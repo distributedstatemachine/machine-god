@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33208109021` (`GREEN`)
 - Main Benchmark evidence: `33208109055` (`GREEN`)
 - Active branch: `agent/m03-ask-cli`
-- Active phase: `bounded top-level ask CLI cycle 1 is rejected; output liveness, flush, deadline, and contract-order remediation are in progress`
-- Next gate: `compose cycle-1 fixes, pass the complete exact-1.94.1 replacement gate, then run three fresh adversarial review tracks`
+- Active phase: `bounded top-level ask CLI cycle-1 findings are remediated and focused-test green`
+- Next gate: `pass the complete exact-1.94.1 replacement gate on one frozen candidate, then run three fresh adversarial review tracks`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
