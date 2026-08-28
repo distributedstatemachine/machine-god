@@ -685,9 +685,11 @@ impl VisionResponseState {
         {
             return Err(protocol_error());
         }
-        if let Some(id) = object.get("id") {
-            self.set_or_check_text_id(id.as_str().ok_or_else(protocol_error)?)?;
-        }
+        // The pinned raw-v4 delta-only path still carries an identity: its
+        // first delta establishes the response's one canonical text ID and
+        // every later delta must match it. In the optional framed path,
+        // `text-start` establishes that same ID before any delta arrives.
+        self.set_or_check_text_id(required_string(object, "id")?)?;
         let delta = required_string(object, "delta")?;
         if delta.len() > MAX_VISION_ATTEMPT_EVIDENCE_BYTES.saturating_sub(self.text.len()) {
             return Err(response_too_large());
@@ -986,9 +988,12 @@ fn valid_token_group(group: Option<Value>, allowed: &[&str]) -> bool {
     let Some(Value::Object(group)) = group else {
         return false;
     };
-    group
-        .iter()
-        .all(|(name, value)| allowed.contains(&name.as_str()) && value.as_u64().is_some())
+    // Raw-v4 token groups always carry their aggregate. Optional breakdown
+    // counters remain bounded to the exact input/output allowlists.
+    group.get("total").and_then(Value::as_u64).is_some()
+        && group
+            .iter()
+            .all(|(name, value)| allowed.contains(&name.as_str()) && value.as_u64().is_some())
 }
 
 fn valid_provider_metadata(metadata: Option<&Value>) -> bool {

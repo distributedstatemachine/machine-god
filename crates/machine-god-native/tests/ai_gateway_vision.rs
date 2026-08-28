@@ -174,6 +174,23 @@ fn sse_unframed_text(text: &str) -> Vec<u8> {
     ])
 }
 
+fn pinned_usage() -> Value {
+    json!({
+        "inputTokens": {
+            "total": 10,
+            "noCache": 8,
+            "cacheRead": 2,
+            "cacheWrite": 0
+        },
+        "outputTokens": {
+            "total": 5,
+            "text": 5,
+            "reasoning": 0
+        },
+        "raw": {"provider": {"promptTokens": 10}}
+    })
+}
+
 fn sse_empty_text() -> Vec<u8> {
     sse_events(&[json!({
         "type": "finish",
@@ -384,6 +401,26 @@ fn response_decoding_survives_every_byte_fragmentation() {
 #[test]
 fn pinned_raw_v4_unframed_text_delta_finish_and_done_sequence_is_accepted() {
     let transport = ScriptedTransport::one(sse_unframed_text(&valid_result().to_string()));
+    let result = execute(Arc::new(transport.clone()), request(vec![png(1, &[1])])).unwrap();
+    assert_eq!(result.images().len(), 1);
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn pinned_raw_v4_usage_totals_and_exact_optional_counters_are_accepted() {
+    let transport = ScriptedTransport::one(sse_events(&[
+        json!({
+            "type": "text-delta",
+            "id": "vision-text",
+            "delta": valid_result().to_string()
+        }),
+        json!({
+            "type": "finish",
+            "finishReason": {"unified": "stop", "raw": "provider-stop"},
+            "usage": pinned_usage(),
+            "providerMetadata": {"gateway": {"route": "direct"}}
+        }),
+    ]));
     let result = execute(Arc::new(transport.clone()), request(vec![png(1, &[1])])).unwrap();
     assert_eq!(result.images().len(), 1);
     assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
@@ -827,6 +864,103 @@ fn optional_text_lifecycle_remains_strict_when_start_or_end_is_present() {
     ];
     for events in cases {
         let transport = ScriptedTransport::one(sse_events(&events));
+        let error = execute(Arc::new(transport.clone()), request(vec![png(1, &[1])])).unwrap_err();
+        assert_eq!(error.kind(), VisionTransportErrorKind::Protocol);
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[test]
+fn framed_and_unframed_text_deltas_require_one_consistent_identity() {
+    let malformed = [
+        // A framed delta must carry the ID established by `text-start`.
+        vec![
+            json!({"type": "text-start", "id": "vision-text"}),
+            json!({"type": "text-delta", "delta": valid_result().to_string()}),
+            json!({"type": "text-end", "id": "vision-text"}),
+            json!({"type": "finish", "finishReason": {"unified": "stop"}}),
+        ],
+        vec![
+            json!({"type": "text-start", "id": "vision-text"}),
+            json!({
+                "type": "text-delta",
+                "id": "different-text",
+                "delta": valid_result().to_string()
+            }),
+            json!({"type": "text-end", "id": "vision-text"}),
+            json!({"type": "finish", "finishReason": {"unified": "stop"}}),
+        ],
+        // The pinned unframed path is delta-only, not identity-free: its
+        // first delta establishes the canonical ID for all later deltas.
+        vec![
+            json!({"type": "text-delta", "delta": valid_result().to_string()}),
+            json!({"type": "finish", "finishReason": {"unified": "stop"}}),
+        ],
+        vec![
+            json!({"type": "text-delta", "id": "vision-text", "delta": ""}),
+            json!({
+                "type": "text-delta",
+                "id": "different-text",
+                "delta": valid_result().to_string()
+            }),
+            json!({"type": "finish", "finishReason": {"unified": "stop"}}),
+        ],
+    ];
+
+    for events in malformed {
+        let invalid = sse_events(&events);
+        let would_be_retry = sse_unframed_text(&valid_result().to_string());
+        let transport = ScriptedTransport::new(vec![vec![invalid], vec![would_be_retry]]);
+        let error = execute(Arc::new(transport.clone()), request(vec![png(1, &[1])])).unwrap_err();
+        assert_eq!(error.kind(), VisionTransportErrorKind::Protocol);
+        // Event identity is an envelope invariant, not structured semantic
+        // invalidity, so it never consumes the one semantic retry.
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[test]
+fn usage_requires_nonnegative_integer_totals_and_exact_optional_counters() {
+    let malformed_usage = [
+        json!({"inputTokens": {}, "outputTokens": {"total": 1}}),
+        json!({"inputTokens": {"total": 1}, "outputTokens": {}}),
+        json!({
+            "inputTokens": {"cacheRead": 1},
+            "outputTokens": {"total": 1}
+        }),
+        json!({
+            "inputTokens": {"total": 1},
+            "outputTokens": {"reasoning": 1}
+        }),
+        json!({
+            "inputTokens": {"total": -1},
+            "outputTokens": {"total": 1}
+        }),
+        json!({
+            "inputTokens": {"total": 1},
+            "outputTokens": {"total": 1.5}
+        }),
+        json!({
+            "inputTokens": {"total": 1, "unknown": 0},
+            "outputTokens": {"total": 1}
+        }),
+    ];
+
+    for usage in malformed_usage {
+        let invalid = sse_events(&[
+            json!({
+                "type": "text-delta",
+                "id": "vision-text",
+                "delta": valid_result().to_string()
+            }),
+            json!({
+                "type": "finish",
+                "finishReason": {"unified": "stop"},
+                "usage": usage
+            }),
+        ]);
+        let would_be_retry = sse_unframed_text(&valid_result().to_string());
+        let transport = ScriptedTransport::new(vec![vec![invalid], vec![would_be_retry]]);
         let error = execute(Arc::new(transport.clone()), request(vec![png(1, &[1])])).unwrap_err();
         assert_eq!(error.kind(), VisionTransportErrorKind::Protocol);
         assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
