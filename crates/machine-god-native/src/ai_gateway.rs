@@ -365,21 +365,24 @@ impl Drop for ModelRequestGuard {
         let Some(request) = self.request.as_mut() else {
             return;
         };
+        let mut scratch = OwnedJsonDropScratch::new();
         for value in request.options.metadata.values_mut() {
-            drop_json_value_iterative(value);
+            scratch.drop_value(std::mem::take(value));
         }
         for tool in &mut request.tools {
-            drop_json_value_iterative(&mut tool.input_schema);
+            scratch.drop_value(std::mem::take(&mut tool.input_schema));
         }
         for message in &mut request.messages {
             for block in &mut message.content {
                 match block {
-                    ContentBlock::Json { value } => drop_json_value_iterative(value),
+                    ContentBlock::Json { value } => {
+                        scratch.drop_value(std::mem::take(value));
+                    }
                     ContentBlock::ToolCall { call } => {
-                        drop_json_value_iterative(&mut call.arguments);
+                        scratch.drop_value(std::mem::take(&mut call.arguments));
                     }
                     ContentBlock::ToolResult { output, .. } => {
-                        drop_json_value_iterative(&mut output.content);
+                        scratch.drop_value(std::mem::take(&mut output.content));
                     }
                     ContentBlock::Text { .. } | _ => {}
                 }
@@ -388,48 +391,74 @@ impl Drop for ModelRequestGuard {
     }
 }
 
-fn drop_json_value_iterative(value: &mut Value) {
-    enum OwnedJsonFrame {
-        Array(std::vec::IntoIter<Value>),
-        Object(serde_json::map::IntoValues),
+enum OwnedJsonFrame {
+    Array(std::vec::IntoIter<Value>),
+    Object(serde_json::map::IntoValues),
+}
+
+impl Iterator for OwnedJsonFrame {
+    type Item = Value;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Array(values) => values.next(),
+            Self::Object(values) => values.next(),
+        }
+    }
+}
+
+struct OwnedJsonDropScratch {
+    frames: Vec<OwnedJsonFrame>,
+}
+
+impl OwnedJsonDropScratch {
+    fn new() -> Self {
+        Self { frames: Vec::new() }
     }
 
-    impl OwnedJsonFrame {
-        fn next(&mut self) -> Option<Value> {
-            match self {
-                Self::Array(values) => values.next(),
-                Self::Object(values) => values.next(),
+    fn drop_value(&mut self, root: Value) {
+        debug_assert!(self.frames.is_empty());
+        let mut current = Some(root);
+        loop {
+            if let Some(value) = current.take() {
+                match value {
+                    Value::Array(values) => {
+                        self.push(OwnedJsonFrame::Array(values.into_iter()));
+                    }
+                    Value::Object(values) => {
+                        self.push(OwnedJsonFrame::Object(values.into_values()));
+                    }
+                    Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+                }
+            }
+            loop {
+                let Some(frame) = self.frames.last_mut() else {
+                    return;
+                };
+                if let Some(child) = frame.next() {
+                    current = Some(child);
+                    break;
+                }
+                self.frames.pop();
             }
         }
     }
 
-    let mut frames: Vec<OwnedJsonFrame> = Vec::new();
-    let mut current = Some(std::mem::take(value));
-    loop {
-        let Some(value) = current.take() else {
-            let Some(frame) = frames.last_mut() else {
-                return;
-            };
-            if let Some(next) = frame.next() {
-                current = Some(next);
+    fn push(&mut self, frame: OwnedJsonFrame) {
+        if self.frames.len() == self.frames.capacity() {
+            let additional = if self.frames.capacity() == 0 {
+                MAX_SAFE_JSON_DEPTH
             } else {
-                frames.pop();
+                self.frames.capacity()
+            };
+            if self.frames.try_reserve_exact(additional).is_err() {
+                // Early request teardown must not recurse through an
+                // attacker-controlled subtree when scratch allocation fails.
+                std::mem::forget(frame);
+                return;
             }
-            continue;
-        };
-        match value {
-            Value::Array(values) => {
-                let mut frame = OwnedJsonFrame::Array(values.into_iter());
-                current = frame.next();
-                frames.push(frame);
-            }
-            Value::Object(values) => {
-                let mut frame = OwnedJsonFrame::Object(values.into_values());
-                current = frame.next();
-                frames.push(frame);
-            }
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
         }
+        self.frames.push(frame);
     }
 }
 
@@ -484,7 +513,10 @@ fn validate_request_envelope(
         check_cancel(cancellation)?;
         let valid_count = match message.role {
             Role::System | Role::User | Role::Tool => message.content.len() == 1,
-            Role::Assistant => message.content.len() <= limits.max_tool_calls.saturating_add(1),
+            Role::Assistant => {
+                !message.content.is_empty()
+                    && message.content.len() <= limits.max_tool_calls.saturating_add(1)
+            }
             _ => false,
         };
         if !valid_count {
@@ -687,6 +719,9 @@ fn build_prompt(
                 }]),
             },
             Role::Assistant => {
+                if message.content.is_empty() {
+                    return Err(invalid_request("gateway_invalid_history"));
+                }
                 let mut parts = Vec::new();
                 let mut saw_call = false;
                 for block in message.content {
@@ -782,6 +817,9 @@ fn prepare_tool_result_values<'message>(
                 }
             }
             Role::Assistant => {
+                if message.content.is_empty() {
+                    return Err(invalid_request("gateway_invalid_history"));
+                }
                 let mut saw_call = false;
                 for (index, block) in message.content.iter().enumerate() {
                     check_cancel(projection.cancellation)?;
@@ -904,8 +942,9 @@ fn map_compact_output_error(error: CompactToolOutputError) -> ProviderError {
 #[cfg(test)]
 mod prompt_allocation_tests {
     use super::*;
-    use machine_god_core::ToolOutput;
+    use machine_god_core::{InferenceOptions, ToolOutput, TurnId};
     use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     const CALLS_PER_GROUP: usize = 64;
     const GROUPS: usize = 63;
@@ -943,48 +982,80 @@ mod prompt_allocation_tests {
         messages
     }
 
+    #[derive(Default)]
+    struct CountingTransport {
+        calls: AtomicUsize,
+    }
+
+    impl AiGatewayTransport for CountingTransport {
+        fn stream(
+            &self,
+            _request: AiGatewayTransportRequest,
+            _cancellation: CancellationToken,
+        ) -> BoxFuture<'_, Result<AiGatewayByteStream, ProviderError>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Box::pin(async { Err(protocol_error("test_transport_called")) })
+        }
+    }
+
+    fn request_with(messages: Vec<Message>) -> ModelRequest {
+        ModelRequest {
+            session_id: SessionId::new("allocation-session").unwrap(),
+            session_incarnation_id: SessionIncarnationId::new("allocation-incarnation").unwrap(),
+            turn_id: TurnId::new("allocation-turn").unwrap(),
+            messages,
+            tools: Vec::new(),
+            options: InferenceOptions::default(),
+        }
+    }
+
     #[test]
-    fn maximal_prompt_preparation_reuses_scratch_and_retains_small_results() {
-        let messages = maximal_history();
-        let session_id = SessionId::new("allocation-session").unwrap();
-        let session_incarnation_id = SessionIncarnationId::new("allocation-incarnation").unwrap();
+    fn provider_reuses_validation_and_rejection_drop_scratch_at_maximal_history() {
+        let transport = Arc::new(CountingTransport::default());
+        let limits = AiGatewayLimits {
+            // Every argument has three nodes and every result has one. Reject
+            // only when validation reaches the final result root.
+            max_json_nodes: RESULT_COUNT * 4 - 1,
+            ..AiGatewayLimits::default()
+        };
+        let provider =
+            AiGatewayProvider::with_limits("provider/default", transport.clone(), limits).unwrap();
+        let mut request = Some(request_with(maximal_history()));
         let cancellation = CancellationToken::new();
-        let limits = AiGatewayLimits::default();
-        let context = PromptBuildContext {
-            session_id: &session_id,
-            session_incarnation_id: &session_incarnation_id,
-            reader_advertised: false,
-            limits,
-            cancellation: &cancellation,
-        };
-        let mut budgets = ToolOutputBudgets {
-            source_remaining: limits.max_request_bytes,
-            wire_remaining: limits.max_request_bytes,
-        };
-        let mut prepared = None;
+        let mut result = None;
         allocation_counter::measure(|| {});
         let allocations = allocation_counter::measure(|| {
-            prepared = Some(prepare_tool_result_values(
-                &messages,
-                &context,
-                &mut budgets,
+            result = Some(futures_executor::block_on(
+                provider.stream(request.take().unwrap(), cancellation.clone()),
             ));
         });
-        let prepared = prepared.expect("preparation completed").unwrap();
-        assert_eq!(prepared.len(), RESULT_COUNT);
-        assert!(prepared.iter().all(|value| value.capacity() <= 64));
+        let Err(error) = result.expect("provider completed") else {
+            panic!("late oversized JSON unexpectedly reached transport");
+        };
+        assert_eq!(error.code, "gateway_json_node_limit");
+        assert_eq!(transport.calls.load(Ordering::Relaxed), 0);
         assert!(
-            allocations.count_total <= (RESULT_COUNT + 1_024) as u64,
-            "prompt preparation allocated per traversal: {allocations:?}"
+            allocations.count_total <= 64,
+            "provider allocated traversal storage per JSON root: {allocations:?}"
         );
-        assert!(
-            allocations.bytes_current <= 384 * 1_024,
-            "small results retained excess capacity: {allocations:?}"
-        );
-        assert!(
-            allocations.bytes_max <= 512 * 1_024,
-            "prompt preparation held excess peak capacity: {allocations:?}"
-        );
+    }
+
+    #[test]
+    fn empty_assistant_message_is_rejected_before_transport() {
+        let transport = Arc::new(CountingTransport::default());
+        let provider = AiGatewayProvider::new("provider/default", transport.clone()).unwrap();
+        let result = futures_executor::block_on(provider.stream(
+            request_with(vec![Message {
+                role: Role::Assistant,
+                content: Vec::new(),
+            }]),
+            CancellationToken::new(),
+        ));
+        let Err(error) = result else {
+            panic!("empty assistant message unexpectedly reached transport");
+        };
+        assert_eq!(error.code, "gateway_invalid_history");
+        assert_eq!(transport.calls.load(Ordering::Relaxed), 0);
     }
 }
 
@@ -1005,14 +1076,22 @@ fn validate_request_json(
     cancellation: &CancellationToken,
 ) -> Result<(), ProviderError> {
     let mut nodes = 0;
+    let mut frames = Vec::new();
     for value in request.options.metadata.values() {
         check_cancel(cancellation)?;
-        validate_json(value, &mut nodes, limits.max_json_nodes, cancellation)?;
+        validate_json(
+            value,
+            &mut frames,
+            &mut nodes,
+            limits.max_json_nodes,
+            cancellation,
+        )?;
     }
     for tool in &request.tools {
         check_cancel(cancellation)?;
         validate_json(
             &tool.input_schema,
+            &mut frames,
             &mut nodes,
             limits.max_json_nodes,
             cancellation,
@@ -1029,7 +1108,13 @@ fn validate_request_json(
                 ContentBlock::Text { .. } | _ => None,
             };
             if let Some(value) = value {
-                validate_json(value, &mut nodes, limits.max_json_nodes, cancellation)?;
+                validate_json(
+                    value,
+                    &mut frames,
+                    &mut nodes,
+                    limits.max_json_nodes,
+                    cancellation,
+                )?;
             }
         }
     }
@@ -1050,13 +1135,17 @@ impl<'a> JsonFrame<'a> {
     }
 }
 
-fn validate_json(
-    root: &Value,
+fn validate_json<'value>(
+    root: &'value Value,
+    frames: &mut Vec<JsonFrame<'value>>,
     nodes: &mut usize,
     max_nodes: usize,
     cancellation: &CancellationToken,
 ) -> Result<(), ProviderError> {
-    let mut frames: Vec<JsonFrame<'_>> = Vec::new();
+    debug_assert!(frames.is_empty());
+    frames
+        .try_reserve_exact(MAX_SAFE_JSON_DEPTH)
+        .map_err(|_| invalid_request("gateway_json_depth_limit"))?;
     let mut current = Some((root, 0_usize));
     loop {
         let Some((value, depth)) = current.take() else {
@@ -1592,6 +1681,33 @@ impl GatewayEventStream {
         self.cancellation = None;
     }
 
+    fn terminate(
+        &mut self,
+        outcome: Option<Result<ModelEvent, ProviderError>>,
+    ) -> Poll<Option<Result<ModelEvent, ProviderError>>> {
+        // Release transport ownership before the final cancellation boundary:
+        // a source is allowed to request cancellation from its Drop path.
+        drop(self.source.take());
+        self.clear_cancellation_waiter();
+        self.terminal = true;
+        if self.cancellation_token.is_cancelled() {
+            Poll::Ready(Some(Err(cancelled_error())))
+        } else {
+            Poll::Ready(outcome)
+        }
+    }
+
+    fn pop_pending(&mut self) -> Option<Poll<Option<Result<ModelEvent, ProviderError>>>> {
+        let event = self.pending.pop_front()?;
+        if self.cancellation_token.is_cancelled()
+            || matches!(event, Ok(ModelEvent::Stop { .. }) | Err(_))
+        {
+            return Some(self.terminate(Some(event)));
+        }
+        self.clear_cancellation_waiter();
+        Some(Poll::Ready(Some(event)))
+    }
+
     fn consume_chunk(&mut self, chunk: &[u8]) -> Result<(), ProviderError> {
         check_cancel(&self.cancellation_token)?;
         if chunk.is_empty() {
@@ -2019,67 +2135,97 @@ impl Stream for GatewayEventStream {
             return Poll::Ready(None);
         }
         if this.poll_cancellation(context) {
-            this.terminal = true;
-            return Poll::Ready(Some(Err(cancelled_error())));
+            return this.terminate(Some(Err(cancelled_error())));
         }
-        if let Some(event) = this.pending.pop_front() {
-            this.clear_cancellation_waiter();
-            if matches!(event, Ok(ModelEvent::Stop { .. })) {
-                this.terminal = true;
-            }
-            return Poll::Ready(Some(event));
+        if let Some(outcome) = this.pop_pending() {
+            return outcome;
         }
         let Some(source) = this.source.as_mut() else {
-            this.clear_cancellation_waiter();
-            this.terminal = true;
-            return Poll::Ready(None);
+            return this.terminate(None);
         };
         let source_result = source.as_mut().poll_next(context);
         if source_result.is_ready() && this.cancellation_token.is_cancelled() {
-            this.clear_cancellation_waiter();
-            this.terminal = true;
-            return Poll::Ready(Some(Err(cancelled_error())));
+            return this.terminate(Some(Err(cancelled_error())));
         }
         match source_result {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Some(Err(error))) => {
-                this.clear_cancellation_waiter();
-                this.terminal = true;
-                Poll::Ready(Some(Err(error)))
-            }
+            Poll::Ready(Some(Err(error))) => this.terminate(Some(Err(error))),
             Poll::Ready(Some(Ok(chunk))) => {
                 if let Err(error) = this.consume_chunk(&chunk) {
-                    this.clear_cancellation_waiter();
-                    this.terminal = true;
-                    return Poll::Ready(Some(Err(error)));
+                    return this.terminate(Some(Err(error)));
                 }
-                if let Some(event) = this.pending.pop_front() {
-                    this.clear_cancellation_waiter();
-                    if matches!(event, Ok(ModelEvent::Stop { .. })) {
-                        this.terminal = true;
-                    }
-                    return Poll::Ready(Some(event));
+                if this.cancellation_token.is_cancelled() {
+                    return this.terminate(Some(Err(cancelled_error())));
+                }
+                if let Some(outcome) = this.pop_pending() {
+                    return outcome;
                 }
                 context.waker().wake_by_ref();
                 Poll::Pending
             }
             Poll::Ready(None) => {
+                // An exhausted source may request cancellation from Drop.
+                drop(this.source.take());
+                if this.cancellation_token.is_cancelled() {
+                    return this.terminate(Some(Err(cancelled_error())));
+                }
                 if let Err(error) = this.consume_eof() {
-                    this.clear_cancellation_waiter();
-                    this.terminal = true;
-                    return Poll::Ready(Some(Err(error)));
+                    return this.terminate(Some(Err(error)));
                 }
-                if let Some(event) = this.pending.pop_front() {
-                    this.clear_cancellation_waiter();
-                    if matches!(event, Ok(ModelEvent::Stop { .. })) {
-                        this.terminal = true;
-                    }
-                    return Poll::Ready(Some(event));
+                if this.cancellation_token.is_cancelled() {
+                    return this.terminate(Some(Err(cancelled_error())));
                 }
-                this.clear_cancellation_waiter();
-                this.terminal = true;
-                Poll::Ready(None)
+                if let Some(outcome) = this.pop_pending() {
+                    return outcome;
+                }
+                this.terminate(None)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod event_stream_teardown_tests {
+    use super::*;
+    use futures_util::StreamExt;
+
+    struct DropCancelsByteStream {
+        cancellation: CancellationToken,
+        chunk: Option<Vec<u8>>,
+    }
+
+    impl Stream for DropCancelsByteStream {
+        type Item = Result<Vec<u8>, ProviderError>;
+
+        fn poll_next(
+            mut self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+        ) -> Poll<Option<Self::Item>> {
+            Poll::Ready(self.chunk.take().map(Ok))
+        }
+    }
+
+    impl Drop for DropCancelsByteStream {
+        fn drop(&mut self) {
+            self.cancellation.cancel();
+        }
+    }
+
+    #[test]
+    fn source_drop_cancellation_wins_over_queued_stop() {
+        let cancellation = CancellationToken::new();
+        let source = Box::pin(DropCancelsByteStream {
+            cancellation: cancellation.clone(),
+            chunk: Some(
+                b"data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n".to_vec(),
+            ),
+        }) as AiGatewayByteStream;
+        let mut stream = GatewayEventStream::new(source, &cancellation, AiGatewayLimits::default());
+
+        let error = futures_executor::block_on(stream.next())
+            .expect("cancellation is emitted")
+            .expect_err("source teardown cancellation wins over Stop");
+        assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+        assert!(futures_executor::block_on(stream.next()).is_none());
     }
 }
