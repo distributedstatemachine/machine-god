@@ -134,11 +134,7 @@ impl VisionBatchRequest {
         focus: String,
         images: Vec<VisionImage>,
     ) -> Result<Self, VisionTransportError> {
-        if focus
-            .trim_matches(|character: char| character.is_ascii_whitespace())
-            .is_empty()
-            || focus.contains('\0')
-            || focus.len() > MAX_VISION_FOCUS_BYTES
+        if focus.len() > MAX_VISION_FOCUS_BYTES
             || !(1..=MAX_VISION_BATCH_IMAGES).contains(&images.len())
         {
             return Err(VisionTransportError::new(
@@ -161,6 +157,15 @@ impl VisionBatchRequest {
                 .ok_or_else(|| {
                     VisionTransportError::new(VisionTransportErrorKind::InvalidRequest)
                 })?;
+        }
+        if focus
+            .trim_matches(|character: char| character.is_ascii_whitespace())
+            .is_empty()
+            || focus.contains('\0')
+        {
+            return Err(VisionTransportError::new(
+                VisionTransportErrorKind::InvalidRequest,
+            ));
         }
         Ok(Self {
             session_id,
@@ -344,7 +349,10 @@ impl VisionImageResult {
     /// [`VisionProviderFailureCode::VisionUnavailable`]. Tool-owned failures
     /// are projected after the provider boundary.
     pub fn new(image_id: u64, outcome: VisionImageOutcome) -> Result<Self, VisionTransportError> {
-        if image_id == 0 || !valid_outcome(&outcome) {
+        if image_id == 0
+            || !outcome_within_size_limits(&outcome)
+            || !valid_outcome_content(&outcome)
+        {
             return Err(VisionTransportError::new(
                 VisionTransportErrorKind::InvalidResponse,
             ));
@@ -393,14 +401,24 @@ impl VisionBatchResponse {
     /// or more than 20 KiB of aggregate retained evidence.
     pub fn new(images: Vec<VisionImageResult>) -> Result<Self, VisionTransportError> {
         if !(1..=MAX_VISION_BATCH_IMAGES).contains(&images.len())
-            || images.iter().any(|image| !valid_outcome(&image.outcome))
+            || images
+                .iter()
+                .any(|image| !outcome_within_size_limits(&image.outcome))
+            || retained_evidence_bytes(&images)
+                .is_none_or(|bytes| bytes > MAX_VISION_ATTEMPT_EVIDENCE_BYTES)
+        {
+            return Err(VisionTransportError::new(
+                VisionTransportErrorKind::InvalidResponse,
+            ));
+        }
+        if images
+            .iter()
+            .any(|image| !valid_outcome_content(&image.outcome))
             || images.iter().enumerate().any(|(index, image)| {
                 images[..index]
                     .iter()
                     .any(|previous| previous.image_id == image.image_id)
             })
-            || retained_evidence_bytes(&images)
-                .is_none_or(|bytes| bytes > MAX_VISION_ATTEMPT_EVIDENCE_BYTES)
         {
             return Err(VisionTransportError::new(
                 VisionTransportErrorKind::InvalidResponse,
@@ -420,15 +438,14 @@ impl VisionBatchResponse {
     }
 }
 
-fn valid_outcome(outcome: &VisionImageOutcome) -> bool {
+fn outcome_within_size_limits(outcome: &VisionImageOutcome) -> bool {
     match outcome {
         VisionImageOutcome::Ok {
             summary,
             visible_text,
             details,
         } => {
-            !summary.trim().is_empty()
-                && summary.len() <= MAX_VISION_EVIDENCE_STRING_BYTES
+            summary.len() <= MAX_VISION_EVIDENCE_STRING_BYTES
                 && visible_text.len() <= MAX_VISION_EVIDENCE_LIST_ITEMS
                 && details.len() <= MAX_VISION_EVIDENCE_LIST_ITEMS
                 && visible_text
@@ -436,10 +453,21 @@ fn valid_outcome(outcome: &VisionImageOutcome) -> bool {
                     .chain(details)
                     .all(|value| value.len() <= MAX_VISION_EVIDENCE_STRING_BYTES)
         }
+        VisionImageOutcome::Failed { .. } => true,
+    }
+}
+
+fn valid_outcome_content(outcome: &VisionImageOutcome) -> bool {
+    match outcome {
+        VisionImageOutcome::Ok { summary, .. } => !trim_ascii_edges(summary).is_empty(),
         VisionImageOutcome::Failed { error } => {
             error.code() == VisionProviderFailureCode::VisionUnavailable
         }
     }
+}
+
+fn trim_ascii_edges(value: &str) -> &str {
+    value.trim_matches(|character| matches!(character, ' ' | '\t' | '\r' | '\n'))
 }
 
 fn retained_evidence_bytes(images: &[VisionImageResult]) -> Option<usize> {

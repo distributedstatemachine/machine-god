@@ -91,6 +91,16 @@ fn request_rejects_blank_or_oversized_focus_and_invalid_image_sets() {
             "focus".to_owned(),
             vec![image(1, MAX_VISION_BATCH_RAW_BYTES), image(2, 1)],
         ),
+        VisionBatchRequest::new(
+            session(),
+            " ".repeat(MAX_VISION_FOCUS_BYTES + 1),
+            vec![image(1, 1)],
+        ),
+        VisionBatchRequest::new(
+            session(),
+            format!("{} ", "f".repeat(MAX_VISION_FOCUS_BYTES)),
+            vec![image(1, 1)],
+        ),
     ];
 
     for result in cases {
@@ -179,6 +189,26 @@ fn result_enforces_leaf_list_and_aggregate_evidence_bounds() {
             visible_text: vec!["v".repeat(MAX_VISION_EVIDENCE_STRING_BYTES + 1)],
             details: Vec::new(),
         },
+        VisionImageOutcome::Ok {
+            summary: " ".repeat(MAX_VISION_EVIDENCE_STRING_BYTES + 1),
+            visible_text: Vec::new(),
+            details: Vec::new(),
+        },
+        VisionImageOutcome::Ok {
+            summary: format!("{} ", "s".repeat(MAX_VISION_EVIDENCE_STRING_BYTES)),
+            visible_text: Vec::new(),
+            details: Vec::new(),
+        },
+        VisionImageOutcome::Ok {
+            summary: "ok".to_owned(),
+            visible_text: vec![" ".repeat(MAX_VISION_EVIDENCE_STRING_BYTES + 1)],
+            details: Vec::new(),
+        },
+        VisionImageOutcome::Ok {
+            summary: "ok".to_owned(),
+            visible_text: vec![format!("{} ", "v".repeat(MAX_VISION_EVIDENCE_STRING_BYTES))],
+            details: Vec::new(),
+        },
     ] {
         assert_eq!(
             VisionImageResult::new(1, outcome).unwrap_err().kind(),
@@ -195,6 +225,12 @@ fn result_enforces_leaf_list_and_aggregate_evidence_bounds() {
             .kind(),
         VisionTransportErrorKind::InvalidResponse
     );
+
+    let non_ascii_blank = success(4, "\u{a0}".to_owned());
+    let VisionImageOutcome::Ok { summary, .. } = non_ascii_blank.outcome() else {
+        panic!("expected successful evidence");
+    };
+    assert_eq!(summary, "\u{a0}");
 }
 
 #[test]
