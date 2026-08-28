@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33179648286` (`GREEN`)
 - Main Benchmark evidence: `33179648264` (`GREEN`)
 - Active branch: `agent/m03-vision`
-- Active phase: `vision adversarial review cycle 15 is in progress on behavior candidate 24b9daa41bdbe3f96998e3019d94b78b404b7163`
-- Next gate: `require zero findings from all three fresh cycle-15 product reviews, then seal the compact historical review ledger`
+- Active phase: `vision behavior candidate 24b9daa41bdbe3f96998e3019d94b78b404b7163 is accepted after three zero-finding cycle-15 reviews; the compact historical ledger is sealed`
+- Next gate: `push the feature branch, require exact-SHA CI and Benchmark evidence, then fast-forward main without force`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
