@@ -31,7 +31,13 @@ impl WebSearchDeadline for TokioWebSearchDeadline {
                     WebSearchTransportErrorKind::RuntimeRequired,
                 ));
             }
-            tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+            let sleep = std::panic::catch_unwind(|| {
+                tokio::time::sleep_until(tokio::time::Instant::from_std(deadline))
+            })
+            .map_err(|_| {
+                WebSearchTransportError::new(WebSearchTransportErrorKind::RuntimeRequired)
+            })?;
+            sleep.await;
             Ok(())
         })
     }
@@ -76,5 +82,18 @@ mod tests {
                 .unwrap();
             assert!(Instant::now() >= deadline);
         });
+    }
+
+    #[test]
+    fn active_runtime_without_time_returns_fixed_runtime_required() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let error = runtime
+            .block_on(
+                TokioWebSearchDeadline::new().wait_until(Instant::now() + Duration::from_millis(1)),
+            )
+            .unwrap_err();
+        assert_eq!(error.kind(), WebSearchTransportErrorKind::RuntimeRequired);
     }
 }
