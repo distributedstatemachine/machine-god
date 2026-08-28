@@ -1316,6 +1316,112 @@ fn cancellation_wins_same_poll_stream_item_error_and_releases_source() {
     assert!(!rendered.contains("PRIVATE_STREAM_ERROR_IMAGE_SENTINEL"));
 }
 
+#[derive(Clone, Copy)]
+enum DropCancellingStreamOutcome {
+    ItemError,
+    EmptyChunk,
+    DecoderError,
+}
+
+#[derive(Clone)]
+struct DropCancellingStreamTransport {
+    outcome: DropCancellingStreamOutcome,
+    drops: Arc<AtomicUsize>,
+}
+
+struct DropCancellingStream {
+    outcome: DropCancellingStreamOutcome,
+    yielded: bool,
+    cancellation: CancellationToken,
+    drops: Arc<AtomicUsize>,
+}
+
+impl Stream for DropCancellingStream {
+    type Item = Result<Vec<u8>, ProviderError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.yielded {
+            return Poll::Pending;
+        }
+        self.yielded = true;
+        Poll::Ready(Some(match self.outcome {
+            DropCancellingStreamOutcome::ItemError => Err(ProviderError::new(
+                ProviderErrorKind::Transport,
+                "PRIVATE_DROP_STREAM_ERROR_CODE",
+                "PRIVATE_DROP_STREAM_ERROR_MESSAGE",
+                true,
+            )),
+            DropCancellingStreamOutcome::EmptyChunk => Ok(Vec::new()),
+            DropCancellingStreamOutcome::DecoderError => Ok(b"data: {}\rX".to_vec()),
+        }))
+    }
+}
+
+impl Drop for DropCancellingStream {
+    fn drop(&mut self) {
+        self.drops.fetch_add(1, Ordering::SeqCst);
+        self.cancellation.cancel();
+    }
+}
+
+impl AiGatewayTransport for DropCancellingStreamTransport {
+    fn stream(
+        &self,
+        _request: AiGatewayTransportRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<AiGatewayByteStream, ProviderError>> {
+        let outcome = self.outcome;
+        let drops = Arc::clone(&self.drops);
+        Box::pin(async move {
+            Ok(Box::pin(DropCancellingStream {
+                outcome,
+                yielded: false,
+                cancellation,
+                drops,
+            }) as AiGatewayByteStream)
+        })
+    }
+}
+
+fn assert_drop_cancellation_wins(outcome: DropCancellingStreamOutcome) {
+    let drops = Arc::new(AtomicUsize::new(0));
+    let worker = AiGatewayVisionTransport::new(
+        MODEL,
+        Arc::new(DropCancellingStreamTransport {
+            outcome,
+            drops: Arc::clone(&drops),
+        }),
+    )
+    .unwrap();
+    let error = futures_executor::block_on(worker.analyze(
+        request(vec![png(1, b"PRIVATE_DROP_CANCELLATION_IMAGE_SENTINEL")]),
+        CancellationToken::new(),
+    ))
+    .unwrap_err();
+
+    assert_eq!(error.kind(), VisionTransportErrorKind::Cancelled);
+    assert_eq!(drops.load(Ordering::SeqCst), 1);
+    let rendered = format!("{error:?} {error}");
+    assert!(!rendered.contains("PRIVATE_DROP_STREAM_ERROR_CODE"));
+    assert!(!rendered.contains("PRIVATE_DROP_STREAM_ERROR_MESSAGE"));
+    assert!(!rendered.contains("PRIVATE_DROP_CANCELLATION_IMAGE_SENTINEL"));
+}
+
+#[test]
+fn stream_drop_cancellation_wins_item_error() {
+    assert_drop_cancellation_wins(DropCancellingStreamOutcome::ItemError);
+}
+
+#[test]
+fn stream_drop_cancellation_wins_empty_chunk_error() {
+    assert_drop_cancellation_wins(DropCancellingStreamOutcome::EmptyChunk);
+}
+
+#[test]
+fn stream_drop_cancellation_wins_decoder_error() {
+    assert_drop_cancellation_wins(DropCancellingStreamOutcome::DecoderError);
+}
+
 #[test]
 fn future_is_inert_before_poll_and_precancelled_request_never_reaches_transport() {
     let transport = ScriptedTransport::one(sse_text(&valid_result().to_string()));

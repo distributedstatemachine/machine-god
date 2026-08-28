@@ -169,36 +169,41 @@ async fn run_attempt(
     let mut stream = stream_result.map_err(|error| map_provider_error(&error))?;
 
     let mut decoder = VisionSseDecoder::default();
-    loop {
-        check_cancelled(&cancellation)?;
+    let stream_outcome = loop {
+        if let Err(error) = check_cancelled(&cancellation) {
+            break Err(error);
+        }
         let next = poll_fn(|context| stream.as_mut().poll_next(context)).await;
         if let Err(error) = check_cancelled(&cancellation) {
-            // Ready stream items can race cancellation in the same poll. Drop
-            // the source before publishing cancellation so neither a queued
-            // item nor an item error can win that race or retain capacity.
-            drop(stream);
-            return Err(error);
+            break Err(error);
         }
         let Some(chunk) = next else {
-            break;
+            break Ok(());
         };
-        let chunk = chunk.map_err(|error| map_provider_error(&error))?;
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(error) => break Err(map_provider_error(&error)),
+        };
         if chunk.is_empty() {
             // A successful empty item cannot advance the decoder and a
             // hostile source could otherwise remain pending forever after
-            // yielding it. Release the source before publishing the fixed
-            // protocol failure.
-            drop(stream);
-            return Err(protocol_error());
+            // yielding it.
+            break Err(protocol_error());
         }
-        decoder.push(&chunk, &cancellation)?;
+        if let Err(error) = decoder.push(&chunk, &cancellation) {
+            break Err(error);
+        }
         if decoder.is_done() {
-            break;
+            break Ok(());
         }
-    }
-    // Release connection permits and source storage before semantic decoding.
+    };
+    // Every terminal source outcome follows one teardown path. In particular,
+    // source Drop may release connection permits and make cancellation
+    // observable; cancellation is rechecked after that cleanup and therefore
+    // wins over item, decoder, empty-chunk, EOF, and successful-DONE outcomes.
     drop(stream);
     check_cancelled(&cancellation)?;
+    stream_outcome?;
     let evidence = decoder.finish(&cancellation)?;
     match decode_structured_response(&evidence.text, source, evidence.remaining_json_nodes) {
         Ok(response) => Ok(AttemptResult::Parsed(response)),
