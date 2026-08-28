@@ -124,6 +124,20 @@ impl Wake for NoopWake {
     fn wake(self: Arc<Self>) {}
 }
 
+struct CountingWake {
+    wakes: Arc<AtomicUsize>,
+}
+
+impl Wake for CountingWake {
+    fn wake(self: Arc<Self>) {
+        self.wakes.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.wakes.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
 fn poll_once<F: Future + ?Sized>(future: Pin<&mut F>) -> Poll<F::Output> {
     future.poll(&mut Context::from_waker(&Waker::from(Arc::new(NoopWake))))
 }
@@ -564,6 +578,58 @@ fn semantic_invalidity_retries_once_with_byte_identical_verified_images() {
 }
 
 #[test]
+fn semantic_retry_returns_pending_before_request_two_and_drop_stays_inert() {
+    let invalid = sse_text(r#"{"images":[]}"#);
+    let valid = sse_text(&valid_result().to_string());
+    let transport = ScriptedTransport::new(vec![vec![invalid], vec![valid]]);
+    let worker = AiGatewayVisionTransport::new(MODEL, Arc::new(transport.clone())).unwrap();
+    let mut future = worker.analyze(
+        request(vec![png(1, b"PRIVATE_RETRY_BOUNDARY_IMAGE_SENTINEL")]),
+        CancellationToken::new(),
+    );
+    let notification_count = Arc::new(AtomicUsize::new(0));
+    let retry_waker = Waker::from(Arc::new(CountingWake {
+        wakes: Arc::clone(&notification_count),
+    }));
+
+    assert!(
+        future
+            .as_mut()
+            .poll(&mut Context::from_waker(&retry_waker))
+            .is_pending()
+    );
+    assert_eq!(notification_count.load(Ordering::SeqCst), 1);
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+    drop(future);
+    assert_eq!(notification_count.load(Ordering::SeqCst), 1);
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn cancellation_wins_at_semantic_retry_boundary_without_request_two() {
+    let invalid = sse_text(r#"{"images":[]}"#);
+    let valid = sse_text(&valid_result().to_string());
+    let transport = ScriptedTransport::new(vec![vec![invalid], vec![valid]]);
+    let worker = AiGatewayVisionTransport::new(MODEL, Arc::new(transport.clone())).unwrap();
+    let cancellation = CancellationToken::new();
+    let mut future = worker.analyze(
+        request(vec![png(1, b"PRIVATE_RETRY_CANCELLATION_IMAGE_SENTINEL")]),
+        cancellation.clone(),
+    );
+
+    assert!(poll_once(future.as_mut()).is_pending());
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+    cancellation.cancel();
+    let Poll::Ready(Err(error)) = poll_once(future.as_mut()) else {
+        panic!("retry-boundary cancellation must complete")
+    };
+    assert_eq!(error.kind(), VisionTransportErrorKind::Cancelled);
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+    let rendered = format!("{error:?} {error}");
+    assert!(!rendered.contains("PRIVATE_RETRY_CANCELLATION_IMAGE_SENTINEL"));
+}
+
+#[test]
 fn second_semantic_invalidity_returns_stable_error_after_exactly_two_attempts() {
     let invalid = sse_text(r#"{"images":[]}"#);
     let transport = ScriptedTransport::new(vec![vec![invalid.clone()], vec![invalid]]);
@@ -920,7 +986,7 @@ fn framed_and_unframed_text_deltas_require_one_consistent_identity() {
 }
 
 #[test]
-fn usage_requires_nonnegative_integer_totals_and_exact_optional_counters() {
+fn usage_requires_unsigned_bounded_totals_and_exact_optional_counters() {
     let malformed_usage = [
         json!({"inputTokens": {}, "outputTokens": {"total": 1}}),
         json!({"inputTokens": {"total": 1}, "outputTokens": {}}),
@@ -947,7 +1013,74 @@ fn usage_requires_nonnegative_integer_totals_and_exact_optional_counters() {
     ];
 
     for usage in malformed_usage {
-        let invalid = sse_events(&[
+        assert_usage_is_non_retryable_protocol_error(&usage);
+    }
+}
+
+#[test]
+fn every_usage_breakdown_counter_must_be_unsigned_and_at_most_its_total() {
+    for (group, counter) in [
+        ("inputTokens", "noCache"),
+        ("inputTokens", "cacheRead"),
+        ("inputTokens", "cacheWrite"),
+        ("outputTokens", "text"),
+        ("outputTokens", "reasoning"),
+    ] {
+        for invalid_counter in [json!(-1), json!(1.5), json!(2)] {
+            let mut usage = json!({
+                "inputTokens": {"total": 1},
+                "outputTokens": {"total": 1}
+            });
+            usage[group][counter] = invalid_counter;
+            assert_usage_is_non_retryable_protocol_error(&usage);
+        }
+    }
+}
+
+fn assert_usage_is_non_retryable_protocol_error(usage: &Value) {
+    let invalid = sse_events(&[
+        json!({
+            "type": "text-delta",
+            "id": "vision-text",
+            "delta": valid_result().to_string()
+        }),
+        json!({
+            "type": "finish",
+            "finishReason": {"unified": "stop"},
+            "usage": usage
+        }),
+    ]);
+    let would_be_retry = sse_unframed_text(&valid_result().to_string());
+    let transport = ScriptedTransport::new(vec![vec![invalid], vec![would_be_retry]]);
+    let error = execute(Arc::new(transport.clone()), request(vec![png(1, &[1])])).unwrap_err();
+    assert_eq!(error.kind(), VisionTransportErrorKind::Protocol);
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn usage_breakdown_counters_accept_zero_equality_and_unsigned_max_boundaries() {
+    let valid_usage = [
+        json!({
+            "inputTokens": {
+                "total": 0,
+                "noCache": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0
+            },
+            "outputTokens": {"total": 0, "text": 0, "reasoning": 0}
+        }),
+        json!({
+            "inputTokens": {
+                "total": u64::MAX,
+                "cacheRead": u64::MAX,
+                "cacheWrite": u64::MAX
+            },
+            "outputTokens": {"total": u64::MAX, "reasoning": u64::MAX}
+        }),
+    ];
+
+    for usage in valid_usage {
+        let transport = ScriptedTransport::one(sse_events(&[
             json!({
                 "type": "text-delta",
                 "id": "vision-text",
@@ -958,11 +1091,9 @@ fn usage_requires_nonnegative_integer_totals_and_exact_optional_counters() {
                 "finishReason": {"unified": "stop"},
                 "usage": usage
             }),
-        ]);
-        let would_be_retry = sse_unframed_text(&valid_result().to_string());
-        let transport = ScriptedTransport::new(vec![vec![invalid], vec![would_be_retry]]);
-        let error = execute(Arc::new(transport.clone()), request(vec![png(1, &[1])])).unwrap_err();
-        assert_eq!(error.kind(), VisionTransportErrorKind::Protocol);
+        ]));
+        let result = execute(Arc::new(transport.clone()), request(vec![png(1, &[1])])).unwrap();
+        assert_eq!(result.images().len(), 1);
         assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
     }
 }
