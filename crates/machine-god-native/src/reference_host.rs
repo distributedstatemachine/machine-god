@@ -136,8 +136,9 @@ impl NativeReferenceHost {
     /// poll the permission prompt, touch session records, or perform network I/O.
     /// The trusted host must select disjoint workspace and session roots; this
     /// constructor does not compare their identity or ancestor relationships.
-    /// The explicit deadline authority must be usable in the runtime that will
-    /// drive web-search calls.
+    /// The production transport is shared by language-model, web-search, and
+    /// vision requests. The explicit deadline authority is shared by web-search
+    /// and vision and must be usable in the runtime that drives both tools.
     ///
     /// # Errors
     ///
@@ -184,8 +185,10 @@ impl NativeReferenceHost {
     /// This function consumes the workspace and state descriptors retained by
     /// [`PreparedNativeRoots`] and does not reopen either selected path. It does
     /// not create a runtime, poll the permission prompt, touch session records,
-    /// or perform network I/O. The explicit deadline authority must be usable in
-    /// the runtime that will drive web-search calls.
+    /// or perform network I/O. The production transport is shared by
+    /// language-model, web-search, and vision requests. The explicit deadline
+    /// authority is shared by web-search and vision and must be usable in the
+    /// runtime that drives both tools.
     ///
     /// # Errors
     ///
@@ -230,8 +233,10 @@ impl NativeReferenceHost {
     /// permission selections as production composition, but performs no
     /// credential discovery or HTTP transport construction. `network_target`
     /// must be the canonical HTTP(S) endpoint contacted by `transport`; that
-    /// exact target is presented for web-search authorization. The explicit
-    /// deadline authority must be usable in the runtime that drives the tool.
+    /// exact target is presented for both web-search and vision authorization.
+    /// The injected transport is shared by language-model, web-search, and
+    /// vision requests. The explicit deadline authority is shared by web-search
+    /// and vision and must be usable in the runtime that drives both tools.
     /// The trusted host must select disjoint workspace and session roots; this
     /// constructor does not compare their identity or ancestor relationships.
     ///
@@ -274,8 +279,10 @@ impl NativeReferenceHost {
     /// construction and does not reopen either path represented by
     /// [`PreparedNativeRoots`]. `network_target` must be the canonical HTTP(S)
     /// endpoint contacted by `transport`; that exact target is presented for
-    /// web-search authorization. The explicit deadline authority must be usable
-    /// in the runtime that drives the tool.
+    /// both web-search and vision authorization. The injected transport is
+    /// shared by language-model, web-search, and vision requests. The explicit
+    /// deadline authority is shared by web-search and vision and must be usable
+    /// in the runtime that drives both tools.
     ///
     /// # Errors
     ///
@@ -369,10 +376,10 @@ impl NativeReferenceHost {
                     NativeReferenceHostBuildErrorKind::VisionTransport,
                 )
             })?;
-        // The public host already requires one inert, absolute deadline
-        // authority. Reusing it keeps every constructor stable while this
-        // private adapter translates only fixed error categories; it never
-        // retains or exposes diagnostics from the web-search boundary.
+        // The public host requires one inert, absolute deadline authority for
+        // both web-search and vision. This private adapter translates only
+        // fixed error categories; it never retains or exposes diagnostics from
+        // the shared boundary.
         let vision_deadline: Arc<dyn VisionDeadline> = Arc::new(VisionDeadlineAdapter {
             inner: Arc::clone(&web_search_deadline),
         });

@@ -1,15 +1,23 @@
 //! Bounded, permission-gated inspection of workspace images.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
-use std::future::{Future, poll_fn};
 use std::io;
 use std::path::Path;
-use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::collections::BTreeMap;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::future::{Future, poll_fn};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::pin::Pin;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::task::Poll;
-use std::time::{Duration, Instant};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::time::Instant;
 
 use machine_god_core::{
     BoxFuture, CancellationToken, Capability, NetworkTarget, PreparedToolCall, Tool, ToolCall,
@@ -17,13 +25,17 @@ use machine_god_core::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use crate::vision_portable::{
-    MAX_VISION_BATCH_IMAGES, MAX_VISION_BATCH_RAW_BYTES, MAX_VISION_FOCUS_BYTES,
-    VisionBatchRequest, VisionDeadline, VisionImage, VisionImageOutcome, VisionMediaType,
-    VisionProviderFailure, VisionProviderFailureCode, VisionTransport, VisionTransportError,
-    VisionTransportErrorKind,
+    MAX_VISION_BATCH_IMAGES, VisionBatchRequest, VisionImage, VisionImageOutcome, VisionMediaType,
+    VisionTransportError, VisionTransportErrorKind,
+};
+use crate::vision_portable::{
+    MAX_VISION_BATCH_RAW_BYTES, MAX_VISION_FOCUS_BYTES, VisionDeadline, VisionProviderFailure,
+    VisionProviderFailureCode, VisionTransport,
 };
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -49,13 +61,18 @@ pub const MAX_VISION_TOTAL_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_VISION_BATCH_BYTES: usize = MAX_VISION_BATCH_RAW_BYTES;
 /// Maximum serialized [`ToolOutput`] size.
 pub const MAX_VISION_SERIALIZED_RESULT_BYTES: usize = 48 * 1024;
-/// Default absolute invocation timeout, including capacity waiting and reads.
+/// Default cooperative invocation deadline.
+///
+/// Capacity and provider futures are raced against this deadline. Synchronous
+/// filesystem calls cannot be preempted; cancellation and deadline state are
+/// checked between those individually bounded calls.
 pub const VISION_DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// Default simultaneous invocation bound.
 pub const VISION_DEFAULT_MAX_ACTIVE_REQUESTS: usize = 2;
 /// Hard simultaneous invocation bound.
 pub const VISION_MAX_ACTIVE_REQUESTS: usize = 8;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const READ_CHUNK_BYTES: usize = 64 * 1024;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const SIGNATURE_PROBE_BYTES: usize = 12;
@@ -125,7 +142,7 @@ impl fmt::Display for VisionConfigError {
 
 impl Error for VisionConfigError {}
 
-/// Native vision timeout and simultaneous-invocation bounds.
+/// Native vision cooperative deadline and simultaneous-invocation bounds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VisionLimits {
     request_timeout: Duration,
@@ -155,7 +172,7 @@ impl VisionLimits {
         })
     }
 
-    /// Returns the absolute invocation timeout.
+    /// Returns the cooperative invocation deadline duration.
     #[must_use]
     pub const fn request_timeout(self) -> Duration {
         self.request_timeout
@@ -188,6 +205,7 @@ pub struct VisionTool {
     transport: Arc<dyn VisionTransport>,
     deadline: Arc<dyn VisionDeadline>,
     limits: VisionLimits,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     permits: Arc<Semaphore>,
 }
 
@@ -220,11 +238,9 @@ impl VisionTool {
         deadline: Arc<dyn VisionDeadline>,
         limits: VisionLimits,
     ) -> Result<Self, VisionConfigError> {
-        validate_target(&target)?;
-
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
-            let _ = (root, transport, deadline, limits);
+            let _ = (root, target, transport, deadline, limits);
             Err(VisionConfigError::new(
                 VisionConfigErrorKind::UnsupportedPlatform,
             ))
@@ -232,6 +248,7 @@ impl VisionTool {
 
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
+            validate_target(&target)?;
             let lexical_root = root.components().collect::<std::path::PathBuf>();
             if !lexical_root.is_absolute() {
                 return Err(VisionConfigError::new(VisionConfigErrorKind::InvalidRoot));
@@ -465,6 +482,7 @@ impl VisionTool {
         let mut batch = Vec::with_capacity(MAX_VISION_BATCH_IMAGES);
         let mut batch_bytes = 0_usize;
         let mut processed_bytes = 0_usize;
+        let mut read_scratch = Vec::new();
         for (index, path) in paths.iter().enumerate() {
             check_cancellation_and_deadline(cancellation, Some(deadline))?;
             let image_id = u64::try_from(index + 1).expect("at most 20 vision images fit u64");
@@ -499,13 +517,18 @@ impl VisionTool {
                         .await?;
                         batch_bytes = 0;
                     }
-                    let read =
-                        match self.finish_image_read(path, image, image_id, cancellation, deadline)
-                        {
-                            Ok(read) => read,
-                            Err(LocalImageFailure::Cancelled) => return Err(cancelled_error()),
-                            Err(LocalImageFailure::Timeout) => return Err(timeout_error()),
-                        };
+                    let read = match self.finish_image_read(
+                        path,
+                        image,
+                        image_id,
+                        cancellation,
+                        deadline,
+                        &mut read_scratch,
+                    ) {
+                        Ok(read) => read,
+                        Err(LocalImageFailure::Cancelled) => return Err(cancelled_error()),
+                        Err(LocalImageFailure::Timeout) => return Err(timeout_error()),
+                    };
                     processed_bytes =
                         processed_bytes.saturating_add(read.bytes_read.saturating_sub(probe_bytes));
                     let Some(image) = read.image else {
@@ -694,9 +717,10 @@ impl VisionTool {
         image_id: u64,
         cancellation: &CancellationToken,
         deadline: Instant,
+        read_scratch: &mut Vec<u8>,
     ) -> Result<LocalImageRead, LocalImageFailure> {
         let bytes_read_before = image.probe_len;
-        let read = finish_verified_image(image, image_id, cancellation, deadline)?;
+        let read = finish_verified_image(image, image_id, cancellation, deadline, read_scratch)?;
         if read.image.is_some() && !confined_binding_matches(&self.root, &read.file, path) {
             return Ok(LocalImageRead::unavailable(read.bytes_read));
         }
@@ -846,8 +870,20 @@ fn open_confined_image(root: &OwnedFd, path: &str) -> rustix::io::Result<OwnedFd
 }
 
 #[cfg(target_os = "linux")]
-const fn confined_binding_matches(_root: &OwnedFd, _file: &OwnedFd, _path: &str) -> bool {
-    true
+fn confined_binding_matches(root: &OwnedFd, file: &OwnedFd, path: &str) -> bool {
+    let Ok(current_binding) = open_confined_image(root, path) else {
+        return false;
+    };
+    let Ok(retained_metadata) = rustix::fs::fstat(file) else {
+        return false;
+    };
+    let Ok(current_metadata) = rustix::fs::fstat(&current_binding) else {
+        return false;
+    };
+    let Some(retained_fingerprint) = ImageFingerprint::from_stat(&retained_metadata) else {
+        return false;
+    };
+    retained_fingerprint.matches(&current_metadata)
 }
 
 #[cfg(target_os = "macos")]
@@ -911,6 +947,7 @@ fn finish_verified_image(
     image_id: u64,
     cancellation: &CancellationToken,
     deadline: Instant,
+    read_scratch: &mut Vec<u8>,
 ) -> Result<CompletedImageRead, LocalImageFailure> {
     let ProbedImage {
         file,
@@ -924,14 +961,16 @@ fn finish_verified_image(
         return Ok(CompletedImageRead::unavailable(file, probe_len));
     }
     bytes.extend_from_slice(&probe[..probe_len]);
-    let mut chunk = vec![0_u8; READ_CHUNK_BYTES].into_boxed_slice();
+    if bytes.len() < fingerprint.size && !prepare_read_scratch(read_scratch) {
+        return Ok(CompletedImageRead::unavailable(file, probe_len));
+    }
     while bytes.len() < fingerprint.size {
         local_boundary(cancellation, deadline)?;
         let remaining = fingerprint.size - bytes.len();
-        match rustix::io::read(&file, &mut chunk[..remaining.min(READ_CHUNK_BYTES)]) {
+        match rustix::io::read(&file, &mut read_scratch[..remaining.min(READ_CHUNK_BYTES)]) {
             Ok(0) => return Ok(CompletedImageRead::unavailable(file, bytes.len())),
             Ok(read) => {
-                bytes.extend_from_slice(&chunk[..read]);
+                bytes.extend_from_slice(&read_scratch[..read]);
                 local_boundary(cancellation, deadline)?;
             }
             Err(error) if error == rustix::io::Errno::INTR => {}
@@ -970,16 +1009,34 @@ fn finish_verified_image(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+fn prepare_read_scratch(read_scratch: &mut Vec<u8>) -> bool {
+    if read_scratch.len() == READ_CHUNK_BYTES {
+        return true;
+    }
+    debug_assert!(read_scratch.is_empty());
+    if read_scratch.try_reserve_exact(READ_CHUNK_BYTES).is_err() {
+        return false;
+    }
+    read_scratch.resize(READ_CHUNK_BYTES, 0);
+    true
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Clone, Copy, Debug)]
 enum LocalImageFailure {
     Cancelled,
     Timeout,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn local_boundary(
     cancellation: &CancellationToken,
     deadline: Instant,
 ) -> Result<(), LocalImageFailure> {
+    // Native reads and metadata checks are synchronous and cannot be detached or
+    // forcibly interrupted safely. Each call is size/count bounded, and the
+    // invocation cooperatively observes cancellation and its deadline between
+    // calls while owned descriptors and permits remain scoped to the future.
     if cancellation.is_cancelled() {
         Err(LocalImageFailure::Cancelled)
     } else if deadline <= Instant::now() {
@@ -1100,6 +1157,7 @@ fn is_forbidden_path_character(character: char) -> bool {
         )
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn sniff_media_type(bytes: &[u8]) -> Option<VisionMediaType> {
     if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
         Some(VisionMediaType::Png)
@@ -1114,6 +1172,7 @@ fn sniff_media_type(bytes: &[u8]) -> Option<VisionMediaType> {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn vision_batch_would_overflow(
     image_count: usize,
     current_bytes: usize,
@@ -1151,6 +1210,7 @@ impl RenderedImage {
         Self::provider_failure(image_id, VisionProviderFailureCode::ImageUnavailable)
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn missing_provider_record(image_id: u64) -> Self {
         Self::provider_failure(image_id, VisionProviderFailureCode::MissingProviderRecord)
     }
@@ -1187,6 +1247,7 @@ struct RenderedFailure {
     suggestion: String,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn merge_provider_response(
     requested_ids: &[u64],
     response: crate::vision_portable::VisionBatchResponse,
@@ -1221,6 +1282,7 @@ fn merge_provider_response(
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn rendered_provider_result(image_id: u64, outcome: VisionImageOutcome) -> RenderedImage {
     match outcome {
         VisionImageOutcome::Ok {
@@ -1249,6 +1311,7 @@ fn rendered_provider_result(image_id: u64, outcome: VisionImageOutcome) -> Rende
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn rendered_transport_failure(image_id: u64, kind: VisionTransportErrorKind) -> RenderedImage {
     match kind {
         VisionTransportErrorKind::ResponseTooLarge => RenderedImage::provider_failure(
@@ -1280,6 +1343,7 @@ fn render_attachment_failures(image_ids: Vec<u64>) -> Result<ToolOutput, ToolErr
     render_ordered(images)
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn render_results_in_source_order(
     image_count: usize,
     results: &mut BTreeMap<u64, RenderedImage>,
@@ -1313,6 +1377,7 @@ fn render_ordered(mut images: Vec<RenderedImage>) -> Result<ToolOutput, ToolErro
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 async fn await_bounded<F: Future>(
     future: F,
     cancellation: &CancellationToken,
@@ -1446,6 +1511,7 @@ fn map_root_open_error(error: rustix::io::Errno) -> VisionConfigError {
     VisionConfigError::new(kind)
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn map_transport_error(error: VisionTransportError) -> ToolError {
     match error.kind() {
         VisionTransportErrorKind::Cancelled => cancelled_error(),
@@ -1542,6 +1608,7 @@ fn timeout_error() -> ToolError {
     )
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn unavailable_error(retryable: bool) -> ToolError {
     ToolError::new(
         ToolErrorKind::Unavailable,
@@ -1673,6 +1740,7 @@ mod tests {
         LargeEvidence,
         CancelThenSuccess,
         InvalidRequest,
+        ResponseTooLarge,
     }
 
     struct FakeTransport {
@@ -1752,6 +1820,7 @@ mod tests {
             let response = VisionBatchResponse::new(results);
             let cancel = matches!(self.mode, TransportMode::CancelThenSuccess);
             let invalid_request = matches!(self.mode, TransportMode::InvalidRequest);
+            let response_too_large = matches!(self.mode, TransportMode::ResponseTooLarge);
             Box::pin(async move {
                 if cancel {
                     assert!(cancellation.cancel());
@@ -1759,6 +1828,11 @@ mod tests {
                 if invalid_request {
                     return Err(VisionTransportError::new(
                         VisionTransportErrorKind::InvalidRequest,
+                    ));
+                }
+                if response_too_large {
+                    return Err(VisionTransportError::new(
+                        VisionTransportErrorKind::ResponseTooLarge,
                     ));
                 }
                 response
@@ -2059,16 +2133,138 @@ mod tests {
             .expect("open writer")
             .write_all(b"growth")
             .expect("grow image after metadata");
+        let mut read_scratch = Vec::new();
         let read = finish_verified_image(
             probe,
             1,
             &CancellationToken::new(),
             Instant::now() + Duration::from_secs(1),
+            &mut read_scratch,
         )
         .expect("read growing image")
         .without_file();
         assert!(read.image.is_none());
         assert_eq!(read.bytes_read, fingerprint.size + 1);
+    }
+
+    #[test]
+    fn probe_resident_images_do_not_allocate_the_read_scratch() {
+        let root = TestRoot::new();
+        std::fs::write(root.path.join("resident.png"), b"\x89PNG\r\n\x1a\n")
+            .expect("write probe-resident image");
+        let transport = Arc::new(FakeTransport::new(TransportMode::Success));
+        let tool = tool(&root, transport);
+        let cancellation = CancellationToken::new();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let probe = tool
+            .open_and_probe_image(
+                "resident.png",
+                super::MAX_VISION_IMAGE_BYTES,
+                &cancellation,
+                deadline,
+            )
+            .expect("probe resident image")
+            .image
+            .expect("admit resident image");
+        let mut read_scratch = Vec::new();
+        let mut read = None;
+        let allocations = allocation_counter::measure(|| {
+            read = Some(finish_verified_image(
+                probe,
+                1,
+                &cancellation,
+                deadline,
+                &mut read_scratch,
+            ));
+        });
+        let read = read
+            .expect("measured resident read")
+            .expect("finish resident image");
+
+        assert!(read.image.is_some());
+        assert!(read_scratch.is_empty());
+        assert!(
+            allocations.bytes_total < 1024,
+            "probe-resident image allocated a read scratch: {allocations:?}"
+        );
+    }
+
+    #[test]
+    fn nonresident_images_reuse_one_call_scoped_read_scratch() {
+        let root = TestRoot::new();
+        let image = [b"\xff\xd8".as_slice(), &[0_u8; 30]].concat();
+        std::fs::write(root.path.join("first.jpg"), &image).expect("write first image");
+        std::fs::write(root.path.join("second.jpg"), &image).expect("write second image");
+        let transport = Arc::new(FakeTransport::new(TransportMode::Success));
+        let tool = tool(&root, transport);
+        let cancellation = CancellationToken::new();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let first_probe = tool
+            .open_and_probe_image(
+                "first.jpg",
+                super::MAX_VISION_IMAGE_BYTES,
+                &cancellation,
+                deadline,
+            )
+            .expect("probe first image")
+            .image
+            .expect("admit first image");
+        let second_probe = tool
+            .open_and_probe_image(
+                "second.jpg",
+                super::MAX_VISION_IMAGE_BYTES,
+                &cancellation,
+                deadline,
+            )
+            .expect("probe second image")
+            .image
+            .expect("admit second image");
+        let mut read_scratch = Vec::new();
+        let mut first_read = None;
+        let first_allocations = allocation_counter::measure(|| {
+            first_read = Some(finish_verified_image(
+                first_probe,
+                1,
+                &cancellation,
+                deadline,
+                &mut read_scratch,
+            ));
+        });
+        assert!(
+            first_read
+                .expect("measured first read")
+                .expect("finish first image")
+                .image
+                .is_some()
+        );
+        assert_eq!(read_scratch.len(), super::READ_CHUNK_BYTES);
+        assert!(
+            first_allocations.bytes_total
+                >= u64::try_from(super::READ_CHUNK_BYTES).expect("scratch size fits u64"),
+            "first nonresident image did not allocate the scratch: {first_allocations:?}"
+        );
+
+        let mut second_read = None;
+        let second_allocations = allocation_counter::measure(|| {
+            second_read = Some(finish_verified_image(
+                second_probe,
+                2,
+                &cancellation,
+                deadline,
+                &mut read_scratch,
+            ));
+        });
+        assert!(
+            second_read
+                .expect("measured second read")
+                .expect("finish second image")
+                .image
+                .is_some()
+        );
+        assert!(
+            second_allocations.bytes_total < 1024,
+            "second image allocated another scratch: {second_allocations:?}"
+        );
     }
 
     #[test]
@@ -2173,6 +2369,45 @@ mod tests {
         ))
         .expect("project relocated path as a local failure");
         assert!(output.is_error);
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn post_probe_revalidation_rejects_an_intermediate_relocated_outside() {
+        let root = TestRoot::new();
+        let outside = TestRoot::new();
+        std::fs::create_dir(root.path.join("nested")).expect("create nested directory");
+        std::fs::write(root.path.join("nested/image.png"), b"\x89PNG\r\n\x1a\n")
+            .expect("write nested image");
+        let transport = Arc::new(FakeTransport::new(TransportMode::Success));
+        let tool = tool(&root, Arc::clone(&transport));
+        let cancellation = CancellationToken::new();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let probe = tool
+            .open_and_probe_image(
+                "nested/image.png",
+                super::MAX_VISION_IMAGE_BYTES,
+                &cancellation,
+                deadline,
+            )
+            .expect("probe nested image")
+            .image
+            .expect("admit nested image");
+        std::fs::rename(root.path.join("nested"), outside.path.join("relocated"))
+            .expect("relocate intermediate after probe");
+
+        let read = tool
+            .finish_image_read(
+                "nested/image.png",
+                probe,
+                1,
+                &cancellation,
+                deadline,
+                &mut Vec::new(),
+            )
+            .expect("finish relocated image as a local outcome");
+        assert!(read.image.is_none());
         assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
     }
 
@@ -2391,6 +2626,29 @@ mod tests {
             output.content["images"][0]["error"]["code"],
             "vision_unavailable"
         );
+    }
+
+    #[test]
+    fn provider_response_too_large_is_an_output_limit_per_image_failure() {
+        let root = TestRoot::new();
+        std::fs::write(root.path.join("one.png"), b"\x89PNG\r\n\x1a\n").expect("write test image");
+        let transport = Arc::new(FakeTransport::new(TransportMode::ResponseTooLarge));
+        let tool = tool(&root, Arc::clone(&transport));
+        let output = block_on(tool.execute(
+            context(),
+            json!({"focus": "Inspect", "paths": ["one.png"]}),
+            CancellationToken::new(),
+        ))
+        .expect("render provider response limit");
+
+        assert!(output.is_error);
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(output.content["images"].as_array().map(Vec::len), Some(1));
+        assert_eq!(
+            output.content["images"][0]["error"]["code"],
+            "output_limit_exceeded"
+        );
+        assert_eq!(output.content["images"][0]["error"]["retryable"], true);
     }
 
     #[test]

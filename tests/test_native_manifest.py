@@ -39,9 +39,13 @@ VISION_ADAPTER_CFG = (
     'cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))'
 )
 VISION_TOOL_CFG = (
-    'cfg(all(feature = "ai-gateway-http", '
-    'not(target_family = "wasm"), unix))'
+    'cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))'
 )
+VISION_REFERENCE_HOST_CFG = '''cfg(all(
+    feature = "ai-gateway-http",
+    not(target_family = "wasm"),
+    any(target_os = "linux", target_os = "macos")
+))'''
 MODEL_CATALOG_HTTP_DIRECT_DEPENDENCIES = {
     "hickory-proto",
     "hickory-resolver",
@@ -466,6 +470,16 @@ class NativeManifestTests(unittest.TestCase):
         tool_cfg = f"#[{VISION_TOOL_CFG}]\n"
         self.assertEqual(lib_source.count(tool_cfg + "mod vision;"), 1)
         self.assertEqual(lib_source.count(tool_cfg + "pub use vision::{"), 1)
+
+        reference_host_cfg = f"#[{VISION_REFERENCE_HOST_CFG}]\n"
+        self.assertEqual(
+            lib_source.count(reference_host_cfg + "mod reference_host;"),
+            1,
+        )
+        self.assertEqual(
+            lib_source.count(reference_host_cfg + "pub use reference_host::{"),
+            1,
+        )
 
         adapter_cfg = f"#[{VISION_ADAPTER_CFG}]\n"
         self.assertEqual(
