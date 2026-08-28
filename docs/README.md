@@ -48,6 +48,7 @@ SHAs, workflow IDs, review counts, or slice-by-slice history.
   [copy_file](copy-file.md), and [create_folder](create-folder.md).
 - Host interaction: [open_file](open-file.md), [terminal](terminal.md), and
   [ask_user_question](ask-user-question.md).
+- Session-result paging: [read_tool_result](read-tool-result.md).
 - Network tools: [web_fetch](web-fetch.md) and
   [web_search](web-search.md).
 

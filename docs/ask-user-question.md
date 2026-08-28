@@ -327,10 +327,11 @@ prompter.
 `NativeReferenceHost` retains its existing Linux/macOS, non-WebAssembly,
 `ai-gateway-http` boundary. Its constructors require an explicit shared
 `QuestionPrompter`; they do not discover a terminal, TTY, environment variable,
-file, or runtime for it. The sixteen-tool catalog is `ask_user_question`,
+file, or runtime for it. The seventeen-tool catalog is `ask_user_question`,
 `copy_file`, `create_folder`, `delete_file`, `edit_file`, `file_info`,
 `glob_files`, `grep_files`, `list_files`, `open_file`, `read_file`,
-`rename_file`, `terminal`, `web_fetch`, `web_search`, and `write_file`.
+`read_tool_result`, `rename_file`, `terminal`, `web_fetch`, `web_search`, and
+`write_file`.
 
 ## Regression evidence
 
@@ -371,8 +372,8 @@ Deferred work includes approval continuation and broader permission modes; a
 terminal, graphical, browser, remote, or CLI question UI; timeouts, detached or
 background prompts, persistence/history/resume, and multi-process capacity;
 multi-select/default choices; durable terminal actions; `vision`;
-`read_tool_result`; Milestone 05 extension surfaces; benchmark workloads; and
-product-performance or compatibility-promotion claims.
+Milestone 05 extension surfaces; benchmark workloads; and product-performance
+or compatibility-promotion claims.
 
 Zig remains only a pinned upstream fx build input. Machine-god is a Rust
 product and neither ships nor executes Zig.
