@@ -201,7 +201,9 @@ pub struct VisionTool {
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     _unsupported: std::convert::Infallible,
     target: NetworkTarget,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     transport: Arc<dyn VisionTransport>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     deadline: Arc<dyn VisionDeadline>,
     limits: VisionLimits,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -418,7 +420,7 @@ impl Tool for VisionTool {
 
             #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             {
-                let _ = (context, paths);
+                let _ = (context, focus, paths);
                 Err(unsupported_platform_error())
             }
 
@@ -1056,7 +1058,7 @@ fn local_boundary(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 fn canonical_request(arguments: Value) -> Result<CanonicalVisionRequest, ToolError> {
     canonical_request_owned(&JsonValueOwner::new(arguments))
 }
@@ -1313,6 +1315,7 @@ fn vision_batch_would_overflow(
 #[derive(Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 enum RenderedImageState {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     Ok {
         summary: String,
         visible_text: Vec<String>,
@@ -1359,8 +1362,16 @@ impl RenderedImage {
         }
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn is_success(&self) -> bool {
         matches!(self.state, RenderedImageState::Ok { .. })
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    fn is_success(&self) -> bool {
+        match self.state {
+            RenderedImageState::Failed { .. } => false,
+        }
     }
 }
 
@@ -1829,6 +1840,7 @@ fn vision_name() -> ToolName {
     ToolName::new(VISION_TOOL_NAME).expect("vision is a valid tool name")
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn validate_target(target: &NetworkTarget) -> Result<(), VisionConfigError> {
     let default_port = matches!(
         (target.scheme.as_str(), target.port),
@@ -1845,6 +1857,7 @@ fn validate_target(target: &NetworkTarget) -> Result<(), VisionConfigError> {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn canonical_network_host(host: &str) -> bool {
     if host.is_empty()
         || host.len() > 253
@@ -1889,6 +1902,7 @@ fn canonical_network_host(host: &str) -> bool {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 enum UrlIpv4Host {
     NotIpv4,
     Address(std::net::Ipv4Addr),
@@ -1896,6 +1910,7 @@ enum UrlIpv4Host {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 enum UrlIpv4Number {
     NotNumber,
     Value(u64),
@@ -1904,6 +1919,7 @@ enum UrlIpv4Number {
 
 /// Classifies the numeric spellings that URL parsers interpret as IPv4 so an
 /// authorized textual target cannot silently resolve as a different host.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn url_ipv4_host(host: &str) -> UrlIpv4Host {
     let final_part = host
         .strip_suffix('.')
@@ -1956,6 +1972,7 @@ fn url_ipv4_host(host: &str) -> UrlIpv4Host {
     UrlIpv4Host::Address(std::net::Ipv4Addr::from(address))
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn parse_url_ipv4_number(part: &str) -> UrlIpv4Number {
     if part.is_empty() {
         return UrlIpv4Number::NotNumber;
