@@ -32,9 +32,7 @@ pub(crate) fn serialize_tool_output_compact(
     cancellation: &CancellationToken,
 ) -> Result<(), CompactToolOutputError> {
     destination.clear();
-    if limits.json_depth > MAX_SAFE_JSON_DEPTH {
-        return Err(CompactToolOutputError::Invalid);
-    }
+    validate_limits(limits)?;
 
     let mut encoder = Encoder::new(destination, limits.output_bytes, cancellation);
     encoder.append(b"{\"content\":")?;
@@ -49,8 +47,51 @@ pub(crate) fn serialize_tool_output_compact(
     encoder.append(b"}")
 }
 
+/// Serializes one JSON value with the same compact, iterative encoder used for
+/// tool outputs.
+#[allow(
+    dead_code,
+    reason = "crate-private API is consumed by the parallel reader repair"
+)]
+pub(crate) fn serialize_json_value_compact(
+    value: &Value,
+    destination: &mut Vec<u8>,
+    limits: CompactToolOutputLimits,
+    cancellation: &CancellationToken,
+) -> Result<(), CompactToolOutputError> {
+    destination.clear();
+    validate_limits(limits)?;
+    let mut encoder = Encoder::new(destination, limits.output_bytes, cancellation);
+    encode_value_iterative(value, &mut encoder, limits.json_depth, limits.json_nodes)
+}
+
+/// Measures one compact JSON value without retaining its encoded bytes.
+pub(crate) fn measure_json_value_compact(
+    value: &Value,
+    limits: CompactToolOutputLimits,
+    cancellation: &CancellationToken,
+) -> Result<usize, CompactToolOutputError> {
+    validate_limits(limits)?;
+    let mut encoder = Encoder::measuring(limits.output_bytes, cancellation);
+    encode_value_iterative(value, &mut encoder, limits.json_depth, limits.json_nodes)?;
+    Ok(encoder.written())
+}
+
+fn validate_limits(limits: CompactToolOutputLimits) -> Result<(), CompactToolOutputError> {
+    if limits.json_depth > MAX_SAFE_JSON_DEPTH {
+        Err(CompactToolOutputError::Invalid)
+    } else {
+        Ok(())
+    }
+}
+
+enum EncodingOutput<'a> {
+    Buffer(&'a mut Vec<u8>),
+    Counter(usize),
+}
+
 struct Encoder<'a> {
-    destination: &'a mut Vec<u8>,
+    output: EncodingOutput<'a>,
     max_output_bytes: usize,
     cancellation: &'a CancellationToken,
     #[cfg(test)]
@@ -66,7 +107,19 @@ impl<'a> Encoder<'a> {
         cancellation: &'a CancellationToken,
     ) -> Self {
         Self {
-            destination,
+            output: EncodingOutput::Buffer(destination),
+            max_output_bytes,
+            cancellation,
+            #[cfg(test)]
+            scanned_string_bytes: 0,
+            #[cfg(test)]
+            cancel_after_scanned_bytes: None,
+        }
+    }
+
+    fn measuring(max_output_bytes: usize, cancellation: &'a CancellationToken) -> Self {
+        Self {
+            output: EncodingOutput::Counter(0),
             max_output_bytes,
             cancellation,
             #[cfg(test)]
@@ -85,7 +138,14 @@ impl<'a> Encoder<'a> {
     }
 
     fn remaining(&self) -> usize {
-        self.max_output_bytes.saturating_sub(self.destination.len())
+        self.max_output_bytes.saturating_sub(self.written())
+    }
+
+    fn written(&self) -> usize {
+        match &self.output {
+            EncodingOutput::Buffer(destination) => destination.len(),
+            EncodingOutput::Counter(bytes) => *bytes,
+        }
     }
 
     fn append(&mut self, bytes: &[u8]) -> Result<(), CompactToolOutputError> {
@@ -93,17 +153,15 @@ impl<'a> Encoder<'a> {
         if bytes.len() > self.remaining() {
             return Err(CompactToolOutputError::OutputLimit);
         }
-        if bytes.len()
-            > self
-                .destination
-                .capacity()
-                .saturating_sub(self.destination.len())
-        {
-            self.destination
-                .try_reserve_exact(bytes.len())
-                .map_err(|_| CompactToolOutputError::Invalid)?;
+        match &mut self.output {
+            EncodingOutput::Buffer(destination) => {
+                reserve_for_append(destination, bytes.len(), self.max_output_bytes)?;
+                destination.extend_from_slice(bytes);
+            }
+            EncodingOutput::Counter(written) => {
+                *written += bytes.len();
+            }
         }
-        self.destination.extend_from_slice(bytes);
         Ok(())
     }
 
@@ -114,6 +172,30 @@ impl<'a> Encoder<'a> {
             self.cancellation.cancel();
         }
     }
+}
+
+fn reserve_for_append(
+    destination: &mut Vec<u8>,
+    additional: usize,
+    max_output_bytes: usize,
+) -> Result<(), CompactToolOutputError> {
+    let required = destination
+        .len()
+        .checked_add(additional)
+        .ok_or(CompactToolOutputError::OutputLimit)?;
+    if required <= destination.capacity() {
+        return Ok(());
+    }
+
+    let geometric = destination
+        .capacity()
+        .max(STRING_SCAN_CHUNK_BYTES)
+        .saturating_mul(2)
+        .min(max_output_bytes);
+    let target = required.max(geometric);
+    destination
+        .try_reserve_exact(target - destination.len())
+        .map_err(|_| CompactToolOutputError::Invalid)
 }
 
 enum ValueFrame<'a> {
@@ -219,7 +301,7 @@ fn encode_node<'a>(
     match value {
         Value::Null => encoder.append(b"null"),
         Value::Bool(value) => encoder.append(if *value { b"true" } else { b"false" }),
-        Value::Number(value) => encoder.append(value.to_string().as_bytes()),
+        Value::Number(value) => encode_number(value, encoder),
         Value::String(value) => encode_string(value, encoder),
         Value::Array(values) => {
             if depth >= max_depth {
@@ -244,6 +326,37 @@ fn encode_node<'a>(
                 first: true,
             });
             Ok(())
+        }
+    }
+}
+
+fn encode_number(
+    value: &serde_json::Number,
+    encoder: &mut Encoder<'_>,
+) -> Result<(), CompactToolOutputError> {
+    let mut writer = NumberWriter {
+        encoder,
+        error: None,
+    };
+    if std::fmt::write(&mut writer, format_args!("{value}")).is_err() {
+        return Err(writer.error.unwrap_or(CompactToolOutputError::Invalid));
+    }
+    Ok(())
+}
+
+struct NumberWriter<'a, 'output> {
+    encoder: &'a mut Encoder<'output>,
+    error: Option<CompactToolOutputError>,
+}
+
+impl std::fmt::Write for NumberWriter<'_, '_> {
+    fn write_str(&mut self, value: &str) -> std::fmt::Result {
+        match self.encoder.append(value.as_bytes()) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.error = Some(error);
+                Err(std::fmt::Error)
+            }
         }
     }
 }
@@ -387,6 +500,120 @@ mod tests {
             .unwrap();
             assert_eq!(actual, expected);
         }
+    }
+
+    #[test]
+    fn compact_value_serialization_and_measurement_match_serde_json() {
+        let value = json!({
+            "controls": "\u{0}\u{8}\t\n\r\"\\/",
+            "unicode": "λ🦀",
+            "numbers": [i64::MIN, u64::MAX, -0.0, 1.25e100],
+            "nested": [{"empty": []}, true, null],
+        });
+        let expected = serde_json::to_vec(&value).unwrap();
+        let limits = CompactToolOutputLimits {
+            output_bytes: expected.len(),
+            json_depth: MAX_SAFE_JSON_DEPTH,
+            json_nodes: 100,
+        };
+        let cancellation = CancellationToken::new();
+        let mut actual = Vec::new();
+        serialize_json_value_compact(&value, &mut actual, limits, &cancellation).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(
+            measure_json_value_compact(&value, limits, &cancellation).unwrap(),
+            expected.len()
+        );
+
+        let short = CompactToolOutputLimits {
+            output_bytes: expected.len() - 1,
+            ..limits
+        };
+        assert_eq!(
+            serialize_json_value_compact(&value, &mut actual, short, &cancellation),
+            Err(CompactToolOutputError::OutputLimit)
+        );
+        assert_eq!(
+            measure_json_value_compact(&value, short, &cancellation),
+            Err(CompactToolOutputError::OutputLimit)
+        );
+
+        let cancelled = CancellationToken::new();
+        cancelled.cancel();
+        assert_eq!(
+            serialize_json_value_compact(&value, &mut actual, limits, &cancelled),
+            Err(CompactToolOutputError::Cancelled)
+        );
+        assert_eq!(
+            measure_json_value_compact(&value, limits, &cancelled),
+            Err(CompactToolOutputError::Cancelled)
+        );
+    }
+
+    fn measure_output_allocations(
+        output: &ToolOutput,
+        limits: CompactToolOutputLimits,
+    ) -> (Vec<u8>, allocation_counter::AllocationInfo) {
+        let cancellation = CancellationToken::new();
+        let mut actual = Vec::new();
+        let mut result = None;
+        let allocations = allocation_counter::measure(|| {
+            result = Some(serialize_tool_output_compact(
+                output,
+                &mut actual,
+                limits,
+                &cancellation,
+            ));
+        });
+        assert_eq!(result, Some(Ok(())));
+        (actual, allocations)
+    }
+
+    #[test]
+    fn multi_megabyte_strings_use_amortized_fallible_growth() {
+        for output in [
+            ToolOutput::success("x".repeat(2 * 1024 * 1024)),
+            ToolOutput::success("\"".repeat(1024 * 1024)),
+        ] {
+            let expected = serde_json::to_vec(&output).unwrap();
+            let (actual, allocations) = measure_output_allocations(
+                &output,
+                CompactToolOutputLimits {
+                    output_bytes: expected.len(),
+                    json_depth: MAX_SAFE_JSON_DEPTH,
+                    json_nodes: 1,
+                },
+            );
+            assert_eq!(actual, expected);
+            assert!(
+                allocations.count_total <= 32,
+                "string encoding allocated too often: {allocations:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn number_heavy_output_does_not_allocate_per_node() {
+        let output = ToolOutput::success(Value::Array(
+            (0_u64..100_000)
+                .map(Number::from)
+                .map(Value::Number)
+                .collect(),
+        ));
+        let expected = serde_json::to_vec(&output).unwrap();
+        let (actual, allocations) = measure_output_allocations(
+            &output,
+            CompactToolOutputLimits {
+                output_bytes: expected.len(),
+                json_depth: MAX_SAFE_JSON_DEPTH,
+                json_nodes: 100_001,
+            },
+        );
+        assert_eq!(actual, expected);
+        assert!(
+            allocations.count_total <= 32,
+            "number encoding allocated per node: {allocations:?}"
+        );
     }
 
     #[test]

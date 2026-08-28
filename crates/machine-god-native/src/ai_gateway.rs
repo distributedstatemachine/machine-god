@@ -1,7 +1,8 @@
 //! Runtime-neutral codec for the pinned Vercel AI Gateway v3 wire contract.
 
 use crate::tool_output_serializer::{
-    CompactToolOutputError, CompactToolOutputLimits, serialize_tool_output_compact,
+    CompactToolOutputError, CompactToolOutputLimits, measure_json_value_compact,
+    serialize_tool_output_compact,
 };
 use crate::tool_result_projection::{
     READ_TOOL_RESULT_TOOL_NAME, TOOL_RESULT_PROJECTION_THRESHOLD_BYTES, project_tool_result,
@@ -698,11 +699,16 @@ fn build_prompt(
                             {
                                 return Err(invalid_request("gateway_invalid_history"));
                             }
-                            drop(serialize_bounded(
+                            measure_json_value_compact(
                                 &call.arguments,
-                                projection.limits.max_tool_arguments_bytes,
+                                CompactToolOutputLimits {
+                                    output_bytes: projection.limits.max_tool_arguments_bytes,
+                                    json_depth: MAX_SAFE_JSON_DEPTH,
+                                    json_nodes: projection.limits.max_json_nodes,
+                                },
                                 projection.cancellation,
-                            )?);
+                            )
+                            .map_err(map_compact_output_error)?;
                             parts.push(GatewayPart::ToolCall {
                                 tool_call_id: call.id.to_string(),
                                 tool_name: call.name.to_string(),
@@ -776,13 +782,7 @@ fn build_tool_result_value(
         },
         projection.cancellation,
     )
-    .map_err(|error| match error {
-        CompactToolOutputError::Cancelled => cancelled_error(),
-        CompactToolOutputError::OutputLimit => invalid_request("gateway_request_byte_limit"),
-        CompactToolOutputError::JsonDepth => invalid_request("gateway_json_depth_limit"),
-        CompactToolOutputError::JsonNodes => invalid_request("gateway_json_node_limit"),
-        CompactToolOutputError::Invalid => protocol_error("gateway_internal_encoding"),
-    })?;
+    .map_err(map_compact_output_error)?;
     budgets.source_remaining = budgets
         .source_remaining
         .checked_sub(serialized_output.len())
@@ -809,6 +809,16 @@ fn build_tool_result_value(
         .checked_sub(value.len())
         .ok_or_else(|| invalid_request("gateway_request_byte_limit"))?;
     Ok(value)
+}
+
+fn map_compact_output_error(error: CompactToolOutputError) -> ProviderError {
+    match error {
+        CompactToolOutputError::Cancelled => cancelled_error(),
+        CompactToolOutputError::OutputLimit => invalid_request("gateway_request_byte_limit"),
+        CompactToolOutputError::JsonDepth => invalid_request("gateway_json_depth_limit"),
+        CompactToolOutputError::JsonNodes => invalid_request("gateway_json_node_limit"),
+        CompactToolOutputError::Invalid => protocol_error("gateway_internal_encoding"),
+    }
 }
 
 fn exact_text(content: Vec<ContentBlock>) -> Result<String, ProviderError> {
