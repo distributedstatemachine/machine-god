@@ -425,11 +425,8 @@ mod production {
             let (work_sender, work_receiver) = tokio::sync::mpsc::channel(1);
             let (acknowledgement_sender, acknowledgement_receiver) = tokio::sync::mpsc::channel(1);
             let worker = scope.spawn(move || {
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_io()
-                    .enable_time()
-                    .build()
-                    .map_err(|_| ())?;
+                let (runtime, deadline) =
+                    TokioWebSearchDeadline::build_runtime_pair().map_err(|_| ())?;
                 runtime.block_on(async move {
                     let mut signals = AskSignals::register()?;
                     let host = NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots(
@@ -438,7 +435,7 @@ mod production {
                         prepared_roots,
                         Arc::new(DenyPermissionPrompter),
                         Arc::new(UnavailableQuestionPrompter),
-                        Arc::new(TokioWebSearchDeadline::new()),
+                        Arc::new(deadline),
                     )
                     .map_err(|_| ())?;
                     let result = execute_turn(

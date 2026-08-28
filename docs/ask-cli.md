@@ -72,7 +72,10 @@ Only assistant `TextDelta` payload bytes are written to standard output, in
 event order and without terminal styling, forced newline, or buffering the
 complete answer. Reasoning, usage, lifecycle events, session identities,
 permission details, tool calls/results, and provider diagnostics are not
-printed. A successful empty answer therefore writes no bytes.
+printed. A successful empty answer therefore writes no bytes. When no output
+operation has failed, the command explicitly flushes acknowledged output after
+every terminal path. A write or flush failure is an output failure unless an
+already observed signal has precedence; a failed writer is not retried.
 
 - A completed turn exits `0` after all preceding text bytes are written.
 - Invalid grammar exits `2` with the global invalid-arguments diagnostic.
@@ -84,6 +87,14 @@ printed. A successful empty answer therefore writes no bytes.
 - `SIGINT` and `SIGTERM` request turn cancellation, keep driving owned work to
   terminal cleanup, and exit `130` and `143` respectively without starting a
   detached task.
+
+Synchronous standard-output work stays on the calling thread. The runtime and
+turn run on one scoped worker and exchange one owned output item at a time over
+capacity-one work and acknowledgement channels, so output backpressure cannot
+block signal polling. After a signal, an outstanding write or flush receives a
+100 ms post-cleanup acknowledgement grace. If the borrowed writer remains
+blocked, the worker exits the process with the signal code only after the turn
+has reached terminal cleanup; otherwise the scoped worker joins normally.
 
 Partial assistant bytes already written before a later operational failure are
 not retracted. No failure text may include the prompt, a credential, a path,
@@ -97,9 +108,10 @@ provider data, tool data, operating-system diagnostics, or a session identity.
   permission reasons retain the default engine bounds.
 - Fresh session-ID generation and collision retries are bounded in the native
   lifecycle API; OS randomness is acquired only after its future is polled.
-- The current-thread runtime, signal listeners, provider stream, permission or
-  question future, tool future, turn lease, and output borrow remain owned by
-  the command and are not detached.
+- The current-thread runtime, its one scoped worker, two capacity-one output
+  channels, signal listeners, provider stream, permission or question future,
+  tool future, turn lease, and output borrow remain owned by the command and
+  are not detached.
 
 This is scenario compatibility with the pinned upstream `ask` entry point, not
 full option, presentation, persistence-mode, or performance equivalence.
