@@ -14,7 +14,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use machine_god_core::{BoxFuture, CancellationToken, ProviderError, ProviderErrorKind};
 use serde_json::{Map, Value, json};
 use std::fmt;
-use std::future::poll_fn;
+use std::future::{Future, poll_fn};
 use std::io;
 use std::sync::Arc;
 use std::task::Poll;
@@ -23,6 +23,7 @@ const SYSTEM_PROMPT: &str = "Extract only factual visual evidence from user-auth
 const RESPONSE_FORMAT_NAME: &str = "fx_vision_evidence";
 const RESPONSE_FORMAT_DESCRIPTION: &str = "Factual evidence extracted from the requested images.";
 const BASE64_CHUNK_RAW_BYTES: usize = 48 * 1024;
+const _: () = assert!(BASE64_CHUNK_RAW_BYTES.is_multiple_of(3));
 const MAX_EVENT_STRING_BYTES: usize = MAX_VISION_ATTEMPT_EVIDENCE_BYTES;
 const BODY_PREFIX: &[u8] = b"{\"prompt\":[{\"role\":\"system\",\"content\":";
 const BODY_USER_PREFIX: &[u8] = b"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":";
@@ -121,7 +122,7 @@ impl VisionTransport for AiGatewayVisionTransport {
                 // Build at most one encoded body at a time. A semantic retry
                 // deterministically re-encodes the same owned verified bytes,
                 // avoiding a second full request allocation at peak.
-                let attempt_body = build_worker_body(&request, &cancellation)?;
+                let attempt_body = build_worker_body(&request, &cancellation).await?;
                 let gateway_request = build_gateway_transport_request(
                     &self.model,
                     request.session_id().as_str(),
@@ -148,7 +149,7 @@ impl VisionTransport for AiGatewayVisionTransport {
                         // executor-neutral, so make this one cooperative yield
                         // self-waking and deterministic instead of relying on
                         // a particular runtime's scheduling primitive.
-                        cooperative_retry_boundary(&cancellation).await?;
+                        cooperative_boundary(&cancellation).await?;
                     }
                     AttemptResult::InvalidStructuredResponse => {
                         return Err(transport_error(VisionTransportErrorKind::InvalidResponse));
@@ -165,7 +166,7 @@ enum AttemptResult {
     InvalidStructuredResponse,
 }
 
-async fn cooperative_retry_boundary(
+async fn cooperative_boundary(
     cancellation: &CancellationToken,
 ) -> Result<(), VisionTransportError> {
     check_cancelled(cancellation)?;
@@ -190,6 +191,10 @@ async fn run_attempt(
     cancellation: CancellationToken,
 ) -> Result<AttemptResult, VisionTransportError> {
     check_cancelled(&cancellation)?;
+    // Retain the one completed request body across an executor-neutral yield.
+    // The caller's deadline/cancellation arbiter therefore always gets a poll
+    // between bounded encoding work and the authority-bearing dispatch call.
+    cooperative_boundary(&cancellation).await?;
     let stream_result = transport.stream(request, cancellation.clone()).await;
     if let Err(error) = check_cancelled(&cancellation) {
         // A transport may make cancellation observable while completing its
@@ -201,11 +206,31 @@ async fn run_attempt(
     let mut stream = stream_result.map_err(|error| map_provider_error(&error))?;
 
     let mut decoder = VisionSseDecoder::default();
+    let mut cancelled = std::pin::pin!(cancellation.cancelled());
     let stream_outcome = loop {
         if let Err(error) = check_cancelled(&cancellation) {
             break Err(error);
         }
-        let next = poll_fn(|context| stream.as_mut().poll_next(context)).await;
+        let next = poll_fn(|context| {
+            if cancelled.as_mut().poll(context).is_ready() || cancellation.is_cancelled() {
+                return Poll::Ready(Err(transport_error(VisionTransportErrorKind::Cancelled)));
+            }
+            let next = stream.as_mut().poll_next(context);
+            if cancellation.is_cancelled() {
+                drop(next);
+                Poll::Ready(Err(transport_error(VisionTransportErrorKind::Cancelled)))
+            } else {
+                match next {
+                    Poll::Ready(next) => Poll::Ready(Ok(next)),
+                    Poll::Pending => Poll::Pending,
+                }
+            }
+        })
+        .await;
+        let next = match next {
+            Ok(next) => next,
+            Err(error) => break Err(error),
+        };
         if let Err(error) = check_cancelled(&cancellation) {
             break Err(error);
         }
@@ -228,6 +253,13 @@ async fn run_attempt(
         if decoder.is_done() {
             break Ok(());
         }
+        // An immediately-ready source must not monopolize its caller's poll.
+        // Decoder and stream state remain owned by this future while the
+        // one-shot self-wake returns control after exactly one accepted,
+        // nonterminal source item.
+        if let Err(error) = cooperative_boundary(&cancellation).await {
+            break Err(error);
+        }
     };
     // Every terminal source outcome follows one teardown path. In particular,
     // source Drop may release connection permits and make cancellation
@@ -244,7 +276,7 @@ async fn run_attempt(
     }
 }
 
-fn build_worker_body(
+async fn build_worker_body(
     request: &VisionBatchRequest,
     cancellation: &CancellationToken,
 ) -> Result<Vec<u8>, VisionTransportError> {
@@ -264,7 +296,7 @@ fn build_worker_body(
         append(&mut body, BODY_FILE_PREFIX)?;
         append_json_string(&mut body, image.media_type().as_str())?;
         append(&mut body, BODY_FILE_DATA_PREFIX)?;
-        append_base64(&mut body, image.bytes(), cancellation)?;
+        append_base64(&mut body, image.bytes(), cancellation).await?;
         append(&mut body, BODY_FILE_SUFFIX)?;
     }
 
@@ -383,7 +415,7 @@ fn json_string_encoded_len(value: &str) -> Result<usize, VisionTransportError> {
     Ok(counter.0)
 }
 
-fn append_base64(
+async fn append_base64(
     output: &mut Vec<u8>,
     input: &[u8],
     cancellation: &CancellationToken,
@@ -403,6 +435,11 @@ fn append_base64(
         if written != encoded_len {
             return Err(transport_error(VisionTransportErrorKind::InvalidRequest));
         }
+        // Chunk lengths other than the final image chunk are divisible by
+        // three, so yielding does not alter standard-base64 framing. Always
+        // yielding after the final chunk also bounds aggregate work across a
+        // batch of several individually small images.
+        cooperative_boundary(cancellation).await?;
     }
     Ok(())
 }

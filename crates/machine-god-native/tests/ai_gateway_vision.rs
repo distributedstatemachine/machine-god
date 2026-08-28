@@ -25,7 +25,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
@@ -296,6 +296,25 @@ impl VisionDeadline for NeverDeadline {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+struct TriggeredDeadline {
+    ready: Arc<AtomicBool>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl VisionDeadline for TriggeredDeadline {
+    fn wait_until(&self, _deadline: Instant) -> BoxFuture<'_, Result<(), VisionTransportError>> {
+        let ready = Arc::clone(&self.ready);
+        Box::pin(std::future::poll_fn(move |_context| {
+            if ready.load(Ordering::SeqCst) {
+                Poll::Ready(Ok(()))
+            } else {
+                Poll::Pending
+            }
+        }))
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn tool_context() -> ToolContext {
     ToolContext {
         session_id: SessionId::new("vision-gateway-session").unwrap(),
@@ -467,6 +486,134 @@ fn exact_raw_batch_and_hostile_focus_use_one_exact_body_allocation_below_the_cei
 }
 
 #[test]
+fn base64_segment_boundaries_preserve_the_canonical_wire_body() {
+    const SEGMENT_BYTES: usize = 48 * 1024;
+
+    for length in [
+        SEGMENT_BYTES - 1,
+        SEGMENT_BYTES,
+        SEGMENT_BYTES + 1,
+        2 * SEGMENT_BYTES - 1,
+        2 * SEGMENT_BYTES,
+        2 * SEGMENT_BYTES + 1,
+    ] {
+        let bytes = (0..length)
+            .map(|index| u8::try_from(index % 251).unwrap())
+            .collect::<Vec<_>>();
+        let transport = ScriptedTransport::one(sse_text(&valid_result().to_string()));
+        execute(Arc::new(transport.clone()), request(vec![png(1, &bytes)])).unwrap();
+
+        let captured = transport.requests();
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0].body_capacity, captured[0].body.len());
+        let body: Value = serde_json::from_slice(&captured[0].body).unwrap();
+        assert_eq!(
+            body["prompt"][1]["content"][1]["data"],
+            BASE64_STANDARD.encode(&bytes)
+        );
+    }
+}
+
+#[test]
+fn maximal_request_encoding_yields_before_dispatch_and_drop_is_inert() {
+    let transport = ScriptedTransport::one(sse_text(&valid_result().to_string()));
+    let worker = AiGatewayVisionTransport::new(MODEL, Arc::new(transport.clone())).unwrap();
+    let mut future = worker.analyze(
+        request(vec![
+            VisionImage::new(
+                1,
+                VisionMediaType::Png,
+                vec![0xa5; MAX_VISION_BATCH_RAW_BYTES],
+            )
+            .unwrap(),
+        ]),
+        CancellationToken::new(),
+    );
+    let notification_count = Arc::new(AtomicUsize::new(0));
+    let waker = Waker::from(Arc::new(CountingWake {
+        wakes: Arc::clone(&notification_count),
+    }));
+
+    for expected_notifications in 1..=2 {
+        assert!(
+            future
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker))
+                .is_pending()
+        );
+        assert_eq!(
+            notification_count.load(Ordering::SeqCst),
+            expected_notifications
+        );
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+    }
+    drop(future);
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn cancellation_at_completed_body_boundary_prevents_dispatch() {
+    let transport = ScriptedTransport::one(sse_text(&valid_result().to_string()));
+    let worker = AiGatewayVisionTransport::new(MODEL, Arc::new(transport.clone())).unwrap();
+    let cancellation = CancellationToken::new();
+    let mut future = worker.analyze(
+        request(vec![png(1, b"PRIVATE_PREDISPATCH_IMAGE_SENTINEL")]),
+        cancellation.clone(),
+    );
+
+    // The first boundary follows the bounded base64 segment. The second owns
+    // the complete canonical body immediately before transport dispatch.
+    assert!(poll_once(future.as_mut()).is_pending());
+    assert!(poll_once(future.as_mut()).is_pending());
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+    cancellation.cancel();
+    let Poll::Ready(Err(error)) = poll_once(future.as_mut()) else {
+        panic!("pre-dispatch cancellation must complete")
+    };
+    assert_eq!(error.kind(), VisionTransportErrorKind::Cancelled);
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+    let rendered = format!("{error:?} {error}");
+    assert!(!rendered.contains("PRIVATE_PREDISPATCH_IMAGE_SENTINEL"));
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn outer_deadline_at_encoding_boundary_prevents_gateway_dispatch() {
+    let workspace = TemporaryDirectory::new();
+    std::fs::write(workspace.path().join("one.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+    let transport = ScriptedTransport::one(sse_text(&valid_result().to_string()));
+    let worker = AiGatewayVisionTransport::new(MODEL, Arc::new(transport.clone())).unwrap();
+    let deadline_ready = Arc::new(AtomicBool::new(false));
+    let tool = VisionTool::with_transport(
+        workspace.path(),
+        NetworkTarget {
+            scheme: "https".to_owned(),
+            host: "ai-gateway.vercel.sh".to_owned(),
+            port: None,
+        },
+        Arc::new(worker),
+        Arc::new(TriggeredDeadline {
+            ready: Arc::clone(&deadline_ready),
+        }),
+    )
+    .unwrap();
+    let mut future = tool.execute(
+        tool_context(),
+        json!({"focus": "Inspect", "paths": ["one.png"]}),
+        CancellationToken::new(),
+    );
+
+    assert!(poll_once(future.as_mut()).is_pending());
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+    deadline_ready.store(true, Ordering::SeqCst);
+    let Poll::Ready(Err(error)) = poll_once(future.as_mut()) else {
+        panic!("outer deadline must complete before Gateway dispatch")
+    };
+    assert_eq!(error.code, "vision_timeout");
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
 fn response_json_node_budget_is_aggregate_across_events_and_structured_evidence() {
     let result = valid_result();
     let result_text = result.to_string();
@@ -577,6 +724,83 @@ fn semantic_invalidity_retries_once_with_byte_identical_verified_images() {
     assert_eq!(requests[0].body, requests[1].body);
 }
 
+#[derive(Clone)]
+struct RetryOwnershipTransport {
+    calls: Arc<AtomicUsize>,
+    live_attempts: Arc<AtomicUsize>,
+    drops: Arc<AtomicUsize>,
+}
+
+struct RetryOwnershipStream {
+    response: Option<Vec<u8>>,
+    _request_body: Vec<u8>,
+    live_attempts: Arc<AtomicUsize>,
+    drops: Arc<AtomicUsize>,
+}
+
+impl Stream for RetryOwnershipStream {
+    type Item = Result<Vec<u8>, ProviderError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.response
+            .take()
+            .map_or(Poll::Pending, |response| Poll::Ready(Some(Ok(response))))
+    }
+}
+
+impl Drop for RetryOwnershipStream {
+    fn drop(&mut self) {
+        assert_eq!(self.live_attempts.fetch_sub(1, Ordering::SeqCst), 1);
+        self.drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl AiGatewayTransport for RetryOwnershipTransport {
+    fn stream(
+        &self,
+        request: AiGatewayTransportRequest,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<AiGatewayByteStream, ProviderError>> {
+        let call_index = self.calls.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(
+            self.live_attempts.fetch_add(1, Ordering::SeqCst),
+            0,
+            "prior attempt-owned request body and stream must be gone"
+        );
+        let response = if call_index == 0 {
+            sse_text(r#"{"images":[]}"#)
+        } else {
+            sse_text(&valid_result().to_string())
+        };
+        let stream = RetryOwnershipStream {
+            response: Some(response),
+            _request_body: request.into_body(),
+            live_attempts: Arc::clone(&self.live_attempts),
+            drops: Arc::clone(&self.drops),
+        };
+        Box::pin(async move { Ok(Box::pin(stream) as AiGatewayByteStream) })
+    }
+}
+
+#[test]
+fn retry_drops_first_stream_and_its_owned_body_before_request_two() {
+    let transport = RetryOwnershipTransport {
+        calls: Arc::new(AtomicUsize::new(0)),
+        live_attempts: Arc::new(AtomicUsize::new(0)),
+        drops: Arc::new(AtomicUsize::new(0)),
+    };
+
+    let result = execute(
+        Arc::new(transport.clone()),
+        request(vec![png(1, b"PRIVATE_RETRY_OWNERSHIP_IMAGE_SENTINEL")]),
+    )
+    .unwrap();
+    assert_eq!(result.images().len(), 1);
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(transport.live_attempts.load(Ordering::SeqCst), 0);
+    assert_eq!(transport.drops.load(Ordering::SeqCst), 2);
+}
+
 #[test]
 fn semantic_retry_returns_pending_before_request_two_and_drop_stays_inert() {
     let invalid = sse_text(r#"{"images":[]}"#);
@@ -592,16 +816,21 @@ fn semantic_retry_returns_pending_before_request_two_and_drop_stays_inert() {
         wakes: Arc::clone(&notification_count),
     }));
 
-    assert!(
-        future
-            .as_mut()
-            .poll(&mut Context::from_waker(&retry_waker))
-            .is_pending()
-    );
-    assert_eq!(notification_count.load(Ordering::SeqCst), 1);
+    for expected_notifications in 1..=3 {
+        assert!(
+            future
+                .as_mut()
+                .poll(&mut Context::from_waker(&retry_waker))
+                .is_pending()
+        );
+        assert_eq!(
+            notification_count.load(Ordering::SeqCst),
+            expected_notifications
+        );
+    }
     assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
     drop(future);
-    assert_eq!(notification_count.load(Ordering::SeqCst), 1);
+    assert_eq!(notification_count.load(Ordering::SeqCst), 3);
     assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
 }
 
@@ -617,6 +846,8 @@ fn cancellation_wins_at_semantic_retry_boundary_without_request_two() {
         cancellation.clone(),
     );
 
+    assert!(poll_once(future.as_mut()).is_pending());
+    assert!(poll_once(future.as_mut()).is_pending());
     assert!(poll_once(future.as_mut()).is_pending());
     assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
     cancellation.cancel();
@@ -1153,6 +1384,237 @@ fn provider_failure_record_is_typed_and_missing_sibling_is_preserved_for_tool_me
 }
 
 #[derive(Clone)]
+struct ReadyByteTransport {
+    response: Arc<Vec<u8>>,
+    calls: Arc<AtomicUsize>,
+    drops: Arc<AtomicUsize>,
+}
+
+struct ReadyByteStream {
+    response: Arc<Vec<u8>>,
+    offset: usize,
+    drops: Arc<AtomicUsize>,
+}
+
+impl Stream for ReadyByteStream {
+    type Item = Result<Vec<u8>, ProviderError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let Some(byte) = self.response.get(self.offset).copied() else {
+            return Poll::Ready(None);
+        };
+        self.offset += 1;
+        Poll::Ready(Some(Ok(vec![byte])))
+    }
+}
+
+impl Drop for ReadyByteStream {
+    fn drop(&mut self) {
+        self.drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl AiGatewayTransport for ReadyByteTransport {
+    fn stream(
+        &self,
+        _request: AiGatewayTransportRequest,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<AiGatewayByteStream, ProviderError>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let response = Arc::clone(&self.response);
+        let drops = Arc::clone(&self.drops);
+        Box::pin(async move {
+            Ok(Box::pin(ReadyByteStream {
+                response,
+                offset: 0,
+                drops,
+            }) as AiGatewayByteStream)
+        })
+    }
+}
+
+fn ready_byte_transport() -> ReadyByteTransport {
+    ReadyByteTransport {
+        response: Arc::new(sse_text(&valid_result().to_string())),
+        calls: Arc::new(AtomicUsize::new(0)),
+        drops: Arc::new(AtomicUsize::new(0)),
+    }
+}
+
+#[test]
+fn immediately_ready_byte_stream_yields_and_eventually_preserves_exact_semantics() {
+    let transport = ready_byte_transport();
+    let worker = AiGatewayVisionTransport::new(MODEL, Arc::new(transport.clone())).unwrap();
+    let mut future = worker.analyze(request(vec![png(1, &[1])]), CancellationToken::new());
+    let notification_count = Arc::new(AtomicUsize::new(0));
+    let waker = Waker::from(Arc::new(CountingWake {
+        wakes: Arc::clone(&notification_count),
+    }));
+
+    // Encoding and pre-dispatch each return control once. The next outer poll
+    // consumes exactly one accepted nonterminal item, not the complete response.
+    for expected_notifications in 1..=3 {
+        assert!(
+            future
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker))
+                .is_pending()
+        );
+        assert_eq!(
+            notification_count.load(Ordering::SeqCst),
+            expected_notifications
+        );
+    }
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(transport.drops.load(Ordering::SeqCst), 0);
+
+    let result = futures_executor::block_on(future).unwrap();
+    assert_eq!(result.images().len(), 1);
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(transport.drops.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn dropping_at_ready_item_boundary_releases_the_owned_stream() {
+    let transport = ready_byte_transport();
+    let worker = AiGatewayVisionTransport::new(MODEL, Arc::new(transport.clone())).unwrap();
+    let mut future = worker.analyze(
+        request(vec![png(1, b"PRIVATE_READY_BOUNDARY_IMAGE_SENTINEL")]),
+        CancellationToken::new(),
+    );
+
+    assert!(poll_once(future.as_mut()).is_pending());
+    assert!(poll_once(future.as_mut()).is_pending());
+    assert!(poll_once(future.as_mut()).is_pending());
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(transport.drops.load(Ordering::SeqCst), 0);
+    drop(future);
+    assert_eq!(transport.drops.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn cancellation_at_ready_item_boundary_wins_after_stream_cleanup() {
+    let transport = ready_byte_transport();
+    let worker = AiGatewayVisionTransport::new(MODEL, Arc::new(transport.clone())).unwrap();
+    let cancellation = CancellationToken::new();
+    let mut future = worker.analyze(
+        request(vec![png(
+            1,
+            b"PRIVATE_READY_BOUNDARY_CANCELLATION_IMAGE_SENTINEL",
+        )]),
+        cancellation.clone(),
+    );
+
+    assert!(poll_once(future.as_mut()).is_pending());
+    assert!(poll_once(future.as_mut()).is_pending());
+    assert!(poll_once(future.as_mut()).is_pending());
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(transport.drops.load(Ordering::SeqCst), 0);
+    cancellation.cancel();
+    let Poll::Ready(Err(error)) = poll_once(future.as_mut()) else {
+        panic!("ready-item-boundary cancellation must complete")
+    };
+    assert_eq!(error.kind(), VisionTransportErrorKind::Cancelled);
+    assert_eq!(transport.drops.load(Ordering::SeqCst), 1);
+    let rendered = format!("{error:?} {error}");
+    assert!(!rendered.contains("PRIVATE_READY_BOUNDARY_CANCELLATION_IMAGE_SENTINEL"));
+}
+
+#[derive(Clone)]
+struct PendingSourceTransport {
+    calls: Arc<AtomicUsize>,
+    polls: Arc<AtomicUsize>,
+    drops: Arc<AtomicUsize>,
+}
+
+struct PendingSourceStream {
+    polls: Arc<AtomicUsize>,
+    drops: Arc<AtomicUsize>,
+}
+
+impl Stream for PendingSourceStream {
+    type Item = Result<Vec<u8>, ProviderError>;
+
+    fn poll_next(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.polls.fetch_add(1, Ordering::SeqCst);
+        Poll::Pending
+    }
+}
+
+impl Drop for PendingSourceStream {
+    fn drop(&mut self) {
+        self.drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl AiGatewayTransport for PendingSourceTransport {
+    fn stream(
+        &self,
+        _request: AiGatewayTransportRequest,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<AiGatewayByteStream, ProviderError>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let polls = Arc::clone(&self.polls);
+        let drops = Arc::clone(&self.drops);
+        Box::pin(async move {
+            Ok(Box::pin(PendingSourceStream { polls, drops }) as AiGatewayByteStream)
+        })
+    }
+}
+
+#[test]
+fn cancellation_wakes_a_pending_source_and_wins_after_stream_cleanup() {
+    let transport = PendingSourceTransport {
+        calls: Arc::new(AtomicUsize::new(0)),
+        polls: Arc::new(AtomicUsize::new(0)),
+        drops: Arc::new(AtomicUsize::new(0)),
+    };
+    let worker = AiGatewayVisionTransport::new(MODEL, Arc::new(transport.clone())).unwrap();
+    let cancellation = CancellationToken::new();
+    let mut future = worker.analyze(
+        request(vec![png(1, b"PRIVATE_PENDING_SOURCE_IMAGE_SENTINEL")]),
+        cancellation.clone(),
+    );
+    let notification_count = Arc::new(AtomicUsize::new(0));
+    let waker = Waker::from(Arc::new(CountingWake {
+        wakes: Arc::clone(&notification_count),
+    }));
+
+    for expected_notifications in 1..=2 {
+        assert!(
+            future
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker))
+                .is_pending()
+        );
+        assert_eq!(
+            notification_count.load(Ordering::SeqCst),
+            expected_notifications
+        );
+    }
+    assert!(
+        future
+            .as_mut()
+            .poll(&mut Context::from_waker(&waker))
+            .is_pending()
+    );
+    assert_eq!(notification_count.load(Ordering::SeqCst), 2);
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(transport.polls.load(Ordering::SeqCst), 1);
+
+    cancellation.cancel();
+    assert_eq!(notification_count.load(Ordering::SeqCst), 3);
+    let Poll::Ready(Err(error)) = future.as_mut().poll(&mut Context::from_waker(&waker)) else {
+        panic!("pending-source cancellation must complete")
+    };
+    assert_eq!(error.kind(), VisionTransportErrorKind::Cancelled);
+    assert_eq!(transport.polls.load(Ordering::SeqCst), 1);
+    assert_eq!(transport.drops.load(Ordering::SeqCst), 1);
+    let rendered = format!("{error:?} {error}");
+    assert!(!rendered.contains("PRIVATE_PENDING_SOURCE_IMAGE_SENTINEL"));
+}
+
+#[derive(Clone)]
 struct PendingAfterDoneTransport {
     response: Arc<Vec<u8>>,
     drops: Arc<AtomicUsize>,
@@ -1269,6 +1731,8 @@ fn empty_success_chunk_returns_protocol_failure_and_releases_pending_source() {
         CancellationToken::new(),
     );
 
+    assert!(poll_once(future.as_mut()).is_pending());
+    assert!(poll_once(future.as_mut()).is_pending());
     let Poll::Ready(Err(error)) = poll_once(future.as_mut()) else {
         panic!("empty success chunk must complete without polling the pending source again")
     };
