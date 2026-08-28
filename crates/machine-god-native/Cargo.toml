@@ -11,6 +11,7 @@ publish.workspace = true
 default = []
 ai-gateway-http = [
     "ai-gateway-model-catalog-http",
+    "dep:base64",
     "dep:bytes",
     "web-fetch-http",
 ]
@@ -33,6 +34,7 @@ web-fetch-http = [
 ]
 
 [dependencies]
+base64 = { workspace = true, optional = true }
 futures-core.workspace = true
 machine-god-core.workspace = true
 serde.workspace = true

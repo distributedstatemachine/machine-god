@@ -26,6 +26,8 @@ mod ai_gateway_model_catalog;
 ))]
 mod ai_gateway_model_catalog_http;
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+mod ai_gateway_vision;
+#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
 mod ai_gateway_web_search;
 mod ask_permission;
 mod ask_user_question;
@@ -61,6 +63,7 @@ mod state_environment;
 mod terminal;
 mod tool_output_serializer;
 mod tool_result_projection;
+mod vision_portable;
 #[cfg(all(feature = "web-fetch-http", not(target_family = "wasm")))]
 mod web_fetch;
 mod web_search;
@@ -128,6 +131,10 @@ pub use ai_gateway_model_catalog_http::{
     AiGatewayModelCatalogHttpLimits, AiGatewayModelCatalogHttpTransport,
 };
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+pub use ai_gateway_vision::{
+    AiGatewayVisionConfigError, AiGatewayVisionConfigErrorKind, AiGatewayVisionTransport,
+};
+#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
 pub use ai_gateway_web_search::AiGatewayWebSearchTransport;
 pub use ask_permission::{
     ASK_PERMISSION_DENIED_REASON, ASK_PERMISSION_PROMPT_ERROR_CODE,
@@ -151,6 +158,15 @@ pub use ask_user_question::{
     MAX_ASK_USER_QUESTION_TOTAL_RAW_ANSWER_BYTES, QuestionPrompt, QuestionPromptAnswers,
     QuestionPromptError, QuestionPromptOption, QuestionPromptOutcome, QuestionPromptRequest,
     QuestionPrompter,
+};
+pub use vision_portable::{
+    MAX_VISION_ATTEMPT_EVIDENCE_BYTES, MAX_VISION_BATCH_IMAGES, MAX_VISION_BATCH_RAW_BYTES,
+    MAX_VISION_EVIDENCE_LIST_ITEMS, MAX_VISION_EVIDENCE_STRING_BYTES, MAX_VISION_FOCUS_BYTES,
+    MAX_VISION_REQUEST_BYTES, MAX_VISION_RESPONSE_BYTES, MAX_VISION_RESPONSE_JSON_NODES,
+    MAX_VISION_RESPONSE_RECORD_BYTES, MAX_VISION_RESPONSE_RECORDS, VisionBatchRequest,
+    VisionBatchResponse, VisionDeadline, VisionImage, VisionImageOutcome, VisionImageResult,
+    VisionMediaType, VisionProviderFailure, VisionProviderFailureCode, VisionTransport,
+    VisionTransportError, VisionTransportErrorKind,
 };
 
 pub use config::{
