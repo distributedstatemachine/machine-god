@@ -23,7 +23,7 @@ use std::pin::Pin;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::task::Poll;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{AcquireError, OwnedSemaphorePermit, Semaphore};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use crate::vision_portable::{
@@ -447,31 +447,26 @@ impl VisionTool {
             cancellation.cancelled(),
             self.deadline.wait_until(deadline),
         );
-        let acquired = {
-            let (cancelled, timeout) = teardown.waiters();
-            self.acquire_capacity(&cancellation, deadline, cancelled, timeout)
-                .await
-        };
+        let acquired = self
+            .acquire_capacity(&cancellation, deadline, &mut teardown)
+            .await;
         let result = match acquired {
-            Ok(permit) => {
-                teardown.set_permit(permit);
-                match check_cancellation_and_deadline(&cancellation, Some(deadline)) {
-                    Ok(()) => {
-                        let (cancelled, timeout) = teardown.waiters();
-                        self.process_paths(
-                            &context,
-                            &focus,
-                            &paths,
-                            &cancellation,
-                            deadline,
-                            cancelled,
-                            timeout,
-                        )
-                        .await
-                    }
-                    Err(error) => Err(error),
+            Ok(()) => match check_cancellation_and_deadline(&cancellation, Some(deadline)) {
+                Ok(()) => {
+                    let (cancelled, timeout) = teardown.waiters();
+                    self.process_paths(
+                        &context,
+                        &focus,
+                        &paths,
+                        &cancellation,
+                        deadline,
+                        cancelled,
+                        timeout,
+                    )
+                    .await
                 }
-            }
+                Err(error) => Err(error),
+            },
             Err(error) => Err(error),
         };
         teardown.finish(&cancellation, deadline, result)
@@ -622,20 +617,16 @@ impl VisionTool {
         &self,
         cancellation: &CancellationToken,
         deadline: Instant,
-        cancelled: Pin<&mut machine_god_core::Cancelled>,
-        timeout: Pin<&mut (dyn Future<Output = Result<(), VisionTransportError>> + Send)>,
-    ) -> Result<OwnedSemaphorePermit, ToolError> {
+        teardown: &mut VisionInvocationTeardown<'_>,
+    ) -> Result<(), ToolError> {
         check_cancellation_and_deadline(cancellation, Some(deadline))?;
-        await_bounded(
+        acquire_vision_capacity(
             Arc::clone(&self.permits).acquire_owned(),
+            teardown,
             cancellation,
             deadline,
-            cancelled,
-            timeout,
         )
         .await
-        .map_err(map_transport_error)?
-        .map_err(|_| unavailable_error(true))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1697,6 +1688,69 @@ async fn await_bounded<F: Future>(
     .await
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn acquire_vision_capacity<F>(
+    future: F,
+    teardown: &mut VisionInvocationTeardown<'_>,
+    cancellation: &CancellationToken,
+    deadline: Instant,
+) -> Result<(), ToolError>
+where
+    F: Future<Output = Result<OwnedSemaphorePermit, AcquireError>>,
+{
+    let mut future = std::pin::pin!(future);
+    poll_fn(|context| {
+        let cancellation_ready = Pin::new(
+            teardown
+                .cancellation_wait
+                .as_mut()
+                .expect("vision cancellation wait exists until teardown"),
+        )
+        .poll(context)
+        .is_ready();
+        if cancellation_ready || cancellation.is_cancelled() {
+            return Poll::Ready(Err(cancelled_error()));
+        }
+
+        let timeout_result = teardown
+            .timeout
+            .as_mut()
+            .expect("vision deadline wait exists until teardown")
+            .as_mut()
+            .poll(context);
+        if cancellation.is_cancelled() {
+            return Poll::Ready(Err(cancelled_error()));
+        }
+        if deadline <= Instant::now() {
+            return Poll::Ready(Err(timeout_error()));
+        }
+        match timeout_result {
+            Poll::Ready(Ok(())) => return Poll::Ready(Err(timeout_error())),
+            Poll::Ready(Err(error)) => return Poll::Ready(Err(map_transport_error(error))),
+            Poll::Pending => {}
+        }
+
+        match future.as_mut().poll(context) {
+            Poll::Ready(Ok(permit)) => {
+                // Capacity is teardown-owned before post-poll adjudication, so
+                // same-poll cancellation or expiry cannot release it while
+                // the cancellation and deadline waiters are still live.
+                teardown.set_permit(permit);
+                Poll::Ready(check_cancellation_and_deadline(
+                    cancellation,
+                    Some(deadline),
+                ))
+            }
+            Poll::Ready(Err(_)) => Poll::Ready(
+                check_cancellation_and_deadline(cancellation, Some(deadline))
+                    .and_then(|()| Err(unavailable_error(true))),
+            ),
+            Poll::Pending => Poll::Pending,
+        }
+    })
+    .await
+}
+
 fn check_cancellation_and_deadline(
     cancellation: &CancellationToken,
     deadline: Option<Instant>,
@@ -2075,9 +2129,9 @@ mod tests {
     use super::{
         ImageFingerprint, LocalImageFailure, MAX_VISION_FOCUS_BYTES, MAX_VISION_PATH_COMPONENTS,
         MAX_VISION_SERIALIZED_RESULT_BYTES, VisionConfigErrorKind, VisionDeadline,
-        VisionInvocationTeardown, VisionLimits, VisionTool, binding_syscall, canonical_request,
-        finish_verified_image, probe_verified_image, publish_output, render_attachment_failures,
-        render_ordered, sniff_media_type,
+        VisionInvocationTeardown, VisionLimits, VisionTool, acquire_vision_capacity,
+        binding_syscall, canonical_request, finish_verified_image, probe_verified_image,
+        publish_output, render_attachment_failures, render_ordered, sniff_media_type,
     };
     use tokio::sync::Semaphore;
 
@@ -2232,6 +2286,33 @@ mod tests {
                 "deadline teardown must retain active vision capacity",
             );
             assert!(self.cancellation.cancel());
+        }
+    }
+
+    struct ObserveCapacityOnDropFuture {
+        permits: Arc<Semaphore>,
+        drops: Arc<AtomicUsize>,
+    }
+
+    impl std::future::Future for ObserveCapacityOnDropFuture {
+        type Output = Result<(), VisionTransportError>;
+
+        fn poll(
+            self: std::pin::Pin<&mut Self>,
+            _context: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Self::Output> {
+            std::task::Poll::Pending
+        }
+    }
+
+    impl Drop for ObserveCapacityOnDropFuture {
+        fn drop(&mut self) {
+            assert_eq!(
+                self.permits.available_permits(),
+                0,
+                "deadline future must be destroyed before acquired vision capacity",
+            );
+            self.drops.fetch_add(1, Ordering::SeqCst);
         }
     }
 
@@ -3409,6 +3490,89 @@ mod tests {
         .expect_err("same-poll cancellation must precede deadline readiness");
         assert_eq!(error.code, "vision_cancelled");
         assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn same_poll_capacity_cancellation_retains_permit_through_waiter_teardown() {
+        let cancellation = CancellationToken::new();
+        let permits = Arc::new(Semaphore::new(1));
+        let deadline_drops = Arc::new(AtomicUsize::new(0));
+        let mut teardown = VisionInvocationTeardown::new(
+            cancellation.cancelled(),
+            Box::pin(ObserveCapacityOnDropFuture {
+                permits: Arc::clone(&permits),
+                drops: Arc::clone(&deadline_drops),
+            }),
+        );
+        let acquisition_permits = Arc::clone(&permits);
+        let acquisition_cancellation = cancellation.clone();
+        let acquisition = std::future::poll_fn(move |_| {
+            let permit = Arc::clone(&acquisition_permits)
+                .try_acquire_owned()
+                .expect("acquire sole vision permit");
+            assert!(acquisition_cancellation.cancel());
+            std::task::Poll::Ready(Ok::<_, tokio::sync::AcquireError>(permit))
+        });
+        let deadline = Instant::now() + Duration::from_secs(1);
+
+        let error = block_on(acquire_vision_capacity(
+            acquisition,
+            &mut teardown,
+            &cancellation,
+            deadline,
+        ))
+        .expect_err("same-poll cancellation must reject acquired capacity");
+        assert_eq!(error.code, "vision_cancelled");
+        assert_eq!(permits.available_permits(), 0);
+
+        let error = teardown
+            .finish(&cancellation, deadline, Err::<(), _>(error))
+            .expect_err("teardown retains cancellation outcome");
+        assert_eq!(error.code, "vision_cancelled");
+        assert_eq!(deadline_drops.load(Ordering::SeqCst), 1);
+        assert_eq!(permits.available_permits(), 1);
+    }
+
+    #[test]
+    fn same_poll_capacity_deadline_retains_permit_through_waiter_teardown() {
+        let cancellation = CancellationToken::new();
+        let permits = Arc::new(Semaphore::new(1));
+        let deadline_drops = Arc::new(AtomicUsize::new(0));
+        let mut teardown = VisionInvocationTeardown::new(
+            cancellation.cancelled(),
+            Box::pin(ObserveCapacityOnDropFuture {
+                permits: Arc::clone(&permits),
+                drops: Arc::clone(&deadline_drops),
+            }),
+        );
+        let acquisition_permits = Arc::clone(&permits);
+        let deadline = Instant::now() + Duration::from_millis(100);
+        let acquisition = std::future::poll_fn(move |_| {
+            let permit = Arc::clone(&acquisition_permits)
+                .try_acquire_owned()
+                .expect("acquire sole vision permit");
+            std::thread::sleep(
+                deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(5),
+            );
+            std::task::Poll::Ready(Ok::<_, tokio::sync::AcquireError>(permit))
+        });
+
+        let error = block_on(acquire_vision_capacity(
+            acquisition,
+            &mut teardown,
+            &cancellation,
+            deadline,
+        ))
+        .expect_err("same-poll deadline must reject acquired capacity");
+        assert_eq!(error.code, "vision_timeout");
+        assert_eq!(permits.available_permits(), 0);
+
+        let error = teardown
+            .finish(&cancellation, deadline, Err::<(), _>(error))
+            .expect_err("teardown retains deadline outcome");
+        assert_eq!(error.code, "vision_timeout");
+        assert_eq!(deadline_drops.load(Ordering::SeqCst), 1);
+        assert_eq!(permits.available_permits(), 1);
     }
 
     #[test]
