@@ -12,8 +12,9 @@ name = "machine-god"
 path = "src/main.rs"
 
 [dependencies]
+futures-core.workspace = true
 machine-god-core.workspace = true
-machine-god-native = { workspace = true, features = ["ai-gateway-model-catalog-http"] }
+machine-god-native = { workspace = true, features = ["ai-gateway-http"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = { workspace = true, features = ["signal"] }

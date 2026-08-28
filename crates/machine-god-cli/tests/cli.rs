@@ -50,6 +50,7 @@ const HELP: &str = concat!(
     "Usage:\n",
     "  machine-god\n",
     "  machine-god help\n",
+    "  machine-god ask [--] <prompt...>\n",
     "  machine-god doctor [--json]\n",
     "  machine-god models [--json]\n",
     "  machine-god permissions [--json]\n",
@@ -59,6 +60,7 @@ const HELP: &str = concat!(
     "\n",
     "Commands:\n",
     "  help         Show this help\n",
+    "  ask          Run one noninteractive prompt\n",
     "  doctor       Run local health and preflight checks\n",
     "  models       List available models\n",
     "  permissions  Show the permission mode and rules\n",
@@ -72,7 +74,7 @@ const HELP: &str = concat!(
 );
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | doctor [--json] | models [--json] | permissions [--json] | session <id> [--json] | sessions [--json] | status [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | doctor [--json] | models [--json] | permissions [--json] | session <id> [--json] | sessions [--json] | status [--json]]\n",
 );
 const CONFIG_FAILURE: &str = "machine-god: failed to load configuration\n";
 #[cfg(target_os = "linux")]
@@ -753,6 +755,10 @@ fn malformed_arguments_have_one_diagnostic_and_exit_two() {
         &["--json", "models"][..],
         &["--json", "permissions"][..],
         &["--json", "doctor"][..],
+        &["ask"][..],
+        &["ask", "--"][..],
+        &["ask", "--flag"][..],
+        &["ask", " \t\r\n"][..],
         &["doctor", "--json=true"][..],
         &["doctor", "extra"][..],
         &["doctor", "--json", "extra"][..],
@@ -787,6 +793,35 @@ fn malformed_arguments_have_one_diagnostic_and_exit_two() {
         assert_eq!(output.status.code(), Some(2));
         assert!(output.stdout.is_empty());
         assert_eq!(output.stderr, INVALID_ARGUMENTS.as_bytes());
+    }
+}
+
+#[test]
+fn invalid_ask_grammar_precedes_configuration_state_credentials_and_stdin() {
+    let temporary = TestDirectory::new("ask-invalid-no-effects");
+    let config_root = temporary.path().join("missing-config");
+    let state_root = temporary.path().join("missing-state");
+
+    for arguments in [
+        &["ask"][..],
+        &["ask", "--"][..],
+        &["ask", "--flag"][..],
+        &["ask", " \t\r\n"][..],
+    ] {
+        let output = machine_god()
+            .args(arguments)
+            .env_remove("HOME")
+            .env("XDG_CONFIG_HOME", &config_root)
+            .env("XDG_STATE_HOME", &state_root)
+            .env("VERCEL_OIDC_TOKEN", "ASK_INVALID_CREDENTIAL_SECRET")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert_eq!(output.stderr, INVALID_ARGUMENTS.as_bytes());
+        assert!(!config_root.exists());
+        assert!(!state_root.exists());
     }
 }
 
@@ -2779,6 +2814,7 @@ fn non_unicode_arguments_are_rejected_by_the_process_boundary() {
 
     for arguments in [
         vec![OsString::from_vec(vec![0xff])],
+        vec![OsString::from("ask"), OsString::from_vec(vec![0xff])],
         vec![OsString::from("doctor"), OsString::from_vec(vec![0xff])],
         vec![OsString::from("session"), OsString::from_vec(vec![0xff])],
         vec![

@@ -12,9 +12,12 @@ use std::task::{Context, Poll, Waker};
 #[cfg(not(target_family = "wasm"))]
 use std::thread::JoinHandle;
 
+mod ask;
+
 #[cfg(not(target_family = "wasm"))]
 use std::sync::Arc;
 
+use ask::{AskCommandHost, ProductionAskCommandHost, parse_prompt_arguments, run_ask};
 use machine_god_core::{BoxFuture, SessionId, SessionIncarnationId};
 #[cfg(not(target_family = "wasm"))]
 use machine_god_core::{CancellationToken, ModelCatalogProvider, ProviderError, ProviderErrorKind};
@@ -36,7 +39,7 @@ use machine_god_native::{
 
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | doctor [--json] | models [--json] | permissions [--json] | session <id> [--json] | sessions [--json] | status [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | doctor [--json] | models [--json] | permissions [--json] | session <id> [--json] | sessions [--json] | status [--json]]\n",
 );
 const CONFIGURATION_FAILURE: &str = "machine-god: failed to load configuration\n";
 const DOCTOR_RENDER_FAILURE: &str = "machine-god doctor: could not render report\n";
@@ -171,6 +174,7 @@ impl std::fmt::Write for BoundedSessionsOutput {
 enum Command {
     Identity,
     Help,
+    Ask { prompt: String },
     Doctor { json: bool },
     Models { json: bool },
     Permissions { json: bool },
@@ -1072,10 +1076,13 @@ fn run(
         arguments,
         stdout,
         stderr,
-        &ProductionModelsCommandHost,
-        &ProductionDoctorCommandHost,
-        &ProductionSessionCommandHost,
-        &ProductionSessionsCommandHost,
+        (
+            &ProductionModelsCommandHost,
+            &ProductionDoctorCommandHost,
+            &ProductionSessionCommandHost,
+            &ProductionSessionsCommandHost,
+            &ProductionAskCommandHost,
+        ),
     )
 }
 
@@ -1090,10 +1097,13 @@ fn run_with_models_host(
         arguments,
         stdout,
         stderr,
-        models_host,
-        &ProductionDoctorCommandHost,
-        &ProductionSessionCommandHost,
-        &ProductionSessionsCommandHost,
+        (
+            models_host,
+            &ProductionDoctorCommandHost,
+            &ProductionSessionCommandHost,
+            &ProductionSessionsCommandHost,
+            &ProductionAskCommandHost,
+        ),
     )
 }
 
@@ -1108,10 +1118,13 @@ fn run_with_doctor_host(
         arguments,
         stdout,
         stderr,
-        &ProductionModelsCommandHost,
-        doctor_host,
-        &ProductionSessionCommandHost,
-        &ProductionSessionsCommandHost,
+        (
+            &ProductionModelsCommandHost,
+            doctor_host,
+            &ProductionSessionCommandHost,
+            &ProductionSessionsCommandHost,
+            &ProductionAskCommandHost,
+        ),
     )
 }
 
@@ -1126,10 +1139,13 @@ fn run_with_session_host(
         arguments,
         stdout,
         stderr,
-        &ProductionModelsCommandHost,
-        &ProductionDoctorCommandHost,
-        session_host,
-        &ProductionSessionsCommandHost,
+        (
+            &ProductionModelsCommandHost,
+            &ProductionDoctorCommandHost,
+            session_host,
+            &ProductionSessionsCommandHost,
+            &ProductionAskCommandHost,
+        ),
     )
 }
 
@@ -1144,10 +1160,34 @@ fn run_with_sessions_host(
         arguments,
         stdout,
         stderr,
-        &ProductionModelsCommandHost,
-        &ProductionDoctorCommandHost,
-        &ProductionSessionCommandHost,
-        sessions_host,
+        (
+            &ProductionModelsCommandHost,
+            &ProductionDoctorCommandHost,
+            &ProductionSessionCommandHost,
+            sessions_host,
+            &ProductionAskCommandHost,
+        ),
+    )
+}
+
+#[cfg(test)]
+fn run_with_ask_host(
+    arguments: impl IntoIterator<Item = OsString>,
+    stdout: &mut impl io::Write,
+    stderr: &mut impl io::Write,
+    ask_host: &impl AskCommandHost,
+) -> u8 {
+    run_with_hosts(
+        arguments,
+        stdout,
+        stderr,
+        (
+            &ProductionModelsCommandHost,
+            &ProductionDoctorCommandHost,
+            &ProductionSessionCommandHost,
+            &ProductionSessionsCommandHost,
+            ask_host,
+        ),
     )
 }
 
@@ -1155,11 +1195,15 @@ fn run_with_hosts(
     arguments: impl IntoIterator<Item = OsString>,
     stdout: &mut impl io::Write,
     stderr: &mut impl io::Write,
-    models_host: &impl ModelsCommandHost,
-    doctor_host: &impl DoctorCommandHost,
-    inspection_host: &impl SessionCommandHost,
-    listing_host: &impl SessionsCommandHost,
+    hosts: (
+        &impl ModelsCommandHost,
+        &impl DoctorCommandHost,
+        &impl SessionCommandHost,
+        &impl SessionsCommandHost,
+        &impl AskCommandHost,
+    ),
 ) -> u8 {
+    let (models_host, doctor_host, inspection_host, listing_host, ask_host) = hosts;
     let Ok(command) = parse_arguments(arguments) else {
         let _ = stderr.write_all(INVALID_ARGUMENTS.as_bytes());
         return 2;
@@ -1168,6 +1212,9 @@ fn run_with_hosts(
     let output = match command {
         Command::Identity => identity(),
         Command::Help => help(),
+        Command::Ask { prompt } => {
+            return run_ask(ask_host, prompt, stdout, stderr, OUTPUT_FAILURE);
+        }
         Command::Doctor { json } => {
             return run_doctor(doctor_host, json, stdout, stderr);
         }
@@ -1209,6 +1256,9 @@ fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Comm
     let command = match first {
         "help" | "--help" | "-h" => Command::Help,
         "--version" | "-V" => Command::Identity,
+        "ask" => Command::Ask {
+            prompt: parse_prompt_arguments(arguments.by_ref())?,
+        },
         "doctor" => {
             let json = match arguments.next() {
                 None => false,
@@ -1293,6 +1343,7 @@ fn help() -> String {
             "Usage:\n",
             "  machine-god\n",
             "  machine-god help\n",
+            "  machine-god ask [--] <prompt...>\n",
             "  machine-god doctor [--json]\n",
             "  machine-god models [--json]\n",
             "  machine-god permissions [--json]\n",
@@ -1302,6 +1353,7 @@ fn help() -> String {
             "\n",
             "Commands:\n",
             "  help         Show this help\n",
+            "  ask          Run one noninteractive prompt\n",
             "  doctor       Run local health and preflight checks\n",
             "  models       List available models\n",
             "  permissions  Show the permission mode and rules\n",
@@ -1920,7 +1972,7 @@ mod tests {
         SessionOperationalFailure, SessionSnapshot, SessionsCommandHost,
         SessionsOperationalFailure, SessionsSnapshot, classify_session_inspection_error_kind,
         classify_session_listing_error_kind, help, json_permissions, parse_arguments, permissions,
-        push_json_string, render_doctor, render_session, render_sessions, run,
+        push_json_string, render_doctor, render_session, render_sessions, run, run_with_ask_host,
         run_with_doctor_host, run_with_models_host, run_with_session_host, run_with_sessions_host,
     };
     #[cfg(not(target_family = "wasm"))]
@@ -1931,6 +1983,7 @@ mod tests {
         TokioModelsSignalSource, list_models_with_signal_source, list_models_with_signals,
         run_models, terminate_signal_event,
     };
+    use crate::ask::{AskCommandHost, AskCommandOutcome};
     use machine_god_core::{
         AvailableModel, BoxFuture, ModelCatalog, ModelCatalogAccess, PublicCatalogReason,
     };
@@ -1975,6 +2028,37 @@ mod tests {
         fn list_models(&self) -> ModelsCommandExecution {
             self.calls.set(self.calls.get() + 1);
             ModelsCommandExecution::without_signal_guard(self.result.clone())
+        }
+    }
+
+    #[derive(Debug)]
+    struct FakeAskHost {
+        outcome: AskCommandOutcome,
+        calls: Cell<usize>,
+        prompts: RefCell<Vec<String>>,
+        output: &'static [u8],
+    }
+
+    impl FakeAskHost {
+        fn new(outcome: AskCommandOutcome, output: &'static [u8]) -> Self {
+            Self {
+                outcome,
+                calls: Cell::new(0),
+                prompts: RefCell::new(Vec::new()),
+                output,
+            }
+        }
+    }
+
+    impl AskCommandHost for FakeAskHost {
+        fn execute(&self, prompt: String, output: &mut dyn io::Write) -> AskCommandOutcome {
+            self.calls.set(self.calls.get() + 1);
+            self.prompts.borrow_mut().push(prompt);
+            if output.write_all(self.output).is_err() {
+                AskCommandOutcome::OutputFailure
+            } else {
+                self.outcome
+            }
         }
     }
 
@@ -3186,6 +3270,44 @@ mod tests {
     }
 
     #[test]
+    fn ask_parser_accepts_only_the_documented_top_level_grammar() {
+        assert_eq!(
+            parse_arguments([
+                OsString::from("ask"),
+                OsString::from("hello"),
+                OsString::from("世界"),
+            ]),
+            Ok(Command::Ask {
+                prompt: "hello 世界".to_owned(),
+            })
+        );
+        assert_eq!(
+            parse_arguments([
+                OsString::from("ask"),
+                OsString::from("--"),
+                OsString::from("--flag"),
+            ]),
+            Ok(Command::Ask {
+                prompt: "--flag".to_owned(),
+            })
+        );
+
+        for arguments in [
+            vec![OsString::from("ask")],
+            vec![OsString::from("ask"), OsString::from("--")],
+            vec![OsString::from("ask"), OsString::from("--flag")],
+            vec![OsString::from("ask"), OsString::from(" \t\r\n")],
+            vec![
+                OsString::from("ask"),
+                OsString::from("hello"),
+                OsString::from("--"),
+            ],
+        ] {
+            assert_eq!(parse_arguments(arguments), Err(()));
+        }
+    }
+
+    #[test]
     fn session_parser_accepts_only_the_documented_grammar() {
         assert_eq!(
             parse_arguments([OsString::from("session"), OsString::from("alpha")]),
@@ -3249,6 +3371,8 @@ mod tests {
     #[test]
     fn help_lists_doctor_before_models_with_the_frozen_summary() {
         let output = help();
+        assert!(output.contains("  machine-god ask [--] <prompt...>\n"));
+        assert!(output.contains("  ask          Run one noninteractive prompt\n"));
         let doctor_usage = output
             .find("  machine-god doctor [--json]\n")
             .expect("doctor usage");
@@ -3296,6 +3420,51 @@ mod tests {
         assert!(permissions_command < inspection_command);
         assert!(inspection_command < listing_command);
         assert!(listing_command < status_command);
+    }
+
+    #[test]
+    fn ask_dispatches_one_valid_prompt_and_preserves_host_output() {
+        let host = FakeAskHost::new(AskCommandOutcome::Completed, "one\0β".as_bytes());
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let exit = run_with_ask_host(
+            [
+                OsString::from("ask"),
+                OsString::from("hello"),
+                OsString::from("world"),
+            ],
+            &mut stdout,
+            &mut stderr,
+            &host,
+        );
+        assert_eq!(exit, 0);
+        assert_eq!(host.calls.get(), 1);
+        assert_eq!(*host.prompts.borrow(), ["hello world"]);
+        assert_eq!(stdout, "one\0β".as_bytes());
+        assert!(stderr.is_empty());
+    }
+
+    #[test]
+    fn invalid_ask_arguments_precede_all_host_effects() {
+        let host = FakeAskHost::new(AskCommandOutcome::Completed, b"never");
+        for arguments in [
+            vec![OsString::from("ask")],
+            vec![OsString::from("ask"), OsString::from("--")],
+            vec![OsString::from("ask"), OsString::from("--json")],
+            vec![OsString::from("ask"), OsString::from(" \t\r\n")],
+            vec![OsString::from("ask"), OsString::from("nul\0prompt")],
+        ] {
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            assert_eq!(
+                run_with_ask_host(arguments, &mut stdout, &mut stderr, &host),
+                2
+            );
+            assert!(stdout.is_empty());
+            assert_eq!(stderr, INVALID_ARGUMENTS.as_bytes());
+        }
+        assert_eq!(host.calls.get(), 0);
+        assert!(host.prompts.borrow().is_empty());
     }
 
     #[test]
