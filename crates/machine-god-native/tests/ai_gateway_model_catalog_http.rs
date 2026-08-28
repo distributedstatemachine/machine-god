@@ -66,6 +66,14 @@ struct ScriptedServer {
 
 impl ScriptedServer {
     fn start(responses: Vec<Vec<u8>>) -> Self {
+        Self::start_inner(responses, false)
+    }
+
+    fn start_allowing_early_peer_close(responses: Vec<Vec<u8>>) -> Self {
+        Self::start_inner(responses, true)
+    }
+
+    fn start_inner(responses: Vec<Vec<u8>>, allow_early_peer_close: bool) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback server");
         let address = listener.local_addr().expect("server address");
         let (request_tx, request_rx) = mpsc::channel();
@@ -76,8 +84,20 @@ impl ScriptedServer {
                 request_tx
                     .send(read_request(&mut stream).expect("read request"))
                     .expect("publish request");
-                stream.write_all(&response).expect("write response");
-                stream.flush().expect("flush response");
+                if let Err(error) = stream.write_all(&response) {
+                    assert!(
+                        allow_early_peer_close && is_peer_close_error(&error),
+                        "write response: {error}"
+                    );
+                    continue;
+                }
+                if let Err(error) = stream.flush() {
+                    assert!(
+                        allow_early_peer_close && is_peer_close_error(&error),
+                        "flush response: {error}"
+                    );
+                    continue;
+                }
                 let _ = stream.shutdown(Shutdown::Write);
             }
         });
@@ -113,6 +133,16 @@ fn configure(stream: &TcpStream) {
     stream
         .set_write_timeout(Some(IO_TIMEOUT))
         .expect("set write timeout");
+}
+
+fn is_peer_close_error(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::BrokenPipe
+            | io::ErrorKind::NotConnected
+    )
 }
 
 fn read_request(stream: &mut TcpStream) -> io::Result<CapturedRequest> {
@@ -201,13 +231,7 @@ fn read_observed_peer_close(stream: &mut TcpStream) -> bool {
     match stream.read(&mut byte) {
         Ok(0) => true,
         Ok(_) => false,
-        Err(error) => matches!(
-            error.kind(),
-            io::ErrorKind::ConnectionReset
-                | io::ErrorKind::ConnectionAborted
-                | io::ErrorKind::BrokenPipe
-                | io::ErrorKind::NotConnected
-        ),
+        Err(error) => is_peer_close_error(&error),
     }
 }
 
@@ -561,7 +585,7 @@ fn content_length_and_chunked_body_caps_accept_exact_and_reject_one_excess() {
         } else {
             response(200, &excess, &[])
         };
-        let server = ScriptedServer::start(vec![excess_response]);
+        let server = ScriptedServer::start_allowing_early_peer_close(vec![excess_response]);
         let transport = catalog_transport(
             server.endpoint(),
             AiGatewayModelCatalogHttpLimits::default(),
