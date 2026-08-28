@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33208109021` (`GREEN`)
 - Main Benchmark evidence: `33208109055` (`GREEN`)
 - Active branch: `agent/m03-ask-cli`
-- Active phase: `bounded top-level ask CLI contract is frozen; native identity and thin-host implementation are next`
-- Next gate: `implement generated native session identity and the strict one-shot ask host, then run focused tests`
+- Active phase: `bounded top-level ask CLI implementation and evergreen contract consolidation are focused-test green`
+- Next gate: `pass the complete exact-1.94.1 local gate on one frozen candidate, then run three fresh adversarial review tracks`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
