@@ -25,7 +25,7 @@ mod ai_gateway_model_catalog;
     not(target_family = "wasm")
 ))]
 mod ai_gateway_model_catalog_http;
-#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+#[cfg(all(feature = "vision", not(target_family = "wasm")))]
 mod ai_gateway_vision;
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
 mod ai_gateway_web_search;
@@ -63,7 +63,7 @@ mod state_environment;
 mod terminal;
 mod tool_output_serializer;
 mod tool_result_projection;
-#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+#[cfg(all(feature = "vision", not(target_family = "wasm")))]
 mod vision;
 mod vision_portable;
 #[cfg(all(feature = "web-fetch-http", not(target_family = "wasm")))]
@@ -132,7 +132,7 @@ pub use ai_gateway_model_catalog_http::{
     AiGatewayModelCatalogHttpConfigErrorKind, AiGatewayModelCatalogHttpEndpoint,
     AiGatewayModelCatalogHttpLimits, AiGatewayModelCatalogHttpTransport,
 };
-#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+#[cfg(all(feature = "vision", not(target_family = "wasm")))]
 pub use ai_gateway_vision::{
     AiGatewayVisionConfigError, AiGatewayVisionConfigErrorKind, AiGatewayVisionTransport,
 };
@@ -161,7 +161,7 @@ pub use ask_user_question::{
     QuestionPromptError, QuestionPromptOption, QuestionPromptOutcome, QuestionPromptRequest,
     QuestionPrompter,
 };
-#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+#[cfg(all(feature = "vision", not(target_family = "wasm")))]
 pub use vision::{
     MAX_VISION_BATCH_BYTES, MAX_VISION_IMAGE_BYTES, MAX_VISION_IMAGES, MAX_VISION_PATH_BYTES,
     MAX_VISION_PATH_COMPONENT_BYTES, MAX_VISION_PATH_COMPONENTS,

@@ -1,4 +1,4 @@
-#![cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+#![cfg(all(feature = "vision", not(target_family = "wasm")))]
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
