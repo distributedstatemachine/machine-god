@@ -482,13 +482,13 @@ Before authorization, core passes each validated provider call by value to
 a [`PreparedToolCall`](crate::PreparedToolCall) containing the original
 arguments and the same raw `Capability::Tool` used before preflight existed. A
 tool may instead use [`PreparedToolCall::new`](crate::PreparedToolCall::new) to
-return a normalized filesystem, process, network, custom, or tool capability
-together with replacement JSON arguments. Preparation is required to be
-deterministic, synchronous, bounded, nonblocking, and effect-free: it may
-validate and normalize values but must not open files, start processes, contact
-networks, mutate state, or otherwise exercise the capability that policy has
-not yet allowed. Core checks cancellation immediately before calling
-preparation and immediately after it returns. Because preparation is
+return a normalized filesystem, process, network, composite vision, custom, or
+tool capability together with replacement JSON arguments. Preparation is
+required to be deterministic, synchronous, bounded, nonblocking, and effect-
+free: it may validate and normalize values but must not open files, start
+processes, contact networks, mutate state, or otherwise exercise the capability
+that policy has not yet allowed. Core checks cancellation immediately before
+calling preparation and immediately after it returns. Because preparation is
 synchronous, core cannot interrupt it in flight; a blocking implementation
 would delay cancellation and violates the contract.
 
@@ -496,9 +496,9 @@ Core validates prepared execution arguments against the configured JSON depth
 and node bounds and the exact `max_tool_argument_bytes` serialized-byte limit.
 Within a prepared capability, the same depth and node traversal applies only to
 the embedded JSON `serde_json::Value` in `Capability::Tool` or
-`Capability::Custom`; the filesystem, process, and network variants contain no
-embedded JSON value to traverse. Every capability variant is additionally
-validated as a whole against one serialized-byte cap of
+`Capability::Custom`; typed filesystem, process, network, and vision variants
+contain no embedded JSON value to traverse. Every capability variant is
+additionally validated as a whole against one serialized-byte cap of
 `max_tool_argument_bytes + 1024`. The fixed 1 KiB is headroom within that total
 cap, not a separately metered envelope field or second payload budget. It keeps
 the source-compatible default from rejecting raw arguments that were valid at
@@ -508,6 +508,17 @@ no tool. It becomes the same fixed generic, durable tool-error result as an
 execution error, replacing that call's unknown
 placeholder so the next model round can recover without receiving the tool's
 diagnostic.
+
+`Capability::Vision { paths, target }` presents one indivisible policy choice:
+disclose the exact ordered normalized workspace paths to the exact normalized
+provider destination. The path set and destination share the ordinary whole-
+capability byte envelope; neither is authorized separately. A prepared call
+that contains only attachment IDs may use
+[`PreparedToolCall::without_authority`](crate::PreparedToolCall::without_authority)
+only while resolving those IDs performs no policy-governed effect. The current
+native path deterministically reports unavailable attachments without reading
+the filesystem or contacting a provider. The exact behavior is defined by the
+[`vision` contract](vision.md).
 
 Every successfully prepared invocation receives a fresh critical-risk
 authorization request for its prepared capability. Its fixed reason remains

@@ -34,18 +34,28 @@ effect-free preparation. Preparation normalizes model input into:
 
 - exact canonical arguments that allowed execution receives; and
 - a capability identifying the filesystem path and access kind, process and
-  environment identity, or network target policy must decide.
+  environment identity, network target, or indivisible ordered path set plus
+  destination that policy must decide.
 
 Authority-bearing capabilities pass through the injected permission handler.
 An error is never approval. The native ask adapter maps prompt failure to a
 fixed denial-class error and does not cache grants.
+
+Core validates every complete capability within one serialized-byte envelope
+before policy. JSON depth and node traversal applies only to an embedded JSON
+value; typed path, identity, target, and composite path-plus-target fields have
+no separate payload budget. For `vision`, one approval covers both the exact
+workspace paths disclosed and their exact provider destination; neither half
+is independently sufficient. See the [`vision` contract](vision.md).
 
 The explicit no-authority preparation disposition is a narrow trust assertion,
 not an optimization inferred from model input. It is used only when the
 prepared execution needs no policy-governed authority. The question tool uses
 it because the injected `QuestionPrompter` owns the host-interaction authority;
 the tool cannot recursively request permission or escalate through
-`permission_request_id`.
+`permission_request_id`. The current `vision` attachment-ID path also uses it:
+attachment storage is not implemented, so the path deterministically returns
+unavailable records without reading the filesystem or contacting a provider.
 
 ## Filesystem confinement
 
