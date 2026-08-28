@@ -2345,7 +2345,8 @@ impl From<StoredContentBlock> for ContentBlock {
     }
 }
 
-pub(crate) fn validate_record_json(record: &SessionRecord) -> Result<(), ()> {
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn validate_record_json(record: &SessionRecord) -> Result<(), ()> {
     let roots = record
         .metadata
         .values()
@@ -2364,10 +2365,12 @@ pub(crate) fn validate_record_json(record: &SessionRecord) -> Result<(), ()> {
     Ok(())
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct JsonValidationBudget {
     nodes: usize,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl JsonValidationBudget {
     fn validate(&mut self, root: &Value) -> Result<(), ()> {
         let mut frames = Vec::<JsonFrame<'_>>::new();
@@ -2410,16 +2413,19 @@ impl JsonValidationBudget {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct JsonFrame<'a> {
     container_depth: usize,
     children: JsonChildren<'a>,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 enum JsonChildren<'a> {
     Array(std::slice::Iter<'a, Value>),
     Object(serde_json::map::Values<'a>),
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl<'a> Iterator for JsonChildren<'a> {
     type Item = &'a Value;
 

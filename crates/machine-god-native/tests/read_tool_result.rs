@@ -379,6 +379,14 @@ fn page_text(output: &ToolOutput) -> &str {
         .expect("page text is a string")
 }
 
+fn output_with_serialized_len(target: usize) -> ToolOutput {
+    let overhead = serde_json::to_vec(&ToolOutput::success("")).unwrap().len();
+    assert!(target >= overhead);
+    let output = ToolOutput::success("x".repeat(target - overhead));
+    assert_eq!(serde_json::to_vec(&output).unwrap().len(), target);
+    output
+}
+
 #[test]
 fn schema_and_preparation_are_strict_bounded_and_canonical() {
     let store = ScriptStore::new([]);
@@ -542,6 +550,45 @@ fn public_page_start_and_configuration_bounds_are_exact() {
     assert_eq!(exact_eof.content["total_bytes"], 65_536);
     assert_eq!(exact_eof.content["has_more"], false);
     assert_eq!(store.probe.loads.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn each_candidate_has_an_independent_exact_engine_result_ceiling() {
+    const MAX_RESULT_BYTES: usize = 65_536;
+
+    let exact = Fixture::new(
+        "candidate-ceiling-exact-session",
+        "candidate-ceiling-exact-incarnation",
+        "candidate-ceiling-exact-call",
+        output_with_serialized_len(MAX_RESULT_BYTES),
+    );
+    let exact_store = ScriptStore::new([LoadStep::Ready(Ok(Some(exact.record.clone())))]);
+    let exact_page = execute(
+        &exact_store.reader(),
+        exact.context(),
+        arguments(&exact.handle, MAX_RESULT_BYTES + 1, 4),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    assert_eq!(exact_page.content["total_bytes"], MAX_RESULT_BYTES);
+    assert_eq!(page_text(&exact_page), "");
+
+    let oversized = Fixture::new(
+        "candidate-ceiling-over-session",
+        "candidate-ceiling-over-incarnation",
+        "candidate-ceiling-over-call",
+        output_with_serialized_len(MAX_RESULT_BYTES + 1),
+    );
+    let oversized_store = ScriptStore::new([LoadStep::Ready(Ok(Some(oversized.record.clone())))]);
+    assert_not_found(
+        &execute(
+            &oversized_store.reader(),
+            oversized.context(),
+            arguments(&oversized.handle, 1, 4),
+            CancellationToken::new(),
+        )
+        .unwrap_err(),
+    );
 }
 
 #[test]
@@ -942,7 +989,53 @@ fn current_round_results_do_not_consume_prior_result_budget() {
 }
 
 #[test]
-fn non_result_content_blocks_are_hard_bounded_before_an_older_target() {
+fn newest_matching_assistant_call_defines_the_current_round_boundary() {
+    let fixture = Fixture::new(
+        "newest-round-session",
+        "newest-round-incarnation",
+        "target-between-rounds",
+        ToolOutput::success("target between repeated call IDs"),
+    );
+    let reader_call = || ContentBlock::ToolCall {
+        call: ToolCall {
+            id: ToolCallId::new("reader-call").unwrap(),
+            name: ToolName::new(READ_TOOL_RESULT_TOOL_NAME).unwrap(),
+            arguments: arguments(&fixture.handle, 1, 4),
+        },
+    };
+    let mut record = fixture.record.clone();
+    record.messages.insert(
+        0,
+        Message {
+            role: Role::Assistant,
+            content: vec![reader_call()],
+        },
+    );
+    record.messages.push(Message {
+        role: Role::Assistant,
+        content: vec![reader_call()],
+    });
+    record.messages.push(Message {
+        role: Role::Tool,
+        content: vec![ContentBlock::ToolResult {
+            call_id: ToolCallId::new("reader-call").unwrap(),
+            output: ToolOutput::success("current placeholder"),
+        }],
+    });
+    let store = ScriptStore::new([LoadStep::Ready(Ok(Some(record)))]);
+
+    let page = execute(
+        &store.reader(),
+        fixture.context(),
+        arguments(&fixture.handle, 1, 16_384),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    assert_eq!(page_text(&page).as_bytes(), fixture.serialized);
+}
+
+#[test]
+fn prepass_bounds_non_result_blocks_even_after_the_current_round() {
     const MAX_SCANNED_CONTENT_BLOCKS: usize = 65_536;
 
     let fixture = Fixture::new(
@@ -951,28 +1044,57 @@ fn non_result_content_blocks_are_hard_bounded_before_an_older_target() {
         "older-target",
         ToolOutput::success("must remain outside the traversal bound"),
     );
-    let mut record = fixture.record.clone();
-    record.messages.push(Message {
-        role: Role::Assistant,
-        content: (0..=MAX_SCANNED_CONTENT_BLOCKS)
-            .map(|_| ContentBlock::Text {
-                text: String::new(),
-            })
-            .collect(),
-    });
-    let store = ScriptStore::new([LoadStep::Ready(Ok(Some(record)))]);
-    let error = execute(
-        &store.reader(),
+    let record_with_trailing_blocks = |trailing_blocks: usize| {
+        let mut record = fixture.record.clone();
+        record.messages.push(Message {
+            role: Role::Assistant,
+            content: vec![ContentBlock::ToolCall {
+                call: ToolCall {
+                    id: ToolCallId::new("reader-call").unwrap(),
+                    name: ToolName::new(READ_TOOL_RESULT_TOOL_NAME).unwrap(),
+                    arguments: arguments(&fixture.handle, 1, 4),
+                },
+            }],
+        });
+        record.messages.push(Message {
+            role: Role::Tool,
+            content: (0..trailing_blocks)
+                .map(|_| ContentBlock::Text {
+                    text: String::new(),
+                })
+                .collect(),
+        });
+        record
+    };
+
+    let exact_store = ScriptStore::new([LoadStep::Ready(Ok(Some(record_with_trailing_blocks(
+        MAX_SCANNED_CONTENT_BLOCKS - 2,
+    ))))]);
+    let exact = execute(
+        &exact_store.reader(),
         fixture.context(),
         arguments(&fixture.handle, 1, 4),
         CancellationToken::new(),
     )
-    .unwrap_err();
-    assert_not_found(&error);
+    .unwrap();
+    assert_eq!(page_text(&exact).len(), 4);
+
+    let over_store = ScriptStore::new([LoadStep::Ready(Ok(Some(record_with_trailing_blocks(
+        MAX_SCANNED_CONTENT_BLOCKS - 1,
+    ))))]);
+    assert_not_found(
+        &execute(
+            &over_store.reader(),
+            fixture.context(),
+            arguments(&fixture.handle, 1, 4),
+            CancellationToken::new(),
+        )
+        .unwrap_err(),
+    );
 }
 
 #[test]
-fn message_traversal_is_hard_bounded_before_an_older_target() {
+fn prepass_bounds_empty_messages_even_after_the_current_round() {
     const MAX_SCANNED_MESSAGES: usize = 4_096;
 
     let fixture = Fixture::new(
@@ -981,22 +1103,51 @@ fn message_traversal_is_hard_bounded_before_an_older_target() {
         "older-target",
         ToolOutput::success("must remain outside the message bound"),
     );
-    let mut record = fixture.record.clone();
-    record
-        .messages
-        .extend((0..MAX_SCANNED_MESSAGES).map(|_| Message {
+    let record_with_trailing_messages = |trailing_messages: usize| {
+        let mut record = fixture.record.clone();
+        record.messages.push(Message {
             role: Role::Assistant,
-            content: Vec::new(),
-        }));
-    let store = ScriptStore::new([LoadStep::Ready(Ok(Some(record)))]);
-    let error = execute(
-        &store.reader(),
+            content: vec![ContentBlock::ToolCall {
+                call: ToolCall {
+                    id: ToolCallId::new("reader-call").unwrap(),
+                    name: ToolName::new(READ_TOOL_RESULT_TOOL_NAME).unwrap(),
+                    arguments: arguments(&fixture.handle, 1, 4),
+                },
+            }],
+        });
+        record
+            .messages
+            .extend((0..trailing_messages).map(|_| Message {
+                role: Role::Tool,
+                content: Vec::new(),
+            }));
+        record
+    };
+
+    let exact_store = ScriptStore::new([LoadStep::Ready(Ok(Some(record_with_trailing_messages(
+        MAX_SCANNED_MESSAGES - 2,
+    ))))]);
+    let exact = execute(
+        &exact_store.reader(),
         fixture.context(),
         arguments(&fixture.handle, 1, 4),
         CancellationToken::new(),
     )
-    .unwrap_err();
-    assert_not_found(&error);
+    .unwrap();
+    assert_eq!(page_text(&exact).len(), 4);
+
+    let over_store = ScriptStore::new([LoadStep::Ready(Ok(Some(record_with_trailing_messages(
+        MAX_SCANNED_MESSAGES - 1,
+    ))))]);
+    assert_not_found(
+        &execute(
+            &over_store.reader(),
+            fixture.context(),
+            arguments(&fixture.handle, 1, 4),
+            CancellationToken::new(),
+        )
+        .unwrap_err(),
+    );
 }
 
 #[test]

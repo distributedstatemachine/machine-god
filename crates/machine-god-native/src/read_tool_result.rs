@@ -1,14 +1,12 @@
 //! Bounded session-backed paging for projected tool results.
 
-use crate::session_store::{
-    MAX_STORED_JSON_DEPTH, MAX_STORED_JSON_NODES, RecordOwner, validate_record_json,
-};
+use crate::session_store::{MAX_STORED_JSON_DEPTH, MAX_STORED_JSON_NODES, RecordOwner};
 use crate::tool_output_serializer::{
     CompactToolOutputError, CompactToolOutputLimits, serialize_tool_output_compact,
 };
 use crate::tool_result_projection::{tool_result_digest, valid_tool_result_handle};
 use machine_god_core::{
-    BoxFuture, CancellationToken, ContentBlock, Message, PreparedToolCall, Role, SessionRecord,
+    BoxFuture, CancellationToken, ContentBlock, PreparedToolCall, Role, SessionRecord,
     SessionStore, Tool, ToolCall, ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput,
     ToolSpec,
 };
@@ -35,6 +33,7 @@ const DEFAULT_MAX_SCANNED_RESULTS: usize = 4_096;
 const DEFAULT_MAX_SERIALIZED_SCAN_BYTES: usize = 8 * 1024 * 1024;
 const MAX_SCANNED_MESSAGES: usize = 4_096;
 const MAX_SCANNED_CONTENT_BLOCKS: usize = 65_536;
+const MAX_SERIALIZED_TOOL_RESULT_BYTES: usize = 65_536;
 const TOOL_RESULT_HANDLE_PREFIX: &str = "tool-result-sha256-";
 
 /// Stable construction-error category.
@@ -288,12 +287,21 @@ impl Tool for ReadToolResultTool {
             {
                 return checked_error(&cancellation, not_found());
             }
-            if validate_record_json(record.get()).is_err() {
-                return checked_error(&cancellation, resource_limit());
-            }
+            check_cancellation(&cancellation)?;
+            let prior_message_end = match prepass_record(record.get(), &context, &cancellation) {
+                Ok(prior_message_end) => prior_message_end,
+                Err(error) => return checked_error(&cancellation, error),
+            };
             check_cancellation(&cancellation)?;
 
-            match scan_record(record.get(), &context, &normalized, limits, &cancellation) {
+            match scan_record(
+                record.get(),
+                prior_message_end,
+                &context,
+                &normalized,
+                limits,
+                &cancellation,
+            ) {
                 Ok(output) => {
                     check_cancellation(&cancellation)?;
                     Ok(output)
@@ -306,28 +314,19 @@ impl Tool for ReadToolResultTool {
 
 fn scan_record(
     record: &SessionRecord,
+    prior_message_end: usize,
     context: &ToolContext,
     arguments: &NormalizedArguments,
     limits: ReadToolResultLimits,
     cancellation: &CancellationToken,
 ) -> Result<ToolOutput, ToolError> {
-    let mut scanned_messages = 0_usize;
-    let mut scanned_blocks = 0_usize;
     let mut scanned_results = 0_usize;
     let mut scanned_bytes = 0_usize;
     let mut serialized = Vec::new();
-    for message in prior_messages(record, context).iter().rev() {
+    for message in record.messages[..prior_message_end].iter().rev() {
         check_cancellation(cancellation)?;
-        scanned_messages = match scanned_messages.checked_add(1) {
-            Some(value) if value <= MAX_SCANNED_MESSAGES => value,
-            _ => return checked_error(cancellation, not_found()),
-        };
         for block in message.content.iter().rev() {
             check_cancellation(cancellation)?;
-            scanned_blocks = match scanned_blocks.checked_add(1) {
-                Some(value) if value <= MAX_SCANNED_CONTENT_BLOCKS => value,
-                _ => return checked_error(cancellation, not_found()),
-            };
             let ContentBlock::ToolResult {
                 ref call_id,
                 ref output,
@@ -342,9 +341,12 @@ fn scan_record(
             let Some(remaining) = limits.serialized_scan_bytes.checked_sub(scanned_bytes) else {
                 return checked_error(cancellation, not_found());
             };
-            if let Err(error) =
-                serialize_output_bounded(output, &mut serialized, remaining, cancellation)
-            {
+            if let Err(error) = serialize_output_bounded(
+                output,
+                &mut serialized,
+                remaining.min(MAX_SERIALIZED_TOOL_RESULT_BYTES),
+                cancellation,
+            ) {
                 return checked_error(cancellation, error);
             }
             scanned_bytes = match scanned_bytes.checked_add(serialized.len()) {
@@ -372,19 +374,139 @@ fn scan_record(
     checked_error(cancellation, not_found())
 }
 
-fn prior_messages<'a>(record: &'a SessionRecord, context: &ToolContext) -> &'a [Message] {
-    let current_round = record.messages.iter().rposition(|message| {
-        message.role == Role::Assistant
-            && message.content.iter().any(|block| {
-                matches!(
-                    block,
-                    ContentBlock::ToolCall { call } if call.id == context.call_id
-                )
-            })
-    });
-    current_round.map_or(record.messages.as_slice(), |index| {
-        &record.messages[..index]
-    })
+fn prepass_record(
+    record: &SessionRecord,
+    context: &ToolContext,
+    cancellation: &CancellationToken,
+) -> Result<usize, ToolError> {
+    prepass_record_observed(record, context, cancellation, || {})
+}
+
+fn prepass_record_observed(
+    record: &SessionRecord,
+    context: &ToolContext,
+    cancellation: &CancellationToken,
+    mut observe: impl FnMut(),
+) -> Result<usize, ToolError> {
+    check_cancellation(cancellation)?;
+    if record.messages.len() > MAX_SCANNED_MESSAGES {
+        return checked_error(cancellation, not_found());
+    }
+
+    let mut json_budget = StoredJsonBudget { nodes: 0 };
+    for value in record.metadata.values() {
+        json_budget.validate(value, cancellation, &mut observe)?;
+    }
+
+    let mut inspected_blocks = 0_usize;
+    let mut current_round = None;
+    for (message_index, message) in record.messages.iter().enumerate() {
+        observe();
+        check_cancellation(cancellation)?;
+        inspected_blocks = inspected_blocks
+            .checked_add(message.content.len())
+            .filter(|blocks| *blocks <= MAX_SCANNED_CONTENT_BLOCKS)
+            .ok_or_else(not_found)?;
+
+        let mut contains_current_call = false;
+        for block in &message.content {
+            observe();
+            check_cancellation(cancellation)?;
+            match block {
+                ContentBlock::Json { value } => {
+                    json_budget.validate(value, cancellation, &mut observe)?;
+                }
+                ContentBlock::ToolCall { call } => {
+                    contains_current_call |=
+                        message.role == Role::Assistant && call.id == context.call_id;
+                    json_budget.validate(&call.arguments, cancellation, &mut observe)?;
+                }
+                ContentBlock::ToolResult { output, .. } => {
+                    json_budget.validate(&output.content, cancellation, &mut observe)?;
+                }
+                ContentBlock::Text { .. } | _ => {}
+            }
+        }
+        if contains_current_call {
+            current_round = Some(message_index);
+        }
+    }
+    check_cancellation(cancellation)?;
+    Ok(current_round.unwrap_or(record.messages.len()))
+}
+
+struct StoredJsonBudget {
+    nodes: usize,
+}
+
+impl StoredJsonBudget {
+    fn validate(
+        &mut self,
+        root: &Value,
+        cancellation: &CancellationToken,
+        observe: &mut impl FnMut(),
+    ) -> Result<(), ToolError> {
+        let mut frames = Vec::<StoredJsonFrame<'_>>::new();
+        let mut current = Some((root, 0_usize));
+        loop {
+            if let Some((value, parent_depth)) = current.take() {
+                observe();
+                check_cancellation(cancellation)?;
+                self.nodes = self
+                    .nodes
+                    .checked_add(1)
+                    .filter(|nodes| *nodes <= MAX_STORED_JSON_NODES)
+                    .ok_or_else(resource_limit)?;
+                let children = match value {
+                    Value::Array(values) => Some(StoredJsonChildren::Array(values.iter())),
+                    Value::Object(values) => Some(StoredJsonChildren::Object(values.values())),
+                    Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
+                };
+                if let Some(children) = children {
+                    let container_depth = parent_depth.checked_add(1).ok_or_else(resource_limit)?;
+                    if container_depth > MAX_STORED_JSON_DEPTH {
+                        return checked_error(cancellation, resource_limit());
+                    }
+                    frames.push(StoredJsonFrame {
+                        container_depth,
+                        children,
+                    });
+                }
+            }
+
+            loop {
+                let Some(frame) = frames.last_mut() else {
+                    return Ok(());
+                };
+                if let Some(child) = frame.children.next() {
+                    current = Some((child, frame.container_depth));
+                    break;
+                }
+                frames.pop();
+            }
+        }
+    }
+}
+
+struct StoredJsonFrame<'a> {
+    container_depth: usize,
+    children: StoredJsonChildren<'a>,
+}
+
+enum StoredJsonChildren<'a> {
+    Array(std::slice::Iter<'a, Value>),
+    Object(serde_json::map::Values<'a>),
+}
+
+impl<'a> Iterator for StoredJsonChildren<'a> {
+    type Item = &'a Value;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Array(children) => children.next(),
+            Self::Object(children) => children.next(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -655,4 +777,88 @@ fn cancelled() -> ToolError {
         "read_tool_result was cancelled",
         false,
     )
+}
+
+#[cfg(test)]
+mod prepass_tests {
+    use super::*;
+    use machine_god_core::{Message, SessionId, SessionIncarnationId, ToolCallId, TurnId};
+
+    fn context(session_id: SessionId, incarnation_id: SessionIncarnationId) -> ToolContext {
+        ToolContext {
+            session_id,
+            session_incarnation_id: incarnation_id,
+            turn_id: TurnId::new("prepass-test-turn").unwrap(),
+            call_id: ToolCallId::new("prepass-test-call").unwrap(),
+        }
+    }
+
+    #[test]
+    fn cancellation_is_observed_at_the_exact_injected_prepass_inspection() {
+        let session_id = SessionId::new("prepass-cancel-session").unwrap();
+        let incarnation_id = SessionIncarnationId::new("prepass-cancel-incarnation").unwrap();
+        let mut record = SessionRecord::empty(session_id.clone(), incarnation_id.clone());
+        record.messages.push(Message {
+            role: Role::Assistant,
+            content: vec![ContentBlock::Json {
+                value: serde_json::json!([0, 1, 2]),
+            }],
+        });
+        let context = context(session_id, incarnation_id);
+        let cancellation = CancellationToken::new();
+        let cancellation_trigger = cancellation.clone();
+        let mut inspections = 0_usize;
+        let error = prepass_record_observed(&record, &context, &cancellation, || {
+            inspections += 1;
+            if inspections == 3 {
+                cancellation_trigger.cancel();
+            }
+        })
+        .unwrap_err();
+
+        assert_eq!(inspections, 3);
+        assert_eq!(error.kind, ToolErrorKind::Cancelled);
+        assert_eq!(error.code, "read_tool_result_cancelled");
+    }
+
+    #[test]
+    fn structural_overflow_is_rejected_before_excess_content_is_inspected() {
+        let session_id = SessionId::new("prepass-structure-session").unwrap();
+        let incarnation_id = SessionIncarnationId::new("prepass-structure-incarnation").unwrap();
+        let tool_context = context(session_id.clone(), incarnation_id.clone());
+        let cancellation = CancellationToken::new();
+
+        let mut message_overflow = SessionRecord::empty(session_id.clone(), incarnation_id.clone());
+        message_overflow
+            .messages
+            .extend((0..=MAX_SCANNED_MESSAGES).map(|_| Message {
+                role: Role::Tool,
+                content: Vec::new(),
+            }));
+        let mut message_inspections = 0_usize;
+        let error =
+            prepass_record_observed(&message_overflow, &tool_context, &cancellation, || {
+                message_inspections += 1
+            })
+            .unwrap_err();
+        assert_eq!(error.code, "read_tool_result_not_found");
+        assert_eq!(message_inspections, 0);
+
+        let mut block_overflow = SessionRecord::empty(session_id, incarnation_id);
+        block_overflow.messages.push(Message {
+            role: Role::Tool,
+            content: (0..=MAX_SCANNED_CONTENT_BLOCKS)
+                .map(|_| ContentBlock::Text {
+                    text: String::new(),
+                })
+                .collect(),
+        });
+        let mut block_inspections = 0_usize;
+        let error = prepass_record_observed(&block_overflow, &tool_context, &cancellation, || {
+            block_inspections += 1
+        })
+        .unwrap_err();
+        assert_eq!(error.code, "read_tool_result_not_found");
+        assert_eq!(block_inspections, 1);
+    }
 }
