@@ -557,6 +557,41 @@ fn two_empty_success_outputs_exhaust_the_single_semantic_retry() {
 }
 
 #[test]
+fn json_fence_trimming_accepts_only_pinned_ascii_edges() {
+    let result = valid_result().to_string();
+    let ascii_wrapped = format!(" \t\r\n```json\r\n \t\r\n{result}\r\n\t ``` \t\r\n");
+    let transport = ScriptedTransport::one(sse_unframed_text(&ascii_wrapped));
+    let response = execute(Arc::new(transport.clone()), request(vec![png(1, &[1])])).unwrap();
+    assert_eq!(response.images().len(), 1);
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+
+    for wrapper in ["\u{00a0}", "\u{000b}", "\u{000c}"] {
+        for invalid in [
+            format!("{wrapper}```json\n{result}\n```{wrapper}"),
+            format!("```json\n{wrapper}{result}{wrapper}\n```"),
+        ] {
+            let invalid_response = sse_unframed_text(&invalid);
+            let valid_response = sse_unframed_text(&ascii_wrapped);
+            let recovered =
+                ScriptedTransport::new(vec![vec![invalid_response.clone()], vec![valid_response]]);
+            let response =
+                execute(Arc::new(recovered.clone()), request(vec![png(1, &[1])])).unwrap();
+            assert_eq!(response.images().len(), 1);
+            assert_eq!(recovered.calls.load(Ordering::SeqCst), 2);
+
+            let exhausted = ScriptedTransport::new(vec![
+                vec![invalid_response.clone()],
+                vec![invalid_response],
+            ]);
+            let error =
+                execute(Arc::new(exhausted.clone()), request(vec![png(1, &[1])])).unwrap_err();
+            assert_eq!(error.kind(), VisionTransportErrorKind::InvalidResponse);
+            assert_eq!(exhausted.calls.load(Ordering::SeqCst), 2);
+        }
+    }
+}
+
+#[test]
 fn summary_blankness_uses_exact_pinned_edges_and_preserves_other_content() {
     let ascii_blank = json!({"images": [{
         "image_id": 1,
@@ -906,6 +941,77 @@ fn done_releases_pending_source_before_result_publication() {
     let result = execute(Arc::new(transport), request(vec![png(1, &[1])])).unwrap();
     assert_eq!(result.images().len(), 1);
     assert_eq!(drops.load(Ordering::SeqCst), 1);
+}
+
+#[derive(Clone)]
+struct EmptyThenPendingTransport {
+    calls: Arc<AtomicUsize>,
+    drops: Arc<AtomicUsize>,
+}
+
+struct EmptyThenPendingStream {
+    yielded_empty: bool,
+    drops: Arc<AtomicUsize>,
+}
+
+impl Stream for EmptyThenPendingStream {
+    type Item = Result<Vec<u8>, ProviderError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.yielded_empty {
+            Poll::Pending
+        } else {
+            self.yielded_empty = true;
+            Poll::Ready(Some(Ok(Vec::new())))
+        }
+    }
+}
+
+impl Drop for EmptyThenPendingStream {
+    fn drop(&mut self) {
+        self.drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl AiGatewayTransport for EmptyThenPendingTransport {
+    fn stream(
+        &self,
+        _request: AiGatewayTransportRequest,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<AiGatewayByteStream, ProviderError>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let drops = Arc::clone(&self.drops);
+        Box::pin(async move {
+            Ok(Box::pin(EmptyThenPendingStream {
+                yielded_empty: false,
+                drops,
+            }) as AiGatewayByteStream)
+        })
+    }
+}
+
+#[test]
+fn empty_success_chunk_returns_protocol_failure_and_releases_pending_source() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let drops = Arc::new(AtomicUsize::new(0));
+    let transport = EmptyThenPendingTransport {
+        calls: Arc::clone(&calls),
+        drops: Arc::clone(&drops),
+    };
+    let worker = AiGatewayVisionTransport::new(MODEL, Arc::new(transport)).unwrap();
+    let mut future = worker.analyze(
+        request(vec![png(1, b"PRIVATE_EMPTY_CHUNK_IMAGE_SENTINEL")]),
+        CancellationToken::new(),
+    );
+
+    let Poll::Ready(Err(error)) = poll_once(future.as_mut()) else {
+        panic!("empty success chunk must complete without polling the pending source again")
+    };
+    assert_eq!(error.kind(), VisionTransportErrorKind::Protocol);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(drops.load(Ordering::SeqCst), 1);
+    let rendered = format!("{error:?} {error}");
+    assert!(!rendered.contains("PRIVATE_EMPTY_CHUNK_IMAGE_SENTINEL"));
 }
 
 #[derive(Clone)]

@@ -172,6 +172,14 @@ async fn run_attempt(
             break;
         };
         let chunk = chunk.map_err(|error| map_provider_error(&error))?;
+        if chunk.is_empty() {
+            // A successful empty item cannot advance the decoder and a
+            // hostile source could otherwise remain pending forever after
+            // yielding it. Release the source before publishing the fixed
+            // protocol failure.
+            drop(stream);
+            return Err(protocol_error());
+        }
         decoder.push(&chunk, &cancellation)?;
         if decoder.is_done() {
             break;
@@ -915,12 +923,18 @@ fn strict_json_error_is_node_limit(error: &serde_json::Error) -> bool {
 }
 
 fn single_json_fence_payload(text: &str) -> Option<&str> {
-    let trimmed = text.trim();
+    let trimmed = trim_pinned_ascii_edges(text);
     let after_prefix = trimmed.strip_prefix("```json")?;
     if !after_prefix.starts_with(['\n', '\r']) {
         return None;
     }
-    after_prefix.strip_suffix("```").map(str::trim)
+    after_prefix
+        .strip_suffix("```")
+        .map(trim_pinned_ascii_edges)
+}
+
+fn trim_pinned_ascii_edges(value: &str) -> &str {
+    value.trim_matches(|character| matches!(character, ' ' | '\t' | '\r' | '\n'))
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
