@@ -26,9 +26,9 @@ use crate::vision_portable::{
     VisionTransportErrorKind,
 };
 
-#[cfg(unix)]
-use rustix::fd::{AsFd, OwnedFd};
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use rustix::fd::OwnedFd;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use rustix::fs::{FileType, Mode, OFlags};
 
 /// Model-visible tool name.
@@ -57,7 +57,7 @@ pub const VISION_DEFAULT_MAX_ACTIVE_REQUESTS: usize = 2;
 pub const VISION_MAX_ACTIVE_REQUESTS: usize = 8;
 
 const READ_CHUNK_BYTES: usize = 64 * 1024;
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const SIGNATURE_PROBE_BYTES: usize = 12;
 const VISION_DESCRIPTION: &str = "Inspect up to 20 workspace images with a focused question. Accepts exactly one of workspace-relative paths or prior image attachment IDs; attachment history is unavailable in this host slice.";
 
@@ -180,9 +180,9 @@ impl Default for VisionLimits {
 /// Native, workspace-confined vision tool with explicitly injected network and
 /// deadline authorities.
 pub struct VisionTool {
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     root: OwnedFd,
-    #[cfg(not(unix))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     _unsupported: std::convert::Infallible,
     target: NetworkTarget,
     transport: Arc<dyn VisionTransport>,
@@ -222,7 +222,7 @@ impl VisionTool {
     ) -> Result<Self, VisionConfigError> {
         validate_target(&target)?;
 
-        #[cfg(not(unix))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = (root, transport, deadline, limits);
             Err(VisionConfigError::new(
@@ -230,7 +230,7 @@ impl VisionTool {
             ))
         }
 
-        #[cfg(unix)]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             let lexical_root = root.components().collect::<std::path::PathBuf>();
             if !lexical_root.is_absolute() {
@@ -250,7 +250,7 @@ impl VisionTool {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn from_root_descriptor(
         root: OwnedFd,
         target: NetworkTarget,
@@ -396,13 +396,13 @@ impl Tool for VisionTool {
                 }
             };
 
-            #[cfg(not(unix))]
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             {
                 let _ = (context, paths);
                 Err(unsupported_platform_error())
             }
 
-            #[cfg(unix)]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             {
                 self.execute_supported(context, focus, paths, cancellation)
                     .await
@@ -411,7 +411,7 @@ impl Tool for VisionTool {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl VisionTool {
     async fn execute_supported(
         &self,
@@ -435,12 +435,38 @@ impl VisionTool {
             .await?;
         check_cancellation_and_deadline(&cancellation, Some(deadline))?;
 
+        let output = self
+            .process_paths(
+                &context,
+                &focus,
+                &paths,
+                &cancellation,
+                deadline,
+                Pin::new(&mut cancelled),
+                timeout.as_mut(),
+            )
+            .await?;
+        drop(permit);
+        Ok(output)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn process_paths(
+        &self,
+        context: &ToolContext,
+        focus: &str,
+        paths: &[String],
+        cancellation: &CancellationToken,
+        deadline: Instant,
+        mut cancelled: Pin<&mut machine_god_core::Cancelled>,
+        mut timeout: Pin<&mut (dyn Future<Output = Result<(), VisionTransportError>> + Send)>,
+    ) -> Result<ToolOutput, ToolError> {
         let mut results = BTreeMap::new();
         let mut batch = Vec::with_capacity(MAX_VISION_BATCH_IMAGES);
         let mut batch_bytes = 0_usize;
         let mut processed_bytes = 0_usize;
         for (index, path) in paths.iter().enumerate() {
-            check_cancellation_and_deadline(&cancellation, Some(deadline))?;
+            check_cancellation_and_deadline(cancellation, Some(deadline))?;
             let image_id = u64::try_from(index + 1).expect("at most 20 vision images fit u64");
             let remaining_total = MAX_VISION_TOTAL_IMAGE_BYTES.saturating_sub(processed_bytes);
             if remaining_total == 0 {
@@ -448,30 +474,44 @@ impl VisionTool {
                 continue;
             }
             let image_limit = remaining_total.min(MAX_VISION_IMAGE_BYTES);
-            match self.read_image(path, image_id, image_limit, &cancellation, deadline) {
-                Ok(read) => {
-                    processed_bytes = processed_bytes.saturating_add(read.bytes_read);
-                    let Some(image) = read.image else {
+            match self.open_and_probe_image(path, image_limit, cancellation, deadline) {
+                Ok(probe) => {
+                    processed_bytes = processed_bytes.saturating_add(probe.bytes_read);
+                    let probe_bytes = probe.bytes_read;
+                    let Some(image) = probe.image else {
                         results.insert(image_id, RenderedImage::unavailable(image_id));
                         continue;
                     };
-                    let image_bytes = image.bytes().len();
+                    let image_bytes = image.fingerprint.size;
                     let crosses_batch =
                         vision_batch_would_overflow(batch.len(), batch_bytes, image_bytes);
                     if crosses_batch {
                         self.dispatch_batch(
                             std::mem::take(&mut batch),
-                            &context,
-                            &focus,
-                            &cancellation,
+                            context,
+                            focus,
+                            cancellation,
                             deadline,
-                            Pin::new(&mut cancelled),
+                            cancelled.as_mut(),
                             timeout.as_mut(),
                             &mut results,
                         )
                         .await?;
                         batch_bytes = 0;
                     }
+                    let read =
+                        match self.finish_image_read(path, image, image_id, cancellation, deadline)
+                        {
+                            Ok(read) => read,
+                            Err(LocalImageFailure::Cancelled) => return Err(cancelled_error()),
+                            Err(LocalImageFailure::Timeout) => return Err(timeout_error()),
+                        };
+                    processed_bytes =
+                        processed_bytes.saturating_add(read.bytes_read.saturating_sub(probe_bytes));
+                    let Some(image) = read.image else {
+                        results.insert(image_id, RenderedImage::unavailable(image_id));
+                        continue;
+                    };
                     batch_bytes = batch_bytes
                         .checked_add(image_bytes)
                         .filter(|bytes| *bytes <= MAX_VISION_BATCH_BYTES)
@@ -482,11 +522,11 @@ impl VisionTool {
                     {
                         self.dispatch_batch(
                             std::mem::take(&mut batch),
-                            &context,
-                            &focus,
-                            &cancellation,
+                            context,
+                            focus,
+                            cancellation,
                             deadline,
-                            Pin::new(&mut cancelled),
+                            cancelled.as_mut(),
                             timeout.as_mut(),
                             &mut results,
                         )
@@ -498,28 +538,50 @@ impl VisionTool {
                 Err(LocalImageFailure::Timeout) => return Err(timeout_error()),
             }
         }
+        self.finish_execution(
+            batch,
+            paths.len(),
+            context,
+            focus,
+            cancellation,
+            deadline,
+            cancelled,
+            timeout.as_mut(),
+            &mut results,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn finish_execution(
+        &self,
+        batch: Vec<VisionImage>,
+        source_count: usize,
+        context: &ToolContext,
+        focus: &str,
+        cancellation: &CancellationToken,
+        deadline: Instant,
+        cancelled: Pin<&mut machine_god_core::Cancelled>,
+        timeout: Pin<&mut (dyn Future<Output = Result<(), VisionTransportError>> + Send)>,
+        results: &mut BTreeMap<u64, RenderedImage>,
+    ) -> Result<ToolOutput, ToolError> {
         if !batch.is_empty() {
             self.dispatch_batch(
-                std::mem::take(&mut batch),
-                &context,
-                &focus,
-                &cancellation,
+                batch,
+                context,
+                focus,
+                cancellation,
                 deadline,
-                Pin::new(&mut cancelled),
-                timeout.as_mut(),
-                &mut results,
+                cancelled,
+                timeout,
+                results,
             )
             .await?;
         }
 
-        check_cancellation_and_deadline(&cancellation, Some(deadline))?;
-        let output = render_results_in_source_order(paths.len(), &mut results)?;
-        check_cancellation_and_deadline(&cancellation, Some(deadline))?;
-
-        // `batch` has been moved into and released by the final provider call.
-        // Release its allocation before invocation capacity on the success path.
-        drop(batch);
-        drop(permit);
+        check_cancellation_and_deadline(cancellation, Some(deadline))?;
+        let output = render_results_in_source_order(source_count, results)?;
+        check_cancellation_and_deadline(cancellation, Some(deadline))?;
         Ok(output)
     }
 
@@ -592,55 +654,21 @@ impl VisionTool {
         check_cancellation_and_deadline(cancellation, Some(deadline))
     }
 
-    fn read_image(
+    fn open_and_probe_image(
         &self,
         path: &str,
-        image_id: u64,
         max_bytes: usize,
         cancellation: &CancellationToken,
         deadline: Instant,
-    ) -> Result<LocalImageRead, LocalImageFailure> {
+    ) -> Result<LocalImageProbe, LocalImageFailure> {
         local_boundary(cancellation, deadline)?;
-        let mut directory: Option<OwnedFd> = None;
-        let mut components = path.split('/').peekable();
-        let file = loop {
-            local_boundary(cancellation, deadline)?;
-            let Some(component) = components.next() else {
-                return Ok(LocalImageRead::unavailable(0));
-            };
-            let directory_fd = directory
-                .as_ref()
-                .map_or_else(|| self.root.as_fd(), AsFd::as_fd);
-            if components.peek().is_some() {
-                let Ok(opened) = rustix::fs::openat(
-                    directory_fd,
-                    component,
-                    OFlags::RDONLY
-                        | OFlags::DIRECTORY
-                        | OFlags::NOFOLLOW
-                        | OFlags::CLOEXEC
-                        | OFlags::NONBLOCK,
-                    Mode::empty(),
-                ) else {
-                    return Ok(LocalImageRead::unavailable(0));
-                };
-                directory = Some(opened);
-            } else {
-                let Ok(opened) = rustix::fs::openat(
-                    directory_fd,
-                    component,
-                    OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
-                    Mode::empty(),
-                ) else {
-                    return Ok(LocalImageRead::unavailable(0));
-                };
-                break opened;
-            }
+        let Ok(file) = open_confined_image(&self.root, path) else {
+            return Ok(LocalImageProbe::unavailable(0));
         };
 
         local_boundary(cancellation, deadline)?;
         let Ok(metadata) = rustix::fs::fstat(&file) else {
-            return Ok(LocalImageRead::unavailable(0));
+            return Ok(LocalImageProbe::unavailable(0));
         };
         if !FileType::from_raw_mode(metadata.st_mode).is_file()
             || metadata.st_nlink == 0
@@ -648,16 +676,36 @@ impl VisionTool {
                 .ok()
                 .is_none_or(|size| size > max_bytes)
         {
-            return Ok(LocalImageRead::unavailable(0));
+            return Ok(LocalImageProbe::unavailable(0));
         }
         let Some(fingerprint) = ImageFingerprint::from_stat(&metadata) else {
-            return Ok(LocalImageRead::unavailable(0));
+            return Ok(LocalImageProbe::unavailable(0));
         };
-        read_verified_image(&file, fingerprint, image_id, cancellation, deadline)
+        if !confined_binding_matches(&self.root, &file, path) {
+            return Ok(LocalImageProbe::unavailable(0));
+        }
+        probe_verified_image(file, fingerprint, cancellation, deadline)
+    }
+
+    fn finish_image_read(
+        &self,
+        path: &str,
+        image: ProbedImage,
+        image_id: u64,
+        cancellation: &CancellationToken,
+        deadline: Instant,
+    ) -> Result<LocalImageRead, LocalImageFailure> {
+        let bytes_read_before = image.probe_len;
+        let read = finish_verified_image(image, image_id, cancellation, deadline)?;
+        if read.image.is_some() && !confined_binding_matches(&self.root, &read.file, path) {
+            return Ok(LocalImageRead::unavailable(read.bytes_read));
+        }
+        debug_assert!(read.bytes_read >= bytes_read_before);
+        Ok(read.without_file())
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ImageFingerprint {
     device: i128,
@@ -671,7 +719,7 @@ struct ImageFingerprint {
     changed_nanoseconds: i128,
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl ImageFingerprint {
     fn from_stat(metadata: &rustix::fs::Stat) -> Option<Self> {
         Some(Self {
@@ -692,18 +740,34 @@ impl ImageFingerprint {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct LocalImageRead {
     image: Option<VisionImage>,
     bytes_read: usize,
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl LocalImageRead {
-    fn available(image: VisionImage, bytes_read: usize) -> Self {
+    const fn unavailable(bytes_read: usize) -> Self {
         Self {
-            image: Some(image),
+            image: None,
             bytes_read,
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct LocalImageProbe {
+    image: Option<ProbedImage>,
+    bytes_read: usize,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl LocalImageProbe {
+    fn available(image: ProbedImage) -> Self {
+        Self {
+            bytes_read: image.probe_len,
+            image: Some(image),
         }
     }
 
@@ -715,73 +779,197 @@ impl LocalImageRead {
     }
 }
 
-#[cfg(unix)]
-fn read_verified_image(
-    file: &OwnedFd,
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct ProbedImage {
+    file: OwnedFd,
     fingerprint: ImageFingerprint,
+    media_type: VisionMediaType,
+    probe: [u8; SIGNATURE_PROBE_BYTES],
+    probe_len: usize,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct CompletedImageRead {
+    file: OwnedFd,
+    image: Option<VisionImage>,
+    bytes_read: usize,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl CompletedImageRead {
+    fn available(file: OwnedFd, image: VisionImage, bytes_read: usize) -> Self {
+        Self {
+            file,
+            image: Some(image),
+            bytes_read,
+        }
+    }
+
+    fn unavailable(file: OwnedFd, bytes_read: usize) -> Self {
+        Self {
+            file,
+            image: None,
+            bytes_read,
+        }
+    }
+
+    fn without_file(self) -> LocalImageRead {
+        LocalImageRead {
+            image: self.image,
+            bytes_read: self.bytes_read,
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn open_confined_image(root: &OwnedFd, path: &str) -> rustix::io::Result<OwnedFd> {
+    rustix::fs::openat2(
+        root,
+        path,
+        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NONBLOCK,
+        Mode::empty(),
+        rustix::fs::ResolveFlags::BENEATH
+            | rustix::fs::ResolveFlags::NO_SYMLINKS
+            | rustix::fs::ResolveFlags::NO_MAGICLINKS,
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn open_confined_image(root: &OwnedFd, path: &str) -> rustix::io::Result<OwnedFd> {
+    let nofollow_any = OFlags::from_bits_retain(libc::O_NOFOLLOW_ANY as _);
+    rustix::fs::openat(
+        root,
+        path,
+        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NONBLOCK | nofollow_any,
+        Mode::empty(),
+    )
+}
+
+#[cfg(target_os = "linux")]
+const fn confined_binding_matches(_root: &OwnedFd, _file: &OwnedFd, _path: &str) -> bool {
+    true
+}
+
+#[cfg(target_os = "macos")]
+fn confined_binding_matches(root: &OwnedFd, file: &OwnedFd, path: &str) -> bool {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let Ok(root_path) = rustix::fs::getpath(root) else {
+        return false;
+    };
+    let Ok(file_path) = rustix::fs::getpath(file) else {
+        return false;
+    };
+    let expected = Path::new(OsStr::from_bytes(root_path.as_bytes())).join(path);
+    expected.as_os_str().as_bytes() == file_path.as_bytes()
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn probe_verified_image(
+    file: OwnedFd,
+    fingerprint: ImageFingerprint,
+    cancellation: &CancellationToken,
+    deadline: Instant,
+) -> Result<LocalImageProbe, LocalImageFailure> {
+    let mut probe = [0_u8; SIGNATURE_PROBE_BYTES];
+    let expected = fingerprint.size.min(SIGNATURE_PROBE_BYTES);
+    let mut bytes_read = 0_usize;
+    while bytes_read < expected {
+        local_boundary(cancellation, deadline)?;
+        match rustix::io::read(&file, &mut probe[bytes_read..expected]) {
+            Ok(0) => return Ok(LocalImageProbe::unavailable(bytes_read)),
+            Ok(read) => {
+                bytes_read += read;
+                local_boundary(cancellation, deadline)?;
+            }
+            Err(error) if error == rustix::io::Errno::INTR => {}
+            Err(_) => return Ok(LocalImageProbe::unavailable(bytes_read)),
+        }
+    }
+    let Some(media_type) = sniff_media_type(&probe[..bytes_read]) else {
+        return Ok(LocalImageProbe::unavailable(bytes_read));
+    };
+    let Ok(current_metadata) = rustix::fs::fstat(&file) else {
+        return Ok(LocalImageProbe::unavailable(bytes_read));
+    };
+    if !fingerprint.matches(&current_metadata) {
+        return Ok(LocalImageProbe::unavailable(bytes_read));
+    }
+    Ok(LocalImageProbe::available(ProbedImage {
+        file,
+        fingerprint,
+        media_type,
+        probe,
+        probe_len: bytes_read,
+    }))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn finish_verified_image(
+    image: ProbedImage,
     image_id: u64,
     cancellation: &CancellationToken,
     deadline: Instant,
-) -> Result<LocalImageRead, LocalImageFailure> {
-    let mut bytes = Vec::with_capacity(fingerprint.size);
+) -> Result<CompletedImageRead, LocalImageFailure> {
+    let ProbedImage {
+        file,
+        fingerprint,
+        media_type,
+        probe,
+        probe_len,
+    } = image;
+    let mut bytes = Vec::new();
+    if bytes.try_reserve_exact(fingerprint.size).is_err() {
+        return Ok(CompletedImageRead::unavailable(file, probe_len));
+    }
+    bytes.extend_from_slice(&probe[..probe_len]);
     let mut chunk = vec![0_u8; READ_CHUNK_BYTES].into_boxed_slice();
-    let mut media_type = None;
-    loop {
+    while bytes.len() < fingerprint.size {
         local_boundary(cancellation, deadline)?;
-        let remaining = fingerprint
-            .size
-            .saturating_add(1)
-            .saturating_sub(bytes.len());
-        if remaining == 0 {
-            return Ok(LocalImageRead::unavailable(bytes.len()));
-        }
-        let read_limit = if media_type.is_none() {
-            SIGNATURE_PROBE_BYTES.saturating_sub(bytes.len())
-        } else {
-            READ_CHUNK_BYTES
-        };
-        match rustix::io::read(file, &mut chunk[..remaining.min(read_limit)]) {
-            Ok(0) => break,
+        let remaining = fingerprint.size - bytes.len();
+        match rustix::io::read(&file, &mut chunk[..remaining.min(READ_CHUNK_BYTES)]) {
+            Ok(0) => return Ok(CompletedImageRead::unavailable(file, bytes.len())),
             Ok(read) => {
                 bytes.extend_from_slice(&chunk[..read]);
                 local_boundary(cancellation, deadline)?;
-                if bytes.len() > fingerprint.size {
-                    return Ok(LocalImageRead::unavailable(bytes.len()));
-                }
-                if media_type.is_none()
-                    && (bytes.len() >= SIGNATURE_PROBE_BYTES || bytes.len() == fingerprint.size)
-                {
-                    media_type = sniff_media_type(&bytes);
-                    if media_type.is_none() {
-                        return Ok(LocalImageRead::unavailable(bytes.len()));
-                    }
-                }
             }
             Err(error) if error == rustix::io::Errno::INTR => {}
-            Err(_) => return Ok(LocalImageRead::unavailable(bytes.len())),
+            Err(_) => return Ok(CompletedImageRead::unavailable(file, bytes.len())),
         }
     }
-    if bytes.len() != fingerprint.size {
-        return Ok(LocalImageRead::unavailable(bytes.len()));
+
+    let mut growth_witness = [0_u8; 1];
+    loop {
+        local_boundary(cancellation, deadline)?;
+        match rustix::io::read(&file, &mut growth_witness) {
+            Ok(0) => break,
+            Ok(read) => {
+                return Ok(CompletedImageRead::unavailable(
+                    file,
+                    bytes.len().saturating_add(read),
+                ));
+            }
+            Err(error) if error == rustix::io::Errno::INTR => {}
+            Err(_) => return Ok(CompletedImageRead::unavailable(file, bytes.len())),
+        }
     }
-    let Some(media_type) = media_type.or_else(|| sniff_media_type(&bytes)) else {
-        return Ok(LocalImageRead::unavailable(bytes.len()));
-    };
+
     local_boundary(cancellation, deadline)?;
-    let Ok(final_metadata) = rustix::fs::fstat(file) else {
-        return Ok(LocalImageRead::unavailable(bytes.len()));
+    let Ok(final_metadata) = rustix::fs::fstat(&file) else {
+        return Ok(CompletedImageRead::unavailable(file, bytes.len()));
     };
     if !fingerprint.matches(&final_metadata) {
-        return Ok(LocalImageRead::unavailable(bytes.len()));
+        return Ok(CompletedImageRead::unavailable(file, bytes.len()));
     }
     let bytes_read = bytes.len();
     let Ok(image) = VisionImage::new(image_id, media_type, bytes) else {
-        return Ok(LocalImageRead::unavailable(bytes_read));
+        return Ok(CompletedImageRead::unavailable(file, bytes_read));
     };
-    Ok(LocalImageRead::available(image, bytes_read))
+    Ok(CompletedImageRead::available(file, image, bytes_read))
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Clone, Copy, Debug)]
 enum LocalImageFailure {
     Cancelled,
@@ -802,6 +990,12 @@ fn local_boundary(
 }
 
 fn canonical_request(arguments: Value) -> Result<CanonicalVisionRequest, ToolError> {
+    if arguments.as_object().is_some_and(|object| {
+        matches!(object.get("paths"), Some(Value::Null))
+            || matches!(object.get("image_ids"), Some(Value::Null))
+    }) {
+        return Err(invalid_arguments_error());
+    }
     let arguments: VisionArguments =
         serde_json::from_value(arguments).map_err(|_| invalid_arguments_error())?;
     if arguments.focus.len() > MAX_VISION_FOCUS_BYTES
@@ -870,6 +1064,9 @@ fn canonical_request(arguments: Value) -> Result<CanonicalVisionRequest, ToolErr
 fn normalize_relative_path(path: &str) -> Result<String, ToolError> {
     if path.is_empty()
         || path.len() > MAX_VISION_PATH_BYTES
+        || path
+            .trim_matches(|character: char| character.is_ascii_whitespace())
+            .is_empty()
         || Path::new(path).is_absolute()
         || path == "~"
         || path.starts_with("~/")
@@ -1239,7 +1436,7 @@ fn canonical_network_host(host: &str) -> bool {
         })
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn map_root_open_error(error: rustix::io::Errno) -> VisionConfigError {
     let kind = if error == rustix::io::Errno::LOOP || error == rustix::io::Errno::NOTDIR {
         VisionConfigErrorKind::InvalidRootType
@@ -1317,7 +1514,7 @@ fn invalid_path_error() -> ToolError {
     )
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn unsupported_platform_error() -> ToolError {
     ToolError::new(
         ToolErrorKind::Unavailable,
@@ -1390,7 +1587,7 @@ impl io::Write for JsonByteCounter {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
     use std::future;
     use std::io::Write as _;
@@ -1414,8 +1611,8 @@ mod tests {
     use super::{
         ImageFingerprint, MAX_VISION_FOCUS_BYTES, MAX_VISION_PATH_COMPONENTS,
         MAX_VISION_SERIALIZED_RESULT_BYTES, VisionConfigErrorKind, VisionDeadline, VisionLimits,
-        VisionTool, canonical_request, read_verified_image, render_attachment_failures,
-        render_ordered, sniff_media_type,
+        VisionTool, canonical_request, finish_verified_image, probe_verified_image,
+        render_attachment_failures, render_ordered, sniff_media_type,
     };
 
     static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -1482,6 +1679,7 @@ mod tests {
         calls: AtomicUsize,
         batches: Mutex<Vec<Vec<(u64, VisionMediaType, usize)>>>,
         mode: TransportMode,
+        mutate_on_first_call: Option<PathBuf>,
     }
 
     impl FakeTransport {
@@ -1490,6 +1688,16 @@ mod tests {
                 calls: AtomicUsize::new(0),
                 batches: Mutex::new(Vec::new()),
                 mode,
+                mutate_on_first_call: None,
+            }
+        }
+
+        fn mutating(mode: TransportMode, path: PathBuf) -> Self {
+            Self {
+                calls: AtomicUsize::new(0),
+                batches: Mutex::new(Vec::new()),
+                mode,
+                mutate_on_first_call: Some(path),
             }
         }
     }
@@ -1500,7 +1708,17 @@ mod tests {
             request: VisionBatchRequest,
             cancellation: CancellationToken,
         ) -> BoxFuture<'_, Result<VisionBatchResponse, VisionTransportError>> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
+            let call_index = self.calls.fetch_add(1, Ordering::SeqCst);
+            if call_index == 0
+                && let Some(path) = &self.mutate_on_first_call
+            {
+                std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(path)
+                    .expect("open image mutation target")
+                    .write_all(b"x")
+                    .expect("mutate image during prior batch dispatch");
+            }
             let batch = request
                 .images()
                 .iter()
@@ -1601,12 +1819,15 @@ mod tests {
             json!({"focus": "Inspect this", "paths": [], "image_ids": [1]}),
             json!({"focus": "Inspect this", "paths": ["one.png"], "image_ids": [1]}),
             json!({"focus": "Inspect this", "paths": ["one.png", "one.png"]}),
+            json!({"focus": "Inspect this", "paths": null, "image_ids": [1]}),
+            json!({"focus": "Inspect this", "paths": ["one.png"], "image_ids": null}),
             json!({"focus": "Inspect this", "image_ids": [1, 1]}),
             json!({"focus": "Inspect this", "image_ids": [0]}),
             json!({"focus": "Inspect this", "paths": ["../one.png"]}),
             json!({"focus": "Inspect this", "paths": ["./one.png"]}),
             json!({"focus": "Inspect this", "paths": ["~"]}),
             json!({"focus": "Inspect this", "paths": ["~/one.png"]}),
+            json!({"focus": "Inspect this", "paths": [" \t"]}),
             json!({"focus": "Inspect this", "paths": ["images//one.png"]}),
             json!({"focus": "Inspect this", "paths": ["one.png"], "extra": true}),
         ] {
@@ -1755,16 +1976,25 @@ mod tests {
             &rustix::fs::fstat(&descriptor).expect("inspect invalid image"),
         )
         .expect("fingerprint invalid image");
-        let read = read_verified_image(
-            &descriptor,
-            fingerprint,
-            1,
-            &CancellationToken::new(),
-            Instant::now() + Duration::from_secs(1),
-        )
-        .expect("read invalid image");
+        let cancellation = CancellationToken::new();
+        let mut read = None;
+        let allocations = allocation_counter::measure(|| {
+            read = Some(probe_verified_image(
+                descriptor,
+                fingerprint,
+                &cancellation,
+                Instant::now() + Duration::from_secs(1),
+            ));
+        });
+        let read = read
+            .expect("measured invalid image result")
+            .expect("read invalid image");
         assert!(read.image.is_none());
         assert_eq!(read.bytes_read, super::SIGNATURE_PROBE_BYTES);
+        assert!(
+            allocations.bytes_total < 1024,
+            "signature rejection allocated for advertised file size: {allocations:?}"
+        );
     }
 
     #[test]
@@ -1814,20 +2044,29 @@ mod tests {
             &rustix::fs::fstat(&descriptor).expect("inspect initial image"),
         )
         .expect("fingerprint initial image");
+        let probe = probe_verified_image(
+            descriptor,
+            fingerprint,
+            &CancellationToken::new(),
+            Instant::now() + Duration::from_secs(1),
+        )
+        .expect("probe initial image")
+        .image
+        .expect("admit initial image");
         std::fs::OpenOptions::new()
             .append(true)
             .open(&path)
             .expect("open writer")
             .write_all(b"growth")
             .expect("grow image after metadata");
-        let read = read_verified_image(
-            &descriptor,
-            fingerprint,
+        let read = finish_verified_image(
+            probe,
             1,
             &CancellationToken::new(),
             Instant::now() + Duration::from_secs(1),
         )
-        .expect("read growing image");
+        .expect("read growing image")
+        .without_file();
         assert!(read.image.is_none());
         assert_eq!(read.bytes_read, fingerprint.size + 1);
     }
@@ -1896,6 +2135,48 @@ mod tests {
     }
 
     #[test]
+    fn relocated_intermediate_directory_cannot_redirect_the_whole_lookup() {
+        let root = TestRoot::new();
+        let outside = TestRoot::new();
+        std::fs::create_dir(root.path.join("nested")).expect("create nested directory");
+        let retained_intermediate = rustix::fs::openat(
+            rustix::fs::CWD,
+            root.path.join("nested"),
+            rustix::fs::OFlags::RDONLY
+                | rustix::fs::OFlags::DIRECTORY
+                | rustix::fs::OFlags::NOFOLLOW
+                | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .expect("retain intermediate directory like the rejected walker");
+        let moved = outside.path.join("moved");
+        std::fs::rename(root.path.join("nested"), &moved).expect("relocate intermediate");
+        std::fs::write(moved.join("outside.png"), b"\x89PNG\r\n\x1a\n")
+            .expect("write outside-only image");
+
+        let escaped = rustix::fs::openat(
+            &retained_intermediate,
+            "outside.png",
+            rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .expect("the rejected sequential walker would follow the relocated descriptor");
+        drop(escaped);
+
+        let transport = Arc::new(FakeTransport::new(TransportMode::Success));
+        let tool = tool(&root, Arc::clone(&transport));
+        assert!(super::open_confined_image(&tool.root, "nested/outside.png").is_err());
+        let output = block_on(tool.execute(
+            context(),
+            json!({"focus": "Inspect", "paths": ["nested/outside.png"]}),
+            CancellationToken::new(),
+        ))
+        .expect("project relocated path as a local failure");
+        assert!(output.is_error);
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
     fn batches_are_sequentially_bounded_by_count_and_raw_bytes() {
         let count_root = TestRoot::new();
         let mut paths = Vec::new();
@@ -1950,6 +2231,39 @@ mod tests {
         assert_eq!(batches.len(), 2);
         assert_eq!(batches[0], vec![(1, VisionMediaType::Png, first_size)]);
         assert_eq!(batches[1], vec![(2, VisionMediaType::Png, second_size)]);
+    }
+
+    #[test]
+    fn byte_crossing_dispatches_before_allocating_the_next_full_snapshot() {
+        let root = TestRoot::new();
+        std::fs::write(root.path.join("first.png"), b"\x89PNG\r\n\x1a\n")
+            .expect("write first image");
+        let second_path = root.path.join("second.png");
+        let mut second = std::fs::File::create(&second_path).expect("create second image");
+        second
+            .write_all(b"\x89PNG\r\n\x1a\n")
+            .expect("write second image signature");
+        second
+            .set_len(super::MAX_VISION_IMAGE_BYTES as u64)
+            .expect("size second image");
+        drop(second);
+
+        let transport = Arc::new(FakeTransport::mutating(TransportMode::Success, second_path));
+        let tool = tool(&root, Arc::clone(&transport));
+        let output = block_on(tool.execute(
+            context(),
+            json!({"focus": "Inspect", "paths": ["first.png", "second.png"]}),
+            CancellationToken::new(),
+        ))
+        .expect("execute byte-crossing call");
+
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(output.content["images"][0]["status"], "ok");
+        assert_eq!(output.content["images"][1]["status"], "failed");
+        assert_eq!(
+            output.content["images"][1]["error"]["code"],
+            "image_unavailable"
+        );
     }
 
     #[test]

@@ -33,20 +33,21 @@ or:
 }
 ```
 
-Unknown or duplicate object members, mistyped values, an empty source array,
-more than 20 source entries, duplicate entries, a non-positive image ID, or a
-blank or over-4,096-byte `focus` are invalid. Source order is significant.
-Preparation preserves `focus` bytes after validating that ASCII-edge trimming
-is nonempty; it does not otherwise rewrite the requested analysis.
+Unknown or duplicate object members, explicit `null` source members, mistyped
+values, an empty source array, more than 20 source entries, duplicate entries,
+a non-positive image ID, or a blank, NUL-containing, or over-4,096-byte `focus`
+are invalid. Source order is significant. Preparation preserves `focus` bytes
+after validating that ASCII-edge trimming is nonempty; it does not otherwise
+rewrite the requested analysis.
 
 Milestone 03 implements workspace-relative `paths`. Absolute paths, `~/`,
-empty components, `.`, `..`, repeated separators, NUL, overlong components,
-and paths outside the retained workspace identity are rejected. Path strings
-are normalized before policy and execution and stable first-seen order is
-preserved. Attached-image storage and prompt image ingestion are not yet part
-of machine-god, so valid `image_ids` produce ordered `image_unavailable`
-records without filesystem or network effects. This retains the pinned public
-schema without inventing durable image state.
+ASCII-whitespace-only paths, empty components, `.`, `..`, repeated separators,
+NUL, overlong components, and paths outside the retained workspace identity
+are rejected. Path strings are normalized before policy and execution and
+stable first-seen order is preserved. Attached-image storage and prompt image
+ingestion are not yet part of machine-god, so valid `image_ids` produce ordered
+`image_unavailable` records without filesystem or network effects. This
+retains the pinned public schema without inventing durable image state.
 
 ## Authority and execution agreement
 
@@ -75,15 +76,17 @@ target actually used by their opaque transport.
 
 After approval, execution reparses the canonical arguments and rejects any
 capability-divergent input before opening a descriptor or polling the
-transport. It walks every path descriptor-relatively from the retained root,
-opens every component without following symbolic links, requires the final
-descriptor to be a regular file, and reads through that descriptor only.
-The reader fingerprints descriptor identity, link count, type/mode, size, and
-modification/change timestamps before the read and requires an exact match at
-EOF. Directories, symbolic links, FIFOs, sockets, disappearing, shrinking,
-growing, or concurrently changed files and identity or root-validation
-failures become path-redacted per-image failures without provider access for
-that image.
+transport. Linux performs one whole-path `openat2` lookup beneath the retained
+root with all symbolic links forbidden. macOS performs one whole-path
+`openat` lookup with `O_NOFOLLOW_ANY` and verifies the descriptor's exact
+root-relative binding before and after reading. No user-space intermediate
+directory descriptor is carried into a later component lookup. The reader
+then requires a regular file, fingerprints descriptor identity, link count,
+type/mode, size, and modification/change timestamps, and requires an exact
+match at EOF. Directories, symbolic links, FIFOs, sockets, relocated
+intermediates, disappearing, shrinking, growing, or concurrently changed
+files and identity or root-validation failures become path-redacted per-image
+failures without provider access for that image.
 
 Valid `image_ids` require no policy-governed effect in this milestone and are
 prepared without authority. They deterministically return the documented
@@ -101,20 +104,23 @@ extension:
 
 No raster decoder runs locally. A malformed or unsupported signature is
 `image_unavailable` and is rejected after at most the fixed 12-byte signature
-probe rather than reading the rest of that file. Animated GIF/WebP content is
-admitted as compressed input within the same byte limits; interpreting frames
-belongs to the provider.
+probe rather than reading the rest of that file or reserving its advertised
+size. A supported descriptor receives one fallible exact-size reservation only
+after admission. Animated GIF/WebP content is admitted as compressed input
+within the same byte limits; interpreting frames belongs to the provider.
 
 Every readable path receives a call-local positive `image_id` equal to its
 one-based source position. Local failures retain that position. Healthy images
 are processed in source order in sequential batches of at most eight images
-and at most 8 MiB aggregate raw bytes. A batch is sent before adding an image
-that would cross either boundary. At most 20 images and 64 MiB of aggregate
-image bytes are read by one call, including bytes consumed by later local
-failures. A file that grows at the exact aggregate boundary may consume one
-additional overflow-witness byte; after the budget is exhausted, remaining
-paths become local failures without content reads. Admitted raw bytes are
-therefore also bounded by 64 MiB.
+and at most 8 MiB aggregate raw bytes. The next descriptor is opened, sized,
+and signature-probed first; if its known size would cross either boundary, the
+current batch is sent before allocating or reading the next complete snapshot.
+At most 20 images and 64 MiB of aggregate image bytes are read by one call,
+including bytes consumed by later local failures. A file that grows at the
+exact aggregate boundary may consume one additional separately buffered
+overflow-witness byte; after the budget is exhausted, remaining paths become
+local failures without content reads. Admitted raw bytes are therefore also
+bounded by 64 MiB.
 
 ## Private Gateway worker
 
@@ -168,10 +174,13 @@ or a provider-declared batch failure record:
 
 The decoder accepts only bounded text deltas followed by one valid finish and
 terminal record. Tool calls, tool results, media/file output, contradictory or
-duplicate finish state, output after terminal state, malformed UTF-8/JSON, an
-unauthorized or duplicate image ID, and unknown fields fail closed. Transport
-authentication, rate-limit, timeout, unavailable, protocol, response-size,
-and cancellation errors remain fixed and path/body/credential-free.
+duplicate finish state, output before the terminal record, malformed
+UTF-8/JSON, an unauthorized or duplicate image ID, and unknown fields fail
+closed. `[DONE]` is the transport ownership boundary: the worker publishes the
+already validated result and drops the source without polling a later chunk.
+Transport authentication, rate-limit, timeout, unavailable, protocol,
+response-size, and cancellation errors remain fixed and
+path/body/credential-free.
 
 A structurally invalid successful provider response receives exactly one
 semantic retry using the same owned, already verified image bytes. Transport
@@ -185,11 +194,12 @@ request.
 ## Result
 
 The tool returns a path-free object whose `images` array exactly matches input
-order. A provider omission becomes `missing_provider_record`. Local admission
-failure becomes `image_unavailable`. Malformed success after the semantic
-retry becomes `provider_response_invalid`; provider/transport failure becomes
-`vision_unavailable`; and exhausted evidence/output capacity becomes
-`output_limit_exceeded`.
+order. A partial provider response that omits one or more requested records
+becomes `missing_provider_record` for each omitted image. An entirely empty
+response is structurally invalid and becomes `provider_response_invalid`
+after the one semantic retry. Local admission failure becomes
+`image_unavailable`; provider/transport failure becomes `vision_unavailable`;
+and exhausted evidence/output capacity becomes `output_limit_exceeded`.
 
 Each provider batch independently obeys its 20 KiB evidence ceiling. If the
 combined legal batch evidence would exceed the 48 KiB complete tool-result
@@ -241,9 +251,11 @@ credential, or endpoint diagnostic.
 
 Provider result string counts, per-string bytes, aggregate retained evidence,
 SSE record count, and decoded JSON nodes have independent public constants and
-remain below the complete response/result ceilings. Exact equality with a
-limit is admitted; the first byte or item beyond it is rejected or converted
-to the documented per-image limit failure.
+remain below the complete response/result ceilings. The JSON-node budget is
+one aggregate allowance across SSE event envelopes and final structured
+evidence within each semantic attempt. Exact equality with a limit is
+admitted; the first byte or item beyond it is rejected or converted to the
+documented per-image limit failure.
 
 Capacity is acquired before allocating image buffers and is held until all
 descriptors, raw images, request/response buffers, transport futures, and
@@ -272,9 +284,10 @@ or provider diagnostics.
 
 Portable media/request/response/error/limit and injected transport/deadline
 contracts are available without HTTP or Tokio and on WebAssembly. The concrete
-descriptor-reading `VisionTool` is compiled with `ai-gateway-http` on Unix
-non-WebAssembly targets; reference-host composition remains Linux/macOS-only.
-Other targets retain a compile-checked portable surface and do not claim a
+descriptor-reading `VisionTool` works only on Linux with `openat2` support and
+macOS with `O_NOFOLLOW_ANY`; reference-host composition has the same
+Linux/macOS boundary. Other targets retain a compile-checked portable surface,
+return the fixed unsupported-platform construction failure, and do not claim a
 working native image reader. Construction is network-inert.
 
 ## Deliberately deferred
