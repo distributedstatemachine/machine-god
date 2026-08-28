@@ -195,14 +195,47 @@ async fn run_attempt(
     // The caller's deadline/cancellation arbiter therefore always gets a poll
     // between bounded encoding work and the authority-bearing dispatch call.
     cooperative_boundary(&cancellation).await?;
-    let stream_result = transport.stream(request, cancellation.clone()).await;
+    let mut startup = transport.stream(request, cancellation.clone());
+    let mut startup_cancelled = cancellation.cancelled();
+    let startup_result = poll_fn(|context| {
+        // The worker owns this waiter instead of relying on an injected
+        // startup future to register the token or wake its caller. Check the
+        // token on both sides of the one bounded startup poll so cancellation
+        // also wins when transport code makes it observable during that poll.
+        if std::pin::Pin::new(&mut startup_cancelled)
+            .poll(context)
+            .is_ready()
+            || cancellation.is_cancelled()
+        {
+            return Poll::Ready(Err(transport_error(VisionTransportErrorKind::Cancelled)));
+        }
+        let result = startup.as_mut().poll(context);
+        if cancellation.is_cancelled() {
+            // This may own a newly acquired byte stream. Release it in the
+            // cancelling poll, before the worker publishes cancellation.
+            drop(result);
+            Poll::Ready(Err(transport_error(VisionTransportErrorKind::Cancelled)))
+        } else {
+            match result {
+                Poll::Ready(result) => Poll::Ready(Ok(result)),
+                Poll::Pending => Poll::Pending,
+            }
+        }
+    })
+    .await;
+    // Ready startup outcomes do not retain an inactive cancellation Waker.
+    // Drop the startup future before final adjudication too: its cleanup may
+    // release request-body ownership and make cancellation observable.
+    drop(startup_cancelled);
+    drop(startup);
     if let Err(error) = check_cancelled(&cancellation) {
         // A transport may make cancellation observable while completing its
         // startup future. Release any acquired byte stream before publishing
         // cancellation, which wins over both success and failure readiness.
-        drop(stream_result);
+        drop(startup_result);
         return Err(error);
     }
+    let stream_result = startup_result?;
     let mut stream = stream_result.map_err(|error| map_provider_error(&error))?;
 
     let mut decoder = VisionSseDecoder::default();

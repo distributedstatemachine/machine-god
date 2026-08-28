@@ -1842,6 +1842,355 @@ fn cancellation_wins_same_poll_transport_startup_error() {
 }
 
 #[derive(Clone)]
+struct PendingStartupTransport {
+    calls: Arc<AtomicUsize>,
+    polls: Arc<AtomicUsize>,
+    drops: Arc<AtomicUsize>,
+    live_request_bodies: Arc<AtomicUsize>,
+}
+
+struct PendingStartup {
+    _request_body: Vec<u8>,
+    polls: Arc<AtomicUsize>,
+    drops: Arc<AtomicUsize>,
+    live_request_bodies: Arc<AtomicUsize>,
+}
+
+impl Future for PendingStartup {
+    type Output = Result<AiGatewayByteStream, ProviderError>;
+
+    fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+        self.polls.fetch_add(1, Ordering::SeqCst);
+        Poll::Pending
+    }
+}
+
+impl Drop for PendingStartup {
+    fn drop(&mut self) {
+        assert_eq!(self.live_request_bodies.fetch_sub(1, Ordering::SeqCst), 1);
+        self.drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl AiGatewayTransport for PendingStartupTransport {
+    fn stream(
+        &self,
+        request: AiGatewayTransportRequest,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<AiGatewayByteStream, ProviderError>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(
+            self.live_request_bodies.fetch_add(1, Ordering::SeqCst),
+            0,
+            "only one startup may own an encoded request body"
+        );
+        Box::pin(PendingStartup {
+            _request_body: request.into_body(),
+            polls: Arc::clone(&self.polls),
+            drops: Arc::clone(&self.drops),
+            live_request_bodies: Arc::clone(&self.live_request_bodies),
+        })
+    }
+}
+
+fn pending_startup_transport() -> PendingStartupTransport {
+    PendingStartupTransport {
+        calls: Arc::new(AtomicUsize::new(0)),
+        polls: Arc::new(AtomicUsize::new(0)),
+        drops: Arc::new(AtomicUsize::new(0)),
+        live_request_bodies: Arc::new(AtomicUsize::new(0)),
+    }
+}
+
+#[test]
+fn cancellation_wakes_pending_startup_and_releases_its_request_body() {
+    let transport = pending_startup_transport();
+    let worker = AiGatewayVisionTransport::new(MODEL, Arc::new(transport.clone())).unwrap();
+    let cancellation = CancellationToken::new();
+    let mut future = worker.analyze(
+        request(vec![png(1, b"PRIVATE_PENDING_STARTUP_IMAGE_SENTINEL")]),
+        cancellation.clone(),
+    );
+    let notification_count = Arc::new(AtomicUsize::new(0));
+    let waker = Waker::from(Arc::new(CountingWake {
+        wakes: Arc::clone(&notification_count),
+    }));
+
+    // Encoding and pre-dispatch self-wake once each. Startup itself remains
+    // pending without retaining or waking the supplied task Waker.
+    for expected_notifications in 1..=2 {
+        assert!(
+            future
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker))
+                .is_pending()
+        );
+        assert_eq!(
+            notification_count.load(Ordering::SeqCst),
+            expected_notifications
+        );
+    }
+    assert!(
+        future
+            .as_mut()
+            .poll(&mut Context::from_waker(&waker))
+            .is_pending()
+    );
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(transport.polls.load(Ordering::SeqCst), 1);
+    assert_eq!(transport.drops.load(Ordering::SeqCst), 0);
+    assert_eq!(transport.live_request_bodies.load(Ordering::SeqCst), 1);
+
+    let notifications_before_cancel = notification_count.load(Ordering::SeqCst);
+    assert!(cancellation.cancel());
+    assert_eq!(
+        notification_count.load(Ordering::SeqCst),
+        notifications_before_cancel + 1,
+        "the worker-owned cancellation waiter must wake pending startup"
+    );
+    let Poll::Ready(Err(error)) = future.as_mut().poll(&mut Context::from_waker(&waker)) else {
+        panic!("pending-startup cancellation must complete")
+    };
+    assert_eq!(error.kind(), VisionTransportErrorKind::Cancelled);
+    assert_eq!(transport.polls.load(Ordering::SeqCst), 1);
+    assert_eq!(transport.drops.load(Ordering::SeqCst), 1);
+    assert_eq!(transport.live_request_bodies.load(Ordering::SeqCst), 0);
+    let rendered = format!("{error:?} {error}");
+    assert!(!rendered.contains("PRIVATE_PENDING_STARTUP_IMAGE_SENTINEL"));
+}
+
+#[test]
+fn manual_repoll_checks_cancellation_before_polling_pending_startup_again() {
+    let transport = pending_startup_transport();
+    let worker = AiGatewayVisionTransport::new(MODEL, Arc::new(transport.clone())).unwrap();
+    let cancellation = CancellationToken::new();
+    let mut future = worker.analyze(
+        request(vec![png(
+            1,
+            b"PRIVATE_MANUAL_REPOLL_STARTUP_IMAGE_SENTINEL",
+        )]),
+        cancellation.clone(),
+    );
+
+    assert!(poll_once(future.as_mut()).is_pending());
+    assert!(poll_once(future.as_mut()).is_pending());
+    assert!(poll_once(future.as_mut()).is_pending());
+    assert_eq!(transport.polls.load(Ordering::SeqCst), 1);
+    assert_eq!(transport.live_request_bodies.load(Ordering::SeqCst), 1);
+
+    cancellation.cancel();
+    let Poll::Ready(Err(error)) = poll_once(future.as_mut()) else {
+        panic!("manual cancellation repoll must complete")
+    };
+    assert_eq!(error.kind(), VisionTransportErrorKind::Cancelled);
+    assert_eq!(
+        transport.polls.load(Ordering::SeqCst),
+        1,
+        "cancelled startup must not receive another poll"
+    );
+    assert_eq!(transport.drops.load(Ordering::SeqCst), 1);
+    assert_eq!(transport.live_request_bodies.load(Ordering::SeqCst), 0);
+}
+
+#[derive(Clone)]
+struct CancelWithStartupSuccessTransport {
+    startup_drops: Arc<AtomicUsize>,
+    stream_drops: Arc<AtomicUsize>,
+    live_request_bodies: Arc<AtomicUsize>,
+}
+
+struct CancelWithStartupSuccess {
+    cancellation: CancellationToken,
+    _request_body: Vec<u8>,
+    startup_drops: Arc<AtomicUsize>,
+    stream_drops: Arc<AtomicUsize>,
+    live_request_bodies: Arc<AtomicUsize>,
+}
+
+struct AcquiredPendingStream {
+    drops: Arc<AtomicUsize>,
+}
+
+impl Stream for AcquiredPendingStream {
+    type Item = Result<Vec<u8>, ProviderError>;
+
+    fn poll_next(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Poll::Pending
+    }
+}
+
+impl Drop for AcquiredPendingStream {
+    fn drop(&mut self) {
+        self.drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl Future for CancelWithStartupSuccess {
+    type Output = Result<AiGatewayByteStream, ProviderError>;
+
+    fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+        self.cancellation.cancel();
+        Poll::Ready(Ok(Box::pin(AcquiredPendingStream {
+            drops: Arc::clone(&self.stream_drops),
+        }) as AiGatewayByteStream))
+    }
+}
+
+impl Drop for CancelWithStartupSuccess {
+    fn drop(&mut self) {
+        assert_eq!(self.live_request_bodies.fetch_sub(1, Ordering::SeqCst), 1);
+        self.startup_drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl AiGatewayTransport for CancelWithStartupSuccessTransport {
+    fn stream(
+        &self,
+        request: AiGatewayTransportRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<AiGatewayByteStream, ProviderError>> {
+        assert_eq!(self.live_request_bodies.fetch_add(1, Ordering::SeqCst), 0);
+        Box::pin(CancelWithStartupSuccess {
+            cancellation,
+            _request_body: request.into_body(),
+            startup_drops: Arc::clone(&self.startup_drops),
+            stream_drops: Arc::clone(&self.stream_drops),
+            live_request_bodies: Arc::clone(&self.live_request_bodies),
+        })
+    }
+}
+
+#[test]
+fn cancellation_wins_same_poll_startup_success_after_full_teardown() {
+    let transport = CancelWithStartupSuccessTransport {
+        startup_drops: Arc::new(AtomicUsize::new(0)),
+        stream_drops: Arc::new(AtomicUsize::new(0)),
+        live_request_bodies: Arc::new(AtomicUsize::new(0)),
+    };
+    let worker = AiGatewayVisionTransport::new(MODEL, Arc::new(transport.clone())).unwrap();
+    let error = futures_executor::block_on(worker.analyze(
+        request(vec![png(1, b"PRIVATE_STARTUP_SUCCESS_IMAGE_SENTINEL")]),
+        CancellationToken::new(),
+    ))
+    .unwrap_err();
+
+    assert_eq!(error.kind(), VisionTransportErrorKind::Cancelled);
+    assert_eq!(transport.startup_drops.load(Ordering::SeqCst), 1);
+    assert_eq!(transport.stream_drops.load(Ordering::SeqCst), 1);
+    assert_eq!(transport.live_request_bodies.load(Ordering::SeqCst), 0);
+    let rendered = format!("{error:?} {error}");
+    assert!(!rendered.contains("PRIVATE_STARTUP_SUCCESS_IMAGE_SENTINEL"));
+}
+
+#[derive(Clone, Copy)]
+enum DropCancellingStartupOutcome {
+    Success,
+    Error,
+}
+
+#[derive(Clone)]
+struct DropCancellingStartupTransport {
+    outcome: DropCancellingStartupOutcome,
+    startup_drops: Arc<AtomicUsize>,
+    stream_drops: Arc<AtomicUsize>,
+    live_request_bodies: Arc<AtomicUsize>,
+}
+
+struct DropCancellingStartup {
+    outcome: DropCancellingStartupOutcome,
+    cancellation: CancellationToken,
+    _request_body: Vec<u8>,
+    startup_drops: Arc<AtomicUsize>,
+    stream_drops: Arc<AtomicUsize>,
+    live_request_bodies: Arc<AtomicUsize>,
+}
+
+impl Future for DropCancellingStartup {
+    type Output = Result<AiGatewayByteStream, ProviderError>;
+
+    fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+        Poll::Ready(match self.outcome {
+            DropCancellingStartupOutcome::Success => Ok(Box::pin(AcquiredPendingStream {
+                drops: Arc::clone(&self.stream_drops),
+            }) as AiGatewayByteStream),
+            DropCancellingStartupOutcome::Error => Err(ProviderError::new(
+                ProviderErrorKind::Transport,
+                "PRIVATE_DROP_STARTUP_ERROR_CODE",
+                "PRIVATE_DROP_STARTUP_ERROR_MESSAGE",
+                true,
+            )),
+        })
+    }
+}
+
+impl Drop for DropCancellingStartup {
+    fn drop(&mut self) {
+        assert_eq!(self.live_request_bodies.fetch_sub(1, Ordering::SeqCst), 1);
+        self.startup_drops.fetch_add(1, Ordering::SeqCst);
+        self.cancellation.cancel();
+    }
+}
+
+impl AiGatewayTransport for DropCancellingStartupTransport {
+    fn stream(
+        &self,
+        request: AiGatewayTransportRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<AiGatewayByteStream, ProviderError>> {
+        assert_eq!(self.live_request_bodies.fetch_add(1, Ordering::SeqCst), 0);
+        Box::pin(DropCancellingStartup {
+            outcome: self.outcome,
+            cancellation,
+            _request_body: request.into_body(),
+            startup_drops: Arc::clone(&self.startup_drops),
+            stream_drops: Arc::clone(&self.stream_drops),
+            live_request_bodies: Arc::clone(&self.live_request_bodies),
+        })
+    }
+}
+
+fn assert_startup_drop_cancellation_wins(outcome: DropCancellingStartupOutcome) {
+    let transport = DropCancellingStartupTransport {
+        outcome,
+        startup_drops: Arc::new(AtomicUsize::new(0)),
+        stream_drops: Arc::new(AtomicUsize::new(0)),
+        live_request_bodies: Arc::new(AtomicUsize::new(0)),
+    };
+    let worker = AiGatewayVisionTransport::new(MODEL, Arc::new(transport.clone())).unwrap();
+    let error = futures_executor::block_on(worker.analyze(
+        request(vec![png(1, b"PRIVATE_DROP_STARTUP_REQUEST_IMAGE_SENTINEL")]),
+        CancellationToken::new(),
+    ))
+    .unwrap_err();
+
+    assert_eq!(error.kind(), VisionTransportErrorKind::Cancelled);
+    assert_eq!(transport.startup_drops.load(Ordering::SeqCst), 1);
+    assert_eq!(transport.live_request_bodies.load(Ordering::SeqCst), 0);
+    let expected_stream_drops = match outcome {
+        DropCancellingStartupOutcome::Success => 1,
+        DropCancellingStartupOutcome::Error => 0,
+    };
+    assert_eq!(
+        transport.stream_drops.load(Ordering::SeqCst),
+        expected_stream_drops
+    );
+    let rendered = format!("{error:?} {error}");
+    assert!(!rendered.contains("PRIVATE_DROP_STARTUP_ERROR_CODE"));
+    assert!(!rendered.contains("PRIVATE_DROP_STARTUP_ERROR_MESSAGE"));
+    assert!(!rendered.contains("PRIVATE_DROP_STARTUP_REQUEST_IMAGE_SENTINEL"));
+}
+
+#[test]
+fn startup_request_owner_drop_cancellation_wins_ready_success() {
+    assert_startup_drop_cancellation_wins(DropCancellingStartupOutcome::Success);
+}
+
+#[test]
+fn startup_request_owner_drop_cancellation_wins_ready_error() {
+    assert_startup_drop_cancellation_wins(DropCancellingStartupOutcome::Error);
+}
+
+#[derive(Clone)]
 struct CancelWithStreamErrorTransport {
     drops: Arc<AtomicUsize>,
 }
