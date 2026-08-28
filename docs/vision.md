@@ -266,7 +266,10 @@ remain below the complete response/result ceilings. The JSON-node budget is
 one aggregate allowance across SSE event envelopes and final structured
 evidence within each semantic attempt. Exact equality with a limit is
 admitted; the first byte or item beyond it is rejected or converted to the
-documented per-image limit failure.
+documented per-image limit failure. Portable constructors apply byte, count,
+and aggregate ceilings before blankness, NUL, or evidence-content scans, so
+rejected content-validation work is proportional only to already admitted
+input.
 
 Capacity is acquired before allocating image buffers and is held until all
 descriptors, raw images, request/response buffers, transport futures, and
