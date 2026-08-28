@@ -22,12 +22,13 @@ The wire shape is deliberately scoped to the behavior needed from pinned
 It is not a claim of compatibility with a current Vercel AI Gateway protocol,
 full fx equivalence, or a measured performance improvement.
 
-The adjacent [`web_search` tool](web-search.md) does not broaden this outer
-generation codec. Its private worker reuses an injected
-`Arc<dyn AiGatewayTransport>` but owns a separate bounded request projection and
-provider-executed response decoder in native. `AiGatewayProvider` continues to
-reject `providerExecuted: true` and response-side `tool-result` events exactly
-as documented below.
+The adjacent [`web_search` tool](web-search.md) and
+[`vision` tool](vision.md) do not broaden this outer generation codec. Their
+private workers reuse an injected `Arc<dyn AiGatewayTransport>` but own separate
+bounded request projections and strict response decoders in native.
+`AiGatewayProvider` continues to reject `providerExecuted: true`, response-side
+`tool-result` events, and provider-neutral image content exactly as documented
+below.
 
 ## Public boundary
 
@@ -380,13 +381,38 @@ evidence is retained only in the
 of this durable behavior contract. The slice makes no compatibility or
 performance claim.
 
+## Adjacent private vision worker
+
+The native vision adapter is likewise adjacent rather than a mode of
+`AiGatewayProvider`. After core has approved one composite `vision` capability,
+`VisionTool` verifies authorized workspace images and sends sequential bounded
+batches through `AiGatewayVisionTransport`. That worker reuses the configured
+model and the same injected transport as the outer provider, but owns a
+dedicated one-shot raw-v4 request and response codec. Each request carries the
+bounded focus as user text and verified PNG, JPEG, GIF, or WebP bytes as
+standard-base64 `file` parts, advertises no tools, selects tool choice `none`,
+and requires strict JSON evidence.
+
+The private decoder accepts only bounded text deltas, one valid finish, and one
+terminal record containing exactly the authorized image IDs. A structurally
+invalid successful response receives one semantic retry with the same owned,
+verified image bytes; transport, cancellation, deadline, authentication,
+rate-limit, availability, and output-limit failures are not retried. The
+worker drops its byte stream before returning, so a capacity-one shared
+transport is available to the next outer provider round. Image bytes, base64,
+provider bodies, and evidence never enter provider-neutral prompt/history
+content. The complete authority, media, batching, result, redaction, resource,
+and lifecycle contract is [`vision.md`](vision.md).
+
 ## Deferred scope
 
 This generation-codec slice adds no URL or HTTP client, socket, DNS, proxy,
 TLS, native credential lookup, authorization header, status-code mapping, retry/backoff,
 clock, async runtime, endpoint selection, team routing, or model-catalog logic,
-provider-executed tool support in this outer codec, image, structured-output,
-temperature, or metadata support. It adds no CLI wiring or commands,
+provider-executed tool support in this outer codec, provider-neutral image
+content, structured-output, temperature, or metadata support. The private
+vision worker above does not change those general codec deferrals. It adds no
+CLI wiring or commands,
 production permission prompt, or
 permission mode beyond `ask`. The native session store remains a separate
 library boundary. Native configuration may declare the codec's provider kind

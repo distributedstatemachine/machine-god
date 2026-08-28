@@ -99,6 +99,7 @@ or the linked normative contracts.
 | [web fetch](web-fetch.md) | 2,000-byte URL, 24 KiB body, 56 KiB result, 32 DNS addresses, 60-second total deadline, default 8/hard 32 active calls |
 | [web search](web-search.md) | 4 KiB query, 256 KiB response, 64 KiB record, 256 records, 10 sources, 48 KiB result, 30-second total deadline, default 4/hard 16 active calls |
 | [terminal](terminal.md) | 32 KiB command, 256 KiB environment snapshot, 64 KiB retained output, 1 MiB produced-output cutoff, 48 KiB result, 120-second default timeout, default 4/hard 16 active calls |
+| [vision](vision.md) | 20 sources, 4 KiB focus, 8 MiB per image, 64 MiB aggregate, sequential batches of 8 images/8 MiB, 20 KiB evidence per attempt, 64 KiB response, 48 KiB result, 60-second total deadline, default 2/hard 8 active calls |
 | [questions](ask-user-question.md) | four questions, six options each, 4 KiB aggregate raw answers, 48 KiB result guard, default 1/hard 8 active prompts, 256 callbacks across one prompt lifetime |
 
 Most native tools fail fast when their concurrency capacity is full. Capacity
