@@ -22,8 +22,8 @@ The wire shape is deliberately scoped to the behavior needed from pinned
 It is not a claim of compatibility with a current Vercel AI Gateway protocol,
 full fx equivalence, or a measured performance improvement.
 
-The in-progress slice-33 [`web_search` tool](web-search.md) does not broaden
-this outer generation codec. Its private worker reuses an injected
+The adjacent [`web_search` tool](web-search.md) does not broaden this outer
+generation codec. Its private worker reuses an injected
 `Arc<dyn AiGatewayTransport>` but owns a separate bounded request projection and
 provider-executed response decoder in native. `AiGatewayProvider` continues to
 reject `providerExecuted: true` and response-side `tool-result` events exactly
