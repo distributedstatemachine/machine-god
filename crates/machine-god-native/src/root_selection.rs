@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::ffi::OsStr;
 use std::fmt;
+use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use rustix::fd::{AsFd, BorrowedFd, OwnedFd};
@@ -19,6 +20,8 @@ const GROUP_OR_OTHER_PERMISSIONS: u64 = 0o077;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum NativeRootSelectionErrorKind {
+    /// The process current directory could not be captured.
+    CurrentDirectory,
     /// The explicitly supplied workspace path is not a safe absolute lexical path.
     InvalidWorkspaceRoot,
     /// Neither state environment input selected a usable value.
@@ -32,6 +35,7 @@ impl NativeRootSelectionErrorKind {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::CurrentDirectory => "current_directory",
             Self::InvalidWorkspaceRoot => "invalid_workspace_root",
             Self::StateRootUnavailable => "state_root_unavailable",
             Self::InvalidStateEnvironment => "invalid_state_environment",
@@ -69,6 +73,9 @@ impl fmt::Debug for NativeRootSelectionError {
 impl fmt::Display for NativeRootSelectionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self.kind {
+            NativeRootSelectionErrorKind::CurrentDirectory => {
+                "native current directory is unavailable"
+            }
             NativeRootSelectionErrorKind::InvalidWorkspaceRoot => {
                 "native workspace root selection is invalid"
             }
@@ -118,6 +125,19 @@ pub struct NativeRootSelection {
 }
 
 impl NativeRootSelection {
+    /// Captures the process current directory and selects roots using the
+    /// supplied environment snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed, redacted error when the current directory cannot be
+    /// captured or when the resulting root selection is invalid.
+    pub fn from_current_process(
+        environment: &NativeEnvironment,
+    ) -> Result<Self, NativeRootSelectionError> {
+        Self::from_current_directory(environment, std::env::current_dir)
+    }
+
     /// Selects roots from an injected environment snapshot and workspace path.
     ///
     /// # Errors
@@ -153,6 +173,16 @@ impl NativeRootSelection {
             state_root,
             state_selection,
         })
+    }
+
+    fn from_current_directory(
+        environment: &NativeEnvironment,
+        current_directory: impl FnOnce() -> io::Result<PathBuf>,
+    ) -> Result<Self, NativeRootSelectionError> {
+        let workspace_root = current_directory().map_err(|_| {
+            NativeRootSelectionError::new(NativeRootSelectionErrorKind::CurrentDirectory)
+        })?;
+        Self::from_environment(environment, &workspace_root)
     }
 
     /// Returns the selected absolute workspace path.
@@ -675,4 +705,67 @@ fn same_identity(left: &rustix::fs::Stat, right: &rustix::fs::Stat) -> bool {
 
 fn private_directory_mode() -> Mode {
     Mode::RUSR | Mode::WUSR | Mode::XUSR
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+
+    use super::*;
+
+    fn environment(state_root: &str) -> NativeEnvironment {
+        NativeEnvironment::new(None, Some(OsString::from(state_root)), None)
+    }
+
+    #[test]
+    fn injected_current_directory_is_combined_with_the_supplied_snapshot() {
+        let selection =
+            NativeRootSelection::from_current_directory(&environment("/captured/state"), || {
+                Ok(PathBuf::from("/captured/workspace/./nested"))
+            })
+            .unwrap();
+
+        assert_eq!(
+            selection.workspace_root(),
+            Path::new("/captured/workspace/nested")
+        );
+        assert_eq!(
+            selection.state_root(),
+            Path::new("/captured/state/machine-god")
+        );
+    }
+
+    #[test]
+    fn current_directory_failure_is_fixed_and_redacted() {
+        let error =
+            NativeRootSelection::from_current_directory(&environment("/captured/state"), || {
+                Err(io::Error::other("PRIVATE_CURRENT_DIRECTORY_DETAIL"))
+            })
+            .unwrap_err();
+
+        assert_eq!(error.kind(), NativeRootSelectionErrorKind::CurrentDirectory);
+        assert_eq!(error.kind().as_str(), "current_directory");
+        let rendered = format!("{error:?} {error}");
+        assert_eq!(
+            rendered,
+            "NativeRootSelectionError { kind: CurrentDirectory } native current directory is unavailable"
+        );
+        assert!(!rendered.contains("PRIVATE_CURRENT_DIRECTORY_DETAIL"));
+    }
+
+    #[test]
+    fn process_constructor_captures_the_native_current_directory() {
+        let expected = std::env::current_dir()
+            .unwrap()
+            .components()
+            .collect::<PathBuf>();
+        let selection =
+            NativeRootSelection::from_current_process(&environment("/captured/state")).unwrap();
+
+        assert_eq!(selection.workspace_root(), expected);
+        assert_eq!(
+            selection.state_root(),
+            Path::new("/captured/state/machine-god")
+        );
+    }
 }

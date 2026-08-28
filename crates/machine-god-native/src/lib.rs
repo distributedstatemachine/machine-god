@@ -61,6 +61,8 @@ mod session_store;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod state_environment;
 mod terminal;
+#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+mod tokio_web_search_deadline;
 mod tool_output_serializer;
 mod tool_result_projection;
 #[cfg(all(feature = "vision", not(target_family = "wasm")))]
@@ -283,9 +285,10 @@ pub use session_inspection::{
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use session_lifecycle::{
-    MAX_SESSION_INCARNATION_ATTEMPTS, NativeSessionLifecycle, NativeSessionLifecycleBuildError,
-    NativeSessionLifecycleBuildErrorKind, NativeSessionLifecycleError,
-    NativeSessionLifecycleErrorKind, SessionIncarnationSource, SessionIncarnationSourceError,
+    MAX_SESSION_ID_ATTEMPTS, MAX_SESSION_INCARNATION_ATTEMPTS, NativeSessionLifecycle,
+    NativeSessionLifecycleBuildError, NativeSessionLifecycleBuildErrorKind,
+    NativeSessionLifecycleError, NativeSessionLifecycleErrorKind, SessionIdSource,
+    SessionIdSourceError, SessionIncarnationSource, SessionIncarnationSourceError,
 };
 pub use session_listing::{
     NativeSessionList, NativeSessionListingError, NativeSessionListingErrorKind,
@@ -308,6 +311,8 @@ pub use terminal::{
     TerminalExecutionOutcome, TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor,
     TerminalExecutorError, TerminalExecutorErrorKind, TerminalLimits, TerminalTool,
 };
+#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
+pub use tokio_web_search_deadline::TokioWebSearchDeadline;
 #[cfg(all(feature = "web-fetch-http", not(target_family = "wasm")))]
 pub use web_fetch::{
     MAX_WEB_FETCH_BODY_BYTES, MAX_WEB_FETCH_DNS_ADDRESSES, MAX_WEB_FETCH_MIME_TYPE_BYTES,
