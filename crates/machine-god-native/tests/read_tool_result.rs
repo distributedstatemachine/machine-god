@@ -7,8 +7,8 @@ use machine_god_core::{
     ToolErrorKind, ToolName, ToolOutput, TurnId,
 };
 use machine_god_native::{
-    READ_TOOL_RESULT_TOOL_NAME, ReadToolResultConfigErrorKind, ReadToolResultLimits,
-    ReadToolResultTool,
+    READ_TOOL_RESULT_MAX_SOURCE_BYTES, READ_TOOL_RESULT_TOOL_NAME, ReadToolResultConfigErrorKind,
+    ReadToolResultLimits, ReadToolResultTool,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -554,30 +554,31 @@ fn public_page_start_and_configuration_bounds_are_exact() {
 
 #[test]
 fn each_candidate_has_an_independent_exact_engine_result_ceiling() {
-    const MAX_RESULT_BYTES: usize = 65_536;
-
     let exact = Fixture::new(
         "candidate-ceiling-exact-session",
         "candidate-ceiling-exact-incarnation",
         "candidate-ceiling-exact-call",
-        output_with_serialized_len(MAX_RESULT_BYTES),
+        output_with_serialized_len(READ_TOOL_RESULT_MAX_SOURCE_BYTES),
     );
     let exact_store = ScriptStore::new([LoadStep::Ready(Ok(Some(exact.record.clone())))]);
     let exact_page = execute(
         &exact_store.reader(),
         exact.context(),
-        arguments(&exact.handle, MAX_RESULT_BYTES + 1, 4),
+        arguments(&exact.handle, READ_TOOL_RESULT_MAX_SOURCE_BYTES + 1, 4),
         CancellationToken::new(),
     )
     .unwrap();
-    assert_eq!(exact_page.content["total_bytes"], MAX_RESULT_BYTES);
+    assert_eq!(
+        exact_page.content["total_bytes"],
+        READ_TOOL_RESULT_MAX_SOURCE_BYTES
+    );
     assert_eq!(page_text(&exact_page), "");
 
     let oversized = Fixture::new(
         "candidate-ceiling-over-session",
         "candidate-ceiling-over-incarnation",
         "candidate-ceiling-over-call",
-        output_with_serialized_len(MAX_RESULT_BYTES + 1),
+        output_with_serialized_len(READ_TOOL_RESULT_MAX_SOURCE_BYTES + 1),
     );
     let oversized_store = ScriptStore::new([LoadStep::Ready(Ok(Some(oversized.record.clone())))]);
     assert_not_found(

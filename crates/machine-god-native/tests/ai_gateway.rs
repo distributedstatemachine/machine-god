@@ -16,6 +16,7 @@ use machine_god_native::{
     AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION, AI_GATEWAY_PROTOCOL_VERSION,
     AI_GATEWAY_PROVIDER_NAME, AiGatewayByteStream, AiGatewayConfigErrorKind, AiGatewayLimits,
     AiGatewayProvider, AiGatewayTransport, AiGatewayTransportRequest,
+    READ_TOOL_RESULT_MAX_SOURCE_BYTES,
 };
 use serde_json::{Value, json};
 
@@ -1377,8 +1378,13 @@ fn huge_unescaped_tool_result_respects_tiny_source_budget_before_transport() {
 }
 
 #[test]
-fn reader_advertisement_projects_only_above_the_exact_threshold() {
-    let transport = ScriptedTransport::new([bytes(finish("stop")), bytes(finish("stop"))]);
+fn reader_advertisement_projects_only_within_the_exact_service_envelope() {
+    let transport = ScriptedTransport::new([
+        bytes(finish("stop")),
+        bytes(finish("stop")),
+        bytes(finish("stop")),
+        bytes(finish("stop")),
+    ]);
     let provider = provider(&transport);
 
     let exact_output = tool_result_with_serialized_len(16_384, false);
@@ -1421,6 +1427,38 @@ fn reader_advertisement_projects_only_above_the_exact_threshold() {
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     );
+
+    let exact_reader_max = tool_result_with_serialized_len(READ_TOOL_RESULT_MAX_SOURCE_BYTES, true);
+    let projected = send_tool_result_request(
+        &provider,
+        &transport,
+        tool_result_request(
+            exact_reader_max,
+            true,
+            "service-session",
+            "service-incarnation",
+            "service-exact-call",
+        ),
+    );
+    let value: Value = serde_json::from_str(&projected).unwrap();
+    assert_eq!(value["type"], "tool_result_preview");
+    assert_eq!(value["total_bytes"], READ_TOOL_RESULT_MAX_SOURCE_BYTES);
+
+    let over_reader_max =
+        tool_result_with_serialized_len(READ_TOOL_RESULT_MAX_SOURCE_BYTES + 1, true);
+    let over_reader_max_serialized = serde_json::to_string(&over_reader_max).unwrap();
+    let complete = send_tool_result_request(
+        &provider,
+        &transport,
+        tool_result_request(
+            over_reader_max,
+            true,
+            "service-session",
+            "service-incarnation",
+            "service-over-call",
+        ),
+    );
+    assert_eq!(complete, over_reader_max_serialized);
 }
 
 #[test]

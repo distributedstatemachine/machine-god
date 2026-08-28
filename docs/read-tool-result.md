@@ -86,12 +86,14 @@ source bytes; an individual page is not promised to be complete JSON.
 
 AI Gateway projection is conditional on the same request advertising
 `read_tool_result`. A complete compact `ToolOutput` of exactly 16 KiB remains
-inline. A larger result is replaced on that provider request by a projection
-envelope containing its opaque handle, complete source length, error
-disposition, reader name, and a preview of at most 4 KiB of source UTF-8. The
-separate wire budget bounds the selected envelope text, while the final
-request-body limit bounds the fully escaped outer request. The durable
-transcript remains complete and unchanged.
+inline. A larger result through the reader's inclusive 64 KiB source ceiling is
+replaced on that provider request by a projection envelope containing its
+opaque handle, complete source length, error disposition, reader name, and a
+preview of at most 4 KiB of source UTF-8. A source above that ceiling remains
+complete instead of receiving an unserviceable handle; it must fit every
+ordinary Gateway request budget. The separate wire budget bounds the selected
+full or envelope text, while the final request-body limit bounds the fully
+escaped outer request. The durable transcript remains complete and unchanged.
 
 A result produced by `read_tool_result` is never projected again, even when
 JSON escaping makes its complete wire form exceed the 16 KiB projection

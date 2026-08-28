@@ -7,7 +7,10 @@ use crate::tool_output_serializer::{
     CompactToolOutputError, CompactToolOutputLimits, measure_json_value_compact,
     serialize_tool_output_compact,
 };
-use crate::tool_result_projection::{tool_result_digest, valid_tool_result_handle};
+use crate::tool_result_projection::{
+    READ_TOOL_RESULT_MAX_SOURCE_BYTES as PROJECTION_MAX_SOURCE_BYTES, tool_result_digest,
+    valid_tool_result_handle,
+};
 use machine_god_core::{
     BoxFuture, CancellationToken, ContentBlock, PreparedToolCall, Role, SessionRecord,
     SessionStore, Tool, ToolCall, ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput,
@@ -21,11 +24,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Exact registered tool name.
 pub const READ_TOOL_RESULT_TOOL_NAME: &str = "read_tool_result";
+/// Largest compact prior `ToolOutput` source that the reader can page.
+pub const READ_TOOL_RESULT_MAX_SOURCE_BYTES: usize = PROJECTION_MAX_SOURCE_BYTES;
 
 const DESCRIPTION: &str = "Read a UTF-8-safe byte range from a prior tool result using its session-scoped preview handle.";
 const MAX_ARGUMENT_BYTES: usize = 512;
 const DEFAULT_START_BYTE: usize = 1;
-const MAX_START_BYTE: usize = 65_537;
+const MAX_START_BYTE: usize = READ_TOOL_RESULT_MAX_SOURCE_BYTES + 1;
 const DEFAULT_PAGE_BYTES: usize = 8_192;
 const MIN_PAGE_BYTES: usize = 4;
 const MAX_PAGE_BYTES: usize = 16_384;
@@ -35,7 +40,6 @@ const DEFAULT_MAX_SCANNED_RESULTS: usize = 4_096;
 const DEFAULT_MAX_SERIALIZED_SCAN_BYTES: usize = 8 * 1024 * 1024;
 const MAX_SCANNED_MESSAGES: usize = 4_096;
 const MAX_SCANNED_CONTENT_BLOCKS: usize = 65_536;
-const MAX_SERIALIZED_TOOL_RESULT_BYTES: usize = 65_536;
 const TOOL_RESULT_HANDLE_PREFIX: &str = "tool-result-sha256-";
 
 /// Stable construction-error category.
@@ -354,7 +358,7 @@ fn scan_record(
             if let Err(error) = serialize_output_bounded(
                 output,
                 &mut serialized,
-                remaining.min(MAX_SERIALIZED_TOOL_RESULT_BYTES),
+                remaining.min(READ_TOOL_RESULT_MAX_SOURCE_BYTES),
                 cancellation,
             ) {
                 return checked_error(cancellation, error);

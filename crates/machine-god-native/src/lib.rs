@@ -230,8 +230,8 @@ pub use read_file::{
     ReadFileToolOpenError, ReadFileToolOpenErrorKind,
 };
 pub use read_tool_result::{
-    READ_TOOL_RESULT_TOOL_NAME, ReadToolResultConfigError, ReadToolResultConfigErrorKind,
-    ReadToolResultLimits, ReadToolResultTool,
+    READ_TOOL_RESULT_MAX_SOURCE_BYTES, READ_TOOL_RESULT_TOOL_NAME, ReadToolResultConfigError,
+    ReadToolResultConfigErrorKind, ReadToolResultLimits, ReadToolResultTool,
 };
 #[cfg(all(
     feature = "ai-gateway-http",

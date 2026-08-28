@@ -153,8 +153,9 @@ Projection is enabled for one request only when that request's tool catalog
 advertises the exact tool name `read_tool_result`. Without that tool, every
 historical result retains the prior complete wire representation. With it, a
 compact serialized `ToolOutput` of at most 16,384 bytes also remains complete;
-the threshold is inclusive. A source larger than 16,384 bytes is represented
-by this compact JSON object as the Gateway tool-result `output.value`:
+the threshold is inclusive. A source from 16,385 through the reader's inclusive
+65,536-byte service ceiling is represented by this compact JSON object as the
+Gateway tool-result `output.value`:
 
 ```json
 {"type":"tool_result_preview","handle":"tool-result-sha256-<64 lowercase hexadecimal digits>","total_bytes":32768,"is_error":false,"read_more_with":"read_tool_result","preview":"<UTF-8 prefix>"}
@@ -175,6 +176,11 @@ lowercase hexadecimal digits. The matching session-backed range reader is
 specified in [`read-tool-result.md`](read-tool-result.md). Projection changes
 only this provider request; it neither replaces the complete durable transcript
 result nor writes a separate archive.
+
+A source above 65,536 bytes remains complete rather than receiving an
+unserviceable handle. It must fit the independent source, selected-wire, and
+final encoded-body budgets. This case is reachable only when a host raises the
+core engine's configurable per-result limit above its 65,536-byte default.
 
 Gateway results whose resolved tool name is `read_tool_result` remain complete
 instead of being projected recursively. They still consume the independent

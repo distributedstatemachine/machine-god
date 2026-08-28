@@ -3,6 +3,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 pub(crate) const READ_TOOL_RESULT_TOOL_NAME: &str = "read_tool_result";
+pub(crate) const READ_TOOL_RESULT_MAX_SOURCE_BYTES: usize = 65_536;
 pub(crate) const TOOL_RESULT_PROJECTION_THRESHOLD_BYTES: usize = 16_384;
 pub(crate) const TOOL_RESULT_PROJECTION_MAX_BYTES: usize = 4_096;
 

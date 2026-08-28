@@ -5,7 +5,8 @@ use crate::tool_output_serializer::{
     serialize_tool_output_compact,
 };
 use crate::tool_result_projection::{
-    READ_TOOL_RESULT_TOOL_NAME, TOOL_RESULT_PROJECTION_THRESHOLD_BYTES, project_tool_result,
+    READ_TOOL_RESULT_MAX_SOURCE_BYTES, READ_TOOL_RESULT_TOOL_NAME,
+    TOOL_RESULT_PROJECTION_THRESHOLD_BYTES, project_tool_result,
 };
 use futures_core::Stream;
 use machine_god_core::{
@@ -791,6 +792,7 @@ fn build_tool_result_value(
     let value = if tool_name.as_str() != READ_TOOL_RESULT_TOOL_NAME
         && projection.reader_advertised
         && serialized_output.len() > TOOL_RESULT_PROJECTION_THRESHOLD_BYTES
+        && serialized_output.len() <= READ_TOOL_RESULT_MAX_SOURCE_BYTES
     {
         project_tool_result(
             projection.session_id,
