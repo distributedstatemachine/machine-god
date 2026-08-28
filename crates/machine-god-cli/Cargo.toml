@@ -14,10 +14,14 @@ path = "src/main.rs"
 [dependencies]
 futures-core.workspace = true
 machine-god-core.workspace = true
-machine-god-native = { workspace = true, features = ["ai-gateway-http"] }
+machine-god-native.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+machine-god-native = { workspace = true, features = ["ai-gateway-model-catalog-http"] }
 tokio = { workspace = true, features = ["signal"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+machine-god-native = { workspace = true, features = ["ai-gateway-http"] }
 
 [lints]
 workspace = true
