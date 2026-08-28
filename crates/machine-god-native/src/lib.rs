@@ -63,6 +63,8 @@ mod state_environment;
 mod terminal;
 mod tool_output_serializer;
 mod tool_result_projection;
+#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm"), unix))]
+mod vision;
 mod vision_portable;
 #[cfg(all(feature = "web-fetch-http", not(target_family = "wasm")))]
 mod web_fetch;
@@ -158,6 +160,14 @@ pub use ask_user_question::{
     MAX_ASK_USER_QUESTION_TOTAL_RAW_ANSWER_BYTES, QuestionPrompt, QuestionPromptAnswers,
     QuestionPromptError, QuestionPromptOption, QuestionPromptOutcome, QuestionPromptRequest,
     QuestionPrompter,
+};
+#[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm"), unix))]
+pub use vision::{
+    MAX_VISION_BATCH_BYTES, MAX_VISION_IMAGE_BYTES, MAX_VISION_IMAGES, MAX_VISION_PATH_BYTES,
+    MAX_VISION_PATH_COMPONENT_BYTES, MAX_VISION_PATH_COMPONENTS,
+    MAX_VISION_SERIALIZED_RESULT_BYTES, MAX_VISION_TOTAL_IMAGE_BYTES,
+    VISION_DEFAULT_MAX_ACTIVE_REQUESTS, VISION_DEFAULT_REQUEST_TIMEOUT, VISION_MAX_ACTIVE_REQUESTS,
+    VISION_TOOL_NAME, VisionConfigError, VisionConfigErrorKind, VisionLimits, VisionTool,
 };
 pub use vision_portable::{
     MAX_VISION_ATTEMPT_EVIDENCE_BYTES, MAX_VISION_BATCH_IMAGES, MAX_VISION_BATCH_RAW_BYTES,
