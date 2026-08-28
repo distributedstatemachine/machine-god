@@ -21,19 +21,19 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `35`
-- Delivered main: `89cae2099a40078aacdfbc84e95dfbc75add03fe`
-- Main CI: `33082850231` (`GREEN`)
-- Main Benchmark evidence: `33082850219` (`GREEN`)
-- Active branch: `agent/m03-read-tool-result`
-- Active phase: `range-only read_tool_result review-green behavior sealed`
-- Next gate: `feature exact CI and Benchmark, then fast-forward main`
+- Delivered slices: `36`
+- Delivered main: `73712608bdc4253faa42aba93741506ebc5d4572`
+- Main CI: `33178362750` (`GREEN`)
+- Main Benchmark evidence: `33178362696` (`GREEN`)
+- Active branch: `agent/m03-vision`
+- Active phase: `read_tool_result delivered; vision is the next native tool`
+- Next gate: `create agent/m03-vision and freeze its bounded contract`
 <!-- canonical-live-status:end -->
 
-The two recorded Actions runs succeeded for the exact delivered-main commit.
-The Benchmark evidence run retained the required exact-SHA artifacts. This
-active behavior slice remains undelivered until its complete gate, review, and
-exact remote evidence succeed.
+The two recorded Actions runs succeeded for the exact delivered-main commit,
+and the Benchmark evidence run retained the required exact-SHA artifacts. No
+behavior slice is active between the completed reader delivery and the next
+bounded `vision` branch.
 
 ## Architecture ownership
 
@@ -127,8 +127,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 33 | `web_search` | [contract](web-search.md) | [review](reviews/m03-web-search-review-01.md) | `52b5885` |
 | 34 | Bounded foreground `terminal` exec | [contract](terminal.md) | [review](reviews/m03-terminal-review-01.md) | `ddd6a89` |
 | 35 | Ordinary `ask_user_question` | [contract](ask-user-question.md) | [review](reviews/m03-ask-user-question-review-01.md) | `490d122` |
+| 36 | Range-only `read_tool_result` with conditional Gateway projection | [contract](read-tool-result.md) | [review](reviews/m03-read-tool-result-review-01.md) | `7371260` |
 
-The exact delivered-main record after slice 35 is in the canonical live-status
+The exact delivered-main record after slice 36 is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.
@@ -143,20 +144,19 @@ requires an explicit reviewed plan change.
 - Provider-neutral engine integration with the native provider, transport,
   permission, session, configuration, and reference-host seams represented by
   delivered slices 1-16.
-- Sixteen native tools: `list_files`, `glob_files`, `grep_files`, `read_file`,
+- Seventeen native tools: `list_files`, `glob_files`, `grep_files`, `read_file`,
   `write_file`, `edit_file`, `delete_file`, `rename_file`, `copy_file`,
   `create_folder`, `file_info`, `open_file`, `web_fetch`, `web_search`,
-  `terminal`, and `ask_user_question`.
+  `terminal`, `ask_user_question`, and `read_tool_result`.
 - Delivered CLI slices for `permissions`, `models`, `doctor`, `sessions`, and
   strict summary-only `session <id>`.
 
 ### Remaining
 
-- Complete the in-progress range-only, session-backed `read_tool_result` slice
-  with conditional AI Gateway projection. After that tool, native `vision`
-  remains. Every authority-bearing addition needs normalized preflight, exact
-  policy/execution agreement, explicit resource bounds, redacted diagnostics,
-  cancellation/drop evidence, and declared platform scope before integration.
+- Complete native `vision`, the final remaining M03 tool. Every
+  authority-bearing addition needs normalized preflight, exact policy/execution
+  agreement, explicit resource bounds, redacted diagnostics, cancellation/drop
+  evidence, and declared platform scope before integration.
 - Complete top-level CLI ownership for `help`, `ask`, `status`, `permissions`,
   `models`, `doctor`, `session`, `sessions`, `resume`, `replay`, and `workspace`.
   Existing partial/delivered commands do not close the combined boundary.
