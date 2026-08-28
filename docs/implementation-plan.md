@@ -26,13 +26,14 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33179648286` (`GREEN`)
 - Main Benchmark evidence: `33179648264` (`GREEN`)
 - Active branch: `agent/m03-vision`
-- Active phase: `vision contract frozen; implementation is in progress`
-- Next gate: `integrate the bounded tool, Gateway worker, host, tests, and docs`
+- Active phase: `vision implementation complete; exact local gate is in progress`
+- Next gate: `pass the complete local gate and three fresh adversarial reviews`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
 and the Benchmark evidence run retained the required exact-SHA artifacts. The
-bounded `vision` behavior is active on the branch named above.
+bounded `vision` behavior is implemented on the branch named above and is not
+yet delivered.
 
 ## Architecture ownership
 
