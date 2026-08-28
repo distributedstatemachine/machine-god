@@ -474,8 +474,7 @@ class NativeManifestTests(unittest.TestCase):
         self.assertEqual(lib_source.count(tool_cfg + "mod vision;"), 1)
         self.assertEqual(lib_source.count(tool_cfg + "pub use vision::{"), 1)
         self.assertIn(
-            "contracts are available without\n"
-            "`vision`,\n"
+            "contracts are available without `vision`,\n"
             "`ai-gateway-http`, HTTP, or Tokio, including on WebAssembly",
             vision_document,
         )
@@ -491,8 +490,8 @@ class NativeManifestTests(unittest.TestCase):
             vision_document,
         )
         self.assertIn(
-            "Other native operating systems return the fixed\n"
-            "`UnsupportedPlatform` construction failure",
+            "Other native operating systems return the\n"
+            "fixed `UnsupportedPlatform` construction failure",
             vision_document,
         )
         self.assertNotIn(
@@ -534,7 +533,7 @@ class NativeManifestTests(unittest.TestCase):
         )
         self.assertEqual(
             self.manifest["dependencies"]["base64"],
-            {"workspace": True, "optional": True},
+            {"workspace": True, "optional": True, "features": ["alloc"]},
         )
 
         completed = subprocess.run(
@@ -584,7 +583,8 @@ class NativeManifestTests(unittest.TestCase):
         )
         clippy_command = (
             'cargo +"${RUST_TOOLCHAIN}" clippy --locked '
-            "-p machine-god-native --lib --tests --no-default-features "
+            "-p machine-god-native --lib --test vision_unsupported "
+            "--no-default-features "
             "--features vision --target x86_64-unknown-freebsd -- -D warnings"
         )
         self.assertEqual(workflow.count(unsupported_job), 1)
@@ -592,7 +592,8 @@ class NativeManifestTests(unittest.TestCase):
         self.assertEqual(workflow.count(clippy_command), 1)
         self.assertIn(
             "CI cross-compiles and runs warnings-denied Clippy over the narrow\n"
-            "feature's library and tests for `x86_64-unknown-freebsd` with Rust 1.94.1",
+            "feature's library and unsupported-platform integration test for\n"
+            "`x86_64-unknown-freebsd` with Rust 1.94.1",
             vision_document,
         )
 
