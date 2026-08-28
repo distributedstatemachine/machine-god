@@ -2,9 +2,9 @@
 
 `NativeReferenceHost` is the maintained example of composing the
 provider-neutral engine with native AI Gateway, persistence, prompt, root, and
-tool implementations. It is a library boundary; the current CLI does not yet
-turn this complete composition into an interactive agent UI. Current milestone
-state is maintained only in the
+tool implementations. It is a library boundary; the CLI uses it for bounded
+one-shot requests but does not yet provide a full interactive agent UI. Current
+milestone state is maintained only in the
 [implementation plan](implementation-plan.md#current-delivery-state).
 
 ## Availability
@@ -175,7 +175,7 @@ component detail.
 
 ## Deferred composition
 
-The reference host does not yet supply a full interactive CLI/TUI, persistent
+The reference host does not itself supply a full interactive CLI/TUI, persistent
 grant policy, alternate provider or credential selections, MCP/ACP/skill or
 subagent infrastructure, encrypted storage, non-Unix root hardening, durable
 image attachments, prompt images, or CLI image flags. Those additions must

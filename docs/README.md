@@ -59,6 +59,7 @@ contract together when exact numeric limits matter.
 
 ## CLI contracts
 
+- [ask](ask-cli.md)
 - [permissions](permissions-cli.md)
 - [models](models-cli.md)
 - [doctor](doctor-cli.md)
