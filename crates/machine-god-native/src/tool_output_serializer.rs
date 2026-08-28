@@ -2,6 +2,7 @@ use machine_god_core::{CancellationToken, MAX_SAFE_JSON_DEPTH, ToolOutput};
 use serde_json::Value;
 
 const STRING_SCAN_CHUNK_BYTES: usize = 1_024;
+const INITIAL_OUTPUT_BUFFER_BYTES: usize = 64;
 const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -23,8 +24,8 @@ pub(crate) struct CompactToolOutputLimits {
 /// Reusable traversal storage for compact JSON serialization.
 ///
 /// A scratch value can be retained while serializing multiple tool outputs
-/// borrowed from the same session record, avoiding one frame allocation per
-/// candidate. It never owns or mutates the values being serialized.
+/// borrowed from the same aggregate request or session record, avoiding one
+/// frame allocation per value. It never owns or mutates serialized values.
 pub(crate) struct CompactJsonScratch<'value> {
     frames: Vec<ValueFrame<'value>>,
 }
@@ -40,6 +41,7 @@ impl CompactJsonScratch<'_> {
 /// The destination is cleared before serialization and may contain a bounded
 /// prefix when an error is returned. Callers can retain it and reuse its
 /// allocation across serializations.
+#[cfg(test)]
 pub(crate) fn serialize_tool_output_compact(
     output: &ToolOutput,
     destination: &mut Vec<u8>,
@@ -115,17 +117,33 @@ pub(crate) fn measure_json_value_compact(
     limits: CompactToolOutputLimits,
     cancellation: &CancellationToken,
 ) -> Result<usize, CompactToolOutputError> {
+    let mut scratch = CompactJsonScratch::new();
+    measure_json_value_compact_with_scratch(value, &mut scratch, limits, cancellation)
+}
+
+/// Measures one compact JSON value while reusing traversal-frame storage.
+///
+/// The scratch is cleared before measurement and remains reusable after
+/// success or failure.
+pub(crate) fn measure_json_value_compact_with_scratch<'value>(
+    value: &'value Value,
+    scratch: &mut CompactJsonScratch<'value>,
+    limits: CompactToolOutputLimits,
+    cancellation: &CancellationToken,
+) -> Result<usize, CompactToolOutputError> {
+    scratch.frames.clear();
     validate_limits(limits)?;
     let mut encoder = Encoder::measuring(limits.output_bytes, cancellation);
-    let mut scratch = CompactJsonScratch::new();
-    encode_value_iterative(
+    let result = encode_value_iterative(
         value,
         &mut encoder,
         limits.json_depth,
         limits.json_nodes,
         &mut scratch.frames,
-    )?;
-    Ok(encoder.written())
+    )
+    .map(|()| encoder.written());
+    scratch.frames.clear();
+    result
 }
 
 fn validate_limits(limits: CompactToolOutputLimits) -> Result<(), CompactToolOutputError> {
@@ -238,11 +256,14 @@ fn reserve_for_append(
         return Ok(());
     }
 
-    let geometric = destination
-        .capacity()
-        .max(STRING_SCAN_CHUNK_BYTES)
-        .saturating_mul(2)
-        .min(max_output_bytes);
+    let geometric = if destination.capacity() == 0 {
+        INITIAL_OUTPUT_BUFFER_BYTES.min(max_output_bytes)
+    } else {
+        destination
+            .capacity()
+            .saturating_mul(2)
+            .min(max_output_bytes)
+    };
     let target = required.max(geometric);
     destination
         .try_reserve_exact(target - destination.len())

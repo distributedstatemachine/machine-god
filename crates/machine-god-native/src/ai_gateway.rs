@@ -1,8 +1,8 @@
 //! Runtime-neutral codec for the pinned Vercel AI Gateway v3 wire contract.
 
 use crate::tool_output_serializer::{
-    CompactToolOutputError, CompactToolOutputLimits, measure_json_value_compact,
-    serialize_tool_output_compact,
+    CompactJsonScratch, CompactToolOutputError, CompactToolOutputLimits,
+    measure_json_value_compact_with_scratch, serialize_tool_output_compact_with_scratch,
 };
 use crate::tool_result_projection::{
     READ_TOOL_RESULT_MAX_SOURCE_BYTES, READ_TOOL_RESULT_TOOL_NAME,
@@ -667,6 +667,7 @@ fn build_prompt(
     projection: &PromptBuildContext<'_>,
     budgets: &mut ToolOutputBudgets,
 ) -> Result<Vec<GatewayMessage>, ProviderError> {
+    let mut prepared_results = prepare_tool_result_values(&messages, projection, budgets)?;
     let mut prompt = Vec::with_capacity(messages.len());
     let mut pending: BTreeMap<ToolCallId, ToolName> = BTreeMap::new();
     for message in messages {
@@ -689,6 +690,7 @@ fn build_prompt(
                 let mut parts = Vec::new();
                 let mut saw_call = false;
                 for block in message.content {
+                    check_cancel(projection.cancellation)?;
                     match block {
                         ContentBlock::Text { text } if !saw_call && parts.is_empty() => {
                             parts.push(GatewayPart::Text { text });
@@ -700,16 +702,6 @@ fn build_prompt(
                             {
                                 return Err(invalid_request("gateway_invalid_history"));
                             }
-                            measure_json_value_compact(
-                                &call.arguments,
-                                CompactToolOutputLimits {
-                                    output_bytes: projection.limits.max_tool_arguments_bytes,
-                                    json_depth: MAX_SAFE_JSON_DEPTH,
-                                    json_nodes: projection.limits.max_json_nodes,
-                                },
-                                projection.cancellation,
-                            )
-                            .map_err(map_compact_output_error)?;
                             parts.push(GatewayPart::ToolCall {
                                 tool_call_id: call.id.to_string(),
                                 tool_name: call.name.to_string(),
@@ -734,7 +726,7 @@ fn build_prompt(
                 if content.len() != 1 {
                     return Err(invalid_request("gateway_invalid_history"));
                 }
-                let ContentBlock::ToolResult { call_id, output } =
+                let ContentBlock::ToolResult { call_id, output: _ } =
                     content.pop().expect("length checked")
                 else {
                     return Err(invalid_request("gateway_invalid_history"));
@@ -742,7 +734,9 @@ fn build_prompt(
                 let Some(name) = pending.remove(&call_id) else {
                     return Err(invalid_request("gateway_invalid_history"));
                 };
-                let value = build_tool_result_value(&output, &call_id, &name, projection, budgets)?;
+                let value = prepared_results
+                    .pop_front()
+                    .ok_or_else(|| protocol_error("gateway_internal_encoding"))?;
                 GatewayMessage {
                     role: "tool",
                     content: GatewayContent::Parts(vec![GatewayPart::ToolResult {
@@ -762,20 +756,104 @@ fn build_prompt(
     if !pending.is_empty() {
         return Err(invalid_request("gateway_invalid_history"));
     }
+    if !prepared_results.is_empty() {
+        return Err(protocol_error("gateway_internal_encoding"));
+    }
     Ok(prompt)
 }
 
-fn build_tool_result_value(
-    output: &machine_god_core::ToolOutput,
+fn prepare_tool_result_values<'message>(
+    messages: &'message [Message],
+    projection: &PromptBuildContext<'_>,
+    budgets: &mut ToolOutputBudgets,
+) -> Result<VecDeque<String>, ProviderError> {
+    let mut prepared = VecDeque::new();
+    let mut pending: BTreeMap<&'message str, &'message ToolName> = BTreeMap::new();
+    let mut scratch = CompactJsonScratch::new();
+    for message in messages {
+        check_cancel(projection.cancellation)?;
+        if !pending.is_empty() && message.role != Role::Tool {
+            return Err(invalid_request("gateway_invalid_history"));
+        }
+        match message.role {
+            Role::System | Role::User => {
+                if !matches!(message.content.as_slice(), [ContentBlock::Text { .. }]) {
+                    return Err(invalid_request("gateway_invalid_history"));
+                }
+            }
+            Role::Assistant => {
+                let mut saw_call = false;
+                for (index, block) in message.content.iter().enumerate() {
+                    check_cancel(projection.cancellation)?;
+                    match block {
+                        ContentBlock::Text { .. } if !saw_call && index == 0 => {}
+                        ContentBlock::ToolCall { call } => {
+                            saw_call = true;
+                            if pending.len() >= projection.limits.max_tool_calls
+                                || pending.insert(call.id.as_str(), &call.name).is_some()
+                            {
+                                return Err(invalid_request("gateway_invalid_history"));
+                            }
+                            measure_json_value_compact_with_scratch(
+                                &call.arguments,
+                                &mut scratch,
+                                CompactToolOutputLimits {
+                                    output_bytes: projection.limits.max_tool_arguments_bytes,
+                                    json_depth: MAX_SAFE_JSON_DEPTH,
+                                    json_nodes: projection.limits.max_json_nodes,
+                                },
+                                projection.cancellation,
+                            )
+                            .map_err(map_compact_output_error)?;
+                        }
+                        ContentBlock::Text { .. }
+                        | ContentBlock::Json { .. }
+                        | ContentBlock::ToolResult { .. } => {
+                            return Err(invalid_request("gateway_invalid_history"));
+                        }
+                        _ => return Err(invalid_request("gateway_invalid_history")),
+                    }
+                }
+            }
+            Role::Tool => {
+                let [ContentBlock::ToolResult { call_id, output }] = message.content.as_slice()
+                else {
+                    return Err(invalid_request("gateway_invalid_history"));
+                };
+                let Some(name) = pending.remove(call_id.as_str()) else {
+                    return Err(invalid_request("gateway_invalid_history"));
+                };
+                prepared.push_back(build_tool_result_value(
+                    output,
+                    &mut scratch,
+                    call_id,
+                    name,
+                    projection,
+                    budgets,
+                )?);
+            }
+            _ => return Err(invalid_request("gateway_invalid_history")),
+        }
+    }
+    if !pending.is_empty() {
+        return Err(invalid_request("gateway_invalid_history"));
+    }
+    Ok(prepared)
+}
+
+fn build_tool_result_value<'value>(
+    output: &'value machine_god_core::ToolOutput,
+    scratch: &mut CompactJsonScratch<'value>,
     call_id: &ToolCallId,
     tool_name: &ToolName,
     projection: &PromptBuildContext<'_>,
     budgets: &mut ToolOutputBudgets,
 ) -> Result<String, ProviderError> {
     let mut serialized_output = Vec::new();
-    serialize_tool_output_compact(
+    serialize_tool_output_compact_with_scratch(
         output,
         &mut serialized_output,
+        scratch,
         CompactToolOutputLimits {
             output_bytes: budgets.source_remaining,
             json_depth: MAX_SAFE_JSON_DEPTH,
@@ -820,6 +898,93 @@ fn map_compact_output_error(error: CompactToolOutputError) -> ProviderError {
         CompactToolOutputError::JsonDepth => invalid_request("gateway_json_depth_limit"),
         CompactToolOutputError::JsonNodes => invalid_request("gateway_json_node_limit"),
         CompactToolOutputError::Invalid => protocol_error("gateway_internal_encoding"),
+    }
+}
+
+#[cfg(test)]
+mod prompt_allocation_tests {
+    use super::*;
+    use machine_god_core::ToolOutput;
+    use serde_json::json;
+
+    const CALLS_PER_GROUP: usize = 64;
+    const GROUPS: usize = 63;
+    const RESULT_COUNT: usize = CALLS_PER_GROUP * GROUPS;
+
+    fn maximal_history() -> Vec<Message> {
+        let mut messages = Vec::with_capacity(1 + GROUPS * (CALLS_PER_GROUP + 1));
+        messages.push(Message::text(Role::User, "run the complete history"));
+        for group in 0..GROUPS {
+            let calls: Vec<_> = (0..CALLS_PER_GROUP)
+                .map(|index| ToolCall {
+                    id: ToolCallId::new(format!("call-{group}-{index}"))
+                        .expect("fixture call ID is valid"),
+                    name: ToolName::new("echo").expect("fixture tool name is valid"),
+                    arguments: json!([{"value": null}]),
+                })
+                .collect();
+            messages.push(Message {
+                role: Role::Assistant,
+                content: calls
+                    .iter()
+                    .cloned()
+                    .map(|call| ContentBlock::ToolCall { call })
+                    .collect(),
+            });
+            messages.extend(calls.into_iter().map(|call| Message {
+                role: Role::Tool,
+                content: vec![ContentBlock::ToolResult {
+                    call_id: call.id,
+                    output: ToolOutput::success("ok"),
+                }],
+            }));
+        }
+        assert_eq!(messages.len(), AiGatewayLimits::default().max_messages);
+        messages
+    }
+
+    #[test]
+    fn maximal_prompt_preparation_reuses_scratch_and_retains_small_results() {
+        let messages = maximal_history();
+        let session_id = SessionId::new("allocation-session").unwrap();
+        let session_incarnation_id = SessionIncarnationId::new("allocation-incarnation").unwrap();
+        let cancellation = CancellationToken::new();
+        let limits = AiGatewayLimits::default();
+        let context = PromptBuildContext {
+            session_id: &session_id,
+            session_incarnation_id: &session_incarnation_id,
+            reader_advertised: false,
+            limits,
+            cancellation: &cancellation,
+        };
+        let mut budgets = ToolOutputBudgets {
+            source_remaining: limits.max_request_bytes,
+            wire_remaining: limits.max_request_bytes,
+        };
+        let mut prepared = None;
+        allocation_counter::measure(|| {});
+        let allocations = allocation_counter::measure(|| {
+            prepared = Some(prepare_tool_result_values(
+                &messages,
+                &context,
+                &mut budgets,
+            ));
+        });
+        let prepared = prepared.expect("preparation completed").unwrap();
+        assert_eq!(prepared.len(), RESULT_COUNT);
+        assert!(prepared.iter().all(|value| value.capacity() <= 64));
+        assert!(
+            allocations.count_total <= (RESULT_COUNT + 1_024) as u64,
+            "prompt preparation allocated per traversal: {allocations:?}"
+        );
+        assert!(
+            allocations.bytes_current <= 384 * 1_024,
+            "small results retained excess capacity: {allocations:?}"
+        );
+        assert!(
+            allocations.bytes_max <= 512 * 1_024,
+            "prompt preparation held excess peak capacity: {allocations:?}"
+        );
     }
 }
 
