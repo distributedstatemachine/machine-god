@@ -607,11 +607,10 @@ class BenchmarkScriptsTest(unittest.TestCase):
             fake_git.write_text(
                 "\n".join(
                     (
-                        "#!/usr/bin/env python3",
-                        "import os, time",
-                        "while True:",
-                        "    os.write(1, b'x' * 8192)",
-                        "    time.sleep(0.001)",
+                        "#!/bin/sh",
+                        "while :; do",
+                        "    printf '%2048s' x",
+                        "done",
                     )
                 )
                 + "\n",
