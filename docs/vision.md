@@ -302,13 +302,16 @@ or provider diagnostics.
 
 ## Platform and feature scope
 
-Portable media/request/response/error/limit and injected transport/deadline
-contracts are available without HTTP or Tokio and on WebAssembly. The concrete
-`VisionTool` type is available on non-WebAssembly native targets, but its
-descriptor-reading implementation works only on Linux with `openat2` support
-and macOS with `O_NOFOLLOW_ANY`; reference-host composition has the same
-Linux/macOS boundary. Other native targets return the fixed
-unsupported-platform construction failure and do not claim a working image
+The provider-neutral portable media, request, response, error, limit, and
+injected transport/deadline contracts are available without
+`ai-gateway-http`, HTTP, or Tokio, including on WebAssembly. The concrete native
+`VisionTool` built from those injected dependencies, together with its
+unsupported-platform constructor stub, is compiled only when
+`ai-gateway-http` is enabled on a non-WebAssembly native target. On that
+feature surface, descriptor-backed execution works on Linux with `openat2`
+support and macOS with `O_NOFOLLOW_ANY`; reference-host composition has the
+same Linux/macOS boundary. Other native operating systems return the fixed
+`UnsupportedPlatform` construction failure and do not claim a working image
 reader. Construction is network-inert.
 
 ## Deliberately deferred

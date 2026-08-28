@@ -33,6 +33,7 @@ VISION_PORTABLE_SOURCE = (
     / "src"
     / "vision_portable.rs"
 )
+VISION_DOCUMENT = REPOSITORY_ROOT / "docs" / "vision.md"
 CLI_MANIFEST = REPOSITORY_ROOT / "crates" / "machine-god-cli" / "Cargo.toml"
 NON_WASM_CFG = 'cfg(not(target_family = "wasm"))'
 VISION_ADAPTER_CFG = (
@@ -453,6 +454,7 @@ class NativeManifestTests(unittest.TestCase):
     ) -> None:
         lib_source = NATIVE_LIB_SOURCE.read_text(encoding="utf-8")
         portable_source = VISION_PORTABLE_SOURCE.read_text(encoding="utf-8")
+        vision_document = VISION_DOCUMENT.read_text(encoding="utf-8")
         features = self.manifest["features"]
 
         self.assertEqual(lib_source.count("\nmod vision_portable;\n"), 1)
@@ -470,6 +472,25 @@ class NativeManifestTests(unittest.TestCase):
         tool_cfg = f"#[{VISION_TOOL_CFG}]\n"
         self.assertEqual(lib_source.count(tool_cfg + "mod vision;"), 1)
         self.assertEqual(lib_source.count(tool_cfg + "pub use vision::{"), 1)
+        self.assertIn(
+            "contracts are available without\n"
+            "`ai-gateway-http`, HTTP, or Tokio, including on WebAssembly",
+            vision_document,
+        )
+        self.assertIn(
+            "constructor stub, is compiled only when\n"
+            "`ai-gateway-http` is enabled on a non-WebAssembly native target",
+            vision_document,
+        )
+        self.assertIn(
+            "Other native operating systems return the fixed\n"
+            "`UnsupportedPlatform` construction failure",
+            vision_document,
+        )
+        self.assertNotIn(
+            "`VisionTool` type is available on non-WebAssembly native targets",
+            vision_document,
+        )
 
         reference_host_cfg = f"#[{VISION_REFERENCE_HOST_CFG}]\n"
         self.assertEqual(
