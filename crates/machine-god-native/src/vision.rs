@@ -2166,9 +2166,11 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use futures_executor::block_on;
+    use futures_util::stream;
     use machine_god_core::{
         BoxFuture, CancellationToken, Capability, NetworkTarget, PreparedToolAuthorization,
-        SessionId, SessionIncarnationId, Tool, ToolCall, ToolCallId, ToolContext, ToolName, TurnId,
+        ProviderError, SessionId, SessionIncarnationId, Tool, ToolCall, ToolCallId, ToolContext,
+        ToolName, TurnId,
     };
     use machine_god_reentrant_waker_test::{Callback, new as reentrant_waker};
     use serde_json::{Value, json};
@@ -2176,6 +2178,10 @@ mod tests {
     use crate::vision_portable::{
         VisionBatchRequest, VisionBatchResponse, VisionImageOutcome, VisionImageResult,
         VisionMediaType, VisionTransport, VisionTransportError, VisionTransportErrorKind,
+    };
+    use crate::{
+        AiGatewayByteStream, AiGatewayTransport, AiGatewayTransportRequest,
+        AiGatewayVisionTransport,
     };
 
     use super::{
@@ -2388,6 +2394,34 @@ mod tests {
         }
     }
 
+    struct TriggeredInvocationDeadline {
+        ready: Arc<AtomicBool>,
+        drops: Arc<AtomicUsize>,
+        permits: Arc<Mutex<Option<Arc<Semaphore>>>>,
+    }
+
+    impl VisionDeadline for TriggeredInvocationDeadline {
+        fn wait_until(
+            &self,
+            _deadline: Instant,
+        ) -> BoxFuture<'_, Result<(), VisionTransportError>> {
+            let permits = self
+                .permits
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_ref()
+                .cloned()
+                .expect("test installs the vision semaphore before execution");
+            Box::pin(TriggeredTimeoutFuture {
+                ready: Arc::clone(&self.ready),
+                _observation: ObserveCapacityOnDropFuture {
+                    permits,
+                    drops: Arc::clone(&self.drops),
+                },
+            })
+        }
+    }
+
     struct PanicOnDropDeadline;
 
     impl VisionDeadline for PanicOnDropDeadline {
@@ -2434,6 +2468,32 @@ mod tests {
         batches: Mutex<Vec<Vec<(u64, VisionMediaType, usize)>>>,
         mode: TransportMode,
         mutate_on_first_call: Option<PathBuf>,
+    }
+
+    struct DeadlineActivatingGatewayTransport {
+        calls: AtomicUsize,
+        deadline_ready: Arc<AtomicBool>,
+        cancel_on_first_attempt: bool,
+    }
+
+    impl AiGatewayTransport for DeadlineActivatingGatewayTransport {
+        fn stream(
+            &self,
+            _request: AiGatewayTransportRequest,
+            cancellation: CancellationToken,
+        ) -> BoxFuture<'_, Result<AiGatewayByteStream, ProviderError>> {
+            let call_index = self.calls.fetch_add(1, Ordering::SeqCst);
+            if call_index == 0 {
+                self.deadline_ready.store(true, Ordering::SeqCst);
+                if self.cancel_on_first_attempt {
+                    assert!(cancellation.cancel());
+                }
+            }
+            let response = semantic_invalid_gateway_vision_response();
+            Box::pin(
+                async move { Ok(Box::pin(stream::iter([Ok(response)])) as AiGatewayByteStream) },
+            )
+        }
     }
 
     impl FakeTransport {
@@ -2570,6 +2630,81 @@ mod tests {
             turn_id: TurnId::new("vision-turn").expect("valid turn ID"),
             call_id: ToolCallId::new("vision-call").expect("valid test call ID"),
         }
+    }
+
+    fn semantic_invalid_gateway_vision_response() -> Vec<u8> {
+        let mut response = Vec::new();
+        for event in [
+            json!({"type": "stream-start", "warnings": []}),
+            json!({"type": "text-start", "id": "vision-text"}),
+            json!({
+                "type": "text-delta",
+                "id": "vision-text",
+                "delta": r#"{"images":[]}"#,
+            }),
+            json!({"type": "text-end", "id": "vision-text"}),
+            json!({"type": "finish", "finishReason": {"unified": "stop"}}),
+        ] {
+            response.extend_from_slice(b"data: ");
+            response.extend_from_slice(
+                serde_json::to_string(&event)
+                    .expect("serialize scripted Gateway event")
+                    .as_bytes(),
+            );
+            response.extend_from_slice(b"\n\n");
+        }
+        response.extend_from_slice(b"data: [DONE]\n\n");
+        response
+    }
+
+    fn assert_gateway_semantic_retry_observes_outer_deadline(
+        cancel_on_first_attempt: bool,
+        expected_code: &'static str,
+    ) {
+        let root = TestRoot::new();
+        std::fs::write(root.path.join("one.png"), b"\x89PNG\r\n\x1a\n").expect("write test image");
+        let deadline_ready = Arc::new(AtomicBool::new(false));
+        let deadline_drops = Arc::new(AtomicUsize::new(0));
+        let observed_permits = Arc::new(Mutex::new(None));
+        let transport = Arc::new(DeadlineActivatingGatewayTransport {
+            calls: AtomicUsize::new(0),
+            deadline_ready: Arc::clone(&deadline_ready),
+            cancel_on_first_attempt,
+        });
+        let worker = AiGatewayVisionTransport::new(
+            "test/configured-vision-model",
+            Arc::clone(&transport) as Arc<dyn AiGatewayTransport>,
+        )
+        .expect("construct Gateway vision worker");
+        let tool = VisionTool::with_bounded_transport(
+            root.path.as_path(),
+            target(),
+            Arc::new(worker),
+            Arc::new(TriggeredInvocationDeadline {
+                ready: deadline_ready,
+                drops: Arc::clone(&deadline_drops),
+                permits: Arc::clone(&observed_permits),
+            }),
+            VisionLimits::new(Duration::from_secs(60), 1).expect("capacity-one vision limits"),
+        )
+        .expect("construct composed Gateway vision tool");
+        *observed_permits
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::clone(&tool.permits));
+        let cancellation = CancellationToken::new();
+
+        let error = block_on(tool.execute(
+            context(),
+            json!({"focus": "Inspect", "paths": ["one.png"]}),
+            cancellation.clone(),
+        ))
+        .expect_err("the outer vision arbiter must stop the semantic retry");
+
+        assert_eq!(error.code, expected_code);
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(deadline_drops.load(Ordering::SeqCst), 1);
+        assert_eq!(tool.permits.available_permits(), 1);
+        assert_eq!(cancellation.is_cancelled(), cancel_on_first_attempt);
     }
 
     fn deeply_nested_value(depth: usize) -> Value {
@@ -3690,6 +3825,16 @@ mod tests {
 
         assert_eq!(error.code, "vision_timeout");
         assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn gateway_semantic_retry_yields_to_outer_deadline_before_request_two() {
+        assert_gateway_semantic_retry_observes_outer_deadline(false, "vision_timeout");
+    }
+
+    #[test]
+    fn cancellation_wins_when_gateway_retry_also_activates_outer_deadline() {
+        assert_gateway_semantic_retry_observes_outer_deadline(true, "vision_cancelled");
     }
 
     #[test]
