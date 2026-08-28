@@ -149,7 +149,7 @@ pub(crate) fn run_ask(
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod production {
-    use std::future::poll_fn;
+    use std::future::{Future, poll_fn};
     use std::pin::Pin;
     use std::sync::{Arc, mpsc};
     use std::task::Poll;
@@ -274,6 +274,7 @@ mod production {
         control: AskSignalControlSender,
         signals: Option<AskSignals>,
         worker: Option<JoinHandle<()>>,
+        registration: AskSignalRegistration,
     }
 
     fn map_thread_spawn<T>(result: std::io::Result<T>) -> Result<T, ()> {
@@ -282,6 +283,21 @@ mod production {
 
     impl AskSignalController {
         fn spawn() -> Result<Self, ()> {
+            Self::spawn_with_registrar(|| {
+                let interrupt =
+                    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+                        .map_err(|_| ());
+                let terminate =
+                    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                        .map_err(|_| ());
+                (interrupt, terminate)
+            })
+        }
+
+        fn spawn_with_registrar<F>(registrar: F) -> Result<Self, ()>
+        where
+            F: FnOnce() -> (SignalRegistrationResult, SignalRegistrationResult) + Send + 'static,
+        {
             let (control_sender, control_receiver) = tokio::sync::mpsc::channel(1);
             let (signal_sender, signal_receiver) = tokio::sync::mpsc::channel(1);
             let (ready_sender, ready_receiver) = mpsc::sync_channel(0);
@@ -289,16 +305,22 @@ mod production {
                 std::thread::Builder::new()
                     .name("machine-god-ask-signals".to_owned())
                     .spawn(move || {
-                        run_signal_guardian(control_receiver, &signal_sender, &ready_sender);
+                        run_signal_guardian(
+                            control_receiver,
+                            &signal_sender,
+                            &ready_sender,
+                            registrar,
+                        );
                     }),
             )?;
-            if let Ok(Ok(())) = ready_receiver.recv() {
+            if let Ok(Ok(registration)) = ready_receiver.recv() {
                 Ok(Self {
                     control: AskSignalControlSender {
                         sender: control_sender,
                     },
                     signals: Some(AskSignals::new(signal_receiver)),
                     worker: Some(worker),
+                    registration,
                 })
             } else {
                 let _ = worker.join();
@@ -316,6 +338,10 @@ mod production {
 
         fn enter_final(&self) -> Result<(), ()> {
             self.control.enter_final()
+        }
+
+        const fn registration_complete(&self) -> bool {
+            matches!(self.registration, AskSignalRegistration::Complete)
         }
     }
 
@@ -348,11 +374,160 @@ mod production {
         ControlClosed,
     }
 
-    fn run_signal_guardian(
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum AskSignalRegistration {
+        Complete,
+        Partial,
+    }
+
+    type SignalRegistrationResult = Result<tokio::signal::unix::Signal, ()>;
+
+    struct RegisteredAskSignals {
+        interrupt: Option<tokio::signal::unix::Signal>,
+        terminate: Option<tokio::signal::unix::Signal>,
+    }
+
+    impl RegisteredAskSignals {
+        fn from_results(
+            interrupt: SignalRegistrationResult,
+            terminate: SignalRegistrationResult,
+        ) -> Result<(Self, AskSignalRegistration), ()> {
+            let interrupt = interrupt.ok();
+            let terminate = terminate.ok();
+            let registration = match (interrupt.is_some(), terminate.is_some()) {
+                (true, true) => AskSignalRegistration::Complete,
+                (true, false) | (false, true) => AskSignalRegistration::Partial,
+                (false, false) => return Err(()),
+            };
+            Ok((
+                Self {
+                    interrupt,
+                    terminate,
+                },
+                registration,
+            ))
+        }
+    }
+
+    trait AskSignalListeners {
+        fn poll_interrupt(&mut self, context: &mut std::task::Context<'_>) -> Poll<Option<()>>;
+        fn poll_terminate(&mut self, context: &mut std::task::Context<'_>) -> Poll<Option<()>>;
+    }
+
+    impl AskSignalListeners for RegisteredAskSignals {
+        fn poll_interrupt(&mut self, context: &mut std::task::Context<'_>) -> Poll<Option<()>> {
+            self.interrupt
+                .as_mut()
+                .map_or(Poll::Pending, |signal| signal.poll_recv(context))
+        }
+
+        fn poll_terminate(&mut self, context: &mut std::task::Context<'_>) -> Poll<Option<()>> {
+            self.terminate
+                .as_mut()
+                .map_or(Poll::Pending, |signal| signal.poll_recv(context))
+        }
+    }
+
+    struct AskSignalGuardianState {
+        phase: AskSignalPhase,
+        finishing: Option<(i32, Pin<Box<tokio::time::Sleep>>)>,
+        turn_signal_latched: bool,
+    }
+
+    impl Default for AskSignalGuardianState {
+        fn default() -> Self {
+            Self {
+                phase: AskSignalPhase::Setup,
+                finishing: None,
+                turn_signal_latched: false,
+            }
+        }
+    }
+
+    fn poll_signal_guardian<L: AskSignalListeners>(
+        context: &mut std::task::Context<'_>,
+        control: &mut tokio::sync::mpsc::Receiver<AskSignalControl>,
+        turn_signals: &tokio::sync::mpsc::Sender<AskSignal>,
+        listeners: &mut L,
+        state: &mut AskSignalGuardianState,
+    ) -> Poll<AskSignalGuardianResult> {
+        let mut deferred_control_failure = None;
+        match control.poll_recv(context) {
+            Poll::Ready(Some(AskSignalControl::ActivateTurn(ready))) => {
+                state.phase = AskSignalPhase::Turn;
+                state.turn_signal_latched = false;
+                if ready.send(()).is_err() {
+                    deferred_control_failure = Some(AskSignalGuardianResult::ControlClosed);
+                }
+                context.waker().wake_by_ref();
+            }
+            Poll::Ready(Some(AskSignalControl::EnterFinal(ready))) => {
+                state.phase = AskSignalPhase::Final;
+                if ready.send(()).is_err() {
+                    deferred_control_failure = Some(AskSignalGuardianResult::ControlClosed);
+                }
+                context.waker().wake_by_ref();
+            }
+            Poll::Ready(Some(AskSignalControl::Finish(exit_code))) => {
+                state.phase = AskSignalPhase::Final;
+                state.finishing = Some((
+                    i32::from(exit_code),
+                    Box::pin(tokio::time::sleep(Duration::from_millis(1))),
+                ));
+                context.waker().wake_by_ref();
+            }
+            Poll::Ready(None) => {
+                deferred_control_failure = Some(AskSignalGuardianResult::ControlClosed);
+            }
+            Poll::Pending => {}
+        }
+
+        let signal = match listeners.poll_interrupt(context) {
+            Poll::Ready(Some(())) => Some(AskSignal::Interrupt),
+            Poll::Ready(None) => return Poll::Ready(AskSignalGuardianResult::Exit(1)),
+            Poll::Pending => match listeners.poll_terminate(context) {
+                Poll::Ready(Some(())) => Some(AskSignal::Terminate),
+                Poll::Ready(None) => return Poll::Ready(AskSignalGuardianResult::Exit(1)),
+                Poll::Pending => None,
+            },
+        };
+        if let Some(signal) = signal {
+            if state.turn_signal_latched {
+                context.waker().wake_by_ref();
+            } else if state.phase == AskSignalPhase::Turn {
+                match turn_signals.try_send(signal) {
+                    Ok(()) | Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                        state.turn_signal_latched = true;
+                        context.waker().wake_by_ref();
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                        return Poll::Ready(AskSignalGuardianResult::Exit(1));
+                    }
+                }
+            } else {
+                return Poll::Ready(AskSignalGuardianResult::Exit(signal.exit_code()));
+            }
+        }
+
+        if let Some((exit_code, drain)) = state.finishing.as_mut()
+            && let Poll::Ready(()) = drain.as_mut().poll(context)
+        {
+            return Poll::Ready(AskSignalGuardianResult::Exit(*exit_code));
+        }
+        if let Some(failure) = deferred_control_failure {
+            return Poll::Ready(failure);
+        }
+        Poll::Pending
+    }
+
+    fn run_signal_guardian<F>(
         mut control: tokio::sync::mpsc::Receiver<AskSignalControl>,
         turn_signals: &tokio::sync::mpsc::Sender<AskSignal>,
-        ready: &mpsc::SyncSender<Result<(), ()>>,
-    ) {
+        ready: &mpsc::SyncSender<Result<AskSignalRegistration, ()>>,
+        registrar: F,
+    ) where
+        F: FnOnce() -> (SignalRegistrationResult, SignalRegistrationResult),
+    {
         let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .enable_time()
@@ -361,80 +536,28 @@ mod production {
             let _ = ready.send(Err(()));
             return;
         };
-        let (mut interrupt, mut terminate) = {
+        let registration = {
             let _entered = runtime.enter();
-            let interrupt =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt());
-            let terminate =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate());
-            if let (Ok(interrupt), Ok(terminate)) = (interrupt, terminate) {
-                (interrupt, terminate)
-            } else {
+            let (interrupt, terminate) = registrar();
+            let Ok(registration) = RegisteredAskSignals::from_results(interrupt, terminate) else {
                 let _ = ready.send(Err(()));
                 return;
-            }
+            };
+            registration
         };
-        if ready.send(Ok(())).is_err() {
+        let (mut listeners, registration) = registration;
+        if ready.send(Ok(registration)).is_err() {
             return;
         }
-        let mut phase = AskSignalPhase::Setup;
-        let mut finishing: Option<(i32, Pin<Box<tokio::time::Sleep>>)> = None;
+        let mut state = AskSignalGuardianState::default();
         let result = runtime.block_on(poll_fn(|context| {
-            let signal = match interrupt.poll_recv(context) {
-                Poll::Ready(Some(())) => Some(AskSignal::Interrupt),
-                Poll::Ready(None) => {
-                    return Poll::Ready(AskSignalGuardianResult::Exit(1));
-                }
-                Poll::Pending => match terminate.poll_recv(context) {
-                    Poll::Ready(Some(())) => Some(AskSignal::Terminate),
-                    Poll::Ready(None) => {
-                        return Poll::Ready(AskSignalGuardianResult::Exit(1));
-                    }
-                    Poll::Pending => None,
-                },
-            };
-            if let Some(signal) = signal
-                && (phase != AskSignalPhase::Turn || turn_signals.try_send(signal).is_err())
-            {
-                return Poll::Ready(AskSignalGuardianResult::Exit(signal.exit_code()));
-            }
-
-            if let Some((exit_code, drain)) = finishing.as_mut() {
-                return drain
-                    .as_mut()
-                    .poll(context)
-                    .map(|()| AskSignalGuardianResult::Exit(*exit_code));
-            }
-
-            match control.poll_recv(context) {
-                Poll::Ready(Some(AskSignalControl::ActivateTurn(ready))) => {
-                    phase = AskSignalPhase::Turn;
-                    if ready.send(()).is_err() {
-                        return Poll::Ready(AskSignalGuardianResult::ControlClosed);
-                    }
-                    context.waker().wake_by_ref();
-                }
-                Poll::Ready(Some(AskSignalControl::EnterFinal(ready))) => {
-                    phase = AskSignalPhase::Final;
-                    if ready.send(()).is_err() {
-                        return Poll::Ready(AskSignalGuardianResult::ControlClosed);
-                    }
-                    context.waker().wake_by_ref();
-                }
-                Poll::Ready(Some(AskSignalControl::Finish(exit_code))) => {
-                    phase = AskSignalPhase::Final;
-                    finishing = Some((
-                        i32::from(exit_code),
-                        Box::pin(tokio::time::sleep(Duration::from_millis(1))),
-                    ));
-                    context.waker().wake_by_ref();
-                }
-                Poll::Ready(None) => {
-                    return Poll::Ready(AskSignalGuardianResult::ControlClosed);
-                }
-                Poll::Pending => {}
-            }
-            Poll::Pending
+            poll_signal_guardian(
+                context,
+                &mut control,
+                turn_signals,
+                &mut listeners,
+                &mut state,
+            )
         }));
         if let AskSignalGuardianResult::Exit(exit_code) = result {
             std::process::exit(exit_code);
@@ -680,6 +803,13 @@ mod production {
                     AskCommandOutcome::OperationalFailure,
                 );
             };
+            if !controller.registration_complete() {
+                let _ = controller.enter_final();
+                return AskCommandExecution::with_finalizer(
+                    AskCommandOutcome::OperationalFailure,
+                    controller,
+                );
+            }
             let (outcome, controller) = execute_production(prompt, output, controller);
             AskCommandExecution::with_finalizer(outcome, controller)
         }
@@ -906,27 +1036,37 @@ mod production {
     mod tests {
         use std::collections::VecDeque;
         use std::fs;
+        use std::future::{self, poll_fn};
         use std::io;
+        use std::os::unix::fs::PermissionsExt;
         use std::path::{Path, PathBuf};
         use std::pin::Pin;
         use std::process::{Child, Command, Stdio};
-        use std::sync::Arc;
         use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+        use std::sync::{Arc, Mutex, mpsc};
         use std::task::{Context, Poll};
         use std::time::{Duration, Instant};
 
         use futures_core::Stream;
         use machine_god_core::{
-            ModelEvent, SessionId, SessionIncarnationId, SessionRecord, SessionStore, StopReason,
-            TokenUsage, TurnEvent,
+            BoxFuture, CancellationToken, Message, ModelEvent, NetworkTarget, ProviderError, Role,
+            SessionId, SessionIncarnationId, SessionRecord, SessionStore, StopReason, TokenUsage,
+            TurnEvent,
         };
-        use machine_god_native::FileSessionStore;
+        use machine_god_native::{
+            AiGatewayByteStream, AiGatewayTransport, AiGatewayTransportRequest, FileSessionStore,
+            NativeEnvironment, NativeReferenceHost, WebSearchDeadline, WebSearchTransportError,
+            load_native_config,
+        };
 
         use super::super::{AskCommandExecution, AskCommandHost, run_ask};
         use super::{
-            AskCommandOutcome, AskSignal, AskSignalController, OutputBridge, SignalSource,
-            TurnDriveResult, TurnEventDisposition, classify_turn_event, drive_turn_stream,
-            final_outcome, map_thread_spawn, serve_output,
+            AskCommandOutcome, AskSignal, AskSignalControl, AskSignalControlSender,
+            AskSignalController, AskSignalGuardianResult, AskSignalGuardianState,
+            AskSignalListeners, AskSignals, DenyPermissionPrompter, OutputBridge, SignalSource,
+            TurnDriveResult, TurnEventDisposition, UnavailableQuestionPrompter,
+            classify_turn_event, drive_turn_stream, execute_turn, final_outcome, map_thread_spawn,
+            poll_signal_guardian, serve_output,
         };
 
         const BLOCKED_OUTPUT_CHILD_MODE: &str = "MACHINE_GOD_ASK_BLOCKED_OUTPUT_CHILD";
@@ -936,6 +1076,7 @@ mod production {
         const SETUP_LOCK_ROOT: &str = "MACHINE_GOD_ASK_SETUP_LOCK_ROOT";
         const SIGNAL_STAGE_READY_PATH: &str = "MACHINE_GOD_ASK_SIGNAL_STAGE_READY_PATH";
         const DIAGNOSTIC_CHILD_MODE: &str = "MACHINE_GOD_ASK_DIAGNOSTIC_CHILD";
+        const PARTIAL_DIAGNOSTIC_CHILD_MODE: &str = "MACHINE_GOD_ASK_PARTIAL_DIAGNOSTIC_CHILD";
 
         struct ScopedChild {
             child: Child,
@@ -1112,6 +1253,42 @@ mod production {
             }
         }
 
+        struct PartiallyRegisteredFailureHost;
+
+        impl AskCommandHost for PartiallyRegisteredFailureHost {
+            fn execute(&self, _prompt: String, _output: &mut dyn io::Write) -> AskCommandExecution {
+                let mode = std::env::var(PARTIAL_DIAGNOSTIC_CHILD_MODE)
+                    .expect("partial registration mode should be set");
+                let controller =
+                    AskSignalController::spawn_with_registrar(move || match mode.as_str() {
+                        "interrupt-only" => {
+                            let interrupt = tokio::signal::unix::signal(
+                                tokio::signal::unix::SignalKind::interrupt(),
+                            )
+                            .map_err(|_| ());
+                            (interrupt, Err(()))
+                        }
+                        "terminate-only" => {
+                            let terminate = tokio::signal::unix::signal(
+                                tokio::signal::unix::SignalKind::terminate(),
+                            )
+                            .map_err(|_| ());
+                            (Err(()), terminate)
+                        }
+                        _ => panic!("unsupported partial registration mode"),
+                    })
+                    .expect("one signal listener should remain owned");
+                assert!(!controller.registration_complete());
+                controller
+                    .enter_final()
+                    .expect("partial diagnostic stage should activate");
+                AskCommandExecution::with_finalizer(
+                    AskCommandOutcome::OperationalFailure,
+                    controller,
+                )
+            }
+        }
+
         struct SaturatedDiagnostic {
             ready_path: PathBuf,
         }
@@ -1148,6 +1325,27 @@ mod production {
                 "fixed-output-failure\n",
             );
             panic!("saturated diagnostic unexpectedly returned");
+        }
+
+        #[test]
+        #[ignore = "subprocess helper invoked by partial_registration_retains_signal_ownership"]
+        fn partial_registration_saturated_diagnostic_child() {
+            if std::env::var_os(PARTIAL_DIAGNOSTIC_CHILD_MODE).is_none() {
+                return;
+            }
+            let ready_path = PathBuf::from(
+                std::env::var_os(SIGNAL_STAGE_READY_PATH).expect("ready path should be set"),
+            );
+            let mut stdout = io::sink();
+            let mut stderr = SaturatedDiagnostic { ready_path };
+            let _ = run_ask(
+                &PartiallyRegisteredFailureHost,
+                "redacted-prompt".to_owned(),
+                &mut stdout,
+                &mut stderr,
+                "fixed-output-failure\n",
+            );
+            panic!("partial-registration diagnostic unexpectedly returned");
         }
 
         struct ScriptedTurn {
@@ -1365,6 +1563,154 @@ mod production {
             assert_eq!(map_thread_spawn::<()>(Err(error)), Err(()));
         }
 
+        #[derive(Default)]
+        struct QueuedGuardianSignals {
+            interrupt: bool,
+            terminate: bool,
+        }
+
+        impl AskSignalListeners for QueuedGuardianSignals {
+            fn poll_interrupt(&mut self, _context: &mut Context<'_>) -> Poll<Option<()>> {
+                if std::mem::take(&mut self.interrupt) {
+                    Poll::Ready(Some(()))
+                } else {
+                    Poll::Pending
+                }
+            }
+
+            fn poll_terminate(&mut self, _context: &mut Context<'_>) -> Poll<Option<()>> {
+                if std::mem::take(&mut self.terminate) {
+                    Poll::Ready(Some(()))
+                } else {
+                    Poll::Pending
+                }
+            }
+        }
+
+        #[test]
+        fn queued_turn_activation_is_applied_before_same_poll_signal() {
+            let (control_sender, mut control_receiver) = tokio::sync::mpsc::channel(1);
+            let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
+            control_sender
+                .try_send(AskSignalControl::ActivateTurn(ready_sender))
+                .expect("turn activation should queue");
+            let (turn_sender, mut turn_receiver) = tokio::sync::mpsc::channel(1);
+            let mut listeners = QueuedGuardianSignals {
+                interrupt: true,
+                terminate: false,
+            };
+            let mut state = AskSignalGuardianState::default();
+            let mut context = Context::from_waker(std::task::Waker::noop());
+
+            assert!(matches!(
+                poll_signal_guardian(
+                    &mut context,
+                    &mut control_receiver,
+                    &turn_sender,
+                    &mut listeners,
+                    &mut state,
+                ),
+                Poll::Pending
+            ));
+            ready_receiver
+                .recv()
+                .expect("turn activation should acknowledge");
+            assert_eq!(turn_receiver.try_recv(), Ok(AskSignal::Interrupt));
+            assert!(state.turn_signal_latched);
+        }
+
+        #[test]
+        fn full_turn_signal_channel_coalesces_without_replacing_first_signal() {
+            let (_control_sender, mut control_receiver) = tokio::sync::mpsc::channel(1);
+            let (turn_sender, mut turn_receiver) = tokio::sync::mpsc::channel(1);
+            turn_sender
+                .try_send(AskSignal::Interrupt)
+                .expect("first signal should occupy the channel");
+            let mut listeners = QueuedGuardianSignals {
+                interrupt: false,
+                terminate: true,
+            };
+            let mut state = AskSignalGuardianState {
+                phase: super::AskSignalPhase::Turn,
+                ..AskSignalGuardianState::default()
+            };
+            let mut context = Context::from_waker(std::task::Waker::noop());
+
+            assert!(matches!(
+                poll_signal_guardian(
+                    &mut context,
+                    &mut control_receiver,
+                    &turn_sender,
+                    &mut listeners,
+                    &mut state,
+                ),
+                Poll::Pending
+            ));
+            assert!(state.turn_signal_latched);
+            assert_eq!(turn_receiver.try_recv(), Ok(AskSignal::Interrupt));
+        }
+
+        #[test]
+        fn closed_turn_signal_channel_uses_fixed_guardian_failure() {
+            let (_control_sender, mut control_receiver) = tokio::sync::mpsc::channel(1);
+            let (turn_sender, turn_receiver) = tokio::sync::mpsc::channel(1);
+            drop(turn_receiver);
+            let mut listeners = QueuedGuardianSignals {
+                interrupt: true,
+                terminate: false,
+            };
+            let mut state = AskSignalGuardianState {
+                phase: super::AskSignalPhase::Turn,
+                ..AskSignalGuardianState::default()
+            };
+            let mut context = Context::from_waker(std::task::Waker::noop());
+
+            assert!(matches!(
+                poll_signal_guardian(
+                    &mut context,
+                    &mut control_receiver,
+                    &turn_sender,
+                    &mut listeners,
+                    &mut state,
+                ),
+                Poll::Ready(AskSignalGuardianResult::Exit(1))
+            ));
+        }
+
+        #[test]
+        fn latched_turn_signal_keeps_its_exit_during_finalization() {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .expect("test runtime should build");
+            let (control_sender, mut control_receiver) = tokio::sync::mpsc::channel(1);
+            control_sender
+                .try_send(AskSignalControl::Finish(130))
+                .expect("finish should queue");
+            let (turn_sender, _turn_receiver) = tokio::sync::mpsc::channel(1);
+            let mut listeners = QueuedGuardianSignals {
+                interrupt: false,
+                terminate: true,
+            };
+            let mut state = AskSignalGuardianState {
+                phase: super::AskSignalPhase::Turn,
+                turn_signal_latched: true,
+                ..AskSignalGuardianState::default()
+            };
+
+            let result = runtime.block_on(poll_fn(|context| {
+                poll_signal_guardian(
+                    context,
+                    &mut control_receiver,
+                    &turn_sender,
+                    &mut listeners,
+                    &mut state,
+                )
+            }));
+
+            assert!(matches!(result, AskSignalGuardianResult::Exit(130)));
+        }
+
         #[test]
         fn presentation_classifies_terminal_events_without_rendering_them() {
             assert_eq!(
@@ -1382,6 +1728,193 @@ mod production {
                     retryable: false,
                 }),
                 (TurnEventDisposition::Failed, None)
+            );
+        }
+
+        struct OneChunkStream {
+            chunk: Option<Result<Vec<u8>, ProviderError>>,
+        }
+
+        impl Stream for OneChunkStream {
+            type Item = Result<Vec<u8>, ProviderError>;
+
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                _context: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                Poll::Ready(self.chunk.take())
+            }
+        }
+
+        struct OneShotTransport {
+            response: Mutex<Option<Vec<u8>>>,
+            session_ids: Mutex<Vec<SessionId>>,
+        }
+
+        impl OneShotTransport {
+            fn new(response: impl Into<Vec<u8>>) -> Self {
+                Self {
+                    response: Mutex::new(Some(response.into())),
+                    session_ids: Mutex::new(Vec::new()),
+                }
+            }
+
+            fn session_ids(&self) -> Vec<SessionId> {
+                self.session_ids.lock().unwrap().clone()
+            }
+        }
+
+        impl AiGatewayTransport for OneShotTransport {
+            fn stream(
+                &self,
+                request: AiGatewayTransportRequest,
+                _cancellation: CancellationToken,
+            ) -> BoxFuture<'_, Result<AiGatewayByteStream, ProviderError>> {
+                let (headers, _body) = request.into_parts();
+                let session_id = headers
+                    .iter()
+                    .find(|header| header.name() == "x-session-id")
+                    .map(|header| SessionId::new(header.value()).expect("session ID is valid"))
+                    .expect("gateway request should carry a session ID");
+                self.session_ids.lock().unwrap().push(session_id);
+                let response = self
+                    .response
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .expect("transport should receive exactly one request");
+                Box::pin(async move {
+                    Ok(Box::pin(OneChunkStream {
+                        chunk: Some(Ok(response)),
+                    }) as AiGatewayByteStream)
+                })
+            }
+        }
+
+        struct NeverWebSearchDeadline;
+
+        impl WebSearchDeadline for NeverWebSearchDeadline {
+            fn wait_until(
+                &self,
+                _deadline: Instant,
+            ) -> BoxFuture<'_, Result<(), WebSearchTransportError>> {
+                Box::pin(future::pending())
+            }
+        }
+
+        #[test]
+        #[allow(clippy::too_many_lines)]
+        fn composed_host_turn_writes_exact_output_and_persists_one_session() {
+            let temporary = ScopedTestDirectory::new("composed-host-success");
+            let workspace_root = temporary.path().join("workspace");
+            let session_root = temporary.path().join("sessions");
+            for root in [&workspace_root, &session_root] {
+                fs::create_dir(root).expect("composition root should be creatable");
+                fs::set_permissions(root, fs::Permissions::from_mode(0o700))
+                    .expect("composition root should be private");
+            }
+            let transport = Arc::new(OneShotTransport::new(concat!(
+                "data: {\"type\":\"text-delta\",\"id\":\"answer\",\"delta\":\"composed \"}\n\n",
+                "data: {\"type\":\"text-delta\",\"id\":\"answer\",\"delta\":\"answer\"}\n\n",
+                "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n"
+            )));
+            let host = NativeReferenceHost::compose_with_ai_gateway_transport(
+                load_native_config(&NativeEnvironment::new(None, None, None))
+                    .expect("built-in config should load"),
+                transport.clone(),
+                NetworkTarget {
+                    scheme: "https".to_owned(),
+                    host: "ai-gateway.vercel.sh".to_owned(),
+                    port: None,
+                },
+                &workspace_root,
+                &session_root,
+                Arc::new(DenyPermissionPrompter),
+                Arc::new(UnavailableQuestionPrompter),
+                Arc::new(NeverWebSearchDeadline),
+            )
+            .expect("reference host should compose");
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .expect("test runtime should build");
+
+            let (outcome, output, transitions) = std::thread::scope(|scope| {
+                let (work_sender, work_receiver) = tokio::sync::mpsc::channel(1);
+                let (acknowledgement_sender, acknowledgement_receiver) =
+                    tokio::sync::mpsc::channel(1);
+                let output_worker = scope.spawn(move || {
+                    let mut output = RecordingOutput::default();
+                    serve_output(work_receiver, &acknowledgement_sender, &mut output);
+                    output
+                });
+                let (control_sender, mut control_receiver) = tokio::sync::mpsc::channel(1);
+                let control = AskSignalControlSender {
+                    sender: control_sender,
+                };
+                let control_worker = scope.spawn(move || {
+                    let mut transitions = Vec::new();
+                    while let Some(command) = control_receiver.blocking_recv() {
+                        match command {
+                            AskSignalControl::ActivateTurn(ready) => {
+                                transitions.push("turn");
+                                ready.send(()).expect("turn transition should acknowledge");
+                            }
+                            AskSignalControl::EnterFinal(ready) => {
+                                transitions.push("final");
+                                ready.send(()).expect("final transition should acknowledge");
+                                break;
+                            }
+                            AskSignalControl::Finish(_) => {
+                                panic!("successful composed turn should not force guardian exit");
+                            }
+                        }
+                    }
+                    transitions
+                });
+                let (signal_sender, signal_receiver) = tokio::sync::mpsc::channel(1);
+                let outcome = runtime
+                    .block_on(execute_turn(
+                        &host,
+                        "composed request".to_owned(),
+                        OutputBridge {
+                            work: work_sender,
+                            acknowledgements: acknowledgement_receiver,
+                        },
+                        AskSignals::new(signal_receiver),
+                        &control,
+                    ))
+                    .expect("composed turn should execute");
+                drop(signal_sender);
+                drop(control);
+                let output = output_worker.join().expect("output worker should join");
+                let transitions = control_worker.join().expect("control worker should join");
+                (outcome, output, transitions)
+            });
+
+            assert_eq!(outcome, AskCommandOutcome::Completed);
+            assert_eq!(output.bytes, b"composed answer");
+            assert_eq!(output.flushes, 1);
+            assert_eq!(transitions, ["turn", "final"]);
+            let listing = runtime
+                .block_on(host.session_lifecycle().list_sessions())
+                .expect("session listing should succeed");
+            assert!(!listing.truncated());
+            assert_eq!(listing.session_ids().len(), 1);
+            assert_eq!(transport.session_ids(), listing.session_ids());
+            let record = runtime
+                .block_on(
+                    host.session_lifecycle()
+                        .replay(listing.session_ids()[0].clone()),
+                )
+                .expect("completed session should replay");
+            assert_eq!(record.next_turn_sequence, 2);
+            assert_eq!(
+                record.messages,
+                [
+                    Message::text(Role::User, "composed request"),
+                    Message::text(Role::Assistant, "composed answer"),
+                ]
             );
         }
 
@@ -1597,7 +2130,9 @@ mod production {
                 return;
             };
             let (signal, block_on_flush, ready_before_signal, delayed_write) = match mode.as_str() {
-                "interrupt-write" => (AskSignal::Interrupt, false, false, false),
+                "interrupt-write" | "interrupt-repeated-write" => {
+                    (AskSignal::Interrupt, false, false, false)
+                }
                 "terminate-write" => (AskSignal::Terminate, false, false, false),
                 "interrupt-flush" => (AskSignal::Interrupt, true, false, false),
                 "interrupt-preflush" => (AskSignal::Interrupt, true, true, false),
@@ -1780,9 +2315,47 @@ mod production {
         }
 
         #[test]
+        fn partial_registration_retains_signal_ownership() {
+            for (mode, kill_signal, expected_exit) in [
+                ("interrupt-only", "-INT", 130),
+                ("terminate-only", "-TERM", 143),
+            ] {
+                let temporary = ScopedTestDirectory::new(mode);
+                let ready_path = temporary.path().join("stage-ready");
+                let mut command = Command::new(
+                    std::env::current_exe().expect("current test executable should resolve"),
+                );
+                command
+                    .args([
+                        "--exact",
+                        "ask::production::tests::partial_registration_saturated_diagnostic_child",
+                        "--ignored",
+                        "--nocapture",
+                    ])
+                    .env(PARTIAL_DIAGNOSTIC_CHILD_MODE, mode)
+                    .env(SIGNAL_STAGE_READY_PATH, &ready_path)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
+                let mut child = ScopedChild::spawn(&mut command);
+
+                wait_for_marker(&mut child, &ready_path);
+                let kill_status = Command::new("kill")
+                    .args([kill_signal, &child.id().to_string()])
+                    .status()
+                    .expect("signal command should run");
+                assert!(kill_status.success());
+                let status = child.wait_for_exit(Duration::from_secs(10));
+
+                assert_eq!(status.code(), Some(expected_exit));
+            }
+        }
+
+        #[test]
         fn blocked_output_signals_exit_after_terminal_drain() {
             for (mode, kill_signal, expected_exit, max_signal_elapsed) in [
                 ("interrupt-write", "-INT", 130, None),
+                ("interrupt-repeated-write", "-INT", 130, None),
                 ("terminate-write", "-TERM", 143, None),
                 ("interrupt-flush", "-INT", 130, None),
                 ("interrupt-preflush", "-INT", 130, None),
@@ -1815,11 +2388,19 @@ mod production {
 
                 wait_for_marker(&mut child, &markers.ready);
                 let signal_started = Instant::now();
-                let kill_status = Command::new("kill")
-                    .args([kill_signal, &child.id().to_string()])
-                    .status()
-                    .expect("signal command should run");
-                assert!(kill_status.success());
+                let kill_signals: &[&str] = if mode == "interrupt-repeated-write" {
+                    &["-INT", "-TERM", "-INT"]
+                } else {
+                    &[kill_signal]
+                };
+                let child_id = child.id().to_string();
+                for signal in kill_signals {
+                    let kill_status = Command::new("kill")
+                        .args([*signal, child_id.as_str()])
+                        .status()
+                        .expect("signal command should run");
+                    assert!(kill_status.success());
+                }
                 let status = child.wait_for_exit(Duration::from_secs(10));
                 if let Some(max_signal_elapsed) = max_signal_elapsed {
                     assert!(

@@ -89,7 +89,9 @@ an apparently recoverable output failure.
 - Standard-output failure cancels or drops the owned turn, exits `1`, and uses
   the existing fixed output diagnostic.
 - During a live turn, `SIGINT` and `SIGTERM` request cancellation, keep driving
-  owned work to terminal cleanup, and exit `130` and `143` respectively.
+  owned work to terminal cleanup, and exit `130` and `143` respectively. Once
+  one signal is accepted, later signals are coalesced until cleanup finishes;
+  the first accepted signal determines the exit.
 - During configuration, root preparation, host/session setup, final diagnostic
   presentation, or command finalization, the signal guardian exits with the
   same signal code. A blocking setup operation or saturated standard-error
@@ -103,7 +105,10 @@ capacity-one signal and control channels. It switches from setup handling to
 turn forwarding only after a concrete cancellable turn exists, then stays live
 through diagnostics and final process exit. Output or setup backpressure
 therefore cannot stop signal observation or leave Tokio's installed Unix signal
-handler without an active receiver.
+handler without an active receiver. If signal registration is only partially
+successful, request effects do not start: the command takes the fixed
+operational-failure path while retaining every installed listener through its
+diagnostic and final exit.
 
 After a turn signal, an outstanding write and any following flush share one
 absolute 100 ms post-cleanup acknowledgement deadline; the flush cannot restart
