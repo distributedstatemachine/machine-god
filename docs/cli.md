@@ -57,8 +57,53 @@ effect.
 `status` and `status --json` inspect process configuration and state-location
 metadata without loading configuration contents, constructing the engine,
 creating directories, starting a runtime, or contacting a provider. The human
-form is line-oriented; the JSON form is one compact LF-terminated object.
-Paths are presentation values for this command and are escaped in JSON.
+form is exactly four LF-terminated lines in this field order:
+
+```text
+machine-god <package-version> (engine API <api-version>)
+permission_mode: ask
+config_file: state=<config-state> path=<JSON-string-or-null>
+state_directory: state=<state-directory-state> path=<JSON-string-or-null>
+```
+
+The angle-bracketed version values are the compiled package version and the
+supported core API version. `status --json` writes one compact object followed
+by LF, with this exact nested key order:
+
+```text
+{"name":"machine-god","version":"<package-version>","engine_api_version":<api-version>,"permission_mode":"ask","config_file":{"path":<JSON-string-or-null>,"state":"<config-state>"},"state_directory":{"path":<JSON-string-or-null>,"state":"<state-directory-state>"}}
+```
+
+Config state is exactly one of `file`, `missing`, `not_file`, `inaccessible`,
+`unavailable`, or `invalid_environment`. State-directory state is exactly one
+of `directory`, `missing`, `not_directory`, `inaccessible`, `unavailable`, or
+`invalid_environment`. A resolved path is present even when it is missing,
+inaccessible, or the wrong kind; only `unavailable` and
+`invalid_environment` have a `null` path. Status reports the fixed native
+permission default `ask` and does not parse configuration, so it does not
+report configured provider, transport, model, credential source, or schema.
+
+Present paths use JSON-string encoding in both forms. Quotes, backslashes,
+C0/C1 controls and DEL, Unicode line and paragraph separators, and Unicode
+bidirectional-formatting controls are escaped; unresolved paths use the
+unquoted token `null` in human output and JSON `null` in JSON output.
+
+Config and state locations are resolved independently. A nonempty
+`XDG_CONFIG_HOME` selects
+`$XDG_CONFIG_HOME/machine-god/config.json`; otherwise a nonempty `HOME`
+selects `$HOME/.config/machine-god/config.json`. A nonempty `XDG_STATE_HOME`
+selects `$XDG_STATE_HOME/machine-god`; otherwise a nonempty `HOME` selects
+`$HOME/.local/state/machine-god`. Empty XDG values are absent and fall back to
+`HOME`. Every selected root must be absolute Unicode. A nonempty invalid XDG
+root produces `invalid_environment` for its location and never falls back to
+`HOME`; an invalid selected `HOME` does the same. Missing or empty `HOME` makes
+a location that needs it `unavailable`.
+
+Inspection uses no-follow metadata for each final path. A final config symlink
+is `not_file`, and a final state-directory symlink is `not_directory`; neither
+target is followed. The command does not canonicalize paths, read or parse the
+configuration file, create missing paths or ancestors, write state, construct
+an engine, start a runtime, discover credentials, or use the network.
 
 ## Output ownership
 
