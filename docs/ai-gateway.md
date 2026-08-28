@@ -302,8 +302,10 @@ or projected Gateway value then fits and decrements the separate wire budget.
 The shared nonrecursive compact encoder bounds depth and nodes and checks
 cancellation while scanning string and key bytes in chunks of at most 1 KiB;
 an oversized unescaped string therefore stops at the remaining source budget
-instead of being scanned in full. One traversal-frame scratch is reused while
-preparing all historical call arguments and results. Separately retained
+instead of being scanned in full. Aggregate request validation reuses one
+borrowed traversal-frame scratch across every JSON root, prompt preparation
+reuses another across all historical call arguments and results, and guarded
+early teardown reuses one owned iterative-drop scratch. Separately retained
 result buffers start at 64 bytes and grow geometrically only as needed, so a
 maximum-cardinality history does not allocate traversal storage or 2 KiB of
 spare result capacity per call.
@@ -335,17 +337,20 @@ another response byte to become observable. The transport receives the same
 token and must arrange an equivalent wakeup while its own future or byte stream
 is pending. If cancellation becomes ready during the same poll that would
 otherwise return a terminal response event or terminal response failure,
-cancellation wins. The decoder retains a cancellation waiter only while its
-stream poll returns `Pending`; every ready event, error, stop, and end outcome
-deregisters it before returning, so later cancellation cannot spuriously wake
-an inactive poller. Dropping the provider future or event stream drops all owned
-transport futures, streams, buffers, and partial tool state. Before an owned
+cancellation wins. Terminal processing drops the owned byte stream before its
+last cancellation check, so cancellation requested by transport cleanup also
+wins over a queued usage/stop event, source error, decoder error, EOF, or clean
+end. The decoder retains a cancellation waiter only while its stream poll
+returns `Pending`; every ready event, error, stop, and end outcome deregisters
+it before returning, so later cancellation cannot spuriously wake an inactive
+poller. Dropping the provider future or event stream drops all owned transport
+futures, streams, buffers, and partial tool state. Before an owned
 `ModelRequest` leaves its guard, all of its JSON trees, including ignored
 metadata, pass aggregate depth/node validation. Early rejection, cancellation,
 or drop drains guarded JSON iteratively before dropping the outer request, so a
 deep hostile tree does not fall back to recursive `serde_json::Value`
-destruction. Accepted trees are within the fixed safe depth ceiling. No detached
-task, thread, timer, or retry survives cancellation or drop.
+destruction. Accepted trees are within the fixed safe depth ceiling. No
+detached task, thread, timer, or retry survives cancellation or drop.
 
 ## Adjacent slice-33 web-search worker
 
@@ -369,17 +374,11 @@ a capacity-one shared transport can therefore run the nested worker request.
 
 No provider-executed value crosses the provider-neutral `ModelProvider`
 boundary. The inner result becomes a bounded local `ToolOutput` and returns to
-the ordinary core tool round. Cycle-1 source remediation is composed, and exact
-precursor `e662fa8`, tree `6c0ace9`, passes the complete local gate. Exact
-cycle-2 remediation `366cef9`, tree `40c05cb`, also passed its complete gate.
-Formal cycle 3 rejected exact candidate `aef6abe`, tree `5abcef3`, with a
-deduplicated `1/0/2/2`. Exact isolated components `5d45dca` and `454f8fd`
-compose its remediation. Exact precursor `b834205`, tree `f3557a5`, passes the
-complete replacement gate. Formal cycle 4 rejected exact `cc1d3d1`, tree
-`ad0c3d3`, with a deduplicated `0/0/1/1`. Exact remediation precursor `2e9c44d`,
-tree `3e25daa`, passes the complete replacement gate. Formal cycle 5 is green on
-exact `782aa54`, tree `b1ba692`, with a `0/0/0/0` union; delivery workflows are
-pending, and the slice makes no compatibility or performance claim.
+the ordinary core tool round. Historical candidate, gate, review, and delivery
+evidence is retained only in the
+[`web_search` review ledger](reviews/m03-web-search-review-01.md); it is not part
+of this durable behavior contract. The slice makes no compatibility or
+performance claim.
 
 ## Deferred scope
 
