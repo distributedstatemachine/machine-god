@@ -511,7 +511,13 @@ impl VisionSseDecoder {
             .checked_sub(self.nodes)
             .filter(|remaining| *remaining > 0)
             .ok_or_else(response_too_large)?;
-        let event = parse_strict_json(data, remaining).map_err(|_| protocol_error())?;
+        let event = parse_strict_json(data, remaining).map_err(|error| {
+            if strict_json_error_is_node_limit(&error) {
+                response_too_large()
+            } else {
+                protocol_error()
+            }
+        })?;
         validate_json_string_bounds(&event)?;
         self.nodes = self
             .nodes
@@ -782,7 +788,7 @@ fn decode_structured_response(
         return Err(StructuredDecodeError::Invalid);
     }
     if records.len() > request.images().len() {
-        return Err(StructuredDecodeError::ResponseTooLarge);
+        return Err(StructuredDecodeError::Invalid);
     }
     let mut decoded = Vec::with_capacity(records.len());
     let mut retained_evidence_bytes = 0_usize;
@@ -818,7 +824,7 @@ fn decode_structured_response(
                 if summary.len() > MAX_VISION_EVIDENCE_STRING_BYTES {
                     return Err(StructuredDecodeError::ResponseTooLarge);
                 }
-                if summary.trim_ascii().is_empty() {
+                if summary_is_blank(&summary) {
                     return Err(StructuredDecodeError::Invalid);
                 }
                 let visible_text = take_strings(&mut record, "visible_text")?;
@@ -861,6 +867,12 @@ fn take_string(
         return Err(StructuredDecodeError::Invalid);
     };
     Ok(value)
+}
+
+fn summary_is_blank(summary: &str) -> bool {
+    summary
+        .trim_matches(|character| matches!(character, ' ' | '\t' | '\r' | '\n'))
+        .is_empty()
 }
 
 fn take_strings(

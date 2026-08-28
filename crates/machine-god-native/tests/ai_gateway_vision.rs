@@ -4,6 +4,10 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use futures_util::{Stream, stream};
 use machine_god_core::{BoxFuture, CancellationToken, ProviderError, ProviderErrorKind, SessionId};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use machine_god_core::{
+    NetworkTarget, SessionIncarnationId, Tool, ToolCallId, ToolContext, TurnId,
+};
 use machine_god_native::{
     AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION, AI_GATEWAY_PROTOCOL_VERSION,
     AiGatewayByteStream, AiGatewayTransport, AiGatewayTransportRequest,
@@ -13,15 +17,25 @@ use machine_god_native::{
     MAX_VISION_RESPONSE_JSON_NODES, VisionBatchRequest, VisionImage, VisionImageOutcome,
     VisionMediaType, VisionTransport, VisionTransportErrorKind,
 };
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use machine_god_native::{VisionDeadline, VisionTool, VisionTransportError};
 use serde_json::{Value, json};
 use std::future::Future;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::time::Instant;
 
 const MODEL: &str = "test/configured-vision-model";
 const PRIVATE_FOCUS: &str = "inspect PRIVATE_FOCUS_SENTINEL";
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+static NEXT_TEMPORARY_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CapturedRequest {
@@ -198,6 +212,66 @@ fn execute(
 ) -> Result<machine_god_native::VisionBatchResponse, machine_god_native::VisionTransportError> {
     let worker = AiGatewayVisionTransport::new(MODEL, transport).unwrap();
     futures_executor::block_on(worker.analyze(request, CancellationToken::new()))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct TemporaryDirectory(PathBuf);
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl TemporaryDirectory {
+    fn new() -> Self {
+        for _ in 0..1_000 {
+            let identifier = NEXT_TEMPORARY_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "machine-god-ai-gateway-vision-{}-{identifier}",
+                std::process::id()
+            ));
+            match std::fs::create_dir(&path) {
+                Ok(()) => return Self(path),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => panic!("failed to create temporary directory: {error}"),
+            }
+        }
+        panic!("failed to allocate a unique temporary directory")
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Drop for TemporaryDirectory {
+    fn drop(&mut self) {
+        match std::fs::remove_dir_all(&self.0) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) if std::thread::panicking() => {
+                eprintln!("failed to remove temporary directory while panicking: {error}");
+            }
+            Err(error) => panic!("failed to remove temporary directory: {error}"),
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct NeverDeadline;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl VisionDeadline for NeverDeadline {
+    fn wait_until(&self, _deadline: Instant) -> BoxFuture<'_, Result<(), VisionTransportError>> {
+        Box::pin(std::future::pending())
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn tool_context() -> ToolContext {
+    ToolContext {
+        session_id: SessionId::new("vision-gateway-session").unwrap(),
+        session_incarnation_id: SessionIncarnationId::new("vision-gateway-incarnation").unwrap(),
+        turn_id: TurnId::new("vision-gateway-turn").unwrap(),
+        call_id: ToolCallId::new("vision-gateway-call").unwrap(),
+    }
 }
 
 fn header<'a>(request: &'a CapturedRequest, name: &str) -> &'a str {
@@ -380,6 +454,62 @@ fn response_json_node_budget_is_aggregate_across_events_and_structured_evidence(
 }
 
 #[test]
+fn event_envelope_node_exhaustion_is_a_non_retryable_resource_error() {
+    let oversized_event = json!({
+        "type": "stream-start",
+        "warnings": vec![json!(0); MAX_VISION_RESPONSE_JSON_NODES],
+    });
+    let transport = ScriptedTransport::one(sse_events(&[oversized_event]));
+    let error = execute(Arc::new(transport.clone()), request(vec![png(1, &[1])])).unwrap_err();
+    assert_eq!(error.kind(), VisionTransportErrorKind::ResponseTooLarge);
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+
+    let malformed = ScriptedTransport::one(b"data: {\"type\":\n\n".to_vec());
+    let error = execute(Arc::new(malformed.clone()), request(vec![png(1, &[1])])).unwrap_err();
+    assert_eq!(error.kind(), VisionTransportErrorKind::Protocol);
+    assert_eq!(malformed.calls.load(Ordering::SeqCst), 1);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn event_envelope_node_exhaustion_projects_to_one_output_limit_failure() {
+    let workspace = TemporaryDirectory::new();
+    std::fs::write(workspace.path().join("one.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+    let oversized_event = json!({
+        "type": "stream-start",
+        "warnings": vec![json!(0); MAX_VISION_RESPONSE_JSON_NODES],
+    });
+    let transport = ScriptedTransport::one(sse_events(&[oversized_event]));
+    let worker = AiGatewayVisionTransport::new(MODEL, Arc::new(transport.clone())).unwrap();
+    let tool = VisionTool::with_transport(
+        workspace.path(),
+        NetworkTarget {
+            scheme: "https".to_owned(),
+            host: "ai-gateway.vercel.sh".to_owned(),
+            port: None,
+        },
+        Arc::new(worker),
+        Arc::new(NeverDeadline),
+    )
+    .unwrap();
+
+    let output = futures_executor::block_on(tool.execute(
+        tool_context(),
+        json!({"focus": "Inspect", "paths": ["one.png"]}),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+
+    assert!(output.is_error);
+    assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(output.content["images"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        output.content["images"][0]["error"]["code"],
+        "output_limit_exceeded"
+    );
+}
+
+#[test]
 fn semantic_invalidity_retries_once_with_byte_identical_verified_images() {
     let invalid = sse_text(r#"{"images":[]}"#);
     let valid = sse_text(&valid_result().to_string());
@@ -427,7 +557,7 @@ fn two_empty_success_outputs_exhaust_the_single_semantic_retry() {
 }
 
 #[test]
-fn summary_blankness_uses_ascii_edges_and_preserves_nbsp_content() {
+fn summary_blankness_uses_exact_pinned_edges_and_preserves_other_content() {
     let ascii_blank = json!({"images": [{
         "image_id": 1,
         "status": "ok",
@@ -466,6 +596,23 @@ fn summary_blankness_uses_ascii_edges_and_preserves_nbsp_content() {
     };
     assert_eq!(summary, "\u{00a0}");
     assert_eq!(nbsp_transport.calls.load(Ordering::SeqCst), 1);
+
+    for accepted in ["\u{000b}", "\u{000c}"] {
+        let evidence = json!({"images": [{
+            "image_id": 1,
+            "status": "ok",
+            "summary": accepted,
+            "visible_text": [],
+            "details": []
+        }]});
+        let transport = ScriptedTransport::one(sse_unframed_text(&evidence.to_string()));
+        let result = execute(Arc::new(transport.clone()), request(vec![png(1, &[1])])).unwrap();
+        let VisionImageOutcome::Ok { summary, .. } = result.images()[0].outcome() else {
+            panic!("expected successful evidence")
+        };
+        assert_eq!(summary, accepted);
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+    }
 }
 
 #[test]
@@ -485,22 +632,6 @@ fn structured_evidence_resource_ceilings_never_semantically_retry() {
             "visible_text": vec![""; MAX_VISION_EVIDENCE_LIST_ITEMS + 1],
             "details": []
         }]}),
-        json!({"images": [
-            {
-                "image_id": 1,
-                "status": "ok",
-                "summary": "one",
-                "visible_text": [],
-                "details": []
-            },
-            {
-                "image_id": 2,
-                "status": "ok",
-                "summary": "two",
-                "visible_text": [],
-                "details": []
-            }
-        ]}),
         json!({"images": [{
             "image_id": 1,
             "status": "ok",
@@ -516,6 +647,39 @@ fn structured_evidence_resource_ceilings_never_semantically_retry() {
         assert_eq!(error.kind(), VisionTransportErrorKind::ResponseTooLarge);
         assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
     }
+}
+
+#[test]
+fn extra_structured_records_receive_only_the_bounded_semantic_retry() {
+    let extra = json!({"images": [
+        {
+            "image_id": 1,
+            "status": "ok",
+            "summary": "requested",
+            "visible_text": [],
+            "details": []
+        },
+        {
+            "image_id": 2,
+            "status": "ok",
+            "summary": "extra",
+            "visible_text": [],
+            "details": []
+        }
+    ]});
+    let extra_response = sse_unframed_text(&extra.to_string());
+    let valid_response = sse_unframed_text(&valid_result().to_string());
+    let recovered =
+        ScriptedTransport::new(vec![vec![extra_response.clone()], vec![valid_response]]);
+    let response = execute(Arc::new(recovered.clone()), request(vec![png(1, &[1])])).unwrap();
+    assert_eq!(response.images().len(), 1);
+    assert_eq!(recovered.calls.load(Ordering::SeqCst), 2);
+
+    let exhausted =
+        ScriptedTransport::new(vec![vec![extra_response.clone()], vec![extra_response]]);
+    let error = execute(Arc::new(exhausted.clone()), request(vec![png(1, &[1])])).unwrap_err();
+    assert_eq!(error.kind(), VisionTransportErrorKind::InvalidResponse);
+    assert_eq!(exhausted.calls.load(Ordering::SeqCst), 2);
 }
 
 #[test]
