@@ -302,7 +302,11 @@ or projected Gateway value then fits and decrements the separate wire budget.
 The shared nonrecursive compact encoder bounds depth and nodes and checks
 cancellation while scanning string and key bytes in chunks of at most 1 KiB;
 an oversized unescaped string therefore stops at the remaining source budget
-instead of being scanned in full.
+instead of being scanned in full. One traversal-frame scratch is reused while
+preparing all historical call arguments and results. Separately retained
+result buffers start at 64 bytes and grow geometrically only as needed, so a
+maximum-cardinality history does not allocate traversal storage or 2 KiB of
+spare result capacity per call.
 Projection therefore cannot admit an oversized source by shrinking its wire
 form, and an unprojected result does not merge the two charges. The final outer
 request serialization remains independently subject to the encoded-body limit,

@@ -26,7 +26,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33082850231` (`GREEN`)
 - Main Benchmark evidence: `33082850219` (`GREEN`)
 - Active branch: `agent/m03-read-tool-result`
-- Active phase: `range-only read_tool_result fifth review repairs integrated`
+- Active phase: `range-only read_tool_result sixth review repairs integrated`
 - Next gate: `replacement exact local gate, then three zero-finding reviews`
 <!-- canonical-live-status:end -->
 
