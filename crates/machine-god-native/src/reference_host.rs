@@ -2,18 +2,20 @@ use std::error::Error;
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 
-use machine_god_core::{Engine, NetworkTarget, SessionStore};
+use machine_god_core::{BoxFuture, Engine, NetworkTarget, SessionStore};
 
 use crate::workspace::{WorkspaceRoot, WorkspaceTools};
 use crate::{
     AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayHttpTransport,
-    AiGatewayProvider, AiGatewayTransport, AiGatewayWebSearchTransport, AskPermissionHandler,
-    AskUserQuestionTool, FileSessionStore, LoadedNativeConfig, NativeCredentialSourceKind,
-    NativeProviderKind, NativeSessionLifecycle, NativeTransportKind, PermissionMode,
-    PermissionPrompter, PreparedNativeRoots, QuestionPrompter, ReadToolResultTool, TerminalTool,
-    WebFetchTool, WebSearchDeadline, WebSearchLimits, WebSearchTool,
-    discover_ai_gateway_credential,
+    AiGatewayProvider, AiGatewayTransport, AiGatewayVisionTransport, AiGatewayWebSearchTransport,
+    AskPermissionHandler, AskUserQuestionTool, FileSessionStore, LoadedNativeConfig,
+    NativeCredentialSourceKind, NativeProviderKind, NativeSessionLifecycle, NativeTransportKind,
+    PermissionMode, PermissionPrompter, PreparedNativeRoots, QuestionPrompter, ReadToolResultTool,
+    TerminalTool, VisionDeadline, VisionLimits, VisionTool, VisionTransportError,
+    VisionTransportErrorKind, WebFetchTool, WebSearchDeadline, WebSearchLimits, WebSearchTool,
+    WebSearchTransportErrorKind, discover_ai_gateway_credential,
 };
 
 /// Stable stage at which native reference-host composition failed.
@@ -34,6 +36,10 @@ pub enum NativeReferenceHostBuildErrorKind {
     WebFetchTransport,
     /// The production bounded web-search transport could not be constructed.
     WebSearchTransport,
+    /// The private Gateway vision worker could not be constructed.
+    VisionTransport,
+    /// The bounded vision tool could not retain its configured authorities.
+    VisionConfig,
     /// The bounded terminal tool could not snapshot its process environment.
     TerminalConfig,
     /// The selected provider could not be constructed.
@@ -92,6 +98,12 @@ impl fmt::Display for NativeReferenceHostBuildError {
             }
             NativeReferenceHostBuildErrorKind::WebSearchTransport => {
                 "native reference-host web-search transport construction failed"
+            }
+            NativeReferenceHostBuildErrorKind::VisionTransport => {
+                "native reference-host vision transport construction failed"
+            }
+            NativeReferenceHostBuildErrorKind::VisionConfig => {
+                "native reference-host vision construction failed"
             }
             NativeReferenceHostBuildErrorKind::TerminalConfig => {
                 "native reference-host terminal construction failed"
@@ -351,6 +363,29 @@ impl NativeReferenceHost {
                     NativeReferenceHostBuildErrorKind::TerminalConfig,
                 )
             })?;
+        let vision_transport = AiGatewayVisionTransport::new(model.clone(), Arc::clone(&transport))
+            .map_err(|_| {
+                NativeReferenceHostBuildError::new(
+                    NativeReferenceHostBuildErrorKind::VisionTransport,
+                )
+            })?;
+        // The public host already requires one inert, absolute deadline
+        // authority. Reusing it keeps every constructor stable while this
+        // private adapter translates only fixed error categories; it never
+        // retains or exposes diagnostics from the web-search boundary.
+        let vision_deadline: Arc<dyn VisionDeadline> = Arc::new(VisionDeadlineAdapter {
+            inner: Arc::clone(&web_search_deadline),
+        });
+        let vision = VisionTool::from_root_descriptor(
+            workspace_tools.vision_root,
+            network_target.clone(),
+            Arc::new(vision_transport),
+            vision_deadline,
+            VisionLimits::default(),
+        )
+        .map_err(|_| {
+            NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::VisionConfig)
+        })?;
         let search_transport =
             AiGatewayWebSearchTransport::new(model.clone(), Arc::clone(&transport)).map_err(
                 |_| {
@@ -401,6 +436,7 @@ impl NativeReferenceHost {
             .tool(read_tool_result)
             .tool(workspace_tools.rename_file)
             .tool(terminal)
+            .tool(vision)
             .tool(web_fetch)
             .tool(web_search)
             .tool(workspace_tools.write_file)
@@ -421,6 +457,34 @@ impl NativeReferenceHost {
             credential_source,
         })
     }
+}
+
+struct VisionDeadlineAdapter {
+    inner: Arc<dyn WebSearchDeadline>,
+}
+
+impl VisionDeadline for VisionDeadlineAdapter {
+    fn wait_until(&self, deadline: Instant) -> BoxFuture<'_, Result<(), VisionTransportError>> {
+        let wait = self.inner.wait_until(deadline);
+        Box::pin(async move { wait.await.map_err(map_vision_deadline_error) })
+    }
+}
+
+fn map_vision_deadline_error(error: crate::WebSearchTransportError) -> VisionTransportError {
+    let kind = match error.kind() {
+        WebSearchTransportErrorKind::InvalidRequest => VisionTransportErrorKind::InvalidRequest,
+        WebSearchTransportErrorKind::Authentication => VisionTransportErrorKind::Authentication,
+        WebSearchTransportErrorKind::RateLimited => VisionTransportErrorKind::RateLimited,
+        WebSearchTransportErrorKind::Timeout => VisionTransportErrorKind::Timeout,
+        WebSearchTransportErrorKind::Unavailable => VisionTransportErrorKind::Unavailable,
+        WebSearchTransportErrorKind::InvalidResponse => VisionTransportErrorKind::InvalidResponse,
+        WebSearchTransportErrorKind::Protocol => VisionTransportErrorKind::Protocol,
+        WebSearchTransportErrorKind::ResponseTooLarge
+        | WebSearchTransportErrorKind::ResultTooLarge => VisionTransportErrorKind::ResponseTooLarge,
+        WebSearchTransportErrorKind::RuntimeRequired => VisionTransportErrorKind::RuntimeRequired,
+        WebSearchTransportErrorKind::Cancelled => VisionTransportErrorKind::Cancelled,
+    };
+    VisionTransportError::new(kind)
 }
 
 fn production_ai_gateway_target() -> NetworkTarget {
@@ -483,7 +547,10 @@ fn consume_prepared_roots(
 
 #[cfg(test)]
 mod tests {
-    use super::{NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind};
+    use super::{
+        NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind, map_vision_deadline_error,
+    };
+    use crate::{VisionTransportErrorKind, WebSearchTransportError, WebSearchTransportErrorKind};
 
     #[test]
     fn terminal_configuration_failure_has_one_fixed_redacted_shape() {
@@ -498,5 +565,81 @@ mod tests {
             format!("{error:?}"),
             "NativeReferenceHostBuildError { kind: TerminalConfig }"
         );
+    }
+
+    #[test]
+    fn vision_construction_failures_have_fixed_stage_only_shapes() {
+        for (kind, expected) in [
+            (
+                NativeReferenceHostBuildErrorKind::VisionTransport,
+                "native reference-host vision transport construction failed",
+            ),
+            (
+                NativeReferenceHostBuildErrorKind::VisionConfig,
+                "native reference-host vision construction failed",
+            ),
+        ] {
+            let error = NativeReferenceHostBuildError::new(kind);
+            assert_eq!(error.to_string(), expected);
+            assert_eq!(
+                format!("{error:?}"),
+                format!("NativeReferenceHostBuildError {{ kind: {kind:?} }}")
+            );
+        }
+    }
+
+    #[test]
+    fn shared_deadline_adapter_maps_every_stable_error_kind_exactly() {
+        for (source, expected) in [
+            (
+                WebSearchTransportErrorKind::InvalidRequest,
+                VisionTransportErrorKind::InvalidRequest,
+            ),
+            (
+                WebSearchTransportErrorKind::Authentication,
+                VisionTransportErrorKind::Authentication,
+            ),
+            (
+                WebSearchTransportErrorKind::RateLimited,
+                VisionTransportErrorKind::RateLimited,
+            ),
+            (
+                WebSearchTransportErrorKind::Timeout,
+                VisionTransportErrorKind::Timeout,
+            ),
+            (
+                WebSearchTransportErrorKind::Unavailable,
+                VisionTransportErrorKind::Unavailable,
+            ),
+            (
+                WebSearchTransportErrorKind::InvalidResponse,
+                VisionTransportErrorKind::InvalidResponse,
+            ),
+            (
+                WebSearchTransportErrorKind::Protocol,
+                VisionTransportErrorKind::Protocol,
+            ),
+            (
+                WebSearchTransportErrorKind::ResponseTooLarge,
+                VisionTransportErrorKind::ResponseTooLarge,
+            ),
+            (
+                WebSearchTransportErrorKind::ResultTooLarge,
+                VisionTransportErrorKind::ResponseTooLarge,
+            ),
+            (
+                WebSearchTransportErrorKind::RuntimeRequired,
+                VisionTransportErrorKind::RuntimeRequired,
+            ),
+            (
+                WebSearchTransportErrorKind::Cancelled,
+                VisionTransportErrorKind::Cancelled,
+            ),
+        ] {
+            assert_eq!(
+                map_vision_deadline_error(WebSearchTransportError::new(source)).kind(),
+                expected
+            );
+        }
     }
 }

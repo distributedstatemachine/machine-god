@@ -23,6 +23,7 @@ pub(crate) struct WorkspaceTools {
     pub(crate) read_file: ReadFileTool,
     pub(crate) rename_file: RenameFileTool,
     pub(crate) terminal_root: OwnedFd,
+    pub(crate) vision_root: OwnedFd,
     pub(crate) write_file: WriteFileTool,
 }
 
@@ -84,6 +85,7 @@ impl WorkspaceRoot {
         let read_file_root = clone_descriptor(&self.descriptor)?;
         let rename_file_root = clone_descriptor(&self.descriptor)?;
         let terminal_root = clone_descriptor(&self.descriptor)?;
+        let vision_root = clone_descriptor(&self.descriptor)?;
         let write_file_root = clone_descriptor(&self.descriptor)?;
         Ok(WorkspaceTools {
             copy_file: CopyFileTool::from_root_descriptor(copy_file_root),
@@ -98,6 +100,7 @@ impl WorkspaceRoot {
             read_file: ReadFileTool::from_root_descriptor(read_file_root),
             rename_file: RenameFileTool::from_root_descriptor(rename_file_root),
             terminal_root,
+            vision_root,
             write_file: WriteFileTool::from_root_descriptor(write_file_root),
         })
     }
@@ -114,7 +117,7 @@ mod tests {
     use super::{WorkspaceRoot, WorkspaceRootError};
 
     #[test]
-    fn workspace_composition_uses_exactly_twelve_identity_preserving_clones() {
+    fn workspace_composition_uses_exactly_thirteen_identity_preserving_clones() {
         let root = WorkspaceRoot::open(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
             .unwrap_or_else(|_| panic!("open workspace root for clone evidence"));
         let original_metadata = rustix::fs::fstat(root.descriptor()).unwrap();
@@ -136,7 +139,7 @@ mod tests {
             })
             .unwrap_or_else(|_| panic!("compose workspace tools for clone evidence"));
 
-        assert_eq!(clone_identities, vec![original_identity; 12]);
+        assert_eq!(clone_identities, vec![original_identity; 13]);
         let terminal_metadata = rustix::fs::fstat(&tools.terminal_root).unwrap();
         assert_eq!(
             (
@@ -145,11 +148,19 @@ mod tests {
             ),
             original_identity
         );
+        let vision_metadata = rustix::fs::fstat(&tools.vision_root).unwrap();
+        assert_eq!(
+            (
+                i128::from(vision_metadata.st_dev),
+                i128::from(vision_metadata.st_ino),
+            ),
+            original_identity
+        );
     }
 
     #[test]
     fn every_descriptor_clone_failure_aborts_workspace_composition() {
-        for failing_attempt in 1..=12 {
+        for failing_attempt in 1..=13 {
             let root = WorkspaceRoot::open(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
                 .unwrap_or_else(|_| panic!("open workspace root for clone failure evidence"));
             let attempts = Cell::new(0);

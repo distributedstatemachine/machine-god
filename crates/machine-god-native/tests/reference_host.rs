@@ -15,6 +15,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use futures_util::{StreamExt, stream};
 use machine_god_core::{
     BoxFuture, CancellationToken, Capability, ContentBlock, FilesystemAccess, NetworkTarget,
@@ -30,8 +32,8 @@ use machine_god_native::{
     OPEN_FILE_TOOL_NAME, PermissionPromptDecision, PermissionPromptError, PermissionPrompter,
     QuestionPromptAnswers, QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest,
     QuestionPrompter, READ_FILE_TOOL_NAME, READ_TOOL_RESULT_TOOL_NAME, RENAME_FILE_TOOL_NAME,
-    TERMINAL_TOOL_NAME, WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME, WRITE_FILE_TOOL_NAME,
-    load_native_config,
+    TERMINAL_TOOL_NAME, VISION_TOOL_NAME, WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME,
+    WRITE_FILE_TOOL_NAME, load_native_config,
 };
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
@@ -371,6 +373,36 @@ fn web_search_round_responses() -> [Vec<u8>; 3] {
     [outer_tool_call, nested_search, outer_finish]
 }
 
+fn vision_round_responses() -> [Vec<u8>; 3] {
+    let outer_tool_call = concat!(
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"vision-call\",\"toolName\":\"vision\",\"input\":{\"paths\":[\"nested/PRIVATE_PATH_SENTINEL.png\"],\"focus\":\"Read the status indicator.\"}}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    let evidence = json!({
+        "images": [{
+            "image_id": 1,
+            "status": "ok",
+            "summary": "The status indicator is ready.",
+            "visible_text": ["READY"],
+            "details": ["The indicator is green."]
+        }]
+    });
+    let nested_vision = format!(
+        "data: {{\"type\":\"stream-start\",\"warnings\":[]}}\n\ndata: {{\"type\":\"text-start\",\"id\":\"vision-text\"}}\n\ndata: {{\"type\":\"text-delta\",\"id\":\"vision-text\",\"delta\":{}}}\n\ndata: {{\"type\":\"text-end\",\"id\":\"vision-text\"}}\n\ndata: {{\"type\":\"finish\",\"finishReason\":{{\"unified\":\"stop\"}}}}\n\ndata: [DONE]\n\n",
+        serde_json::to_string(&evidence.to_string()).unwrap()
+    )
+    .into_bytes();
+    let outer_finish = concat!(
+        "data: {\"type\":\"text-delta\",\"id\":\"answer\",\"delta\":\"vision complete\"}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    [outer_tool_call, nested_vision, outer_finish]
+}
+
 fn ask_user_question_round_responses() -> [Vec<u8>; 2] {
     let tool_call = concat!(
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"question-call\",\"toolName\":\"ask_user_question\",\"input\":{\"questions\":[{\"question\":\"  Which path?  \",\"options\":[{\"label\":\"First\"},{\"label\":\"Second\"}]}]}}\n\n",
@@ -505,7 +537,7 @@ fn directory_is_empty(path: &Path) -> bool {
 
 fn assert_exact_native_tool_catalog(request: &Value) {
     let tools = request["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 17);
+    assert_eq!(tools.len(), 18);
     assert_eq!(
         tools
             .iter()
@@ -526,6 +558,7 @@ fn assert_exact_native_tool_catalog(request: &Value) {
             READ_TOOL_RESULT_TOOL_NAME,
             RENAME_FILE_TOOL_NAME,
             TERMINAL_TOOL_NAME,
+            VISION_TOOL_NAME,
             WEB_FETCH_TOOL_NAME,
             WEB_SEARCH_TOOL_NAME,
             WRITE_FILE_TOOL_NAME
@@ -959,6 +992,132 @@ fn capacity_one_shared_transport_releases_outer_stream_for_custom_target_search(
             "is_error": false
         })
     );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn capacity_one_shared_transport_releases_outer_stream_before_nested_vision() {
+    let temporary = TemporaryDirectory::new("capacity-one-vision");
+    let (workspace, sessions) = roots(temporary.path());
+    let nested = workspace.join("nested");
+    fs::create_dir(&nested).unwrap();
+    let image_bytes = b"\x89PNG\r\n\x1a\nPRIVATE_IMAGE_BYTES_SENTINEL";
+    fs::write(nested.join("PRIVATE_PATH_SENTINEL.png"), image_bytes).unwrap();
+    let encoded_image = BASE64_STANDARD.encode(image_bytes);
+    let transport = CapacityOneTransport::new(vision_round_responses());
+    let prompter = AllowingPrompter::default();
+    let target = NetworkTarget {
+        scheme: "https".to_owned(),
+        host: "vision-gateway.machine-god.dev".to_owned(),
+        port: Some(8443),
+    };
+    let host = NativeReferenceHost::compose_with_ai_gateway_transport(
+        built_in_config(),
+        Arc::new(transport.clone()),
+        target.clone(),
+        &workspace,
+        &sessions,
+        Arc::new(prompter.clone()),
+        inert_question_prompter(),
+        never_deadline(),
+    )
+    .unwrap();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let session_id = SessionId::new("capacity-one-vision").unwrap();
+    let events = runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            let session = host
+                .engine()
+                .create_session(
+                    session_id.clone(),
+                    SessionIncarnationId::new("capacity-one-vision-incarnation").unwrap(),
+                )
+                .unwrap();
+            session
+                .prompt("inspect the authorized image")
+                .await
+                .unwrap()
+                .map(|event| event.map(|event| event.payload))
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        })
+        .await
+        .expect("capacity-one nested vision must not starve")
+    });
+    assert_completed(&events);
+
+    let permission_requests = prompter.requests();
+    assert_eq!(permission_requests.len(), 1);
+    assert_eq!(
+        permission_requests[0].capability,
+        Capability::Vision {
+            paths: vec!["nested/PRIVATE_PATH_SENTINEL.png".to_owned()],
+            target,
+        }
+    );
+
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 3);
+    assert_exact_native_tool_catalog(&body(&requests[0]));
+    let nested_request = body(&requests[1]);
+    assert_eq!(nested_request["tools"], json!([]));
+    assert_eq!(
+        nested_request["prompt"][1]["content"][1]["data"],
+        encoded_image
+    );
+    let nested_serialized = serde_json::to_string(&nested_request).unwrap();
+    assert!(!nested_serialized.contains("PRIVATE_PATH_SENTINEL"));
+    assert!(!nested_serialized.contains("PRIVATE_IMAGE_BYTES_SENTINEL"));
+
+    let outer_continuation = body(&requests[2]);
+    assert_exact_native_tool_catalog(&outer_continuation);
+    let structured_output = decoded_tool_output(&outer_continuation, 2);
+    assert_eq!(
+        structured_output,
+        json!({
+            "content": {
+                "images": [{
+                    "image_id": 1,
+                    "status": "ok",
+                    "summary": "The status indicator is ready.",
+                    "visible_text": ["READY"],
+                    "details": ["The indicator is green."]
+                }]
+            },
+            "is_error": false
+        })
+    );
+    let output_serialized = serde_json::to_string(&structured_output).unwrap();
+    assert!(!output_serialized.contains("PRIVATE_PATH_SENTINEL"));
+    assert!(!output_serialized.contains("PRIVATE_IMAGE_BYTES_SENTINEL"));
+    assert!(!output_serialized.contains(&encoded_image));
+    let outer_serialized = serde_json::to_string(&outer_continuation).unwrap();
+    assert!(!outer_serialized.contains("PRIVATE_IMAGE_BYTES_SENTINEL"));
+    assert!(!outer_serialized.contains(&encoded_image));
+
+    let durable = futures_executor::block_on(host.engine().load_session(session_id))
+        .unwrap()
+        .expect("vision turn is durable");
+    let durable_record = durable.record();
+    let [ContentBlock::ToolResult { output, .. }] = durable_record.messages[2].content.as_slice()
+    else {
+        panic!("vision result is retained as one structured tool result")
+    };
+    assert_eq!(output.content, structured_output["content"]);
+    let durable_result = serde_json::to_string(output).unwrap();
+    assert!(!durable_result.contains("PRIVATE_PATH_SENTINEL"));
+    assert!(!durable_result.contains("PRIVATE_IMAGE_BYTES_SENTINEL"));
+    assert!(!durable_result.contains(&encoded_image));
+    let durable_serialized = serde_json::to_string(&durable_record).unwrap();
+    assert!(!durable_serialized.contains("PRIVATE_IMAGE_BYTES_SENTINEL"));
+    assert!(!durable_serialized.contains(&encoded_image));
 }
 
 #[test]
