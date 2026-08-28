@@ -1,9 +1,11 @@
 //! Bounded session-backed paging for projected tool results.
 
+use crate::session_store::{RecordOwner, validate_record_json};
 use crate::tool_result_projection::{tool_result_digest, valid_tool_result_handle};
 use machine_god_core::{
-    BoxFuture, CancellationToken, ContentBlock, PreparedToolCall, SessionRecord, SessionStore,
-    Tool, ToolCall, ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
+    BoxFuture, CancellationToken, ContentBlock, Message, PreparedToolCall, Role, SessionRecord,
+    SessionStore, Tool, ToolCall, ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput,
+    ToolSpec,
 };
 use serde_json::{Map, Number, Value, json};
 use std::fmt;
@@ -256,7 +258,10 @@ impl Tool for ReadToolResultTool {
                 if cancellation_wait.as_mut().poll(poll_context).is_ready() {
                     return std::task::Poll::Ready(Err(cancelled()));
                 }
-                let result = load.as_mut().poll(poll_context);
+                let result = load
+                    .as_mut()
+                    .poll(poll_context)
+                    .map(|result| result.map(|record| record.map(RecordOwner::new)));
                 if cancellation.is_cancelled() {
                     return std::task::Poll::Ready(Err(cancelled()));
                 }
@@ -273,13 +278,17 @@ impl Tool for ReadToolResultTool {
             let Some(record) = loaded else {
                 return checked_error(&cancellation, not_found());
             };
-            if record.id != context.session_id
-                || record.incarnation_id != context.session_incarnation_id
+            if record.get().id != context.session_id
+                || record.get().incarnation_id != context.session_incarnation_id
             {
                 return checked_error(&cancellation, not_found());
             }
+            if validate_record_json(record.get()).is_err() {
+                return checked_error(&cancellation, resource_limit());
+            }
+            check_cancellation(&cancellation)?;
 
-            match scan_record(&record, &context, &normalized, limits, &cancellation) {
+            match scan_record(record.get(), &context, &normalized, limits, &cancellation) {
                 Ok(output) => {
                     check_cancellation(&cancellation)?;
                     Ok(output)
@@ -302,7 +311,7 @@ fn scan_record(
     let mut scanned_results = 0_usize;
     let mut scanned_bytes = 0_usize;
     let mut serialized = Vec::new();
-    for message in record.messages.iter().rev() {
+    for message in prior_messages(record, context).iter().rev() {
         check_cancellation(cancellation)?;
         scanned_messages = match scanned_messages.checked_add(1) {
             Some(value) if value <= MAX_SCANNED_MESSAGES => value,
@@ -356,6 +365,21 @@ fn scan_record(
         }
     }
     checked_error(cancellation, not_found())
+}
+
+fn prior_messages<'a>(record: &'a SessionRecord, context: &ToolContext) -> &'a [Message] {
+    let current_round = record.messages.iter().rposition(|message| {
+        message.role == Role::Assistant
+            && message.content.iter().any(|block| {
+                matches!(
+                    block,
+                    ContentBlock::ToolCall { call } if call.id == context.call_id
+                )
+            })
+    });
+    current_round.map_or(record.messages.as_slice(), |index| {
+        &record.messages[..index]
+    })
 }
 
 #[derive(Debug)]

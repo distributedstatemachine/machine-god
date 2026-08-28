@@ -50,9 +50,7 @@ pub const MAX_LIST_SESSION_DIRECTORY_ENTRIES: usize = 1_024;
 /// decoded, or returned.
 pub const MAX_LIST_SESSION_TOTAL_RECORD_BYTES: usize = 64 * 1_024 * 1_024;
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_STORED_JSON_DEPTH: usize = 64;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_STORED_JSON_NODES: usize = 65_536;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const SESSION_INSPECTION_READ_BUFFER_BYTES: usize = 4 * 1_024;
@@ -2347,8 +2345,7 @@ impl From<StoredContentBlock> for ContentBlock {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn validate_record_json(record: &SessionRecord) -> Result<(), ()> {
+pub(crate) fn validate_record_json(record: &SessionRecord) -> Result<(), ()> {
     let roots = record
         .metadata
         .values()
@@ -2367,12 +2364,10 @@ fn validate_record_json(record: &SessionRecord) -> Result<(), ()> {
     Ok(())
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct JsonValidationBudget {
     nodes: usize,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl JsonValidationBudget {
     fn validate(&mut self, root: &Value) -> Result<(), ()> {
         let mut frames = Vec::<JsonFrame<'_>>::new();
@@ -2415,19 +2410,16 @@ impl JsonValidationBudget {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct JsonFrame<'a> {
     container_depth: usize,
     children: JsonChildren<'a>,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 enum JsonChildren<'a> {
     Array(std::slice::Iter<'a, Value>),
     Object(serde_json::map::Values<'a>),
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl<'a> Iterator for JsonChildren<'a> {
     type Item = &'a Value;
 
@@ -2439,19 +2431,18 @@ impl<'a> Iterator for JsonChildren<'a> {
     }
 }
 
-struct RecordOwner {
+pub(crate) struct RecordOwner {
     record: Option<SessionRecord>,
 }
 
 impl RecordOwner {
-    fn new(record: SessionRecord) -> Self {
+    pub(crate) fn new(record: SessionRecord) -> Self {
         Self {
             record: Some(record),
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn get(&self) -> &SessionRecord {
+    pub(crate) fn get(&self) -> &SessionRecord {
         self.record.as_ref().expect("record owner is armed")
     }
 

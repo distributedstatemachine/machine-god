@@ -331,6 +331,48 @@ fn assert_not_found(error: &ToolError) {
     );
 }
 
+fn assert_resource_limit(error: &ToolError) {
+    assert_error(
+        error,
+        ToolErrorKind::InvalidInput,
+        "read_tool_result_resource_limit",
+        "read_tool_result resource limit exceeded",
+        false,
+    );
+}
+
+fn assert_cancelled(error: &ToolError) {
+    assert_error(
+        error,
+        ToolErrorKind::Cancelled,
+        "read_tool_result_cancelled",
+        "read_tool_result was cancelled",
+        false,
+    );
+}
+
+fn deeply_nested_value(depth: usize) -> Value {
+    let mut value = Value::Null;
+    for _ in 0..depth {
+        value = Value::Array(vec![value]);
+    }
+    value
+}
+
+fn deeply_nested_record(
+    session_id: &SessionId,
+    incarnation_id: &SessionIncarnationId,
+) -> SessionRecord {
+    record_with_results(
+        session_id.clone(),
+        incarnation_id.clone(),
+        [(
+            ToolCallId::new("deep-result").unwrap(),
+            ToolOutput::success(deeply_nested_value(10_000)),
+        )],
+    )
+}
+
 fn page_text(output: &ToolOutput) -> &str {
     output.content["serialized_tool_output"]
         .as_str()
@@ -828,6 +870,78 @@ fn newest_results_are_prioritized_and_candidates_cannot_exceed_remaining_budget(
 }
 
 #[test]
+fn current_round_results_do_not_consume_prior_result_budget() {
+    let fixture = Fixture::new(
+        "round-boundary-session",
+        "round-boundary-incarnation",
+        "prior-target",
+        ToolOutput::success("prior target"),
+    );
+    let current_call_id = ToolCallId::new("reader-call").unwrap();
+    let sibling_call_id = ToolCallId::new("current-sibling").unwrap();
+    let mut record = fixture.record.clone();
+    record.messages.push(Message {
+        role: Role::Assistant,
+        content: vec![
+            ContentBlock::ToolCall {
+                call: ToolCall {
+                    id: sibling_call_id.clone(),
+                    name: ToolName::new("other_tool").unwrap(),
+                    arguments: json!({}),
+                },
+            },
+            ContentBlock::ToolCall {
+                call: ToolCall {
+                    id: current_call_id,
+                    name: ToolName::new(READ_TOOL_RESULT_TOOL_NAME).unwrap(),
+                    arguments: arguments(&fixture.handle, 1, 4),
+                },
+            },
+        ],
+    });
+    record.messages.push(Message {
+        role: Role::Tool,
+        content: vec![ContentBlock::ToolResult {
+            call_id: ToolCallId::new("reader-call").unwrap(),
+            output: ToolOutput::success("current placeholder"),
+        }],
+    });
+    record.messages.push(Message {
+        role: Role::Tool,
+        content: vec![ContentBlock::ToolResult {
+            call_id: sibling_call_id,
+            output: ToolOutput::success("current sibling result"),
+        }],
+    });
+    let store = ScriptStore::new([
+        LoadStep::Ready(Ok(Some(record.clone()))),
+        LoadStep::Ready(Ok(Some(record))),
+    ]);
+    let tool = store.bounded_reader(ReadToolResultLimits::new(1, 1, MAX_SCAN_BYTES).unwrap());
+
+    let page = execute(
+        &tool,
+        fixture.context(),
+        arguments(&fixture.handle, 1, 16_384),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    assert_eq!(page_text(&page).as_bytes(), fixture.serialized);
+
+    let mut boundaryless_context = fixture.context();
+    boundaryless_context.call_id = ToolCallId::new("direct-reader-call").unwrap();
+    assert_not_found(
+        &execute(
+            &tool,
+            boundaryless_context,
+            arguments(&fixture.handle, 1, 4),
+            CancellationToken::new(),
+        )
+        .unwrap_err(),
+    );
+}
+
+#[test]
 fn non_result_content_blocks_are_hard_bounded_before_an_older_target() {
     const MAX_SCANNED_CONTENT_BLOCKS: usize = 65_536;
 
@@ -1012,6 +1126,55 @@ fn execution_is_inert_and_cancellation_wins_before_during_and_after_load_poll() 
     );
     assert_eq!(store.probe.loads.load(Ordering::SeqCst), 2);
     assert_eq!(store.probe.drops.load(Ordering::SeqCst), 2);
+    assert_eq!(store.probe.live.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn deep_store_records_are_guarded_before_every_load_return_boundary() {
+    let session_id = SessionId::new("deep-record-session").unwrap();
+    let incarnation_id = SessionIncarnationId::new("deep-record-incarnation").unwrap();
+    let same_poll_cancellation = CancellationToken::new();
+    let post_load_cancellation = CancellationToken::new();
+    let store = ScriptStore::new([
+        LoadStep::Ready(Ok(Some(deeply_nested_record(&session_id, &incarnation_id)))),
+        LoadStep::CancelThenReady {
+            cancellation: same_poll_cancellation.clone(),
+            result: Ok(Some(deeply_nested_record(&session_id, &incarnation_id))),
+        },
+        LoadStep::CancelOnDropReady {
+            cancellation: post_load_cancellation.clone(),
+            result: Ok(Some(deeply_nested_record(&session_id, &incarnation_id))),
+        },
+    ]);
+    let tool = store.reader();
+    let tool_context = context(&session_id, &incarnation_id);
+    let args = arguments(&synthetic_handle('d'), 1, 4);
+
+    assert_resource_limit(
+        &execute(
+            &tool,
+            tool_context.clone(),
+            args.clone(),
+            CancellationToken::new(),
+        )
+        .unwrap_err(),
+    );
+
+    let same_poll = execute(
+        &tool,
+        tool_context.clone(),
+        args.clone(),
+        same_poll_cancellation.clone(),
+    )
+    .unwrap_err();
+    assert!(same_poll_cancellation.is_cancelled());
+    assert_cancelled(&same_poll);
+
+    let post_load = execute(&tool, tool_context, args, post_load_cancellation.clone()).unwrap_err();
+    assert!(post_load_cancellation.is_cancelled());
+    assert_cancelled(&post_load);
+    assert_eq!(store.probe.loads.load(Ordering::SeqCst), 3);
+    assert_eq!(store.probe.drops.load(Ordering::SeqCst), 3);
     assert_eq!(store.probe.live.load(Ordering::SeqCst), 0);
 }
 
