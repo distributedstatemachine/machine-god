@@ -143,12 +143,16 @@ assistant-call boundary. It scans only messages preceding that boundary,
 newest first, so current sibling results and placeholders do not consume
 prior-result limits. Every candidate has its own inclusive 64 KiB compact
 source ceiling in addition to the aggregate scan-byte budget. Compact
-serialization uses one reused, geometrically grown fallible buffer and checks
-cancellation while scanning string and key bytes in chunks of at most 1 KiB
-before fixed-digest comparison and UTF-8 range selection. The tool spawns no
-task or thread and performs no retry. Drop cancels ownership of the store future
-and releases capacity; a conforming injected store keeps its effects owned by
-that future or completes its own cleanup on drop.
+serialization uses one reused output buffer and one reused, geometrically grown
+fallible traversal-frame scratch, so allocation scales with maximum JSON depth
+instead of candidate count. The prepass and iterative record destruction each
+reuse one traversal scratch across every stored JSON root for the same reason.
+Serialization checks cancellation while scanning string and key bytes in
+chunks of at most 1 KiB before fixed-digest comparison and UTF-8 range
+selection. The tool spawns no task or thread and performs no retry. Drop cancels
+ownership of the store future and releases capacity; a conforming injected
+store keeps its effects owned by that future or completes its own cleanup on
+drop.
 
 ## Authority and observations
 
@@ -199,7 +203,9 @@ incarnations, handles, result content, store paths, or injected diagnostics.
 
 Cancellation is checked before store load, while the load future is pending,
 after it resolves, during bounded traversal and serialization, and before
-success. Cancellation observable at a return boundary wins over success or
+success. Before its final cancellation check, execution explicitly destroys the
+loaded record, releases active-read capacity, and destroys the owned arguments;
+cancellation triggered during that teardown therefore wins over success or
 another error. Direct execution reports the fixed cancelled error; engine-owned
 turn cancellation retains core's normal cancelled-turn precedence.
 

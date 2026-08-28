@@ -4,8 +4,8 @@ use crate::session_store::{
     JsonValueOwner, MAX_STORED_JSON_DEPTH, MAX_STORED_JSON_NODES, RecordOwner,
 };
 use crate::tool_output_serializer::{
-    CompactToolOutputError, CompactToolOutputLimits, measure_json_value_compact,
-    serialize_tool_output_compact,
+    CompactJsonScratch, CompactToolOutputError, CompactToolOutputLimits,
+    measure_json_value_compact, serialize_tool_output_compact_with_scratch,
 };
 use crate::tool_result_projection::{
     READ_TOOL_RESULT_MAX_SOURCE_BYTES as PROJECTION_MAX_SOURCE_BYTES, tool_result_digest,
@@ -258,72 +258,94 @@ impl Tool for ReadToolResultTool {
         let active_reads = Arc::clone(&self.active_reads);
         let arguments = JsonValueOwner::new(arguments);
         Box::pin(async move {
-            check_cancellation(&cancellation)?;
-            let normalized = match normalize_arguments(arguments.get(), &cancellation) {
-                Ok(arguments) => arguments,
-                Err(error) => return checked_error(&cancellation, error),
-            };
-            check_cancellation(&cancellation)?;
-            let Some(_permit) = try_acquire(active_reads, limits.active_reads) else {
+            let mut permit = None;
+            let mut record = None;
+            let outcome = async {
                 check_cancellation(&cancellation)?;
-                return Err(read_busy());
-            };
-            check_cancellation(&cancellation)?;
-
-            let mut load = session_store.load(context.session_id.clone());
-            let mut cancellation_wait = Box::pin(cancellation.cancelled());
-            let load_result = poll_fn(|poll_context| {
-                if cancellation_wait.as_mut().poll(poll_context).is_ready() {
-                    return std::task::Poll::Ready(Err(cancelled()));
-                }
-                let result = load
-                    .as_mut()
-                    .poll(poll_context)
-                    .map(|result| result.map(|record| record.map(RecordOwner::new)));
-                if cancellation.is_cancelled() {
-                    return std::task::Poll::Ready(Err(cancelled()));
-                }
-                result.map(|result| result.map_err(|error| store_unavailable(error.retryable)))
-            })
-            .await;
-            drop(cancellation_wait);
-            drop(load);
-            check_cancellation(&cancellation)?;
-            let loaded = match load_result {
-                Ok(loaded) => loaded,
-                Err(error) => return checked_error(&cancellation, error),
-            };
-            let Some(record) = loaded else {
-                return checked_error(&cancellation, not_found());
-            };
-            if record.get().id != context.session_id
-                || record.get().incarnation_id != context.session_incarnation_id
-            {
-                return checked_error(&cancellation, not_found());
-            }
-            check_cancellation(&cancellation)?;
-            let prior_message_end = match prepass_record(record.get(), &context, &cancellation) {
-                Ok(prior_message_end) => prior_message_end,
-                Err(error) => return checked_error(&cancellation, error),
-            };
-            check_cancellation(&cancellation)?;
-
-            match scan_record(
-                record.get(),
-                prior_message_end,
-                &context,
-                &normalized,
-                limits,
-                &cancellation,
-            ) {
-                Ok(output) => {
+                let normalized = match normalize_arguments(arguments.get(), &cancellation) {
+                    Ok(arguments) => arguments,
+                    Err(error) => return checked_error(&cancellation, error),
+                };
+                check_cancellation(&cancellation)?;
+                let Some(acquired) = try_acquire(active_reads, limits.active_reads) else {
                     check_cancellation(&cancellation)?;
-                    Ok(output)
+                    return Err(read_busy());
+                };
+                permit = Some(acquired);
+                check_cancellation(&cancellation)?;
+
+                let mut load = session_store.load(context.session_id.clone());
+                let mut cancellation_wait = Box::pin(cancellation.cancelled());
+                let load_result = poll_fn(|poll_context| {
+                    if cancellation_wait.as_mut().poll(poll_context).is_ready() {
+                        return std::task::Poll::Ready(Err(cancelled()));
+                    }
+                    let result = load
+                        .as_mut()
+                        .poll(poll_context)
+                        .map(|result| result.map(|record| record.map(RecordOwner::new)));
+                    if cancellation.is_cancelled() {
+                        return std::task::Poll::Ready(Err(cancelled()));
+                    }
+                    result.map(|result| result.map_err(|error| store_unavailable(error.retryable)))
+                })
+                .await;
+                drop(cancellation_wait);
+                drop(load);
+                check_cancellation(&cancellation)?;
+                record = match load_result {
+                    Ok(loaded) => loaded,
+                    Err(error) => return checked_error(&cancellation, error),
+                };
+                let Some(loaded_record) = record.as_ref() else {
+                    return checked_error(&cancellation, not_found());
+                };
+                if loaded_record.get().id != context.session_id
+                    || loaded_record.get().incarnation_id != context.session_incarnation_id
+                {
+                    return checked_error(&cancellation, not_found());
                 }
-                Err(error) => checked_error(&cancellation, error),
+                check_cancellation(&cancellation)?;
+                let prior_message_end =
+                    match prepass_record(loaded_record.get(), &context, &cancellation) {
+                        Ok(prior_message_end) => prior_message_end,
+                        Err(error) => return checked_error(&cancellation, error),
+                    };
+                check_cancellation(&cancellation)?;
+
+                match scan_record(
+                    loaded_record.get(),
+                    prior_message_end,
+                    &context,
+                    &normalized,
+                    limits,
+                    &cancellation,
+                ) {
+                    Ok(output) => {
+                        check_cancellation(&cancellation)?;
+                        Ok(output)
+                    }
+                    Err(error) => checked_error(&cancellation, error),
+                }
             }
+            .await;
+            finish_execution_after_owned_teardown(&cancellation, arguments, record, permit, outcome)
         })
     }
+}
+
+fn finish_execution_after_owned_teardown<T, Arguments, Record, Permit>(
+    cancellation: &CancellationToken,
+    arguments: Arguments,
+    record: Record,
+    permit: Permit,
+    outcome: Result<T, ToolError>,
+) -> Result<T, ToolError> {
+    drop(record);
+    drop(permit);
+    drop(arguments);
+    check_cancellation(cancellation)?;
+    outcome
 }
 
 fn scan_record(
@@ -337,6 +359,7 @@ fn scan_record(
     let mut scanned_results = 0_usize;
     let mut scanned_bytes = 0_usize;
     let mut serialized = Vec::new();
+    let mut serialization_scratch = CompactJsonScratch::new();
     for message in record.messages[..prior_message_end].iter().rev() {
         check_cancellation(cancellation)?;
         for block in message.content.iter().rev() {
@@ -358,6 +381,7 @@ fn scan_record(
             if let Err(error) = serialize_output_bounded(
                 output,
                 &mut serialized,
+                &mut serialization_scratch,
                 remaining.min(READ_TOOL_RESULT_MAX_SOURCE_BYTES),
                 cancellation,
             ) {
@@ -408,8 +432,9 @@ fn prepass_record_observed(
     }
 
     let mut json_budget = StoredJsonBudget { nodes: 0 };
+    let mut json_frames = Vec::new();
     for value in record.metadata.values() {
-        json_budget.validate(value, cancellation, &mut observe)?;
+        json_budget.validate(value, &mut json_frames, cancellation, &mut observe)?;
     }
 
     let mut inspected_blocks = 0_usize;
@@ -428,15 +453,25 @@ fn prepass_record_observed(
             check_cancellation(cancellation)?;
             match block {
                 ContentBlock::Json { value } => {
-                    json_budget.validate(value, cancellation, &mut observe)?;
+                    json_budget.validate(value, &mut json_frames, cancellation, &mut observe)?;
                 }
                 ContentBlock::ToolCall { call } => {
                     contains_current_call |=
                         message.role == Role::Assistant && call.id == context.call_id;
-                    json_budget.validate(&call.arguments, cancellation, &mut observe)?;
+                    json_budget.validate(
+                        &call.arguments,
+                        &mut json_frames,
+                        cancellation,
+                        &mut observe,
+                    )?;
                 }
                 ContentBlock::ToolResult { output, .. } => {
-                    json_budget.validate(&output.content, cancellation, &mut observe)?;
+                    json_budget.validate(
+                        &output.content,
+                        &mut json_frames,
+                        cancellation,
+                        &mut observe,
+                    )?;
                 }
                 ContentBlock::Text { .. } | _ => {}
             }
@@ -454,13 +489,19 @@ struct StoredJsonBudget {
 }
 
 impl StoredJsonBudget {
-    fn validate(
+    fn validate<'a>(
         &mut self,
-        root: &Value,
+        root: &'a Value,
+        frames: &mut Vec<StoredJsonFrame<'a>>,
         cancellation: &CancellationToken,
         observe: &mut impl FnMut(),
     ) -> Result<(), ToolError> {
-        let mut frames = Vec::<StoredJsonFrame<'_>>::new();
+        frames.clear();
+        if frames.capacity() < MAX_STORED_JSON_DEPTH {
+            frames
+                .try_reserve_exact(MAX_STORED_JSON_DEPTH)
+                .map_err(|_| resource_limit())?;
+        }
         let mut current = Some((root, 0_usize));
         loop {
             if let Some((value, parent_depth)) = current.take() {
@@ -615,15 +656,17 @@ const fn decode_hex(byte: u8) -> Option<u8> {
     }
 }
 
-fn serialize_output_bounded(
-    output: &ToolOutput,
+fn serialize_output_bounded<'value>(
+    output: &'value ToolOutput,
     serialized: &mut Vec<u8>,
+    scratch: &mut CompactJsonScratch<'value>,
     limit: usize,
     cancellation: &CancellationToken,
 ) -> Result<(), ToolError> {
-    serialize_tool_output_compact(
+    serialize_tool_output_compact_with_scratch(
         output,
         serialized,
+        scratch,
         CompactToolOutputLimits {
             output_bytes: limit,
             json_depth: MAX_STORED_JSON_DEPTH,
@@ -786,6 +829,14 @@ mod prepass_tests {
     use super::*;
     use machine_god_core::{Message, SessionId, SessionIncarnationId, ToolCallId, TurnId};
 
+    struct CancelOnDrop(CancellationToken);
+
+    impl Drop for CancelOnDrop {
+        fn drop(&mut self) {
+            self.0.cancel();
+        }
+    }
+
     fn context(session_id: SessionId, incarnation_id: SessionIncarnationId) -> ToolContext {
         ToolContext {
             session_id,
@@ -821,6 +872,51 @@ mod prepass_tests {
         assert_eq!(inspections, 3);
         assert_eq!(error.kind, ToolErrorKind::Cancelled);
         assert_eq!(error.code, "read_tool_result_cancelled");
+    }
+
+    #[test]
+    fn owned_teardown_cancellation_wins_over_success_and_error() {
+        for outcome in [Ok(ToolOutput::success("done")), Err(not_found())] {
+            let cancellation = CancellationToken::new();
+            let cancel_on_record_drop = CancelOnDrop(cancellation.clone());
+            let error = finish_execution_after_owned_teardown(
+                &cancellation,
+                (),
+                cancel_on_record_drop,
+                (),
+                outcome,
+            )
+            .unwrap_err();
+            assert_eq!(error.kind, ToolErrorKind::Cancelled);
+            assert_eq!(error.code, "read_tool_result_cancelled");
+        }
+    }
+
+    #[test]
+    fn high_cardinality_prepass_reuses_one_depth_scratch_allocation() {
+        let session_id = SessionId::new("prepass-allocation-session").unwrap();
+        let incarnation_id = SessionIncarnationId::new("prepass-allocation-incarnation").unwrap();
+        let mut record = SessionRecord::empty(session_id.clone(), incarnation_id.clone());
+        record.messages.push(Message {
+            role: Role::Tool,
+            content: (0..32_000)
+                .map(|_| ContentBlock::Json {
+                    value: serde_json::json!([null]),
+                })
+                .collect(),
+        });
+        let tool_context = context(session_id, incarnation_id);
+        let cancellation = CancellationToken::new();
+        let mut result = None;
+        let allocations = allocation_counter::measure(|| {
+            result = Some(prepass_record(&record, &tool_context, &cancellation));
+        });
+
+        assert_eq!(result, Some(Ok(1)));
+        assert!(
+            allocations.count_total <= 4,
+            "prepass allocated per JSON root: {allocations:?}"
+        );
     }
 
     #[test]

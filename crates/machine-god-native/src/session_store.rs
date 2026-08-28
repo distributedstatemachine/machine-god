@@ -2562,27 +2562,16 @@ impl JsonDropScratch {
 
     fn push(&mut self, frame: OwnedJsonChildren) {
         if self.frames.len() == self.frames.capacity() {
-            let Some(remaining) = MAX_STORED_JSON_NODES.checked_sub(self.frames.len()) else {
-                std::mem::forget(frame);
-                return;
-            };
-            if remaining == 0 {
-                // An input deeper than the aggregate JSON-node contract is
-                // already invalid. Forget its still-owned iterator instead of
-                // falling back to recursive destruction on the caller's stack.
-                std::mem::forget(frame);
-                return;
-            }
             // The first container reserves the complete valid-depth bound.
-            // Invalid deeper input grows geometrically up to the aggregate
-            // node ceiling, keeping allocation count logarithmic and scratch
-            // bounded independently of the number of JSON roots.
+            // Invalid deeper input continues growing geometrically so crossing
+            // a validation ceiling never leaks an owned subtree. Allocation
+            // count remains logarithmic in maximum depth and independent of
+            // the number of JSON roots.
             let additional = if self.frames.capacity() == 0 {
                 MAX_STORED_JSON_DEPTH
             } else {
                 self.frames.capacity()
-            }
-            .min(remaining);
+            };
             if self.frames.try_reserve_exact(additional).is_err() {
                 // Drop must neither panic nor recursively destroy an unbounded
                 // subtree when scratch allocation is unavailable.
@@ -2689,8 +2678,9 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        FileSessionStore, JsonKeyFingerprint, JsonKeyTracker, JsonSummary, RecordOwner,
-        retry_interrupted, serialize_record, validate_record_json,
+        FileSessionStore, JsonDropScratch, JsonKeyFingerprint, JsonKeyTracker, JsonSummary,
+        MAX_STORED_JSON_NODES, RecordOwner, retry_interrupted, serialize_record,
+        validate_record_json,
     };
 
     static NEXT_LISTING_ROOT: AtomicU64 = AtomicU64::new(0);
@@ -2822,6 +2812,26 @@ mod tests {
         assert!(
             allocations.count_total <= 4,
             "dropping 32,000 shallow JSON roots allocated per root: {allocations:?}"
+        );
+    }
+
+    #[test]
+    fn iterative_drop_does_not_leak_past_the_json_node_ceiling() {
+        let allocations = allocation_counter::measure(|| {
+            let mut value = Value::Null;
+            for _ in 0..=MAX_STORED_JSON_NODES {
+                value = Value::Array(vec![value]);
+            }
+            JsonDropScratch::new().drop_value(value);
+        });
+
+        assert_eq!(
+            allocations.count_current, 0,
+            "iterative destruction leaked owned JSON: {allocations:?}"
+        );
+        assert_eq!(
+            allocations.bytes_current, 0,
+            "iterative destruction leaked owned JSON bytes: {allocations:?}"
         );
     }
 }
