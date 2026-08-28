@@ -20,6 +20,21 @@ pub(crate) struct CompactToolOutputLimits {
     pub(crate) json_nodes: usize,
 }
 
+/// Reusable traversal storage for compact JSON serialization.
+///
+/// A scratch value can be retained while serializing multiple tool outputs
+/// borrowed from the same session record, avoiding one frame allocation per
+/// candidate. It never owns or mutates the values being serialized.
+pub(crate) struct CompactJsonScratch<'value> {
+    frames: Vec<ValueFrame<'value>>,
+}
+
+impl CompactJsonScratch<'_> {
+    pub(crate) const fn new() -> Self {
+        Self { frames: Vec::new() }
+    }
+}
+
 /// Serializes a tool output as compact JSON without recursive traversal.
 ///
 /// The destination is cleared before serialization and may contain a bounded
@@ -31,20 +46,45 @@ pub(crate) fn serialize_tool_output_compact(
     limits: CompactToolOutputLimits,
     cancellation: &CancellationToken,
 ) -> Result<(), CompactToolOutputError> {
+    let mut scratch = CompactJsonScratch::new();
+    serialize_tool_output_compact_with_scratch(
+        output,
+        destination,
+        &mut scratch,
+        limits,
+        cancellation,
+    )
+}
+
+/// Serializes a tool output while reusing traversal-frame storage.
+///
+/// The destination and scratch are cleared before serialization and remain
+/// reusable after success or failure.
+pub(crate) fn serialize_tool_output_compact_with_scratch<'value>(
+    output: &'value ToolOutput,
+    destination: &mut Vec<u8>,
+    scratch: &mut CompactJsonScratch<'value>,
+    limits: CompactToolOutputLimits,
+    cancellation: &CancellationToken,
+) -> Result<(), CompactToolOutputError> {
     destination.clear();
+    scratch.frames.clear();
     validate_limits(limits)?;
 
     let mut encoder = Encoder::new(destination, limits.output_bytes, cancellation);
     encoder.append(b"{\"content\":")?;
-    encode_value_iterative(
+    let result = encode_value_iterative(
         &output.content,
         &mut encoder,
         limits.json_depth,
         limits.json_nodes,
-    )?;
-    encoder.append(b",\"is_error\":")?;
-    encoder.append(if output.is_error { b"true" } else { b"false" })?;
-    encoder.append(b"}")
+        &mut scratch.frames,
+    )
+    .and_then(|()| encoder.append(b",\"is_error\":"))
+    .and_then(|()| encoder.append(if output.is_error { b"true" } else { b"false" }))
+    .and_then(|()| encoder.append(b"}"));
+    scratch.frames.clear();
+    result
 }
 
 /// Serializes one JSON value with the same compact, iterative encoder used for
@@ -59,7 +99,14 @@ pub(crate) fn serialize_json_value_compact(
     destination.clear();
     validate_limits(limits)?;
     let mut encoder = Encoder::new(destination, limits.output_bytes, cancellation);
-    encode_value_iterative(value, &mut encoder, limits.json_depth, limits.json_nodes)
+    let mut scratch = CompactJsonScratch::new();
+    encode_value_iterative(
+        value,
+        &mut encoder,
+        limits.json_depth,
+        limits.json_nodes,
+        &mut scratch.frames,
+    )
 }
 
 /// Measures one compact JSON value without retaining its encoded bytes.
@@ -70,7 +117,14 @@ pub(crate) fn measure_json_value_compact(
 ) -> Result<usize, CompactToolOutputError> {
     validate_limits(limits)?;
     let mut encoder = Encoder::measuring(limits.output_bytes, cancellation);
-    encode_value_iterative(value, &mut encoder, limits.json_depth, limits.json_nodes)?;
+    let mut scratch = CompactJsonScratch::new();
+    encode_value_iterative(
+        value,
+        &mut encoder,
+        limits.json_depth,
+        limits.json_nodes,
+        &mut scratch.frames,
+    )?;
     Ok(encoder.written())
 }
 
@@ -225,13 +279,14 @@ enum FrameAction<'a> {
     Done,
 }
 
-fn encode_value_iterative(
-    root: &Value,
+fn encode_value_iterative<'value>(
+    root: &'value Value,
     encoder: &mut Encoder<'_>,
     max_depth: usize,
     max_nodes: usize,
+    frames: &mut Vec<ValueFrame<'value>>,
 ) -> Result<(), CompactToolOutputError> {
-    let mut frames = Vec::new();
+    frames.clear();
     frames
         .try_reserve_exact(max_depth)
         .map_err(|_| CompactToolOutputError::Invalid)?;
@@ -245,11 +300,11 @@ fn encode_value_iterative(
                 .checked_add(1)
                 .filter(|nodes| *nodes <= max_nodes)
                 .ok_or(CompactToolOutputError::JsonNodes)?;
-            encode_node(value, depth, max_depth, encoder, &mut frames)?;
+            encode_node(value, depth, max_depth, encoder, frames)?;
             continue;
         }
 
-        let action = next_frame_action(&mut frames);
+        let action = next_frame_action(frames);
 
         match action {
             FrameAction::ArrayValue {
@@ -610,6 +665,62 @@ mod tests {
         assert!(
             allocations.count_total <= 32,
             "number encoding allocated per node: {allocations:?}"
+        );
+    }
+
+    fn measure_reused_scratch_allocations(
+        candidates: &[ToolOutput],
+        expected: &[Vec<u8>],
+        limits: CompactToolOutputLimits,
+    ) -> allocation_counter::AllocationInfo {
+        let cancellation = CancellationToken::new();
+        let mut destination = Vec::new();
+        let mut scratch = CompactJsonScratch::new();
+        let mut completed = false;
+        let allocations = allocation_counter::measure(|| {
+            for (candidate, expected) in candidates.iter().zip(expected) {
+                serialize_tool_output_compact_with_scratch(
+                    candidate,
+                    &mut destination,
+                    &mut scratch,
+                    limits,
+                    &cancellation,
+                )
+                .unwrap();
+                assert_eq!(&destination, expected);
+            }
+            completed = true;
+        });
+        assert!(completed);
+        allocations
+    }
+
+    #[test]
+    fn reused_frame_scratch_does_not_allocate_per_candidate() {
+        let candidates: Vec<_> = (0_u64..2_048)
+            .map(|index| {
+                ToolOutput::success(json!({
+                    "candidate": index % 10,
+                    "nested": [true, {"value": "constant"}],
+                }))
+            })
+            .collect();
+        let expected: Vec<_> = candidates
+            .iter()
+            .map(|candidate| serde_json::to_vec(candidate).unwrap())
+            .collect();
+        let limits = CompactToolOutputLimits {
+            output_bytes: expected[0].len(),
+            json_depth: MAX_SAFE_JSON_DEPTH,
+            json_nodes: 10,
+        };
+
+        let one = measure_reused_scratch_allocations(&candidates[..1], &expected[..1], limits);
+        let many = measure_reused_scratch_allocations(&candidates, &expected, limits);
+
+        assert!(
+            many.count_total <= one.count_total + 1,
+            "frame scratch allocated with candidate count: one={one:?}, many={many:?}"
         );
     }
 
