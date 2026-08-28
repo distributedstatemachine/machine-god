@@ -67,6 +67,7 @@ fn request_accepts_exact_bounds_and_preserves_order() {
 fn request_rejects_blank_or_oversized_focus_and_invalid_image_sets() {
     let cases = [
         VisionBatchRequest::new(session(), " \n".to_owned(), vec![image(1, 1)]),
+        VisionBatchRequest::new(session(), "inspect\0image".to_owned(), vec![image(1, 1)]),
         VisionBatchRequest::new(
             session(),
             "f".repeat(MAX_VISION_FOCUS_BYTES + 1),
@@ -110,6 +111,39 @@ fn request_rejects_blank_or_oversized_focus_and_invalid_image_sets() {
             .kind(),
         VisionTransportErrorKind::InvalidRequest
     );
+}
+
+#[test]
+fn provider_results_accept_only_vision_unavailable_failures() {
+    for code in [
+        VisionProviderFailureCode::ImageUnavailable,
+        VisionProviderFailureCode::ProviderResponseInvalid,
+        VisionProviderFailureCode::OutputLimitExceeded,
+        VisionProviderFailureCode::MissingProviderRecord,
+    ] {
+        let error = VisionImageResult::new(
+            1,
+            VisionImageOutcome::Failed {
+                error: VisionProviderFailure::new(code),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), VisionTransportErrorKind::InvalidResponse);
+    }
+
+    let result = VisionImageResult::new(
+        1,
+        VisionImageOutcome::Failed {
+            error: VisionProviderFailure::new(VisionProviderFailureCode::VisionUnavailable),
+        },
+    )
+    .expect("provider-declared vision_unavailable must remain valid");
+    let response = VisionBatchResponse::new(vec![result])
+        .expect("a bounded vision_unavailable response must remain valid");
+    let VisionImageOutcome::Failed { error } = response.images()[0].outcome() else {
+        panic!("expected failed provider outcome");
+    };
+    assert_eq!(error.code(), VisionProviderFailureCode::VisionUnavailable);
 }
 
 #[test]

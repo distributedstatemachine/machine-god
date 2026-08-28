@@ -126,9 +126,9 @@ impl VisionBatchRequest {
     ///
     /// # Errors
     ///
-    /// Returns a fixed invalid-request error when the focus is blank or too
-    /// long, the image count is outside `1..=8`, image IDs repeat, or aggregate
-    /// raw image bytes exceed 8 MiB.
+    /// Returns a fixed invalid-request error when the focus is blank, contains
+    /// NUL, or is too long, the image count is outside `1..=8`, image IDs
+    /// repeat, or aggregate raw image bytes exceed 8 MiB.
     pub fn new(
         session_id: SessionId,
         focus: String,
@@ -137,6 +137,7 @@ impl VisionBatchRequest {
         if focus
             .trim_matches(|character: char| character.is_ascii_whitespace())
             .is_empty()
+            || focus.contains('\0')
             || focus.len() > MAX_VISION_FOCUS_BYTES
             || !(1..=MAX_VISION_BATCH_IMAGES).contains(&images.len())
         {
@@ -338,8 +339,10 @@ impl VisionImageResult {
     ///
     /// # Errors
     ///
-    /// Returns a fixed invalid-response error for ID zero or evidence outside
-    /// the explicit string and list bounds.
+    /// Returns a fixed invalid-response error for ID zero, evidence outside
+    /// the explicit string and list bounds, or a provider failure other than
+    /// [`VisionProviderFailureCode::VisionUnavailable`]. Tool-owned failures
+    /// are projected after the provider boundary.
     pub fn new(image_id: u64, outcome: VisionImageOutcome) -> Result<Self, VisionTransportError> {
         if image_id == 0 || !valid_outcome(&outcome) {
             return Err(VisionTransportError::new(
@@ -390,6 +393,7 @@ impl VisionBatchResponse {
     /// or more than 20 KiB of aggregate retained evidence.
     pub fn new(images: Vec<VisionImageResult>) -> Result<Self, VisionTransportError> {
         if !(1..=MAX_VISION_BATCH_IMAGES).contains(&images.len())
+            || images.iter().any(|image| !valid_outcome(&image.outcome))
             || images.iter().enumerate().any(|(index, image)| {
                 images[..index]
                     .iter()
@@ -417,22 +421,25 @@ impl VisionBatchResponse {
 }
 
 fn valid_outcome(outcome: &VisionImageOutcome) -> bool {
-    let VisionImageOutcome::Ok {
-        summary,
-        visible_text,
-        details,
-    } = outcome
-    else {
-        return true;
-    };
-    !summary.trim().is_empty()
-        && summary.len() <= MAX_VISION_EVIDENCE_STRING_BYTES
-        && visible_text.len() <= MAX_VISION_EVIDENCE_LIST_ITEMS
-        && details.len() <= MAX_VISION_EVIDENCE_LIST_ITEMS
-        && visible_text
-            .iter()
-            .chain(details)
-            .all(|value| value.len() <= MAX_VISION_EVIDENCE_STRING_BYTES)
+    match outcome {
+        VisionImageOutcome::Ok {
+            summary,
+            visible_text,
+            details,
+        } => {
+            !summary.trim().is_empty()
+                && summary.len() <= MAX_VISION_EVIDENCE_STRING_BYTES
+                && visible_text.len() <= MAX_VISION_EVIDENCE_LIST_ITEMS
+                && details.len() <= MAX_VISION_EVIDENCE_LIST_ITEMS
+                && visible_text
+                    .iter()
+                    .chain(details)
+                    .all(|value| value.len() <= MAX_VISION_EVIDENCE_STRING_BYTES)
+        }
+        VisionImageOutcome::Failed { error } => {
+            error.code() == VisionProviderFailureCode::VisionUnavailable
+        }
+    }
 }
 
 fn retained_evidence_bytes(images: &[VisionImageResult]) -> Option<usize> {
