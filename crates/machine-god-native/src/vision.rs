@@ -6,8 +6,14 @@ use std::fmt;
 use std::io;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use machine_god_core::{
+    BoxFuture, CancellationToken, Capability, NetworkTarget, PreparedToolCall, Tool, ToolCall,
+    ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::collections::BTreeMap;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -16,15 +22,6 @@ use std::future::{Future, poll_fn};
 use std::pin::Pin;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::task::Poll;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use std::time::Instant;
-
-use machine_god_core::{
-    BoxFuture, CancellationToken, Capability, NetworkTarget, PreparedToolCall, Tool, ToolCall,
-    ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
-};
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -409,7 +406,8 @@ impl Tool for VisionTool {
             let paths = match sources {
                 VisionSources::Paths(paths) => paths,
                 VisionSources::ImageIds(image_ids) => {
-                    return render_attachment_failures(image_ids);
+                    let output = render_attachment_failures(image_ids)?;
+                    return publish_output(output, &cancellation, None);
                 }
             };
 
@@ -704,7 +702,7 @@ impl VisionTool {
         let Some(fingerprint) = ImageFingerprint::from_stat(&metadata) else {
             return Ok(LocalImageProbe::unavailable(0));
         };
-        if !confined_binding_matches(&self.root, &file, path) {
+        if !confined_binding_matches(&self.root, &file, path, cancellation, deadline)? {
             return Ok(LocalImageProbe::unavailable(0));
         }
         probe_verified_image(file, fingerprint, cancellation, deadline)
@@ -721,7 +719,9 @@ impl VisionTool {
     ) -> Result<LocalImageRead, LocalImageFailure> {
         let bytes_read_before = image.probe_len;
         let read = finish_verified_image(image, image_id, cancellation, deadline, read_scratch)?;
-        if read.image.is_some() && !confined_binding_matches(&self.root, &read.file, path) {
+        if read.image.is_some()
+            && !confined_binding_matches(&self.root, &read.file, path, cancellation, deadline)?
+        {
             return Ok(LocalImageRead::unavailable(read.bytes_read));
         }
         debug_assert!(read.bytes_read >= bytes_read_before);
@@ -861,6 +861,9 @@ fn open_confined_image(root: &OwnedFd, path: &str) -> rustix::io::Result<OwnedFd
 #[cfg(target_os = "macos")]
 fn open_confined_image(root: &OwnedFd, path: &str) -> rustix::io::Result<OwnedFd> {
     let nofollow_any = OFlags::from_bits_retain(libc::O_NOFOLLOW_ANY as _);
+    // `O_NOFOLLOW_ANY` asks this one whole-relative-path `openat` syscall to
+    // reject a symlink in any component; there is no user-space component walk
+    // containing additional uncheckpointed syscalls.
     rustix::fs::openat(
         root,
         path,
@@ -869,36 +872,46 @@ fn open_confined_image(root: &OwnedFd, path: &str) -> rustix::io::Result<OwnedFd
     )
 }
 
-#[cfg(target_os = "linux")]
-fn confined_binding_matches(root: &OwnedFd, file: &OwnedFd, path: &str) -> bool {
-    let Ok(current_binding) = open_confined_image(root, path) else {
-        return false;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn confined_binding_matches(
+    root: &OwnedFd,
+    file: &OwnedFd,
+    path: &str,
+    cancellation: &CancellationToken,
+    deadline: Instant,
+) -> Result<bool, LocalImageFailure> {
+    let Some(current_binding) =
+        binding_syscall(cancellation, deadline, || open_confined_image(root, path))?
+    else {
+        return Ok(false);
     };
-    let Ok(retained_metadata) = rustix::fs::fstat(file) else {
-        return false;
+    let Some(retained_metadata) =
+        binding_syscall(cancellation, deadline, || rustix::fs::fstat(file))?
+    else {
+        return Ok(false);
     };
-    let Ok(current_metadata) = rustix::fs::fstat(&current_binding) else {
-        return false;
+    let Some(current_metadata) = binding_syscall(cancellation, deadline, || {
+        rustix::fs::fstat(&current_binding)
+    })?
+    else {
+        return Ok(false);
     };
     let Some(retained_fingerprint) = ImageFingerprint::from_stat(&retained_metadata) else {
-        return false;
+        return Ok(false);
     };
-    retained_fingerprint.matches(&current_metadata)
+    Ok(retained_fingerprint.matches(&current_metadata))
 }
 
-#[cfg(target_os = "macos")]
-fn confined_binding_matches(root: &OwnedFd, file: &OwnedFd, path: &str) -> bool {
-    use std::ffi::OsStr;
-    use std::os::unix::ffi::OsStrExt as _;
-
-    let Ok(root_path) = rustix::fs::getpath(root) else {
-        return false;
-    };
-    let Ok(file_path) = rustix::fs::getpath(file) else {
-        return false;
-    };
-    let expected = Path::new(OsStr::from_bytes(root_path.as_bytes())).join(path);
-    expected.as_os_str().as_bytes() == file_path.as_bytes()
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn binding_syscall<T>(
+    cancellation: &CancellationToken,
+    deadline: Instant,
+    syscall: impl FnOnce() -> rustix::io::Result<T>,
+) -> Result<Option<T>, LocalImageFailure> {
+    local_boundary(cancellation, deadline)?;
+    let result = syscall();
+    local_boundary(cancellation, deadline)?;
+    Ok(result.ok())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1022,7 +1035,7 @@ fn prepare_read_scratch(read_scratch: &mut Vec<u8>) -> bool {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LocalImageFailure {
     Cancelled,
     Timeout,
@@ -1439,6 +1452,15 @@ fn check_cancellation_and_deadline(
     }
 }
 
+fn publish_output(
+    output: ToolOutput,
+    cancellation: &CancellationToken,
+    deadline: Option<Instant>,
+) -> Result<ToolOutput, ToolError> {
+    check_cancellation_and_deadline(cancellation, deadline)?;
+    Ok(output)
+}
+
 fn vision_name() -> ToolName {
     ToolName::new(VISION_TOOL_NAME).expect("vision is a valid tool name")
 }
@@ -1656,6 +1678,7 @@ impl io::Write for JsonByteCounter {
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
+    use std::cell::Cell;
     use std::future;
     use std::io::Write as _;
     use std::path::PathBuf;
@@ -1676,10 +1699,11 @@ mod tests {
     };
 
     use super::{
-        ImageFingerprint, MAX_VISION_FOCUS_BYTES, MAX_VISION_PATH_COMPONENTS,
+        ImageFingerprint, LocalImageFailure, MAX_VISION_FOCUS_BYTES, MAX_VISION_PATH_COMPONENTS,
         MAX_VISION_SERIALIZED_RESULT_BYTES, VisionConfigErrorKind, VisionDeadline, VisionLimits,
-        VisionTool, canonical_request, finish_verified_image, probe_verified_image,
-        render_attachment_failures, render_ordered, sniff_media_type,
+        VisionTool, binding_syscall, canonical_request, finish_verified_image,
+        probe_verified_image, publish_output, render_attachment_failures, render_ordered,
+        sniff_media_type,
     };
 
     static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -2372,7 +2396,6 @@ mod tests {
         assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn post_probe_revalidation_rejects_an_intermediate_relocated_outside() {
         let root = TestRoot::new();
@@ -2409,6 +2432,90 @@ mod tests {
             .expect("finish relocated image as a local outcome");
         assert!(read.image.is_none());
         assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn post_read_revalidation_rejects_a_same_name_replacement() {
+        let root = TestRoot::new();
+        let outside = TestRoot::new();
+        std::fs::write(root.path.join("image.png"), b"\x89PNG\r\n\x1a\n")
+            .expect("write original image");
+        let transport = Arc::new(FakeTransport::new(TransportMode::Success));
+        let tool = tool(&root, Arc::clone(&transport));
+        let cancellation = CancellationToken::new();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let probe = tool
+            .open_and_probe_image(
+                "image.png",
+                super::MAX_VISION_IMAGE_BYTES,
+                &cancellation,
+                deadline,
+            )
+            .expect("probe original image")
+            .image
+            .expect("admit original image");
+        std::fs::rename(
+            root.path.join("image.png"),
+            outside.path.join("original.png"),
+        )
+        .expect("retain the original file under a different binding");
+        std::fs::write(root.path.join("image.png"), b"\x89PNG\r\n\x1a\n")
+            .expect("write same-name replacement");
+
+        let read = tool
+            .finish_image_read(
+                "image.png",
+                probe,
+                1,
+                &cancellation,
+                deadline,
+                &mut Vec::new(),
+            )
+            .expect("finish replaced image as a local outcome");
+        assert!(read.image.is_none());
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn binding_syscall_propagates_cancellation_after_the_kernel_boundary() {
+        let cancellation = CancellationToken::new();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let failure = binding_syscall(&cancellation, deadline, || {
+            assert!(cancellation.cancel());
+            Ok::<(), rustix::io::Errno>(())
+        })
+        .expect_err("post-syscall cancellation must not collapse into image unavailable");
+        assert_eq!(failure, LocalImageFailure::Cancelled);
+    }
+
+    #[test]
+    fn binding_syscall_checks_cancellation_before_entering_the_kernel() {
+        let cancellation = CancellationToken::new();
+        assert!(cancellation.cancel());
+        let called = Cell::new(false);
+        let failure = binding_syscall(
+            &cancellation,
+            Instant::now() + Duration::from_secs(1),
+            || {
+                called.set(true);
+                Ok::<(), rustix::io::Errno>(())
+            },
+        )
+        .expect_err("pre-syscall cancellation must stop the lookup");
+        assert_eq!(failure, LocalImageFailure::Cancelled);
+        assert!(!called.get());
+    }
+
+    #[test]
+    fn binding_syscall_propagates_a_deadline_crossed_in_the_kernel_call() {
+        let cancellation = CancellationToken::new();
+        let deadline = Instant::now() + Duration::from_millis(1);
+        let failure = binding_syscall(&cancellation, deadline, || {
+            std::thread::sleep(Duration::from_millis(10));
+            Ok::<(), rustix::io::Errno>(())
+        })
+        .expect_err("post-syscall deadline must not collapse into image unavailable");
+        assert_eq!(failure, LocalImageFailure::Timeout);
     }
 
     #[test]
@@ -2699,5 +2806,15 @@ mod tests {
         assert!(output.is_error);
         assert_eq!(output.content["images"][0]["image_id"], 7);
         assert_eq!(output.content["images"][1]["image_id"], 2);
+    }
+
+    #[test]
+    fn attachment_output_rechecks_cancellation_immediately_before_publication() {
+        let output = render_attachment_failures(vec![7, 2]).expect("render attachment failures");
+        let cancellation = CancellationToken::new();
+        assert!(cancellation.cancel());
+        let error = publish_output(output, &cancellation, None)
+            .expect_err("cancelled attachment output must not be published");
+        assert_eq!(error.code, "vision_cancelled");
     }
 }
