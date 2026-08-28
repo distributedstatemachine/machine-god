@@ -6,7 +6,8 @@ composition. Explicit selection is pure path derivation from caller-owned
 inputs. Process selection additionally captures the ambient current directory.
 Preparation is the only new root-creation authority, and it can create only a
 fixed state suffix beneath an already existing selected base. Core and the CLI
-receive no environment or root-creation authority.
+do not implement environment or root-creation effects themselves; the CLI may
+invoke this native boundary for an explicitly documented command.
 
 ## Selection
 

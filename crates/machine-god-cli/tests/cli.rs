@@ -77,6 +77,8 @@ const INVALID_ARGUMENTS: &str = concat!(
     "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | doctor [--json] | models [--json] | permissions [--json] | session <id> [--json] | sessions [--json] | status [--json]]\n",
 );
 const CONFIG_FAILURE: &str = "machine-god: failed to load configuration\n";
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const ASK_FAILURE: &str = "machine-god ask: request failed\n";
 #[cfg(target_os = "linux")]
 const OUTPUT_FAILURE: &str = "machine-god: failed to write output\n";
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
@@ -823,6 +825,42 @@ fn invalid_ask_grammar_precedes_configuration_state_credentials_and_stdin() {
         assert!(!config_root.exists());
         assert!(!state_root.exists());
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn valid_ask_prepares_only_the_state_root_before_missing_credentials_fail() {
+    let temporary = TestDirectory::new("ask-missing-credential");
+    let workspace = temporary.path().join("workspace");
+    let config_root = temporary.path().join("missing-config");
+    let state_base = temporary.path().join("state");
+    fs::create_dir(&workspace).unwrap();
+    fs::create_dir(&state_base).unwrap();
+
+    let output = machine_god()
+        .args(["ask", "do not reflect ASK_PROMPT_SECRET"])
+        .current_dir(&workspace)
+        .env_remove("HOME")
+        .env("XDG_CONFIG_HOME", &config_root)
+        .env("XDG_STATE_HOME", &state_base)
+        .env_remove("VERCEL_OIDC_TOKEN")
+        .env_remove("AI_GATEWAY_API_KEY")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(output.stderr, ASK_FAILURE.as_bytes());
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("ASK_PROMPT_SECRET"));
+    assert!(!config_root.exists());
+    assert!(state_base.join("machine-god").is_dir());
+    assert_eq!(
+        fs::read_dir(state_base.join("machine-god"))
+            .unwrap()
+            .count(),
+        0
+    );
 }
 
 fn expected_doctor_output(

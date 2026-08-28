@@ -417,8 +417,10 @@ time and awaits that same deadline.
 The host owns and drives the Tokio runtime and its time driver; the adapter
 creates no runtime of its own. Its sleep future remains owned by the caller and
 is dropped with the enclosing operation, so the adapter spawns no task, thread,
-timer worker, or other detached work. A runtime without time enabled violates
-the host precondition and may panic when Tokio constructs the timer.
+timer worker, or other detached work. If a Tokio handle exists without an
+enabled time driver, the adapter catches timer construction's unwind and
+returns the same fixed `RuntimeRequired` category. The production host still
+enables time explicitly.
 
 ## Deferred scope
 

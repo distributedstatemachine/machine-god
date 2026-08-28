@@ -9,7 +9,8 @@ use crate::{WebSearchDeadline, WebSearchTransportError, WebSearchTransportErrorK
 /// Inert adapter from an absolute standard-library deadline to Tokio time.
 ///
 /// Constructing the adapter or a wait future performs no runtime or timer
-/// work. Polling a wait outside a Tokio runtime returns the fixed
+/// work. Polling a wait outside a Tokio runtime or inside one without an
+/// enabled time driver returns the fixed
 /// [`WebSearchTransportErrorKind::RuntimeRequired`] failure instead of
 /// invoking a Tokio timer API that would panic.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
