@@ -396,10 +396,7 @@ impl Tool for VisionTool {
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
-            let request = canonical_request(arguments.clone())?;
-            if arguments != request.arguments {
-                return Err(invalid_arguments_error());
-            }
+            let request = canonical_request(arguments)?;
             check_cancellation_and_deadline(&cancellation, None)?;
 
             let CanonicalVisionRequest { focus, sources, .. } = request;
@@ -450,7 +447,7 @@ impl VisionTool {
             .await?;
         check_cancellation_and_deadline(&cancellation, Some(deadline))?;
 
-        let output = self
+        let result = self
             .process_paths(
                 &context,
                 &focus,
@@ -460,9 +457,14 @@ impl VisionTool {
                 Pin::new(&mut cancelled),
                 timeout.as_mut(),
             )
-            .await?;
+            .await;
         drop(permit);
-        Ok(output)
+        drop(timeout);
+        drop(cancelled);
+        match result {
+            Ok(output) => publish_output(output, &cancellation, Some(deadline)),
+            Err(error) => Err(error),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1060,18 +1062,13 @@ fn local_boundary(
 }
 
 fn canonical_request(arguments: Value) -> Result<CanonicalVisionRequest, ToolError> {
-    if arguments.as_object().is_some_and(|object| {
-        matches!(object.get("paths"), Some(Value::Null))
-            || matches!(object.get("image_ids"), Some(Value::Null))
-    }) {
-        return Err(invalid_arguments_error());
-    }
+    preflight_arguments(&arguments)?;
     let arguments: VisionArguments =
         serde_json::from_value(arguments).map_err(|_| invalid_arguments_error())?;
     if arguments.focus.len() > MAX_VISION_FOCUS_BYTES
         || arguments
             .focus
-            .trim_matches(|character: char| character.is_ascii_whitespace())
+            .trim_matches(is_focus_edge_whitespace)
             .is_empty()
         || arguments.focus.contains('\0')
     {
@@ -1129,6 +1126,83 @@ fn canonical_request(arguments: Value) -> Result<CanonicalVisionRequest, ToolErr
         sources,
         arguments: canonical,
     })
+}
+
+fn preflight_arguments(arguments: &Value) -> Result<(), ToolError> {
+    let object = arguments.as_object().ok_or_else(invalid_arguments_error)?;
+    if object.len() > 3
+        || object
+            .keys()
+            .any(|field| !matches!(field.as_str(), "focus" | "paths" | "image_ids"))
+    {
+        return Err(invalid_arguments_error());
+    }
+
+    let focus = object
+        .get("focus")
+        .and_then(Value::as_str)
+        .ok_or_else(invalid_arguments_error)?;
+
+    let paths = match object.get("paths") {
+        Some(Value::Array(paths)) => Some(paths),
+        Some(_) => return Err(invalid_arguments_error()),
+        None => None,
+    };
+    let image_ids = match object.get("image_ids") {
+        Some(Value::Array(image_ids)) => Some(image_ids),
+        Some(_) => return Err(invalid_arguments_error()),
+        None => None,
+    };
+
+    if paths.is_some_and(|paths| {
+        paths.len() <= MAX_VISION_IMAGES && paths.iter().any(|path| !path.is_string())
+    }) || image_ids.is_some_and(|image_ids| {
+        image_ids.len() <= MAX_VISION_IMAGES
+            && image_ids.iter().any(|image_id| image_id.as_u64().is_none())
+    }) {
+        return Err(invalid_arguments_error());
+    }
+
+    if focus.len() > MAX_VISION_FOCUS_BYTES
+        || focus.trim_matches(is_focus_edge_whitespace).is_empty()
+        || focus.contains('\0')
+    {
+        return Err(invalid_focus_error());
+    }
+
+    match (paths, image_ids) {
+        (Some(paths), None) => {
+            if !(1..=MAX_VISION_IMAGES).contains(&paths.len()) {
+                return Err(invalid_sources_error());
+            }
+            for path in paths {
+                let path = path.as_str().expect("path element type passed preflight");
+                if path.len() > MAX_VISION_PATH_BYTES {
+                    return Err(invalid_path_error());
+                }
+            }
+            Ok(())
+        }
+        (None, Some(image_ids)) => {
+            if !(1..=MAX_VISION_IMAGES).contains(&image_ids.len()) {
+                return Err(invalid_sources_error());
+            }
+            for image_id in image_ids {
+                let image_id = image_id
+                    .as_u64()
+                    .expect("image ID element type passed preflight");
+                if image_id == 0 {
+                    return Err(invalid_sources_error());
+                }
+            }
+            Ok(())
+        }
+        _ => Err(invalid_sources_error()),
+    }
+}
+
+fn is_focus_edge_whitespace(character: char) -> bool {
+    matches!(character, ' ' | '\t' | '\r' | '\n')
 }
 
 fn normalize_relative_path(path: &str) -> Result<String, ToolError> {
@@ -1494,14 +1568,15 @@ fn canonical_network_host(host: &str) -> bool {
     {
         return false;
     }
+    match url_ipv4_host(host) {
+        UrlIpv4Host::Address(address) => return address.to_string() == host,
+        UrlIpv4Host::Invalid => return false,
+        UrlIpv4Host::NotIpv4 => {}
+    }
     if let Ok(address) = host.parse::<std::net::IpAddr>() {
         return address.to_string() == host;
     }
-    if host.bytes().any(|byte| byte.is_ascii_uppercase())
-        || host
-            .split('.')
-            .all(|label| label.bytes().all(|byte| byte.is_ascii_digit()))
-    {
+    if host.bytes().any(|byte| byte.is_ascii_uppercase()) {
         return false;
     }
     let labels = host.split('.').collect::<Vec<_>>();
@@ -1521,6 +1596,119 @@ fn canonical_network_host(host: &str) -> bool {
                     .last()
                     .is_some_and(u8::is_ascii_alphanumeric)
         })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UrlIpv4Host {
+    NotIpv4,
+    Address(std::net::Ipv4Addr),
+    Invalid,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UrlIpv4Number {
+    NotNumber,
+    Value(u64),
+    Overflow,
+}
+
+/// Classifies the numeric spellings that URL parsers interpret as IPv4 so an
+/// authorized textual target cannot silently resolve as a different host.
+fn url_ipv4_host(host: &str) -> UrlIpv4Host {
+    let final_part = host
+        .strip_suffix('.')
+        .unwrap_or(host)
+        .rsplit('.')
+        .next()
+        .unwrap_or_default();
+    if matches!(parse_url_ipv4_number(final_part), UrlIpv4Number::NotNumber)
+        && !final_part.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return UrlIpv4Host::NotIpv4;
+    }
+
+    let host = host.strip_suffix('.').unwrap_or(host);
+    let mut numbers = [0_u64; 4];
+    let mut count = 0_usize;
+    for part in host.split('.') {
+        let Some(slot) = numbers.get_mut(count) else {
+            return UrlIpv4Host::Invalid;
+        };
+        let number = match parse_url_ipv4_number(part) {
+            UrlIpv4Number::Value(number) => number,
+            UrlIpv4Number::NotNumber | UrlIpv4Number::Overflow => {
+                return UrlIpv4Host::Invalid;
+            }
+        };
+        *slot = number;
+        count += 1;
+    }
+    if count == 0
+        || numbers[..count.saturating_sub(1)]
+            .iter()
+            .any(|number| *number > u64::from(u8::MAX))
+    {
+        return UrlIpv4Host::Invalid;
+    }
+
+    let last_limit = 1_u64 << (8 * (5 - count));
+    let last = numbers[count - 1];
+    if last >= last_limit {
+        return UrlIpv4Host::Invalid;
+    }
+    let mut address = last;
+    for (index, number) in numbers[..count - 1].iter().copied().enumerate() {
+        address += number << (8 * (3 - index));
+    }
+    let Ok(address) = u32::try_from(address) else {
+        return UrlIpv4Host::Invalid;
+    };
+    UrlIpv4Host::Address(std::net::Ipv4Addr::from(address))
+}
+
+fn parse_url_ipv4_number(part: &str) -> UrlIpv4Number {
+    if part.is_empty() {
+        return UrlIpv4Number::NotNumber;
+    }
+    let (digits, radix) =
+        if let Some(digits) = part.strip_prefix("0x").or_else(|| part.strip_prefix("0X")) {
+            (digits, 16_u64)
+        } else if let Some(digits) = part.strip_prefix('0') {
+            (digits, 8_u64)
+        } else {
+            (part, 10_u64)
+        };
+    if digits.is_empty() {
+        return UrlIpv4Number::Value(0);
+    }
+    let mut number = 0_u64;
+    let mut overflowed = false;
+    for byte in digits.bytes() {
+        let digit = match byte {
+            b'0'..=b'9' => u64::from(byte - b'0'),
+            b'a'..=b'f' => u64::from(byte - b'a' + 10),
+            b'A'..=b'F' => u64::from(byte - b'A' + 10),
+            _ => return UrlIpv4Number::NotNumber,
+        };
+        if digit >= radix {
+            return UrlIpv4Number::NotNumber;
+        }
+        if !overflowed {
+            if let Some(value) = number
+                .checked_mul(radix)
+                .and_then(|value| value.checked_add(digit))
+            {
+                number = value;
+            } else {
+                overflowed = true;
+            }
+        }
+    }
+    if overflowed {
+        UrlIpv4Number::Overflow
+    } else {
+        UrlIpv4Number::Value(number)
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1758,6 +1946,42 @@ mod tests {
         }
     }
 
+    struct CancelOnDropDeadline {
+        cancellation: CancellationToken,
+    }
+
+    impl VisionDeadline for CancelOnDropDeadline {
+        fn wait_until(
+            &self,
+            _deadline: Instant,
+        ) -> BoxFuture<'_, Result<(), VisionTransportError>> {
+            Box::pin(CancelOnDropFuture {
+                cancellation: self.cancellation.clone(),
+            })
+        }
+    }
+
+    struct CancelOnDropFuture {
+        cancellation: CancellationToken,
+    }
+
+    impl std::future::Future for CancelOnDropFuture {
+        type Output = Result<(), VisionTransportError>;
+
+        fn poll(
+            self: std::pin::Pin<&mut Self>,
+            _context: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Self::Output> {
+            std::task::Poll::Pending
+        }
+    }
+
+    impl Drop for CancelOnDropFuture {
+        fn drop(&mut self) {
+            self.cancellation.cancel();
+        }
+    }
+
     #[derive(Clone, Copy)]
     enum TransportMode {
         Success,
@@ -1934,6 +2158,60 @@ mod tests {
     }
 
     #[test]
+    fn malformed_element_error_codes_and_direct_execution_match_preparation() {
+        let root = TestRoot::new();
+        std::fs::write(root.path.join("one.png"), b"\x89PNG\r\n\x1a\n").expect("write test image");
+        let transport = Arc::new(FakeTransport::new(TransportMode::Success));
+        let tool = tool(&root, Arc::clone(&transport));
+
+        for (arguments, expected_code) in [
+            (
+                json!({"focus": "Inspect", "paths": [1]}),
+                "vision_invalid_arguments",
+            ),
+            (
+                json!({"focus": "Inspect", "image_ids": ["1"]}),
+                "vision_invalid_arguments",
+            ),
+            (
+                json!({"focus": "Inspect", "paths": ["one.png"], "image_ids": ["1"]}),
+                "vision_invalid_arguments",
+            ),
+            (
+                json!({"focus": "Inspect", "image_ids": [0]}),
+                "vision_invalid_sources",
+            ),
+            (
+                json!({"focus": "Inspect", "paths": ["p".repeat(super::MAX_VISION_PATH_BYTES + 1)]}),
+                "vision_invalid_path",
+            ),
+        ] {
+            let prepare_error = tool
+                .prepare(call(arguments.clone()))
+                .expect_err("malformed arguments must fail preparation");
+            let execute_error =
+                block_on(tool.execute(context(), arguments, CancellationToken::new()))
+                    .expect_err("malformed arguments must fail direct execution");
+            assert_eq!(prepare_error.code, expected_code);
+            assert_eq!(execute_error.code, expected_code);
+        }
+
+        let canonical = json!({"focus": "Inspect", "paths": ["one.png"]});
+        let prepared = tool
+            .prepare(call(canonical.clone()))
+            .expect("prepare exact canonical arguments");
+        assert_eq!(prepared.arguments(), &canonical);
+        let output = block_on(tool.execute(
+            context(),
+            prepared.arguments().clone(),
+            CancellationToken::new(),
+        ))
+        .expect("execute the exact prepared arguments");
+        assert!(!output.is_error);
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn focus_and_path_component_limits_are_byte_exact() {
         assert!(
             canonical_request(json!({
@@ -1956,6 +2234,60 @@ mod tests {
         assert!(canonical_request(json!({"focus": "x", "paths": [maximum_components]})).is_ok());
         assert!(canonical_request(json!({"focus": "x", "paths": [excess_components]})).is_err());
         assert!(canonical_request(json!({"focus": "x", "paths": ["a".repeat(256)]})).is_err());
+    }
+
+    #[test]
+    fn oversized_prebuilt_arguments_are_rejected_without_deep_clone_or_deserialization() {
+        let hostile_arguments = [
+            json!({
+                "focus": "x".repeat(MAX_VISION_FOCUS_BYTES + 1),
+                "paths": vec!["p".repeat(super::MAX_VISION_PATH_BYTES); super::MAX_VISION_IMAGES]
+            }),
+            json!({
+                "focus": "inspect",
+                "paths": vec!["p".repeat(super::MAX_VISION_PATH_BYTES); super::MAX_VISION_IMAGES + 1]
+            }),
+            json!({
+                "focus": "inspect",
+                "paths": vec!["p".repeat(super::MAX_VISION_PATH_BYTES + 1); super::MAX_VISION_IMAGES]
+            }),
+        ];
+
+        for arguments in hostile_arguments {
+            let mut arguments = Some(arguments);
+            let mut result = None;
+            allocation_counter::measure(|| {});
+            let allocations = allocation_counter::measure(|| {
+                result = Some(canonical_request(
+                    arguments.take().expect("prebuilt hostile arguments"),
+                ));
+            });
+
+            assert!(result.is_some_and(|result| result.is_err()));
+            assert!(
+                allocations.count_total <= 2,
+                "raw argument rejection cloned or deserialized the prebuilt value: {allocations:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn vertical_tab_and_form_feed_focus_pass_prepare_and_execute() {
+        let root = TestRoot::new();
+        let transport = Arc::new(FakeTransport::new(TransportMode::Success));
+        let tool = tool(&root, Arc::clone(&transport));
+
+        for focus in ["\u{b}", "\u{c}"] {
+            let arguments = json!({"focus": focus, "image_ids": [1]});
+            let prepared = tool
+                .prepare(call(arguments.clone()))
+                .expect("protocol-nonblank focus must pass preparation");
+            assert_eq!(prepared.arguments(), &arguments);
+            let output = block_on(tool.execute(context(), arguments, CancellationToken::new()))
+                .expect("protocol-nonblank focus must pass execution validation");
+            assert!(output.is_error);
+        }
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]
@@ -2716,6 +3048,33 @@ mod tests {
     }
 
     #[test]
+    fn cancellation_from_final_deadline_teardown_prevents_success_publication() {
+        let root = TestRoot::new();
+        std::fs::write(root.path.join("one.png"), b"\x89PNG\r\n\x1a\n").expect("write test image");
+        let transport = Arc::new(FakeTransport::new(TransportMode::Success));
+        let cancellation = CancellationToken::new();
+        let tool = VisionTool::with_transport(
+            root.path.as_path(),
+            target(),
+            Arc::clone(&transport) as Arc<dyn VisionTransport>,
+            Arc::new(CancelOnDropDeadline {
+                cancellation: cancellation.clone(),
+            }),
+        )
+        .expect("construct drop-cancelling deadline tool");
+
+        let error = block_on(tool.execute(
+            context(),
+            json!({"focus": "Inspect", "paths": ["one.png"]}),
+            cancellation,
+        ))
+        .expect_err("teardown cancellation must reject completed visual output");
+
+        assert_eq!(error.code, "vision_cancelled");
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn provider_invalid_request_is_an_unavailable_per_image_failure() {
         let root = TestRoot::new();
         std::fs::write(root.path.join("one.png"), b"\x89PNG\r\n\x1a\n").expect("write test image");
@@ -2783,6 +3142,71 @@ mod tests {
             .kind(),
             VisionConfigErrorKind::InvalidTarget
         );
+
+        let noncanonical_url_ipv4_hosts = [
+            "127.1",
+            "127.0.1",
+            "127.65537",
+            "2130706433",
+            "127.0.0.01",
+            "0177.0.0.1",
+            "0300.0000.0002.0001",
+            "017700000001",
+            "0x7f.0.0.1",
+            "0X7f.0.0.1",
+            "0x7f.1",
+            "0x7f000001",
+            "127.0.0.0x",
+            "1.0xffffff",
+            "1.2.0xffff",
+            "1.2.3.0377",
+            "0xffffffff",
+            "4294967295",
+        ];
+        let mut hostile_hosts = noncanonical_url_ipv4_hosts
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        hostile_hosts.extend([
+            "1.18446744073709551616".to_owned(),
+            "1.02000000000000000000000".to_owned(),
+            "1.0x10000000000000000".to_owned(),
+            format!("1.{}", "9".repeat(63)),
+            format!("1.0{}", "7".repeat(62)),
+            format!("1.0x{}", "f".repeat(61)),
+            format!("1.0X{}", "F".repeat(61)),
+        ]);
+        for host in hostile_hosts {
+            let failure = VisionTool::with_transport(
+                root.path.as_path(),
+                NetworkTarget {
+                    scheme: "https".to_owned(),
+                    host,
+                    port: None,
+                },
+                Arc::new(FakeTransport::new(TransportMode::Success)),
+                Arc::new(NeverDeadline),
+            )
+            .expect_err("reject URL-standard IPv4 alias");
+            assert_eq!(failure.kind(), VisionConfigErrorKind::InvalidTarget);
+        }
+        for host in [
+            "127.0.0.1".to_owned(),
+            format!("search.{}x", "9".repeat(62)),
+            format!("search.0x{}g", "f".repeat(60)),
+        ] {
+            VisionTool::with_transport(
+                root.path.as_path(),
+                NetworkTarget {
+                    scheme: "https".to_owned(),
+                    host,
+                    port: None,
+                },
+                Arc::new(FakeTransport::new(TransportMode::Success)),
+                Arc::new(NeverDeadline),
+            )
+            .expect("accept a canonical IP or numeric-looking DNS name");
+        }
 
         let oversized = super::RenderedImage {
             image_id: 1,
