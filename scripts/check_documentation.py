@@ -24,6 +24,8 @@ GOVERNED_OVERVIEWS = (
     Path("docs/security.md"),
     Path("docs/performance.md"),
     Path("docs/native-reference-host.md"),
+    Path("docs/cli.md"),
+    Path("docs/ask-cli.md"),
     Path("docs/ask-user-question.md"),
 )
 

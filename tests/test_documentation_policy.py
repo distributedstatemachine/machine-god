@@ -24,7 +24,7 @@ class DocumentationPolicyTests(unittest.TestCase):
             errors, stats = check_documentation.validate_repository(root)
 
             self.assertEqual([], errors)
-            self.assertEqual(10, stats.markdown_files)
+            self.assertEqual(12, stats.markdown_files)
             self.assertEqual(2, stats.fence_lines)
             self.assertEqual(1, stats.relative_links)
             self.assertNotIn("markdown=", (root / "docs/implementation-plan.md").read_text())

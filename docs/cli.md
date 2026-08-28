@@ -52,7 +52,7 @@ machine-god <package-version> (engine API <api-version>)
 It performs no configuration, filesystem, credential, runtime, or network
 effect.
 
-## Status
+## The `status` command
 
 `status` and `status --json` inspect process configuration and state-location
 metadata without loading configuration contents, constructing the engine,
