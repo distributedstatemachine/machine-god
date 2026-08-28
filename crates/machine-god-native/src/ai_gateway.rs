@@ -1,5 +1,8 @@
 //! Runtime-neutral codec for the pinned Vercel AI Gateway v3 wire contract.
 
+use crate::tool_output_serializer::{
+    CompactToolOutputError, CompactToolOutputLimits, serialize_tool_output_compact,
+};
 use crate::tool_result_projection::{
     READ_TOOL_RESULT_TOOL_NAME, TOOL_RESULT_PROJECTION_THRESHOLD_BYTES, project_tool_result,
 };
@@ -762,8 +765,24 @@ fn build_tool_result_value(
     projection: &PromptBuildContext<'_>,
     budgets: &mut ToolOutputBudgets,
 ) -> Result<String, ProviderError> {
-    let serialized_output =
-        serialize_bounded(output, budgets.source_remaining, projection.cancellation)?;
+    let mut serialized_output = Vec::new();
+    serialize_tool_output_compact(
+        output,
+        &mut serialized_output,
+        CompactToolOutputLimits {
+            output_bytes: budgets.source_remaining,
+            json_depth: MAX_SAFE_JSON_DEPTH,
+            json_nodes: projection.limits.max_json_nodes,
+        },
+        projection.cancellation,
+    )
+    .map_err(|error| match error {
+        CompactToolOutputError::Cancelled => cancelled_error(),
+        CompactToolOutputError::OutputLimit => invalid_request("gateway_request_byte_limit"),
+        CompactToolOutputError::JsonDepth => invalid_request("gateway_json_depth_limit"),
+        CompactToolOutputError::JsonNodes => invalid_request("gateway_json_node_limit"),
+        CompactToolOutputError::Invalid => protocol_error("gateway_internal_encoding"),
+    })?;
     budgets.source_remaining = budgets
         .source_remaining
         .checked_sub(serialized_output.len())

@@ -1349,6 +1349,34 @@ fn tool_result_projection_uses_one_cumulative_request_budget() {
 }
 
 #[test]
+fn huge_unescaped_tool_result_respects_tiny_source_budget_before_transport() {
+    let model_request = tool_result_request(
+        ToolOutput::success("x".repeat(4 * 1024 * 1024)),
+        false,
+        "bounded-source-session",
+        "bounded-source-incarnation",
+        "bounded-source-call",
+    );
+    let transport = ScriptedTransport::new([]);
+    let provider = AiGatewayProvider::with_limits(
+        "provider/model",
+        Arc::new(transport.clone()),
+        AiGatewayLimits {
+            max_request_bytes: 64,
+            ..AiGatewayLimits::default()
+        },
+    )
+    .unwrap();
+    let error = expect_start_error(
+        start(&provider, model_request, CancellationToken::new()),
+        "huge unescaped tool result with a tiny source budget",
+    );
+    assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+    assert_eq!(error.code, "gateway_request_byte_limit");
+    assert!(transport.requests().is_empty());
+}
+
+#[test]
 fn reader_advertisement_projects_only_above_the_exact_threshold() {
     let transport = ScriptedTransport::new([bytes(finish("stop")), bytes(finish("stop"))]);
     let provider = provider(&transport);

@@ -59,6 +59,7 @@ mod session_store;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod state_environment;
 mod terminal;
+mod tool_output_serializer;
 mod tool_result_projection;
 #[cfg(all(feature = "web-fetch-http", not(target_family = "wasm")))]
 mod web_fetch;
