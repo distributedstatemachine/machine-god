@@ -49,10 +49,7 @@ pub(crate) fn serialize_tool_output_compact(
 
 /// Serializes one JSON value with the same compact, iterative encoder used for
 /// tool outputs.
-#[allow(
-    dead_code,
-    reason = "crate-private API is consumed by the parallel reader repair"
-)]
+#[cfg(test)]
 pub(crate) fn serialize_json_value_compact(
     value: &Value,
     destination: &mut Vec<u8>,

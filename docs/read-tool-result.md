@@ -120,27 +120,33 @@ independent inclusive bounds:
 | Aggregate stored JSON nodes | 65,536 |
 | Stored JSON container depth | 64 |
 | Prior tool-result blocks scanned | 4,096 |
+| One compact prior tool result | 64 KiB |
 | Aggregate compact result bytes scanned | 8 MiB |
 | Default returned page | 8 KiB |
 | One returned page | 16 KiB |
 | Handle start offset | 65,537 |
 
 Construction with explicit limits rejects zero, internally inconsistent, or
-hard-limit-exceeding values. Preparation performs bounded JSON validation only;
-it is synchronous, nonblocking, effect-free, and does not load a session.
+hard-limit-exceeding values. Preparation measures incoming JSON with the same
+iterative compact encoder used for stored results, checks depth and node bounds,
+and owns even rejected arguments through iterative destruction. It is
+synchronous, nonblocking, effect-free, and does not load a session.
 
 `execute` returns an inert future. First poll checks cancellation and acquires
 active-read capacity without waiting. The tool performs at most one store load,
-immediately guards the returned record for iterative destruction, and validates
-its JSON depth and aggregate node count. It scans only messages preceding the
-current assistant tool-call round, newest first, so current sibling results and
-placeholders do not consume prior-result limits. Compact serialization uses one
-reused buffer and checks cancellation while scanning string and key bytes in
-chunks of at most 1 KiB before fixed-digest comparison and UTF-8 range
-selection. The tool spawns no task or thread and performs no retry. Drop
-cancels ownership of the store future and releases capacity; a conforming
-injected store keeps its effects owned by that future or completes its own
-cleanup on drop.
+immediately guards the returned record for iterative destruction, then performs
+one cancellation-aware prepass across the bounded record to validate message,
+content-block, JSON-depth, and aggregate-node limits and find the newest current
+assistant-call boundary. It scans only messages preceding that boundary,
+newest first, so current sibling results and placeholders do not consume
+prior-result limits. Every candidate has its own inclusive 64 KiB compact
+source ceiling in addition to the aggregate scan-byte budget. Compact
+serialization uses one reused, geometrically grown fallible buffer and checks
+cancellation while scanning string and key bytes in chunks of at most 1 KiB
+before fixed-digest comparison and UTF-8 range selection. The tool spawns no
+task or thread and performs no retry. Drop cancels ownership of the store future
+and releases capacity; a conforming injected store keeps its effects owned by
+that future or completes its own cleanup on drop.
 
 ## Authority and observations
 
@@ -178,6 +184,12 @@ Missing records, wrong incarnations, unknown handles, and handles whose prior
 result is outside the bounded scan all collapse to `read_tool_result_not_found`.
 An injected record exceeding the fixed JSON depth or aggregate-node ceiling is
 `read_tool_result_resource_limit` and is destroyed iteratively.
+An argument exceeding its compact-byte, JSON-depth, or node ceiling is also
+`read_tool_result_resource_limit`; malformed bounded arguments are
+`read_tool_result_invalid_arguments`. Cancellation observed during direct
+argument measurement wins over either classification, and owned arguments are
+destroyed iteratively even when preparation rejects them or an execution future
+is never polled.
 A store failure preserves only `SessionStoreError.retryable`; its kind, code,
 message, debug detail, session identity, and persistence diagnostics are
 discarded. Public error and debug forms do not expose session IDs,

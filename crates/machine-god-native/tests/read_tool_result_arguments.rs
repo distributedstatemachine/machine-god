@@ -160,6 +160,11 @@ fn deeply_nested_invalid_values_have_fixed_errors_and_nonrecursive_ownership() {
     .unwrap_err();
     assert_resource_limit(&deep_execute);
     assert_eq!(probe.load_count(), 0);
+
+    let mut wrong_name = call(deeply_nested_value(DEEP_ARGUMENT_DEPTH));
+    wrong_name.name = ToolName::new("not_read_tool_result").unwrap();
+    assert_invalid(&reader.prepare(wrong_name).unwrap_err());
+    assert_eq!(probe.load_count(), 0);
 }
 
 #[test]
@@ -173,6 +178,13 @@ fn cancellation_wins_before_invalid_normalization_and_unpolled_execution_is_iner
     cancellation.cancel();
     let error = block_on(future).unwrap_err();
     assert_cancelled(&error);
+    assert_eq!(probe.load_count(), 0);
+
+    drop(reader.execute(
+        context(),
+        deeply_nested_value(DEEP_ARGUMENT_DEPTH),
+        CancellationToken::new(),
+    ));
     assert_eq!(probe.load_count(), 0);
 
     let deep_cancellation = CancellationToken::new();

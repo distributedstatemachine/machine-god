@@ -1,8 +1,11 @@
 //! Bounded session-backed paging for projected tool results.
 
-use crate::session_store::{MAX_STORED_JSON_DEPTH, MAX_STORED_JSON_NODES, RecordOwner};
+use crate::session_store::{
+    JsonValueOwner, MAX_STORED_JSON_DEPTH, MAX_STORED_JSON_NODES, RecordOwner,
+};
 use crate::tool_output_serializer::{
-    CompactToolOutputError, CompactToolOutputLimits, serialize_tool_output_compact,
+    CompactToolOutputError, CompactToolOutputLimits, measure_json_value_compact,
+    serialize_tool_output_compact,
 };
 use crate::tool_result_projection::{tool_result_digest, valid_tool_result_handle};
 use machine_god_core::{
@@ -13,7 +16,6 @@ use machine_god_core::{
 use serde_json::{Map, Number, Value, json};
 use std::fmt;
 use std::future::{Future, poll_fn};
-use std::io::{self, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -230,10 +232,14 @@ impl Tool for ReadToolResultTool {
     }
 
     fn prepare(&self, call: ToolCall) -> Result<PreparedToolCall, ToolError> {
-        if call.name.as_str() != READ_TOOL_RESULT_TOOL_NAME {
+        let ToolCall {
+            name, arguments, ..
+        } = call;
+        let arguments = JsonValueOwner::new(arguments);
+        if name.as_str() != READ_TOOL_RESULT_TOOL_NAME {
             return Err(invalid_arguments());
         }
-        let arguments = normalize_arguments(&call.arguments)?;
+        let arguments = normalize_arguments(arguments.get(), &CancellationToken::new())?;
         Ok(PreparedToolCall::without_authority(arguments.into_value()))
     }
 
@@ -246,9 +252,13 @@ impl Tool for ReadToolResultTool {
         let session_store = Arc::clone(&self.session_store);
         let limits = self.limits;
         let active_reads = Arc::clone(&self.active_reads);
+        let arguments = JsonValueOwner::new(arguments);
         Box::pin(async move {
             check_cancellation(&cancellation)?;
-            let normalized = normalize_arguments(&arguments)?;
+            let normalized = match normalize_arguments(arguments.get(), &cancellation) {
+                Ok(arguments) => arguments,
+                Err(error) => return checked_error(&cancellation, error),
+            };
             check_cancellation(&cancellation)?;
             let Some(_permit) = try_acquire(active_reads, limits.active_reads) else {
                 check_cancellation(&cancellation)?;
@@ -533,8 +543,11 @@ impl NormalizedArguments {
     }
 }
 
-fn normalize_arguments(arguments: &Value) -> Result<NormalizedArguments, ToolError> {
-    check_argument_bytes(arguments)?;
+fn normalize_arguments(
+    arguments: &Value,
+    cancellation: &CancellationToken,
+) -> Result<NormalizedArguments, ToolError> {
+    check_argument_bytes(arguments, cancellation)?;
     let Value::Object(object) = arguments else {
         return Err(invalid_arguments());
     };
@@ -623,13 +636,27 @@ fn serialize_output_bounded(
     })
 }
 
-fn check_argument_bytes(arguments: &Value) -> Result<(), ToolError> {
-    let mut counter = BoundedCounter::new(MAX_ARGUMENT_BYTES);
-    match serde_json::to_writer(&mut counter, arguments) {
-        Ok(()) => Ok(()),
-        Err(_) if counter.exceeded => Err(resource_limit()),
-        Err(_) => Err(invalid_arguments()),
-    }
+fn check_argument_bytes(
+    arguments: &Value,
+    cancellation: &CancellationToken,
+) -> Result<(), ToolError> {
+    measure_json_value_compact(
+        arguments,
+        CompactToolOutputLimits {
+            output_bytes: MAX_ARGUMENT_BYTES,
+            json_depth: MAX_STORED_JSON_DEPTH,
+            json_nodes: MAX_STORED_JSON_NODES,
+        },
+        cancellation,
+    )
+    .map(|_| ())
+    .map_err(|error| match error {
+        CompactToolOutputError::Cancelled => cancelled(),
+        CompactToolOutputError::OutputLimit
+        | CompactToolOutputError::JsonDepth
+        | CompactToolOutputError::JsonNodes
+        | CompactToolOutputError::Invalid => resource_limit(),
+    })
 }
 
 fn page_output(
@@ -658,35 +685,6 @@ fn page_output(
         "serialized_tool_output": &source[start..end],
         "has_more": end < source.len()
     })))
-}
-
-struct BoundedCounter {
-    remaining: usize,
-    exceeded: bool,
-}
-
-impl BoundedCounter {
-    const fn new(limit: usize) -> Self {
-        Self {
-            remaining: limit,
-            exceeded: false,
-        }
-    }
-}
-
-impl Write for BoundedCounter {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        if bytes.len() > self.remaining {
-            self.exceeded = true;
-            return Err(io::Error::other("limit"));
-        }
-        self.remaining -= bytes.len();
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
 }
 
 struct ActiveReadPermit {
@@ -838,7 +836,7 @@ mod prepass_tests {
         let mut message_inspections = 0_usize;
         let error =
             prepass_record_observed(&message_overflow, &tool_context, &cancellation, || {
-                message_inspections += 1
+                message_inspections += 1;
             })
             .unwrap_err();
         assert_eq!(error.code, "read_tool_result_not_found");
@@ -855,7 +853,7 @@ mod prepass_tests {
         });
         let mut block_inspections = 0_usize;
         let error = prepass_record_observed(&block_overflow, &tool_context, &cancellation, || {
-            block_inspections += 1
+            block_inspections += 1;
         })
         .unwrap_err();
         assert_eq!(error.code, "read_tool_result_not_found");

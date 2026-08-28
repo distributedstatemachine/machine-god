@@ -2484,6 +2484,28 @@ impl Drop for RecordOwner {
     }
 }
 
+pub(crate) struct JsonValueOwner {
+    value: Option<Value>,
+}
+
+impl JsonValueOwner {
+    pub(crate) fn new(value: Value) -> Self {
+        Self { value: Some(value) }
+    }
+
+    pub(crate) fn get(&self) -> &Value {
+        self.value.as_ref().expect("JSON value owner is armed")
+    }
+}
+
+impl Drop for JsonValueOwner {
+    fn drop(&mut self) {
+        if let Some(value) = self.value.take() {
+            drop_json_value_iterative(value);
+        }
+    }
+}
+
 enum OwnedJsonChildren {
     Array(std::vec::IntoIter<Value>),
     Object(serde_json::map::IntoValues),
