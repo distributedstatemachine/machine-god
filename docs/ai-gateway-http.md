@@ -407,35 +407,36 @@ SSE record.
 
 `TokioWebSearchDeadline` is the native fallible deadline authority used by the
 reference host, including one-shot `ask`. Its sole constructor,
-`build_runtime_pair`, returns an owned `TokioWebSearchRuntime` driver together
-with an adapter privately bound to that exact runtime. Construction enables the
-current-thread runtime's I/O and time drivers. The driver exposes `block_on` but
-not a direct handle accessor; code running within `block_on` may still clone
-Tokio's current handle. Construction returns the fixed redacted
-`WebSearchTransportErrorKind::RuntimeRequired` category if runtime construction
-fails; callers cannot bind the adapter to an arbitrary or driverless runtime.
+`build_runtime_pair`, returns an owned `tokio::runtime::Runtime` together with
+an adapter privately bound to that exact runtime. Construction enables the
+current-thread runtime's I/O and time drivers. Construction returns the fixed
+redacted `WebSearchTransportErrorKind::RuntimeRequired` category if runtime
+construction fails; callers cannot bind the adapter to an arbitrary or
+driverless runtime.
 
-The host owns and drives the returned runtime. The adapter retains both that
-runtime's handle and private pair-liveness state, keeping the runtime identity
-non-reusable while the adapter is live and rejecting use after the runtime
-owner shuts down. The adapter does not own or retain the runtime itself.
+The host owns and drives the returned runtime. The adapter retains that
+runtime's handle and identity but does not own or retain the runtime itself.
 `wait_until` only captures the requested absolute `std::time::Instant`; it reads
-no current handle or liveness state, registers no timer, and remains inert until
-first poll. On first poll it requires the exact live paired runtime to be
-current. Polling without a runtime, after the paired runtime shuts down, on a
-driverless runtime, or on any other time-enabled runtime returns the same fixed
-`RuntimeRequired` category before invoking a Tokio timer API. Only the proven
-paired runtime converts the absolute instant to Tokio time and awaits that same
-deadline. This path does not catch or otherwise use panic as control flow.
+no current handle, registers no timer, and remains inert until first poll. On
+first poll it requires the exact paired runtime to be current, then schedules
+one task on that retained handle. The task captures only the absolute instant;
+Tokio constructs and polls its sleep only when the proven time-enabled runtime
+drives the task. Runtime shutdown racing task submission either cancels the
+task before timer construction or shuts down a timer already owned by that
+runtime. The join failure maps to the same fixed `RuntimeRequired` category.
+Polling without a runtime, through a shut-down paired handle, on a driverless
+runtime, or on any other time-enabled runtime therefore returns
+`RuntimeRequired` without invoking a timer API on that polling executor. This
+path does not catch or otherwise use panic as control flow.
 
-The sleep future remains owned by the caller and is dropped with the enclosing
-operation, so the adapter spawns no task, thread, timer worker, or other
-detached work. The adapter's handle and atomic liveness state do not own a task
-or the runtime, avoiding a runtime-to-task-to-adapter-to-runtime ownership
-cycle. Dropping the runtime driver marks the pair unavailable with a release
-store before normal Tokio shutdown; an adapter, including one polled through a
-previously cloned handle after shutdown, observes that state with an acquire
-load and returns only `RuntimeRequired`.
+The returned wait future owns the task's `JoinHandle`. Completing the wait joins
+the task; dropping the wait first aborts it, so the timer is never intentionally
+detached. Cancellation cleanup is completed when the paired runtime is next
+driven or shut down. There is at most one small runtime-owned task per polled
+active wait, and it owns only the Tokio sleep and absolute instant. It captures
+neither the adapter nor the runtime, avoiding a
+runtime-to-task-to-adapter-to-runtime ownership cycle. The adapter spawns no
+thread or independent timer worker.
 
 ## Deferred scope
 
