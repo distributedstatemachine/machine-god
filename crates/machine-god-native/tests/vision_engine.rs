@@ -1,4 +1,8 @@
-#![cfg(all(feature = "ai-gateway-http", not(target_family = "wasm"), unix))]
+#![cfg(all(
+    feature = "ai-gateway-http",
+    not(target_family = "wasm"),
+    any(target_os = "linux", target_os = "macos")
+))]
 
 use std::fs;
 use std::future;
