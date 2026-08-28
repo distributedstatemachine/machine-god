@@ -33,9 +33,10 @@ session, or network effects. Standard input is never read.
 
 On Linux and macOS, a valid request:
 
-1. captures the process-native environment and current workspace;
+1. captures the process-native environment;
 2. loads the strict native configuration;
-3. selects and prepares identity-checked workspace and state roots;
+3. captures the current workspace, then selects and prepares identity-checked
+   workspace and state roots;
 4. composes the production AI Gateway reference host over one host-owned
    current-thread Tokio runtime with I/O and time enabled;
 5. creates one fresh durable session using a bounded native random-identity
