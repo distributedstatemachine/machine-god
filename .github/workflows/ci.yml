@@ -428,3 +428,15 @@ jobs:
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target "${{ matrix.target }}"
       - name: Test target natively
         run: cargo +"${RUST_TOOLCHAIN}" test --locked --workspace --all-targets --all-features --target "${{ matrix.target }}"
+
+  unsupported-native-vision:
+    name: Unsupported native vision (FreeBSD)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install exact Rust target and Clippy
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy --target x86_64-unknown-freebsd
+      - name: Compile the unsupported-platform vision surface
+        run: cargo +"${RUST_TOOLCHAIN}" clippy --locked -p machine-god-native --lib --tests --no-default-features --features vision --target x86_64-unknown-freebsd -- -D warnings

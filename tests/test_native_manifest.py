@@ -34,13 +34,14 @@ VISION_PORTABLE_SOURCE = (
     / "vision_portable.rs"
 )
 VISION_DOCUMENT = REPOSITORY_ROOT / "docs" / "vision.md"
+CI_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml"
 CLI_MANIFEST = REPOSITORY_ROOT / "crates" / "machine-god-cli" / "Cargo.toml"
 NON_WASM_CFG = 'cfg(not(target_family = "wasm"))'
 VISION_ADAPTER_CFG = (
-    'cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))'
+    'cfg(all(feature = "vision", not(target_family = "wasm")))'
 )
 VISION_TOOL_CFG = (
-    'cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))'
+    'cfg(all(feature = "vision", not(target_family = "wasm")))'
 )
 VISION_REFERENCE_HOST_CFG = '''cfg(all(
     feature = "ai-gateway-http",
@@ -302,8 +303,8 @@ class NativeManifestTests(unittest.TestCase):
             set(features["ai-gateway-http"]),
             {
                 "ai-gateway-model-catalog-http",
-                "dep:base64",
                 "dep:bytes",
+                "vision",
                 "web-fetch-http",
             },
         )
@@ -474,12 +475,19 @@ class NativeManifestTests(unittest.TestCase):
         self.assertEqual(lib_source.count(tool_cfg + "pub use vision::{"), 1)
         self.assertIn(
             "contracts are available without\n"
+            "`vision`,\n"
             "`ai-gateway-http`, HTTP, or Tokio, including on WebAssembly",
             vision_document,
         )
         self.assertIn(
-            "constructor stub, is compiled only when\n"
-            "`ai-gateway-http` is enabled on a non-WebAssembly native target",
+            "The narrow\n"
+            "`vision` feature enables only Base64 encoding and Tokio and does not enable an\n"
+            "HTTP or TLS stack",
+            vision_document,
+        )
+        self.assertIn(
+            "`ai-gateway-http` includes this feature for reference-host\n"
+            "composition",
             vision_document,
         )
         self.assertIn(
@@ -512,7 +520,9 @@ class NativeManifestTests(unittest.TestCase):
             1,
         )
 
-        self.assertEqual(features["ai-gateway-http"].count("dep:base64"), 1)
+        self.assertEqual(set(features["vision"]), {"dep:base64", "dep:tokio"})
+        self.assertEqual(features["ai-gateway-http"].count("vision"), 1)
+        self.assertNotIn("dep:base64", features["ai-gateway-http"])
         self.assertEqual(
             [
                 (feature, dependency)
@@ -520,7 +530,7 @@ class NativeManifestTests(unittest.TestCase):
                 for dependency in dependencies
                 if "base64" in dependency
             ],
-            [("ai-gateway-http", "dep:base64")],
+            [("vision", "dep:base64")],
         )
         self.assertEqual(
             self.manifest["dependencies"]["base64"],
@@ -561,6 +571,29 @@ class NativeManifestTests(unittest.TestCase):
             {"base64", "bytes", "reqwest", "tokio"}.isdisjoint(
                 direct_dependencies
             )
+        )
+
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+        unsupported_job = """  unsupported-native-vision:
+    name: Unsupported native vision (FreeBSD)
+    runs-on: ubuntu-24.04
+"""
+        install_command = (
+            'rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal '
+            "--component clippy --target x86_64-unknown-freebsd"
+        )
+        clippy_command = (
+            'cargo +"${RUST_TOOLCHAIN}" clippy --locked '
+            "-p machine-god-native --lib --tests --no-default-features "
+            "--features vision --target x86_64-unknown-freebsd -- -D warnings"
+        )
+        self.assertEqual(workflow.count(unsupported_job), 1)
+        self.assertEqual(workflow.count(install_command), 1)
+        self.assertEqual(workflow.count(clippy_command), 1)
+        self.assertIn(
+            "CI cross-compiles and runs warnings-denied Clippy over the narrow\n"
+            "feature's library and tests for `x86_64-unknown-freebsd` with Rust 1.94.1",
+            vision_document,
         )
 
 

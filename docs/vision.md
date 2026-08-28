@@ -312,16 +312,22 @@ or provider diagnostics.
 ## Platform and feature scope
 
 The provider-neutral portable media, request, response, error, limit, and
-injected transport/deadline contracts are available without
-`ai-gateway-http`, HTTP, or Tokio, including on WebAssembly. The concrete native
-`VisionTool` built from those injected dependencies, together with its
-unsupported-platform constructor stub, is compiled only when
-`ai-gateway-http` is enabled on a non-WebAssembly native target. On that
-feature surface, descriptor-backed execution works on Linux with `openat2`
-support and macOS with `O_NOFOLLOW_ANY`; reference-host composition has the
-same Linux/macOS boundary. Other native operating systems return the fixed
-`UnsupportedPlatform` construction failure and do not claim a working image
-reader. Construction is network-inert.
+injected transport/deadline contracts are available without `vision`,
+`ai-gateway-http`, HTTP, or Tokio, including on WebAssembly. The narrow
+`vision` feature enables only Base64 encoding and Tokio and does not enable an
+HTTP or TLS stack. On a non-WebAssembly native target it exposes the concrete
+`VisionTool`, its injected AI Gateway adapter, and the unsupported-platform
+constructor stub. `ai-gateway-http` includes this feature for reference-host
+composition.
+
+On that feature surface, descriptor-backed execution works on Linux with
+`openat2` support and macOS with `O_NOFOLLOW_ANY`; reference-host composition
+has the same Linux/macOS boundary. Other native operating systems return the
+fixed `UnsupportedPlatform` construction failure and do not claim a working
+image reader. CI cross-compiles and runs warnings-denied Clippy over the narrow
+feature's library and tests for `x86_64-unknown-freebsd` with Rust 1.94.1, so
+that unsupported constructor remains compile-checked without admitting the
+HTTP/TLS dependency graph. Construction is network-inert.
 
 ## Deliberately deferred
 
