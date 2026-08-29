@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33248233118` (`GREEN`)
 - Main Benchmark evidence: `33248233050` (`GREEN`)
 - Active branch: `agent/m03-resume`
-- Active phase: `bounded explicit-ID resume CLI implementation and focused tests are green after delivered slice 39`
-- Next gate: `run the complete exact local gate, freeze one behavior SHA, and obtain three fresh zero-finding product reviews`
+- Active phase: `bounded explicit-ID resume candidate passed the complete exact local gate and three fresh zero-finding product reviews after delivered slice 39`
+- Next gate: `seal compact review evidence, push the exact feature SHA, and require feature CI and Benchmark evidence before fast-forwarding main`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,

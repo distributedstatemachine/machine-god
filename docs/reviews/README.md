@@ -97,6 +97,7 @@ product behavior; they are not penetration tests.
 - [doctor](m03-doctor-cli-review-01.md)
 - [sessions](m03-sessions-cli-review-01.md)
 - [session](m03-session-cli-review-01.md)
+- [resume](m03-resume-cli-review-01.md)
 
 ## Milestone 05: extensibility tools
 
