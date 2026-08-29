@@ -106,23 +106,24 @@ REFERENCE_HOST_CATALOG_CONTEXT_RE = re.compile(
     r"\breference[- ]host\s+catalog\b|docs/native-reference-host\.md",
     re.IGNORECASE,
 )
-REFERENCE_HOST_INVENTORY_RELATION_RE = re.compile(
-    r"\bregister(?:s|ed)?\b|\bexpos(?:e|es|ed)\b|"
-    r"\bcontain(?:s|ed)?\b|\bconsists?\s+of\b|"
-    r"\bcompris(?:e|es|ed)\b|\bprovid(?:e|es|ed)\b|"
-    r"\blists?\b|\bhas\b|\btotals?\b|"
-    r"\b(?:make|makes|made)\s+up\b|\binventory\b|"
-    r"\bcatalog\s+size\b|\bsize\s+(?:is|of)\b",
-    re.IGNORECASE,
-)
-REFERENCE_HOST_OPERATIONAL_CLONE_RE = re.compile(
-    rf"\b{COUNT_WORD_RE}\s+(?:[A-Za-z][A-Za-z0-9_-]*\s+){{0,5}}clones?\b"
-    rf"[^.!?]{{0,120}}(?:\bWaker\b|\bactive\s+calls?\b|"
-    rf"\bwhile\s+(?:a\s+)?calls?\s+is\s+active\b)|"
-    rf"(?:\bWaker\b|\bactive\s+calls?\b|"
-    rf"\bwhile\s+(?:a\s+)?calls?\s+is\s+active\b)"
-    rf"[^.!?]{{0,120}}\b{COUNT_WORD_RE}\s+"
-    rf"(?:[A-Za-z][A-Za-z0-9_-]*\s+){{0,5}}clones?\b",
+REFERENCE_HOST_OPERATIONAL_LIMIT_RE = re.compile(
+    rf"\b(?:at\s+most|up\s+to|no\s+more\s+than|maximum\s+of)\b"
+    rf"[^.!?]{{0,120}}(?:{INVENTORY_COUNT_NOUN_PATTERN})|"
+    rf"\b(?:concurrency|execution|scheduler|queue)\s+"
+    rf"(?:limit|capacity)\b[^.!?]{{0,120}}(?:{INVENTORY_COUNT_NOUN_PATTERN})|"
+    rf"\b{COUNT_WORD_RE}\s+(?:[A-Za-z][A-Za-z0-9_-]*\s+){{0,4}}"
+    rf"(?:active|executing|concurrent|in[- ]flight|queued|running)\s+tools?\b|"
+    rf"(?:{INVENTORY_COUNT_NOUN_PATTERN})[^.!?]{{0,120}}"
+    rf"\b(?:active|executing|concurrent(?:ly)?|in[- ]flight|queued|running|"
+    rf"at\s+once|"
+    rf"per\s+(?:call|invocation)|while\s+(?:a\s+)?calls?\s+is\s+active)\b|"
+    rf"\b(?:Waker|scheduler|queue|calls?|invocations?)\b"
+    rf"[^.!?]{{0,120}}(?:{INVENTORY_COUNT_NOUN_PATTERN})|"
+    rf"(?:{INVENTORY_COUNT_NOUN_PATTERN})[^.!?]{{0,120}}"
+    rf"\b(?:Waker|scheduler|queue|calls?|invocations?)\b|"
+    rf"\b(?:accepts?|allows?|permits?|executes?|runs?|schedules?|queues?)\b"
+    rf"[^.!?]{{0,80}}"
+    rf"(?:{INVENTORY_COUNT_NOUN_PATTERN})",
     re.IGNORECASE,
 )
 REFERENCE_HOST_INVENTORY_SHORTHAND_RE = re.compile(
@@ -270,24 +271,38 @@ def _prose_without_fenced_blocks(text: str) -> str:
     return "\n".join(prose)
 
 
-def _without_markdown_section(text: str, title: str) -> str:
-    """Blank one named Markdown section through the next peer heading."""
+def _prose_without_html_comments(text: str) -> str:
+    """Remove Markdown HTML comments while retaining their line boundaries."""
 
-    output: list[str] = []
-    section_level: int | None = None
-    for line in text.splitlines():
-        heading = MARKDOWN_HEADING_RE.match(line)
-        if heading is not None:
-            level = len(heading.group(1))
-            normalized_title = heading.group(2).strip().casefold()
-            if section_level is not None and level <= section_level:
-                section_level = None
-            if section_level is None and normalized_title == title.casefold():
-                section_level = level
+    return re.sub(
+        r"<!--.*?(?:-->|$)",
+        lambda match: "\n" * match.group(0).count("\n"),
+        text,
+        flags=re.DOTALL,
+    )
 
-        output.append("" if section_level is not None else line)
 
-    return "\n".join(output)
+def _without_unique_markdown_section(text: str, title: str) -> tuple[str, int]:
+    """Blank one uniquely named section through the next peer heading."""
+
+    lines = text.splitlines()
+    headings = [
+        (index, len(match.group(1)), match.group(2).strip().casefold())
+        for index, line in enumerate(lines)
+        if (match := MARKDOWN_HEADING_RE.match(line)) is not None
+    ]
+    matches = [heading for heading in headings if heading[2] == title.casefold()]
+    if len(matches) != 1:
+        return text, len(matches)
+
+    start, section_level, _ = matches[0]
+    end = len(lines)
+    for index, level, _ in headings:
+        if index > start and level <= section_level:
+            end = index
+            break
+    lines[start:end] = [""] * (end - start)
+    return "\n".join(lines), 1
 
 
 def _validate_governed_overviews(root: Path, errors: list[str]) -> None:
@@ -324,9 +339,16 @@ def _validate_reference_host_inventory(
         text = _read(path, root, errors)
         if text is None:
             continue
-        prose = _prose_without_fenced_blocks(text)
+        prose = _prose_without_html_comments(_prose_without_fenced_blocks(text))
         if relative == REFERENCE_HOST_CONTRACT_PATH:
-            prose = _without_markdown_section(prose, "Tool catalog")
+            prose, section_count = _without_unique_markdown_section(
+                prose, "Tool catalog"
+            )
+            if section_count != 1:
+                errors.append(
+                    f"{relative}: must contain exactly one Tool catalog section; "
+                    f"found {section_count}"
+                )
         has_inventory = any(
             _contains_reference_host_inventory(paragraph)
             for paragraph in re.split(r"\n\s*\n", prose)
@@ -347,6 +369,8 @@ def _contains_reference_host_inventory(paragraph: str) -> bool:
         return False
 
     for sentence in re.split(r"(?<=[.!?])\s+", normalized):
+        if REFERENCE_HOST_OPERATIONAL_LIMIT_RE.search(sentence) is not None:
+            continue
         if REFERENCE_HOST_INVENTORY_SHORTHAND_RE.search(sentence) is not None:
             return True
 
@@ -354,19 +378,8 @@ def _contains_reference_host_inventory(paragraph: str) -> bool:
         has_catalog_context = (
             REFERENCE_HOST_CATALOG_CONTEXT_RE.search(sentence) is not None
         )
-        has_relation = REFERENCE_HOST_INVENTORY_RELATION_RE.search(sentence) is not None
         has_counted_noun = REFERENCE_HOST_INVENTORY_COUNT_RE.search(sentence) is not None
-        if has_catalog_context and has_counted_noun:
-            return True
-        is_operational_clone = (
-            REFERENCE_HOST_OPERATIONAL_CLONE_RE.search(sentence) is not None
-        )
-        if (
-            has_host_context
-            and has_relation
-            and has_counted_noun
-            and not is_operational_clone
-        ):
+        if (has_host_context or has_catalog_context) and has_counted_noun:
             return True
 
         has_count = INVENTORY_COUNT_TOKEN_RE.search(sentence) is not None

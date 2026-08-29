@@ -175,6 +175,13 @@ class DocumentationPolicyTests(unittest.TestCase):
             "NativeReferenceHost provides nineteen built-in tools.\n",
             "Nineteen tools make up NativeReferenceHost.\n",
             "NativeReferenceHost totals nineteen tools.\n",
+            "NativeReferenceHost includes nineteen tools.\n",
+            "There are nineteen tools in NativeReferenceHost.\n",
+            "NativeReferenceHost is composed of nineteen tools.\n",
+            "NativeReferenceHost installs nineteen tools.\n",
+            "NativeReferenceHost owns nineteen tools.\n",
+            "NativeReferenceHost supplies nineteen tools.\n",
+            "NativeReferenceHost's nineteen tools are deterministic.\n",
         )
         for claim in claims:
             with self.subTest(claim=claim), tempfile.TemporaryDirectory() as directory:
@@ -241,6 +248,44 @@ class DocumentationPolicyTests(unittest.TestCase):
                 errors,
             )
 
+    def test_reference_host_catalog_section_must_be_unique_and_comment_safe(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "duplicate",
+                "## Tool catalog\n\nNativeReferenceHost has thirteen tools.\n",
+                "must contain exactly one Tool catalog section; found 2",
+            ),
+            (
+                "comment",
+                "<!--\n## Tool catalog\n-->\n"
+                "NativeReferenceHost has thirteen tools.\n",
+                "reference-host inventory counts belong only in "
+                "docs/native-reference-host.md#tool-catalog",
+            ),
+        )
+        for name, suffix, expected in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_minimal_repository(root)
+                relative = Path("docs/native-reference-host.md")
+                (root / relative).write_text(
+                    "# Reference host\n\n"
+                    "## Tool catalog\n\n"
+                    "The engine registers exactly fourteen tools.\n\n"
+                    "## Construction effects\n\n"
+                    f"{suffix}",
+                    encoding="utf-8",
+                )
+
+                errors, _ = check_documentation.validate_repository(root)
+
+                self.assertTrue(
+                    any(str(relative) in error and expected in error for error in errors),
+                    "\n".join(errors),
+                )
+
     def test_reference_host_inventory_policy_allows_unrelated_numeric_limits(
         self,
     ) -> None:
@@ -258,6 +303,11 @@ class DocumentationPolicyTests(unittest.TestCase):
                 "The reference host permits two clones of the supplied Waker.\n\n"
                 "NativeReferenceHost contains two supplied Waker clones while a "
                 "call is active.\n\n"
+                "NativeReferenceHost has at most four active tools.\n\n"
+                "NativeReferenceHost has four active tools.\n\n"
+                "NativeReferenceHost has a concurrency limit of four tools.\n\n"
+                "NativeReferenceHost runs four tools at once.\n\n"
+                "NativeReferenceHost queues four tools.\n\n"
                 "At one scheduler checkpoint, four workspace tools may execute "
                 "concurrently.\n\n"
                 "Pipeline composition accepts four tools.\n\n"
@@ -298,6 +348,11 @@ class DocumentationPolicyTests(unittest.TestCase):
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("# Evergreen\n", encoding="utf-8")
+
+        (root / check_documentation.REFERENCE_HOST_CONTRACT_PATH).write_text(
+            "# Reference host\n\n## Tool catalog\n",
+            encoding="utf-8",
+        )
 
         plan = root / check_documentation.PLAN_PATH
         plan.parent.mkdir(parents=True, exist_ok=True)
