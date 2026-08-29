@@ -236,13 +236,14 @@ regression/delivery claim unless a milestone explicitly promotes it.
   stay evergreen. They must not duplicate live phase, delivered count, or
   Actions run IDs.
 - `scripts/check_documentation.py` enforces canonical markers and fields, the
-  600-line plan ceiling, evergreen overview restrictions, relative Markdown
-  link targets, and canonical reference-host catalog ownership through one
-  linear Markdown/context scan covering valid fences, HTML comments, inline
-  code, block quotes, and ATX/Setext headings. Each maintained Markdown file is
-  capped at 256 KiB and read/scanned once per validation. The checker prints
-  inventory counts for the current run but never persists those counts into
-  maintained documents.
+  600-line plan ceiling, sole-live-ledger restrictions across every maintained
+  non-review document, rendered relative Markdown link targets, and canonical
+  reference-host catalog ownership. One bounded scan produces separate policy
+  and link projections while tracking ordered quote/list containers, valid
+  fences, block and lazy inline comments, escaped inline code, and ATX/Setext
+  headings. Each maintained Markdown file is capped at 256 KiB and read/scanned
+  once per validation. The checker prints inventory counts for the current run
+  but never persists those counts into maintained documents.
 - Compact this plan after every five delivered slices or whenever it exceeds
   600 lines. Keep the live block, milestone state, compact slice inventory,
   remaining boundary, and gates; move cycle detail to review ledgers.

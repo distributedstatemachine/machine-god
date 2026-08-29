@@ -47,8 +47,11 @@ REQUIRED_LIVE_FIELDS = {
 MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\(\s*(<[^>]+>|[^)\s]+)")
 FENCE_OPEN_RE = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})(.*)$")
 FENCE_CLOSE_RE = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})[ \t]*$")
-BLOCK_QUOTE_PREFIX_RE = re.compile(r"[ ]{0,3}>[ \t]?")
-LIST_MARKER_RE = re.compile(r"[ ]{0,3}(?:[-+*]|[0-9]{1,9}[.)])[ \t]+")
+BLOCK_QUOTE_PREFIX_RE = re.compile(r"[ ]{0,3}>[ ]?")
+LIST_MARKER_RE = re.compile(
+    r"([ ]{0,3})(?:[-+*]|[0-9]{1,9}[.)])([ ]{1,4})(?=\S)"
+)
+THEMATIC_BREAK_RE = re.compile(r"[ ]{0,3}(?:(?:\*[ ]*){3,}|(?:_[ ]*){3,}|(?:-[ ]*){3,})$")
 BACKTICK_RUN_RE = re.compile(r"`+")
 HTML_COMMENT_OPEN_RE = re.compile(r"<!--")
 ACTIONS_RUN_ID_RE = re.compile(
@@ -59,12 +62,18 @@ ACTIONS_RUN_ID_RE = re.compile(
     re.IGNORECASE,
 )
 LIVE_STATUS_HEADER_RE = re.compile(
-    r"^#{1,6}\s+(?:(?:current|live|delivery|implementation)\s+)?status\b",
+    r"^#{1,6}\s+(?:(?:current|live|delivery|implementation)\s+status|status)"
+    r"\s*#*\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
-TOP_LEVEL_STATUS_RE = re.compile(r"^Status:\s+\S", re.IGNORECASE | re.MULTILINE)
+TOP_LEVEL_STATUS_RE = re.compile(
+    r"^Status:\s+(?=.*\b(?:deliver(?:ed|y)|integrated|milestone|slice|workflow|"
+    r"candidate|pending)\b)\S",
+    re.IGNORECASE | re.MULTILINE,
+)
 DELIVERED_COUNT_RE = re.compile(
-    r"\bdelivered[- ]slice count\b|\bdelivered count\b|"
+    r"\bdelivered[- ]slice count\s*(?:is|:)\s*(?:[0-9]+|[a-z-]+)\b|"
+    r"\bdelivered count\s*(?:is|:)\s*(?:[0-9]+|[a-z-]+)\b|"
     r"\bdelivered slices?\s*:\s*(?:[0-9]+|[a-z-]+)\b|"
     r"\b(?:[0-9]+|(?:one|two|three|four|five|six|seven|eight|nine|ten|"
     r"eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|"
@@ -76,9 +85,10 @@ DELIVERED_COUNT_RE = re.compile(
 )
 REVISION_RE = r"`?(?<![0-9a-f])[0-9a-f]{7,40}(?![0-9a-f])`?"
 DELIVERY_LINEAGE_RE = re.compile(
-    rf"\b(?:candidate|delivery|delivered(?:-main)?|review(?:ed)?|commit|base|tree|"
-    rf"revision)\b[^\n]{{0,120}}{REVISION_RE}|"
-    rf"{REVISION_RE}[^\n]{{0,40}}\b(?:candidate|delivery|review|commit|tree|revision)\b|"
+    rf"\b(?:candidate|delivery(?:\s+seal)?|delivered(?:-main)?|review(?:ed)?|"
+    rf"exact\s+base|main\s+sha|tree)\b[^\n]{{0,120}}{REVISION_RE}|"
+    rf"{REVISION_RE}[^\n]{{0,40}}\b(?:candidate|delivery(?:\s+seal)?|review|"
+    rf"exact\s+base|main\s+sha|tree)\b|"
     rf"{REVISION_RE}\s*/\s*{REVISION_RE}",
     re.IGNORECASE,
 )
@@ -145,8 +155,7 @@ INVENTORY_VERB_RE = re.compile(
     re.IGNORECASE,
 )
 OPERATIONAL_VERB_RE = re.compile(
-    r"\b(?:accepts?|allows?|permits?|batches?|executes?|runs?|schedules?|queues?|"
-    r"records?|marks?|labels?|classifies?|tracks?)\b",
+    r"\b(?:accepts?|allows?|permits?|batches?|executes?|runs?|schedules?|queues?)\b",
     re.IGNORECASE,
 )
 OPERATIONAL_MODAL_AFTER_RE = re.compile(
@@ -154,6 +163,7 @@ OPERATIONAL_MODAL_AFTER_RE = re.compile(
     re.IGNORECASE,
 )
 STRONG_OPERATIONAL_AFTER_RE = re.compile(
+    r"(?:^\s*(?:as\s+)?active\b)|"
     r"\b(?:per\s+[A-Za-z][A-Za-z-]*|"
     r"for\s+each\s+(?:supplied\s+)?Waker|"
     r"while\s+(?:a\s+)?calls?\s+is\s+active)\b",
@@ -175,7 +185,9 @@ INVENTORY_TOTAL_RE = re.compile(
 INVENTORY_BARE_COUNT_RE = re.compile(
     rf"\b(?:register(?:s|ed)?|expos(?:e|es|ed)|include(?:s|d)?|"
     rf"provid(?:e|es|ed)|contain(?:s|ed)?|has)\s+"
-    rf"(?:exactly\s+|at\s+most\s+|up\s+to\s+|a\s+maximum\s+of\s+)?"
+    rf"(?:exactly\s+|at\s+most\s+|up\s+to\s+|no\s+more\s+than\s+|"
+    rf"not\s+more\s+than\s+|fewer\s+than\s+|"
+    rf"a\s+maximum\s+of\s+)?"
     rf"{COUNT_WORD_RE}(?=\s*(?:$|[.,;!?]))",
     re.IGNORECASE,
 )
@@ -185,6 +197,11 @@ INVENTORY_NUMBER_OF_RE = re.compile(
     rf"built-ins?|ToolSpec\s+(?:values?|objects?))\b|"
     rf"\btool\s+count\s+of\b)"
     rf"[^.!?]{{0,120}}\b(?:is|was|equals?|totals?)\s+{COUNT_WORD_RE}\b",
+    re.IGNORECASE,
+)
+INVENTORY_TOOL_COUNT_RE = re.compile(
+    rf"\btool\s+count\b[^.!?]{{0,120}}"
+    rf"(?:\b(?:is|was|equals?|totals?)\s+|\bof\s+){COUNT_WORD_RE}\b",
     re.IGNORECASE,
 )
 REFERENCE_HOST_INVENTORY_SHORTHAND_RE = re.compile(
@@ -214,7 +231,7 @@ SETEXT_HEADING_RE = re.compile(r"^[ ]{0,3}(=+|-+)[ \t]*$")
 CLAUSE_SPLIT_RE = re.compile(r"\s+(?:and|but|whereas)\s+|\s*;\s*", re.IGNORECASE)
 SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 SENTENCE_CONTEXT_RE = re.compile(
-    r"^\s*(?:[A-Za-z][A-Za-z-]*,\s+)?"
+    r"^\s*(?:(?:[A-Za-z][A-Za-z-]*)(?:\s+[A-Za-z][A-Za-z-]*){0,3},\s+){0,2}"
     r"(?:It|Its|This\s+(?:host|catalog|composition)|"
     r"The\s+(?:host|catalog|composition))\b",
     re.IGNORECASE,
@@ -230,6 +247,16 @@ class DocumentationStats:
     unique_relative_targets: int = 0
 
 
+@dataclass(frozen=True)
+class MarkdownScan:
+    """One bounded scan projected for prose policy and rendered links."""
+
+    policy_prose: str
+    link_markup: str
+    fence_lines: int
+    unclosed_fence: bool
+
+
 @dataclass
 class ValidationContext:
     """Cache bounded text and one inert-block scan per maintained file."""
@@ -237,14 +264,14 @@ class ValidationContext:
     root: Path
     errors: list[str]
     texts: dict[Path, str | None] = field(default_factory=dict)
-    scans: dict[Path, tuple[str, int, bool] | None] = field(default_factory=dict)
+    scans: dict[Path, MarkdownScan | None] = field(default_factory=dict)
 
     def read(self, path: Path) -> str | None:
         if path not in self.texts:
             self.texts[path] = _read(path, self.root, self.errors)
         return self.texts[path]
 
-    def scan(self, path: Path) -> tuple[str, int, bool] | None:
+    def scan(self, path: Path) -> MarkdownScan | None:
         if path not in self.scans:
             text = self.read(path)
             self.scans[path] = (
@@ -376,54 +403,88 @@ def _is_fence_closer(line: str, open_fence: tuple[str, int]) -> bool:
     return token[0] == open_fence[0] and len(token) >= open_fence[1]
 
 
-def _block_quote_content(line: str) -> tuple[int, int, str]:
-    """Return block-quote depth, content offset, and container-free content."""
+ContainerFrame = tuple[str, int]
+ContainerPath = tuple[ContainerFrame, ...]
 
-    depth = 0
+
+@dataclass(frozen=True)
+class ParsedContainerLine:
+    path: ContainerPath
+    content_offset: int
+    content: str
+
+
+def _match_container_path(
+    line: str, expected: ContainerPath
+) -> tuple[ContainerPath, int]:
+    """Match the longest ordered quote/list prefix from one expanded line."""
+
+    matched: list[ContainerFrame] = []
     cursor = 0
+    for frame in expected:
+        kind, width = frame
+        if kind == "quote":
+            marker = BLOCK_QUOTE_PREFIX_RE.match(line, cursor)
+            if marker is None:
+                break
+            cursor = marker.end()
+        else:
+            if line[cursor : cursor + width] != " " * width:
+                break
+            cursor += width
+        matched.append(frame)
+    return tuple(matched), cursor
+
+
+def _parse_container_line(line: str, ambient: ContainerPath) -> ParsedContainerLine:
+    """Parse a bounded ordered CommonMark quote/list container prefix."""
+
+    if not line.strip():
+        retained: list[ContainerFrame] = []
+        for frame in ambient:
+            if frame[0] != "list":
+                break
+            retained.append(frame)
+        return ParsedContainerLine(tuple(retained), len(line), "")
+
+    matched, cursor = _match_container_path(line, ambient)
+    path = list(matched)
     while True:
-        match = BLOCK_QUOTE_PREFIX_RE.match(line, cursor)
-        if match is None:
-            break
-        depth += 1
-        cursor = match.end()
-    return depth, cursor, line[cursor:]
+        quote = BLOCK_QUOTE_PREFIX_RE.match(line, cursor)
+        if quote is not None:
+            path.append(("quote", 0))
+            cursor = quote.end()
+            continue
+        marker = LIST_MARKER_RE.match(line, cursor)
+        if marker is not None:
+            width = marker.end() - cursor
+            path.append(("list", width))
+            cursor = marker.end()
+            continue
+        break
+    return ParsedContainerLine(tuple(path), cursor, line[cursor:])
 
 
-def _opening_container_content(line: str) -> tuple[int, int, str]:
-    """Strip block-quote and one list marker for fence opening."""
-
-    quote_depth, _, quoted_content = _block_quote_content(line)
-    list_marker = LIST_MARKER_RE.match(quoted_content)
-    if list_marker is None:
-        return quote_depth, 0, quoted_content
-    return quote_depth, list_marker.end(), quoted_content[list_marker.end() :]
-
-
-def _continuation_content(content: str, indent: int) -> str | None:
-    """Strip one list continuation indent or report container exit."""
-
-    if indent == 0:
-        return content
-    spaces = len(content) - len(content.lstrip(" "))
-    if spaces < indent:
-        return None
-    return content[indent:]
-
-
-def _backtick_runs(text: str) -> tuple[array, array, array]:
-    """Index paragraph-local exact backtick runs in compact numeric arrays."""
+def _backtick_runs(text: str) -> tuple[array, array, array, bytearray]:
+    """Index paragraph-local exact and outside-code escaped backtick runs."""
 
     starts = array("I")
     ends = array("I")
     next_same = array("i")
+    escaped = bytearray()
 
     def add_segment(segment_start: int, segment_end: int) -> None:
         first_index = len(starts)
         for match in BACKTICK_RUN_RE.finditer(text, segment_start, segment_end):
+            slash = match.start() - 1
+            slash_count = 0
+            while slash >= segment_start and text[slash] == "\\":
+                slash_count += 1
+                slash -= 1
             starts.append(match.start())
             ends.append(match.end())
             next_same.append(-1)
+            escaped.append(slash_count % 2)
         nearest: dict[int, int] = {}
         for index in range(len(starts) - 1, first_index - 1, -1):
             length = ends[index] - starts[index]
@@ -432,32 +493,65 @@ def _backtick_runs(text: str) -> tuple[array, array, array]:
 
     segment_start = 0
     offset = 0
+    ambient: ContainerPath = ()
     for raw_line in text.splitlines(keepends=True):
         content = raw_line.rstrip("\r\n")
         line_start = offset
         offset += len(raw_line)
-        _, _, block_content = _opening_container_content(content)
+        parsed = _parse_container_line(content, ambient)
+        ambient = parsed.path
         is_block_boundary = (
             not content.strip()
-            or _fence_opener(block_content) is not None
-            or FENCE_CLOSE_RE.match(block_content) is not None
+            or _fence_opener(parsed.content) is not None
+            or FENCE_CLOSE_RE.match(parsed.content) is not None
         )
         if is_block_boundary:
             add_segment(segment_start, line_start)
             segment_start = offset
     add_segment(segment_start, len(text))
-    return starts, ends, next_same
+    return starts, ends, next_same, escaped
 
 
-def _scan_markdown_inert_blocks(text: str) -> tuple[str, int, bool]:
-    """Strip fences/comments with linear, shared Markdown state."""
+def _lazy_inline_comment_continuation(line: str) -> bool:
+    """Accept only a conservative non-block lazy paragraph continuation."""
 
-    run_starts, run_ends, next_same_run = _backtick_runs(text)
-    comment_starts = [match.start() for match in HTML_COMMENT_OPEN_RE.finditer(text)]
-    prose: list[str] = []
-    open_fence: tuple[str, int, int, int] | None = None
+    if not line.strip():
+        return False
+    parsed = _parse_container_line(line, ())
+    if parsed.path:
+        return False
+    content = parsed.content
+    return not (
+        _fence_opener(content) is not None
+        or MARKDOWN_HEADING_RE.match(content) is not None
+        or THEMATIC_BREAK_RE.match(content) is not None
+        or content.lstrip().startswith("<!--")
+    )
+
+
+def _blank_for_links(value: str) -> str:
+    """Blank inert inline code without joining surrounding link syntax."""
+
+    return re.sub(r"[^\r\n]", " ", value)
+
+
+def _scan_markdown_inert_blocks(source: str) -> MarkdownScan:
+    """Project bounded Markdown once with ordered container ownership."""
+
+    text = source.expandtabs(4)
+    run_starts, run_ends, next_same_run, escaped_runs = _backtick_runs(text)
+    comment_starts = array(
+        "I", (match.start() for match in HTML_COMMENT_OPEN_RE.finditer(text))
+    )
+    policy: list[str] = []
+    links: list[str] = []
+    ambient: ContainerPath = ()
+    open_fence: tuple[str, int, ContainerPath] | None = None
+    block_comment: ContainerPath | None = None
+    inline_comment: ContainerPath | None = None
+    inline_pending: list[str] = []
+    inline_newlines: list[str] = []
     unclosed_fence = False
-    comment_container: tuple[int, int] | None = None
     fence_lines = 0
     run_index = 0
     code_span_end: int | None = None
@@ -471,10 +565,7 @@ def _scan_markdown_inert_blocks(text: str) -> tuple[str, int, bool]:
         line_end = line_start + len(content)
         offset += len(raw_line)
 
-        while (
-            run_index < len(run_starts)
-            and run_ends[run_index] <= line_start
-        ):
+        while run_index < len(run_starts) and run_ends[run_index] <= line_start:
             run_index += 1
         while (
             comment_index < len(comment_starts)
@@ -482,33 +573,17 @@ def _scan_markdown_inert_blocks(text: str) -> tuple[str, int, bool]:
         ):
             comment_index += 1
 
-        quote_depth, _, quoted_content = _block_quote_content(content)
-        _, opening_list_indent, opening_content = _opening_container_content(content)
-        if comment_container is not None:
-            comment_quote_depth, comment_list_indent = comment_container
-            if (
-                quote_depth < comment_quote_depth
-                or _continuation_content(quoted_content, comment_list_indent) is None
-            ):
-                comment_container = None
         if open_fence is not None:
-            required_quote_depth = open_fence[2]
-            required_list_indent = open_fence[3]
-            fence_content = _continuation_content(
-                quoted_content, required_list_indent
+            fence_path = open_fence[2]
+            matched, fence_offset = _match_container_path(content, fence_path)
+            blank_list_continuation = (
+                not content.strip()
+                and all(frame[0] == "list" for frame in fence_path)
             )
-            if (
-                (required_quote_depth > 0 and quote_depth < required_quote_depth)
-                or fence_content is None
-            ):
-                unclosed_fence = True
-                open_fence = None
-            else:
-                if (
-                    quote_depth == required_quote_depth
-                    and _is_fence_closer(
-                        fence_content, (open_fence[0], open_fence[1])
-                    )
+            if matched == fence_path or blank_list_continuation:
+                fence_content = "" if blank_list_continuation else content[fence_offset:]
+                if matched == fence_path and _is_fence_closer(
+                    fence_content, (open_fence[0], open_fence[1])
                 ):
                     open_fence = None
                     fence_lines += 1
@@ -517,60 +592,94 @@ def _scan_markdown_inert_blocks(text: str) -> tuple[str, int, bool]:
                     and run_starts[run_index] < line_end
                 ):
                     run_index += 1
-                prose.append(newline)
+                policy.append(newline)
+                links.append(newline)
                 continue
+            unclosed_fence = True
+            open_fence = None
 
+        if block_comment is not None:
+            matched, comment_offset = _match_container_path(content, block_comment)
+            blank_list_continuation = (
+                not content.strip()
+                and all(frame[0] == "list" for frame in block_comment)
+            )
+            if matched == block_comment or blank_list_continuation:
+                end = text.find("-->", line_start + comment_offset, line_end)
+                if end < 0:
+                    policy.append(newline)
+                    links.append(newline)
+                    ambient = block_comment
+                    continue
+                block_comment = None
+                ambient = matched
+                cursor = end + 3
+            else:
+                block_comment = None
+                cursor = line_start
+        elif inline_comment is not None:
+            end = text.find("-->", line_start, line_end)
+            matched, _ = _match_container_path(content, inline_comment)
+            if end >= 0:
+                policy.extend(inline_newlines)
+                links.extend(inline_newlines)
+                inline_pending.clear()
+                inline_newlines.clear()
+                inline_comment = None
+                cursor = end + 3
+            elif matched == inline_comment or _lazy_inline_comment_continuation(content):
+                inline_pending.append(raw_line)
+                inline_newlines.append(newline)
+                continue
+            else:
+                restored = "".join(inline_pending)
+                policy.append(restored)
+                links.append(restored)
+                inline_pending.clear()
+                inline_newlines.clear()
+                inline_comment = None
+                cursor = line_start
+        else:
+            cursor = line_start
+
+        parsed = _parse_container_line(content, ambient)
+        ambient = parsed.path
+        content_start = line_start + parsed.content_offset
         if code_span_end is not None and code_span_end <= line_start:
             code_span_end = None
-        continues_code_span = code_span_end is not None
-        if comment_container is None and not continues_code_span:
-            opener = _fence_opener(opening_content)
-            if opener is not None:
-                open_fence = (
-                    opener[0],
-                    opener[1],
-                    quote_depth,
-                    opening_list_indent,
-                )
+        if block_comment is None and inline_comment is None and code_span_end is None:
+            opener = _fence_opener(parsed.content)
+            if opener is not None and cursor <= content_start:
+                open_fence = (opener[0], opener[1], parsed.path)
                 fence_lines += 1
                 while (
                     run_index < len(run_starts)
                     and run_starts[run_index] < line_end
                 ):
                     run_index += 1
-                prose.append(newline)
+                policy.append(newline)
+                links.append(newline)
                 continue
 
-        visible: list[str] = []
-        cursor = line_start
+        defer_inline_line = False
         while cursor < line_end:
             if code_span_end is not None:
                 segment_end = min(code_span_end, line_end)
-                visible.append(text[cursor:segment_end])
+                segment = text[cursor:segment_end]
+                policy.append(segment)
+                links.append(_blank_for_links(segment))
                 cursor = segment_end
                 if cursor >= code_span_end:
                     code_span_end = None
                 continue
-            if comment_container is not None:
-                end = text.find("-->", cursor, line_end)
-                if end < 0:
-                    cursor = line_end
-                    break
-                comment_container = None
-                cursor = end + 3
-                continue
 
-            while (
-                run_index < len(run_starts)
-                and run_ends[run_index] <= cursor
-            ):
+            while run_index < len(run_starts) and run_ends[run_index] <= cursor:
                 run_index += 1
             while (
                 comment_index < len(comment_starts)
                 and comment_starts[comment_index] < cursor
             ):
                 comment_index += 1
-
             run_start = (
                 run_starts[run_index]
                 if run_index < len(run_starts) and run_starts[run_index] < line_end
@@ -584,39 +693,90 @@ def _scan_markdown_inert_blocks(text: str) -> tuple[str, int, bool]:
             )
 
             if run_start < comment_start and run_index < len(run_starts):
+                if escaped_runs[run_index]:
+                    segment_end = run_ends[run_index]
+                    segment = text[cursor:segment_end]
+                    policy.append(segment)
+                    links.append(segment)
+                    cursor = segment_end
+                    run_index += 1
+                    continue
                 close_index = next_same_run[run_index]
                 if close_index < 0:
                     segment_end = run_ends[run_index]
+                    segment = text[cursor:segment_end]
+                    policy.append(segment)
+                    links.append(segment)
+                    cursor = segment_end
                     run_index += 1
-                else:
-                    code_span_end = run_ends[close_index]
-                    run_index = close_index + 1
-                    segment_end = min(code_span_end, line_end)
-                visible.append(text[cursor:segment_end])
+                    continue
+                code_span_end = run_ends[close_index]
+                run_index = close_index + 1
+                segment_end = min(code_span_end, line_end)
+                policy.append(text[cursor:segment_end])
+                links.append(text[cursor:run_start])
+                links.append(_blank_for_links(text[run_start:segment_end]))
                 cursor = segment_end
-                if code_span_end is not None and cursor >= code_span_end:
+                if cursor >= code_span_end:
                     code_span_end = None
                 continue
-            if comment_start < line_end:
-                visible.append(text[cursor:comment_start])
-                comment_container = (quote_depth, opening_list_indent)
-                cursor = comment_start + 4
-                comment_index += 1
-                continue
 
-            visible.append(text[cursor:line_end])
+            if comment_start < line_end:
+                prefix = text[cursor:comment_start]
+                logical_prefix = text[content_start:comment_start]
+                block_candidate = not logical_prefix.strip()
+                if block_candidate and len(logical_prefix) > 3:
+                    literal_end = comment_start + 4
+                    literal = text[cursor:literal_end]
+                    policy.append(literal)
+                    links.append(literal)
+                    cursor = literal_end
+                    comment_index += 1
+                    continue
+                policy.append(prefix)
+                links.append(prefix)
+                end = text.find("-->", comment_start + 4, line_end)
+                comment_index += 1
+                if end >= 0:
+                    cursor = end + 3
+                    continue
+                if block_candidate:
+                    block_comment = parsed.path
+                    cursor = line_end
+                    break
+                inline_comment = parsed.path
+                inline_pending.append(text[comment_start:line_end] + newline)
+                inline_newlines.append(newline)
+                defer_inline_line = True
+                cursor = line_end
+                break
+
+            segment = text[cursor:line_end]
+            policy.append(segment)
+            links.append(segment)
             cursor = line_end
 
-        prose.append("".join(visible) + newline)
+        if not defer_inline_line:
+            policy.append(newline)
+            links.append(newline)
 
-    return "".join(prose), fence_lines, unclosed_fence or open_fence is not None
+    if inline_pending:
+        restored = "".join(inline_pending)
+        policy.append(restored)
+        links.append(restored)
+
+    return MarkdownScan(
+        policy_prose="".join(policy),
+        link_markup="".join(links),
+        fence_lines=fence_lines,
+        unclosed_fence=unclosed_fence or open_fence is not None,
+    )
 
 
 def _prose_without_fenced_blocks(text: str) -> str:
-    """Return visible prose while fenced blocks and HTML comments stay inert."""
+    """Return policy prose while fenced blocks and HTML comments stay inert."""
 
-    prose, _, _ = _scan_markdown_inert_blocks(text)
-    return prose
+    return _scan_markdown_inert_blocks(text).policy_prose
 
 
 def _without_unique_markdown_section(text: str, title: str) -> tuple[str, int]:
@@ -651,15 +811,28 @@ def _without_unique_markdown_section(text: str, title: str) -> tuple[str, int]:
     return "\n".join(lines), 1
 
 
-def _validate_governed_overviews(context: ValidationContext) -> None:
+def _validate_live_ledger_ownership(
+    context: ValidationContext, files: list[Path]
+) -> None:
+    """Keep mutable delivery status out of every durable non-review document."""
+
     root = context.root
     errors = context.errors
-    for relative in GOVERNED_OVERVIEWS:
-        path = root / relative
+    review_index = Path("docs/reviews/README.md")
+    for path in files:
+        relative = path.relative_to(root)
+        if relative == PLAN_PATH:
+            continue
+        if (
+            len(relative.parts) >= 2
+            and relative.parts[:2] == ("docs", "reviews")
+            and relative != review_index
+        ):
+            continue
         scan = context.scan(path)
         if scan is None:
             continue
-        prose = scan[0]
+        prose = scan.policy_prose
         if ACTIONS_RUN_ID_RE.search(prose):
             errors.append(f"{relative}: must not contain GitHub Actions run IDs")
         if DELIVERED_COUNT_RE.search(prose):
@@ -689,7 +862,7 @@ def _validate_reference_host_inventory(
         scan = context.scan(path)
         if scan is None:
             continue
-        prose = scan[0]
+        prose = scan.policy_prose
         if relative == REFERENCE_HOST_CONTRACT_PATH:
             prose, section_count = _without_unique_markdown_section(
                 prose, "Tool catalog"
@@ -852,6 +1025,12 @@ def _contains_reference_host_inventory(
             if has_host_context or has_catalog_context:
                 if INVENTORY_NUMBER_OF_RE.search(clause) is not None:
                     return True
+                for tool_count in INVENTORY_TOOL_COUNT_RE.finditer(clause):
+                    after = clause[
+                        tool_count.end() : min(len(clause), tool_count.end() + 120)
+                    ].split(",", 1)[0]
+                    if STRONG_OPERATIONAL_AFTER_RE.search(after) is None:
+                        return True
                 for pattern in (INVENTORY_TOTAL_RE, INVENTORY_BARE_COUNT_RE):
                     for total in pattern.finditer(clause):
                         after = clause[
@@ -932,12 +1111,11 @@ def _validate_markdown(
         if text is None or scan is None:
             continue
 
-        _, file_fence_lines, unclosed_fence = scan
-        fence_lines += file_fence_lines
-        if unclosed_fence:
+        fence_lines += scan.fence_lines
+        if scan.unclosed_fence:
             errors.append(f"{path.relative_to(root)}: unclosed Markdown fence")
 
-        for match in MARKDOWN_LINK_RE.finditer(text):
+        for match in MARKDOWN_LINK_RE.finditer(scan.link_markup):
             target = _relative_link_target(match.group(1))
             if target is None:
                 continue
@@ -970,7 +1148,7 @@ def validate_repository(root: Path) -> tuple[list[str], DocumentationStats]:
     context = ValidationContext(root, errors)
     files = markdown_files(root)
     _validate_live_status(context, files)
-    _validate_governed_overviews(context)
+    _validate_live_ledger_ownership(context, files)
     _validate_reference_host_inventory(context, files)
     stats = _validate_markdown(context, files)
     return errors, stats

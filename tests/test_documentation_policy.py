@@ -147,6 +147,36 @@ class DocumentationPolicyTests(unittest.TestCase):
 
             self.assertEqual([], errors)
 
+    def test_every_unlisted_durable_document_rejects_live_delivery_evidence(
+        self,
+    ) -> None:
+        for relative in (
+            Path("docs/unlisted-contract.md"),
+            Path("docs/reviews/README.md"),
+        ):
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_minimal_repository(root)
+                (root / relative).write_text(
+                    "# Durable contract\n\n"
+                    "## Current status\n\n"
+                    "Delivered slices: 999\n\n"
+                    "Feature CI run `12345678901` passed.\n\n"
+                    "Delivered from commit "
+                    "`0123456789abcdef0123456789abcdef01234567`.\n",
+                    encoding="utf-8",
+                )
+
+                errors, _ = check_documentation.validate_repository(root)
+                rendered = "\n".join(errors)
+
+                self.assertIn(
+                    f"{relative}: must not contain a live status header", errors
+                )
+                self.assertIn("delivered-count phrase", rendered)
+                self.assertIn("GitHub Actions run IDs", rendered)
+                self.assertIn("SHA-style delivery lineage", rendered)
+
     def test_reference_host_inventory_counts_are_rejected_outside_canonical_docs(
         self,
     ) -> None:
@@ -215,6 +245,20 @@ class DocumentationPolicyTests(unittest.TestCase):
             "NativeReferenceHost exposes nineteen.\n",
             "NativeReferenceHost exposes at most nineteen.\n",
             "The tool count of NativeReferenceHost is nineteen.\n",
+            "NativeReferenceHost registers no more than nineteen.\n",
+            "NativeReferenceHost registers not more than nineteen.\n",
+            "NativeReferenceHost registers fewer than nineteen.\n",
+            "NativeReferenceHost tool count is nineteen.\n",
+            "NativeReferenceHost has a tool count of nineteen.\n",
+            "The tool count for NativeReferenceHost equals nineteen.\n",
+            "NativeReferenceHost tracks nineteen tools in its catalog.\n",
+            "NativeReferenceHost labels nineteen built-in tools as stable.\n",
+            "NativeReferenceHost records nineteen tools in the catalog.\n",
+            "NativeReferenceHost is stable. However, in practice, it registers "
+            "nineteen tools.\n",
+            "NativeReferenceHost is stable. Even so, it registers nineteen tools.\n",
+            "NativeReferenceHost is stable. As a result, it registers nineteen "
+            "tools.\n",
         )
         for claim in claims:
             with self.subTest(claim=claim), tempfile.TemporaryDirectory() as directory:
@@ -375,6 +419,10 @@ class DocumentationPolicyTests(unittest.TestCase):
                 "NativeReferenceHost records nineteen tool retries, nineteen tool "
                 "handles, and nineteen tool latencies.\n\n"
                 "NativeReferenceHost marks nineteen tool entries active.\n\n"
+                "NativeReferenceHost tracks nineteen active tools in flight.\n\n"
+                "NativeReferenceHost labels nineteen tool entries active.\n\n"
+                "NativeReferenceHost records nineteen tools per request.\n\n"
+                "NativeReferenceHost has a tool count of nineteen per request.\n\n"
                 "NativeReferenceHost: four workspace tools may execute "
                 "concurrently.\n\n"
                 "At one scheduler checkpoint, four workspace tools may execute "
@@ -468,6 +516,12 @@ class DocumentationPolicyTests(unittest.TestCase):
                 "<!--\nNativeReferenceHost has nineteen tools.\n-->\n",
                 False,
             ),
+            (
+                "escaped opener before real code",
+                "Escaped \\` then code ` <!--\n"
+                "NativeReferenceHost has nineteen tools.\n--> ` after.\n",
+                True,
+            ),
         )
         for name, payload, rejected in cases:
             with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
@@ -513,6 +567,47 @@ class DocumentationPolicyTests(unittest.TestCase):
                 False,
                 False,
             ),
+            (
+                "list then quote fence",
+                "- > ```text\n  > NativeReferenceHost has nineteen tools.\n"
+                "  > ```\n",
+                False,
+                False,
+            ),
+            (
+                "nested list fence",
+                "- - ```text\n    NativeReferenceHost has nineteen tools.\n"
+                "    ```\n",
+                False,
+                False,
+            ),
+            (
+                "quote list quote fence",
+                "> - > ```text\n>   > NativeReferenceHost has nineteen tools.\n"
+                ">   > ```\n",
+                False,
+                False,
+            ),
+            (
+                "ambient list fence exit",
+                "- item\n  ```text\nNativeReferenceHost has nineteen tools.\n"
+                "  ```\n",
+                True,
+                True,
+            ),
+            (
+                "blank list fence continuation",
+                "- ```text\n  first\n\n  NativeReferenceHost has nineteen tools.\n"
+                "  ```\n",
+                False,
+                False,
+            ),
+            (
+                "tab list fence continuation",
+                "-\t```text\n\tNativeReferenceHost has nineteen tools.\n\t```\n",
+                False,
+                False,
+            ),
         )
         for name, payload, rejected, unclosed in cases:
             with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
@@ -525,7 +620,8 @@ class DocumentationPolicyTests(unittest.TestCase):
 
                 errors, _ = check_documentation.validate_repository(root)
                 inventory_errors = [
-                    error for error in errors
+                    error
+                    for error in errors
                     if "reference-host inventory counts belong only" in error
                 ]
 
@@ -535,6 +631,49 @@ class DocumentationPolicyTests(unittest.TestCase):
                     any("unclosed Markdown fence" in error for error in errors),
                     "\n".join(errors),
                 )
+
+    def test_html_comments_follow_block_and_lazy_list_ownership(self) -> None:
+        cases = (
+            (
+                "nested list outdent",
+                "- - <!--\n  NativeReferenceHost has nineteen tools.\n  -->\n",
+                True,
+            ),
+            (
+                "ambient list block comment exit",
+                "- item\n  <!--\nNativeReferenceHost has nineteen tools.\n"
+                "  -->\n",
+                True,
+            ),
+            (
+                "lazy inline list comment",
+                "- Text <!--\nNativeReferenceHost has nineteen tools.\n-->\n",
+                False,
+            ),
+            (
+                "nested list block comment",
+                "- - <!--\n    NativeReferenceHost has nineteen tools.\n"
+                "    -->\n",
+                False,
+            ),
+        )
+        for name, payload, rejected in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_minimal_repository(root)
+                relative = Path("docs/tool-contract.md")
+                (root / relative).write_text(
+                    f"# Durable tool contract\n\n{payload}", encoding="utf-8"
+                )
+
+                errors, _ = check_documentation.validate_repository(root)
+                inventory_errors = [
+                    error
+                    for error in errors
+                    if "reference-host inventory counts belong only" in error
+                ]
+
+                self.assertEqual(rejected, bool(inventory_errors), "\n".join(errors))
 
     def test_inline_code_cannot_pair_across_fenced_block_boundaries(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -555,6 +694,24 @@ class DocumentationPolicyTests(unittest.TestCase):
 
             self.assertEqual([], errors)
 
+    def test_link_validation_uses_only_rendered_markdown_links(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            (root / "docs/tool-contract.md").write_text(
+                "# Durable tool contract\n\n"
+                "[`two`](two.md) is real.\n\n"
+                "The literal syntax is `[example](missing-inline.md)`.\n\n"
+                "<!-- [example](missing-comment.md) -->\n\n"
+                "```md\n[example](missing-fence.md)\n```\n",
+                encoding="utf-8",
+            )
+
+            errors, stats = check_documentation.validate_repository(root)
+
+            self.assertEqual([], errors)
+            self.assertEqual(2, stats.relative_links)
+
     def test_markdown_scanner_tokenizes_many_code_spans_once(self) -> None:
         class RecordingPattern:
             def __init__(self, pattern: object) -> None:
@@ -570,13 +727,13 @@ class DocumentationPolicyTests(unittest.TestCase):
         check_documentation.HTML_COMMENT_OPEN_RE = recording  # type: ignore[assignment]
         try:
             text = "`x`" * 65_536 + "<!-- hidden -->visible\n"
-            prose, _, unclosed = check_documentation._scan_markdown_inert_blocks(text)
+            scan = check_documentation._scan_markdown_inert_blocks(text)
         finally:
             check_documentation.HTML_COMMENT_OPEN_RE = original
 
         self.assertEqual(1, recording.calls)
-        self.assertFalse(unclosed)
-        self.assertTrue(prose.endswith("visible\n"))
+        self.assertFalse(scan.unclosed_fence)
+        self.assertTrue(scan.policy_prose.endswith("visible\n"))
 
     def test_operational_classifier_slices_bounded_context_first(self) -> None:
         class SliceRecordingStr(str):
@@ -626,7 +783,7 @@ class DocumentationPolicyTests(unittest.TestCase):
             original = check_documentation._scan_markdown_inert_blocks
             calls = 0
 
-            def recording(text: str) -> tuple[str, int, bool]:
+            def recording(text: str) -> check_documentation.MarkdownScan:
                 nonlocal calls
                 calls += 1
                 return original(text)
@@ -641,7 +798,9 @@ class DocumentationPolicyTests(unittest.TestCase):
             self.assertEqual(stats.markdown_files, calls)
 
     def test_backtick_index_uses_compact_numeric_arrays(self) -> None:
-        starts, ends, next_same = check_documentation._backtick_runs("`x` " * 10_000)
+        starts, ends, next_same, escaped = check_documentation._backtick_runs(
+            "`x` " * 10_000
+        )
 
         self.assertEqual(20_000, len(starts))
         self.assertEqual(len(starts), len(ends))
@@ -649,6 +808,7 @@ class DocumentationPolicyTests(unittest.TestCase):
         self.assertEqual(4, starts.itemsize)
         self.assertEqual(4, ends.itemsize)
         self.assertEqual(4, next_same.itemsize)
+        self.assertEqual(bytes(20_000), escaped)
 
     def test_durable_limits_hashes_and_policy_terms_are_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -660,6 +820,11 @@ class DocumentationPolicyTests(unittest.TestCase):
                 "12,345,678,901 bytes.\n\n"
                 "A content SHA-256 is "
                 "`0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef`.\n\n"
+                "The plan owns the delivered-slice count. Status: accepted.\n\n"
+                "The pinned baseline is "
+                "[`b1774fbf6c7602b503026f96f6e960e946c692ef`]"
+                "(https://github.com/vercel-labs/fx/commit/"
+                "b1774fbf6c7602b503026f96f6e960e946c692ef).\n\n"
                 "```text\n"
                 "Status: examples may demonstrate rejected maintenance prose.\n"
                 "Workflow ID 12345678901\n"
