@@ -325,7 +325,7 @@ On that feature surface, descriptor-backed execution works on Linux with
 has the same Linux/macOS boundary. Other native operating systems return the
 fixed `UnsupportedPlatform` construction failure and do not claim a working
 image reader. CI cross-compiles and runs warnings-denied Clippy over the narrow
-feature's library plus the vision and semantic-search unsupported-platform
+feature's library plus the relevant native-tool unsupported-platform
 integration tests for `x86_64-unknown-freebsd` with Rust 1.94.1, so those
 constructors remain compile-checked without admitting the HTTP/TLS dependency
 graph. Construction is network-inert.

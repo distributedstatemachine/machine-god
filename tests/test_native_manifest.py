@@ -583,7 +583,8 @@ class NativeManifestTests(unittest.TestCase):
         )
         clippy_command = (
             'cargo +"${RUST_TOOLCHAIN}" clippy --locked '
-            "-p machine-god-native --lib --test semantic_search_unsupported "
+            "-p machine-god-native --lib --test memory_unsupported "
+            "--test semantic_search_unsupported "
             "--test vision_unsupported "
             "--no-default-features "
             "--features vision --target x86_64-unknown-freebsd -- -D warnings"
@@ -593,7 +594,7 @@ class NativeManifestTests(unittest.TestCase):
         self.assertEqual(workflow.count(clippy_command), 1)
         self.assertIn(
             "CI cross-compiles and runs warnings-denied Clippy over the narrow\n"
-            "feature's library plus the vision and semantic-search unsupported-platform\n"
+            "feature's library plus the relevant native-tool unsupported-platform\n"
             "integration tests for `x86_64-unknown-freebsd` with Rust 1.94.1",
             vision_document,
         )
