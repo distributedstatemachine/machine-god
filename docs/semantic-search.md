@@ -103,6 +103,21 @@ kernel-`readdir`-order subset of an overflowing directory. An empty directory
 still probes EOF when no visit slots remain, so reaching exactly 2,000 entries
 does not by itself make the result incomplete.
 
+Directory input has a separate global 12,288-attempt ceiling. On Linux, an
+8 KiB safe `RawDir` buffer exposes and charges every `getdents64` refill before
+the call, including exact EOF and an interrupted refill that will be retried.
+On macOS, the libc directory stream does not expose buffer boundaries, so the
+bounded conservative equivalent charges every `readdir` call; an interrupted
+macOS stream is a read failure because that stream becomes terminal and cannot
+be retried as though its next `None` were exact EOF. At the 2,000-entry visit
+ceiling, even the most call-heavy normal macOS shape requires at most 8,003
+charged calls: 2,000 admitted entries, two dot records for each of at most
+2,001 directories, and an EOF probe for each directory
+(`2,000 + 2×2,001 + 2,001`). The remaining 4,285 attempts admit bounded
+incidental Linux interruptions without permitting an interrupt loop. Attempt
+exhaustion is the nonretryable `semantic_search_scan_limit` hard failure and
+returns no partial result.
+
 Regular files are candidates. Symbolic-link entries are counted and skipped;
 they are never opened, resolved, scored, or descended through. FIFOs, sockets,
 devices, and other special objects are not content candidates. Hidden entries
@@ -177,7 +192,10 @@ Lines are numbered from one and split only on LF; LF is excluded while a
 preceding CR remains content. The sample is the first line whose line score is
 strictly greater than every earlier line score. Equal later lines do not
 replace it. A filename-only match has line number zero and an empty sample.
-Only files with a positive total score are matching results.
+The terminal split segment is always dispatched, including the empty segment
+of an empty file or content ending in LF, matching the pinned scalar-split
+behavior. It cannot change a score when empty, but it remains charged matcher
+work. Only files with a positive total score are matching results.
 
 Matching work is charged across the call and uses checked arithmetic. At most
 67,108,864 work steps are admitted. One step is charged before every
@@ -266,13 +284,13 @@ not by themselves make the scan incomplete; their fixed eligibility rules and
 counters make those exclusions explicit. A stopword-only query has no
 filesystem observations and therefore reports zero statistics.
 
-Aggregate content or name bytes, content-read attempts, keyword-work steps,
-path or depth bounds, and checked counter overflow are hard scan-limit
-failures. They return no partial result and are never represented by
-`traversal_cap`. Raw-name accounting includes the one bounded overflow witness
-even though that witness does not increment `visited_entries`. The partial
-traversal reason is reserved solely for atomic directory rejection at the
-2,000-entry ceiling.
+Aggregate content or name bytes, directory-read attempts, content-read
+attempts, keyword-work steps, path or depth bounds, and checked counter
+overflow are hard scan-limit failures. They return no partial result and are
+never represented by `traversal_cap`. Raw-name accounting includes the one
+bounded overflow witness even though that witness does not increment
+`visited_entries`. The partial traversal reason is reserved solely for atomic
+directory rejection at the 2,000-entry ceiling.
 
 ## Errors, lifecycle, and cancellation
 
@@ -314,6 +332,9 @@ with operating-system access or permission denial, execution returns the
 nonretryable `semantic_search_permission_denied` category. Other reacquisition
 failures remain retryable `semantic_search_unavailable`; neither mapping
 includes a raw path, error number, or operating-system diagnostic.
+On macOS this taxonomy also covers every retained-root linkedness-validation
+boundary: descriptor metadata, `getpath`, parent reacquisition, and parent
+entry metadata.
 
 No task, thread, process, timer, producer, cache, or indexer is detached.
 Dropping an unpolled future performs no filesystem effect. Dropping a polled

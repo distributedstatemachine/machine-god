@@ -6,6 +6,8 @@ use std::path::Path;
 use std::cmp::Ordering;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::collections::BinaryHeap;
+#[cfg(target_os = "linux")]
+use std::mem::MaybeUninit;
 
 use machine_god_core::{
     BoxFuture, CancellationToken, Capability, FilesystemAccess, PreparedToolCall, Tool, ToolCall,
@@ -15,8 +17,12 @@ use serde_json::{Value, json};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use rustix::fd::{AsFd, OwnedFd};
+#[cfg(target_os = "macos")]
+use rustix::fs::Dir;
+#[cfg(target_os = "linux")]
+use rustix::fs::RawDir;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags};
+use rustix::fs::{AtFlags, FileType, Mode, OFlags};
 
 /// Maximum UTF-8 bytes accepted in the raw lexical query.
 pub const MAX_SEMANTIC_SEARCH_QUERY_BYTES: usize = 4 * 1024;
@@ -35,8 +41,9 @@ pub const MAX_SEMANTIC_SEARCH_FILE_BYTES: usize = 100 * 1024;
 /// Maximum aggregate file bytes accepted by one search.
 pub const MAX_SEMANTIC_SEARCH_TOTAL_CONTENT_BYTES: usize = 64 * 1024 * 1024;
 /// Maximum file-read attempts, including successful, EOF, witness, and interrupted reads.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub const MAX_SEMANTIC_SEARCH_CONTENT_READ_ATTEMPTS: usize = 12 * 1024;
+/// Maximum directory refill/read attempts, including EOF and interrupted reads.
+pub const MAX_SEMANTIC_SEARCH_DIRECTORY_READ_ATTEMPTS: usize = 12 * 1024;
 /// Maximum UTF-8 bytes displayed from the best line in one result.
 pub const MAX_SEMANTIC_SEARCH_RESULT_LINE_BYTES: usize = 2_000;
 /// Maximum checked matcher work steps.
@@ -56,6 +63,8 @@ pub const MAX_SEMANTIC_SEARCH_KEYWORDS: usize = 16;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const CONTENT_READ_CHUNK_BYTES: usize = 8 * 1024;
+#[cfg(target_os = "linux")]
+const DIRECTORY_READ_BUFFER_BYTES: usize = 8 * 1024;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const CANCELLATION_CHECK_INTERVAL: usize = 1_024;
 
@@ -484,6 +493,7 @@ impl IncompleteReasons {
 struct ScanBudget {
     visited_entries: usize,
     total_entry_name_bytes: usize,
+    directory_read_attempts: usize,
     candidate_files: usize,
     total_content_bytes: usize,
     content_read_attempts: usize,
@@ -516,6 +526,17 @@ impl ScanBudget {
         self.visited_entries = self
             .visited_entries
             .checked_add(entries)
+            .ok_or_else(scan_limit)?;
+        Ok(())
+    }
+
+    fn charge_directory_read_attempt(&mut self) -> Result<(), ToolError> {
+        if self.directory_read_attempts >= MAX_SEMANTIC_SEARCH_DIRECTORY_READ_ATTEMPTS {
+            return Err(scan_limit());
+        }
+        self.directory_read_attempts = self
+            .directory_read_attempts
+            .checked_add(1)
             .ok_or_else(scan_limit)?;
         Ok(())
     }
@@ -1173,38 +1194,71 @@ fn make_directory_frame(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+trait DirectoryEntryReader {
+    fn requires_read_attempt(&self) -> bool;
+
+    fn interrupted_read_is_retryable(&self) -> bool;
+
+    fn next_name(&mut self) -> Option<Result<Vec<u8>, rustix::io::Errno>>;
+}
+
+#[cfg(target_os = "linux")]
+impl<Fd: AsFd> DirectoryEntryReader for RawDir<'_, Fd> {
+    fn requires_read_attempt(&self) -> bool {
+        self.is_buffer_empty()
+    }
+
+    fn interrupted_read_is_retryable(&self) -> bool {
+        true
+    }
+
+    fn next_name(&mut self) -> Option<Result<Vec<u8>, rustix::io::Errno>> {
+        self.next()
+            .map(|entry| entry.map(|entry| entry.file_name().to_bytes().to_vec()))
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl DirectoryEntryReader for Dir {
+    fn requires_read_attempt(&self) -> bool {
+        // rustix's libc-backed iterator does not expose its internal refill
+        // boundary. Charging every readdir call is the bounded conservative
+        // equivalent on macOS.
+        true
+    }
+
+    fn interrupted_read_is_retryable(&self) -> bool {
+        // libc DIR becomes terminal after readdir reports an error, so retrying
+        // here could turn an interruption into a false exact EOF.
+        false
+    }
+
+    fn next_name(&mut self) -> Option<Result<Vec<u8>, rustix::io::Errno>> {
+        self.next()
+            .map(|entry| entry.map(|entry| entry.file_name().to_bytes().to_vec()))
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn read_directory_entries(
     directory: rustix::fd::BorrowedFd<'_>,
     budget: &mut ScanBudget,
     incomplete: &mut IncompleteReasons,
     cancellation: &CancellationToken,
 ) -> Result<Vec<DirectoryEntry>, ToolError> {
-    let mut stream = execution_filesystem_call(cancellation, || Dir::read_from(directory))?
-        .map_err(map_directory_stream_error)?;
-    let remaining = budget.remaining_entries()?;
-    let mut raw_entries = Vec::new();
-    loop {
-        let next = execution_filesystem_call(cancellation, || stream.next())?;
-        let Some(entry) = next else {
-            break;
-        };
-        let entry = entry.map_err(map_directory_stream_error)?;
-        let name_bytes = entry.file_name().to_bytes();
-        if name_bytes == b"." || name_bytes == b".." {
-            continue;
-        }
-        if name_bytes.len() > MAX_SEMANTIC_SEARCH_RESULT_PATH_BYTES {
-            return Err(scan_limit());
-        }
-        budget.observe_entry_name(name_bytes.len())?;
-        raw_entries.push(name_bytes.to_vec());
-        if raw_entries.len() > remaining {
-            budget.charge_entries(remaining)?;
-            incomplete.traversal_cap = true;
-            return Ok(Vec::new());
-        }
-    }
-    budget.charge_entries(raw_entries.len())?;
+    #[cfg(target_os = "linux")]
+    let raw_entries = {
+        let mut buffer = [MaybeUninit::uninit(); DIRECTORY_READ_BUFFER_BYTES];
+        let mut stream = RawDir::new(directory, &mut buffer);
+        stage_directory_entry_names(&mut stream, budget, incomplete, cancellation)?
+    };
+    #[cfg(target_os = "macos")]
+    let raw_entries = {
+        let mut stream = execution_filesystem_call(cancellation, || Dir::read_from(directory))?
+            .map_err(map_directory_stream_error)?;
+        stage_directory_entry_names(&mut stream, budget, incomplete, cancellation)?
+    };
+
     let mut entries = Vec::with_capacity(raw_entries.len());
     for name_bytes in raw_entries {
         let name = std::str::from_utf8(&name_bytes).map_err(|_| invalid_entry_name())?;
@@ -1236,6 +1290,50 @@ fn read_directory_entries(
     entries.sort_unstable_by(|left, right| left.sort_key.cmp(&right.sort_key));
     check_cancellation(cancellation)?;
     Ok(entries)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn stage_directory_entry_names(
+    stream: &mut impl DirectoryEntryReader,
+    budget: &mut ScanBudget,
+    incomplete: &mut IncompleteReasons,
+    cancellation: &CancellationToken,
+) -> Result<Vec<Vec<u8>>, ToolError> {
+    let remaining = budget.remaining_entries()?;
+    let mut raw_entries = Vec::new();
+    loop {
+        if stream.requires_read_attempt() {
+            budget.charge_directory_read_attempt()?;
+        }
+        let next = execution_filesystem_call(cancellation, || stream.next_name())?;
+        let Some(entry) = next else {
+            break;
+        };
+        let name_bytes = match entry {
+            Ok(name) => name,
+            Err(error)
+                if error == rustix::io::Errno::INTR && stream.interrupted_read_is_retryable() =>
+            {
+                continue;
+            }
+            Err(error) => return Err(map_directory_iteration_error(error)),
+        };
+        if name_bytes == b"." || name_bytes == b".." {
+            continue;
+        }
+        if name_bytes.len() > MAX_SEMANTIC_SEARCH_RESULT_PATH_BYTES {
+            return Err(scan_limit());
+        }
+        budget.observe_entry_name(name_bytes.len())?;
+        raw_entries.push(name_bytes);
+        if raw_entries.len() > remaining {
+            budget.charge_entries(remaining)?;
+            incomplete.traversal_cap = true;
+            return Ok(Vec::new());
+        }
+    }
+    budget.charge_entries(raw_entries.len())?;
+    Ok(raw_entries)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1387,20 +1485,18 @@ fn score_text_file(
         line_start = index.checked_add(1).ok_or_else(scan_limit)?;
         line_number = line_number.checked_add(1).ok_or_else(scan_limit)?;
     }
-    if line_start < content.len() {
-        score_line(
-            &content[line_start..],
-            line_number,
-            keywords,
-            budget,
-            cancellation,
-            &mut total_score,
-            &mut best_line_score,
-            &mut best_line_number,
-            &mut best_line,
-            &mut best_line_truncated,
-        )?;
-    }
+    score_line(
+        &content[line_start..],
+        line_number,
+        keywords,
+        budget,
+        cancellation,
+        &mut total_score,
+        &mut best_line_score,
+        &mut best_line_number,
+        &mut best_line,
+        &mut best_line_truncated,
+    )?;
 
     let basename = workspace_path.rsplit('/').next().unwrap_or(workspace_path);
     for keyword in keywords {
@@ -1732,9 +1828,9 @@ fn ensure_macos_root_is_linked(
     cancellation: &CancellationToken,
 ) -> Result<(), ToolError> {
     let root_metadata = execution_filesystem_call(cancellation, || rustix::fs::fstat(root))?
-        .map_err(|_| unavailable())?;
+        .map_err(map_linkedness_validation_error)?;
     let root_path = execution_filesystem_call(cancellation, || rustix::fs::getpath(root))?
-        .map_err(|_| unavailable())?;
+        .map_err(map_linkedness_validation_error)?;
     let root_path = root_path.as_bytes();
     if root_path == b"/" {
         return Ok(());
@@ -1748,11 +1844,11 @@ fn ensure_macos_root_is_linked(
     let parent = execution_filesystem_call(cancellation, || {
         rustix::fs::openat(root, "..", directory_open_flags(), Mode::empty())
     })?
-    .map_err(|_| unavailable())?;
+    .map_err(map_linkedness_validation_error)?;
     let linked = execution_filesystem_call(cancellation, || {
         rustix::fs::statat(&parent, &name, AtFlags::SYMLINK_NOFOLLOW)
     })?
-    .map_err(|_| unavailable())?;
+    .map_err(map_linkedness_validation_error)?;
     if linked.st_dev != root_metadata.st_dev
         || linked.st_ino != root_metadata.st_ino
         || !FileType::from_raw_mode(linked.st_mode).is_dir()
@@ -1794,6 +1890,15 @@ fn map_retained_root_reacquisition_error(error: rustix::io::Errno) -> ToolError 
     }
 }
 
+#[cfg(any(target_os = "macos", all(test, target_os = "linux")))]
+fn map_linkedness_validation_error(error: rustix::io::Errno) -> ToolError {
+    if error == rustix::io::Errno::ACCESS || error == rustix::io::Errno::PERM {
+        permission_denied()
+    } else {
+        unavailable()
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn map_directory_stream_error(error: rustix::io::Errno) -> ToolError {
     if error == rustix::io::Errno::ACCESS || error == rustix::io::Errno::PERM {
@@ -1801,6 +1906,17 @@ fn map_directory_stream_error(error: rustix::io::Errno) -> ToolError {
     } else {
         read_failed()
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn map_directory_iteration_error(error: rustix::io::Errno) -> ToolError {
+    #[cfg(target_os = "linux")]
+    if error == rustix::io::Errno::INVAL {
+        // A raw dirent that cannot fit the buffer necessarily exceeds the
+        // contract's 4 KiB name bound (the buffer also includes its header).
+        return scan_limit();
+    }
+    map_directory_stream_error(error)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1958,8 +2074,51 @@ fn scan_limit() -> ToolError {
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod cancellation_checkpoint_tests {
     use std::cell::Cell;
+    use std::collections::VecDeque;
 
     use super::*;
+
+    struct InjectedDirectoryReader {
+        observations: VecDeque<Option<Result<Vec<u8>, rustix::io::Errno>>>,
+        calls: usize,
+        cancel_on_call: Option<(usize, CancellationToken)>,
+        requires_attempt: bool,
+        retry_interrupted: bool,
+    }
+
+    impl InjectedDirectoryReader {
+        fn retrying(
+            observations: impl IntoIterator<Item = Option<Result<Vec<u8>, rustix::io::Errno>>>,
+        ) -> Self {
+            Self {
+                observations: observations.into_iter().collect(),
+                calls: 0,
+                cancel_on_call: None,
+                requires_attempt: true,
+                retry_interrupted: true,
+            }
+        }
+    }
+
+    impl DirectoryEntryReader for InjectedDirectoryReader {
+        fn requires_read_attempt(&self) -> bool {
+            self.requires_attempt
+        }
+
+        fn interrupted_read_is_retryable(&self) -> bool {
+            self.retry_interrupted
+        }
+
+        fn next_name(&mut self) -> Option<Result<Vec<u8>, rustix::io::Errno>> {
+            self.calls += 1;
+            if let Some((call, cancellation)) = &self.cancel_on_call
+                && self.calls == *call
+            {
+                assert!(cancellation.cancel());
+            }
+            self.observations.pop_front().unwrap_or(None)
+        }
+    }
 
     fn assert_cancelled<T>(result: Result<T, ToolError>) {
         let Err(error) = result else {
@@ -2044,6 +2203,141 @@ mod cancellation_checkpoint_tests {
             assert!(cancellation.cancel());
             Ok::<usize, rustix::io::Errno>(1)
         }));
+    }
+
+    #[test]
+    fn repeated_interrupted_directory_refills_stop_before_an_unmetered_attempt() {
+        assert_eq!(MAX_SEMANTIC_SEARCH_DIRECTORY_READ_ATTEMPTS, 12_288);
+        let cancellation = CancellationToken::new();
+        let mut budget = ScanBudget {
+            directory_read_attempts: MAX_SEMANTIC_SEARCH_DIRECTORY_READ_ATTEMPTS - 2,
+            ..ScanBudget::default()
+        };
+        let mut incomplete = IncompleteReasons::default();
+        let mut stream = InjectedDirectoryReader::retrying([
+            Some(Err(rustix::io::Errno::INTR)),
+            Some(Err(rustix::io::Errno::INTR)),
+            Some(Err(rustix::io::Errno::INTR)),
+        ]);
+
+        assert_scan_limit(stage_directory_entry_names(
+            &mut stream,
+            &mut budget,
+            &mut incomplete,
+            &cancellation,
+        ));
+        assert_eq!(stream.calls, 2);
+        assert_eq!(
+            budget.directory_read_attempts,
+            MAX_SEMANTIC_SEARCH_DIRECTORY_READ_ATTEMPTS
+        );
+        assert!(!incomplete.any());
+    }
+
+    #[test]
+    fn exact_directory_refill_boundary_includes_the_eof_attempt() {
+        let cancellation = CancellationToken::new();
+        let mut budget = ScanBudget {
+            directory_read_attempts: MAX_SEMANTIC_SEARCH_DIRECTORY_READ_ATTEMPTS - 2,
+            ..ScanBudget::default()
+        };
+        let mut incomplete = IncompleteReasons::default();
+        let mut stream = InjectedDirectoryReader::retrying([Some(Ok(b".".to_vec())), None]);
+
+        let entries =
+            stage_directory_entry_names(&mut stream, &mut budget, &mut incomplete, &cancellation)
+                .expect("the inclusive directory-read ceiling admits exact EOF");
+        assert!(entries.is_empty());
+        assert_eq!(stream.calls, 2);
+        assert_eq!(
+            budget.directory_read_attempts,
+            MAX_SEMANTIC_SEARCH_DIRECTORY_READ_ATTEMPTS
+        );
+        assert!(!incomplete.any());
+    }
+
+    #[test]
+    fn directory_eof_cannot_bypass_post_call_cancellation() {
+        let cancellation = CancellationToken::new();
+        let mut budget = ScanBudget::default();
+        let mut incomplete = IncompleteReasons::default();
+        let mut stream = InjectedDirectoryReader::retrying([None]);
+        stream.cancel_on_call = Some((1, cancellation.clone()));
+
+        assert_cancelled(stage_directory_entry_names(
+            &mut stream,
+            &mut budget,
+            &mut incomplete,
+            &cancellation,
+        ));
+        assert_eq!(stream.calls, 1);
+        assert_eq!(budget.directory_read_attempts, 1);
+        assert!(!incomplete.any());
+    }
+
+    #[test]
+    fn interrupted_directory_refill_cannot_bypass_post_call_cancellation() {
+        let cancellation = CancellationToken::new();
+        let mut budget = ScanBudget::default();
+        let mut incomplete = IncompleteReasons::default();
+        let mut stream = InjectedDirectoryReader::retrying([Some(Err(rustix::io::Errno::INTR))]);
+        stream.cancel_on_call = Some((1, cancellation.clone()));
+
+        assert_cancelled(stage_directory_entry_names(
+            &mut stream,
+            &mut budget,
+            &mut incomplete,
+            &cancellation,
+        ));
+        assert_eq!(stream.calls, 1);
+        assert_eq!(budget.directory_read_attempts, 1);
+        assert!(!incomplete.any());
+    }
+
+    #[test]
+    fn buffered_directory_entries_do_not_charge_a_refill_attempt() {
+        let cancellation = CancellationToken::new();
+        let mut budget = ScanBudget {
+            visited_entries: MAX_SEMANTIC_SEARCH_VISITED_ENTRIES,
+            ..ScanBudget::default()
+        };
+        let mut incomplete = IncompleteReasons::default();
+        let mut stream = InjectedDirectoryReader::retrying([Some(Ok(b"witness".to_vec()))]);
+        stream.requires_attempt = false;
+
+        let entries =
+            stage_directory_entry_names(&mut stream, &mut budget, &mut incomplete, &cancellation)
+                .expect("one buffered overflow witness remains bounded");
+        assert!(entries.is_empty());
+        assert_eq!(stream.calls, 1);
+        assert_eq!(budget.directory_read_attempts, 0);
+        assert!(incomplete.traversal_cap);
+    }
+
+    #[test]
+    fn terminal_directory_stream_does_not_retry_an_interruption_as_false_eof() {
+        let cancellation = CancellationToken::new();
+        let mut budget = ScanBudget::default();
+        let mut incomplete = IncompleteReasons::default();
+        let mut stream =
+            InjectedDirectoryReader::retrying([Some(Err(rustix::io::Errno::INTR)), None]);
+        stream.retry_interrupted = false;
+
+        let error =
+            stage_directory_entry_names(&mut stream, &mut budget, &mut incomplete, &cancellation)
+                .unwrap_err();
+        assert_eq!(error.code, "semantic_search_read_failed");
+        assert_eq!(stream.calls, 1);
+        assert_eq!(budget.directory_read_attempts, 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn oversized_raw_linux_dirent_maps_to_the_structural_scan_limit() {
+        let error = map_directory_iteration_error(rustix::io::Errno::INVAL);
+        assert_eq!(error.kind, ToolErrorKind::Execution);
+        assert_eq!(error.code, "semantic_search_scan_limit");
+        assert!(!error.retryable);
     }
 
     #[test]
@@ -2213,8 +2507,27 @@ mod cancellation_checkpoint_tests {
         assert!(result.is_none());
         assert_eq!(
             budget.match_steps,
-            (newline_count + 1) * MAX_SEMANTIC_SEARCH_KEYWORDS
+            (newline_count + 2) * MAX_SEMANTIC_SEARCH_KEYWORDS
         );
+    }
+
+    #[test]
+    fn empty_terminal_segment_and_basename_dispatch_reach_the_exact_match_boundary() {
+        let cancellation = CancellationToken::new();
+        let keyword = Keyword {
+            raw: "needle".to_owned(),
+            folded: b"needle".to_vec(),
+            prefix: vec![0; "needle".len()],
+        };
+        let mut budget = ScanBudget {
+            match_steps: MAX_SEMANTIC_SEARCH_MATCH_STEPS - 2,
+            ..ScanBudget::default()
+        };
+
+        let result = score_text_file("", "", &[keyword], &mut budget, &cancellation)
+            .expect("terminal empty line and empty basename dispatch reach the boundary");
+        assert!(result.is_none());
+        assert_eq!(budget.match_steps, MAX_SEMANTIC_SEARCH_MATCH_STEPS);
     }
 
     #[test]
@@ -2229,5 +2542,21 @@ mod cancellation_checkpoint_tests {
         assert_eq!(error.kind, ToolErrorKind::Unavailable);
         assert_eq!(error.code, "semantic_search_unavailable");
         assert!(error.retryable);
+    }
+
+    #[test]
+    fn linkedness_validation_maps_only_access_denials_to_permission() {
+        for raw_error in [rustix::io::Errno::ACCESS, rustix::io::Errno::PERM] {
+            let error = map_linkedness_validation_error(raw_error);
+            assert_eq!(error.kind, ToolErrorKind::PermissionDenied);
+            assert_eq!(error.code, "semantic_search_permission_denied");
+            assert!(!error.retryable);
+        }
+        for raw_error in [rustix::io::Errno::IO, rustix::io::Errno::NOENT] {
+            let error = map_linkedness_validation_error(raw_error);
+            assert_eq!(error.kind, ToolErrorKind::Unavailable);
+            assert_eq!(error.code, "semantic_search_unavailable");
+            assert!(error.retryable);
+        }
     }
 }

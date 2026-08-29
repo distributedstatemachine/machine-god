@@ -16,8 +16,9 @@ use machine_god_core::{
     ToolCall, ToolCallId, ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, TurnId,
 };
 use machine_god_native::{
-    MAX_SEMANTIC_SEARCH_DEPTH, MAX_SEMANTIC_SEARCH_FILE_BYTES, MAX_SEMANTIC_SEARCH_KEYWORDS,
-    MAX_SEMANTIC_SEARCH_MATCH_STEPS, MAX_SEMANTIC_SEARCH_PATH_BYTES,
+    MAX_SEMANTIC_SEARCH_CONTENT_READ_ATTEMPTS, MAX_SEMANTIC_SEARCH_DEPTH,
+    MAX_SEMANTIC_SEARCH_DIRECTORY_READ_ATTEMPTS, MAX_SEMANTIC_SEARCH_FILE_BYTES,
+    MAX_SEMANTIC_SEARCH_KEYWORDS, MAX_SEMANTIC_SEARCH_MATCH_STEPS, MAX_SEMANTIC_SEARCH_PATH_BYTES,
     MAX_SEMANTIC_SEARCH_QUERY_BYTES, MAX_SEMANTIC_SEARCH_RESULT_LINE_BYTES,
     MAX_SEMANTIC_SEARCH_RESULT_PATH_BYTES, MAX_SEMANTIC_SEARCH_RETAINED_RESULTS,
     MAX_SEMANTIC_SEARCH_SERIALIZED_RESULT_BYTES, MAX_SEMANTIC_SEARCH_SHOWN_RESULTS,
@@ -219,6 +220,8 @@ fn public_limits_are_frozen_and_coherent() {
     assert_eq!(MAX_SEMANTIC_SEARCH_TOTAL_ENTRY_NAME_BYTES, 8_388_608);
     assert_eq!(MAX_SEMANTIC_SEARCH_FILE_BYTES, 102_400);
     assert_eq!(MAX_SEMANTIC_SEARCH_TOTAL_CONTENT_BYTES, 67_108_864);
+    assert_eq!(MAX_SEMANTIC_SEARCH_CONTENT_READ_ATTEMPTS, 12_288);
+    assert_eq!(MAX_SEMANTIC_SEARCH_DIRECTORY_READ_ATTEMPTS, 12_288);
     assert_eq!(MAX_SEMANTIC_SEARCH_RESULT_LINE_BYTES, 2_000);
     assert_eq!(MAX_SEMANTIC_SEARCH_MATCH_STEPS, 67_108_864);
     assert_eq!(MAX_SEMANTIC_SEARCH_KEYWORDS, 16);
@@ -598,6 +601,58 @@ fn retained_root_permission_revocation_is_nonretryable_when_the_platform_enforce
             }
         }
         Err(error) => panic!("unexpected permission probe failure: {error}"),
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn retained_root_parent_permission_revocation_is_nonretryable_when_enforced() {
+    let temporary = TemporaryDirectory::new();
+    let workspace = temporary.path().join("workspace");
+    fs::create_dir(&workspace).unwrap();
+    fs::write(workspace.join("needle.txt"), "needle\n").unwrap();
+    let search_tool = tool(&workspace);
+    let original_permissions = fs::metadata(temporary.path()).unwrap().permissions();
+    let restore = PermissionRestore {
+        path: temporary.path().to_owned(),
+        permissions: original_permissions.clone(),
+    };
+    let mut revoked_permissions = original_permissions;
+    revoked_permissions.set_mode(0o000);
+    fs::set_permissions(temporary.path(), revoked_permissions).unwrap();
+
+    let ordinary_access = fs::metadata(&workspace);
+    let result = execute(
+        &search_tool,
+        canonical("needle", "."),
+        CancellationToken::new(),
+    );
+    drop(restore);
+
+    match ordinary_access {
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            assert_tool_error(
+                result.unwrap_err(),
+                ToolErrorKind::PermissionDenied,
+                "semantic_search_permission_denied",
+                "requested search root cannot be searched",
+                false,
+            );
+        }
+        Ok(_) => {
+            // Privileged CI users may bypass mode-bit denial. If linkedness
+            // validation still observes it, the stable mapping is mandatory.
+            if let Err(error) = result {
+                assert_tool_error(
+                    error,
+                    ToolErrorKind::PermissionDenied,
+                    "semantic_search_permission_denied",
+                    "requested search root cannot be searched",
+                    false,
+                );
+            }
+        }
+        Err(error) => panic!("unexpected parent permission probe failure: {error}"),
     }
 }
 
