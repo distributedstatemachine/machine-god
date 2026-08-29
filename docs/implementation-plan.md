@@ -21,21 +21,22 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `41`
-- Delivered main: `33bdd7630861607929ec4d0335541c0494ed48e1`
-- Main CI: `33254454283` (`GREEN`)
-- Main Benchmark evidence: `33254454281` (`GREEN`)
-- Active branch: `agent/m05-skill`
-- Active phase: `bounded workspace-local skill candidate 0fae5abe099f24055c57f835cfdf5a78e36497ee accepted by three fresh product-review tracks`
-- Next gate: `push the review-sealed feature SHA, require exact feature CI and Benchmark evidence, then fast-forward main and require both exact main workflows`
+- Delivered slices: `42`
+- Delivered main: `ef5ab4021da515cfcabed7f2cb40a23f775012c5`
+- Main CI: `33257985954` (`GREEN`)
+- Main Benchmark evidence: `33257985878` (`GREEN`)
+- Active branch: `agent/m05-install-skill`
+- Active phase: `bounded workspace-local skill delivered; bounded local-only single-skill install_skill contract freeze next`
+- Next gate: `create the feature branch from the delivery seal, freeze the install_skill authority and lifecycle contract, then implement focused product evidence without changing documentation tooling`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
 and the Benchmark evidence run retained the required exact-SHA artifacts. The
-bounded native [`memory`](memory.md) tool is delivered as slice 41. The next
-product slice is the bounded workspace-local `skill` tool. Documentation parser
-maintenance remains a separate non-product task; product iterations use the
-existing bounded repository-policy checker.
+bounded workspace-local [`skill`](skill.md) tool is delivered as slice 42. The
+next product slice is a bounded local-only `install_skill` tool that installs one
+workspace-confined skill without process or network authority. Documentation
+parser maintenance remains a separate non-product task; product iterations use
+the existing bounded repository-policy checker.
 
 ## Architecture ownership
 
@@ -135,8 +136,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 39 | Bounded lexical `semantic_search` | [contract](semantic-search.md) | [review](reviews/m05-semantic-search-review-01.md) | `6a63127` |
 | 40 | Bounded explicit-ID top-level `resume` CLI | [contract](resume-cli.md) | [review](reviews/m03-resume-cli-review-01.md) | `136d44e` |
 | 41 | Bounded native `memory` | [contract](memory.md) | [review](reviews/m05-memory-review-01.md) | `33bdd76` |
+| 42 | Bounded workspace-local `skill` | [contract](skill.md) | [review](reviews/m05-skill-review-01.md) | `ef5ab40` |
 
-The exact delivered-main record after slice 41 is in the canonical live-status
+The exact delivered-main record after slice 42 is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.
@@ -151,10 +153,11 @@ requires an explicit reviewed plan change.
 - Provider-neutral engine integration with the native provider, transport,
   permission, session, configuration, and reference-host seams represented by
   delivered slices 1-16.
-- Nineteen native tools: `list_files`, `glob_files`, `grep_files`, `read_file`,
+- Twenty native tools: `list_files`, `glob_files`, `grep_files`, `read_file`,
   `write_file`, `edit_file`, `delete_file`, `rename_file`, `copy_file`,
   `create_folder`, `file_info`, `open_file`, `web_fetch`, `web_search`,
-  `terminal`, `ask_user_question`, `read_tool_result`, `vision`, and `memory`.
+  `terminal`, `ask_user_question`, `read_tool_result`, `vision`, `memory`, and
+  `skill`.
 - Delivered CLI slices for `ask`, `resume`, `permissions`, `models`, `doctor`,
   `sessions`, and strict summary-only `session <id>`.
 
