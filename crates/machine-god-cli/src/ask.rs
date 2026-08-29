@@ -1,8 +1,11 @@
 use std::ffi::OsString;
 use std::io;
 
+use machine_god_core::SessionId;
+
 pub(crate) const MAX_ASK_PROMPT_BYTES: usize = 256 * 1024;
 pub(crate) const ASK_OPERATIONAL_FAILURE: &str = "machine-god ask: request failed\n";
+pub(crate) const RESUME_OPERATIONAL_FAILURE: &str = "machine-god resume: request failed\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(
@@ -20,6 +23,12 @@ pub(crate) enum AskCommandOutcome {
     Terminated,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum SessionSelection {
+    CreateGenerated,
+    Resume(SessionId),
+}
+
 impl AskCommandOutcome {
     const fn exit_code(self) -> u8 {
         match self {
@@ -32,7 +41,12 @@ impl AskCommandOutcome {
 }
 
 pub(crate) trait AskCommandHost {
-    fn execute(&self, prompt: String, output: &mut dyn io::Write) -> AskCommandExecution;
+    fn execute(
+        &self,
+        selection: SessionSelection,
+        prompt: String,
+        output: &mut dyn io::Write,
+    ) -> AskCommandExecution;
 }
 
 trait AskCommandFinalizer {
@@ -132,10 +146,49 @@ pub(crate) fn run_ask(
     stderr: &mut impl io::Write,
     output_failure: &'static str,
 ) -> u8 {
-    let execution = host.execute(prompt, stdout);
+    run_prompt(
+        host,
+        SessionSelection::CreateGenerated,
+        prompt,
+        stdout,
+        stderr,
+        ASK_OPERATIONAL_FAILURE,
+        output_failure,
+    )
+}
+
+pub(crate) fn run_resume(
+    host: &impl AskCommandHost,
+    id: SessionId,
+    prompt: String,
+    stdout: &mut impl io::Write,
+    stderr: &mut impl io::Write,
+    output_failure: &'static str,
+) -> u8 {
+    run_prompt(
+        host,
+        SessionSelection::Resume(id),
+        prompt,
+        stdout,
+        stderr,
+        RESUME_OPERATIONAL_FAILURE,
+        output_failure,
+    )
+}
+
+fn run_prompt(
+    host: &impl AskCommandHost,
+    selection: SessionSelection,
+    prompt: String,
+    stdout: &mut impl io::Write,
+    stderr: &mut impl io::Write,
+    operational_failure: &'static str,
+    output_failure: &'static str,
+) -> u8 {
+    let execution = host.execute(selection, prompt, stdout);
     let outcome = execution.outcome();
     let diagnostic = match outcome {
-        AskCommandOutcome::OperationalFailure => Some(ASK_OPERATIONAL_FAILURE),
+        AskCommandOutcome::OperationalFailure => Some(operational_failure),
         AskCommandOutcome::OutputFailure => Some(output_failure),
         AskCommandOutcome::Completed
         | AskCommandOutcome::Interrupted
@@ -167,7 +220,7 @@ mod production {
 
     use super::{
         AskCommandExecution, AskCommandFinalizer, AskCommandHost, AskCommandOutcome,
-        ProductionAskCommandHost,
+        ProductionAskCommandHost, SessionSelection,
     };
 
     #[derive(Clone, Copy, Debug, Default)]
@@ -797,7 +850,12 @@ mod production {
     }
 
     impl AskCommandHost for ProductionAskCommandHost {
-        fn execute(&self, prompt: String, output: &mut dyn std::io::Write) -> AskCommandExecution {
+        fn execute(
+            &self,
+            selection: SessionSelection,
+            prompt: String,
+            output: &mut dyn std::io::Write,
+        ) -> AskCommandExecution {
             let Ok(controller) = AskSignalController::spawn() else {
                 return AskCommandExecution::without_finalizer(
                     AskCommandOutcome::OperationalFailure,
@@ -810,12 +868,13 @@ mod production {
                     controller,
                 );
             }
-            let (outcome, controller) = execute_production(prompt, output, controller);
+            let (outcome, controller) = execute_production(selection, prompt, output, controller);
             AskCommandExecution::with_finalizer(outcome, controller)
         }
     }
 
     fn execute_production(
+        selection: SessionSelection,
         prompt: String,
         output: &mut dyn std::io::Write,
         mut controller: AskSignalController,
@@ -851,6 +910,7 @@ mod production {
                             .map_err(|_| ())?;
                         runtime.block_on(execute_turn(
                             &host,
+                            selection,
                             prompt,
                             OutputBridge {
                                 work: work_sender,
@@ -875,16 +935,18 @@ mod production {
 
     async fn execute_turn(
         host: &NativeReferenceHost,
+        selection: SessionSelection,
         prompt: String,
         output: OutputBridge,
         mut signals: AskSignals,
         control: &AskSignalControlSender,
     ) -> Result<AskCommandOutcome, ()> {
-        let session = host
-            .session_lifecycle()
-            .create_generated()
-            .await
-            .map_err(|_| ())?;
+        let lifecycle = host.session_lifecycle();
+        let session = match selection {
+            SessionSelection::CreateGenerated => lifecycle.create_generated().await,
+            SessionSelection::Resume(id) => lifecycle.resume(id).await,
+        }
+        .map_err(|_| ())?;
         let turn = session.prompt(prompt).await.map_err(|_| ())?;
         control.activate_turn()?;
         let mut result = drive_turn(turn, &mut signals, output).await;
@@ -1058,8 +1120,9 @@ mod production {
             NativeEnvironment, NativeReferenceHost, WebSearchDeadline, WebSearchTransportError,
             load_native_config,
         };
+        use serde_json::Value;
 
-        use super::super::{AskCommandExecution, AskCommandHost, run_ask};
+        use super::super::{AskCommandExecution, AskCommandHost, SessionSelection, run_ask};
         use super::{
             AskCommandOutcome, AskSignal, AskSignalControl, AskSignalControlSender,
             AskSignalController, AskSignalGuardianResult, AskSignalGuardianState,
@@ -1241,7 +1304,12 @@ mod production {
         struct RegisteredFailureHost;
 
         impl AskCommandHost for RegisteredFailureHost {
-            fn execute(&self, _prompt: String, _output: &mut dyn io::Write) -> AskCommandExecution {
+            fn execute(
+                &self,
+                _selection: SessionSelection,
+                _prompt: String,
+                _output: &mut dyn io::Write,
+            ) -> AskCommandExecution {
                 let controller = AskSignalController::spawn()
                     .expect("diagnostic-stage signal guardian should register");
                 controller
@@ -1257,7 +1325,12 @@ mod production {
         struct PartiallyRegisteredFailureHost;
 
         impl AskCommandHost for PartiallyRegisteredFailureHost {
-            fn execute(&self, _prompt: String, _output: &mut dyn io::Write) -> AskCommandExecution {
+            fn execute(
+                &self,
+                _selection: SessionSelection,
+                _prompt: String,
+                _output: &mut dyn io::Write,
+            ) -> AskCommandExecution {
                 let mode = std::env::var(PARTIAL_DIAGNOSTIC_CHILD_MODE)
                     .expect("partial registration mode should be set");
                 let controller =
@@ -1748,16 +1821,30 @@ mod production {
         }
 
         struct OneShotTransport {
-            response: Mutex<Option<Vec<u8>>>,
+            responses: Mutex<VecDeque<Vec<u8>>>,
+            request_bodies: Mutex<Vec<Vec<u8>>>,
             session_ids: Mutex<Vec<SessionId>>,
         }
 
         impl OneShotTransport {
             fn new(response: impl Into<Vec<u8>>) -> Self {
+                Self::scripted([response])
+            }
+
+            fn scripted<R, I>(responses: I) -> Self
+            where
+                R: Into<Vec<u8>>,
+                I: IntoIterator<Item = R>,
+            {
                 Self {
-                    response: Mutex::new(Some(response.into())),
+                    responses: Mutex::new(responses.into_iter().map(Into::into).collect()),
+                    request_bodies: Mutex::new(Vec::new()),
                     session_ids: Mutex::new(Vec::new()),
                 }
+            }
+
+            fn request_bodies(&self) -> Vec<Vec<u8>> {
+                self.request_bodies.lock().unwrap().clone()
             }
 
             fn session_ids(&self) -> Vec<SessionId> {
@@ -1771,19 +1858,20 @@ mod production {
                 request: AiGatewayTransportRequest,
                 _cancellation: CancellationToken,
             ) -> BoxFuture<'_, Result<AiGatewayByteStream, ProviderError>> {
-                let (headers, _body) = request.into_parts();
+                let (headers, body) = request.into_parts();
                 let session_id = headers
                     .iter()
                     .find(|header| header.name() == "x-session-id")
                     .map(|header| SessionId::new(header.value()).expect("session ID is valid"))
                     .expect("gateway request should carry a session ID");
                 self.session_ids.lock().unwrap().push(session_id);
+                self.request_bodies.lock().unwrap().push(body);
                 let response = self
-                    .response
+                    .responses
                     .lock()
                     .unwrap()
-                    .take()
-                    .expect("transport should receive exactly one request");
+                    .pop_front()
+                    .expect("transport should have a response for every request");
                 Box::pin(async move {
                     Ok(Box::pin(OneChunkStream {
                         chunk: Some(Ok(response)),
@@ -1801,6 +1889,67 @@ mod production {
             ) -> BoxFuture<'_, Result<(), WebSearchTransportError>> {
                 Box::pin(future::pending())
             }
+        }
+
+        fn run_composed_turn(
+            runtime: &tokio::runtime::Runtime,
+            host: &NativeReferenceHost,
+            selection: SessionSelection,
+            prompt: &str,
+        ) -> (AskCommandOutcome, RecordingOutput, Vec<&'static str>) {
+            std::thread::scope(|scope| {
+                let (work_sender, work_receiver) = tokio::sync::mpsc::channel(1);
+                let (acknowledgement_sender, acknowledgement_receiver) =
+                    tokio::sync::mpsc::channel(1);
+                let output_worker = scope.spawn(move || {
+                    let mut output = RecordingOutput::default();
+                    serve_output(work_receiver, &acknowledgement_sender, &mut output);
+                    output
+                });
+                let (control_sender, mut control_receiver) = tokio::sync::mpsc::channel(1);
+                let control = AskSignalControlSender {
+                    sender: control_sender,
+                };
+                let control_worker = scope.spawn(move || {
+                    let mut transitions = Vec::new();
+                    while let Some(command) = control_receiver.blocking_recv() {
+                        match command {
+                            AskSignalControl::ActivateTurn(ready) => {
+                                transitions.push("turn");
+                                ready.send(()).expect("turn transition should acknowledge");
+                            }
+                            AskSignalControl::EnterFinal(ready) => {
+                                transitions.push("final");
+                                ready.send(()).expect("final transition should acknowledge");
+                                break;
+                            }
+                            AskSignalControl::Finish(_) => {
+                                panic!("successful composed turn should not force guardian exit");
+                            }
+                        }
+                    }
+                    transitions
+                });
+                let (signal_sender, signal_receiver) = tokio::sync::mpsc::channel(1);
+                let outcome = runtime
+                    .block_on(execute_turn(
+                        host,
+                        selection,
+                        prompt.to_owned(),
+                        OutputBridge {
+                            work: work_sender,
+                            acknowledgements: acknowledgement_receiver,
+                        },
+                        AskSignals::new(signal_receiver),
+                        &control,
+                    ))
+                    .expect("composed turn should execute");
+                drop(signal_sender);
+                drop(control);
+                let output = output_worker.join().expect("output worker should join");
+                let transitions = control_worker.join().expect("control worker should join");
+                (outcome, output, transitions)
+            })
         }
 
         #[test]
@@ -1840,58 +1989,12 @@ mod production {
                 .build()
                 .expect("test runtime should build");
 
-            let (outcome, output, transitions) = std::thread::scope(|scope| {
-                let (work_sender, work_receiver) = tokio::sync::mpsc::channel(1);
-                let (acknowledgement_sender, acknowledgement_receiver) =
-                    tokio::sync::mpsc::channel(1);
-                let output_worker = scope.spawn(move || {
-                    let mut output = RecordingOutput::default();
-                    serve_output(work_receiver, &acknowledgement_sender, &mut output);
-                    output
-                });
-                let (control_sender, mut control_receiver) = tokio::sync::mpsc::channel(1);
-                let control = AskSignalControlSender {
-                    sender: control_sender,
-                };
-                let control_worker = scope.spawn(move || {
-                    let mut transitions = Vec::new();
-                    while let Some(command) = control_receiver.blocking_recv() {
-                        match command {
-                            AskSignalControl::ActivateTurn(ready) => {
-                                transitions.push("turn");
-                                ready.send(()).expect("turn transition should acknowledge");
-                            }
-                            AskSignalControl::EnterFinal(ready) => {
-                                transitions.push("final");
-                                ready.send(()).expect("final transition should acknowledge");
-                                break;
-                            }
-                            AskSignalControl::Finish(_) => {
-                                panic!("successful composed turn should not force guardian exit");
-                            }
-                        }
-                    }
-                    transitions
-                });
-                let (signal_sender, signal_receiver) = tokio::sync::mpsc::channel(1);
-                let outcome = runtime
-                    .block_on(execute_turn(
-                        &host,
-                        "composed request".to_owned(),
-                        OutputBridge {
-                            work: work_sender,
-                            acknowledgements: acknowledgement_receiver,
-                        },
-                        AskSignals::new(signal_receiver),
-                        &control,
-                    ))
-                    .expect("composed turn should execute");
-                drop(signal_sender);
-                drop(control);
-                let output = output_worker.join().expect("output worker should join");
-                let transitions = control_worker.join().expect("control worker should join");
-                (outcome, output, transitions)
-            });
+            let (outcome, output, transitions) = run_composed_turn(
+                &runtime,
+                &host,
+                SessionSelection::CreateGenerated,
+                "composed request",
+            );
 
             assert_eq!(outcome, AskCommandOutcome::Completed);
             assert_eq!(output.bytes, b"composed answer");
@@ -1917,6 +2020,110 @@ mod production {
                     Message::text(Role::Assistant, "composed answer"),
                 ]
             );
+        }
+
+        #[test]
+        #[allow(clippy::too_many_lines)]
+        fn composed_host_resume_continues_exact_session_and_transcript() {
+            let temporary = ScopedTestDirectory::new("composed-host-resume");
+            let workspace_root = temporary.path().join("workspace");
+            let session_root = temporary.path().join("sessions");
+            for root in [&workspace_root, &session_root] {
+                fs::create_dir(root).expect("composition root should be creatable");
+                fs::set_permissions(root, fs::Permissions::from_mode(0o700))
+                    .expect("composition root should be private");
+            }
+            let transport = Arc::new(OneShotTransport::scripted([
+                concat!(
+                    "data: {\"type\":\"text-delta\",\"id\":\"first\",\"delta\":\"first answer\"}\n\n",
+                    "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n"
+                ),
+                concat!(
+                    "data: {\"type\":\"text-delta\",\"id\":\"second\",\"delta\":\"continued answer\"}\n\n",
+                    "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n"
+                ),
+            ]));
+            let host = NativeReferenceHost::compose_with_ai_gateway_transport(
+                load_native_config(&NativeEnvironment::new(None, None, None))
+                    .expect("built-in config should load"),
+                transport.clone(),
+                NetworkTarget {
+                    scheme: "https".to_owned(),
+                    host: "ai-gateway.vercel.sh".to_owned(),
+                    port: None,
+                },
+                &workspace_root,
+                &session_root,
+                Arc::new(DenyPermissionPrompter),
+                Arc::new(UnavailableQuestionPrompter),
+                Arc::new(NeverWebSearchDeadline),
+            )
+            .expect("reference host should compose");
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .expect("test runtime should build");
+
+            let (first_outcome, first_output, first_transitions) = run_composed_turn(
+                &runtime,
+                &host,
+                SessionSelection::CreateGenerated,
+                "first request",
+            );
+            let listing = runtime
+                .block_on(host.session_lifecycle().list_sessions())
+                .expect("session listing should succeed");
+            let [id] = listing.session_ids() else {
+                panic!("first turn should persist exactly one session");
+            };
+            let id = id.clone();
+
+            let (resume_outcome, resume_output, resume_transitions) = run_composed_turn(
+                &runtime,
+                &host,
+                SessionSelection::Resume(id.clone()),
+                "second request",
+            );
+
+            assert_eq!(first_outcome, AskCommandOutcome::Completed);
+            assert_eq!(first_output.bytes, b"first answer");
+            assert_eq!(first_output.flushes, 1);
+            assert_eq!(first_transitions, ["turn", "final"]);
+            assert_eq!(resume_outcome, AskCommandOutcome::Completed);
+            assert_eq!(resume_output.bytes, b"continued answer");
+            assert_eq!(resume_output.flushes, 1);
+            assert_eq!(resume_transitions, ["turn", "final"]);
+            assert_eq!(transport.session_ids(), [id.clone(), id.clone()]);
+
+            let record = runtime
+                .block_on(host.session_lifecycle().replay(id))
+                .expect("resumed session should replay");
+            assert_eq!(record.next_turn_sequence, 3);
+            assert_eq!(
+                record.messages,
+                [
+                    Message::text(Role::User, "first request"),
+                    Message::text(Role::Assistant, "first answer"),
+                    Message::text(Role::User, "second request"),
+                    Message::text(Role::Assistant, "continued answer"),
+                ]
+            );
+
+            let request_bodies = transport.request_bodies();
+            assert_eq!(request_bodies.len(), 2);
+            let first_request: Value =
+                serde_json::from_slice(&request_bodies[0]).expect("first request should be JSON");
+            assert_eq!(first_request["prompt"].as_array().unwrap().len(), 1);
+            let resumed_request: Value =
+                serde_json::from_slice(&request_bodies[1]).expect("resume request should be JSON");
+            let prompt = resumed_request["prompt"].as_array().unwrap();
+            assert_eq!(prompt.len(), 3);
+            assert_eq!(prompt[0]["role"], "user");
+            assert_eq!(prompt[0]["content"][0]["text"], "first request");
+            assert_eq!(prompt[1]["role"], "assistant");
+            assert_eq!(prompt[1]["content"][0]["text"], "first answer");
+            assert_eq!(prompt[2]["role"], "user");
+            assert_eq!(prompt[2]["content"][0]["text"], "second request");
         }
 
         #[test]
@@ -2492,7 +2699,12 @@ mod production {
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 impl AskCommandHost for ProductionAskCommandHost {
-    fn execute(&self, _prompt: String, _output: &mut dyn io::Write) -> AskCommandExecution {
+    fn execute(
+        &self,
+        _selection: SessionSelection,
+        _prompt: String,
+        _output: &mut dyn io::Write,
+    ) -> AskCommandExecution {
         AskCommandExecution::without_finalizer(AskCommandOutcome::OperationalFailure)
     }
 }
@@ -2503,14 +2715,18 @@ mod tests {
     use std::ffi::OsString;
     use std::io;
 
+    use machine_god_core::SessionId;
+
     use super::{
         ASK_OPERATIONAL_FAILURE, AskCommandExecution, AskCommandHost, AskCommandOutcome,
-        MAX_ASK_PROMPT_BYTES, parse_prompt_arguments, run_ask,
+        MAX_ASK_PROMPT_BYTES, RESUME_OPERATIONAL_FAILURE, SessionSelection, parse_prompt_arguments,
+        run_ask, run_resume,
     };
 
     struct FakeAskHost {
         outcome: AskCommandOutcome,
         calls: Cell<usize>,
+        selections: RefCell<Vec<SessionSelection>>,
         prompts: RefCell<Vec<String>>,
         bytes: &'static [u8],
     }
@@ -2520,6 +2736,7 @@ mod tests {
             Self {
                 outcome,
                 calls: Cell::new(0),
+                selections: RefCell::new(Vec::new()),
                 prompts: RefCell::new(Vec::new()),
                 bytes,
             }
@@ -2527,8 +2744,14 @@ mod tests {
     }
 
     impl AskCommandHost for FakeAskHost {
-        fn execute(&self, prompt: String, output: &mut dyn io::Write) -> AskCommandExecution {
+        fn execute(
+            &self,
+            selection: SessionSelection,
+            prompt: String,
+            output: &mut dyn io::Write,
+        ) -> AskCommandExecution {
             self.calls.set(self.calls.get() + 1);
+            self.selections.borrow_mut().push(selection);
             self.prompts.borrow_mut().push(prompt);
             let outcome = if output.write_all(self.bytes).is_err() {
                 AskCommandOutcome::OutputFailure
@@ -2603,9 +2826,37 @@ mod tests {
             0
         );
         assert_eq!(host.calls.get(), 1);
+        assert_eq!(
+            *host.selections.borrow(),
+            [SessionSelection::CreateGenerated]
+        );
         assert_eq!(*host.prompts.borrow(), ["prompt"]);
         assert_eq!(stdout, "a\0β".as_bytes());
         assert!(stderr.is_empty());
+    }
+
+    #[test]
+    fn resume_runner_forwards_exact_session_and_uses_fixed_diagnostic() {
+        let id = SessionId::new("saved-session").expect("fixed session ID should be valid");
+        let host = FakeAskHost::new(AskCommandOutcome::OperationalFailure, b"");
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        assert_eq!(
+            run_resume(
+                &host,
+                id.clone(),
+                "continue here".to_owned(),
+                &mut stdout,
+                &mut stderr,
+                "output failed\n",
+            ),
+            1
+        );
+        assert_eq!(host.calls.get(), 1);
+        assert_eq!(*host.selections.borrow(), [SessionSelection::Resume(id)]);
+        assert_eq!(*host.prompts.borrow(), ["continue here"]);
+        assert!(stdout.is_empty());
+        assert_eq!(stderr, RESUME_OPERATIONAL_FAILURE.as_bytes());
     }
 
     #[test]
