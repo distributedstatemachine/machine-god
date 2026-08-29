@@ -190,8 +190,9 @@ block for an operating-system-dependent duration.
 `PreparedNativeRoots` retains the opened workspace and final state-root
 descriptors. `workspace_root()` and `state_root()` return the selected paths,
 while the descriptors—not later path lookup—are the authorities handed to
-workspace tools and `FileSessionStore`. Replacing either path after successful
-preparation does not redirect those retained components. `selection()` exposes
+workspace tools, `FileSessionStore`, and the state-rooted `MemoryTool`.
+Replacing either path after successful preparation does not redirect those
+retained components. `selection()` exposes
 the non-authoritative selected paths. The prepared value is not cloneable, and
 its debug output is exactly `PreparedNativeRoots { .. }`, exposing no path,
 descriptor, device, inode, ownership, or mode.
@@ -238,9 +239,11 @@ and macOS; other targets receive no public runtime API for this boundary.
 constructors consume one `PreparedNativeRoots`. They transfer its retained
 workspace authority, cloning its descriptor only as required by the registered
 workspace-rooted tools, and transfer its separately retained state-root identity
-to `FileSessionStore` without reopening either path. Core exposes the composed
-tools in deterministic alphabetical catalog order. The selected `machine-god`
-state root itself is the store root; no extra `sessions` suffix is inserted.
+to `FileSessionStore` without reopening either path. Composition then gives
+`MemoryTool` one identity-preserving clone of that already-retained state-root
+descriptor. Core exposes the composed tools in deterministic alphabetical
+catalog order. The selected `machine-god` state root itself is the store and
+memory root; no extra `sessions` or `memory` suffix is inserted.
 The loaded configuration, permission prompter, credential snapshot or trusted
 custom transport, engine limits, and event sink retain their documented
 meanings.

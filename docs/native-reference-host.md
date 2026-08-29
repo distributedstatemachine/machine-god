@@ -67,6 +67,8 @@ Every successful host contains:
 - one concrete `Arc<FileSessionStore>` shared exactly, through the same erased
   `Arc<dyn SessionStore>`, with the engine, `ReadToolResultTool`, and
   `NativeSessionLifecycle`;
+- one `MemoryTool` over an identity-preserving clone of that store's retained
+  state-root descriptor, without access to session-record APIs;
 - default provider-neutral `EngineLimits` and the default no-op event sink;
 - one explicit `Arc<dyn WebSearchDeadline>` for bounded web-search timing,
   reused through a fixed category-only adapter for vision's capacity wait,
@@ -84,7 +86,7 @@ reports no discovered credential source.
 
 ## Tool catalog
 
-The engine registers exactly nineteen tools in deterministic alphabetical
+The engine registers exactly twenty tools in deterministic alphabetical
 order:
 
 1. `ask_user_question`
@@ -96,16 +98,17 @@ order:
 7. `glob_files`
 8. `grep_files`
 9. `list_files`
-10. `open_file`
-11. `read_file`
-12. `read_tool_result`
-13. `rename_file`
-14. `semantic_search`
-15. `terminal`
-16. `vision`
-17. `web_fetch`
-18. `web_search`
-19. `write_file`
+10. `memory`
+11. `open_file`
+12. `read_file`
+13. `read_tool_result`
+14. `rename_file`
+15. `semantic_search`
+16. `terminal`
+17. `vision`
+18. `web_fetch`
+19. `web_search`
+20. `write_file`
 
 Fifteen tools use one retained workspace identity. `glob_files` consumes the
 original descriptor. The other fourteen workspace tools receive
@@ -114,6 +117,9 @@ identity-preserving clones: `copy_file`, `create_folder`, `delete_file`,
 `rename_file`, `semantic_search`, `terminal`, `vision`, and `write_file`.
 `ask_user_question` and `web_fetch` are rootless. `read_tool_result` uses the
 engine's exact session-store allocation and has no workspace authority.
+`memory` uses a clone of the retained state-root identity but has no workspace
+or session-record authority; its fixed files and permission boundary are
+defined by the [memory contract](memory.md).
 `web_search` is backed by the configured AI Gateway network target and shared
 transport rather than a workspace descriptor. `vision` combines its retained
 workspace identity with that target in one disclosure capability and uses the
@@ -136,6 +142,8 @@ and enabled tools, it does perform the documented bounded setup needed to own
 later authority:
 
 - open and retain existing root descriptors, or consume prepared descriptors;
+- clone the retained state-root descriptor once for `memory`, without reading
+  or creating memory state;
 - discover and validate the two supported credential environment sources on
   the production path;
 - snapshot the bounded process environment used by `terminal`;

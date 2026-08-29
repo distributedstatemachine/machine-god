@@ -25,16 +25,17 @@ input; it is not a machine-god product language or runtime dependency.
 - Delivered main: `136d44e43d94f6f36a63a62ca0b3da8ca6877939`
 - Main CI: `33250415686` (`GREEN`)
 - Main Benchmark evidence: `33250415718` (`GREEN`)
-- Active branch: `agent/m03-next-cli`
-- Active phase: `bounded explicit-ID resume CLI delivered as slice 40; documentation-tool maintenance remains separate`
-- Next gate: `select and contract the next bounded actual tool or CLI slice, open its feature branch, and keep Markdown-checker work out of scope`
+- Active branch: `agent/m05-memory`
+- Active phase: `bounded native memory tool contract frozen; implementation and focused tests in progress`
+- Next gate: `integrate the memory tool through the retained state identity, pass focused tests, then run the complete exact local gate`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
 and the Benchmark evidence run retained the required exact-SHA artifacts. The
-bounded explicit-ID `resume` CLI is delivered as slice 40. Documentation parser
-maintenance remains a separate non-product task; product iterations use the
-existing bounded repository-policy checker.
+bounded explicit-ID `resume` CLI is delivered as slice 40. The next product
+slice is the native [`memory`](memory.md) tool. Documentation parser maintenance
+remains a separate non-product task; product iterations use the existing
+bounded repository-policy checker.
 
 ## Architecture ownership
 
