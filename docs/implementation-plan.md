@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33221912387` (`GREEN`)
 - Active branch: `agent/m03-session-docs-consolidation`
 - Active phase: `bounded session contract consolidation and single-source checker coverage after delivered slice 38`
-- Next gate: `land the documentation-only consolidation through exact remote gates, clean every iteration worktree, then select the next bounded native tool compatibility gap`
+- Next gate: `land the documentation-only consolidation through exact remote gates, clean every iteration worktree, then begin the bounded M05 semantic_search tool slice`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
