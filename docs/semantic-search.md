@@ -47,16 +47,17 @@ file, or eligible regular files beneath it when it is a directory. It does not
 imply `Read`, `Metadata`, `Enumerate`, `EnumerateRecursive`, mutation,
 external-path access, or symlink-target access. Preparation opens no
 descriptor, reads no entry or content, and consults no process state. Execution
-extracts the bounded keyword list before it reacquires the retained workspace
-root, so a stopword-only query performs no filesystem operation after
-permission succeeds.
+on Linux extracts the bounded keyword list before it reacquires the retained
+workspace root, so a stopword-only query performs no filesystem operation
+after permission succeeds. Non-Linux execution instead returns the fixed
+unsupported result before keyword extraction or filesystem work.
 
 ## Keyword extraction
 
-Keyword extraction scans the preserved query from left to right. Exactly these
-single ASCII bytes split tokens: space, tab, comma, period, semicolon, colon,
-question mark, and exclamation mark. New token boundaries are not inferred
-from other ASCII or Unicode punctuation or whitespace.
+On Linux, keyword extraction scans the preserved query from left to right.
+Exactly these single ASCII bytes split tokens: space, tab, comma, period,
+semicolon, colon, question mark, and exclamation mark. New token boundaries
+are not inferred from other ASCII or Unicode punctuation or whitespace.
 
 Tokens shorter than two bytes are discarded. The following stop words are
 discarded with ASCII-case-insensitive comparison:
@@ -70,9 +71,9 @@ The first sixteen remaining tokens are retained in encounter order. Tokens are
 not deduplicated, stemmed, normalized, translated, or reordered; repeated
 tokens therefore remain repeated scoring inputs. Once sixteen have been
 retained, later query bytes do not add keywords. A syntactically valid query
-that contains only splitters, short tokens, or stop words succeeds with empty
-`keywords` and `results`, all counters zero, `incomplete: false`, and no
-filesystem effect during execution.
+that contains only splitters, short tokens, or stop words succeeds on Linux
+with empty `keywords` and `results`, all counters zero, `incomplete: false`, and
+no filesystem effect during execution.
 
 ## Workspace confinement and traversal
 
@@ -277,8 +278,8 @@ more than one applies:
 `incomplete` is exactly whether that array is nonempty. Ordinary skips for an
 oversized file, non-text file, ignored directory, symlink, or special object do
 not by themselves make the scan incomplete; their fixed eligibility rules and
-counters make those exclusions explicit. A stopword-only query has no
-filesystem observations and therefore reports zero statistics.
+counters make those exclusions explicit. On Linux, a stopword-only query has
+no filesystem observations and therefore reports zero statistics.
 
 Aggregate content or name bytes, directory-read attempts, content-read
 attempts, keyword-work steps, path or depth bounds, and checked counter

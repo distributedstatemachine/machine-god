@@ -259,13 +259,9 @@ delivered generic durable error surface.
 
 ## Host composition and compatibility boundary
 
-At slice-twenty-three delivery, the native reference host registered exactly
-nine alphabetical workspace tools. The delivered slice-twenty-four `copy_file`
-extends that composition to exactly ten: `copy_file`, `delete_file`,
-`edit_file`, `file_info`, `glob_files`, `grep_files`, `list_files`, `read_file`,
-`rename_file`, and `write_file`. Workspace-root composition consumes the
-original descriptor for one tool and makes exactly nine identity-preserving
-clones.
+`rename_file` is part of the native reference host. The canonical current
+inventory and descriptor-cloning contract live only in the
+[native reference-host tool catalog](native-reference-host.md#tool-catalog).
 
 Pinned fx at `b1774fbf6c7602b503026f96f6e960e946c692ef` uses the same
 tool and field names and supports the core rename scenario. Its implementation
