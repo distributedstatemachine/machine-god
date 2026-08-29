@@ -876,10 +876,12 @@ fn cancelled() -> ToolError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ExecutionArguments, IoBudget, MAX_SKILL_CHUNK_BYTES, MAX_SKILL_FILE_BYTES,
-        MAX_SKILL_IO_ATTEMPTS, fit_output_page, normalize_name, normalize_resource,
+        ExecutionArguments, MAX_SKILL_FILE_BYTES, normalize_name, normalize_resource,
         validate_canonical_arguments,
     };
+    #[cfg(unix)]
+    use super::{IoBudget, MAX_SKILL_CHUNK_BYTES, MAX_SKILL_IO_ATTEMPTS, fit_output_page};
+    #[cfg(unix)]
     use machine_god_core::CancellationToken;
 
     #[test]
