@@ -297,6 +297,15 @@ impl FileSessionStore {
         Self { root }
     }
 
+    /// Returns a close-on-exec duplicate of the exact retained state root.
+    ///
+    /// Descriptor-relative native components use this instead of reopening the
+    /// selected path, so later pathname replacement cannot split their state
+    /// authority from the session store's retained directory identity.
+    pub(crate) fn try_clone_root_descriptor(&self) -> io::Result<OwnedFd> {
+        self.root.try_clone()
+    }
+
     pub(crate) fn create_empty_record(
         &self,
         mut record: SessionRecord,

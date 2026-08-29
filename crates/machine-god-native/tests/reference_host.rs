@@ -27,13 +27,14 @@ use machine_god_native::{
     AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayTransport,
     AiGatewayTransportRequest, COPY_FILE_TOOL_NAME, CREATE_FOLDER_TOOL_NAME, ConfigOrigin,
     DELETE_FILE_TOOL_NAME, EDIT_FILE_TOOL_NAME, FILE_INFO_TOOL_NAME, GLOB_FILES_TOOL_NAME,
-    GREP_FILES_TOOL_NAME, LIST_FILES_TOOL_NAME, LoadedNativeConfig, NativeEnvironment,
-    NativeReferenceHost, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
-    OPEN_FILE_TOOL_NAME, PermissionPromptDecision, PermissionPromptError, PermissionPrompter,
-    QuestionPromptAnswers, QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest,
-    QuestionPrompter, READ_FILE_TOOL_NAME, READ_TOOL_RESULT_TOOL_NAME, RENAME_FILE_TOOL_NAME,
-    SEMANTIC_SEARCH_TOOL_NAME, TERMINAL_TOOL_NAME, VISION_TOOL_NAME, WEB_FETCH_TOOL_NAME,
-    WEB_SEARCH_TOOL_NAME, WRITE_FILE_TOOL_NAME, load_native_config,
+    GREP_FILES_TOOL_NAME, LIST_FILES_TOOL_NAME, LoadedNativeConfig, MEMORY_TOOL_NAME,
+    NativeEnvironment, NativeReferenceHost, NativeReferenceHostBuildError,
+    NativeReferenceHostBuildErrorKind, OPEN_FILE_TOOL_NAME, PermissionPromptDecision,
+    PermissionPromptError, PermissionPrompter, QuestionPromptAnswers, QuestionPromptError,
+    QuestionPromptOutcome, QuestionPromptRequest, QuestionPrompter, READ_FILE_TOOL_NAME,
+    READ_TOOL_RESULT_TOOL_NAME, RENAME_FILE_TOOL_NAME, SEMANTIC_SEARCH_TOOL_NAME,
+    TERMINAL_TOOL_NAME, VISION_TOOL_NAME, WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME,
+    WRITE_FILE_TOOL_NAME, load_native_config,
 };
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
@@ -581,7 +582,7 @@ fn directory_is_empty(path: &Path) -> bool {
 
 fn assert_exact_native_tool_catalog(request: &Value) {
     let tools = request["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 19);
+    assert_eq!(tools.len(), 20);
     assert_eq!(
         tools
             .iter()
@@ -597,6 +598,7 @@ fn assert_exact_native_tool_catalog(request: &Value) {
             GLOB_FILES_TOOL_NAME,
             GREP_FILES_TOOL_NAME,
             LIST_FILES_TOOL_NAME,
+            MEMORY_TOOL_NAME,
             OPEN_FILE_TOOL_NAME,
             READ_FILE_TOOL_NAME,
             READ_TOOL_RESULT_TOOL_NAME,

@@ -232,6 +232,7 @@ fn retained_root_responses() -> [Vec<u8>; 3] {
     .to_vec();
     let second = concat!(
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"write-call\",\"toolName\":\"write_file\",\"input\":{\"path\":\"generated.txt\",\"content\":\"RETAINED_GENERATED_CONTENT\"}}\n\n",
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"memory-call\",\"toolName\":\"memory\",\"input\":{\"action\":\"save\",\"fact\":\"RETAINED_MEMORY_FACT_SENTINEL\"}}\n\n",
         "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
     )
     .as_bytes()
@@ -302,7 +303,7 @@ fn prepared_constructor_consumes_retained_workspace_and_state_identities() {
             ..
         })
     ));
-    assert_eq!(prompter.count(), 5);
+    assert_eq!(prompter.count(), 6);
     let requests = transport.request_bodies();
     assert_eq!(requests.len(), 3);
     let second_request = String::from_utf8(requests[1].clone()).unwrap();
@@ -369,10 +370,30 @@ fn prepared_constructor_consumes_retained_workspace_and_state_identities() {
         })
     );
     assert_eq!(
+        third_request["prompt"][8]["content"][0]["toolCallId"],
+        "memory-call"
+    );
+    let encoded_memory = third_request["prompt"][8]["content"][0]["output"]["value"]
+        .as_str()
+        .expect("memory output is encoded as text");
+    let memory_output: Value = serde_json::from_str(encoded_memory).unwrap();
+    assert_eq!(
+        memory_output,
+        serde_json::json!({
+            "content": {"action": "save", "stored": true, "count": 1},
+            "is_error": false
+        })
+    );
+    assert_eq!(
         fs::read(retained_workspace.join("generated.txt")).unwrap(),
         b"RETAINED_GENERATED_CONTENT"
     );
     assert!(!workspace.join("generated.txt").exists());
+    assert_eq!(
+        fs::read_to_string(retained_state.join("memories.json")).unwrap(),
+        r#"{"schema_version":1,"memories":["RETAINED_MEMORY_FACT_SENTINEL"]}"#
+    );
+    assert!(!state_root.join("memories.json").exists());
     assert!(!directory_is_empty(&retained_state));
     assert!(directory_is_empty(&state_root));
 }

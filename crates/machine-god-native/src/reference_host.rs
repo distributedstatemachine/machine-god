@@ -10,7 +10,7 @@ use crate::workspace::{WorkspaceRoot, WorkspaceTools};
 use crate::{
     AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayHttpTransport,
     AiGatewayProvider, AiGatewayTransport, AiGatewayVisionTransport, AiGatewayWebSearchTransport,
-    AskPermissionHandler, AskUserQuestionTool, FileSessionStore, LoadedNativeConfig,
+    AskPermissionHandler, AskUserQuestionTool, FileSessionStore, LoadedNativeConfig, MemoryTool,
     NativeCredentialSourceKind, NativeProviderKind, NativeSessionLifecycle, NativeTransportKind,
     PermissionMode, PermissionPrompter, PreparedNativeRoots, QuestionPrompter, ReadToolResultTool,
     TerminalTool, VisionDeadline, VisionLimits, VisionTool, VisionTransportError,
@@ -28,6 +28,8 @@ pub enum NativeReferenceHostBuildErrorKind {
     WorkspaceRoot,
     /// The existing session-store root could not be safely retained.
     SessionStore,
+    /// The memory tool could not retain the exact session-store root identity.
+    Memory,
     /// AI Gateway credential discovery failed.
     Credential,
     /// The production AI Gateway HTTP transport could not be constructed.
@@ -86,6 +88,9 @@ impl fmt::Display for NativeReferenceHostBuildError {
             }
             NativeReferenceHostBuildErrorKind::SessionStore => {
                 "native reference-host session store is unavailable"
+            }
+            NativeReferenceHostBuildErrorKind::Memory => {
+                "native reference-host memory construction failed"
             }
             NativeReferenceHostBuildErrorKind::Credential => {
                 "native reference-host credential is unavailable"
@@ -156,6 +161,7 @@ impl NativeReferenceHost {
         validate_selections(&loaded_config)?;
         let workspace_tools = open_workspace_tools(workspace_root)?;
         let session_store = open_session_store(session_root)?;
+        let memory = open_memory_tool(&session_store)?;
 
         let credential = discover_ai_gateway_credential(credential_environment).map_err(|_| {
             NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Credential)
@@ -173,6 +179,7 @@ impl NativeReferenceHost {
             web_search_deadline,
             workspace_tools,
             session_store,
+            memory,
             permission_prompter,
             question_prompter,
             Some(credential_source),
@@ -204,6 +211,7 @@ impl NativeReferenceHost {
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
         let (workspace_tools, session_store) = consume_prepared_roots(prepared_roots)?;
+        let memory = open_memory_tool(&session_store)?;
 
         let credential = discover_ai_gateway_credential(credential_environment).map_err(|_| {
             NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Credential)
@@ -221,6 +229,7 @@ impl NativeReferenceHost {
             web_search_deadline,
             workspace_tools,
             session_store,
+            memory,
             permission_prompter,
             question_prompter,
             Some(credential_source),
@@ -258,6 +267,7 @@ impl NativeReferenceHost {
         validate_selections(&loaded_config)?;
         let workspace_tools = open_workspace_tools(workspace_root)?;
         let session_store = open_session_store(session_root)?;
+        let memory = open_memory_tool(&session_store)?;
 
         Self::finish_composition(
             loaded_config,
@@ -266,6 +276,7 @@ impl NativeReferenceHost {
             web_search_deadline,
             workspace_tools,
             session_store,
+            memory,
             permission_prompter,
             question_prompter,
             None,
@@ -299,6 +310,7 @@ impl NativeReferenceHost {
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
         let (workspace_tools, session_store) = consume_prepared_roots(prepared_roots)?;
+        let memory = open_memory_tool(&session_store)?;
 
         Self::finish_composition(
             loaded_config,
@@ -307,6 +319,7 @@ impl NativeReferenceHost {
             web_search_deadline,
             workspace_tools,
             session_store,
+            memory,
             permission_prompter,
             question_prompter,
             None,
@@ -359,6 +372,7 @@ impl NativeReferenceHost {
         web_search_deadline: Arc<dyn WebSearchDeadline>,
         workspace_tools: WorkspaceTools,
         session_store: FileSessionStore,
+        memory: MemoryTool,
         permission_prompter: Arc<dyn PermissionPrompter>,
         question_prompter: Arc<dyn QuestionPrompter>,
         credential_source: Option<AiGatewayCredentialSource>,
@@ -438,6 +452,7 @@ impl NativeReferenceHost {
             .tool(workspace_tools.glob_files)
             .tool(workspace_tools.grep_files)
             .tool(workspace_tools.list_files)
+            .tool(memory)
             .tool(workspace_tools.open_file)
             .tool(workspace_tools.read_file)
             .tool(read_tool_result)
@@ -545,6 +560,15 @@ fn open_session_store(
     })
 }
 
+fn open_memory_tool(
+    session_store: &FileSessionStore,
+) -> Result<MemoryTool, NativeReferenceHostBuildError> {
+    let root = session_store.try_clone_root_descriptor().map_err(|_| {
+        NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Memory)
+    })?;
+    Ok(MemoryTool::from_root_descriptor(root))
+}
+
 fn consume_prepared_roots(
     prepared_roots: PreparedNativeRoots,
 ) -> Result<(WorkspaceTools, FileSessionStore), NativeReferenceHostBuildError> {
@@ -559,6 +583,20 @@ mod tests {
         NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind, map_vision_deadline_error,
     };
     use crate::{VisionTransportErrorKind, WebSearchTransportError, WebSearchTransportErrorKind};
+
+    #[test]
+    fn memory_configuration_failure_has_one_fixed_redacted_shape() {
+        let error = NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Memory);
+
+        assert_eq!(
+            error.to_string(),
+            "native reference-host memory construction failed"
+        );
+        assert_eq!(
+            format!("{error:?}"),
+            "NativeReferenceHostBuildError { kind: Memory }"
+        );
+    }
 
     #[test]
     fn terminal_configuration_failure_has_one_fixed_redacted_shape() {
