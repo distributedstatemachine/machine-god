@@ -42,7 +42,8 @@ SHAs, workflow IDs, review counts, or slice-by-slice history.
 
 - Workspace reading and search: [read_file](read-file.md),
   [list_files](list-files.md), [file_info](file-info.md),
-  [glob_files](glob-files.md), and [grep_files](grep-files.md).
+  [glob_files](glob-files.md), [grep_files](grep-files.md), and
+  [semantic_search](semantic-search.md).
 - Workspace mutation: [write_file](write-file.md), [edit_file](edit-file.md),
   [delete_file](delete-file.md), [rename_file](rename-file.md),
   [copy_file](copy-file.md), and [create_folder](create-folder.md).

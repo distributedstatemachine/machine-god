@@ -82,7 +82,7 @@ reports no discovered credential source.
 
 ## Tool catalog
 
-The engine registers exactly eighteen tools in deterministic alphabetical
+The engine registers exactly nineteen tools in deterministic alphabetical
 order:
 
 1. `ask_user_question`
@@ -98,21 +98,26 @@ order:
 11. `read_file`
 12. `read_tool_result`
 13. `rename_file`
-14. `terminal`
-15. `vision`
-16. `web_fetch`
-17. `web_search`
-18. `write_file`
+14. `semantic_search`
+15. `terminal`
+16. `vision`
+17. `web_fetch`
+18. `web_search`
+19. `write_file`
 
-Fourteen tools use one retained workspace identity. `glob_files` consumes the
-original descriptor; the other thirteen workspace tools, including `terminal`
-and `vision`, receive identity-preserving clones. `ask_user_question` and
-`web_fetch` are rootless. `read_tool_result` uses the engine's exact
-session-store allocation and has no workspace authority. `web_search` is backed
-by the configured AI Gateway network target and shared transport rather than a
-workspace descriptor. `vision` combines its retained workspace identity with
-that target in one disclosure capability and uses the shared transport only
-after approval and descriptor-relative image verification.
+Fifteen tools use one retained workspace identity. `glob_files` consumes the
+original descriptor. The other fourteen workspace tools receive
+identity-preserving clones: `copy_file`, `create_folder`, `delete_file`,
+`edit_file`, `file_info`, `grep_files`, `list_files`, `open_file`, `read_file`,
+`rename_file`, `semantic_search`, `terminal`, `vision`, and `write_file`.
+`ask_user_question` and `web_fetch` are rootless. `read_tool_result` uses the
+engine's exact session-store allocation and has no workspace authority.
+`web_search` is backed by the configured AI Gateway network target and shared
+transport rather than a workspace descriptor. `vision` combines its retained
+workspace identity with that target in one disclosure capability and uses the
+shared transport only after approval and descriptor-relative image
+verification. `semantic_search` uses only its retained workspace identity; it
+does not use the provider, transport, or an embedding index.
 
 Catalog membership does not imply that every platform can complete every
 effect. Each tool still performs strict preparation, permission handling when
