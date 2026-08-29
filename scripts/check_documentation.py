@@ -85,27 +85,47 @@ COUNT_WORD_RE = (
     r"twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
     r"twenty)"
 )
-REFERENCE_HOST_INVENTORY_RE = re.compile(
-    rf"\b{COUNT_WORD_RE}-tool\b[^.]{{0,120}}"
-    rf"\b(?:catalog|composition|reference[- ]host|host|checkpoint)\b|"
-    rf"\b(?:reference[- ]host|NativeReferenceHost|current\s+host|"
-    rf"delivered\s+host|composed\s+host)\b[^.]{{0,160}}\b{COUNT_WORD_RE}\s+"
-    rf"(?:(?:alphabetical|workspace(?:-backed)?|descriptor-backed)\s+)?tools\b|"
-    rf"\bregisters\s+(?:exactly\s+)?{COUNT_WORD_RE}\s+"
-    rf"(?:alphabetical\s+)?tools\b|"
-    rf"\b{COUNT_WORD_RE}\s+alphabetical\s+tools\b|"
-    rf"\b{COUNT_WORD_RE}\s+workspace\s+tools\b|"
-    rf"\b{COUNT_WORD_RE}\s+workspace-backed\s+tools\b|"
-    rf"\b{COUNT_WORD_RE}\s+descriptor-backed\s+tools\b|"
-    rf"\b{COUNT_WORD_RE}\s+identity-preserving\s+clones\b|"
-    rf"\b{COUNT_WORD_RE}\s+clones?\s+(?:across|among|for|between)\b"
-    rf"[^.]{{0,120}}\btools\b|"
-    rf"\b{COUNT_WORD_RE}-clone\b[^.]{{0,120}}"
-    rf"\b(?:catalog|composition|reference[- ]host|host|identity|descriptor)\b|"
-    rf"\b(?:workspace(?:\s+identity)?|descriptor|reference[- ]host|catalog)\b"
-    rf"[^.]{{0,160}}\b{COUNT_WORD_RE}\s+(?:identity-preserving\s+)?clones\b",
+INVENTORY_COUNT_PATTERN = (
+    rf"\b{COUNT_WORD_RE}-(?:tool|clone)\b|"
+    rf"\b{COUNT_WORD_RE}\s+"
+    rf"(?:(?:alphabetical|workspace(?:-backed)?|descriptor-backed|built-in|"
+    rf"identity-preserving)\s+)?"
+    rf"(?:tools|entries|clones)\b|"
+    rf"\bone\s+"
+    rf"(?:(?:alphabetical|workspace(?:-backed)?|descriptor-backed|built-in|"
+    rf"identity-preserving)\s+)?"
+    rf"(?:tool|entry|clone)\b"
+)
+REFERENCE_HOST_INVENTORY_COUNT_RE = re.compile(
+    INVENTORY_COUNT_PATTERN,
     re.IGNORECASE,
 )
+REFERENCE_HOST_SECTION_RE = re.compile(
+    r"\breference[- ]host\b|\bhost\s+composition\b|\btool\s+catalog\b",
+    re.IGNORECASE,
+)
+INVENTORY_CONTEXT_PATTERN = (
+    r"\breference[- ]host\b|\bNativeReferenceHost\b|"
+    r"\b(?:tool|reference)\s+catalog\b|\bcatalog\b|\bcomposition\b|"
+    r"\bcheckpoint\b|\bdescriptor(?:-backed)?\b|\bworkspace\s+identity\b|"
+    r"\bidentity-preserving\b"
+)
+REFERENCE_HOST_INVENTORY_PROXIMITY_RE = re.compile(
+    rf"(?:{INVENTORY_CONTEXT_PATTERN})[^.!?]{{0,240}}"
+    rf"(?:{INVENTORY_COUNT_PATTERN})|"
+    rf"(?:{INVENTORY_COUNT_PATTERN})[^.!?]{{0,240}}"
+    rf"(?:{INVENTORY_CONTEXT_PATTERN})|"
+    rf"\b{COUNT_WORD_RE}-(?:tool|clone)\b[^.!?]{{0,160}}\bhost\b|"
+    rf"\bhost\b[^.!?]{{0,160}}\b{COUNT_WORD_RE}-(?:tool|clone)\b|"
+    rf"\b{COUNT_WORD_RE}\s+descriptor-backed\s+tools\b|"
+    rf"\b{COUNT_WORD_RE}\s+identity-preserving\s+clones\b|"
+    rf"\bhost\b[^.!?]{{0,160}}\b{COUNT_WORD_RE}\s+"
+    rf"workspace(?:-backed)?\s+tools\b|"
+    rf"\b{COUNT_WORD_RE}\s+workspace(?:-backed)?\s+tools\b"
+    rf"[^.!?]{{0,160}}\bhost\b",
+    re.IGNORECASE,
+)
+MARKDOWN_HEADING_RE = re.compile(r"^[ ]{0,3}#{1,6}\s+(.*)$")
 
 
 @dataclass(frozen=True)
@@ -262,8 +282,39 @@ def _validate_reference_host_inventory(
         text = _read(path, root, errors)
         if text is None:
             continue
-        prose = re.sub(r"\s+", " ", _prose_without_fenced_blocks(text))
-        if REFERENCE_HOST_INVENTORY_RE.search(prose):
+        prose = _prose_without_fenced_blocks(text)
+        section_is_reference_host = False
+        paragraph: list[str] = []
+
+        def paragraph_has_inventory() -> bool:
+            normalized = re.sub(r"\s+", " ", " ".join(paragraph)).strip()
+            if not normalized or REFERENCE_HOST_INVENTORY_COUNT_RE.search(normalized) is None:
+                return False
+            return (
+                section_is_reference_host
+                or REFERENCE_HOST_INVENTORY_PROXIMITY_RE.search(normalized) is not None
+            )
+
+        has_inventory = False
+        for line in [*prose.splitlines(), ""]:
+            heading = MARKDOWN_HEADING_RE.match(line)
+            if heading is not None:
+                if paragraph_has_inventory():
+                    has_inventory = True
+                    break
+                paragraph.clear()
+                section_is_reference_host = (
+                    REFERENCE_HOST_SECTION_RE.search(heading.group(1)) is not None
+                )
+            elif not line.strip():
+                if paragraph_has_inventory():
+                    has_inventory = True
+                    break
+                paragraph.clear()
+            else:
+                paragraph.append(line)
+
+        if has_inventory:
             errors.append(
                 f"{relative}: reference-host inventory counts belong only in "
                 "docs/native-reference-host.md#tool-catalog"

@@ -164,6 +164,8 @@ class DocumentationPolicyTests(unittest.TestCase):
             "The twelve-tool production reference-host composition is stable.\n",
             "The workspace descriptor is distributed through eleven clones.\n",
             "The eleven-tool/ten-clone host is stable.\n",
+            "The reference-host tool catalog contains nineteen entries.\n",
+            "Nineteen built-in tools are exposed by NativeReferenceHost.\n",
         )
         for claim in claims:
             with self.subTest(claim=claim), tempfile.TemporaryDirectory() as directory:
@@ -216,6 +218,9 @@ class DocumentationPolicyTests(unittest.TestCase):
                 "# Durable tool contract\n\n"
                 "The executor accepts four active tools, retains twelve KiB, and "
                 "permits two supplied-Waker clones.\n\n"
+                "At most four workspace tools may execute concurrently.\n\n"
+                "The executor makes two clones across four active tools, one per "
+                "Waker.\n\n"
                 "```text\n"
                 "The reference host registers exactly fourteen tools.\n"
                 "```\n",
