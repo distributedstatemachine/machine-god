@@ -22,17 +22,18 @@ input; it is not a machine-god product language or runtime dependency.
 
 <!-- canonical-live-status:start -->
 - Delivered slices: `38`
-- Delivered main: `8e7d31779952e783e40e20ce4d5016c268101329`
-- Main CI: `33219163081` (`GREEN`)
-- Main Benchmark evidence: `33219163086` (`GREEN`)
+- Delivered main: `ea315a5c8fd521773f948c922fb0ae4831f1eaa4`
+- Main CI: `33221912386` (`GREEN`)
+- Main Benchmark evidence: `33221912387` (`GREEN`)
 - Active branch: `agent/m03-ask-output-grace-test`
-- Active phase: `slice 38 ask is delivered; repeated Intel macOS CI exposed a scheduler-sensitive output-grace regression test`
-- Next gate: `replace the wall-clock assertion with deterministic virtual-time evidence, pass exact local review and remote gates, clean the worktree, then begin bounded documentation consolidation`
+- Active phase: `slice 38 ask and deterministic output-grace regression evidence are delivered; bounded session documentation consolidation is next`
+- Next gate: `deliver the documentation-only session contract consolidation and checker coverage, clean its worktree, then return to the next bounded CLI or tool slice`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
 and the Benchmark evidence run retained the required exact-SHA artifacts. The
-bounded top-level `ask` behavior is delivered as slice 38.
+bounded top-level `ask` behavior is delivered as slice 38, with deterministic
+virtual-time coverage of its shared signal-output deadline.
 
 ## Architecture ownership
 
