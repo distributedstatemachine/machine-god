@@ -86,14 +86,24 @@ COUNT_WORD_RE = (
     r"twenty)"
 )
 REFERENCE_HOST_INVENTORY_RE = re.compile(
-    rf"\b{COUNT_WORD_RE}-tool\s+alphabetical\s+reference\s+catalog\b|"
-    rf"\bregisters\s+exactly\s+{COUNT_WORD_RE}\s+(?:alphabetical\s+)?tools\b|"
+    rf"\b{COUNT_WORD_RE}-tool\b[^.]{{0,120}}"
+    rf"\b(?:catalog|composition|reference[- ]host|host|checkpoint)\b|"
+    rf"\b(?:reference[- ]host|NativeReferenceHost|current\s+host|"
+    rf"delivered\s+host|composed\s+host)\b[^.]{{0,160}}\b{COUNT_WORD_RE}\s+"
+    rf"(?:(?:alphabetical|workspace(?:-backed)?|descriptor-backed)\s+)?tools\b|"
+    rf"\bregisters\s+(?:exactly\s+)?{COUNT_WORD_RE}\s+"
+    rf"(?:alphabetical\s+)?tools\b|"
     rf"\b{COUNT_WORD_RE}\s+alphabetical\s+tools\b|"
     rf"\b{COUNT_WORD_RE}\s+workspace\s+tools\b|"
     rf"\b{COUNT_WORD_RE}\s+workspace-backed\s+tools\b|"
+    rf"\b{COUNT_WORD_RE}\s+descriptor-backed\s+tools\b|"
     rf"\b{COUNT_WORD_RE}\s+identity-preserving\s+clones\b|"
     rf"\b{COUNT_WORD_RE}\s+clones?\s+(?:across|among|for|between)\b"
-    rf"[^.]{{0,120}}\btools\b",
+    rf"[^.]{{0,120}}\btools\b|"
+    rf"\b{COUNT_WORD_RE}-clone\b[^.]{{0,120}}"
+    rf"\b(?:catalog|composition|reference[- ]host|host|identity|descriptor)\b|"
+    rf"\b(?:workspace(?:\s+identity)?|descriptor|reference[- ]host|catalog)\b"
+    rf"[^.]{{0,160}}\b{COUNT_WORD_RE}\s+(?:identity-preserving\s+)?clones\b",
     re.IGNORECASE,
 )
 
