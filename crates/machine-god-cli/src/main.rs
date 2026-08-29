@@ -185,6 +185,12 @@ enum Command {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SessionIdGrammar {
+    Inspection,
+    Resume,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DoctorCheckStatus {
     Ok,
     Warn,
@@ -1288,14 +1294,18 @@ fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Comm
             Command::Permissions { json }
         }
         "resume" => {
-            let id = parse_explicit_session_id(arguments.next().ok_or(())?)?;
+            let id =
+                parse_explicit_session_id(arguments.next().ok_or(())?, SessionIdGrammar::Resume)?;
             Command::Resume {
                 id,
                 prompt: parse_prompt_arguments(arguments.by_ref())?,
             }
         }
         "session" => {
-            let id = parse_explicit_session_id(arguments.next().ok_or(())?)?;
+            let id = parse_explicit_session_id(
+                arguments.next().ok_or(())?,
+                SessionIdGrammar::Inspection,
+            )?;
             let json = match arguments.next() {
                 None => false,
                 Some(argument) if argument == "--json" => true,
@@ -1328,9 +1338,16 @@ fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Comm
     Ok(command)
 }
 
-fn parse_explicit_session_id(argument: OsString) -> Result<SessionId, ()> {
+fn parse_explicit_session_id(
+    argument: OsString,
+    grammar: SessionIdGrammar,
+) -> Result<SessionId, ()> {
     let id = argument.into_string().map_err(|_| ())?;
-    if id == "last" || id.starts_with('-') {
+    let reserved = match grammar {
+        SessionIdGrammar::Inspection => matches!(id.as_str(), "last" | "--id" | "--json"),
+        SessionIdGrammar::Resume => id == "last" || id.starts_with('-'),
+    };
+    if reserved {
         return Err(());
     }
     SessionId::new(id).map_err(|_| ())
@@ -3354,12 +3371,18 @@ mod tests {
                 json: true,
             })
         );
+        assert_eq!(
+            parse_arguments([OsString::from("session"), OsString::from("--flag")]),
+            Ok(Command::Session {
+                id: machine_god_core::SessionId::new("--flag").unwrap(),
+                json: false,
+            })
+        );
 
         for arguments in [
             vec![OsString::from("session")],
             vec![OsString::from("session"), OsString::from("last")],
             vec![OsString::from("session"), OsString::from("--id")],
-            vec![OsString::from("session"), OsString::from("--flag")],
             vec![
                 OsString::from("session"),
                 OsString::from("--id"),

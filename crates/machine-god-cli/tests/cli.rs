@@ -789,7 +789,6 @@ fn malformed_arguments_have_one_diagnostic_and_exit_two() {
         &["session"][..],
         &["session", "last"][..],
         &["session", "--id"][..],
-        &["session", "--flag"][..],
         &["session", "--id", "alpha"][..],
         &["session", "--json"][..],
         &["session", "--json", "alpha"][..],
