@@ -240,9 +240,12 @@ regression/delivery claim unless a milestone explicitly promotes it.
   non-review document, rendered relative Markdown link targets, and canonical
   reference-host catalog ownership. One bounded scan produces separate policy
   and link projections while tracking ordered quote/list containers, valid
-  fences, block and lazy inline comments, escaped inline code, and ATX/Setext
-  headings. Each maintained Markdown file is capped at 256 KiB and read/scanned
-  once per validation. The checker prints inventory counts for the current run
+  fences, empty list items, block and paragraph-bound inline comments, escaped
+  inline code, and ATX/Setext headings. Cached container metadata and a
+  forward-only link tokenizer keep hostile nesting and malformed link syntax
+  linear in the 256 KiB per-file ceiling. Reserved live-status field labels are
+  rejected outside this plan. Each maintained Markdown file is read/scanned
+  once per validation; the checker prints inventory counts for the current run
   but never persists those counts into maintained documents.
 - Compact this plan after every five delivered slices or whenever it exceeds
   600 lines. Keep the live block, milestone state, compact slice inventory,

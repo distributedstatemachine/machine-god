@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -177,6 +178,55 @@ class DocumentationPolicyTests(unittest.TestCase):
                 self.assertIn("GitHub Actions run IDs", rendered)
                 self.assertIn("SHA-style delivery lineage", rendered)
 
+    def test_canonical_live_fields_are_reserved_to_the_plan(self) -> None:
+        payload = (
+            "Main CI: `123` (`GREEN`)\n\n"
+            "- Main Benchmark evidence: pending\n\n"
+            "> - > Active branch: `agent/m05-other`\n\n"
+            "## Active phase: implementing memory\n\n"
+            "1. Next gate: push main\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            relative = Path("docs/unlisted.md")
+            (root / relative).write_text(payload, encoding="utf-8")
+
+            errors, _ = check_documentation.validate_repository(root)
+            rendered = "\n".join(errors)
+
+            for field in (
+                "Main CI",
+                "Main Benchmark evidence",
+                "Active branch",
+                "Active phase",
+                "Next gate",
+            ):
+                self.assertIn(
+                    f"canonical live-status field '{field}'",
+                    rendered,
+                )
+
+    def test_evergreen_prose_does_not_claim_canonical_live_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            (root / "docs/unlisted.md").write_text(
+                "# Evergreen\n\n"
+                "Main CI uses Rust 1.94.1. The next gate is selected by policy.\n\n"
+                "An active branch uses the documented naming convention.\n\n"
+                "Current phase: durable documentation.\n\n"
+                "| Main CI | exact-SHA workflow |\n"
+                "| --- | --- |\n\n"
+                "```text\nActive phase: example only\n```\n\n"
+                "<!-- Next gate: hidden example -->\n",
+                encoding="utf-8",
+            )
+
+            errors, _ = check_documentation.validate_repository(root)
+
+            self.assertEqual([], errors)
+
     def test_reference_host_inventory_counts_are_rejected_outside_canonical_docs(
         self,
     ) -> None:
@@ -254,6 +304,9 @@ class DocumentationPolicyTests(unittest.TestCase):
             "NativeReferenceHost tracks nineteen tools in its catalog.\n",
             "NativeReferenceHost labels nineteen built-in tools as stable.\n",
             "NativeReferenceHost records nineteen tools in the catalog.\n",
+            "The reference host exposes a catalog of nineteen.\n",
+            "The reference host exposes a catalog of at most nineteen.\n",
+            "NativeReferenceHost exposes nineteen distinct capabilities.\n",
             "NativeReferenceHost is stable. However, in practice, it registers "
             "nineteen tools.\n",
             "NativeReferenceHost is stable. Even so, it registers nineteen tools.\n",
@@ -422,6 +475,9 @@ class DocumentationPolicyTests(unittest.TestCase):
                 "NativeReferenceHost tracks nineteen active tools in flight.\n\n"
                 "NativeReferenceHost labels nineteen tool entries active.\n\n"
                 "NativeReferenceHost records nineteen tools per request.\n\n"
+                "NativeReferenceHost retries nineteen tool entries.\n\n"
+                "NativeReferenceHost retried nineteen tool entries.\n\n"
+                "NativeReferenceHost may retry nineteen tool entries.\n\n"
                 "NativeReferenceHost has a tool count of nineteen per request.\n\n"
                 "NativeReferenceHost: four workspace tools may execute "
                 "concurrently.\n\n"
@@ -675,6 +731,147 @@ class DocumentationPolicyTests(unittest.TestCase):
 
                 self.assertEqual(rejected, bool(inventory_errors), "\n".join(errors))
 
+    def test_inline_comment_closes_only_inside_its_paragraph(self) -> None:
+        cases = (
+            (
+                "valid root continuation",
+                "Text <!--\nNativeReferenceHost has nineteen tools. --> suffix\n",
+                False,
+                False,
+            ),
+            (
+                "valid lazy list continuation",
+                "- Text <!--\nNativeReferenceHost has nineteen tools. -->\n",
+                False,
+                False,
+            ),
+            (
+                "noninterrupting ordered two",
+                "Text <!--\n2. NativeReferenceHost has nineteen tools. -->\n",
+                False,
+                False,
+            ),
+            (
+                "blank interruption",
+                "Text <!--\n\nNativeReferenceHost has nineteen tools.\n-->\n",
+                True,
+                False,
+            ),
+            (
+                "ATX close interruption",
+                "Text <!--\n# NativeReferenceHost has nineteen tools. -->\n",
+                True,
+                False,
+            ),
+            (
+                "Setext interruption",
+                "Text <!--\n===\nNativeReferenceHost has nineteen tools.\n-->\n",
+                True,
+                False,
+            ),
+            (
+                "thematic interruption",
+                "Text <!--\n***\nNativeReferenceHost has nineteen tools.\n-->\n",
+                True,
+                False,
+            ),
+            (
+                "unordered list close interruption",
+                "Text <!--\n- NativeReferenceHost has nineteen tools. -->\n",
+                True,
+                False,
+            ),
+            (
+                "ordered one close interruption",
+                "Text <!--\n1. NativeReferenceHost has nineteen tools. -->\n",
+                True,
+                False,
+            ),
+            (
+                "fence close text is info",
+                "Text <!--\n```md -->\n"
+                "NativeReferenceHost has nineteen tools.\n```\n",
+                False,
+                False,
+            ),
+        )
+        for name, payload, rejected, unclosed in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_minimal_repository(root)
+                relative = Path("docs/tool-contract.md")
+                (root / relative).write_text(payload, encoding="utf-8")
+
+                errors, _ = check_documentation.validate_repository(root)
+                rendered = "\n".join(errors)
+
+                self.assertEqual(
+                    rejected,
+                    "reference-host inventory counts belong only" in rendered,
+                    rendered,
+                )
+                self.assertEqual(
+                    unclosed,
+                    f"{relative}: unclosed Markdown fence" in errors,
+                    rendered,
+                )
+
+    def test_empty_list_items_preserve_nested_block_ownership(self) -> None:
+        cases = (
+            (
+                "empty bullet fence outdent",
+                "-\n  ```text\nNativeReferenceHost has nineteen tools.\n  ```\n",
+                True,
+                True,
+            ),
+            (
+                "empty bullet fence retained",
+                "-   \n  ```text\n  NativeReferenceHost has nineteen tools.\n  ```\n",
+                False,
+                False,
+            ),
+            (
+                "empty ordered comment outdent",
+                "1.\n   <!--\nNativeReferenceHost has nineteen tools.\n   -->\n",
+                True,
+                False,
+            ),
+            (
+                "empty ordered comment retained",
+                "1.   \n   <!--\n   NativeReferenceHost has nineteen tools.\n"
+                "   -->\n",
+                False,
+                False,
+            ),
+            (
+                "quote empty list outdent",
+                "> -\n>   <!--\n"
+                "> NativeReferenceHost has nineteen tools.\n>   -->\n",
+                True,
+                False,
+            ),
+        )
+        for name, payload, rejected, unclosed in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_minimal_repository(root)
+                relative = Path("docs/tool-contract.md")
+                (root / relative).write_text(payload, encoding="utf-8")
+
+                errors, _ = check_documentation.validate_repository(root)
+                rendered = "\n".join(errors)
+
+                self.assertEqual(
+                    rejected,
+                    "reference-host inventory counts belong only" in rendered,
+                    rendered,
+                )
+                self.assertEqual(
+                    unclosed,
+                    f"{relative}: unclosed Markdown fence" in errors,
+                    rendered,
+                )
+
     def test_inline_code_cannot_pair_across_fenced_block_boundaries(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -711,6 +908,60 @@ class DocumentationPolicyTests(unittest.TestCase):
 
             self.assertEqual([], errors)
             self.assertEqual(2, stats.relative_links)
+
+    def test_markdown_link_target_scanner_preserves_supported_syntax(self) -> None:
+        markup = (
+            "[one](one.md) ![image](image.png) [[nested](nested.md) "
+            "[angle](<dir/file name.md>) [title](target.md \"title\") "
+            "[multiline](\n next.md) []() [empty-angle](<>) "
+            "[unterminated](<tail"
+        )
+
+        targets = list(check_documentation._markdown_link_targets(markup))
+
+        self.assertEqual(
+            [
+                "one.md",
+                "image.png",
+                "nested.md",
+                "<dir/file name.md>",
+                "target.md",
+                "next.md",
+                "<>",
+                "<tail",
+            ],
+            targets,
+        )
+
+    def test_pathological_markdown_scans_remain_bounded(self) -> None:
+        ceiling = check_documentation.MAX_MARKDOWN_BYTES
+        hostile_inputs = (
+            "[" * ceiling,
+            ("- " * (ceiling // 4) + "x\n" + "\n" * ceiling)[:ceiling],
+            (
+                "- " * (ceiling // 16)
+                + "```text\n"
+                + "\n" * ceiling
+            )[:ceiling],
+            (
+                "- " * (ceiling // 16)
+                + "<!--\n"
+                + "\n" * ceiling
+            )[:ceiling],
+        )
+        started = time.monotonic()
+        scans = [
+            check_documentation._scan_markdown_inert_blocks(source)
+            for source in hostile_inputs
+        ]
+        targets = list(
+            check_documentation._markdown_link_targets(hostile_inputs[0])
+        )
+        elapsed = time.monotonic() - started
+
+        self.assertEqual([], targets)
+        self.assertFalse(scans[0].unclosed_fence)
+        self.assertLess(elapsed, 5.0)
 
     def test_markdown_scanner_tokenizes_many_code_spans_once(self) -> None:
         class RecordingPattern:
