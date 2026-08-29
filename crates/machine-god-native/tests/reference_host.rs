@@ -366,6 +366,22 @@ fn semantic_search_round_responses() -> [Vec<u8>; 2] {
     [tool_call, finish]
 }
 
+fn skill_round_responses() -> [Vec<u8>; 2] {
+    let tool_call = concat!(
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"skill-call\",\"toolName\":\"skill\",\"input\":{\"name\":\"release-checks\",\"resource\":\"./references//linux.md\"}}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    let finish = concat!(
+        "data: {\"type\":\"text-delta\",\"id\":\"answer\",\"delta\":\"skill read complete\"}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    [tool_call, finish]
+}
+
 #[cfg(target_os = "linux")]
 fn expected_semantic_search_output() -> Value {
     json!({
@@ -1132,6 +1148,116 @@ fn composed_semantic_search_preserves_catalog_and_returns_fixed_unsupported_resu
     };
     assert_eq!(output.content, expected["content"]);
     assert!(output.is_error);
+    assert!(!directory_is_empty(&sessions));
+}
+
+#[test]
+fn composed_skill_uses_retained_workspace_and_persists_exact_result() {
+    let temporary = TemporaryDirectory::new("skill");
+    let (workspace, sessions) = roots(temporary.path());
+    let resource = workspace.join("skills/release-checks/references/linux.md");
+    fs::create_dir_all(resource.parent().unwrap()).unwrap();
+    let retained_content = "Run the retained release checks exactly.\n";
+    fs::write(&resource, retained_content).unwrap();
+    let transport = ScriptedTransport::new("SKILL_FACTORY_SENTINEL", skill_round_responses());
+    let prompter = AllowingPrompter::default();
+    let host = compose_with_transport(
+        built_in_config(),
+        transport.clone(),
+        &workspace,
+        &sessions,
+        prompter.clone(),
+    )
+    .unwrap();
+
+    let retained_workspace = temporary.path().join("skill-retained");
+    fs::rename(&workspace, &retained_workspace).unwrap();
+    let replacement_resource = workspace.join("skills/release-checks/references/linux.md");
+    fs::create_dir_all(replacement_resource.parent().unwrap()).unwrap();
+    fs::write(
+        &replacement_resource,
+        "SKILL_REPLACEMENT_CONTENT_MUST_NOT_BE_READ",
+    )
+    .unwrap();
+
+    let (session_id, events) = collect_turn(&host, "skill");
+    assert_completed(&events);
+
+    let permission_requests = prompter.requests();
+    assert_eq!(permission_requests.len(), 1);
+    assert_eq!(
+        permission_requests[0].capability,
+        Capability::Filesystem {
+            access: FilesystemAccess::Read,
+            path: "skills/release-checks/references/linux.md".to_owned(),
+        }
+    );
+
+    let expected = json!({
+        "content": {
+            "name": "release-checks",
+            "resource": "references/linux.md",
+            "offset": 0,
+            "next_offset": retained_content.len(),
+            "total_bytes": retained_content.len(),
+            "content": retained_content,
+            "truncated": false,
+        },
+        "is_error": false,
+    });
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    let first = body(&requests[0]);
+    assert_exact_native_tool_catalog(&first);
+    let second = body(&requests[1]);
+    assert_exact_native_tool_catalog(&second);
+    assert_eq!(second["prompt"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        second["prompt"][2]["content"][0]["toolCallId"],
+        "skill-call"
+    );
+    assert_eq!(decoded_tool_output(&second, 2), expected);
+    assert!(
+        !serde_json::to_string(&second)
+            .unwrap()
+            .contains("SKILL_REPLACEMENT_CONTENT_MUST_NOT_BE_READ")
+    );
+
+    let finished_output = events
+        .iter()
+        .find_map(|event| match event {
+            TurnEvent::ToolFinished { output, .. } => Some(output),
+            _ => None,
+        })
+        .expect("skill emits one completed tool result");
+    assert_eq!(finished_output.content, expected["content"]);
+    assert!(!finished_output.is_error);
+
+    let durable = futures_executor::block_on(host.engine().load_session(session_id))
+        .unwrap()
+        .expect("skill turn is durable");
+    let record = durable.record();
+    assert_eq!(record.messages.len(), 4);
+    assert_eq!(record.messages[0].role, Role::User);
+    assert_eq!(record.messages[1].role, Role::Assistant);
+    assert_eq!(record.messages[2].role, Role::Tool);
+    let [ContentBlock::ToolResult { output, .. }] = record.messages[2].content.as_slice() else {
+        panic!("skill result is retained as one structured tool result")
+    };
+    assert_eq!(output.content, expected["content"]);
+    assert!(!output.is_error);
+    assert_eq!(record.messages[3].role, Role::Assistant);
+    assert_eq!(
+        record.messages[3].content,
+        [ContentBlock::Text {
+            text: "skill read complete".to_owned(),
+        }]
+    );
+    assert_eq!(
+        fs::read_to_string(retained_workspace.join("skills/release-checks/references/linux.md"))
+            .unwrap(),
+        retained_content
+    );
     assert!(!directory_is_empty(&sessions));
 }
 
