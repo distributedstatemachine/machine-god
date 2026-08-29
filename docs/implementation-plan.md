@@ -21,19 +21,20 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `38`
-- Delivered main: `ea315a5c8fd521773f948c922fb0ae4831f1eaa4`
-- Main CI: `33221912386` (`GREEN`)
-- Main Benchmark evidence: `33221912387` (`GREEN`)
-- Active branch: `agent/m05-semantic-search`
-- Active phase: `locally green and adversarially reviewed M05 semantic_search delivery candidate after delivered slice 38`
-- Next gate: `pass exact feature CI and Benchmark evidence, fast-forward main, then pass exact main CI and Benchmark evidence`
+- Delivered slices: `39`
+- Delivered main: `6a63127f99e8c0f18e29a773eff0c870f2f54661`
+- Main CI: `33248233118` (`GREEN`)
+- Main Benchmark evidence: `33248233050` (`GREEN`)
+- Active branch: `agent/m03-resume`
+- Active phase: `selecting the bounded explicit-ID resume CLI slice after delivered semantic_search slice 39`
+- Next gate: `create the isolated resume worktree, freeze its durable contract, and implement focused behavior and tests`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
 and the Benchmark evidence run retained the required exact-SHA artifacts. The
-bounded top-level `ask` behavior is delivered as slice 38, with deterministic
-virtual-time coverage of its shared signal-output deadline.
+bounded `semantic_search` behavior is delivered as slice 39. Documentation
+parser maintenance remains a separate non-product task; product iterations use
+the existing bounded repository-policy checker.
 
 ## Architecture ownership
 
@@ -130,8 +131,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 36 | Range-only `read_tool_result` with conditional Gateway projection | [contract](read-tool-result.md) | [review](reviews/m03-read-tool-result-review-01.md) | `7371260` |
 | 37 | Native `vision` with bounded Gateway evidence | [contract](vision.md) | [review](reviews/m03-vision-review-01.md) | `0a32e2f` |
 | 38 | Bounded top-level `ask` CLI | [contract](ask-cli.md) | [review](reviews/m03-ask-cli-review-01.md) | `8e7d317` |
+| 39 | Bounded lexical `semantic_search` | [contract](semantic-search.md) | [review](reviews/m05-semantic-search-review-01.md) | `6a63127` |
 
-The exact delivered-main record after slice 38 is in the canonical live-status
+The exact delivered-main record after slice 39 is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.
