@@ -1201,8 +1201,9 @@ mod tests {
     use machine_god_core::CancellationToken;
     use rustix::fd::AsFd;
     use std::fs;
-    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     use std::path::{Path, PathBuf};
+    use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_TEMPORARY_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -1239,7 +1240,29 @@ mod tests {
 
     #[test]
     fn cancellation_after_lock_creation_leaves_owner_access_established() {
+        const CHILD_MARKER: &str = "MACHINE_GOD_MEMORY_CANCEL_UMASK_CHILD";
+        if std::env::var_os(CHILD_MARKER).is_none() {
+            let status = Command::new("sh")
+                .arg("-c")
+                .arg(
+                    "umask 0777; exec \"$1\" --exact \
+                     memory::tests::cancellation_after_lock_creation_leaves_owner_access_established \
+                     --nocapture",
+                )
+                .arg("machine-god-memory-cancel-umask")
+                .arg(std::env::current_exe().unwrap())
+                .env(CHILD_MARKER, "1")
+                .status()
+                .expect("failed to execute isolated cancellation/umask test process");
+            assert!(
+                status.success(),
+                "cancellation/umask child failed: {status}"
+            );
+            return;
+        }
+
         let temporary = TemporaryDirectory::new();
+        fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let root = rustix::fs::open(
             temporary.path(),
             OFlags::RDONLY
