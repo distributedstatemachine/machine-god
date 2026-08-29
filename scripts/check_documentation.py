@@ -27,6 +27,9 @@ GOVERNED_OVERVIEWS = (
     Path("docs/cli.md"),
     Path("docs/ask-cli.md"),
     Path("docs/ask-user-question.md"),
+    Path("docs/session-cli.md"),
+    Path("docs/native-session-inspection.md"),
+    Path("docs/session-store.md"),
 )
 
 REQUIRED_LIVE_FIELDS = {
@@ -41,18 +44,35 @@ REQUIRED_LIVE_FIELDS = {
 
 MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\(\s*(<[^>]+>|[^)\s]+)")
 FENCE_RE = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})")
-ACTIONS_RUN_ID_RE = re.compile(r"\b[0-9]{10,12}\b")
+ACTIONS_RUN_ID_RE = re.compile(
+    r"\b(?:github\s+actions|actions|workflow)(?:\s+run)?(?:\s+id)?"
+    r"\s*(?:(?:is|was)\s+|[:#]\s*)?`?[0-9]{6,12}\b|"
+    r"\b(?:ci|benchmark(?:\s+evidence)?)\s+run\s+`?[0-9]{6,12}\b|"
+    r"/actions/runs/[0-9]+\b",
+    re.IGNORECASE,
+)
 LIVE_STATUS_HEADER_RE = re.compile(
     r"^#{1,6}\s+(?:(?:current|live|delivery|implementation)\s+)?status\b",
     re.IGNORECASE | re.MULTILINE,
 )
+TOP_LEVEL_STATUS_RE = re.compile(r"^Status:\s+\S", re.IGNORECASE | re.MULTILINE)
 DELIVERED_COUNT_RE = re.compile(
     r"\bdelivered[- ]slice count\b|\bdelivered count\b|"
     r"\bdelivered slices?\s*:\s*(?:[0-9]+|[a-z-]+)\b|"
     r"\b(?:[0-9]+|(?:one|two|three|four|five|six|seven|eight|nine|ten|"
     r"eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|"
     r"nineteen|twenty|thirty|forty)(?:-[a-z]+)?)\s+delivered(?:\s+bounded)?"
-    r"\s+slices?\b",
+    r"\s+slices?\b|"
+    r"\bslices?\s+[0-9]+\s+(?:is|are)\s+delivered\b|"
+    r"\bdelivered\s+slice[- ]?[0-9]+\b",
+    re.IGNORECASE,
+)
+REVISION_RE = r"`?(?<![0-9a-f])[0-9a-f]{7,40}(?![0-9a-f])`?"
+DELIVERY_LINEAGE_RE = re.compile(
+    rf"\b(?:candidate|delivery|delivered(?:-main)?|review(?:ed)?|commit|base|tree|"
+    rf"revision)\b[^\n]{{0,120}}{REVISION_RE}|"
+    rf"{REVISION_RE}[^\n]{{0,40}}\b(?:candidate|delivery|review|commit|tree|revision)\b|"
+    rf"{REVISION_RE}\s*/\s*{REVISION_RE}",
     re.IGNORECASE,
 )
 
@@ -156,18 +176,44 @@ def _validate_live_status(root: Path, files: list[Path], errors: list[str]) -> N
             )
 
 
+def _prose_without_fenced_blocks(text: str) -> str:
+    """Return prose lines so policy examples inside fenced blocks stay inert."""
+
+    prose: list[str] = []
+    open_fence: tuple[str, int] | None = None
+    for line in text.splitlines():
+        match = FENCE_RE.match(line)
+        if match is not None:
+            token = match.group(1)
+            if open_fence is None:
+                open_fence = (token[0], len(token))
+            elif token[0] == open_fence[0] and len(token) >= open_fence[1]:
+                open_fence = None
+            prose.append("")
+        elif open_fence is None:
+            prose.append(line)
+        else:
+            prose.append("")
+    return "\n".join(prose)
+
+
 def _validate_governed_overviews(root: Path, errors: list[str]) -> None:
     for relative in GOVERNED_OVERVIEWS:
         path = root / relative
         text = _read(path, root, errors)
         if text is None:
             continue
-        if ACTIONS_RUN_ID_RE.search(text):
+        prose = _prose_without_fenced_blocks(text)
+        if ACTIONS_RUN_ID_RE.search(prose):
             errors.append(f"{relative}: must not contain GitHub Actions run IDs")
-        if DELIVERED_COUNT_RE.search(text):
+        if DELIVERED_COUNT_RE.search(prose):
             errors.append(f"{relative}: must not contain a delivered-count phrase")
-        if LIVE_STATUS_HEADER_RE.search(text):
+        if LIVE_STATUS_HEADER_RE.search(prose):
             errors.append(f"{relative}: must not contain a live status header")
+        if TOP_LEVEL_STATUS_RE.search(prose):
+            errors.append(f"{relative}: must not contain mutable top-level Status prose")
+        if DELIVERY_LINEAGE_RE.search(prose):
+            errors.append(f"{relative}: must not contain SHA-style delivery lineage")
 
 
 def _relative_link_target(raw_target: str) -> str | None:

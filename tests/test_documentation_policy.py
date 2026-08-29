@@ -24,7 +24,7 @@ class DocumentationPolicyTests(unittest.TestCase):
             errors, stats = check_documentation.validate_repository(root)
 
             self.assertEqual([], errors)
-            self.assertEqual(12, stats.markdown_files)
+            self.assertEqual(15, stats.markdown_files)
             self.assertEqual(2, stats.fence_lines)
             self.assertEqual(1, stats.relative_links)
             self.assertNotIn("markdown=", (root / "docs/implementation-plan.md").read_text())
@@ -51,6 +51,122 @@ class DocumentationPolicyTests(unittest.TestCase):
             self.assertIn("live status header", rendered)
             self.assertIn("unclosed Markdown fence", rendered)
             self.assertIn("missing relative link target", rendered)
+
+    def test_session_contracts_are_governed(self) -> None:
+        governed = set(check_documentation.GOVERNED_OVERVIEWS)
+
+        self.assertTrue(
+            {
+                Path("docs/session-cli.md"),
+                Path("docs/native-session-inspection.md"),
+                Path("docs/session-store.md"),
+            }.issubset(governed)
+        )
+
+    def test_each_session_contract_rejects_mutable_status_prose(self) -> None:
+        session_contracts = (
+            Path("docs/session-cli.md"),
+            Path("docs/native-session-inspection.md"),
+            Path("docs/session-store.md"),
+        )
+        for relative in session_contracts:
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_minimal_repository(root)
+                (root / relative).write_text(
+                    "# Durable contract\n\nStatus: slice 32 is delivered.\n",
+                    encoding="utf-8",
+                )
+
+                errors, _ = check_documentation.validate_repository(root)
+
+                self.assertIn(
+                    f"{relative}: must not contain mutable top-level Status prose",
+                    errors,
+                )
+
+    def test_mutable_delivery_evidence_is_rejected_from_durable_docs(self) -> None:
+        cases = (
+            (
+                "actions run",
+                "The GitHub Actions run ID is `12345678901`.\n",
+                "GitHub Actions run IDs",
+            ),
+            (
+                "workflow id",
+                "The exact workflow ID is `12345678901`.\n",
+                "GitHub Actions run IDs",
+            ),
+            (
+                "ci run",
+                "The feature CI run `12345678901` passed.\n",
+                "GitHub Actions run IDs",
+            ),
+            (
+                "delivered count",
+                "Delivered slices: 32\n",
+                "delivered-count phrase",
+            ),
+            (
+                "sha lineage",
+                "Delivered from commit `0123456789abcdef0123456789abcdef01234567`.\n",
+                "SHA-style delivery lineage",
+            ),
+        )
+        for name, evidence, expected in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_minimal_repository(root)
+                relative = Path("docs/session-cli.md")
+                (root / relative).write_text(
+                    f"# Durable contract\n\n{evidence}", encoding="utf-8"
+                )
+
+                errors, _ = check_documentation.validate_repository(root)
+
+                self.assertTrue(
+                    any(str(relative) in error and expected in error for error in errors),
+                    "\n".join(errors),
+                )
+
+    def test_live_evidence_is_allowed_in_plan_and_historical_reviews(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            history = root / "docs/reviews/m03-historical-review.md"
+            history.parent.mkdir(parents=True, exist_ok=True)
+            history.write_text(
+                "# Historical review\n\n"
+                "Status: accepted.\n"
+                "Workflow ID `12345678901` reviewed commit "
+                "`0123456789abcdef0123456789abcdef01234567`.\n",
+                encoding="utf-8",
+            )
+
+            errors, _ = check_documentation.validate_repository(root)
+
+            self.assertEqual([], errors)
+
+    def test_durable_limits_hashes_and_policy_terms_are_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            (root / "docs/session-store.md").write_text(
+                "# Durable contract\n\n"
+                "Workflow IDs are not product state. The byte ceiling is "
+                "12,345,678,901 bytes.\n\n"
+                "A content SHA-256 is "
+                "`0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef`.\n\n"
+                "```text\n"
+                "Status: examples may demonstrate rejected maintenance prose.\n"
+                "Workflow ID 12345678901\n"
+                "```\n",
+                encoding="utf-8",
+            )
+
+            errors, _ = check_documentation.validate_repository(root)
+
+            self.assertEqual([], errors)
 
     def _write_minimal_repository(self, root: Path) -> None:
         for relative in check_documentation.GOVERNED_OVERVIEWS:
