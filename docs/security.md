@@ -43,6 +43,12 @@ approval because they observe or mutate state shared across sessions. Its
 state-root descriptor is explicit native authority and is never discovered by
 core or inferred from model input.
 
+The workspace-local `skill` tool requests one exact filesystem-read capability
+for `skills/<name>/<resource>`. Its byte offset narrows only the returned range
+and does not broaden the authorized object. Loaded text remains untrusted opaque
+workspace content; it cannot grant installation, process, network, persistence,
+MCP, subagent, or additional filesystem authority.
+
 Authority-bearing capabilities pass through the injected permission handler.
 An error is never approval. The native ask adapter maps prompt failure to a
 fixed denial-class error and does not cache grants.
@@ -71,6 +77,11 @@ no-follow traversal and revalidate types and identities at the boundaries
 specified by each contract. Model-supplied paths are strict, bounded,
 workspace-relative forms; preparation and direct execution apply the same
 normalization.
+
+The `skill` reader additionally fixes the leading `skills` directory and one
+validated skill-name component, admits the complete selected regular file
+within a fixed byte limit, validates all bytes as UTF-8, and returns bounded
+pages without interpreting Markdown, YAML, frontmatter, references, or code.
 
 This prevents ordinary lexical escape and symlink traversal, but it is not a
 general filesystem sandbox. Portable pathname operations are not atomic
@@ -203,7 +214,8 @@ The following remain explicit future work rather than implied guarantees:
 - hardened non-Unix workspace and store construction;
 - a true process sandbox or stronger descendant containment;
 - private/authenticated web destinations and redirect authorization; and
-- extension, MCP, ACP, subagent, and SDK authority models.
+- managed skill discovery/installation and extension, MCP, ACP, subagent, and
+  SDK authority models.
 
 Each subsystem contract is normative for its exact platform, effect, limits,
 and race semantics.

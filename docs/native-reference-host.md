@@ -86,7 +86,7 @@ reports no discovered credential source.
 
 ## Tool catalog
 
-The engine registers exactly twenty tools in deterministic alphabetical
+The engine registers exactly twenty-one tools in deterministic alphabetical
 order:
 
 1. `ask_user_question`
@@ -104,22 +104,28 @@ order:
 13. `read_tool_result`
 14. `rename_file`
 15. `semantic_search`
-16. `terminal`
-17. `vision`
-18. `web_fetch`
-19. `web_search`
-20. `write_file`
+16. `skill`
+17. `terminal`
+18. `vision`
+19. `web_fetch`
+20. `web_search`
+21. `write_file`
 
-Fifteen tools use one retained workspace identity. `glob_files` consumes the
-original descriptor. The other fourteen workspace tools receive
+Sixteen tools use one retained workspace identity. `glob_files` consumes the
+original descriptor. The other fifteen workspace tools receive
 identity-preserving clones: `copy_file`, `create_folder`, `delete_file`,
 `edit_file`, `file_info`, `grep_files`, `list_files`, `open_file`, `read_file`,
-`rename_file`, `semantic_search`, `terminal`, `vision`, and `write_file`.
+`rename_file`, `semantic_search`, `skill`, `terminal`, `vision`, and
+`write_file`.
 `ask_user_question` and `web_fetch` are rootless. `read_tool_result` uses the
 engine's exact session-store allocation and has no workspace authority.
 `memory` uses a clone of the retained state-root identity but has no workspace
 or session-record authority; its fixed files and permission boundary are
 defined by the [memory contract](memory.md).
+`skill` reads only an explicitly selected workspace-local UTF-8 resource after
+an exact filesystem-read decision. It treats the bytes as opaque model-visible
+content and neither parses nor executes them; its bounds and confinement are
+defined by the [skill contract](skill.md).
 `web_search` is backed by the configured AI Gateway network target and shared
 transport rather than a workspace descriptor. `vision` combines its retained
 workspace identity with that target in one disclosure capability and uses the
@@ -193,9 +199,10 @@ component detail.
 
 ## Deferred composition
 
-The reference host does not itself supply a full interactive CLI/TUI, persistent
-grant policy, alternate provider or credential selections, MCP/ACP/skill or
-subagent infrastructure, encrypted storage, non-Unix root hardening, durable
-image attachments, prompt images, or CLI image flags. Those additions must
-preserve the crate ownership and authority boundaries in
+The reference host does not itself supply a full interactive CLI/TUI,
+persistent grant policy, alternate provider or credential selections, managed
+skill discovery or installation, MCP/ACP or subagent infrastructure, encrypted
+storage, non-Unix root hardening, durable image attachments, prompt images, or
+CLI image flags. Those additions must preserve the crate ownership and
+authority boundaries in
 [architecture.md](architecture.md) and [security.md](security.md).

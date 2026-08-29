@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33254454283` (`GREEN`)
 - Main Benchmark evidence: `33254454281` (`GREEN`)
 - Active branch: `agent/m05-skill`
-- Active phase: `bounded workspace-local skill contract freeze in progress`
-- Next gate: `freeze the opaque UTF-8 skill-resource contract, then implement the confined native tool and focused evidence`
+- Active phase: `bounded workspace-local skill implementation and focused evidence complete; full exact-1.94.1 local gate in progress`
+- Next gate: `pass the complete local replacement gate, freeze one behavior candidate, then require three fresh product-review tracks to report zero findings`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
