@@ -25,9 +25,9 @@ input; it is not a machine-god product language or runtime dependency.
 - Delivered main: `ea315a5c8fd521773f948c922fb0ae4831f1eaa4`
 - Main CI: `33221912386` (`GREEN`)
 - Main Benchmark evidence: `33221912387` (`GREEN`)
-- Active branch: `agent/m03-ask-output-grace-test`
-- Active phase: `slice 38 ask and deterministic output-grace regression evidence are delivered; bounded session documentation consolidation is next`
-- Next gate: `deliver the documentation-only session contract consolidation and checker coverage, clean its worktree, then return to the next bounded CLI or tool slice`
+- Active branch: `agent/m03-session-docs-consolidation`
+- Active phase: `bounded session contract consolidation and single-source checker coverage after delivered slice 38`
+- Next gate: `land the documentation-only consolidation through exact remote gates, clean every iteration worktree, then select the next bounded native tool compatibility gap`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
