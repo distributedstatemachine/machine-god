@@ -76,6 +76,24 @@ DELIVERY_LINEAGE_RE = re.compile(
     re.IGNORECASE,
 )
 
+REFERENCE_HOST_INVENTORY_EXEMPTIONS = {
+    PLAN_PATH,
+    Path("docs/native-reference-host.md"),
+}
+COUNT_WORD_RE = (
+    r"(?:[0-9]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|"
+    r"twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
+    r"twenty)"
+)
+REFERENCE_HOST_INVENTORY_RE = re.compile(
+    rf"\b{COUNT_WORD_RE}-tool\s+alphabetical\s+reference\s+catalog\b|"
+    rf"\bregisters\s+exactly\s+{COUNT_WORD_RE}\s+(?:alphabetical\s+)?tools\b|"
+    rf"\b{COUNT_WORD_RE}\s+alphabetical\s+tools\b|"
+    rf"\b{COUNT_WORD_RE}\s+workspace-backed\s+tools\b|"
+    rf"\b{COUNT_WORD_RE}\s+identity-preserving\s+clones\b",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True)
 class DocumentationStats:
@@ -216,6 +234,29 @@ def _validate_governed_overviews(root: Path, errors: list[str]) -> None:
             errors.append(f"{relative}: must not contain SHA-style delivery lineage")
 
 
+def _validate_reference_host_inventory(
+    root: Path, files: list[Path], errors: list[str]
+) -> None:
+    """Keep mutable reference-host inventory facts in their canonical contract."""
+
+    for path in files:
+        relative = path.relative_to(root)
+        if relative in REFERENCE_HOST_INVENTORY_EXEMPTIONS:
+            continue
+        if len(relative.parts) >= 2 and relative.parts[:2] == ("docs", "reviews"):
+            continue
+
+        text = _read(path, root, errors)
+        if text is None:
+            continue
+        prose = re.sub(r"\s+", " ", _prose_without_fenced_blocks(text))
+        if REFERENCE_HOST_INVENTORY_RE.search(prose):
+            errors.append(
+                f"{relative}: reference-host inventory counts belong only in "
+                "docs/native-reference-host.md#tool-catalog"
+            )
+
+
 def _relative_link_target(raw_target: str) -> str | None:
     target = raw_target[1:-1] if raw_target.startswith("<") else raw_target
     target = unquote(target.replace("\\ ", " "))
@@ -286,6 +327,7 @@ def validate_repository(root: Path) -> tuple[list[str], DocumentationStats]:
     files = markdown_files(root)
     _validate_live_status(root, files, errors)
     _validate_governed_overviews(root, errors)
+    _validate_reference_host_inventory(root, files, errors)
     stats = _validate_markdown(root, files, errors)
     return errors, stats
 

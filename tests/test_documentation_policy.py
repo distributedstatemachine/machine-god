@@ -147,6 +147,77 @@ class DocumentationPolicyTests(unittest.TestCase):
 
             self.assertEqual([], errors)
 
+    def test_reference_host_inventory_counts_are_rejected_outside_canonical_docs(
+        self,
+    ) -> None:
+        claims = (
+            "The fifteen-tool alphabetical reference catalog is stable.\n",
+            "The reference host registers exactly fourteen tools.\n",
+            "Composition contains thirteen alphabetical tools.\n",
+            "Exactly twelve workspace-backed tools share the descriptor.\n",
+            "The root uses eleven identity-preserving clones.\n",
+        )
+        for claim in claims:
+            with self.subTest(claim=claim), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_minimal_repository(root)
+                relative = Path("docs/tool-contract.md")
+                (root / relative).write_text(
+                    f"# Durable tool contract\n\n{claim}", encoding="utf-8"
+                )
+
+                errors, _ = check_documentation.validate_repository(root)
+
+                self.assertIn(
+                    f"{relative}: reference-host inventory counts belong only in "
+                    "docs/native-reference-host.md#tool-catalog",
+                    errors,
+                )
+
+    def test_reference_host_inventory_counts_are_allowed_in_canonical_history(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            (root / "docs/native-reference-host.md").write_text(
+                "# Reference host\n\n## Tool catalog\n\n"
+                "The engine registers exactly fourteen tools.\n",
+                encoding="utf-8",
+            )
+            review = root / "docs/reviews/m03-historical-review.md"
+            review.parent.mkdir(parents=True, exist_ok=True)
+            review.write_text(
+                "# Historical review\n\n"
+                "The thirteen alphabetical tools used twelve identity-preserving "
+                "clones.\n",
+                encoding="utf-8",
+            )
+
+            errors, _ = check_documentation.validate_repository(root)
+
+            self.assertEqual([], errors)
+
+    def test_reference_host_inventory_policy_allows_unrelated_numeric_limits(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            (root / "docs/tool-contract.md").write_text(
+                "# Durable tool contract\n\n"
+                "The executor accepts four active tools, retains twelve KiB, and "
+                "permits two supplied-Waker clones.\n\n"
+                "```text\n"
+                "The reference host registers exactly fourteen tools.\n"
+                "```\n",
+                encoding="utf-8",
+            )
+
+            errors, _ = check_documentation.validate_repository(root)
+
+            self.assertEqual([], errors)
+
     def test_durable_limits_hashes_and_policy_terms_are_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

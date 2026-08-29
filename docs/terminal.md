@@ -124,14 +124,14 @@ executor is therefore Linux-only in this slice. Public `TerminalTool::open` and
 non-Linux targets fails with the fixed unsupported category before filesystem
 lookup, environment inspection, thread creation, or spawn.
 
-Reference-host composition is a deliberate private exception: it retains and
-clones the workspace descriptor and advertises `terminal` in the same fifteen-
-tool catalog on supported host-composition targets. On a non-Linux host, strict
-preparation and permission still occur through the engine; an allowed execution
-strictly reparses the canonical arguments and then returns the fixed unsupported
-error before cwd lookup, worker or guardian creation, or spawn. The exported
-contracts remain portable, and a trusted injected `TerminalExecutor` may
-implement the same ownership contract for deterministic tests or a future
+Reference-host composition is a deliberate private exception: it retains the
+workspace authority and advertises `terminal` as defined by the canonical
+[tool catalog](native-reference-host.md#tool-catalog). On a non-Linux host,
+strict preparation and permission still occur through the engine; an allowed
+execution strictly reparses the canonical arguments and then returns the fixed
+unsupported error before cwd lookup, worker or guardian creation, or spawn. The
+exported contracts remain portable, and a trusted injected `TerminalExecutor`
+may implement the same ownership contract for deterministic tests or a future
 separately reviewed helper.
 
 ## Fixed execution protocol
@@ -371,7 +371,7 @@ retention through bounded rendering, final cancellation, and public return;
 exact-once active-slot release; exact-tilde and tilde-prefixed cwd literals;
 redaction; public-
 construction and private-host unsupported behavior; engine event/output
-persistence; and the fifteen-tool alphabetical reference catalog.
+persistence; and canonical reference-host catalog composition.
 The required exact Rust checks, release-mode focused tests, fresh release-binary
 smokes, portability checks, three fresh adversarial product reviews, exact
 feature workflows, fast-forward integration, exact main workflows, and clean
