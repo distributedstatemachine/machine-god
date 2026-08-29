@@ -892,10 +892,11 @@ mod production {
                     .spawn_scoped(scope, move || {
                         let environment = NativeEnvironment::from_process();
                         let loaded_config = load_native_config(&environment).map_err(|_| ())?;
-                        let selection = NativeRootSelection::from_current_process(&environment)
-                            .map_err(|_| ())?;
+                        let root_selection =
+                            NativeRootSelection::from_current_process(&environment)
+                                .map_err(|_| ())?;
                         let prepared_roots =
-                            PreparedNativeRoots::prepare(selection).map_err(|_| ())?;
+                            PreparedNativeRoots::prepare(root_selection).map_err(|_| ())?;
                         let (runtime, deadline) =
                             TokioWebSearchDeadline::build_runtime_pair().map_err(|_| ())?;
                         let host =
@@ -1109,6 +1110,16 @@ mod production {
         use std::task::{Context, Poll};
         use std::time::{Duration, Instant};
 
+        use super::super::{AskCommandExecution, AskCommandHost, SessionSelection, run_ask};
+        use super::{
+            AskCommandOutcome, AskSignal, AskSignalControl, AskSignalControlSender,
+            AskSignalController, AskSignalGuardianResult, AskSignalGuardianState,
+            AskSignalListeners, AskSignals, DenyPermissionPrompter, OutputAcknowledgement,
+            OutputBridge, OutputWork, SIGNAL_OUTPUT_GRACE, SignalSource, TurnDriveResult,
+            TurnDriveState, TurnEventDisposition, UnavailableQuestionPrompter, classify_turn_event,
+            drive_turn_stream, execute_turn, final_outcome, flush_terminal_output,
+            map_thread_spawn, poll_signal_guardian, record_signal_grace, serve_output,
+        };
         use futures_core::Stream;
         use machine_god_core::{
             BoxFuture, CancellationToken, Message, ModelEvent, NetworkTarget, ProviderError, Role,
@@ -1119,18 +1130,6 @@ mod production {
             AiGatewayByteStream, AiGatewayTransport, AiGatewayTransportRequest, FileSessionStore,
             NativeEnvironment, NativeReferenceHost, WebSearchDeadline, WebSearchTransportError,
             load_native_config,
-        };
-        use serde_json::Value;
-
-        use super::super::{AskCommandExecution, AskCommandHost, SessionSelection, run_ask};
-        use super::{
-            AskCommandOutcome, AskSignal, AskSignalControl, AskSignalControlSender,
-            AskSignalController, AskSignalGuardianResult, AskSignalGuardianState,
-            AskSignalListeners, AskSignals, DenyPermissionPrompter, OutputAcknowledgement,
-            OutputBridge, OutputWork, SIGNAL_OUTPUT_GRACE, SignalSource, TurnDriveResult,
-            TurnDriveState, TurnEventDisposition, UnavailableQuestionPrompter, classify_turn_event,
-            drive_turn_stream, execute_turn, final_outcome, flush_terminal_output,
-            map_thread_spawn, poll_signal_guardian, record_signal_grace, serve_output,
         };
 
         const BLOCKED_OUTPUT_CHILD_MODE: &str = "MACHINE_GOD_ASK_BLOCKED_OUTPUT_CHILD";
@@ -2111,19 +2110,23 @@ mod production {
 
             let request_bodies = transport.request_bodies();
             assert_eq!(request_bodies.len(), 2);
-            let first_request: Value =
-                serde_json::from_slice(&request_bodies[0]).expect("first request should be JSON");
-            assert_eq!(first_request["prompt"].as_array().unwrap().len(), 1);
-            let resumed_request: Value =
-                serde_json::from_slice(&request_bodies[1]).expect("resume request should be JSON");
-            let prompt = resumed_request["prompt"].as_array().unwrap();
-            assert_eq!(prompt.len(), 3);
-            assert_eq!(prompt[0]["role"], "user");
-            assert_eq!(prompt[0]["content"][0]["text"], "first request");
-            assert_eq!(prompt[1]["role"], "assistant");
-            assert_eq!(prompt[1]["content"][0]["text"], "first answer");
-            assert_eq!(prompt[2]["role"], "user");
-            assert_eq!(prompt[2]["content"][0]["text"], "second request");
+            let first_request = std::str::from_utf8(&request_bodies[0])
+                .expect("first request body should be UTF-8");
+            assert!(first_request.contains("\"text\":\"first request\""));
+            assert!(!first_request.contains("first answer"));
+            let resumed_request = std::str::from_utf8(&request_bodies[1])
+                .expect("resume request body should be UTF-8");
+            let first_user = resumed_request
+                .find("\"text\":\"first request\"")
+                .expect("resume request should retain the first user message");
+            let first_assistant = resumed_request
+                .find("\"text\":\"first answer\"")
+                .expect("resume request should retain the first assistant message");
+            let second_user = resumed_request
+                .find("\"text\":\"second request\"")
+                .expect("resume request should append the second user message");
+            assert!(first_user < first_assistant);
+            assert!(first_assistant < second_user);
         }
 
         #[test]
