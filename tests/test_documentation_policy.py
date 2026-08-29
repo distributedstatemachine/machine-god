@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import time
 import unittest
@@ -1002,6 +1003,7 @@ class DocumentationPolicyTests(unittest.TestCase):
             ("[x](<foo.md>\"title\")", []),
             ("[x](missing.md\n\n\"title\")", []),
             ("[x](missing.md \"multi\n\nline\")", []),
+            ("[x](missing<file.md)", ["missing<file.md"]),
             ("[x](missing-eof.md", []),
             ("[x](<missing-eof.md", []),
             ("[x](missing(unbalanced.md)", []),
@@ -1053,6 +1055,10 @@ class DocumentationPolicyTests(unittest.TestCase):
         self.assertEqual(
             "missing\0.md",
             check_documentation._relative_link_target("missing%00.md"),
+        )
+        self.assertEqual(
+            " missing.md",
+            check_documentation._relative_link_target("< missing.md>"),
         )
         self.assertEqual(
             [],
@@ -1137,6 +1143,43 @@ class DocumentationPolicyTests(unittest.TestCase):
             ),
         )
 
+    def test_multiline_reference_titles_and_lazy_destinations_are_validated(
+        self,
+    ) -> None:
+        cases = (
+            '[foo]: missing.md "multi\nline"\n\n[foo]\n',
+            "[foo]: missing.md\r\n\t'multi\r\nline'\r\n\r\n[foo]\r\n",
+            '> [foo]: missing.md (multi\nline)\n\n[foo]\n',
+            "> [foo]:\n missing.md\n\n[x][foo]\n",
+        )
+        for markup in cases:
+            with self.subTest(markup=markup):
+                self.assertEqual(
+                    ["missing.md"],
+                    list(check_documentation._markdown_link_targets(markup)),
+                )
+
+    def test_incomplete_multiline_reference_title_does_not_define_link(
+        self,
+    ) -> None:
+        markup = '[foo]: missing.md "multi\nline\n\n[foo]\n'
+
+        self.assertEqual(
+            [], list(check_documentation._markdown_link_targets(markup))
+        )
+
+    def test_reference_label_only_unescapes_commonmark_punctuation(self) -> None:
+        markup = (
+            "[a b]: good.md\n"
+            "[a\\ b]: missing.md\n\n"
+            "[a\\ b]\n"
+        )
+
+        self.assertEqual(
+            ["missing.md"],
+            list(check_documentation._markdown_link_targets(markup)),
+        )
+
     def test_reference_definition_cannot_interrupt_a_paragraph(self) -> None:
         markup = (
             "NativeReferenceHost has\n"
@@ -1214,6 +1257,32 @@ class DocumentationPolicyTests(unittest.TestCase):
             ],
             list(check_documentation._markdown_link_targets(scan.link_markup)),
         )
+
+    def test_reference_definitions_own_literal_delimiters(self) -> None:
+        cases = (
+            '[note]: good.md "`"\n[x](missing.md) `\n',
+            '[note]: good.md "<!--"\n[x](missing.md) -->\n',
+        )
+        for markup in cases:
+            with self.subTest(markup=markup):
+                scan = check_documentation._scan_markdown_inert_blocks(markup)
+                self.assertEqual(
+                    ["missing.md"],
+                    list(check_documentation._markdown_link_targets(scan.link_markup)),
+                )
+
+    def test_indented_code_cannot_own_a_later_literal_delimiter(self) -> None:
+        cases = (
+            "\t`\r\n[x](missing.md) `\r\n",
+            "    <!--\r[x](missing.md) -->\r",
+        )
+        for markup in cases:
+            with self.subTest(markup=markup):
+                scan = check_documentation._scan_markdown_inert_blocks(markup)
+                self.assertEqual(
+                    ["missing.md"],
+                    list(check_documentation._markdown_link_targets(scan.link_markup)),
+                )
 
     def test_links_nested_in_image_alt_text_are_not_rendered(self) -> None:
         markup = "![[inner](ignored.md)](image.png)"
@@ -1293,10 +1362,24 @@ class DocumentationPolicyTests(unittest.TestCase):
         prose = check_documentation._normalize_policy_markup(
             "**Main *CI:*** pending\n"
             "Delivered **slices: *999***\r\n"
+            "***M****a*in CI: pending\n"
         )
 
         self.assertIn("Main CI: pending", prose)
         self.assertIn("Delivered slices: 999", prose)
+        self.assertEqual(2, prose.count("Main CI: pending"))
+
+    def test_classifier_processes_many_emphasis_delimiters_linearly(self) -> None:
+        markup = ("*a" * check_documentation.MAX_MARKDOWN_BYTES)[
+            : check_documentation.MAX_MARKDOWN_BYTES
+        ]
+
+        started = time.monotonic()
+        prose = check_documentation._normalize_policy_markup(markup)
+        elapsed = time.monotonic() - started
+
+        self.assertEqual("a" * (check_documentation.MAX_MARKDOWN_BYTES // 2), prose)
+        self.assertLess(elapsed, 1.5)
 
     def test_classifier_applies_commonmark_backslash_escapes(self) -> None:
         self.assertEqual(
@@ -1505,6 +1588,51 @@ class DocumentationPolicyTests(unittest.TestCase):
                     any(expected in error for error in errors),
                     "\n".join(errors),
                 )
+
+    def test_relative_link_check_count_is_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            (root / "docs/existing.md").write_text("# Existing\n", encoding="utf-8")
+            (root / "docs/tool-contract.md").write_text(
+                "[one](existing.md) [two](missing.md)\n",
+                encoding="utf-8",
+            )
+            original = check_documentation.MAX_RELATIVE_LINK_CHECKS
+            check_documentation.MAX_RELATIVE_LINK_CHECKS = 1
+            try:
+                errors, _ = check_documentation.validate_repository(root)
+            finally:
+                check_documentation.MAX_RELATIVE_LINK_CHECKS = original
+
+            self.assertEqual(
+                ["documentation: relative link checks exceed the 1-target ceiling"],
+                errors,
+            )
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX special files")
+    def test_special_and_symlinked_markdown_entries_fail_without_opening(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            fifo = root / "docs/fifo.md"
+            link = root / "docs/link.md"
+            os.mkfifo(fifo)
+            link.symlink_to(root / "docs/two.md")
+
+            started = time.monotonic()
+            errors, _ = check_documentation.validate_repository(root)
+            elapsed = time.monotonic() - started
+
+            self.assertIn(
+                "docs/fifo.md: maintained Markdown entry is not a regular file",
+                errors,
+            )
+            self.assertIn(
+                "docs/link.md: maintained Markdown entry is not a regular file",
+                errors,
+            )
+            self.assertLess(elapsed, 1.0)
 
     def test_ignored_trees_do_not_consume_discovery_budget(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
