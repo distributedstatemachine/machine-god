@@ -271,9 +271,9 @@ in no-feature and WebAssembly builds, and perform no I/O themselves. The
 concrete semaphore-owning `WebSearchTool` and Gateway worker adapter are
 non-WebAssembly and gated by `ai-gateway-http`. Slice-33 reference-
 host composition remains Linux/macOS-only because the current native host is
-Linux/macOS-only. It registers fourteen alphabetical tools: twelve share one
-retained workspace identity, while rootless `web_fetch` and Gateway-backed
-`web_search` own no workspace descriptor.
+Linux/macOS-only. Its deterministic catalog and workspace-descriptor ownership
+are defined only by the [native reference-host contract](native-reference-host.md#tool-catalog);
+this tool remains Gateway-backed and owns no workspace descriptor.
 
 ## Deliberately deferred
 
