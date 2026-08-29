@@ -21,20 +21,20 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `39`
-- Delivered main: `6a63127f99e8c0f18e29a773eff0c870f2f54661`
-- Main CI: `33248233118` (`GREEN`)
-- Main Benchmark evidence: `33248233050` (`GREEN`)
-- Active branch: `agent/m03-resume`
-- Active phase: `bounded explicit-ID resume candidate passed the complete exact local gate and three fresh zero-finding product reviews after delivered slice 39`
-- Next gate: `seal compact review evidence, push the exact feature SHA, and require feature CI and Benchmark evidence before fast-forwarding main`
+- Delivered slices: `40`
+- Delivered main: `136d44e43d94f6f36a63a62ca0b3da8ca6877939`
+- Main CI: `33250415686` (`GREEN`)
+- Main Benchmark evidence: `33250415718` (`GREEN`)
+- Active branch: `agent/m03-next-cli`
+- Active phase: `bounded explicit-ID resume CLI delivered as slice 40; documentation-tool maintenance remains separate`
+- Next gate: `select and contract the next bounded actual tool or CLI slice, open its feature branch, and keep Markdown-checker work out of scope`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
 and the Benchmark evidence run retained the required exact-SHA artifacts. The
-bounded `semantic_search` behavior is delivered as slice 39. Documentation
-parser maintenance remains a separate non-product task; product iterations use
-the existing bounded repository-policy checker.
+bounded explicit-ID `resume` CLI is delivered as slice 40. Documentation parser
+maintenance remains a separate non-product task; product iterations use the
+existing bounded repository-policy checker.
 
 ## Architecture ownership
 
@@ -132,8 +132,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 37 | Native `vision` with bounded Gateway evidence | [contract](vision.md) | [review](reviews/m03-vision-review-01.md) | `0a32e2f` |
 | 38 | Bounded top-level `ask` CLI | [contract](ask-cli.md) | [review](reviews/m03-ask-cli-review-01.md) | `8e7d317` |
 | 39 | Bounded lexical `semantic_search` | [contract](semantic-search.md) | [review](reviews/m05-semantic-search-review-01.md) | `6a63127` |
+| 40 | Bounded explicit-ID top-level `resume` CLI | [contract](resume-cli.md) | [review](reviews/m03-resume-cli-review-01.md) | `136d44e` |
 
-The exact delivered-main record after slice 39 is in the canonical live-status
+The exact delivered-main record after slice 40 is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.
@@ -152,8 +153,8 @@ requires an explicit reviewed plan change.
   `write_file`, `edit_file`, `delete_file`, `rename_file`, `copy_file`,
   `create_folder`, `file_info`, `open_file`, `web_fetch`, `web_search`,
   `terminal`, `ask_user_question`, `read_tool_result`, and `vision`.
-- Delivered CLI slices for `ask`, `permissions`, `models`, `doctor`, `sessions`,
-  and strict summary-only `session <id>`.
+- Delivered CLI slices for `ask`, `resume`, `permissions`, `models`, `doctor`,
+  `sessions`, and strict summary-only `session <id>`.
 
 ### Remaining
 
