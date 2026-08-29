@@ -78,8 +78,8 @@ DELIVERY_LINEAGE_RE = re.compile(
 
 REFERENCE_HOST_INVENTORY_EXEMPTIONS = {
     PLAN_PATH,
-    Path("docs/native-reference-host.md"),
 }
+REFERENCE_HOST_CONTRACT_PATH = Path("docs/native-reference-host.md")
 COUNT_WORD_RE = (
     r"(?:[0-9]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|"
     r"twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
@@ -88,22 +88,41 @@ COUNT_WORD_RE = (
 INVENTORY_COUNT_NOUN_PATTERN = (
     rf"\b{COUNT_WORD_RE}-(?:tool|clone)\b|"
     rf"\b{COUNT_WORD_RE}\s+"
-    rf"(?:[A-Za-z][A-Za-z0-9_-]*\s+){{0,5}}(?:tools?|entries|clones?)\b"
+    rf"(?:[A-Za-z][A-Za-z0-9_-]*\s+){{0,5}}"
+    rf"(?:tools?(?!\s+(?:calls?|catalog|events?|outputs?|results?|schemas?|specs?)\b)|"
+    rf"entries|clones?)\b"
 )
 REFERENCE_HOST_INVENTORY_COUNT_RE = re.compile(
     INVENTORY_COUNT_NOUN_PATTERN,
     re.IGNORECASE,
 )
 INVENTORY_COUNT_TOKEN_RE = re.compile(rf"\b{COUNT_WORD_RE}\b", re.IGNORECASE)
-REFERENCE_HOST_INVENTORY_CONTEXT_RE = re.compile(
-    r"\breference[- ]host\b|\bNativeReferenceHost\b|"
-    r"\b(?:tool|reference)\s+catalog\b|docs/native-reference-host\.md",
+REFERENCE_HOST_CONTEXT_RE = re.compile(
+    r"\breference[- ]host\b|\bNativeReferenceHost\b",
+    re.IGNORECASE,
+)
+REFERENCE_HOST_CATALOG_CONTEXT_RE = re.compile(
+    r"\b(?:tool|reference)\s+catalog\b|"
+    r"\breference[- ]host\s+catalog\b|docs/native-reference-host\.md",
     re.IGNORECASE,
 )
 REFERENCE_HOST_INVENTORY_RELATION_RE = re.compile(
     r"\bregister(?:s|ed)?\b|\bexpos(?:e|es|ed)\b|"
-    r"\bcontain(?:s|ed)?\b|\bconsists?\s+of\b|\binventory\b|"
+    r"\bcontain(?:s|ed)?\b|\bconsists?\s+of\b|"
+    r"\bcompris(?:e|es|ed)\b|\bprovid(?:e|es|ed)\b|"
+    r"\blists?\b|\bhas\b|\btotals?\b|"
+    r"\b(?:make|makes|made)\s+up\b|\binventory\b|"
     r"\bcatalog\s+size\b|\bsize\s+(?:is|of)\b",
+    re.IGNORECASE,
+)
+REFERENCE_HOST_OPERATIONAL_CLONE_RE = re.compile(
+    rf"\b{COUNT_WORD_RE}\s+(?:[A-Za-z][A-Za-z0-9_-]*\s+){{0,5}}clones?\b"
+    rf"[^.!?]{{0,120}}(?:\bWaker\b|\bactive\s+calls?\b|"
+    rf"\bwhile\s+(?:a\s+)?calls?\s+is\s+active\b)|"
+    rf"(?:\bWaker\b|\bactive\s+calls?\b|"
+    rf"\bwhile\s+(?:a\s+)?calls?\s+is\s+active\b)"
+    rf"[^.!?]{{0,120}}\b{COUNT_WORD_RE}\s+"
+    rf"(?:[A-Za-z][A-Za-z0-9_-]*\s+){{0,5}}clones?\b",
     re.IGNORECASE,
 )
 REFERENCE_HOST_INVENTORY_SHORTHAND_RE = re.compile(
@@ -125,6 +144,9 @@ REFERENCE_HOST_INVENTORY_SHORTHAND_RE = re.compile(
     rf"\bworkspace\s+descriptor\b[^.!?]{{0,80}}\bdistribut(?:e|es|ed)\b"
     rf"[^.!?]{{0,80}}\b{COUNT_WORD_RE}\s+clones\b",
     re.IGNORECASE,
+)
+MARKDOWN_HEADING_RE = re.compile(
+    r"^[ ]{0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$"
 )
 
 
@@ -248,6 +270,26 @@ def _prose_without_fenced_blocks(text: str) -> str:
     return "\n".join(prose)
 
 
+def _without_markdown_section(text: str, title: str) -> str:
+    """Blank one named Markdown section through the next peer heading."""
+
+    output: list[str] = []
+    section_level: int | None = None
+    for line in text.splitlines():
+        heading = MARKDOWN_HEADING_RE.match(line)
+        if heading is not None:
+            level = len(heading.group(1))
+            normalized_title = heading.group(2).strip().casefold()
+            if section_level is not None and level <= section_level:
+                section_level = None
+            if section_level is None and normalized_title == title.casefold():
+                section_level = level
+
+        output.append("" if section_level is not None else line)
+
+    return "\n".join(output)
+
+
 def _validate_governed_overviews(root: Path, errors: list[str]) -> None:
     for relative in GOVERNED_OVERVIEWS:
         path = root / relative
@@ -283,6 +325,8 @@ def _validate_reference_host_inventory(
         if text is None:
             continue
         prose = _prose_without_fenced_blocks(text)
+        if relative == REFERENCE_HOST_CONTRACT_PATH:
+            prose = _without_markdown_section(prose, "Tool catalog")
         has_inventory = any(
             _contains_reference_host_inventory(paragraph)
             for paragraph in re.split(r"\n\s*\n", prose)
@@ -306,17 +350,34 @@ def _contains_reference_host_inventory(paragraph: str) -> bool:
         if REFERENCE_HOST_INVENTORY_SHORTHAND_RE.search(sentence) is not None:
             return True
 
-        has_context = REFERENCE_HOST_INVENTORY_CONTEXT_RE.search(sentence) is not None
+        has_host_context = REFERENCE_HOST_CONTEXT_RE.search(sentence) is not None
+        has_catalog_context = (
+            REFERENCE_HOST_CATALOG_CONTEXT_RE.search(sentence) is not None
+        )
         has_relation = REFERENCE_HOST_INVENTORY_RELATION_RE.search(sentence) is not None
         has_counted_noun = REFERENCE_HOST_INVENTORY_COUNT_RE.search(sentence) is not None
-        if has_context and has_relation and has_counted_noun:
+        if has_catalog_context and has_counted_noun:
+            return True
+        is_operational_clone = (
+            REFERENCE_HOST_OPERATIONAL_CLONE_RE.search(sentence) is not None
+        )
+        if (
+            has_host_context
+            and has_relation
+            and has_counted_noun
+            and not is_operational_clone
+        ):
             return True
 
         has_count = INVENTORY_COUNT_TOKEN_RE.search(sentence) is not None
         has_catalog_size = re.search(
             r"\bcatalog\s+size\b|\bsize\s+(?:is|of)\b", sentence, re.IGNORECASE
         )
-        if has_context and has_count and has_catalog_size is not None:
+        if (
+            (has_host_context or has_catalog_context)
+            and has_count
+            and has_catalog_size is not None
+        ):
             return True
 
     return False

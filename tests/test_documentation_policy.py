@@ -169,6 +169,12 @@ class DocumentationPolicyTests(unittest.TestCase):
             "NativeReferenceHost exposes nineteen built-in ToolSpec entries.\n",
             "The reference-host catalog size is nineteen.\n",
             "The catalog in `docs/native-reference-host.md` contains nineteen tools.\n",
+            "NativeReferenceHost has nineteen tools.\n",
+            "The tool catalog lists nineteen entries.\n",
+            "NativeReferenceHost comprises nineteen tools.\n",
+            "NativeReferenceHost provides nineteen built-in tools.\n",
+            "Nineteen tools make up NativeReferenceHost.\n",
+            "NativeReferenceHost totals nineteen tools.\n",
         )
         for claim in claims:
             with self.subTest(claim=claim), tempfile.TemporaryDirectory() as directory:
@@ -211,6 +217,30 @@ class DocumentationPolicyTests(unittest.TestCase):
 
             self.assertEqual([], errors)
 
+    def test_reference_host_inventory_is_allowed_only_in_tool_catalog_section(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            relative = Path("docs/native-reference-host.md")
+            (root / relative).write_text(
+                "# Reference host\n\n"
+                "## Tool catalog\n\n"
+                "The engine registers exactly fourteen tools.\n\n"
+                "## Construction effects\n\n"
+                "NativeReferenceHost has thirteen tools.\n",
+                encoding="utf-8",
+            )
+
+            errors, _ = check_documentation.validate_repository(root)
+
+            self.assertIn(
+                f"{relative}: reference-host inventory counts belong only in "
+                "docs/native-reference-host.md#tool-catalog",
+                errors,
+            )
+
     def test_reference_host_inventory_policy_allows_unrelated_numeric_limits(
         self,
     ) -> None:
@@ -226,9 +256,12 @@ class DocumentationPolicyTests(unittest.TestCase):
                 "Waker.\n\n"
                 "NativeReferenceHost may execute four workspace tools concurrently.\n\n"
                 "The reference host permits two clones of the supplied Waker.\n\n"
+                "NativeReferenceHost contains two supplied Waker clones while a "
+                "call is active.\n\n"
                 "At one scheduler checkpoint, four workspace tools may execute "
                 "concurrently.\n\n"
                 "Pipeline composition accepts four tools.\n\n"
+                "Limits allow sixteen tool calls beside a one MiB tool catalog.\n\n"
                 "```text\n"
                 "The reference host registers exactly fourteen tools.\n"
                 "```\n",
