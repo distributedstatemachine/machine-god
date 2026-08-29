@@ -345,10 +345,25 @@ fn validate_canonical_arguments(arguments: &ExecutionArguments) -> Result<(), To
 }
 
 fn normalize_query(query: &str) -> Result<String, ToolError> {
-    if query.is_empty() || query.len() > MAX_SEMANTIC_SEARCH_QUERY_BYTES {
+    if query.len() > MAX_SEMANTIC_SEARCH_QUERY_BYTES
+        || query.trim_matches([' ', '\t', '\r', '\n']).is_empty()
+        || query.chars().any(is_forbidden_query_character)
+    {
         return Err(invalid_query());
     }
     Ok(query.to_owned())
+}
+
+fn is_forbidden_query_character(character: char) -> bool {
+    (character.is_control() && character != '\t')
+        || matches!(
+            character,
+            '\u{061c}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{2028}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+        )
 }
 
 fn normalize_relative_path(path: &str) -> Result<String, ToolError> {

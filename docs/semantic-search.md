@@ -18,12 +18,12 @@ and one optional `path` string:
 
 Unknown fields, missing `query`, explicit `null`, and wrong field types are
 invalid. `path` omission defaults to `.`. The requested query is bounded to
-4,096 UTF-8 bytes and must be nonempty after trimming ASCII space, tab,
-carriage return, and line feed at its edges. Preparation otherwise preserves
-the query bytes: it performs no Unicode normalization, stemming, synonym
-expansion, or case rewriting. NUL, line controls, unsafe formatting controls,
-and an overlong query are `semantic_search_invalid_query`. Tab remains valid
-because it is one of the pinned keyword separators.
+4,096 UTF-8 bytes and must contain a byte other than ASCII space or tab.
+Preparation otherwise preserves the query bytes: it performs no Unicode
+normalization, stemming, synonym expansion, or case rewriting. NUL, other C0
+or C1 controls, unsafe formatting controls, and an overlong query are
+`semantic_search_invalid_query`. Tab remains valid because it is one of the
+pinned keyword separators.
 
 Requested and normalized paths are independently bounded to 4,096 UTF-8 bytes.
 Path normalization collapses repeated `/`, removes exact `.` components, joins
@@ -34,8 +34,7 @@ formatting controls. Backslash is an ordinary Unix filename character, not a
 separator or escape.
 
 Preflight is deterministic, synchronous, bounded, nonblocking, and effect-free.
-It strictly decodes and normalizes the arguments, extracts the bounded keyword
-list below, and returns:
+It strictly decodes and normalizes the arguments and returns:
 
 - `Capability::Filesystem` with `FilesystemAccess::SearchContent` at the exact
   normalized selected path; and
@@ -47,7 +46,10 @@ content inspection at that one path: the selected object when it is a regular
 file, or eligible regular files beneath it when it is a directory. It does not
 imply `Read`, `Metadata`, `Enumerate`, `EnumerateRecursive`, mutation,
 external-path access, or symlink-target access. Preparation opens no
-descriptor, reads no entry or content, and consults no process state.
+descriptor, reads no entry or content, and consults no process state. Execution
+extracts the bounded keyword list before it reacquires the retained workspace
+root, so a stopword-only query performs no filesystem operation after
+permission succeeds.
 
 ## Keyword extraction
 
@@ -89,7 +91,8 @@ previously opened ancestor cannot redirect later lookups outside the retained
 identity.
 
 Directory traversal is iterative and deterministic. Each directory's validated
-UTF-8 entries are ordered by raw path bytes before classification and descent.
+UTF-8 entries are classified, then ordered by raw path bytes before processing
+and descent.
 Regular files are candidates. Symbolic-link entries are counted and skipped;
 they are never opened, resolved, scored, or descended through. FIFOs, sockets,
 devices, and other special objects are not content candidates. Hidden entries
@@ -129,13 +132,14 @@ secret scan, or content rewriting runs. Successful line excerpts are
 intentionally authorized workspace content and may enter the durable tool
 result and observer events.
 
-Files are read through their retained descriptors. Descriptor identity, type,
-size, and bounded-read observations are revalidated around the read so a
-symlink or special-object race cannot redirect content access. A concurrent
-rename of the opened file does not redirect its descriptor; a disappearance,
-growth, replacement, or inconsistent observation may instead select a fixed
-redacted unavailable, path-rejected, or read-failed category. The operation is
-not a multi-file snapshot.
+Files are read through their retained descriptors. Descriptor type and initial
+size are verified before the bounded read, and the read admits one overflow
+witness, so a symlink or special-object race cannot redirect content access or
+silently bypass the file-size bound. A concurrent rename of the opened file
+does not redirect its descriptor; a disappearance, growth, replacement, or
+inconsistent observation may instead select a fixed redacted unavailable,
+path-rejected, or read-failed category. The operation is not a multi-file
+snapshot.
 
 ## Scoring and ordering
 

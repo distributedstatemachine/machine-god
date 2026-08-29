@@ -263,6 +263,11 @@ fn query_and_path_bounds_are_byte_exact_and_direct_execution_revalidates_canonic
     let prepared = tool.prepare(call(json!({"query": maximum_query}))).unwrap();
     assert_eq!(prepared.arguments()["path"], ".");
     assert_invalid_query(tool.prepare(call(json!({"query": ""}))).unwrap_err());
+    for query in ["   \t", "bad\0query", "bad\nquery", "bad\u{202e}query"] {
+        assert_invalid_query(tool.prepare(call(json!({"query": query}))).unwrap_err());
+    }
+    let tab_query = tool.prepare(call(json!({"query": "alpha\tbeta"}))).unwrap();
+    assert_eq!(tab_query.arguments()["query"], "alpha\tbeta");
     assert_invalid_query(
         tool.prepare(call(json!({
             "query": "q".repeat(MAX_SEMANTIC_SEARCH_QUERY_BYTES + 1)
