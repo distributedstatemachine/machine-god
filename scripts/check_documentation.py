@@ -89,8 +89,11 @@ REFERENCE_HOST_INVENTORY_RE = re.compile(
     rf"\b{COUNT_WORD_RE}-tool\s+alphabetical\s+reference\s+catalog\b|"
     rf"\bregisters\s+exactly\s+{COUNT_WORD_RE}\s+(?:alphabetical\s+)?tools\b|"
     rf"\b{COUNT_WORD_RE}\s+alphabetical\s+tools\b|"
+    rf"\b{COUNT_WORD_RE}\s+workspace\s+tools\b|"
     rf"\b{COUNT_WORD_RE}\s+workspace-backed\s+tools\b|"
-    rf"\b{COUNT_WORD_RE}\s+identity-preserving\s+clones\b",
+    rf"\b{COUNT_WORD_RE}\s+identity-preserving\s+clones\b|"
+    rf"\b{COUNT_WORD_RE}\s+clones?\s+(?:across|among|for|between)\b"
+    rf"[^.]{{0,120}}\btools\b",
     re.IGNORECASE,
 )
 

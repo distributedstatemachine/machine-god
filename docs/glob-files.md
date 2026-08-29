@@ -369,24 +369,14 @@ thread, channel, subprocess, timer, or detached work.
 
 ## Reference-host composition
 
-The delivered slice extends both existing-path and prepared-root
-`NativeReferenceHost` constructors from three to exactly four workspace tools.
-The catalog order is deterministically alphabetical:
-
-```text
-file_info
-glob_files
-list_files
-read_file
-```
-
-One retained workspace identity is distributed as the original descriptor plus
-three clones across those four tools. Prepared-root composition consumes those
-four descriptors without reopening the workspace path. A clone failure remains
-the host's fixed redacted `WorkspaceRoot` construction stage and occurs before
-engine construction. No constructor arguments, configuration fields,
-credential, provider, transport, permission, session, runtime, or CLI authority
-change.
+`glob_files` is part of the native reference host. The canonical current
+inventory, ordering, and descriptor distribution live only in the
+[native reference-host tool catalog](native-reference-host.md#tool-catalog).
+Prepared-root composition does not reopen the workspace path. A workspace
+descriptor-clone failure remains the host's fixed redacted `WorkspaceRoot`
+construction stage and occurs before engine construction. No constructor
+arguments, configuration fields, credential, provider, transport, permission,
+session, runtime, or CLI authority change.
 
 ## Deferred scope
 

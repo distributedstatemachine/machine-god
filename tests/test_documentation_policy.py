@@ -154,8 +154,10 @@ class DocumentationPolicyTests(unittest.TestCase):
             "The fifteen-tool alphabetical reference catalog is stable.\n",
             "The reference host registers exactly fourteen tools.\n",
             "Composition contains thirteen alphabetical tools.\n",
+            "The host has exactly four workspace tools.\n",
             "Exactly twelve workspace-backed tools share the descriptor.\n",
             "The root uses eleven identity-preserving clones.\n",
+            "One descriptor plus three clones across those four tools.\n",
         )
         for claim in claims:
             with self.subTest(claim=claim), tempfile.TemporaryDirectory() as directory:
