@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from array import array
@@ -20,6 +21,7 @@ END_MARKER = "<!-- canonical-live-status:end -->"
 MAX_PLAN_LINES = 600
 MAX_MARKDOWN_BYTES = 262_144
 MAX_EXPANDED_MARKDOWN_BYTES = 524_288
+MAX_DOCUMENTATION_DISCOVERY_ENTRIES = 4_096
 MAX_MARKDOWN_FILES = 256
 MAX_MARKDOWN_TOTAL_BYTES = 4_194_304
 
@@ -73,6 +75,7 @@ HTML_DECLARATION_BLOCK_RE = re.compile(
 HTML_ENTITY_RE = re.compile(
     r"&(?:#[xX][0-9A-Fa-f]{1,8}|#[0-9]{1,8}|[A-Za-z][A-Za-z0-9]{1,31});"
 )
+MARKDOWN_ESCAPABLE_PUNCTUATION = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 ACTIONS_RUN_ID_RE = re.compile(
     r"\b(?:github\s+actions|actions|workflow)(?:\s+run)?(?:\s+id)?"
     r"\s*(?:(?:is|was)\s+|[:#]\s*)?`?[0-9]{6,12}\b|"
@@ -305,22 +308,32 @@ class ValidationContext:
 
     def read(self, path: Path) -> str | None:
         if path not in self.texts:
-            result = _read(path, self.root, self.errors)
+            if self.aggregate_exceeded:
+                self.texts[path] = None
+                return None
+            remaining = MAX_MARKDOWN_TOTAL_BYTES - self.total_bytes
+            limit = min(MAX_MARKDOWN_BYTES, remaining)
+            aggregate_limit = limit < MAX_MARKDOWN_BYTES
+            prior_error_count = len(self.errors)
+            result = _read(
+                path,
+                self.root,
+                self.errors,
+                limit,
+                aggregate_limit=aggregate_limit,
+            )
             if result is None:
+                aggregate_error = (
+                    "documentation: aggregate Markdown input exceeds the "
+                    f"{MAX_MARKDOWN_TOTAL_BYTES}-byte ceiling"
+                )
+                if aggregate_limit and aggregate_error in self.errors[prior_error_count:]:
+                    self.aggregate_exceeded = True
                 self.texts[path] = None
             else:
                 text, byte_length = result
-                if self.total_bytes + byte_length > MAX_MARKDOWN_TOTAL_BYTES:
-                    if not self.aggregate_exceeded:
-                        self.errors.append(
-                            "documentation: aggregate Markdown input exceeds the "
-                            f"{MAX_MARKDOWN_TOTAL_BYTES}-byte ceiling"
-                        )
-                    self.aggregate_exceeded = True
-                    self.texts[path] = None
-                else:
-                    self.total_bytes += byte_length
-                    self.texts[path] = text
+                self.total_bytes += byte_length
+                self.texts[path] = text
         return self.texts[path]
 
     def scan(self, path: Path) -> MarkdownScan | None:
@@ -337,30 +350,66 @@ class ValidationContext:
         return self.scans[path]
 
 
-def markdown_files(root: Path) -> list[Path]:
+def markdown_files(root: Path, errors: list[str]) -> list[Path]:
     """Return a bounded maintained Markdown inventory."""
 
     ignored_parts = {".bench", ".git", "target"}
     files: list[Path] = []
-    for path in root.rglob("*.md"):
-        if ignored_parts.isdisjoint(path.relative_to(root).parts):
-            files.append(path)
-            if len(files) > MAX_MARKDOWN_FILES:
-                break
+    pending = [root]
+    discovered = 0
+    while pending:
+        directory = pending.pop()
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    discovered += 1
+                    if discovered > MAX_DOCUMENTATION_DISCOVERY_ENTRIES:
+                        errors.append(
+                            "documentation: filesystem discovery exceeds the "
+                            f"{MAX_DOCUMENTATION_DISCOVERY_ENTRIES}-entry ceiling"
+                        )
+                        return sorted(files)
+                    if entry.name in ignored_parts and entry.is_dir(
+                        follow_symlinks=False
+                    ):
+                        continue
+                    path = Path(entry.path)
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(path)
+                    elif entry.name.endswith(".md"):
+                        files.append(path)
+                        if len(files) > MAX_MARKDOWN_FILES:
+                            return sorted(files)
+        except OSError as error:
+            errors.append(
+                f"{directory.relative_to(root)}: cannot enumerate documentation: "
+                f"{error}"
+            )
     return sorted(files)
 
 
 def _read(
-    path: Path, root: Path, errors: list[str]
+    path: Path,
+    root: Path,
+    errors: list[str],
+    byte_limit: int,
+    *,
+    aggregate_limit: bool,
 ) -> tuple[str, int] | None:
     try:
         with path.open("rb") as source:
-            data = source.read(MAX_MARKDOWN_BYTES + 1)
-        if len(data) > MAX_MARKDOWN_BYTES:
-            errors.append(
-                f"{path.relative_to(root)}: exceeds the "
-                f"{MAX_MARKDOWN_BYTES}-byte Markdown ceiling"
-            )
+            data = source.read(byte_limit + 1)
+        if len(data) > byte_limit:
+            if aggregate_limit:
+                errors.append(
+                    "documentation: aggregate Markdown input exceeds the "
+                    f"{MAX_MARKDOWN_TOTAL_BYTES}-byte ceiling"
+                )
+            else:
+                errors.append(
+                    f"{path.relative_to(root)}: exceeds the "
+                    f"{MAX_MARKDOWN_BYTES}-byte Markdown ceiling"
+                )
             return None
         return data.decode("utf-8"), len(data)
     except (OSError, UnicodeError) as error:
@@ -592,9 +641,15 @@ def _parse_container_line(
     return ParsedContainerLine(state, cursor, line[cursor:])
 
 
-def _backtick_runs(text: str) -> tuple[array, array, array, bytearray]:
+def _backtick_runs(
+    text: str, inline_literals: bytearray | None = None
+) -> tuple[array, array, array, bytearray]:
     """Index paragraph-local exact and outside-code escaped backtick runs."""
 
+    if inline_literals is None:
+        inline_literals = (
+            _inline_literal_mask(text) if "`" in text else bytearray(len(text))
+        )
     starts = array("I")
     ends = array("I")
     next_same = array("i")
@@ -603,6 +658,8 @@ def _backtick_runs(text: str) -> tuple[array, array, array, bytearray]:
     def add_segment(segment_start: int, segment_end: int) -> None:
         first_index = len(starts)
         for match in BACKTICK_RUN_RE.finditer(text, segment_start, segment_end):
+            if inline_literals[match.start()]:
+                continue
             slash = match.start() - 1
             slash_count = 0
             while slash >= segment_start and text[slash] == "\\":
@@ -718,19 +775,66 @@ def _escaped_punctuation_mask(markup: str) -> bytearray:
         if token == "\\":
             slash_run += 1
             continue
-        if slash_run % 2 and token.isascii() and not token.isalnum():
+        if slash_run % 2 and token in MARKDOWN_ESCAPABLE_PUNCTUATION:
             escaped[index] = 1
         slash_run = 0
     return escaped
 
 
+def _expand_markdown_tabs(source: str) -> str:
+    """Expand block tabs while retaining invalid inline-link leading tabs."""
+
+    protected = bytearray(len(source))
+    last_non_whitespace = -1
+    line_breaks_since_content = 0
+    for index, token in enumerate(source):
+        if not token.isspace():
+            last_non_whitespace = index
+            line_breaks_since_content = 0
+            continue
+        if token == "\n" or (
+            token == "\r" and (index + 1 == len(source) or source[index + 1] != "\n")
+        ):
+            line_breaks_since_content += 1
+        if (
+            token == "\t"
+            and line_breaks_since_content <= 1
+            and last_non_whitespace > 0
+            and source[last_non_whitespace] == "("
+            and source[last_non_whitespace - 1] == "]"
+        ):
+            protected[index] = 1
+
+    expanded: list[str] = []
+    column = 0
+    for index, token in enumerate(source):
+        if token == "\t":
+            width = 4 - column % 4
+            expanded.append("\t" if protected[index] else " " * width)
+            column += width
+        else:
+            expanded.append(token)
+            if token in "\r\n":
+                column = 0
+            else:
+                column += 1
+    return "".join(expanded)
+
+
 def _scan_markdown_inert_blocks(source: str) -> MarkdownScan:
     """Project bounded Markdown once with ordered container ownership."""
 
-    text = source.expandtabs(4)
+    text = _expand_markdown_tabs(source)
     if len(text.encode("utf-8")) > MAX_EXPANDED_MARKDOWN_BYTES:
         return MarkdownScan("", "", "", 0, False, expanded_overflow=True)
-    run_starts, run_ends, next_same_run, escaped_runs = _backtick_runs(text)
+    inline_literals = (
+        _inline_literal_mask(text)
+        if "`" in text or "<!--" in text
+        else bytearray(len(text))
+    )
+    run_starts, run_ends, next_same_run, escaped_runs = _backtick_runs(
+        text, inline_literals
+    )
     escaped_punctuation = _escaped_punctuation_mask(text)
     comment_starts = array(
         "I",
@@ -738,6 +842,7 @@ def _scan_markdown_inert_blocks(source: str) -> MarkdownScan:
             match.start()
             for match in HTML_COMMENT_OPEN_RE.finditer(text)
             if not escaped_punctuation[match.start()]
+            and not inline_literals[match.start()]
         ),
     )
     policy: list[str] = []
@@ -1343,6 +1448,8 @@ class LinkSyntaxIndex:
     next_angle_open: array
     next_line_break: array
     next_nonspace: array
+    next_tab: array
+    next_invalid_whitespace: array
     next_single_quote: array
     next_double_quote: array
     next_paren_close: array
@@ -1365,10 +1472,15 @@ def _link_syntax_index(markup: str) -> LinkSyntaxIndex:
 
     next_nonspace = array("i", [-1]) * (len(markup) + 1)
     nearest_nonspace = -1
+    next_invalid_whitespace = array("i", [-1]) * (len(markup) + 1)
+    nearest_invalid_whitespace = -1
     for index in range(len(markup) - 1, -1, -1):
         if not markup[index].isspace():
             nearest_nonspace = index
         next_nonspace[index] = nearest_nonspace
+        if markup[index].isspace() and markup[index] not in " \t\r\n":
+            nearest_invalid_whitespace = index
+        next_invalid_whitespace[index] = nearest_invalid_whitespace
 
     return LinkSyntaxIndex(
         escaped=escaped,
@@ -1376,6 +1488,8 @@ def _link_syntax_index(markup: str) -> LinkSyntaxIndex:
         next_angle_open=_next_unescaped(markup, escaped, "<"),
         next_line_break=_next_unescaped(markup, bytearray(len(markup)), "\n"),
         next_nonspace=next_nonspace,
+        next_tab=_next_unescaped(markup, bytearray(len(markup)), "\t"),
+        next_invalid_whitespace=next_invalid_whitespace,
         next_single_quote=_next_unescaped(markup, escaped, "'"),
         next_double_quote=_next_unescaped(markup, escaped, '"'),
         next_paren_close=_next_unescaped(markup, escaped, ")"),
@@ -1383,7 +1497,11 @@ def _link_syntax_index(markup: str) -> LinkSyntaxIndex:
 
 
 def _skip_link_whitespace(
-    syntax: LinkSyntaxIndex, cursor: int, limit: int
+    syntax: LinkSyntaxIndex,
+    cursor: int,
+    limit: int,
+    *,
+    allow_tabs: bool = True,
 ) -> int | None:
     """Skip link whitespace unless it contains a blank physical line."""
 
@@ -1391,6 +1509,13 @@ def _skip_link_whitespace(
         return limit
     next_nonspace = syntax.next_nonspace[cursor]
     end = limit if next_nonspace < 0 or next_nonspace >= limit else next_nonspace
+    invalid = syntax.next_invalid_whitespace[cursor]
+    if invalid >= 0 and invalid < end:
+        return None
+    if not allow_tabs:
+        tab = syntax.next_tab[cursor]
+        if tab >= 0 and tab < end:
+            return None
     first_break = syntax.next_line_break[cursor]
     if first_break >= 0 and first_break < end:
         second_break = syntax.next_line_break[first_break + 1]
@@ -1431,7 +1556,9 @@ def _inline_link_target(
 ) -> tuple[str, int] | None:
     """Parse one complete inline destination and optional title."""
 
-    cursor = _skip_link_whitespace(syntax, open_paren + 1, len(markup))
+    cursor = _skip_link_whitespace(
+        syntax, open_paren + 1, len(markup), allow_tabs=False
+    )
     if cursor is None or cursor >= len(markup):
         return None
 
@@ -1667,11 +1794,18 @@ def _reference_definitions(markup: str) -> tuple[dict[str, str], str]:
     ambient = EMPTY_CONTAINER
     pending_title_owner: ContainerState | None = None
     pending_destination: tuple[ContainerState, str, int] | None = None
+    paragraph_open = False
     for raw_line in markup.splitlines(keepends=True):
         content = raw_line.rstrip("\r\n")
         newline = raw_line[len(content) :]
+        prior_ambient = ambient
         parsed = _parse_container_line(content, ambient)
         ambient = parsed.state
+        continuation, _ = _paragraph_line_continuation(
+            content, prior_ambient
+        )
+        if paragraph_open and not continuation:
+            paragraph_open = False
         if pending_destination is not None:
             owner, label, chunk_index = pending_destination
             pending_destination = None
@@ -1690,25 +1824,48 @@ def _reference_definitions(markup: str) -> tuple[dict[str, str], str]:
                 chunks.append(" " * len(content) + newline)
                 if not has_title:
                     pending_title_owner = parsed.state
+                paragraph_open = False
                 continue
         if pending_title_owner is not None:
             same_owner = parsed.path == pending_title_owner.frames
             pending_title_owner = None
             if same_owner and _reference_title_line(parsed.content):
                 chunks.append(" " * len(content) + newline)
+                paragraph_open = False
                 continue
-        definition = _reference_definition(parsed.content)
+        definition = (
+            None
+            if paragraph_open
+            else _reference_definition(parsed.content)
+        )
         if definition is not None:
             label, target, has_title = definition
             definitions.setdefault(label, target)
             chunks.append(" " * len(content) + newline)
             if not has_title:
                 pending_title_owner = parsed.state
+            paragraph_open = False
             continue
-        prefix = _reference_definition_prefix(parsed.content)
+        prefix = (
+            None
+            if paragraph_open
+            else _reference_definition_prefix(parsed.content)
+        )
         chunks.append(raw_line)
         if prefix is not None:
             pending_destination = (parsed.state, prefix, len(chunks) - 1)
+            paragraph_open = False
+        elif not content.strip():
+            paragraph_open = False
+        else:
+            paragraph_open = not (
+                _fence_opener(parsed.content) is not None
+                or PARAGRAPH_ATX_RE.match(parsed.content) is not None
+                or SETEXT_HEADING_RE.match(parsed.content) is not None
+                or THEMATIC_BREAK_RE.match(parsed.content) is not None
+                or HTML_RAW_BLOCK_RE.match(parsed.content) is not None
+                or HTML_DECLARATION_BLOCK_RE.match(parsed.content) is not None
+            )
     return definitions, "".join(chunks)
 
 
@@ -1737,8 +1894,14 @@ def _without_indented_code(markup: str) -> str:
                 continue
             indented_owner = None
 
+        prior_ambient = ambient
         parsed = _parse_container_line(content, ambient)
         ambient = parsed.state
+        continuation, _ = _paragraph_line_continuation(
+            content, prior_ambient
+        )
+        if paragraph_open and not continuation:
+            paragraph_open = False
         if not content.strip():
             paragraph_open = False
             chunks.append(raw_line)
@@ -1854,6 +2017,44 @@ def _complete_type7_html_tag(content: str) -> bool:
     return end is not None and not content[end:].strip()
 
 
+def _inline_literal_mask(markup: str) -> bytearray:
+    """Mark inline-link destinations/titles and complete HTML tag syntax."""
+
+    syntax = _link_syntax_index(markup)
+    mask = bytearray(len(markup))
+    cursor = 0
+    while cursor < len(markup):
+        if markup[cursor] == "<" and not syntax.escaped[cursor]:
+            end = _html_tag_end(markup, cursor)
+            if end is not None:
+                mask[cursor:end] = b"\x01" * (end - cursor)
+                cursor = end
+                continue
+        cursor += 1
+
+    openers = array("I")
+    cursor = 0
+    while cursor < len(markup):
+        token = markup[cursor]
+        if token == "[" and not syntax.escaped[cursor]:
+            openers.append(cursor)
+            cursor += 1
+            continue
+        if token != "]" or syntax.escaped[cursor] or not openers:
+            cursor += 1
+            continue
+        openers.pop()
+        if cursor + 1 < len(markup) and markup[cursor + 1] == "(":
+            inline = _inline_link_target(markup, syntax, cursor + 1)
+            if inline is not None:
+                _, end = inline
+                mask[cursor + 1 : end] = b"\x01" * (end - cursor - 1)
+                cursor = end
+                continue
+        cursor += 1
+    return mask
+
+
 def _without_html_blocks_for_links(markup: str) -> str:
     """Blank CommonMark HTML block contents where Markdown links are inert."""
 
@@ -1866,6 +2067,13 @@ def _without_html_blocks_for_links(markup: str) -> str:
         content = raw_line.rstrip("\r\n")
         newline = raw_line[len(content) :]
         if html_owner is not None:
+            if (
+                not content.strip()
+                and html_owner.list_only
+                and html_end is not None
+            ):
+                chunks.append(" " * len(content) + newline)
+                continue
             matched, owner_offset = _match_container_path(
                 content, html_owner.frames
             )
@@ -1996,7 +2204,7 @@ def _markdown_link_targets(markup: str) -> Iterator[str]:
             image_depth -= 1
         nested_label = bool(opener_nested.pop())
         active = image or opener_generation == generation
-        if cursor - opener - 1 > 999 or not active:
+        if not active:
             cursor += 1
             continue
 
@@ -2009,6 +2217,10 @@ def _markdown_link_targets(markup: str) -> Iterator[str]:
                 yield target
             if not image and not in_image:
                 generation += 1
+            continue
+
+        if cursor - opener - 1 > 999:
+            cursor += 1
             continue
 
         suffix = _reference_suffix(markup, syntax, cursor + 1)
@@ -2144,7 +2356,7 @@ def _normalize_policy_markup(prose: str) -> str:
         image = bool(opener_images.pop())
         nested_label = bool(opener_nested.pop())
         active = image or opener_generation == generation
-        if cursor - opener - 1 > 999 or not active:
+        if not active:
             cursor += 1
             continue
 
@@ -2153,6 +2365,9 @@ def _normalize_policy_markup(prose: str) -> str:
             inline = _inline_link_target(prose, syntax, cursor + 1)
             if inline is not None:
                 _, syntax_end = inline
+        if syntax_end is None and cursor - opener - 1 > 999:
+            cursor += 1
+            continue
         if syntax_end is None:
             suffix = _reference_suffix(prose, syntax, cursor + 1)
             if suffix is not None:
@@ -2298,6 +2513,33 @@ def _normalize_policy_markup(prose: str) -> str:
                 rendered.append(unescape_html(entity.group(0)))
                 cursor = entity.end()
                 continue
+        if token == "\\":
+            run_end = cursor + 1
+            while (
+                run_end < len(prose)
+                and prose[run_end] == "\\"
+                and not code[run_end]
+                and not html_tags[run_end]
+                and not removed[run_end]
+            ):
+                run_end += 1
+            slash_count = run_end - cursor
+            rendered.append("\\" * (slash_count // 2))
+            if (
+                slash_count % 2
+                and run_end < len(prose)
+                and prose[run_end] in MARKDOWN_ESCAPABLE_PUNCTUATION
+                and not code[run_end]
+                and not html_tags[run_end]
+                and not removed[run_end]
+            ):
+                rendered.append(prose[run_end])
+                cursor = run_end + 1
+                continue
+            if slash_count % 2:
+                rendered.append("\\")
+            cursor = run_end
+            continue
         rendered.append(token)
         cursor += 1
     return "".join(rendered)
@@ -2307,12 +2549,11 @@ def _relative_link_target(raw_target: str) -> str | None:
     target = raw_target[1:-1] if raw_target.startswith("<") else raw_target
     rendered: list[str] = []
     cursor = 0
-    escapable = " !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
     while cursor < len(target):
         if (
             target[cursor] == "\\"
             and cursor + 1 < len(target)
-            and target[cursor + 1] in escapable
+            and target[cursor + 1] in MARKDOWN_ESCAPABLE_PUNCTUATION
         ):
             cursor += 1
         rendered.append(target[cursor])
@@ -2320,13 +2561,19 @@ def _relative_link_target(raw_target: str) -> str | None:
     target = HTML_ENTITY_RE.sub(
         lambda match: unescape_html(match.group(0)), "".join(rendered)
     )
-    target = unquote(target)
-    if target.startswith("#"):
+    classification_target = "".join(
+        f"%{ord(token):02X}" if ord(token) < 0x20 else token
+        for token in target
+    )
+    if classification_target.startswith("#"):
         return None
-    parsed = urlsplit(target)
-    if parsed.scheme or parsed.netloc or target.startswith("/"):
+    try:
+        parsed = urlsplit(classification_target)
+    except ValueError:
         return None
-    return parsed.path or None
+    if parsed.scheme or parsed.netloc or classification_target.startswith("/"):
+        return None
+    return unquote(parsed.path) or None
 
 
 def _validate_markdown(
@@ -2360,10 +2607,21 @@ def _validate_markdown(
             if target in checked_targets:
                 continue
             checked_targets.add(target)
-            resolved = (path.parent / target).resolve()
+            if "\0" in target:
+                errors.append(
+                    f"{path.relative_to(root)}: invalid relative link target"
+                )
+                continue
+            try:
+                resolved = (path.parent / target).resolve()
+            except (OSError, ValueError):
+                errors.append(
+                    f"{path.relative_to(root)}: invalid relative link target"
+                )
+                continue
             unique_targets.add(resolved)
             try:
-                resolved.relative_to(root.resolve())
+                resolved.relative_to(root)
             except ValueError:
                 errors.append(
                     f"{path.relative_to(root)}: relative link escapes repository: {target}"
@@ -2386,7 +2644,9 @@ def validate_repository(root: Path) -> tuple[list[str], DocumentationStats]:
     root = root.resolve()
     errors: list[str] = []
     context = ValidationContext(root, errors)
-    files = markdown_files(root)
+    files = markdown_files(root, errors)
+    if any("filesystem discovery exceeds" in error for error in errors):
+        return errors, DocumentationStats(markdown_files=len(files))
     if len(files) > MAX_MARKDOWN_FILES:
         errors.append(
             "documentation: maintained Markdown file count exceeds the "

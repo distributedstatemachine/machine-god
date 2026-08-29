@@ -1030,7 +1030,7 @@ class DocumentationPolicyTests(unittest.TestCase):
             check_documentation._relative_link_target(r"dir/a\(b\).md"),
         )
         self.assertEqual(
-            "dir/a b.md",
+            r"dir/a\ b.md",
             check_documentation._relative_link_target(r"<dir/a\ b.md>"),
         )
         self.assertIsNone(
@@ -1042,6 +1042,42 @@ class DocumentationPolicyTests(unittest.TestCase):
             "foo&bar.md",
             check_documentation._relative_link_target("foo&amp;bar.md"),
         )
+        self.assertEqual(
+            "foo\tbar.md",
+            check_documentation._relative_link_target("foo%09bar.md"),
+        )
+        self.assertEqual(
+            "foo\tbar.md",
+            check_documentation._relative_link_target("foo&Tab;bar.md"),
+        )
+        self.assertEqual(
+            "missing\0.md",
+            check_documentation._relative_link_target("missing%00.md"),
+        )
+        self.assertEqual(
+            [],
+            list(check_documentation._markdown_link_targets("[x](\tmissing.md)")),
+        )
+
+    def test_invalid_decoded_relative_link_target_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            (root / "docs/foo\tbar.md").write_text("# Tab name\n", encoding="utf-8")
+            (root / "docs/tool-contract.md").write_text(
+                "[percent tab](foo%09bar.md)\n"
+                "[entity tab](foo&Tab;bar.md)\n"
+                "[nul](missing%00.md)\n"
+                "[literal tab](\tmissing.md)\n",
+                encoding="utf-8",
+            )
+
+            errors, stats = check_documentation.validate_repository(root)
+
+            self.assertEqual(
+                ["docs/tool-contract.md: invalid relative link target"], errors
+            )
+            self.assertEqual(4, stats.relative_links)
 
     def test_reference_style_relative_links_are_validated(self) -> None:
         payloads = (
@@ -1087,6 +1123,31 @@ class DocumentationPolicyTests(unittest.TestCase):
             ),
         )
 
+    def test_reference_definition_cannot_interrupt_a_paragraph(self) -> None:
+        markup = (
+            "NativeReferenceHost has\n"
+            "[note]: nineteen&#32;tools.\n\n"
+            "[use][note]\n"
+        )
+
+        self.assertEqual([], list(check_documentation._markdown_link_targets(markup)))
+        self.assertIn(
+            "NativeReferenceHost has\n[note]: nineteen tools.",
+            check_documentation._normalize_policy_markup(markup),
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            (root / "docs/unlisted.md").write_text(markup, encoding="utf-8")
+
+            errors, _ = check_documentation.validate_repository(root)
+
+            self.assertTrue(
+                any("reference-host inventory counts belong only" in error for error in errors),
+                "\n".join(errors),
+            )
+
     def test_html_block_markdown_links_are_inert(self) -> None:
         markup = (
             "<div>\n[raw](ignored-one.md)\n</div>\n\n"
@@ -1099,6 +1160,45 @@ class DocumentationPolicyTests(unittest.TestCase):
         self.assertEqual(
             ["checked.md"],
             list(check_documentation._markdown_link_targets(markup)),
+        )
+
+    def test_list_owned_raw_html_blocks_survive_blank_lines(self) -> None:
+        markup = (
+            "- <script>\n\n"
+            "  [script](ignored-script.md)\n"
+            "  </script>\n\n"
+            "- <?pi\n\n"
+            "  [pi](ignored-pi.md)\n"
+            "  ?>\n\n"
+            "- <![CDATA[\n\n"
+            "  [cdata](ignored-cdata.md)\n"
+            "  ]]>\n\n"
+            "[real](checked.md)\n"
+        )
+
+        self.assertEqual(
+            ["checked.md"],
+            list(check_documentation._markdown_link_targets(markup)),
+        )
+
+    def test_inline_titles_and_html_attributes_own_literal_delimiters(self) -> None:
+        markup = (
+            "[comment](comment.md \"<!--\") -->\n\n"
+            "[tick](tick.md \"`\") `\n\n"
+            "<span title=\"<!--\">[attribute-comment](attribute-comment.md)"
+            "</span> -->\n\n"
+            "<span title=\"`\">[attribute-tick](attribute-tick.md)</span> `\n"
+        )
+        scan = check_documentation._scan_markdown_inert_blocks(markup)
+
+        self.assertEqual(
+            [
+                "comment.md",
+                "tick.md",
+                "attribute-comment.md",
+                "attribute-tick.md",
+            ],
+            list(check_documentation._markdown_link_targets(scan.link_markup)),
         )
 
     def test_links_nested_in_image_alt_text_are_not_rendered(self) -> None:
@@ -1121,6 +1221,8 @@ class DocumentationPolicyTests(unittest.TestCase):
                 "- item\n\n"
                 "      [list-code](missing-nested-code.md)\n\n"
                 ">     [quote-code](missing-quote-code.md)\n\n"
+                "paragraph\n"
+                "-     [new-container-code](missing-new-container-code.md)\n\n"
                 "Paragraph\n"
                 "    [rendered](missing-rendered.md)\n",
                 encoding="utf-8",
@@ -1134,6 +1236,7 @@ class DocumentationPolicyTests(unittest.TestCase):
             self.assertNotIn("missing-list-code.md", rendered)
             self.assertNotIn("missing-nested-code.md", rendered)
             self.assertNotIn("missing-quote-code.md", rendered)
+            self.assertNotIn("missing-new-container-code.md", rendered)
             self.assertEqual(2, stats.relative_links)
 
     def test_classifier_uses_rendered_inline_presentation_text(self) -> None:
@@ -1181,6 +1284,42 @@ class DocumentationPolicyTests(unittest.TestCase):
         self.assertIn("Main CI: pending", prose)
         self.assertIn("Delivered slices: 999", prose)
 
+    def test_classifier_applies_commonmark_backslash_escapes(self) -> None:
+        self.assertEqual(
+            "Main CI: pending",
+            check_documentation._normalize_policy_markup(r"Main CI\: pending"),
+        )
+        self.assertEqual(
+            r"Main CI\ : pending",
+            check_documentation._normalize_policy_markup(r"Main CI\ : pending"),
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            (root / "docs/unlisted.md").write_text(
+                r"Main CI\: pending", encoding="utf-8"
+            )
+
+            errors, _ = check_documentation.validate_repository(root)
+
+            self.assertTrue(
+                any("canonical live-status field 'Main CI'" in error for error in errors),
+                "\n".join(errors),
+            )
+
+    def test_inline_link_label_is_not_limited_like_a_reference_label(self) -> None:
+        markup = "[" + "x" * 1_000 + "](missing.md)"
+
+        self.assertEqual(
+            ["missing.md"],
+            list(check_documentation._markdown_link_targets(markup)),
+        )
+        self.assertEqual(
+            "x" * 1_000,
+            check_documentation._normalize_policy_markup(markup),
+        )
+
     def test_classifier_treats_indented_code_as_inert(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1217,6 +1356,7 @@ class DocumentationPolicyTests(unittest.TestCase):
         ceiling = check_documentation.MAX_MARKDOWN_BYTES
         hostile_inputs = (
             "[" * ceiling,
+            "\t" * ceiling,
             ("[x](< " * ceiling)[:ceiling],
             ("[" * (ceiling // 2) + "]" * (ceiling // 2))[:ceiling],
             ("- " * (ceiling // 4) + "x\n" + "\n" * ceiling)[:ceiling],
@@ -1312,6 +1452,12 @@ class DocumentationPolicyTests(unittest.TestCase):
     def test_repository_wide_documentation_bounds_fail_closed(self) -> None:
         cases = (
             (
+                "filesystem discovery",
+                "MAX_DOCUMENTATION_DISCOVERY_ENTRIES",
+                1,
+                "filesystem discovery exceeds",
+            ),
+            (
                 "files",
                 "MAX_MARKDOWN_FILES",
                 14,
@@ -1345,6 +1491,67 @@ class DocumentationPolicyTests(unittest.TestCase):
                     any(expected in error for error in errors),
                     "\n".join(errors),
                 )
+
+    def test_ignored_trees_do_not_consume_discovery_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            ignored = root / "target/generated"
+            ignored.mkdir(parents=True)
+            for index in range(128):
+                (ignored / f"artifact-{index}.txt").write_text("x", encoding="utf-8")
+            original = check_documentation.MAX_DOCUMENTATION_DISCOVERY_ENTRIES
+            check_documentation.MAX_DOCUMENTATION_DISCOVERY_ENTRIES = 32
+            try:
+                errors, _ = check_documentation.validate_repository(root)
+            finally:
+                check_documentation.MAX_DOCUMENTATION_DISCOVERY_ENTRIES = original
+
+            self.assertEqual([], errors)
+
+    def test_aggregate_overflow_stops_reading_remaining_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = [root / f"{name}.md" for name in ("a", "b", "c")]
+            for path in paths:
+                path.write_text("xxxx", encoding="utf-8")
+            original_limit = check_documentation.MAX_MARKDOWN_TOTAL_BYTES
+            original_read = check_documentation._read
+            calls: list[Path] = []
+
+            def recording(
+                path: Path,
+                repository: Path,
+                errors: list[str],
+                byte_limit: int,
+                *,
+                aggregate_limit: bool,
+            ) -> tuple[str, int] | None:
+                calls.append(path)
+                return original_read(
+                    path,
+                    repository,
+                    errors,
+                    byte_limit,
+                    aggregate_limit=aggregate_limit,
+                )
+
+            check_documentation.MAX_MARKDOWN_TOTAL_BYTES = 4
+            check_documentation._read = recording
+            try:
+                errors: list[str] = []
+                context = check_documentation.ValidationContext(root, errors)
+                for path in paths:
+                    context.read(path)
+            finally:
+                check_documentation._read = original_read
+                check_documentation.MAX_MARKDOWN_TOTAL_BYTES = original_limit
+
+            self.assertEqual(paths[:2], calls)
+            self.assertEqual(
+                ["documentation: aggregate Markdown input exceeds the 4-byte ceiling"],
+                errors,
+            )
 
     def test_validation_scans_each_markdown_file_once(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
