@@ -18,10 +18,11 @@ machine-god resume <id> [--] <prompt...>
 digits, `-`, `_`, `.`, or `:`, and with a first byte other than `-`. The core
 `SessionId` alphabet itself remains unchanged; rejecting a command-position ID
 that begins with `-` is an intentional CLI parser tightening because that token
-is option-like. One or more Unicode prompt arguments follow the ID and are
-joined with one ASCII space into exactly one prompt. A single `--` after the ID
-ends option recognition and permits the first prompt part to begin with `-`; it
-is not part of the prompt.
+is option-like. The exact token `last` is also reserved for possible future
+selection behavior and cannot name a resume target. One or more Unicode prompt
+arguments follow the ID and are joined with one ASCII space into exactly one
+prompt. A single `--` after the ID ends option recognition and permits the first
+prompt part to begin with `-`; it is not part of the prompt.
 
 The joined prompt must contain at least one byte other than space, tab, CR, or
 LF, contain no NUL byte, and contain at most 256 KiB of UTF-8. Join accounting
@@ -105,19 +106,28 @@ The command makes no cross-process serialization claim. Process-local engine
 state converges same-incarnation resumes only within one composed host, while
 the file store's advisory lock and compare-and-swap fence individual durable
 operations. Another cooperating process may load the same revision and begin
-work concurrently; a later conflicting save fails rather than merging turns.
-The CLI neither holds a process-wide session lease for the complete provider
-turn nor excludes processes that ignore the store protocol.
+work concurrently. Prompt reservation handles a conflict with at most 32
+reload-and-retry attempts: a loser may reconcile a same-incarnation user-message
+prefix committed by another process, append its own prompt, and send that
+combined prefix to its provider. A later assistant commit whose transcript has
+diverged fails closed instead of merging assistant results. The CLI neither
+holds a process-wide session lease for the complete provider turn nor excludes
+processes that ignore the store protocol.
 
 ## Resource and compatibility boundary
 
 The prompt, assistant text, provider rounds, events, tool calls/results,
 transcript, metadata, and structural JSON retain the bounds documented for
 [`ask`](ask-cli.md), the [core engine](core-api.md), and the
-[session lifecycle](native-session-lifecycle.md). Resume reads at most one
-current-schema record within the file-store cap and may create that record's
-permanent lock sidecar. The command adds no directory enumeration, ID-generation
-retry, detached task, thread, timer, or unbounded application retry.
+[session lifecycle](native-session-lifecycle.md). The initial lifecycle resume
+loads at most one current-schema record within the file-store cap. Subsequent
+prompt reservation and assistant persistence use the core store contract;
+compare-and-swap validation may reread the bounded record, and reservation may
+perform the bounded conflict retries described above. The command may create
+the record's permanent lock sidecar. It adds no directory enumeration or
+ID-generation retry. It reuses `ask`'s bounded scoped worker and owned signal
+guardian; no thread or task remains detached, and there is no unbounded
+application retry.
 
 The pinned upstream fx surface accepts implicit-last selection, aliases,
 recording, and interactive continuation forms. Machine-god intentionally
