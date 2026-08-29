@@ -85,47 +85,47 @@ COUNT_WORD_RE = (
     r"twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
     r"twenty)"
 )
-INVENTORY_COUNT_PATTERN = (
+INVENTORY_COUNT_NOUN_PATTERN = (
     rf"\b{COUNT_WORD_RE}-(?:tool|clone)\b|"
     rf"\b{COUNT_WORD_RE}\s+"
-    rf"(?:(?:alphabetical|workspace(?:-backed)?|descriptor-backed|built-in|"
-    rf"identity-preserving)\s+)?"
-    rf"(?:tools|entries|clones)\b|"
-    rf"\bone\s+"
-    rf"(?:(?:alphabetical|workspace(?:-backed)?|descriptor-backed|built-in|"
-    rf"identity-preserving)\s+)?"
-    rf"(?:tool|entry|clone)\b"
+    rf"(?:[A-Za-z][A-Za-z0-9_-]*\s+){{0,5}}(?:tools?|entries|clones?)\b"
 )
 REFERENCE_HOST_INVENTORY_COUNT_RE = re.compile(
-    INVENTORY_COUNT_PATTERN,
+    INVENTORY_COUNT_NOUN_PATTERN,
     re.IGNORECASE,
 )
-REFERENCE_HOST_SECTION_RE = re.compile(
-    r"\breference[- ]host\b|\bhost\s+composition\b|\btool\s+catalog\b",
-    re.IGNORECASE,
-)
-INVENTORY_CONTEXT_PATTERN = (
+INVENTORY_COUNT_TOKEN_RE = re.compile(rf"\b{COUNT_WORD_RE}\b", re.IGNORECASE)
+REFERENCE_HOST_INVENTORY_CONTEXT_RE = re.compile(
     r"\breference[- ]host\b|\bNativeReferenceHost\b|"
-    r"\b(?:tool|reference)\s+catalog\b|\bcatalog\b|\bcomposition\b|"
-    r"\bcheckpoint\b|\bdescriptor(?:-backed)?\b|\bworkspace\s+identity\b|"
-    r"\bidentity-preserving\b"
+    r"\b(?:tool|reference)\s+catalog\b|docs/native-reference-host\.md",
+    re.IGNORECASE,
 )
-REFERENCE_HOST_INVENTORY_PROXIMITY_RE = re.compile(
-    rf"(?:{INVENTORY_CONTEXT_PATTERN})[^.!?]{{0,240}}"
-    rf"(?:{INVENTORY_COUNT_PATTERN})|"
-    rf"(?:{INVENTORY_COUNT_PATTERN})[^.!?]{{0,240}}"
-    rf"(?:{INVENTORY_CONTEXT_PATTERN})|"
-    rf"\b{COUNT_WORD_RE}-(?:tool|clone)\b[^.!?]{{0,160}}\bhost\b|"
-    rf"\bhost\b[^.!?]{{0,160}}\b{COUNT_WORD_RE}-(?:tool|clone)\b|"
+REFERENCE_HOST_INVENTORY_RELATION_RE = re.compile(
+    r"\bregister(?:s|ed)?\b|\bexpos(?:e|es|ed)\b|"
+    r"\bcontain(?:s|ed)?\b|\bconsists?\s+of\b|\binventory\b|"
+    r"\bcatalog\s+size\b|\bsize\s+(?:is|of)\b",
+    re.IGNORECASE,
+)
+REFERENCE_HOST_INVENTORY_SHORTHAND_RE = re.compile(
+    rf"\b{COUNT_WORD_RE}-(?:tool|clone)\b[^.!?]{{0,160}}"
+    rf"(?:\bcatalog\b|\breference[- ]host\b|\bhost\b)|"
+    rf"(?:\bcatalog\b|\breference[- ]host\b|\bhost\b)"
+    rf"[^.!?]{{0,160}}\b{COUNT_WORD_RE}-(?:tool|clone)\b|"
+    rf"\bcomposition\b[^.!?]{{0,80}}\bcontain(?:s|ed)?\b"
+    rf"[^.!?]{{0,80}}\b{COUNT_WORD_RE}\s+"
+    rf"(?:[A-Za-z][A-Za-z0-9_-]*\s+){{0,5}}tools?\b|"
+    rf"\bhost\b[^.!?]{{0,80}}\bhas\b[^.!?]{{0,40}}"
+    rf"\b{COUNT_WORD_RE}\s+workspace(?:-backed)?\s+tools?\b|"
+    rf"\b{COUNT_WORD_RE}\s+workspace(?:-backed)?\s+tools?\b"
+    rf"[^.!?]{{0,120}}\b(?:share|shares|shared)\b[^.!?]{{0,80}}\bdescriptor\b|"
     rf"\b{COUNT_WORD_RE}\s+descriptor-backed\s+tools\b|"
     rf"\b{COUNT_WORD_RE}\s+identity-preserving\s+clones\b|"
-    rf"\bhost\b[^.!?]{{0,160}}\b{COUNT_WORD_RE}\s+"
-    rf"workspace(?:-backed)?\s+tools\b|"
-    rf"\b{COUNT_WORD_RE}\s+workspace(?:-backed)?\s+tools\b"
-    rf"[^.!?]{{0,160}}\bhost\b",
+    rf"\bdescriptor\b[^.!?]{{0,80}}\b{COUNT_WORD_RE}\s+clones\b"
+    rf"[^.!?]{{0,80}}\b{COUNT_WORD_RE}\s+tools\b|"
+    rf"\bworkspace\s+descriptor\b[^.!?]{{0,80}}\bdistribut(?:e|es|ed)\b"
+    rf"[^.!?]{{0,80}}\b{COUNT_WORD_RE}\s+clones\b",
     re.IGNORECASE,
 )
-MARKDOWN_HEADING_RE = re.compile(r"^[ ]{0,3}#{1,6}\s+(.*)$")
 
 
 @dataclass(frozen=True)
@@ -283,42 +283,43 @@ def _validate_reference_host_inventory(
         if text is None:
             continue
         prose = _prose_without_fenced_blocks(text)
-        section_is_reference_host = False
-        paragraph: list[str] = []
-
-        def paragraph_has_inventory() -> bool:
-            normalized = re.sub(r"\s+", " ", " ".join(paragraph)).strip()
-            if not normalized or REFERENCE_HOST_INVENTORY_COUNT_RE.search(normalized) is None:
-                return False
-            return (
-                section_is_reference_host
-                or REFERENCE_HOST_INVENTORY_PROXIMITY_RE.search(normalized) is not None
-            )
-
-        has_inventory = False
-        for line in [*prose.splitlines(), ""]:
-            heading = MARKDOWN_HEADING_RE.match(line)
-            if heading is not None:
-                if paragraph_has_inventory():
-                    has_inventory = True
-                    break
-                paragraph.clear()
-                section_is_reference_host = (
-                    REFERENCE_HOST_SECTION_RE.search(heading.group(1)) is not None
-                )
-            elif not line.strip():
-                if paragraph_has_inventory():
-                    has_inventory = True
-                    break
-                paragraph.clear()
-            else:
-                paragraph.append(line)
+        has_inventory = any(
+            _contains_reference_host_inventory(paragraph)
+            for paragraph in re.split(r"\n\s*\n", prose)
+        )
 
         if has_inventory:
             errors.append(
                 f"{relative}: reference-host inventory counts belong only in "
                 "docs/native-reference-host.md#tool-catalog"
             )
+
+
+def _contains_reference_host_inventory(paragraph: str) -> bool:
+    """Recognize inventory statements without confusing operational limits."""
+
+    normalized = re.sub(r"\s+", " ", paragraph).strip()
+    if not normalized:
+        return False
+
+    for sentence in re.split(r"(?<=[.!?])\s+", normalized):
+        if REFERENCE_HOST_INVENTORY_SHORTHAND_RE.search(sentence) is not None:
+            return True
+
+        has_context = REFERENCE_HOST_INVENTORY_CONTEXT_RE.search(sentence) is not None
+        has_relation = REFERENCE_HOST_INVENTORY_RELATION_RE.search(sentence) is not None
+        has_counted_noun = REFERENCE_HOST_INVENTORY_COUNT_RE.search(sentence) is not None
+        if has_context and has_relation and has_counted_noun:
+            return True
+
+        has_count = INVENTORY_COUNT_TOKEN_RE.search(sentence) is not None
+        has_catalog_size = re.search(
+            r"\bcatalog\s+size\b|\bsize\s+(?:is|of)\b", sentence, re.IGNORECASE
+        )
+        if has_context and has_count and has_catalog_size is not None:
+            return True
+
+    return False
 
 
 def _relative_link_target(raw_target: str) -> str | None:

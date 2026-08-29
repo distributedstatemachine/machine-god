@@ -166,6 +166,9 @@ class DocumentationPolicyTests(unittest.TestCase):
             "The eleven-tool/ten-clone host is stable.\n",
             "The reference-host tool catalog contains nineteen entries.\n",
             "Nineteen built-in tools are exposed by NativeReferenceHost.\n",
+            "NativeReferenceHost exposes nineteen built-in ToolSpec entries.\n",
+            "The reference-host catalog size is nineteen.\n",
+            "The catalog in `docs/native-reference-host.md` contains nineteen tools.\n",
         )
         for claim in claims:
             with self.subTest(claim=claim), tempfile.TemporaryDirectory() as directory:
@@ -221,6 +224,11 @@ class DocumentationPolicyTests(unittest.TestCase):
                 "At most four workspace tools may execute concurrently.\n\n"
                 "The executor makes two clones across four active tools, one per "
                 "Waker.\n\n"
+                "NativeReferenceHost may execute four workspace tools concurrently.\n\n"
+                "The reference host permits two clones of the supplied Waker.\n\n"
+                "At one scheduler checkpoint, four workspace tools may execute "
+                "concurrently.\n\n"
+                "Pipeline composition accepts four tools.\n\n"
                 "```text\n"
                 "The reference host registers exactly fourteen tools.\n"
                 "```\n",
