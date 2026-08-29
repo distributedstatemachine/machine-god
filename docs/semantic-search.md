@@ -214,8 +214,8 @@ more than one applies:
    traversal before every otherwise eligible candidate was searched;
 2. `result_cap` — more than 200 matching files existed, so only the best 200
    were retained; and
-3. `output_cap` — fewer than the first 100 retained results could be emitted
-   within the complete output ceiling.
+3. `output_cap` — one or more retained results were omitted by the 100-result
+   display ceiling or the complete serialized-output ceiling.
 
 `incomplete` is exactly whether that array is nonempty. Ordinary skips for an
 oversized file, non-text file, ignored directory, symlink, or special object do
