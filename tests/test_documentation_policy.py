@@ -192,6 +192,22 @@ class DocumentationPolicyTests(unittest.TestCase):
             "tools.\n",
             "NativeReferenceHost registers nineteen tools\n"
             "and permits two active tool calls.\n",
+            "NativeReferenceHost registers at most nineteen tools.\n",
+            "The reference-host catalog contains up to nineteen tools.\n",
+            "NativeReferenceHost includes a maximum of nineteen ToolSpec objects.\n",
+            "NativeReferenceHost has nineteen tools that execute concurrently.\n",
+            "NativeReferenceHost's nineteen tools run concurrently.\n",
+            "NativeReferenceHost provides nineteen built-ins.\n",
+            "NativeReferenceHost exposes nineteen tool schemas.\n",
+            "NativeReferenceHost registers a total of nineteen.\n",
+            "NativeReferenceHost has thirty tools.\n",
+            "NativeReferenceHost has a dozen tools.\n",
+            "NativeReferenceHost is stable. It registers nineteen tools.\n",
+            "NativeReferenceHost is stable.\n\nIt registers nineteen tools.\n",
+            "The catalog is defined in docs/native-reference-host.md. It contains "
+            "nineteen tools.\n",
+            "NativeReferenceHost (e.g. in production) registers nineteen tools.\n",
+            "## NativeReferenceHost\n\nIt registers nineteen tools.\n",
         )
         for claim in claims:
             with self.subTest(claim=claim), tempfile.TemporaryDirectory() as directory:
@@ -344,6 +360,11 @@ class DocumentationPolicyTests(unittest.TestCase):
                 "NativeReferenceHost queues four tools.\n\n"
                 "NativeReferenceHost's active set contains four tools.\n\n"
                 "NativeReferenceHost batches four tools per turn.\n\n"
+                "NativeReferenceHost owns two clones for each Waker.\n\n"
+                "NativeReferenceHost owns two clones while a call is active.\n\n"
+                "NativeReferenceHost provides four tools per request.\n\n"
+                "NativeReferenceHost: four workspace tools may execute "
+                "concurrently.\n\n"
                 "At one scheduler checkpoint, four workspace tools may execute "
                 "concurrently.\n\n"
                 "Pipeline composition accepts four tools.\n\n"
@@ -402,6 +423,120 @@ class DocumentationPolicyTests(unittest.TestCase):
                 "docs/native-reference-host.md#tool-catalog",
                 errors,
             )
+
+    def test_multiline_code_span_and_unmatched_tick_preserve_comment_semantics(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "multiline code span",
+                "The literal is `first\n<!--\nsecond`.\n"
+                "NativeReferenceHost has nineteen tools.\n",
+                True,
+            ),
+            (
+                "unmatched literal",
+                "The unmatched literal is ` before a real comment.\n"
+                "<!--\nNativeReferenceHost has nineteen tools.\n-->\n",
+                False,
+            ),
+        )
+        for name, payload, rejected in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_minimal_repository(root)
+                relative = Path("docs/tool-contract.md")
+                (root / relative).write_text(
+                    f"# Durable tool contract\n\n{payload}", encoding="utf-8"
+                )
+
+                errors, _ = check_documentation.validate_repository(root)
+                inventory_errors = [
+                    error for error in errors
+                    if "reference-host inventory counts belong only" in error
+                ]
+
+                self.assertEqual(rejected, bool(inventory_errors), "\n".join(errors))
+
+    def test_fence_openers_and_closers_follow_markdown_syntax(self) -> None:
+        cases = (
+            (
+                "invalid backtick info",
+                "```bad`info\nNativeReferenceHost has nineteen tools.\n```\n",
+                True,
+            ),
+            (
+                "trailing closer text",
+                "```text\n```not-a-close\n"
+                "NativeReferenceHost has nineteen tools.\n```\n",
+                False,
+            ),
+        )
+        for name, payload, rejected in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_minimal_repository(root)
+                relative = Path("docs/tool-contract.md")
+                (root / relative).write_text(
+                    f"# Durable tool contract\n\n{payload}", encoding="utf-8"
+                )
+
+                errors, _ = check_documentation.validate_repository(root)
+                inventory_errors = [
+                    error for error in errors
+                    if "reference-host inventory counts belong only" in error
+                ]
+
+                self.assertEqual(rejected, bool(inventory_errors), "\n".join(errors))
+                self.assertFalse(
+                    any("unclosed Markdown fence" in error for error in errors),
+                    "\n".join(errors),
+                )
+
+    def test_markdown_scanner_tokenizes_many_code_spans_once(self) -> None:
+        class RecordingPattern:
+            def __init__(self, pattern: object) -> None:
+                self.pattern = pattern
+                self.calls = 0
+
+            def finditer(self, text: str):  # type: ignore[no-untyped-def]
+                self.calls += 1
+                return self.pattern.finditer(text)  # type: ignore[attr-defined]
+
+        original = check_documentation.HTML_COMMENT_OPEN_RE
+        recording = RecordingPattern(original)
+        check_documentation.HTML_COMMENT_OPEN_RE = recording  # type: ignore[assignment]
+        try:
+            text = "`x`" * 65_536 + "<!-- hidden -->visible\n"
+            prose, _, unclosed = check_documentation._scan_markdown_inert_blocks(text)
+        finally:
+            check_documentation.HTML_COMMENT_OPEN_RE = original
+
+        self.assertEqual(1, recording.calls)
+        self.assertFalse(unclosed)
+        self.assertTrue(prose.endswith("visible\n"))
+
+    def test_operational_classifier_slices_bounded_context_first(self) -> None:
+        class SliceRecordingStr(str):
+            widths: list[int] = []
+
+            def __getitem__(self, key: object) -> str:
+                if isinstance(key, slice):
+                    start, stop, step = key.indices(len(self))
+                    if step == 1:
+                        self.widths.append(max(0, stop - start))
+                return super().__getitem__(key)  # type: ignore[arg-type]
+
+        clause = SliceRecordingStr(
+            "x" * 100_000 + " NativeReferenceHost permits two active tools per turn"
+        )
+        match = check_documentation.REFERENCE_HOST_INVENTORY_COUNT_RE.search(clause)
+        self.assertIsNotNone(match)
+
+        self.assertTrue(
+            check_documentation._counted_noun_is_operational(clause, match)
+        )
+        self.assertLessEqual(max(clause.widths), 120)
 
     def test_durable_limits_hashes_and_policy_terms_are_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

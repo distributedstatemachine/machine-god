@@ -237,8 +237,10 @@ regression/delivery claim unless a milestone explicitly promotes it.
   Actions run IDs.
 - `scripts/check_documentation.py` enforces canonical markers and fields, the
   600-line plan ceiling, evergreen overview restrictions, relative Markdown
-  link targets, and balanced fences. It prints inventory counts for the current
-  run but never persists those counts into maintained documents.
+  link targets, and canonical reference-host catalog ownership through one
+  linear Markdown/context scan covering valid fences, HTML comments, inline
+  code, and ATX/Setext headings. It prints inventory counts for the current run
+  but never persists those counts into maintained documents.
 - Compact this plan after every five delivered slices or whenever it exceeds
   600 lines. Keep the live block, milestone state, compact slice inventory,
   remaining boundary, and gates; move cycle detail to review ledgers.
