@@ -37,6 +37,12 @@ effect-free preparation. Preparation normalizes model input into:
   environment identity, network target, or indivisible ordered path set plus
   destination that policy must decide.
 
+The durable `memory` tool uses an exact custom capability containing its
+canonical action and fact, if present. All memory actions require policy
+approval because they observe or mutate state shared across sessions. Its
+state-root descriptor is explicit native authority and is never discovered by
+core or inferred from model input.
+
 Authority-bearing capabilities pass through the injected permission handler.
 An error is never approval. The native ask adapter maps prompt failure to a
 fixed denial-class error and does not cache grants.
@@ -124,6 +130,13 @@ publication, and directory synchronization. These coordinate cooperating
 processes and fence stale saves; they do not provide a global multi-record
 snapshot, encryption, record authentication, hostile-process exclusion, or
 secure erasure.
+
+The native `memory` tool separately owns a fixed versioned document and
+permanent advisory lock under an identity-preserving clone of the retained
+state root. Its nonblocking lock fails busy instead of waiting on a cooperating
+operation; save and clear use the atomic-publication and post-commit ambiguity
+boundary in the [memory contract](memory.md). Memory state and session records
+are not one transaction.
 
 Store futures are inert until polled and currently perform synchronous native
 work on the polling thread. Lock waits, filesystem latency, and documented

@@ -176,6 +176,7 @@ Construction failures are fixed, redacted stage categories:
 - unsupported selection;
 - workspace root;
 - session store;
+- memory construction;
 - credential;
 - HTTP transport;
 - web-fetch transport;
