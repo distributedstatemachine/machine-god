@@ -821,15 +821,15 @@ impl SemanticSearchTool {
         search_path: &str,
         cancellation: &CancellationToken,
     ) -> Result<SearchRoot, ToolError> {
-        check_cancellation(cancellation)?;
-        let mut current = rustix::fs::openat(
-            self.root.as_fd(),
-            ".",
-            directory_open_flags(),
-            Mode::empty(),
-        )
+        let mut current = execution_filesystem_call(cancellation, || {
+            rustix::fs::openat(
+                self.root.as_fd(),
+                ".",
+                directory_open_flags(),
+                Mode::empty(),
+            )
+        })?
         .map_err(|_| unavailable())?;
-        check_cancellation(cancellation)?;
         ensure_root_is_linked(current.as_fd(), cancellation)?;
         if search_path == "." {
             return Ok(SearchRoot::Directory(current));
@@ -838,33 +838,34 @@ impl SemanticSearchTool {
         let mut components = search_path.split('/').peekable();
         loop {
             let component = components.next().ok_or_else(invalid_arguments)?;
-            check_cancellation(cancellation)?;
             if components.peek().is_some() {
-                current = rustix::fs::openat(
-                    current.as_fd(),
-                    component,
-                    directory_open_flags(),
-                    Mode::empty(),
-                )
+                current = execution_filesystem_call(cancellation, || {
+                    rustix::fs::openat(
+                        current.as_fd(),
+                        component,
+                        directory_open_flags(),
+                        Mode::empty(),
+                    )
+                })?
                 .map_err(map_search_root_open_error)?;
-                check_cancellation(cancellation)?;
                 continue;
             }
-            let metadata =
+            let metadata = execution_filesystem_call(cancellation, || {
                 rustix::fs::statat(current.as_fd(), component, AtFlags::SYMLINK_NOFOLLOW)
-                    .map_err(map_search_root_open_error)?;
-            check_cancellation(cancellation)?;
+            })?
+            .map_err(map_search_root_open_error)?;
             let initial = classify_file_type(FileType::from_raw_mode(metadata.st_mode));
             let flags = match initial {
                 EntryKind::Directory => directory_open_flags(),
                 EntryKind::RegularFile => content_open_flags(),
                 EntryKind::Symlink | EntryKind::Other => return Err(rejected_path()),
             };
-            let selected = rustix::fs::openat(current.as_fd(), component, flags, Mode::empty())
-                .map_err(map_search_root_open_error)?;
-            check_cancellation(cancellation)?;
-            let opened = rustix::fs::fstat(&selected).map_err(|_| unavailable())?;
-            check_cancellation(cancellation)?;
+            let selected = execution_filesystem_call(cancellation, || {
+                rustix::fs::openat(current.as_fd(), component, flags, Mode::empty())
+            })?
+            .map_err(map_search_root_open_error)?;
+            let opened = execution_filesystem_call(cancellation, || rustix::fs::fstat(&selected))?
+                .map_err(|_| unavailable())?;
             let opened = classify_file_type(FileType::from_raw_mode(opened.st_mode));
             if opened != initial {
                 return Err(rejected_path());
@@ -1040,20 +1041,20 @@ fn process_directory_entry(
             if depth > MAX_SEMANTIC_SEARCH_DEPTH {
                 return Err(scan_limit());
             }
-            check_cancellation(cancellation)?;
             let child = classify_post_observation_result(
-                rustix::fs::openat(
-                    frame.directory.as_fd(),
-                    entry.name.as_str(),
-                    directory_open_flags(),
-                    Mode::empty(),
-                ),
+                execution_filesystem_call(cancellation, || {
+                    rustix::fs::openat(
+                        frame.directory.as_fd(),
+                        entry.name.as_str(),
+                        directory_open_flags(),
+                        Mode::empty(),
+                    )
+                })?,
                 map_descendant_open_error,
             )?;
             let Some(child) = child else {
                 return Ok(None);
             };
-            check_cancellation(cancellation)?;
             make_directory_frame(child, relative_path, depth, outcome, cancellation).map(Some)
         }
         EntryKind::RegularFile => {
@@ -1062,20 +1063,20 @@ fn process_directory_entry(
             let relative_path = join_relative(&frame.relative_path, &entry.name, relative_length);
             let workspace_path = join_workspace_path(&arguments.path, &relative_path)?;
             outcome.budget.observe_candidate()?;
-            check_cancellation(cancellation)?;
             let file = classify_post_observation_result(
-                rustix::fs::openat(
-                    frame.directory.as_fd(),
-                    entry.name.as_str(),
-                    content_open_flags(),
-                    Mode::empty(),
-                ),
+                execution_filesystem_call(cancellation, || {
+                    rustix::fs::openat(
+                        frame.directory.as_fd(),
+                        entry.name.as_str(),
+                        content_open_flags(),
+                        Mode::empty(),
+                    )
+                })?,
                 map_content_open_error,
             )?;
             let Some(file) = file else {
                 return Ok(None);
             };
-            check_cancellation(cancellation)?;
             if let Some(result) = score_open_file(
                 &file,
                 &workspace_path,
@@ -1143,15 +1144,12 @@ fn read_directory_entries(
     incomplete: &mut IncompleteReasons,
     cancellation: &CancellationToken,
 ) -> Result<Vec<DirectoryEntry>, ToolError> {
-    check_cancellation(cancellation)?;
-    let mut stream = Dir::read_from(directory).map_err(map_directory_stream_error)?;
-    check_cancellation(cancellation)?;
+    let mut stream = execution_filesystem_call(cancellation, || Dir::read_from(directory))?
+        .map_err(map_directory_stream_error)?;
     let remaining = budget.remaining_entries()?;
     let mut raw_entries = Vec::new();
     loop {
-        check_cancellation(cancellation)?;
-        let next = stream.next();
-        check_cancellation(cancellation)?;
+        let next = execution_filesystem_call(cancellation, || stream.next())?;
         let Some(entry) = next else {
             break;
         };
@@ -1179,15 +1177,15 @@ fn read_directory_entries(
             return Err(invalid_entry_name());
         }
         let name = name.to_owned();
-        check_cancellation(cancellation)?;
         let metadata = classify_post_observation_result(
-            rustix::fs::statat(directory, name.as_str(), AtFlags::SYMLINK_NOFOLLOW),
+            execution_filesystem_call(cancellation, || {
+                rustix::fs::statat(directory, name.as_str(), AtFlags::SYMLINK_NOFOLLOW)
+            })?,
             map_scan_metadata_error,
         )?;
         let Some(metadata) = metadata else {
             continue;
         };
-        check_cancellation(cancellation)?;
         let kind = classify_file_type(FileType::from_raw_mode(metadata.st_mode));
         let mut sort_key = name_bytes;
         if kind == EntryKind::Directory {
@@ -1215,9 +1213,8 @@ fn score_open_file(
     content_buffer: &mut ContentBuffer,
     cancellation: &CancellationToken,
 ) -> Result<Option<SearchResult>, ToolError> {
-    check_cancellation(cancellation)?;
-    let metadata = rustix::fs::fstat(file).map_err(|_| read_failed())?;
-    check_cancellation(cancellation)?;
+    let metadata = execution_filesystem_call(cancellation, || rustix::fs::fstat(file))?
+        .map_err(|_| read_failed())?;
     if classify_file_type(FileType::from_raw_mode(metadata.st_mode)) != EntryKind::RegularFile {
         return Err(rejected_path());
     }
@@ -1274,7 +1271,9 @@ fn read_bounded_content<'a>(
             .ok_or_else(scan_limit)?;
         if aggregate_remaining == 0 {
             let mut witness = [0_u8; 1];
-            match rustix::io::read(file, &mut witness) {
+            let read =
+                execution_filesystem_call(cancellation, || rustix::io::read(file, &mut witness))?;
+            match read {
                 Ok(0) => break,
                 Ok(_) => return Err(scan_limit()),
                 Err(error) if error == rustix::io::Errno::INTR => continue,
@@ -1284,7 +1283,9 @@ fn read_bounded_content<'a>(
         let requested = (MAX_SEMANTIC_SEARCH_FILE_BYTES + 1 - content_buffer.length)
             .min(aggregate_remaining)
             .min(CONTENT_READ_CHUNK_BYTES);
-        match rustix::io::read(file, content_buffer.read_window(requested)?) {
+        let window = content_buffer.read_window(requested)?;
+        let read = execution_filesystem_call(cancellation, || rustix::io::read(file, window))?;
+        match read {
             Ok(0) => break,
             Ok(read) => {
                 if read > requested {
@@ -1292,7 +1293,6 @@ fn read_bounded_content<'a>(
                 }
                 budget.observe_content_bytes(read)?;
                 content_buffer.commit_read(read)?;
-                check_cancellation(cancellation)?;
             }
             Err(error) if error == rustix::io::Errno::INTR => {}
             Err(_) => return Err(read_failed()),
@@ -1633,6 +1633,17 @@ fn classify_post_observation_result<T>(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+fn execution_filesystem_call<ResultValue>(
+    cancellation: &CancellationToken,
+    call: impl FnOnce() -> ResultValue,
+) -> Result<ResultValue, ToolError> {
+    check_cancellation(cancellation)?;
+    let raw_result = call();
+    check_cancellation(cancellation)?;
+    Ok(raw_result)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const fn directory_open_flags() -> OFlags {
     OFlags::RDONLY
         .union(OFlags::DIRECTORY)
@@ -1656,9 +1667,8 @@ fn ensure_root_is_linked(
 ) -> Result<(), ToolError> {
     #[cfg(target_os = "linux")]
     {
-        check_cancellation(cancellation)?;
-        let metadata = rustix::fs::fstat(root).map_err(|_| unavailable())?;
-        check_cancellation(cancellation)?;
+        let metadata = execution_filesystem_call(cancellation, || rustix::fs::fstat(root))?
+            .map_err(|_| unavailable())?;
         if metadata.st_nlink == 0 {
             return Err(unavailable());
         }
@@ -1673,11 +1683,10 @@ fn ensure_macos_root_is_linked(
     root: rustix::fd::BorrowedFd<'_>,
     cancellation: &CancellationToken,
 ) -> Result<(), ToolError> {
-    check_cancellation(cancellation)?;
-    let root_metadata = rustix::fs::fstat(root).map_err(|_| unavailable())?;
-    check_cancellation(cancellation)?;
-    let root_path = rustix::fs::getpath(root).map_err(|_| unavailable())?;
-    check_cancellation(cancellation)?;
+    let root_metadata = execution_filesystem_call(cancellation, || rustix::fs::fstat(root))?
+        .map_err(|_| unavailable())?;
+    let root_path = execution_filesystem_call(cancellation, || rustix::fs::getpath(root))?
+        .map_err(|_| unavailable())?;
     let root_path = root_path.as_bytes();
     if root_path == b"/" {
         return Ok(());
@@ -1688,13 +1697,14 @@ fn ensure_macos_root_is_linked(
         .filter(|name| !name.is_empty())
         .ok_or_else(unavailable)?;
     let name = std::ffi::CString::new(name).map_err(|_| unavailable())?;
-    check_cancellation(cancellation)?;
-    let parent = rustix::fs::openat(root, "..", directory_open_flags(), Mode::empty())
-        .map_err(|_| unavailable())?;
-    check_cancellation(cancellation)?;
-    let linked =
-        rustix::fs::statat(&parent, &name, AtFlags::SYMLINK_NOFOLLOW).map_err(|_| unavailable())?;
-    check_cancellation(cancellation)?;
+    let parent = execution_filesystem_call(cancellation, || {
+        rustix::fs::openat(root, "..", directory_open_flags(), Mode::empty())
+    })?
+    .map_err(|_| unavailable())?;
+    let linked = execution_filesystem_call(cancellation, || {
+        rustix::fs::statat(&parent, &name, AtFlags::SYMLINK_NOFOLLOW)
+    })?
+    .map_err(|_| unavailable())?;
     if linked.st_dev != root_metadata.st_dev
         || linked.st_ino != root_metadata.st_ino
         || !FileType::from_raw_mode(linked.st_mode).is_dir()
@@ -1886,4 +1896,87 @@ fn scan_limit() -> ToolError {
         "requested semantic search exceeds the scan limit",
         false,
     )
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod cancellation_checkpoint_tests {
+    use std::cell::Cell;
+
+    use super::*;
+
+    fn assert_cancelled<T>(result: Result<T, ToolError>) {
+        let Err(error) = result else {
+            panic!("filesystem observation bypassed post-call cancellation");
+        };
+        assert_eq!(error.kind, ToolErrorKind::Cancelled);
+        assert_eq!(error.code, "semantic_search_cancelled");
+    }
+
+    #[test]
+    fn execution_filesystem_call_checks_before_invocation() {
+        let cancellation = CancellationToken::new();
+        assert!(cancellation.cancel());
+        let called = Cell::new(false);
+
+        assert_cancelled(execution_filesystem_call(&cancellation, || {
+            called.set(true);
+            Ok::<usize, rustix::io::Errno>(1)
+        }));
+        assert!(!called.get());
+    }
+
+    #[test]
+    fn successful_raw_result_cannot_bypass_post_call_cancellation() {
+        let cancellation = CancellationToken::new();
+
+        assert_cancelled(execution_filesystem_call(&cancellation, || {
+            assert!(cancellation.cancel());
+            Ok::<usize, rustix::io::Errno>(8)
+        }));
+    }
+
+    #[test]
+    fn read_eof_cannot_bypass_post_call_cancellation() {
+        let cancellation = CancellationToken::new();
+
+        assert_cancelled(execution_filesystem_call(&cancellation, || {
+            assert!(cancellation.cancel());
+            Ok::<usize, rustix::io::Errno>(0)
+        }));
+    }
+
+    #[test]
+    fn absent_directory_entry_cannot_bypass_post_call_cancellation() {
+        let cancellation = CancellationToken::new();
+
+        assert_cancelled(execution_filesystem_call(&cancellation, || {
+            assert!(cancellation.cancel());
+            None::<Result<(), rustix::io::Errno>>
+        }));
+    }
+
+    #[test]
+    fn noent_interrupted_and_io_errors_cannot_bypass_post_call_cancellation() {
+        for raw_error in [
+            rustix::io::Errno::NOENT,
+            rustix::io::Errno::INTR,
+            rustix::io::Errno::IO,
+        ] {
+            let cancellation = CancellationToken::new();
+            assert_cancelled(execution_filesystem_call(&cancellation, || {
+                assert!(cancellation.cancel());
+                Err::<(), _>(raw_error)
+            }));
+        }
+    }
+
+    #[test]
+    fn aggregate_overflow_witness_cannot_bypass_post_call_cancellation() {
+        let cancellation = CancellationToken::new();
+
+        assert_cancelled(execution_filesystem_call(&cancellation, || {
+            assert!(cancellation.cancel());
+            Ok::<usize, rustix::io::Errno>(1)
+        }));
+    }
 }
