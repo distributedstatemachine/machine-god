@@ -103,3 +103,4 @@ product behavior; they are not penetration tests.
 
 - [semantic_search](m05-semantic-search-review-01.md)
 - [memory](m05-memory-review-01.md)
+- [skill](m05-skill-review-01.md)
