@@ -53,6 +53,7 @@ mod reference_host;
 mod rename_file;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod root_selection;
+mod semantic_search;
 mod session_inspection;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod session_lifecycle;
@@ -278,6 +279,17 @@ pub use rename_file::{
 pub use root_selection::{
     NativeRootSelection, NativeRootSelectionError, NativeRootSelectionErrorKind,
     PreparedNativeRoots, PreparedNativeRootsError, PreparedNativeRootsErrorKind,
+};
+pub use semantic_search::{
+    MAX_SEMANTIC_SEARCH_DEPTH, MAX_SEMANTIC_SEARCH_FILE_BYTES, MAX_SEMANTIC_SEARCH_KEYWORDS,
+    MAX_SEMANTIC_SEARCH_MATCH_STEPS, MAX_SEMANTIC_SEARCH_PATH_BYTES,
+    MAX_SEMANTIC_SEARCH_QUERY_BYTES, MAX_SEMANTIC_SEARCH_RESULT_LINE_BYTES,
+    MAX_SEMANTIC_SEARCH_RESULT_PATH_BYTES, MAX_SEMANTIC_SEARCH_RETAINED_RESULTS,
+    MAX_SEMANTIC_SEARCH_SERIALIZED_RESULT_BYTES, MAX_SEMANTIC_SEARCH_SHOWN_RESULTS,
+    MAX_SEMANTIC_SEARCH_TOTAL_CONTENT_BYTES, MAX_SEMANTIC_SEARCH_TOTAL_ENTRY_NAME_BYTES,
+    MAX_SEMANTIC_SEARCH_TOTAL_RESULT_LINE_BYTES, MAX_SEMANTIC_SEARCH_TOTAL_RESULT_PATH_BYTES,
+    MAX_SEMANTIC_SEARCH_VISITED_ENTRIES, SEMANTIC_SEARCH_TOOL_NAME, SemanticSearchTool,
+    SemanticSearchToolOpenError, SemanticSearchToolOpenErrorKind,
 };
 pub use session_inspection::{
     NativeSessionInspection, NativeSessionInspectionError, NativeSessionInspectionErrorKind,
