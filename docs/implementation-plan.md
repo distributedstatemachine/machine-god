@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33248233118` (`GREEN`)
 - Main Benchmark evidence: `33248233050` (`GREEN`)
 - Active branch: `agent/m03-resume`
-- Active phase: `selecting the bounded explicit-ID resume CLI slice after delivered semantic_search slice 39`
-- Next gate: `create the isolated resume worktree, freeze its durable contract, and implement focused behavior and tests`
+- Active phase: `bounded explicit-ID resume CLI implementation and focused tests are green after delivered slice 39`
+- Next gate: `run the complete exact local gate, freeze one behavior SHA, and obtain three fresh zero-finding product reviews`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
