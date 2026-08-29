@@ -238,15 +238,15 @@ regression/delivery claim unless a milestone explicitly promotes it.
 - `scripts/check_documentation.py` enforces canonical markers and fields, the
   600-line plan ceiling, sole-live-ledger restrictions across every maintained
   non-review document, rendered relative Markdown link targets, and canonical
-  reference-host catalog ownership. One bounded scan produces separate policy
-  and link projections while tracking ordered quote/list containers, valid
-  fences, empty list items, block and paragraph-bound inline comments, escaped
-  inline code, and ATX/Setext headings. Cached container metadata and a
-  forward-only link tokenizer keep hostile nesting and malformed link syntax
-  linear in the 256 KiB per-file ceiling. Reserved live-status field labels are
-  rejected outside this plan. Each maintained Markdown file is read/scanned
-  once per validation; the checker prints inventory counts for the current run
-  but never persists those counts into maintained documents.
+  reference-host catalog ownership. One bounded scan produces separate rendered
+  classifier and link projections while tracking ordered quote/list containers,
+  valid fences, empty list items, indented code, block and paragraph-bound
+  comments and inline code, raw HTML boundaries, and ATX/Setext headings. Compact
+  forward indexes recognize only complete escaped, nested, inline, image, and
+  reference-link syntax without suffix rescans, keeping hostile input linear in
+  the 256 KiB per-file ceiling. Reserved live-status field labels are rejected
+  outside this plan. Each maintained Markdown file is read/scanned once per
+  validation; the checker prints current-run inventory but never persists it.
 - Compact this plan after every five delivered slices or whenever it exceeds
   600 lines. Keep the live block, milestone state, compact slice inventory,
   remaining boundary, and gates; move cycle detail to review ledgers.

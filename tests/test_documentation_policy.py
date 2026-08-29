@@ -794,6 +794,19 @@ class DocumentationPolicyTests(unittest.TestCase):
                 False,
                 False,
             ),
+            (
+                "ATX heading opener is line scoped",
+                "# Title <!--\nNativeReferenceHost has nineteen tools. -->\n",
+                True,
+                False,
+            ),
+            (
+                "HTML block interruption",
+                "Text <!--\n"
+                "<div>NativeReferenceHost has nineteen tools. --></div>\n",
+                True,
+                False,
+            ),
         )
         for name, payload, rejected, unclosed in cases:
             with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
@@ -891,6 +904,29 @@ class DocumentationPolicyTests(unittest.TestCase):
 
             self.assertEqual([], errors)
 
+    def test_inline_code_cannot_pair_across_paragraph_block_boundaries(self) -> None:
+        payloads = (
+            "Text starts `\n# Heading [real](missing-heading.md) `\n",
+            "Text starts `\n- item [real](missing-list.md) `\n",
+            "Text starts `\n> quote [real](missing-quote.md) `\n",
+            "Text starts `\n<div>raw HTML</div>\n\n"
+            "[real](missing-html.md) `\n",
+            "Text starts `\n<?pi raw?>\n[real](missing-pi.md) `\n",
+        )
+        for payload in payloads:
+            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_minimal_repository(root)
+                relative = Path("docs/tool-contract.md")
+                (root / relative).write_text(payload, encoding="utf-8")
+
+                errors, _ = check_documentation.validate_repository(root)
+
+                self.assertTrue(
+                    any("missing relative link target" in error for error in errors),
+                    "\n".join(errors),
+                )
+
     def test_link_validation_uses_only_rendered_markdown_links(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -928,15 +964,204 @@ class DocumentationPolicyTests(unittest.TestCase):
                 "target.md",
                 "next.md",
                 "<>",
-                "<tail",
             ],
             targets,
         )
+
+    def test_rendered_link_grammar_handles_escapes_balance_and_completion(
+        self,
+    ) -> None:
+        cases = (
+            ("[a\\]](missing.md)", ["missing.md"]),
+            ("[outer [inner]](missing.md)", ["missing.md"]),
+            ("\\[literal](missing.md)", []),
+            ("[x](dir/missing(and).md)", ["dir/missing(and).md"]),
+            ("[x](<dir/missing file.md>)", ["<dir/missing file.md>"]),
+            ("[x](missing.md \"title\")", ["missing.md"]),
+            ("[x](missing.md 'title')", ["missing.md"]),
+            ("[x](missing.md (title))", ["missing.md"]),
+            ("[x](missing.md\n\n\"title\")", []),
+            ("[x](missing.md \"multi\n\nline\")", []),
+            ("[x](missing-eof.md", []),
+            ("[x](<missing-eof.md", []),
+            ("[x](missing(unbalanced.md)", []),
+        )
+        for markup, expected in cases:
+            with self.subTest(markup=markup):
+                self.assertEqual(
+                    expected,
+                    list(check_documentation._markdown_link_targets(markup)),
+                )
+
+    def test_undefined_full_reference_does_not_fall_back_to_shortcut(self) -> None:
+        markup = "[label][undefined]\n\n[label]: should-not-render.md\n"
+
+        self.assertEqual(
+            [], list(check_documentation._markdown_link_targets(markup))
+        )
+        self.assertIn(
+            "[label][undefined]",
+            check_documentation._normalize_policy_markup(markup),
+        )
+
+    def test_relative_link_targets_unescape_markdown_punctuation(self) -> None:
+        self.assertEqual(
+            "dir/a(b).md",
+            check_documentation._relative_link_target(r"dir/a\(b\).md"),
+        )
+        self.assertEqual(
+            "dir/a b.md",
+            check_documentation._relative_link_target(r"<dir/a\ b.md>"),
+        )
+
+    def test_reference_style_relative_links_are_validated(self) -> None:
+        payloads = (
+            "[real][key]\n\n[key]: missing-full.md\n",
+            "[collapsed][]\n\n[collapsed]: missing-collapsed.md\n",
+            "[shortcut]\n\n[shortcut]: missing-shortcut.md\n",
+            "![image][asset]\n\n[asset]: missing-image.png\n",
+        )
+        for payload in payloads:
+            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_minimal_repository(root)
+                (root / "docs/tool-contract.md").write_text(
+                    payload, encoding="utf-8"
+                )
+
+                errors, stats = check_documentation.validate_repository(root)
+
+                self.assertTrue(
+                    any("missing relative link target" in error for error in errors),
+                    "\n".join(errors),
+                )
+                self.assertEqual(2, stats.relative_links)
+
+    def test_reference_definition_continuation_title_is_inert(self) -> None:
+        markup = (
+            "[real][key]\n\n"
+            "[key]: missing.md\n"
+            "  \"[not-a-link](ignored.md)\"\n"
+        )
+
+        self.assertEqual(
+            ["missing.md"],
+            list(check_documentation._markdown_link_targets(markup)),
+        )
+
+    def test_html_block_markdown_links_are_inert(self) -> None:
+        markup = (
+            "<div>\n[raw](ignored-one.md)\n</div>\n\n"
+            "<script>[raw](ignored-two.md)</script>\n"
+            "[real](checked.md)\n"
+        )
+
+        self.assertEqual(
+            ["checked.md"],
+            list(check_documentation._markdown_link_targets(markup)),
+        )
+
+    def test_indented_code_links_are_inert_but_paragraph_continuations_render(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            (root / "docs/tool-contract.md").write_text(
+                "    [root-code](missing-root-code.md)\n\n"
+                "-     [same-line-list-code](missing-list-code.md)\n\n"
+                "- item\n\n"
+                "      [list-code](missing-nested-code.md)\n\n"
+                ">     [quote-code](missing-quote-code.md)\n\n"
+                "Paragraph\n"
+                "    [rendered](missing-rendered.md)\n",
+                encoding="utf-8",
+            )
+
+            errors, stats = check_documentation.validate_repository(root)
+            rendered = "\n".join(errors)
+
+            self.assertIn("missing-rendered.md", rendered)
+            self.assertNotIn("missing-root-code.md", rendered)
+            self.assertNotIn("missing-list-code.md", rendered)
+            self.assertNotIn("missing-nested-code.md", rendered)
+            self.assertNotIn("missing-quote-code.md", rendered)
+            self.assertEqual(2, stats.relative_links)
+
+    def test_classifier_uses_rendered_inline_presentation_text(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            relative = Path("docs/unlisted.md")
+            (root / relative).write_text(
+                "**Main CI:** `999` (`GREEN`)\n\n"
+                "[**Active phase:**](https://example.invalid) maintenance\n\n"
+                "***Main Benchmark evidence:*** pending\n\n"
+                "~~Next gate:~~ pending\n\n"
+                "[**Active branch:**][branch] `agent/m05-example`\n\n"
+                "<strong>Main&#32;CI:</strong> `999` (`GREEN`)\n\n"
+                "## **Current status**\n\n"
+                "## <span title=\">\">Current status</span>\n\n"
+                "NativeReferenceHost has **nineteen tools**.\n\n"
+                "<strong>NativeReferenceHost</strong> has "
+                "nine&#116;een tools.\n\n"
+                "[NativeReferenceHost](https://example.invalid) has "
+                "[nineteen tools](https://example.invalid).\n\n"
+                "[branch]: https://example.invalid\n",
+                encoding="utf-8",
+            )
+
+            errors, _ = check_documentation.validate_repository(root)
+            rendered = "\n".join(errors)
+
+            self.assertIn("canonical live-status field 'Main CI'", rendered)
+            self.assertIn("canonical live-status field 'Active phase'", rendered)
+            self.assertIn(
+                "canonical live-status field 'Main Benchmark evidence'", rendered
+            )
+            self.assertIn("canonical live-status field 'Next gate'", rendered)
+            self.assertIn("canonical live-status field 'Active branch'", rendered)
+            self.assertIn("live status header", rendered)
+            self.assertIn("reference-host inventory counts belong only", rendered)
+
+    def test_classifier_treats_indented_code_as_inert(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            (root / "docs/unlisted.md").write_text(
+                "    **Main CI:** `999` (`GREEN`)\n\n"
+                "    NativeReferenceHost has **nineteen tools**.\n",
+                encoding="utf-8",
+            )
+
+            errors, _ = check_documentation.validate_repository(root)
+
+            self.assertEqual([], errors)
+
+    def test_classifier_preserves_escaped_and_code_literal_wrappers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            (root / "docs/unlisted.md").write_text(
+                "\\*\\*Main CI:\\*\\* is literal.\n\n"
+                "`**Active phase:** pending` is code.\n\n"
+                "NativeReferenceHost has \\*\\*nineteen tools\\*\\* literally.\n\n"
+                "NativeReferenceHost documents `nineteen tools` as syntax.\n\n"
+                "\\<strong>Main CI:</strong> is escaped literal syntax.\n\n"
+                "\\&#77;ain CI: is an escaped literal entity.\n",
+                encoding="utf-8",
+            )
+
+            errors, _ = check_documentation.validate_repository(root)
+
+            self.assertEqual([], errors)
 
     def test_pathological_markdown_scans_remain_bounded(self) -> None:
         ceiling = check_documentation.MAX_MARKDOWN_BYTES
         hostile_inputs = (
             "[" * ceiling,
+            ("[x](< " * ceiling)[:ceiling],
+            ("[" * (ceiling // 2) + "]" * (ceiling // 2))[:ceiling],
             ("- " * (ceiling // 4) + "x\n" + "\n" * ceiling)[:ceiling],
             (
                 "- " * (ceiling // 16)
