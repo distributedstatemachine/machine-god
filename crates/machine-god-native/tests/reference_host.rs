@@ -349,6 +349,49 @@ fn tool_round_responses(final_text: &str) -> [Vec<u8>; 5] {
     [first, second, third, fourth, fifth]
 }
 
+fn semantic_search_round_responses() -> [Vec<u8>; 2] {
+    let tool_call = concat!(
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"semantic-call\",\"toolName\":\"semantic_search\",\"input\":{\"query\":\"alpha responsibility\",\"path\":\"./scope//.\"}}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    let finish = concat!(
+        "data: {\"type\":\"text-delta\",\"id\":\"answer\",\"delta\":\"semantic search complete\"}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    [tool_call, finish]
+}
+
+fn expected_semantic_search_output() -> Value {
+    json!({
+        "content": {
+            "query": "alpha responsibility",
+            "path": "scope",
+            "keywords": ["alpha", "responsibility"],
+            "results": [{
+                "path": "scope/concept.rs",
+                "score": 2,
+                "line_number": 1,
+                "line": "alpha responsibility",
+                "line_truncated": false,
+            }],
+            "visited_entries": 1,
+            "candidate_files": 1,
+            "searched_files": 1,
+            "skipped_oversized_files": 0,
+            "skipped_non_text_files": 0,
+            "skipped_symlink_entries": 0,
+            "matching_files": 1,
+            "incomplete": false,
+            "incomplete_reasons": [],
+        },
+        "is_error": false,
+    })
+}
+
 fn web_search_round_responses() -> [Vec<u8>; 3] {
     let outer_tool_call = concat!(
         "data: {\"type\":\"tool-call\",\"toolCallId\":\"search-call\",\"toolName\":\"web_search\",\"input\":{\"query\":\"latest Rust release\",\"allowed_domains\":[\"rust-lang.org\"]}}\n\n",
@@ -909,6 +952,100 @@ fn composition_wires_custom_model_exact_tools_normalized_permissions_and_durable
 
     drop(events);
     assert_persisted_composed_turn(&host, session_id);
+    assert!(!directory_is_empty(&sessions));
+}
+
+#[test]
+fn composed_semantic_search_uses_retained_workspace_and_persists_exact_result() {
+    let temporary = TemporaryDirectory::new("semantic-search");
+    let (workspace, sessions) = roots(temporary.path());
+    fs::create_dir(workspace.join("scope")).unwrap();
+    fs::write(workspace.join("scope/concept.rs"), "alpha responsibility\n").unwrap();
+    let transport = ScriptedTransport::new(
+        "SEMANTIC_SEARCH_FACTORY_SENTINEL",
+        semantic_search_round_responses(),
+    );
+    let prompter = AllowingPrompter::default();
+    let host = compose_with_transport(
+        built_in_config(),
+        transport.clone(),
+        &workspace,
+        &sessions,
+        prompter.clone(),
+    )
+    .unwrap();
+
+    let retained_workspace = temporary.path().join("semantic-search-retained");
+    fs::rename(&workspace, &retained_workspace).unwrap();
+    fs::create_dir(&workspace).unwrap();
+    fs::create_dir(workspace.join("scope")).unwrap();
+    fs::write(
+        workspace.join("scope/concept.rs"),
+        "SEMANTIC_REPLACEMENT_SENTINEL",
+    )
+    .unwrap();
+
+    let (session_id, events) = collect_turn(&host, "semantic-search");
+    assert_completed(&events);
+
+    let permission_requests = prompter.requests();
+    assert_eq!(permission_requests.len(), 1);
+    assert_eq!(
+        permission_requests[0].capability,
+        Capability::Filesystem {
+            access: FilesystemAccess::SearchContent,
+            path: "scope".to_owned(),
+        }
+    );
+
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    let first = body(&requests[0]);
+    assert_exact_native_tool_catalog(&first);
+    let second = body(&requests[1]);
+    assert_exact_native_tool_catalog(&second);
+    assert_eq!(second["prompt"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        second["prompt"][2]["content"][0]["toolCallId"],
+        "semantic-call"
+    );
+    let expected = expected_semantic_search_output();
+    assert_eq!(decoded_tool_output(&second, 2), expected);
+    assert!(
+        !serde_json::to_string(&second)
+            .unwrap()
+            .contains("SEMANTIC_REPLACEMENT_SENTINEL")
+    );
+    let finished_output = events
+        .iter()
+        .find_map(|event| match event {
+            TurnEvent::ToolFinished { output, .. } => Some(output),
+            _ => None,
+        })
+        .expect("semantic search emits one completed tool result");
+    assert_eq!(finished_output.content, expected["content"]);
+    assert!(!finished_output.is_error);
+
+    let durable = futures_executor::block_on(host.engine().load_session(session_id))
+        .unwrap()
+        .expect("semantic search turn is durable");
+    let record = durable.record();
+    assert_eq!(record.messages.len(), 4);
+    assert_eq!(record.messages[0].role, Role::User);
+    assert_eq!(record.messages[1].role, Role::Assistant);
+    assert_eq!(record.messages[2].role, Role::Tool);
+    let [ContentBlock::ToolResult { output, .. }] = record.messages[2].content.as_slice() else {
+        panic!("semantic search result is retained as one structured tool result")
+    };
+    assert_eq!(output.content, expected["content"]);
+    assert!(!output.is_error);
+    assert_eq!(record.messages[3].role, Role::Assistant);
+    assert_eq!(
+        record.messages[3].content,
+        [ContentBlock::Text {
+            text: "semantic search complete".to_owned(),
+        }]
+    );
     assert!(!directory_is_empty(&sessions));
 }
 
