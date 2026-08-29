@@ -17,9 +17,11 @@ The complete reference host is compiled when all of these are true:
 
 Individual native contracts may expose portable injected seams or narrower
 system implementations. In particular, the complete host compiles on macOS,
-but the production terminal system executor is Linux-only. The private host
-catalog retains `terminal` on macOS and returns its fixed unsupported result
-after strict preparation and permission, before cwd lookup or process creation.
+but the production `semantic_search` and terminal system executors are
+Linux-only. The private host catalog retains both tools on macOS and returns
+their fixed unsupported results after strict preparation and permission.
+`semantic_search` performs no workspace lookup or content read; `terminal`
+performs no cwd lookup or process creation.
 
 ## Required selections
 
@@ -116,8 +118,10 @@ engine's exact session-store allocation and has no workspace authority.
 transport rather than a workspace descriptor. `vision` combines its retained
 workspace identity with that target in one disclosure capability and uses the
 shared transport only after approval and descriptor-relative image
-verification. `semantic_search` uses only its retained workspace identity; it
-does not use the provider, transport, or an embedding index.
+verification. On Linux, `semantic_search` uses only its retained workspace
+identity; it does not use the provider, transport, or an embedding index. Its
+macOS placeholder retains the clone only for catalog stability and never
+inspects it.
 
 Catalog membership does not imply that every platform can complete every
 effect. Each tool still performs strict preparation, permission handling when

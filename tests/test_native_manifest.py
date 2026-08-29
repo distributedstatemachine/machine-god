@@ -573,8 +573,8 @@ class NativeManifestTests(unittest.TestCase):
         )
 
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
-        unsupported_job = """  unsupported-native-vision:
-    name: Unsupported native vision (FreeBSD)
+        unsupported_job = """  unsupported-native-tools:
+    name: Unsupported native tools (FreeBSD)
     runs-on: ubuntu-24.04
 """
         install_command = (
@@ -583,7 +583,8 @@ class NativeManifestTests(unittest.TestCase):
         )
         clippy_command = (
             'cargo +"${RUST_TOOLCHAIN}" clippy --locked '
-            "-p machine-god-native --lib --test vision_unsupported "
+            "-p machine-god-native --lib --test semantic_search_unsupported "
+            "--test vision_unsupported "
             "--no-default-features "
             "--features vision --target x86_64-unknown-freebsd -- -D warnings"
         )
@@ -592,8 +593,8 @@ class NativeManifestTests(unittest.TestCase):
         self.assertEqual(workflow.count(clippy_command), 1)
         self.assertIn(
             "CI cross-compiles and runs warnings-denied Clippy over the narrow\n"
-            "feature's library and unsupported-platform integration test for\n"
-            "`x86_64-unknown-freebsd` with Rust 1.94.1",
+            "feature's library plus the vision and semantic-search unsupported-platform\n"
+            "integration tests for `x86_64-unknown-freebsd` with Rust 1.94.1",
             vision_document,
         )
 

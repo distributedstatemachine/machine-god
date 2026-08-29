@@ -26,7 +26,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33221912386` (`GREEN`)
 - Main Benchmark evidence: `33221912387` (`GREEN`)
 - Active branch: `agent/m05-semantic-search`
-- Active phase: `bounded M05 semantic_search tool implementation after delivered slice 38`
+- Active phase: `bounded Linux M05 semantic_search implementation with fixed non-Linux unsupported behavior after delivered slice 38`
 - Next gate: `freeze one exact semantic_search behavior SHA after local gates, close three fresh adversarial review tracks, then pass exact feature and main CI plus Benchmark evidence`
 <!-- canonical-live-status:end -->
 

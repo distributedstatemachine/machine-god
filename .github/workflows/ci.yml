@@ -429,8 +429,8 @@ jobs:
       - name: Test target natively
         run: cargo +"${RUST_TOOLCHAIN}" test --locked --workspace --all-targets --all-features --target "${{ matrix.target }}"
 
-  unsupported-native-vision:
-    name: Unsupported native vision (FreeBSD)
+  unsupported-native-tools:
+    name: Unsupported native tools (FreeBSD)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -438,5 +438,5 @@ jobs:
           persist-credentials: false
       - name: Install exact Rust target and Clippy
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy --target x86_64-unknown-freebsd
-      - name: Compile the unsupported-platform vision surface
-        run: cargo +"${RUST_TOOLCHAIN}" clippy --locked -p machine-god-native --lib --test vision_unsupported --no-default-features --features vision --target x86_64-unknown-freebsd -- -D warnings
+      - name: Compile unsupported-platform native surfaces
+        run: cargo +"${RUST_TOOLCHAIN}" clippy --locked -p machine-god-native --lib --test semantic_search_unsupported --test vision_unsupported --no-default-features --features vision --target x86_64-unknown-freebsd -- -D warnings

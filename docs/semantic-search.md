@@ -76,11 +76,15 @@ filesystem effect during execution.
 
 ## Workspace confinement and traversal
 
-The host supplies one explicit absolute workspace root. On Linux and macOS,
+The host supplies one explicit absolute workspace root. On Linux, public
 construction opens its final component as a no-follow directory and retains
-that descriptor as the tool's only filesystem authority. Other targets expose
-the fixed redacted unsupported-platform failure and perform no workspace
-access.
+that descriptor as the tool's only filesystem authority. Every non-Linux
+target, including macOS, exposes the fixed redacted unsupported-platform
+failure and public construction performs no workspace access. The private
+macOS reference-host placeholder retains an already-cloned workspace
+descriptor only to preserve the stable tool catalog; after strict preparation
+and permission it returns the same unsupported result without inspecting that
+descriptor.
 
 After permission, execution reparses the canonical arguments and reacquires the
 retained root identity. It resolves every selected component descriptor-
@@ -106,17 +110,9 @@ does not by itself make the result incomplete.
 Directory input has a separate global 12,288-attempt ceiling. On Linux, an
 8 KiB safe `RawDir` buffer exposes and charges every `getdents64` refill before
 the call, including exact EOF and an interrupted refill that will be retried.
-On macOS, the libc directory stream does not expose buffer boundaries, so the
-bounded conservative equivalent charges every `readdir` call; an interrupted
-macOS stream is a read failure because that stream becomes terminal and cannot
-be retried as though its next `None` were exact EOF. At the 2,000-entry visit
-ceiling, even the most call-heavy normal macOS shape requires at most 8,003
-charged calls: 2,000 admitted entries, two dot records for each of at most
-2,001 directories, and an EOF probe for each directory
-(`2,000 + 2×2,001 + 2,001`). The remaining 4,285 attempts admit bounded
-incidental Linux interruptions without permitting an interrupt loop. Attempt
-exhaustion is the nonretryable `semantic_search_scan_limit` hard failure and
-returns no partial result.
+Buffered entries do not consume another refill charge. Attempt exhaustion is
+the nonretryable `semantic_search_scan_limit` hard failure and returns no
+partial result. No opaque libc directory stream is used.
 
 Regular files are candidates. Symbolic-link entries are counted and skipped;
 they are never opened, resolved, scored, or descended through. FIFOs, sockets,
@@ -319,22 +315,21 @@ operating-system text, or raw error number. Successful paths, keywords, lines,
 and counts are authorized model-visible content, not error diagnostics. Core's
 ordinary generic durable error mapping remains unchanged.
 
-Creating an execution future is inert. The first poll begins bounded
+Creating an execution future is inert. On Linux, the first poll begins bounded
 synchronous native work. Cancellation is checked before root acquisition,
 around selected-component and descendant opens, between entry reads, before
 and after each bounded file read, at fixed intervals through keyword matching,
 before result reconstruction, and immediately before publication. One
 operating-system open, metadata, directory-read, or file-read call already in
 flight cannot be preempted; cancellation is cooperative when that call returns.
+On non-Linux targets the first poll revalidates canonical arguments and returns
+the fixed unsupported result without filesystem work.
 
 If descriptor-relative reacquisition of the retained workspace root fails
 with operating-system access or permission denial, execution returns the
 nonretryable `semantic_search_permission_denied` category. Other reacquisition
 failures remain retryable `semantic_search_unavailable`; neither mapping
 includes a raw path, error number, or operating-system diagnostic.
-On macOS this taxonomy also covers every retained-root linkedness-validation
-boundary: descriptor metadata, `getpath`, parent reacquisition, and parent
-entry metadata.
 
 No task, thread, process, timer, producer, cache, or indexer is detached.
 Dropping an unpolled future performs no filesystem effect. Dropping a polled
@@ -359,5 +354,5 @@ divergence is intentional.
 This contract does not add embeddings, fuzzy or vector similarity, query
 expansion, language-aware tokenization, Unicode case folding, indexing,
 watchers, ignore-file interpretation, repository discovery, external paths,
-non-Linux/macOS hardened traversal, a CLI command, or a product-performance or
+non-Linux hardened traversal, a CLI command, or a product-performance or
 fx-equivalence claim.

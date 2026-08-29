@@ -2,9 +2,9 @@ use std::error::Error;
 use std::fmt;
 use std::path::Path;
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 use std::cmp::Ordering;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 use std::collections::BinaryHeap;
 #[cfg(target_os = "linux")]
 use std::mem::MaybeUninit;
@@ -15,13 +15,16 @@ use machine_god_core::{
 };
 use serde_json::{Value, json};
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use rustix::fd::{AsFd, OwnedFd};
-#[cfg(target_os = "macos")]
-use rustix::fs::Dir;
+#[cfg(target_os = "linux")]
+use rustix::fd::AsFd;
+#[cfg(any(
+    target_os = "linux",
+    all(target_os = "macos", feature = "ai-gateway-http")
+))]
+use rustix::fd::OwnedFd;
 #[cfg(target_os = "linux")]
 use rustix::fs::RawDir;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 use rustix::fs::{AtFlags, FileType, Mode, OFlags};
 
 /// Maximum UTF-8 bytes accepted in the raw lexical query.
@@ -61,11 +64,11 @@ pub const MAX_SEMANTIC_SEARCH_SERIALIZED_RESULT_BYTES: usize = 48 * 1024;
 /// Maximum non-stopword keywords retained from the query.
 pub const MAX_SEMANTIC_SEARCH_KEYWORDS: usize = 16;
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 const CONTENT_READ_CHUNK_BYTES: usize = 8 * 1024;
 #[cfg(target_os = "linux")]
 const DIRECTORY_READ_BUFFER_BYTES: usize = 8 * 1024;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 const CANCELLATION_CHECK_INTERVAL: usize = 1_024;
 
 /// Registered name of [`SemanticSearchTool`].
@@ -76,7 +79,7 @@ const QUERY_DESCRIPTION: &str = "Natural-language lexical query describing the c
 const PATH_DESCRIPTION: &str =
     "Workspace-relative regular file or directory search root; defaults to the workspace root";
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 const IGNORED_DIRECTORY_NAMES: &[&str] = &[
     ".git",
     ".zig-cache",
@@ -89,7 +92,7 @@ const IGNORED_DIRECTORY_NAMES: &[&str] = &[
     "target",
 ];
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 const STOP_WORDS: &[&str] = &[
     "a", "an", "the", "is", "are", "was", "were", "in", "on", "at", "to", "for", "of", "and", "or",
     "not", "it", "this", "that", "with", "from", "by", "as", "do", "does", "how", "what", "where",
@@ -159,16 +162,26 @@ impl Error for SemanticSearchToolOpenError {}
 
 /// A bounded lexical concept search confined to one retained workspace root.
 pub struct SemanticSearchTool {
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     root: OwnedFd,
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(all(target_os = "macos", feature = "ai-gateway-http"))]
+    _root: OwnedFd,
+    #[cfg(not(any(
+        target_os = "linux",
+        all(target_os = "macos", feature = "ai-gateway-http")
+    )))]
     _unsupported: std::convert::Infallible,
 }
 
 impl SemanticSearchTool {
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
         Self { root }
+    }
+
+    #[cfg(all(target_os = "macos", feature = "ai-gateway-http"))]
+    pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
+        Self { _root: root }
     }
 
     /// Opens and retains an absolute workspace root without following its final
@@ -179,7 +192,7 @@ impl SemanticSearchTool {
     /// Returns a fixed redacted failure when the platform, root spelling, root
     /// type, or root availability is unsuitable.
     pub fn open(root: &Path) -> Result<Self, SemanticSearchToolOpenError> {
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(not(target_os = "linux"))]
         {
             let _ = root;
             Err(SemanticSearchToolOpenError::new(
@@ -187,7 +200,7 @@ impl SemanticSearchTool {
             ))
         }
 
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(target_os = "linux")]
         {
             let lexical_root = root.components().collect::<std::path::PathBuf>();
             if !lexical_root.is_absolute() {
@@ -276,15 +289,15 @@ impl Tool for SemanticSearchTool {
             let arguments = decode_execution_arguments(arguments)?;
             validate_canonical_arguments(&arguments)?;
 
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            #[cfg(not(target_os = "linux"))]
             {
                 let _ = (arguments, cancellation);
                 Err(unsupported_platform())
             }
 
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(target_os = "linux")]
             {
-                self.execute_unix(&arguments, &cancellation)
+                self.execute_linux(&arguments, &cancellation)
             }
         })
     }
@@ -429,7 +442,7 @@ fn semantic_search_name() -> ToolName {
     ToolName::new(SEMANTIC_SEARCH_TOOL_NAME).expect("semantic_search is a valid tool name")
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum EntryKind {
     Directory,
@@ -438,20 +451,20 @@ enum EntryKind {
     Other,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 enum SearchRoot {
     Directory(OwnedFd),
     File(OwnedFd),
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 struct DirectoryEntry {
     name: String,
     sort_key: Vec<u8>,
     kind: EntryKind,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 struct DirectoryFrame {
     directory: OwnedFd,
     relative_path: String,
@@ -459,7 +472,7 @@ struct DirectoryFrame {
     entries: std::vec::IntoIter<DirectoryEntry>,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 #[derive(Default)]
 struct IncompleteReasons {
     traversal_cap: bool,
@@ -467,7 +480,7 @@ struct IncompleteReasons {
     output_cap: bool,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 impl IncompleteReasons {
     const fn any(&self) -> bool {
         self.traversal_cap || self.result_cap || self.output_cap
@@ -488,7 +501,7 @@ impl IncompleteReasons {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 #[derive(Default)]
 struct ScanBudget {
     visited_entries: usize,
@@ -500,7 +513,7 @@ struct ScanBudget {
     match_steps: usize,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 impl ScanBudget {
     fn remaining_entries(&self) -> Result<usize, ToolError> {
         MAX_SEMANTIC_SEARCH_VISITED_ENTRIES
@@ -583,7 +596,7 @@ impl ScanBudget {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 #[derive(Default)]
 struct ScanStats {
     searched_files: usize,
@@ -593,7 +606,7 @@ struct ScanStats {
     matching_files: usize,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 struct SearchResult {
     path: String,
     score: u64,
@@ -602,27 +615,27 @@ struct SearchResult {
     line_truncated: bool,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 struct WorstFirstResult(SearchResult);
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 impl PartialEq for WorstFirstResult {
     fn eq(&self, other: &Self) -> bool {
         self.0.score == other.0.score && self.0.path.as_bytes() == other.0.path.as_bytes()
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 impl Eq for WorstFirstResult {}
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 impl PartialOrd for WorstFirstResult {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 impl Ord for WorstFirstResult {
     fn cmp(&self, other: &Self) -> Ordering {
         other
@@ -633,7 +646,7 @@ impl Ord for WorstFirstResult {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 #[derive(Default)]
 struct RetainedResults {
     records: BinaryHeap<WorstFirstResult>,
@@ -641,7 +654,7 @@ struct RetainedResults {
     total_line_bytes: usize,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 impl RetainedResults {
     fn replacement_totals(
         &self,
@@ -697,13 +710,13 @@ impl RetainedResults {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn result_is_better(left: &SearchResult, right: &SearchResult) -> bool {
     left.score > right.score
         || (left.score == right.score && left.path.as_bytes() < right.path.as_bytes())
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 #[derive(Default)]
 struct ScanOutcome {
     budget: ScanBudget,
@@ -712,14 +725,14 @@ struct ScanOutcome {
     incomplete: IncompleteReasons,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 #[derive(Default)]
 struct ContentBuffer {
     storage: Vec<u8>,
     length: usize,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 impl ContentBuffer {
     fn reset(&mut self) {
         self.length = 0;
@@ -753,14 +766,14 @@ impl ContentBuffer {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 struct Keyword {
     raw: String,
     folded: Vec<u8>,
     prefix: Vec<usize>,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 impl Keyword {
     fn compile(
         raw: &str,
@@ -819,7 +832,7 @@ impl Keyword {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn charged_byte_equality(
     left: u8,
     right: u8,
@@ -830,7 +843,7 @@ fn charged_byte_equality(
     Ok(left == right)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn probe_keyword_presence(
     keyword: &Keyword,
     haystack: &[u8],
@@ -841,9 +854,9 @@ fn probe_keyword_presence(
     keyword.is_present(haystack, budget, cancellation)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 impl SemanticSearchTool {
-    fn execute_unix(
+    fn execute_linux(
         &self,
         arguments: &ExecutionArguments,
         cancellation: &CancellationToken,
@@ -935,7 +948,7 @@ impl SemanticSearchTool {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn split_search_keywords<'a>(
     query: &'a str,
     cancellation: &CancellationToken,
@@ -965,7 +978,7 @@ fn split_search_keywords<'a>(
     Ok(keywords)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn retain_query_token<'a>(token: &'a str, keywords: &mut Vec<&'a str>) {
     if token.len() >= 2
         && !STOP_WORDS
@@ -976,12 +989,12 @@ fn retain_query_token<'a>(token: &'a str, keywords: &mut Vec<&'a str>) {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 const fn is_search_splitter(byte: u8) -> bool {
     matches!(byte, b' ' | b'\t' | b',' | b'.' | b';' | b':' | b'?' | b'!')
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 const fn fold_ascii(byte: u8) -> u8 {
     if byte.is_ascii_uppercase() {
         byte + (b'a' - b'A')
@@ -990,7 +1003,7 @@ const fn fold_ascii(byte: u8) -> u8 {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn scan_root(
     root: SearchRoot,
     arguments: &ExecutionArguments,
@@ -1026,7 +1039,7 @@ fn scan_root(
     check_cancellation(cancellation)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn scan_directory_tree(
     directory: OwnedFd,
     arguments: &ExecutionArguments,
@@ -1074,7 +1087,7 @@ fn scan_directory_tree(
     Ok(())
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 #[allow(clippy::too_many_arguments)]
 fn process_directory_entry(
     entry: &DirectoryEntry,
@@ -1158,7 +1171,7 @@ fn process_directory_entry(
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn retain_result(result: SearchResult, outcome: &mut ScanOutcome) -> Result<(), ToolError> {
     outcome.stats.matching_files = outcome
         .stats
@@ -1171,7 +1184,7 @@ fn retain_result(result: SearchResult, outcome: &mut ScanOutcome) -> Result<(), 
     Ok(())
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn make_directory_frame(
     directory: OwnedFd,
     relative_path: String,
@@ -1193,11 +1206,9 @@ fn make_directory_frame(
     })
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 trait DirectoryEntryReader {
     fn requires_read_attempt(&self) -> bool;
-
-    fn interrupted_read_is_retryable(&self) -> bool;
 
     fn next_name(&mut self) -> Option<Result<Vec<u8>, rustix::io::Errno>>;
 }
@@ -1208,54 +1219,22 @@ impl<Fd: AsFd> DirectoryEntryReader for RawDir<'_, Fd> {
         self.is_buffer_empty()
     }
 
-    fn interrupted_read_is_retryable(&self) -> bool {
-        true
-    }
-
     fn next_name(&mut self) -> Option<Result<Vec<u8>, rustix::io::Errno>> {
         self.next()
             .map(|entry| entry.map(|entry| entry.file_name().to_bytes().to_vec()))
     }
 }
 
-#[cfg(target_os = "macos")]
-impl DirectoryEntryReader for Dir {
-    fn requires_read_attempt(&self) -> bool {
-        // rustix's libc-backed iterator does not expose its internal refill
-        // boundary. Charging every readdir call is the bounded conservative
-        // equivalent on macOS.
-        true
-    }
-
-    fn interrupted_read_is_retryable(&self) -> bool {
-        // libc DIR becomes terminal after readdir reports an error, so retrying
-        // here could turn an interruption into a false exact EOF.
-        false
-    }
-
-    fn next_name(&mut self) -> Option<Result<Vec<u8>, rustix::io::Errno>> {
-        self.next()
-            .map(|entry| entry.map(|entry| entry.file_name().to_bytes().to_vec()))
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn read_directory_entries(
     directory: rustix::fd::BorrowedFd<'_>,
     budget: &mut ScanBudget,
     incomplete: &mut IncompleteReasons,
     cancellation: &CancellationToken,
 ) -> Result<Vec<DirectoryEntry>, ToolError> {
-    #[cfg(target_os = "linux")]
     let raw_entries = {
         let mut buffer = [MaybeUninit::uninit(); DIRECTORY_READ_BUFFER_BYTES];
         let mut stream = RawDir::new(directory, &mut buffer);
-        stage_directory_entry_names(&mut stream, budget, incomplete, cancellation)?
-    };
-    #[cfg(target_os = "macos")]
-    let raw_entries = {
-        let mut stream = execution_filesystem_call(cancellation, || Dir::read_from(directory))?
-            .map_err(map_directory_stream_error)?;
         stage_directory_entry_names(&mut stream, budget, incomplete, cancellation)?
     };
 
@@ -1292,7 +1271,7 @@ fn read_directory_entries(
     Ok(entries)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn stage_directory_entry_names(
     stream: &mut impl DirectoryEntryReader,
     budget: &mut ScanBudget,
@@ -1311,9 +1290,7 @@ fn stage_directory_entry_names(
         };
         let name_bytes = match entry {
             Ok(name) => name,
-            Err(error)
-                if error == rustix::io::Errno::INTR && stream.interrupted_read_is_retryable() =>
-            {
+            Err(error) if error == rustix::io::Errno::INTR => {
                 continue;
             }
             Err(error) => return Err(map_directory_iteration_error(error)),
@@ -1336,7 +1313,7 @@ fn stage_directory_entry_names(
     Ok(raw_entries)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn score_open_file(
     file: &OwnedFd,
     workspace_path: &str,
@@ -1386,7 +1363,7 @@ fn score_open_file(
     score_text_file(content, workspace_path, keywords, budget, cancellation)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn read_bounded_content<'a>(
     file: &OwnedFd,
     content_buffer: &'a mut ContentBuffer,
@@ -1398,7 +1375,7 @@ fn read_bounded_content<'a>(
     })
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn read_bounded_content_with<'a>(
     content_buffer: &'a mut ContentBuffer,
     budget: &mut ScanBudget,
@@ -1447,7 +1424,7 @@ fn read_bounded_content_with<'a>(
     Ok(content_buffer.as_slice())
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn score_text_file(
     content: &str,
     workspace_path: &str,
@@ -1517,7 +1494,7 @@ fn score_text_file(
     }))
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 #[allow(clippy::too_many_arguments)]
 fn score_line(
     line: &str,
@@ -1552,7 +1529,7 @@ fn score_line(
     Ok(())
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn clip_utf8(text: &str, maximum_bytes: usize) -> &str {
     if text.len() <= maximum_bytes {
         return text;
@@ -1564,7 +1541,7 @@ fn clip_utf8(text: &str, maximum_bytes: usize) -> &str {
     &text[..end]
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn render_empty_output(
     arguments: &ExecutionArguments,
     cancellation: &CancellationToken,
@@ -1578,7 +1555,7 @@ fn render_empty_output(
     Ok(ToolOutput::success(value))
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn render_output(
     arguments: &ExecutionArguments,
     keywords: &[Keyword],
@@ -1635,7 +1612,7 @@ fn render_output(
     Ok(ToolOutput::success(value))
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn output_value(
     arguments: &ExecutionArguments,
     keywords: &[&str],
@@ -1659,7 +1636,7 @@ fn output_value(
     })
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn result_value(result: &SearchResult) -> Value {
     json!({
         "path": result.path,
@@ -1670,14 +1647,14 @@ fn result_value(result: &SearchResult) -> Value {
     })
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn serialized_tool_output_size(content: &Value) -> Result<usize, ToolError> {
     serde_json::to_vec(&ToolOutput::success(content.clone()))
         .map(|bytes| bytes.len())
         .map_err(|_| scan_limit())
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn checked_descendant_path_length(
     search_path: &str,
     relative_parent: &str,
@@ -1700,7 +1677,7 @@ fn checked_descendant_path_length(
     Ok(relative_length)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn checked_workspace_path_length(
     search_path: &str,
     relative_length: usize,
@@ -1716,7 +1693,7 @@ fn checked_workspace_path_length(
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn join_relative(parent: &str, name: &str, capacity: usize) -> String {
     if parent.is_empty() {
         name.to_owned()
@@ -1729,7 +1706,7 @@ fn join_relative(parent: &str, name: &str, capacity: usize) -> String {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn join_workspace_path(search_path: &str, relative_path: &str) -> Result<String, ToolError> {
     let capacity = checked_workspace_path_length(search_path, relative_path.len())?;
     if capacity > MAX_SEMANTIC_SEARCH_RESULT_PATH_BYTES {
@@ -1746,12 +1723,12 @@ fn join_workspace_path(search_path: &str, relative_path: &str) -> Result<String,
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn is_ignored_directory(name: &str) -> bool {
     IGNORED_DIRECTORY_NAMES.contains(&name)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn classify_file_type(file_type: FileType) -> EntryKind {
     if file_type.is_dir() {
         EntryKind::Directory
@@ -1764,7 +1741,7 @@ fn classify_file_type(file_type: FileType) -> EntryKind {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn classify_post_observation_result<T>(
     result: Result<T, rustix::io::Errno>,
     map_error: impl FnOnce(rustix::io::Errno) -> ToolError,
@@ -1776,7 +1753,7 @@ fn classify_post_observation_result<T>(
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn execution_filesystem_call<ResultValue>(
     cancellation: &CancellationToken,
     call: impl FnOnce() -> ResultValue,
@@ -1787,7 +1764,7 @@ fn execution_filesystem_call<ResultValue>(
     Ok(raw_result)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 const fn directory_open_flags() -> OFlags {
     OFlags::RDONLY
         .union(OFlags::DIRECTORY)
@@ -1796,7 +1773,7 @@ const fn directory_open_flags() -> OFlags {
         .union(OFlags::NONBLOCK)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 const fn content_open_flags() -> OFlags {
     OFlags::RDONLY
         .union(OFlags::NOFOLLOW)
@@ -1804,61 +1781,20 @@ const fn content_open_flags() -> OFlags {
         .union(OFlags::NONBLOCK)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn ensure_root_is_linked(
     root: rustix::fd::BorrowedFd<'_>,
     cancellation: &CancellationToken,
 ) -> Result<(), ToolError> {
-    #[cfg(target_os = "linux")]
-    {
-        let metadata = execution_filesystem_call(cancellation, || rustix::fs::fstat(root))?
-            .map_err(|_| unavailable())?;
-        if metadata.st_nlink == 0 {
-            return Err(unavailable());
-        }
-    }
-    #[cfg(target_os = "macos")]
-    ensure_macos_root_is_linked(root, cancellation)?;
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn ensure_macos_root_is_linked(
-    root: rustix::fd::BorrowedFd<'_>,
-    cancellation: &CancellationToken,
-) -> Result<(), ToolError> {
-    let root_metadata = execution_filesystem_call(cancellation, || rustix::fs::fstat(root))?
-        .map_err(map_linkedness_validation_error)?;
-    let root_path = execution_filesystem_call(cancellation, || rustix::fs::getpath(root))?
-        .map_err(map_linkedness_validation_error)?;
-    let root_path = root_path.as_bytes();
-    if root_path == b"/" {
-        return Ok(());
-    }
-    let name = root_path
-        .rsplit(|byte| *byte == b'/')
-        .next()
-        .filter(|name| !name.is_empty())
-        .ok_or_else(unavailable)?;
-    let name = std::ffi::CString::new(name).map_err(|_| unavailable())?;
-    let parent = execution_filesystem_call(cancellation, || {
-        rustix::fs::openat(root, "..", directory_open_flags(), Mode::empty())
-    })?
-    .map_err(map_linkedness_validation_error)?;
-    let linked = execution_filesystem_call(cancellation, || {
-        rustix::fs::statat(&parent, &name, AtFlags::SYMLINK_NOFOLLOW)
-    })?
-    .map_err(map_linkedness_validation_error)?;
-    if linked.st_dev != root_metadata.st_dev
-        || linked.st_ino != root_metadata.st_ino
-        || !FileType::from_raw_mode(linked.st_mode).is_dir()
-    {
+    let metadata = execution_filesystem_call(cancellation, || rustix::fs::fstat(root))?
+        .map_err(|_| unavailable())?;
+    if metadata.st_nlink == 0 {
         return Err(unavailable());
     }
     Ok(())
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn map_root_open_error(error: rustix::io::Errno) -> SemanticSearchToolOpenError {
     let kind = if error == rustix::io::Errno::LOOP || error == rustix::io::Errno::NOTDIR {
         SemanticSearchToolOpenErrorKind::InvalidFileType
@@ -1868,7 +1804,7 @@ fn map_root_open_error(error: rustix::io::Errno) -> SemanticSearchToolOpenError 
     SemanticSearchToolOpenError::new(kind)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn map_search_root_open_error(error: rustix::io::Errno) -> ToolError {
     if error == rustix::io::Errno::NOENT {
         not_found()
@@ -1881,7 +1817,7 @@ fn map_search_root_open_error(error: rustix::io::Errno) -> ToolError {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn map_retained_root_reacquisition_error(error: rustix::io::Errno) -> ToolError {
     if error == rustix::io::Errno::ACCESS || error == rustix::io::Errno::PERM {
         permission_denied()
@@ -1890,16 +1826,7 @@ fn map_retained_root_reacquisition_error(error: rustix::io::Errno) -> ToolError 
     }
 }
 
-#[cfg(any(target_os = "macos", all(test, target_os = "linux")))]
-fn map_linkedness_validation_error(error: rustix::io::Errno) -> ToolError {
-    if error == rustix::io::Errno::ACCESS || error == rustix::io::Errno::PERM {
-        permission_denied()
-    } else {
-        unavailable()
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn map_directory_stream_error(error: rustix::io::Errno) -> ToolError {
     if error == rustix::io::Errno::ACCESS || error == rustix::io::Errno::PERM {
         permission_denied()
@@ -1908,7 +1835,7 @@ fn map_directory_stream_error(error: rustix::io::Errno) -> ToolError {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn map_directory_iteration_error(error: rustix::io::Errno) -> ToolError {
     #[cfg(target_os = "linux")]
     if error == rustix::io::Errno::INVAL {
@@ -1919,7 +1846,7 @@ fn map_directory_iteration_error(error: rustix::io::Errno) -> ToolError {
     map_directory_stream_error(error)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn map_scan_metadata_error(error: rustix::io::Errno) -> ToolError {
     if error == rustix::io::Errno::ACCESS || error == rustix::io::Errno::PERM {
         permission_denied()
@@ -1928,7 +1855,7 @@ fn map_scan_metadata_error(error: rustix::io::Errno) -> ToolError {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn map_descendant_open_error(error: rustix::io::Errno) -> ToolError {
     if error == rustix::io::Errno::LOOP || error == rustix::io::Errno::NOTDIR {
         rejected_path()
@@ -1939,7 +1866,7 @@ fn map_descendant_open_error(error: rustix::io::Errno) -> ToolError {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn map_content_open_error(error: rustix::io::Errno) -> ToolError {
     if error == rustix::io::Errno::LOOP || error == rustix::io::Errno::NOTDIR {
         rejected_path()
@@ -1950,7 +1877,7 @@ fn map_content_open_error(error: rustix::io::Errno) -> ToolError {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn check_cancellation(cancellation: &CancellationToken) -> Result<(), ToolError> {
     if cancellation.is_cancelled() {
         Err(ToolError::new(
@@ -1991,7 +1918,7 @@ fn invalid_path() -> ToolError {
     )
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(target_os = "linux"))]
 fn unsupported_platform() -> ToolError {
     ToolError::new(
         ToolErrorKind::Unavailable,
@@ -2001,7 +1928,7 @@ fn unsupported_platform() -> ToolError {
     )
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn not_found() -> ToolError {
     ToolError::new(
         ToolErrorKind::Unavailable,
@@ -2011,7 +1938,7 @@ fn not_found() -> ToolError {
     )
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn permission_denied() -> ToolError {
     ToolError::new(
         ToolErrorKind::PermissionDenied,
@@ -2021,7 +1948,7 @@ fn permission_denied() -> ToolError {
     )
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn rejected_path() -> ToolError {
     ToolError::new(
         ToolErrorKind::PermissionDenied,
@@ -2031,7 +1958,7 @@ fn rejected_path() -> ToolError {
     )
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn unavailable() -> ToolError {
     ToolError::new(
         ToolErrorKind::Unavailable,
@@ -2041,7 +1968,7 @@ fn unavailable() -> ToolError {
     )
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn read_failed() -> ToolError {
     ToolError::new(
         ToolErrorKind::Execution,
@@ -2051,7 +1978,7 @@ fn read_failed() -> ToolError {
     )
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn invalid_entry_name() -> ToolError {
     ToolError::new(
         ToolErrorKind::Execution,
@@ -2061,7 +1988,7 @@ fn invalid_entry_name() -> ToolError {
     )
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn scan_limit() -> ToolError {
     ToolError::new(
         ToolErrorKind::Execution,
@@ -2071,7 +1998,7 @@ fn scan_limit() -> ToolError {
     )
 }
 
-#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+#[cfg(all(test, target_os = "linux"))]
 mod cancellation_checkpoint_tests {
     use std::cell::Cell;
     use std::collections::VecDeque;
@@ -2083,7 +2010,6 @@ mod cancellation_checkpoint_tests {
         calls: usize,
         cancel_on_call: Option<(usize, CancellationToken)>,
         requires_attempt: bool,
-        retry_interrupted: bool,
     }
 
     impl InjectedDirectoryReader {
@@ -2095,7 +2021,6 @@ mod cancellation_checkpoint_tests {
                 calls: 0,
                 cancel_on_call: None,
                 requires_attempt: true,
-                retry_interrupted: true,
             }
         }
     }
@@ -2103,10 +2028,6 @@ mod cancellation_checkpoint_tests {
     impl DirectoryEntryReader for InjectedDirectoryReader {
         fn requires_read_attempt(&self) -> bool {
             self.requires_attempt
-        }
-
-        fn interrupted_read_is_retryable(&self) -> bool {
-            self.retry_interrupted
         }
 
         fn next_name(&mut self) -> Option<Result<Vec<u8>, rustix::io::Errno>> {
@@ -2312,23 +2233,6 @@ mod cancellation_checkpoint_tests {
         assert_eq!(stream.calls, 1);
         assert_eq!(budget.directory_read_attempts, 0);
         assert!(incomplete.traversal_cap);
-    }
-
-    #[test]
-    fn terminal_directory_stream_does_not_retry_an_interruption_as_false_eof() {
-        let cancellation = CancellationToken::new();
-        let mut budget = ScanBudget::default();
-        let mut incomplete = IncompleteReasons::default();
-        let mut stream =
-            InjectedDirectoryReader::retrying([Some(Err(rustix::io::Errno::INTR)), None]);
-        stream.retry_interrupted = false;
-
-        let error =
-            stage_directory_entry_names(&mut stream, &mut budget, &mut incomplete, &cancellation)
-                .unwrap_err();
-        assert_eq!(error.code, "semantic_search_read_failed");
-        assert_eq!(stream.calls, 1);
-        assert_eq!(budget.directory_read_attempts, 1);
     }
 
     #[cfg(target_os = "linux")]
@@ -2542,21 +2446,5 @@ mod cancellation_checkpoint_tests {
         assert_eq!(error.kind, ToolErrorKind::Unavailable);
         assert_eq!(error.code, "semantic_search_unavailable");
         assert!(error.retryable);
-    }
-
-    #[test]
-    fn linkedness_validation_maps_only_access_denials_to_permission() {
-        for raw_error in [rustix::io::Errno::ACCESS, rustix::io::Errno::PERM] {
-            let error = map_linkedness_validation_error(raw_error);
-            assert_eq!(error.kind, ToolErrorKind::PermissionDenied);
-            assert_eq!(error.code, "semantic_search_permission_denied");
-            assert!(!error.retryable);
-        }
-        for raw_error in [rustix::io::Errno::IO, rustix::io::Errno::NOENT] {
-            let error = map_linkedness_validation_error(raw_error);
-            assert_eq!(error.kind, ToolErrorKind::Unavailable);
-            assert_eq!(error.code, "semantic_search_unavailable");
-            assert!(error.retryable);
-        }
     }
 }

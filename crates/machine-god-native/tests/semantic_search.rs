@@ -1,4 +1,4 @@
-#![cfg(any(target_os = "linux", target_os = "macos"))]
+#![cfg(target_os = "linux")]
 
 use std::error::Error;
 use std::fs;
@@ -601,58 +601,6 @@ fn retained_root_permission_revocation_is_nonretryable_when_the_platform_enforce
             }
         }
         Err(error) => panic!("unexpected permission probe failure: {error}"),
-    }
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn retained_root_parent_permission_revocation_is_nonretryable_when_enforced() {
-    let temporary = TemporaryDirectory::new();
-    let workspace = temporary.path().join("workspace");
-    fs::create_dir(&workspace).unwrap();
-    fs::write(workspace.join("needle.txt"), "needle\n").unwrap();
-    let search_tool = tool(&workspace);
-    let original_permissions = fs::metadata(temporary.path()).unwrap().permissions();
-    let restore = PermissionRestore {
-        path: temporary.path().to_owned(),
-        permissions: original_permissions.clone(),
-    };
-    let mut revoked_permissions = original_permissions;
-    revoked_permissions.set_mode(0o000);
-    fs::set_permissions(temporary.path(), revoked_permissions).unwrap();
-
-    let ordinary_access = fs::metadata(&workspace);
-    let result = execute(
-        &search_tool,
-        canonical("needle", "."),
-        CancellationToken::new(),
-    );
-    drop(restore);
-
-    match ordinary_access {
-        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
-            assert_tool_error(
-                result.unwrap_err(),
-                ToolErrorKind::PermissionDenied,
-                "semantic_search_permission_denied",
-                "requested search root cannot be searched",
-                false,
-            );
-        }
-        Ok(_) => {
-            // Privileged CI users may bypass mode-bit denial. If linkedness
-            // validation still observes it, the stable mapping is mandatory.
-            if let Err(error) = result {
-                assert_tool_error(
-                    error,
-                    ToolErrorKind::PermissionDenied,
-                    "semantic_search_permission_denied",
-                    "requested search root cannot be searched",
-                    false,
-                );
-            }
-        }
-        Err(error) => panic!("unexpected parent permission probe failure: {error}"),
     }
 }
 

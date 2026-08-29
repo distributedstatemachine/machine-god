@@ -365,6 +365,7 @@ fn semantic_search_round_responses() -> [Vec<u8>; 2] {
     [tool_call, finish]
 }
 
+#[cfg(target_os = "linux")]
 fn expected_semantic_search_output() -> Value {
     json!({
         "content": {
@@ -955,6 +956,7 @@ fn composition_wires_custom_model_exact_tools_normalized_permissions_and_durable
     assert!(!directory_is_empty(&sessions));
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn composed_semantic_search_uses_retained_workspace_and_persists_exact_result() {
     let temporary = TemporaryDirectory::new("semantic-search");
@@ -1046,6 +1048,87 @@ fn composed_semantic_search_uses_retained_workspace_and_persists_exact_result() 
             text: "semantic search complete".to_owned(),
         }]
     );
+    assert!(!directory_is_empty(&sessions));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn composed_semantic_search_preserves_catalog_and_returns_fixed_unsupported_result() {
+    let temporary = TemporaryDirectory::new("semantic-search-unsupported");
+    let (workspace, sessions) = roots(temporary.path());
+    fs::create_dir(workspace.join("scope")).unwrap();
+    fs::write(
+        workspace.join("scope/concept.rs"),
+        "SEMANTIC_MACOS_CONTENT_MUST_NOT_BE_READ",
+    )
+    .unwrap();
+    let transport = ScriptedTransport::new(
+        "SEMANTIC_MACOS_FACTORY_SENTINEL",
+        semantic_search_round_responses(),
+    );
+    let prompter = AllowingPrompter::default();
+    let host = compose_with_transport(
+        built_in_config(),
+        transport.clone(),
+        &workspace,
+        &sessions,
+        prompter.clone(),
+    )
+    .unwrap();
+
+    let (session_id, events) = collect_turn(&host, "semantic-search-unsupported");
+    assert_completed(&events);
+
+    let permission_requests = prompter.requests();
+    assert_eq!(permission_requests.len(), 1);
+    assert_eq!(
+        permission_requests[0].capability,
+        Capability::Filesystem {
+            access: FilesystemAccess::SearchContent,
+            path: "scope".to_owned(),
+        }
+    );
+
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    let first = body(&requests[0]);
+    assert_exact_native_tool_catalog(&first);
+    let second = body(&requests[1]);
+    assert_exact_native_tool_catalog(&second);
+    let expected = json!({
+        "content": {
+            "code": "tool_error",
+            "message": "tool execution failed",
+            "retryable": false,
+        },
+        "is_error": true,
+    });
+    assert_eq!(decoded_tool_output(&second, 2), expected);
+    assert!(
+        !serde_json::to_string(&second)
+            .unwrap()
+            .contains("SEMANTIC_MACOS_CONTENT_MUST_NOT_BE_READ")
+    );
+
+    let finished_output = events
+        .iter()
+        .find_map(|event| match event {
+            TurnEvent::ToolFinished { output, .. } => Some(output),
+            _ => None,
+        })
+        .expect("unsupported semantic search emits one completed tool result");
+    assert_eq!(finished_output.content, expected["content"]);
+    assert!(finished_output.is_error);
+
+    let durable = futures_executor::block_on(host.engine().load_session(session_id))
+        .unwrap()
+        .expect("unsupported semantic search turn is durable");
+    let record = durable.record();
+    let [ContentBlock::ToolResult { output, .. }] = record.messages[2].content.as_slice() else {
+        panic!("unsupported semantic search result is retained as one structured tool result")
+    };
+    assert_eq!(output.content, expected["content"]);
+    assert!(output.is_error);
     assert!(!directory_is_empty(&sessions));
 }
 
