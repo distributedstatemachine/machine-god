@@ -517,22 +517,66 @@ fn traversal_result_and_output_caps_are_reported_in_stable_order_with_global_bes
         output.content["incomplete_reasons"],
         json!(["result_cap", "output_cap"])
     );
+}
 
-    let traversal_root = TemporaryDirectory::new();
-    for index in 0..=MAX_SEMANTIC_SEARCH_VISITED_ENTRIES {
-        fs::write(
-            traversal_root.path().join(format!("entry-{index:04}.txt")),
-            "absent\n",
-        )
-        .unwrap();
+#[test]
+fn exact_traversal_cap_eof_and_later_empty_directory_remain_complete() {
+    let temporary = TemporaryDirectory::new();
+    let full = temporary.path().join("a-full");
+    fs::create_dir(&full).unwrap();
+    fs::create_dir(temporary.path().join("z-empty")).unwrap();
+    for index in 0..(MAX_SEMANTIC_SEARCH_VISITED_ENTRIES - 2) {
+        fs::write(full.join(format!("entry-{index:04}.txt")), []).unwrap();
     }
-    let capped = run(&tool(traversal_root.path()), "needle", ".");
+
+    let output = run(&tool(temporary.path()), "needle", ".");
     assert_eq!(
-        capped.content["visited_entries"],
+        output.content["visited_entries"],
         MAX_SEMANTIC_SEARCH_VISITED_ENTRIES
     );
     assert_eq!(
-        capped.content["incomplete_reasons"],
+        output.content["candidate_files"],
+        MAX_SEMANTIC_SEARCH_VISITED_ENTRIES - 2
+    );
+    assert_eq!(
+        output.content["searched_files"],
+        MAX_SEMANTIC_SEARCH_VISITED_ENTRIES - 2
+    );
+    assert_eq!(output.content["incomplete"], false);
+    assert_eq!(output.content["incomplete_reasons"], json!([]));
+}
+
+#[test]
+fn overflowing_directory_is_discarded_atomically_and_is_insertion_order_independent() {
+    let temporary = TemporaryDirectory::new();
+    let overflowing = temporary.path().join("a-overflow");
+    fs::create_dir(&overflowing).unwrap();
+    fs::write(temporary.path().join("z-needle.txt"), "needle\n").unwrap();
+    let child_entries = MAX_SEMANTIC_SEARCH_VISITED_ENTRIES - 1;
+    for index in 0..child_entries {
+        fs::write(overflowing.join(format!("entry-{index:04}.txt")), []).unwrap();
+    }
+    let search_tool = tool(temporary.path());
+    let ascending = run(&search_tool, "needle", ".");
+
+    fs::remove_dir_all(&overflowing).unwrap();
+    fs::create_dir(&overflowing).unwrap();
+    for index in (0..child_entries).rev() {
+        fs::write(overflowing.join(format!("entry-{index:04}.txt")), []).unwrap();
+    }
+    let descending = run(&search_tool, "needle", ".");
+
+    assert_eq!(ascending, descending);
+    assert_eq!(
+        ascending.content["visited_entries"],
+        MAX_SEMANTIC_SEARCH_VISITED_ENTRIES
+    );
+    assert_eq!(ascending.content["candidate_files"], 0);
+    assert_eq!(ascending.content["searched_files"], 0);
+    assert_eq!(ascending.content["matching_files"], 0);
+    assert_eq!(ascending.content["results"], json!([]));
+    assert_eq!(
+        ascending.content["incomplete_reasons"],
         json!(["traversal_cap"])
     );
 }
@@ -562,6 +606,54 @@ fn serialized_output_is_bounded_and_output_cap_trims_only_low_ranked_results() {
     assert_eq!(
         output.content["results"][0]["path"],
         "result-000-needle.txt"
+    );
+}
+
+#[test]
+fn control_heavy_escaped_lines_fit_a_bounded_ranked_prefix() {
+    let temporary = TemporaryDirectory::new();
+    let escaped_line = format!(
+        "needle{}",
+        "\u{0001}\"\\".repeat(MAX_SEMANTIC_SEARCH_RESULT_LINE_BYTES / 3)
+    );
+    assert!(escaped_line.len() >= MAX_SEMANTIC_SEARCH_RESULT_LINE_BYTES);
+    for index in 0..MAX_SEMANTIC_SEARCH_SHOWN_RESULTS {
+        fs::write(
+            temporary.path().join(format!("escaped-{index:03}.txt")),
+            &escaped_line,
+        )
+        .unwrap();
+    }
+
+    let output = run(&tool(temporary.path()), "needle", ".");
+    let results = output.content["results"].as_array().unwrap();
+    assert!(!results.is_empty());
+    assert!(results.len() < MAX_SEMANTIC_SEARCH_SHOWN_RESULTS);
+    assert_eq!(results[0]["path"], "escaped-000.txt");
+    assert!(
+        results
+            .iter()
+            .all(|result| result["line"].as_str().unwrap().contains('\u{0001}'))
+    );
+    assert_eq!(output.content["incomplete_reasons"], json!(["output_cap"]));
+    assert!(
+        serde_json::to_vec(&output).unwrap().len() <= MAX_SEMANTIC_SEARCH_SERIALIZED_RESULT_BYTES
+    );
+
+    let mut one_more = output.clone();
+    let next_index = results.len();
+    one_more.content["results"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "path": format!("escaped-{next_index:03}.txt"),
+            "score": 1,
+            "line_number": 1,
+            "line": &escaped_line[..MAX_SEMANTIC_SEARCH_RESULT_LINE_BYTES],
+            "line_truncated": true,
+        }));
+    assert!(
+        serde_json::to_vec(&one_more).unwrap().len() > MAX_SEMANTIC_SEARCH_SERIALIZED_RESULT_BYTES
     );
 }
 

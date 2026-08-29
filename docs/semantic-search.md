@@ -90,9 +90,19 @@ object, path escape, or mismatched revalidation fails closed. Replacing a
 previously opened ancestor cannot redirect later lookups outside the retained
 identity.
 
-Directory traversal is iterative and deterministic. Each directory's validated
-UTF-8 entries are classified, then ordered by raw path bytes before processing
-and descent.
+Directory traversal is iterative and deterministic. A directory is admitted
+atomically: execution stages no more than the global remaining non-dot entry
+budget plus one overflow witness. Exact EOF commits the whole staged batch to
+`visited_entries`; its names are then validated, its entries are classified,
+and the batch is ordered by raw path bytes before processing and descent. If
+the extra witness exists, execution charges all remaining visit slots, charges
+the bounded raw-name bytes including the witness, discards the entire staged
+batch without UTF-8 decoding, metadata inspection, file processing, or
+descent, marks `traversal_cap`, and stops the traversal. It never selects a
+kernel-`readdir`-order subset of an overflowing directory. An empty directory
+still probes EOF when no visit slots remain, so reaching exactly 2,000 entries
+does not by itself make the result incomplete.
+
 Regular files are candidates. Symbolic-link entries are counted and skipped;
 they are never opened, resolved, scored, or descended through. FIFOs, sockets,
 devices, and other special objects are not content candidates. Hidden entries
@@ -163,11 +173,13 @@ sixteen bounded keyword scans over admitted content and basenames. Exhaustion
 cannot wrap a counter or start an unmetered fallback.
 
 Results are ordered by descending score, then by ascending raw UTF-8 path
-bytes. A bounded selection retains the globally best 200 matching files while
-scoring the bounded scan; it retains at most 819,200 aggregate path bytes and
-400,000 aggregate sample-line bytes. At most the first 100 ranked results are
-shown. A shown line is the longest valid UTF-8 prefix no longer than 2,000
-bytes, and `line_truncated` reports whether bytes were omitted.
+bytes. A worst-first bounded heap retains the globally best 200 matching files
+in `O(m log 200)` selection work for `m` matching files; later matches never
+trigger a linear scan of all retained records. Replacement updates aggregate
+accounting exactly, retaining at most 819,200 aggregate path bytes and 400,000
+aggregate sample-line bytes. At most the first 100 ranked results are shown. A
+shown line is the longest valid UTF-8 prefix no longer than 2,000 bytes, and
+`line_truncated` reports whether bytes were omitted.
 
 ## Structured result and incomplete scans
 
@@ -200,22 +212,31 @@ Success returns structured content with this shape:
 ```
 
 `query` is the preserved prepared query and `path` is the normalized selected
-path. `candidate_files` counts bounded regular-file candidates considered for
-admission; `searched_files` counts admitted model-safe text files that were
-scored. Skip counters identify deliberately excluded oversized, non-text, and
-symlink entries. `matching_files` counts positive-score files observed by the
-bounded scan, including a ranked match omitted from `results` by a later cap.
+path. `visited_entries` counts atomically admitted non-dot entries plus visit
+slots conservatively charged to one overflowing directory; its overflow
+witness is not an additional visit. `candidate_files` counts bounded regular-
+file candidates considered for admission; an atomically discarded directory
+contributes none. `searched_files` counts admitted model-safe text files that
+were scored. Skip counters identify deliberately excluded oversized, non-text,
+and symlink entries. `matching_files` counts positive-score files observed by
+the bounded scan, including a ranked match omitted from `results` by a later
+cap.
 
 The serialized complete `ToolOutput` is capped at 49,152 bytes. Result
 selection and serialization never truncate JSON or split UTF-8. If every
 otherwise showable result does not fit, a ranked prefix is emitted and the
-result reports the omission.
+result reports the omission. Prefix fitting is monotonic and uses binary
+search over the at-most-100-result display set, including JSON escaping and the
+complete `ToolOutput` envelope in every size decision; it does not repeatedly
+remove and reserialize one result at a time.
 
 `incomplete_reasons` contains only these stable values, in this order when
 more than one applies:
 
-1. `traversal_cap` — the pinned-compatible 2,000-entry visit ceiling stopped
-   traversal before every otherwise eligible candidate was searched;
+1. `traversal_cap` — a directory had more non-dot entries than the remaining
+   part of the pinned-compatible 2,000-entry visit ceiling, so that whole
+   directory was discarded and traversal stopped before every otherwise
+   eligible candidate was searched;
 2. `result_cap` — more than 200 matching files existed, so only the best 200
    were retained; and
 3. `output_cap` — one or more retained results were omitted by the 100-result
@@ -229,8 +250,10 @@ filesystem observations and therefore reports zero statistics.
 
 Aggregate content or name bytes, keyword-work steps, path or depth bounds, and
 checked counter overflow are hard scan-limit failures. They return no partial
-result and are never represented by `traversal_cap`. The partial traversal
-reason is reserved solely for the 2,000 visited-entry early stop.
+result and are never represented by `traversal_cap`. Raw-name accounting
+includes the one bounded overflow witness even though that witness does not
+increment `visited_entries`. The partial traversal reason is reserved solely
+for atomic directory rejection at the 2,000-entry ceiling.
 
 ## Errors, lifecycle, and cancellation
 

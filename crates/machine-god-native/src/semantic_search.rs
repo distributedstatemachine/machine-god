@@ -2,6 +2,11 @@ use std::error::Error;
 use std::fmt;
 use std::path::Path;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::cmp::Ordering;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::collections::BinaryHeap;
+
 use machine_god_core::{
     BoxFuture, CancellationToken, Capability, FilesystemAccess, PreparedToolCall, Tool, ToolCall,
     ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
@@ -21,7 +26,7 @@ pub const MAX_SEMANTIC_SEARCH_PATH_BYTES: usize = 4 * 1024;
 pub const MAX_SEMANTIC_SEARCH_RESULT_PATH_BYTES: usize = 4 * 1024;
 /// Maximum recursive traversal depth below the selected root.
 pub const MAX_SEMANTIC_SEARCH_DEPTH: usize = 256;
-/// Maximum non-dot directory entries observed by one search.
+/// Maximum charged non-dot directory-entry visits; one overflow witness may be observed.
 pub const MAX_SEMANTIC_SEARCH_VISITED_ENTRIES: usize = 2_000;
 /// Maximum aggregate raw directory-entry name bytes observed by one search.
 pub const MAX_SEMANTIC_SEARCH_TOTAL_ENTRY_NAME_BYTES: usize = 8 * 1024 * 1024;
@@ -488,16 +493,13 @@ struct ScanBudget {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl ScanBudget {
-    fn observe_entry(
-        &mut self,
-        name_bytes: usize,
-        incomplete: &mut IncompleteReasons,
-    ) -> Result<bool, ToolError> {
-        if self.visited_entries >= MAX_SEMANTIC_SEARCH_VISITED_ENTRIES {
-            incomplete.traversal_cap = true;
-            return Ok(false);
-        }
-        self.visited_entries = self.visited_entries.checked_add(1).ok_or_else(scan_limit)?;
+    fn remaining_entries(&self) -> Result<usize, ToolError> {
+        MAX_SEMANTIC_SEARCH_VISITED_ENTRIES
+            .checked_sub(self.visited_entries)
+            .ok_or_else(scan_limit)
+    }
+
+    fn observe_entry_name(&mut self, name_bytes: usize) -> Result<(), ToolError> {
         self.total_entry_name_bytes = self
             .total_entry_name_bytes
             .checked_add(name_bytes)
@@ -505,7 +507,18 @@ impl ScanBudget {
         if self.total_entry_name_bytes > MAX_SEMANTIC_SEARCH_TOTAL_ENTRY_NAME_BYTES {
             return Err(scan_limit());
         }
-        Ok(true)
+        Ok(())
+    }
+
+    fn charge_entries(&mut self, entries: usize) -> Result<(), ToolError> {
+        if entries > self.remaining_entries()? {
+            return Err(scan_limit());
+        }
+        self.visited_entries = self
+            .visited_entries
+            .checked_add(entries)
+            .ok_or_else(scan_limit)?;
+        Ok(())
     }
 
     fn observe_candidate(&mut self) -> Result<(), ToolError> {
@@ -559,80 +572,97 @@ struct SearchResult {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+struct WorstFirstResult(SearchResult);
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl PartialEq for WorstFirstResult {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.score == other.0.score && self.0.path.as_bytes() == other.0.path.as_bytes()
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Eq for WorstFirstResult {}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl PartialOrd for WorstFirstResult {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Ord for WorstFirstResult {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .0
+            .score
+            .cmp(&self.0.score)
+            .then_with(|| self.0.path.as_bytes().cmp(other.0.path.as_bytes()))
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Default)]
 struct RetainedResults {
-    records: Vec<SearchResult>,
+    records: BinaryHeap<WorstFirstResult>,
     total_path_bytes: usize,
     total_line_bytes: usize,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl RetainedResults {
-    fn push(&mut self, result: SearchResult) -> Result<(), ToolError> {
+    fn replacement_totals(
+        &self,
+        removed: Option<&SearchResult>,
+        added: &SearchResult,
+    ) -> Result<(usize, usize), ToolError> {
+        let removed_path_bytes = removed.map_or(0, |result| result.path.len());
+        let removed_line_bytes = removed.map_or(0, |result| result.line.len());
         let next_path_bytes = self
             .total_path_bytes
-            .checked_add(result.path.len())
+            .checked_sub(removed_path_bytes)
+            .and_then(|bytes| bytes.checked_add(added.path.len()))
             .ok_or_else(scan_limit)?;
         let next_line_bytes = self
             .total_line_bytes
-            .checked_add(result.line.len())
+            .checked_sub(removed_line_bytes)
+            .and_then(|bytes| bytes.checked_add(added.line.len()))
             .ok_or_else(scan_limit)?;
         if next_path_bytes > MAX_SEMANTIC_SEARCH_TOTAL_RESULT_PATH_BYTES
             || next_line_bytes > MAX_SEMANTIC_SEARCH_TOTAL_RESULT_LINE_BYTES
         {
             return Err(scan_limit());
         }
-        self.total_path_bytes = next_path_bytes;
-        self.total_line_bytes = next_line_bytes;
-        self.records.push(result);
-        Ok(())
+        Ok((next_path_bytes, next_line_bytes))
     }
 
     fn retain_global_best(&mut self, result: SearchResult) -> Result<bool, ToolError> {
         if self.records.len() < MAX_SEMANTIC_SEARCH_RETAINED_RESULTS {
-            self.push(result)?;
+            let (path_bytes, line_bytes) = self.replacement_totals(None, &result)?;
+            self.records.push(WorstFirstResult(result));
+            self.total_path_bytes = path_bytes;
+            self.total_line_bytes = line_bytes;
             return Ok(false);
         }
-        let worst_index = self
-            .records
-            .iter()
-            .enumerate()
-            .reduce(|worst, candidate| {
-                if result_is_better(worst.1, candidate.1) {
-                    candidate
-                } else {
-                    worst
-                }
-            })
-            .map(|(index, _)| index)
-            .ok_or_else(scan_limit)?;
-        if !result_is_better(&result, &self.records[worst_index]) {
+        let worst = self.records.peek().ok_or_else(scan_limit)?;
+        if !result_is_better(&result, &worst.0) {
             return Ok(true);
         }
-        let removed = &self.records[worst_index];
-        self.total_path_bytes = self
-            .total_path_bytes
-            .checked_sub(removed.path.len())
-            .ok_or_else(scan_limit)?;
-        self.total_line_bytes = self
-            .total_line_bytes
-            .checked_sub(removed.line.len())
-            .ok_or_else(scan_limit)?;
-        self.total_path_bytes = self
-            .total_path_bytes
-            .checked_add(result.path.len())
-            .ok_or_else(scan_limit)?;
-        self.total_line_bytes = self
-            .total_line_bytes
-            .checked_add(result.line.len())
-            .ok_or_else(scan_limit)?;
-        if self.total_path_bytes > MAX_SEMANTIC_SEARCH_TOTAL_RESULT_PATH_BYTES
-            || self.total_line_bytes > MAX_SEMANTIC_SEARCH_TOTAL_RESULT_LINE_BYTES
-        {
-            return Err(scan_limit());
-        }
-        self.records[worst_index] = result;
+        let (path_bytes, line_bytes) = self.replacement_totals(Some(&worst.0), &result)?;
+        self.records.pop().ok_or_else(scan_limit)?;
+        self.records.push(WorstFirstResult(result));
+        self.total_path_bytes = path_bytes;
+        self.total_line_bytes = line_bytes;
         Ok(true)
+    }
+
+    fn into_records(self) -> Vec<SearchResult> {
+        self.records
+            .into_vec()
+            .into_iter()
+            .map(|result| result.0)
+            .collect()
     }
 }
 
@@ -962,6 +992,9 @@ fn scan_directory_tree(
     )?];
     while !stack.is_empty() {
         check_cancellation(cancellation)?;
+        if outcome.incomplete.traversal_cap {
+            break;
+        }
         let next = stack
             .last_mut()
             .expect("nonempty semantic search traversal stack")
@@ -1118,13 +1151,10 @@ fn read_directory_entries(
     check_cancellation(cancellation)?;
     let mut stream = Dir::read_from(directory).map_err(map_directory_stream_error)?;
     check_cancellation(cancellation)?;
-    let mut entries = Vec::new();
+    let remaining = budget.remaining_entries()?;
+    let mut raw_entries = Vec::new();
     loop {
         check_cancellation(cancellation)?;
-        if budget.visited_entries >= MAX_SEMANTIC_SEARCH_VISITED_ENTRIES {
-            incomplete.traversal_cap = true;
-            break;
-        }
         let next = stream.next();
         check_cancellation(cancellation)?;
         let Some(entry) = next else {
@@ -1135,16 +1165,28 @@ fn read_directory_entries(
         if name_bytes == b"." || name_bytes == b".." {
             continue;
         }
-        if !budget.observe_entry(name_bytes.len(), incomplete)? {
-            break;
+        if name_bytes.len() > MAX_SEMANTIC_SEARCH_RESULT_PATH_BYTES {
+            return Err(scan_limit());
         }
-        let name = std::str::from_utf8(name_bytes).map_err(|_| invalid_entry_name())?;
+        budget.observe_entry_name(name_bytes.len())?;
+        raw_entries.push(name_bytes.to_vec());
+        if raw_entries.len() > remaining {
+            budget.charge_entries(remaining)?;
+            incomplete.traversal_cap = true;
+            return Ok(Vec::new());
+        }
+    }
+    budget.charge_entries(raw_entries.len())?;
+    let mut entries = Vec::with_capacity(raw_entries.len());
+    for name_bytes in raw_entries {
+        let name = std::str::from_utf8(&name_bytes).map_err(|_| invalid_entry_name())?;
         if name.chars().any(is_forbidden_path_character) {
             return Err(invalid_entry_name());
         }
+        let name = name.to_owned();
         check_cancellation(cancellation)?;
         let metadata = classify_post_observation_result(
-            rustix::fs::statat(directory, name, AtFlags::SYMLINK_NOFOLLOW),
+            rustix::fs::statat(directory, name.as_str(), AtFlags::SYMLINK_NOFOLLOW),
             map_scan_metadata_error,
         )?;
         let Some(metadata) = metadata else {
@@ -1152,12 +1194,12 @@ fn read_directory_entries(
         };
         check_cancellation(cancellation)?;
         let kind = classify_file_type(FileType::from_raw_mode(metadata.st_mode));
-        let mut sort_key = name_bytes.to_vec();
+        let mut sort_key = name_bytes;
         if kind == EntryKind::Directory {
             sort_key.push(b'/');
         }
         entries.push(DirectoryEntry {
-            name: name.to_owned(),
+            name,
             sort_key,
             kind,
         });
@@ -1405,13 +1447,14 @@ fn render_output(
     cancellation: &CancellationToken,
 ) -> Result<ToolOutput, ToolError> {
     check_cancellation(cancellation)?;
-    outcome.retained.records.sort_unstable_by(|left, right| {
+    let mut ranked = std::mem::take(&mut outcome.retained).into_records();
+    ranked.sort_unstable_by(|left, right| {
         right
             .score
             .cmp(&left.score)
             .then_with(|| left.path.as_bytes().cmp(right.path.as_bytes()))
     });
-    let mut displayed = std::mem::take(&mut outcome.retained.records)
+    let displayed = ranked
         .into_iter()
         .take(MAX_SEMANTIC_SEARCH_SHOWN_RESULTS)
         .collect::<Vec<_>>();
@@ -1422,18 +1465,35 @@ fn render_output(
         .iter()
         .map(|keyword| keyword.raw.as_str())
         .collect::<Vec<_>>();
-    loop {
+    let full = output_value(arguments, &raw_keywords, &displayed, &outcome);
+    if serialized_tool_output_size(&full)? <= MAX_SEMANTIC_SEARCH_SERIALIZED_RESULT_BYTES {
         check_cancellation(cancellation)?;
-        let value = output_value(arguments, &raw_keywords, &displayed, &outcome);
-        if serialized_tool_output_size(&value)? <= MAX_SEMANTIC_SEARCH_SERIALIZED_RESULT_BYTES {
-            check_cancellation(cancellation)?;
-            return Ok(ToolOutput::success(value));
-        }
-        if displayed.pop().is_none() {
-            return Err(scan_limit());
-        }
-        outcome.incomplete.output_cap = true;
+        return Ok(ToolOutput::success(full));
     }
+    outcome.incomplete.output_cap = true;
+
+    let mut fitting = 0_usize;
+    let mut excluded = displayed.len();
+    while fitting < excluded {
+        check_cancellation(cancellation)?;
+        let candidate = fitting
+            .checked_add(excluded)
+            .and_then(|sum| sum.checked_add(1))
+            .ok_or_else(scan_limit)?
+            / 2;
+        let value = output_value(arguments, &raw_keywords, &displayed[..candidate], &outcome);
+        if serialized_tool_output_size(&value)? <= MAX_SEMANTIC_SEARCH_SERIALIZED_RESULT_BYTES {
+            fitting = candidate;
+        } else {
+            excluded = candidate.checked_sub(1).ok_or_else(scan_limit)?;
+        }
+    }
+    let value = output_value(arguments, &raw_keywords, &displayed[..fitting], &outcome);
+    if serialized_tool_output_size(&value)? > MAX_SEMANTIC_SEARCH_SERIALIZED_RESULT_BYTES {
+        return Err(scan_limit());
+    }
+    check_cancellation(cancellation)?;
+    Ok(ToolOutput::success(value))
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
