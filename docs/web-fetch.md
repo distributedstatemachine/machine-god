@@ -1,188 +1,13 @@
 # Native `web_fetch` contract
 
-Status: **DELIVERED**. This page freezes the twenty-seventh bounded Milestone 03
-slice and records its exact local-gate, formal-review, and delivery history.
-Reviewed seal `aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
-`633ddd44406e22f373962c6a2ec965eae4b9cbdb`, passed exact feature CI
-`32874471757`, feature benchmark-evidence `32874471812`, main CI `32875016066`,
-and main benchmark-evidence `32875015892`. Both benchmark runs retain exactly two
-nonexpired exact-SHA artifacts. `main` was fast-forwarded without force from
-`a56ff350c2aace1dc22cb14c269aee89d399cd8e`. This is delivery evidence, not a
-compatibility, product-performance, or fx-equivalence claim.
-
-The candidate starts from exact delivered base
-`a56ff350c2aace1dc22cb14c269aee89d399cd8e`. Its comparison reference is
-[`vercel-labs/fx` at pinned commit
-`b1774fbf6c7602b503026f96f6e960e946c692ef`](https://github.com/vercel-labs/fx/commit/b1774fbf6c7602b503026f96f6e960e946c692ef).
-The upstream behavior was inspected to understand its tool surface; the
-deliberate differences and deferrals below are normative. Production source,
-independently owned direct/engine/production-boundary evidence, core network
-serde evidence, and the shared production/custom reference-host composition
-recorded in the canonical
-[tool catalog](native-reference-host.md#tool-catalog) are present.
-Pre-review gate record `0ba79c9ceacba9a986c217bdb3a659a380823676`,
-tree `5742e4084272120a4531e0d59f0199a5873f39d1`, passed the complete local
-Rust 1.94.1, integrity, dependency, baseline portability, WASI, and release-
-binary gate. Formal cycle 1 rejected exact candidate
-`3ffebb0f429bdfa64ea73635d6ff03b37a4ef80c`, tree
-`1378b02e92973ab15fbf4623138a643b70057f33`. The complete per-track finding
-inventory is in the [`review ledger`](reviews/m03-web-fetch-review-01.md).
-Cycle-1 remediation, independent evidence, and the deterministic static TLS
-test fixture are composed through exact code-and-test precursor
-`5a7960f6e728bf5681e91a411710b4c24dbd6991`, tree
-`f1ed559f0328b8eda721b7b28bcb6fcdb95367b2`. That precursor passed the complete
-replacement Rust 1.94.1, focused, integrity, dependency, baseline portability,
-WASI, active unsupported-target, and release-binary gate. The fixture removes
-the test-only `rcgen` dependency without weakening the real Rustls verifier,
-SNI, hostname, or pinned-address test path. Formal cycle 2 is **NOT GREEN** on
-exact candidate `6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
-`6dc095e796b70fa5964e2d9a24163d75667e1c7a`. Correctness/API reported 0
-blocker, 0 high, 0 medium, and 2 low findings; network/HTTP lifecycle reported
-zero findings at every severity; performance/concurrency reported 0 blocker,
-0 high, 2 medium, and 1 low. The deduplicated union is 0 blocker, 0 high, 2
-medium, and 2 low. Exact isolated production remediation component
-`6b02c212deaf78da7dc1fd27e5f00f7fb588a50e`, tree
-`490f628caa20449c3db96069b34356b0117b7ae4`, implements the raw DNS predecode and
-resolver-snapshot boundary below. Exact composed cycle-2 remediation precursor
-`1a78f6437eb17f646bdd11337464c949beea49f0`, tree
-`b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passes the complete replacement
-local gate under exact Rust and Cargo 1.94.1 without fallback. The focused
-inventory is 21 private, 14 direct, 11 production HTTP lifecycle, and five
-engine tests; the full all-target/all-feature workspace run passes 976 tests.
-This gate record makes no formal-review outcome, workflow, integration, or
-delivery claim; formal candidates are identified only by exact-SHA review
-results.
-Formal cycle 3 is **NOT GREEN** on exact candidate
-`16f5afea28ee8a0102377634c2b447364fa3ee32`, tree
-`0440e1eda3cad5ba1a4138bbd0808622de285420`. Correctness/API reported 0
-blocker, 0 high, 1 medium, and 1 low; network/HTTP lifecycle reported 0
-blocker, 0 high, 1 medium, and 1 low; performance/concurrency reported zero
-findings at every severity. The deduplicated union is 0 blocker, 0 high,
-2 medium, and 1 low. The exact candidate is rejected for blocking per-query
-entropy inside the total deadline, missing cancellation/deadline authority at
-native pre-effect boundaries between sequential network phases, and one low
-duplicated cancellation waiter reported by both non-green tracks. The
-corrected boundary is normative below. Exact isolated production remediation
-component `9abef298352ea3d9517543c384d9703b949cda75`, tree
-`b1ad6f79a9de3414d87c9ff01b28e8c216e6b676`, changes only
-`crates/machine-god-native/src/web_fetch.rs` and implements it with a
-construction-time 32-byte key, `AtomicU32` counter, bounded SHA-256 query-ID
-derivation, carried before/after native-effect deadline checks, and one
-cancellation owner. Exact isolated independent-evidence commit
-`3da79a08eab706f6dd6cd4b1592eb0ffa97f61c6`, tree
-`f690b9b377dedc32776a5fc7b76d4944774b354b`, is based on production and changes
-only `crates/machine-god-native/tests/web_fetch_http.rs`. Its 13/13 focused
-checks prove exactly one cancellation wake, a cancelled result, and
-pending owned-work drop/release for bounded and raw seams without sleep or
-network.
-This remediation record makes no
-replacement-gate, formal-review, workflow, integration, or delivery claim;
-formal candidates are identified only by exact-SHA review results.
-Formal cycle 4 is **NOT GREEN** on exact candidate
-`af043dc860ab88941df1385543a92c3d9880beed`, tree
-`095bac47e4db4001b9010b4f66b46202c620dfaa`. Correctness/API reported
-0 blocker, 0 high, 1 medium, and 2 low findings; network/HTTP lifecycle was
-green with zero findings at every severity; performance/concurrency reported
-0 blocker, 0 high, 1 medium, and 0 low. The deduplicated union is 0 blocker,
-0 high, 2 medium, and 2 low. The exact candidate is rejected for failing to
-stably deduplicate overlapping A/AAAA answers before constructing the pinned
-HTTP client, leaving truncated-DNS TCP connect outside the configured connect
-timeout, describing only the production rather than custom host composition,
-and retaining stale current-candidate prose. The corrected contract is
-normative below. Exact isolated production remediation component
-`9d793035422cd449c9160c7fccd62221382b5ac5`, tree
-`87c48e4a7cf1a7b057adbcef40de5a62d0aa35d6`, changes only native
-`web_fetch.rs` and implements the stable deduplication and DNS TCP-connect
-deadline boundary. Exact isolated independent-evidence commit
-`408e33ec07171988a8f78ee6175adac16532e966`, tree
-`6172f1092561fb06316836f1b7f789db038a4a57`, changes only native
-`web_fetch_http.rs`; its deterministic same-poll authority regression brings
-that suite to 14/14, but it makes no native-DNS proof. Exact composed code/
-evidence precursor `d4cebe5f5d1fac00f239a260fa64853ce44cb3b5`, tree
-`56a1d73538cf78c5f7c891498deb5bfef9c9e1b0`, contains both. This remediation
-record makes no replacement-gate, formal-review outcome, candidate, workflow,
-integration, or delivery claim; formal reviewer reports identify the exact
-candidate they reviewed.
-Formal cycle 5 is **NOT GREEN** on exact candidate
-`81b963ad5a2033fb2295f7325a28fba6b66197d5`, tree
-`f5ede2e70637f5cd8ab373c9dfc893189dd5775c`. Correctness/API reported
-0 blocker, 0 high, 0 medium, and 1 low finding; network/HTTP lifecycle reported
-0 blocker, 0 high, 1 medium, and 0 low; performance/concurrency reported
-0 blocker, 0 high, 0 medium, and 1 low. The two low reports describe the same
-timer-accounting mismatch, so the deduplicated union is 0 blocker, 0 high,
-1 medium, and 1 low. The exact candidate is rejected. The medium finding is a
-same-poll DNS TCP-connect deadline escape: after polling the configured timeout
-before the connect future, a ready connect result rechecked only cancellation
-and the outer deadline, so a connect deadline that became due during that
-effect poll could be missed for either success or later-mapped error. The
-replacement must reapply cancellation and outer-deadline precedence and then
-reject the expired connect deadline before accepting either result.
-Exact isolated source remediation
-`cde7d2ab2498375672c1ec6e124aff04a4020f26`, tree
-`8e8cd69524b4a88f2cc3262ef6d6b2dadc4d1d64`, changes only native
-`web_fetch.rs` and implements that same-poll ordering. Exact composed code
-precursor `d4554a9e14b93a90b3e4f1ae58f210cb2ceb5be7` has the same tree. This
-remediation record makes no replacement-gate, formal-review outcome, candidate,
-workflow, integration, or delivery claim; formal reviewers identify only the
-exact candidate they inspect.
-Formal cycle 6 is **NOT GREEN** on exact candidate
-`5b2b5f6a50c49d42a6fb3abeaa93b31b12757e95`, tree
-`a802d93eeeac9473d2251ae1d31f6a87f1f87a9f`. A medium manifest-portability
-finding rejects the candidate: `web-fetch-http` and `web_fetch.rs` cover every
-non-WASM target, but the direct `sha2` dependency required for DNS query-ID
-derivation covered only Linux and macOS. The remediation places the one direct
-`sha2` entry in the existing `cfg(not(target_family = "wasm"))` dependency
-table. That target table still covers the existing Linux/macOS `copy_file` and
-session-store uses without a duplicate or overlapping target entry, while no
-longer activating the native edge on Rust 1.94.1's
-`wasm32-wali-linux-musl` target, which has Linux as its target OS but belongs to
-the WASM target family. A stdlib `tomllib` regression parses the manifest and
-proves that the feature remains declared, its explicit optional dependencies
-share the non-WASM table, and `sha2` has exactly that one direct target
-placement.
-
-Linux and FreeBSD target-specific dependency-tree probes are valid manifest-
-resolution evidence only. Native Linux HTTP compilation remains an exact-CI
-requirement. Fully compiling the HTTP feature for FreeBSD is not claimed here:
-third-party `aws-lc-sys` stops first because this macOS cross-host lacks the
-FreeBSD C sysroot headers. A FreeBSD host or suitable C sysroot is required for
-that compilation evidence. This remediation record makes no replacement-gate,
-formal-review, workflow, integration, or delivery claim. Milestone 03 remains
-in progress with twenty-six delivered slices.
-
-Formal cycle 10 is **NOT GREEN** on exact candidate
-`698f9d924fe363014dc97971ae60781297d32c2c`, tree
-`08a7d2b8af02b7cb06ec6961dc88192b93aa6658`. Correctness/API and network/HTTP
-lifecycle each reported zero findings at every severity. Performance/
-concurrency reported 0 blocker, 0 high, 0 medium, and 1 low finding, so the
-deduplicated union is 0 blocker, 0 high, 0 medium, and 1 low and the exact
-candidate is rejected. The direct non-WASM `sha2` dependency remained
-unconditional. Focused default compilation narrowed the review's broad premise:
-Linux/macOS must retain `sha2` for independent default `copy_file` and session-
-store hashing, but FreeBSD/Windows used it only through feature-gated
-`web_fetch` and still carried the disabled feature's edge. The remediation uses
-disjoint target declarations: Linux/macOS retain the required dependency;
-other non-WASM targets make it optional and activate it through
-`web-fetch-http`; WASM omits it. Parsed-manifest and resolved direct-dependency-
-tree evidence enforces that matrix. This remediation record makes no
-replacement-gate, formal-review outcome, candidate, workflow, integration,
-delivery, performance, or fx-equivalence claim.
-
-Formal cycle 11 is **GREEN** on exact candidate
-`298be5fdf0713c76155c8fe834c667d20f0cf1f9`, tree
-`8f636bd92922d9e4d1610443253e82a3c0c36268`. Three fresh agents used isolated
-clean read-only worktrees. Correctness/API, network/HTTP lifecycle, and
-performance/portability each reported 0 blocker, 0 high, 0 medium, and 0 low,
-so the deduplicated union is zero at every severity. The reviews independently
-verified strict complete DNS decoder exhaustion, the bounded partial `TC=1`
-UDP replay path, and the Linux/macOS, FreeBSD/Windows, and WASM `sha2` target
-matrix. This review seal by itself makes no workflow, integration, delivery,
-product-performance, compatibility, or fx-equivalence claim. The later exact
-feature and `main` workflow evidence recorded above delivers the slice.
+`WebFetchTool` performs one bounded public-web GET after core authorizes the
+exact normalized network target. The deliberate compatibility differences use
+the pinned fx revision recorded in the implementation plan as input; this
+document defines machine-god's normative behavior.
 
 ## Scope and feature boundary
 
-The candidate adds a rootless `WebFetchTool`: it owns no workspace, state root,
+`WebFetchTool` is rootless: it owns no workspace, state root,
 credential source, browser, cache, or artifact store. It performs one bounded
 public-web GET only after core authorizes the exact normalized network target.
 The implementation is available only on non-WebAssembly targets through the
@@ -196,7 +21,7 @@ non-WASM target. WASM trees omit it with or without the feature.
 
 Every production and explicitly injected/custom reference-host composition
 uses the canonical [tool catalog](native-reference-host.md#tool-catalog).
-`web_fetch` remains rootless and adds no workspace descriptor. This slice adds
+`web_fetch` remains rootless and adds no workspace descriptor. The tool adds
 no CLI surface.
 
 ## Model input and effect-free preparation
@@ -271,7 +96,7 @@ An omitted or explicit default HTTPS port means 443 and is canonicalized to no
 port field. Only an accepted explicit non-default port is preserved in the
 canonical URL and `NetworkTarget`. Core presents that exact
 `Capability::Network` with its existing `Critical` risk. The default policy
-path remains `Ask`: this slice adds no default-safe network admission, grant
+path remains `Ask`: the tool adds no default-safe network admission, grant
 broadening, or special permission mode. Allowed execution must revalidate that
 the prepared URL derives the same scheme, host, and effective port; it may not
 reinterpret the URL into another target. Denial and failed preparation cause
@@ -373,7 +198,7 @@ DNS answers, and query values never enter an error.
 
 Only an absent content encoding or a single `identity` encoding is accepted.
 Every compressed, stacked, unknown, or malformed content encoding is rejected;
-the tool never decompresses a body in this slice.
+the tool never decompresses a body.
 
 ## Time, concurrency, and byte bounds
 
@@ -387,7 +212,7 @@ of its configured connect-timeout deadline or the invocation's overall
 deadline. Neither bound resets on progress.
 
 Construction is runtime-independent, but polling the production transport has
-the same explicit host precondition as the delivered native AI Gateway HTTP
+the same explicit host precondition as the native AI Gateway HTTP
 transport: a current host-owned Tokio runtime with both I/O and time drivers
 enabled must remain driven through protocol and socket teardown. No current
 runtime handle returns fixed `RuntimeRequired`. Tokio exposes no stable safe
@@ -449,7 +274,7 @@ timeout sleep are owned by the future and are never detached.
 
 After stripping MIME parameters and normalizing ASCII case, declared text,
 JSON, XML, and JavaScript media types are eligible for bounded textual output.
-HTML is returned as bounded raw untrusted text. This slice does not convert,
+HTML is returned as bounded raw untrusted text. The tool does not convert,
 render, sanitize, execute, or interpret HTML.
 
 Eligible textual bytes must be valid UTF-8 and model-safe. NUL and disallowed
@@ -483,7 +308,7 @@ status, encoding, body limit, unsafe text, and result limit. They expose no
 response bytes, redirect destination, address, credential-like query value, or
 dependency/operating-system diagnostic.
 
-There is no cache in this slice, so `cache_hit` is always false. No result can
+There is no cache, so `cache_hit` is always false. No result can
 refer to a persisted artifact.
 
 ## Deliberate upstream differences and deferred work
@@ -491,7 +316,7 @@ refer to a persisted artifact.
 The pinned upstream's same-site/optional-`www` redirect handling and
 default-safe web-fetch admission are deliberately not copied. One approved
 `NetworkTarget` and one `Ask` decision cannot authorize a different host, and
-all network authority remains `Critical` in this slice. Redirect following of
+all network authority remains `Critical`. Redirect following of
 any kind remains deferred.
 
 Also deferred are caching, cache revalidation, binary artifact persistence,
@@ -500,133 +325,3 @@ HTML-to-Markdown conversion, compression, private or authenticated targets,
 cookies, proxying, retries, browser execution, CLI changes, benchmark workload
 changes, product-performance claims, compatibility-inventory promotion, and
 complete fx equivalence.
-
-## Candidate and delivery gates
-
-Production and independently owned direct/private/engine/host tests must first
-compose on one immutable candidate SHA. The exact Rust 1.94.1 local gate and
-user-visible release-binary exercise must pass. Three fresh adversarial tracks
-must then review that same SHA:
-
-1. correctness and public API;
-2. network/HTTP lifecycle and robustness; and
-3. performance and concurrency bounds.
-
-Every finding at every severity rejects that candidate. Remediation requires a
-new immutable SHA, the complete replacement gate, and three fresh tracks;
-repeat until all report zero findings. Only then may the feature branch run its
-exact-SHA workflows, fast-forward `main` without force, and run exact `main`
-workflows. The live record is
-[`m03-web-fetch-review-01.md`](reviews/m03-web-fetch-review-01.md).
-
-The composed source at exact pre-review record
-`0ba79c9ceacba9a986c217bdb3a659a380823676`, tree
-`5742e4084272120a4531e0d59f0199a5873f39d1`, passed that local gate. Formal
-cycle 1 nevertheless rejected exact candidate
-`3ffebb0f429bdfa64ea73635d6ff03b37a4ef80c`, tree
-`1378b02e92973ab15fbf4623138a643b70057f33`. This contract correction records
-the review findings. The remediation and evidence components are composed with
-the static-fixture portability correction through exact precursor
-`5a7960f6e728bf5681e91a411710b4c24dbd6991`, tree
-`f1ed559f0328b8eda721b7b28bcb6fcdb95367b2`. Its complete replacement local
-gate is green. Formal cycle 2 rejected exact candidate
-`6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
-`6dc095e796b70fa5964e2d9a24163d75667e1c7a`, with 0 blocker, 0 high, 2 medium,
-and 2 low deduplicated findings. Exact isolated production remediation component
-`6b02c212deaf78da7dc1fd27e5f00f7fb588a50e`, tree
-`490f628caa20449c3db96069b34356b0117b7ae4`, implements the corrected boundary.
-Exact composed cycle-2 remediation precursor
-`1a78f6437eb17f646bdd11337464c949beea49f0`, tree
-`b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passes the complete replacement
-local gate. This gate record makes no formal-review outcome, workflow,
-integration, or delivery claim; formal candidates are identified only by
-exact-SHA review results.
-Formal cycle 3 rejected exact candidate
-`16f5afea28ee8a0102377634c2b447364fa3ee32`, tree
-`0440e1eda3cad5ba1a4138bbd0808622de285420`. Correctness/API reported
-0 blocker, 0 high, 1 medium, and 1 low; network/HTTP lifecycle reported
-0 blocker, 0 high, 1 medium, and 1 low; performance/concurrency reported zero
-findings. After deduplication the cycle has 0 blocker, 0 high, 2 medium, and
-1 low finding. Blocking per-query entropy ran within the total deadline;
-native transitions between A, AAAA, TCP, HTTP, and body work lacked explicit
-pre-effect cancellation/deadline authority; and the two non-green tracks
-repeated the low duplicate-cancellation-waiter finding. The corrected contract
-uses one construction-time random seed and atomic per-query sequence, fixed
-hostname-unavailable state with literal-IP bypass, one bounded waiter for
-permit/DNS/HTTP/body waits, and the same absolute deadline at every native
-pre-effect boundary. The final synchronous boundary checks token/deadline state
-directly without another waiter. Exact
-isolated production remediation component
-`9abef298352ea3d9517543c384d9703b949cda75`, tree
-`b1ad6f79a9de3414d87c9ff01b28e8c216e6b676`, changes only native
-`web_fetch.rs` and implements the 32-byte key, `AtomicU32` plus bounded SHA-256
-ID derivation, carried pre/post-effect deadline checks, and one cancellation
-owner. Exact isolated independent-evidence commit
-`3da79a08eab706f6dd6cd4b1592eb0ffa97f61c6`, tree
-`f690b9b377dedc32776a5fc7b76d4944774b354b`, is based on production and changes
-only `web_fetch_http.rs`; its 13/13 focused checks prove exactly one
-cancellation wake, a cancelled result, and pending owned-work drop/release for
-bounded and raw seams without sleep or network. This remediation record makes no
-replacement-gate,
-formal-review, workflow, integration, or delivery claim; formal candidates are
-identified only by exact-SHA review results.
-Formal cycle 4 rejected exact candidate
-`af043dc860ab88941df1385543a92c3d9880beed`, tree
-`095bac47e4db4001b9010b4f66b46202c620dfaa`. Correctness/API reported
-0 blocker, 0 high, 1 medium, and 2 low; network/HTTP lifecycle was green at
-0/0/0/0; performance/concurrency reported 0 blocker, 0 high, 1 medium, and 0
-low. After deduplication, the cycle has 0 blocker, 0 high, 2 medium, and 2 low
-findings: repeated A/AAAA addresses reached pinned client construction without
-stable first-seen deduplication; a truncated-DNS TCP connect was bounded by
-cancellation and the total invocation deadline but not the configured connect
-timeout; the custom-host composition contract was incomplete; and maintained
-current state still said a new exact candidate was pending. The corrected
-contract stably deduplicates fully validated admitted addresses before client
-construction, makes the configured connect timeout govern DNS TCP replay
-subordinate to cancellation and any earlier overall deadline, and states that
-both production and explicitly injected/custom composition paths use the
-canonical [tool catalog](native-reference-host.md#tool-catalog). Exact isolated
-production remediation component
-`9d793035422cd449c9160c7fccd62221382b5ac5`, tree
-`87c48e4a7cf1a7b057adbcef40de5a62d0aa35d6`, changes only native
-`web_fetch.rs`. Its exact focused checks passed 29 private, 14 direct, 13 HTTP,
-and five engine tests plus native all-target/all-feature tests, formatting, and
-warnings-denied Clippy. Exact isolated independent-evidence commit
-`408e33ec07171988a8f78ee6175adac16532e966`, tree
-`6172f1092561fb06316836f1b7f789db038a4a57`, changes only native
-`web_fetch_http.rs`. Its same-poll authority regression brings that suite to
-14/14 with formatting and warnings-denied Clippy green, but makes no native-
-DNS proof. Exact composed code/evidence precursor
-`d4cebe5f5d1fac00f239a260fa64853ce44cb3b5`, tree
-`56a1d73538cf78c5f7c891498deb5bfef9c9e1b0`, contains both. This remediation
-record makes no replacement-gate, formal-review outcome, candidate, workflow,
-integration, or delivery claim; formal reviewer reports identify the exact
-candidate they reviewed.
-Formal cycle 5 rejected exact candidate
-`81b963ad5a2033fb2295f7325a28fba6b66197d5`, tree
-`f5ede2e70637f5cd8ab373c9dfc893189dd5775c`. Correctness/API reported
-0 blocker, 0 high, 0 medium, and 1 low finding; network/HTTP lifecycle reported
-0 blocker, 0 high, 1 medium, and 0 low; performance/concurrency reported
-0 blocker, 0 high, 0 medium, and 1 low. The correctness and performance low
-reports are the same timer-accounting mismatch, so the deduplicated union is
-0 blocker, 0 high, 1 medium, and 1 low. The exact candidate is rejected. The
-medium finding is a same-poll DNS TCP-connect deadline escape: the helper
-polled its timeout before the connect effect, then a ready effect result
-rechecked cancellation and the outer deadline but not whether the configured
-connect deadline became due during that poll. A late success could be accepted,
-and a late error could be mapped as unavailable rather than timeout. The
-replacement must apply cancellation and outer-deadline precedence first, then
-reject an expired connect deadline before accepting either result. The
-normative timer inventory is exactly one reusable outer machine-god invocation-
-deadline sleep, at most two sequential short-lived DNS replay connect-timeout
-sleeps, and any bounded Reqwest/Hyper HTTP connection-attempt timers; none
-resets or extends the outer absolute deadline. The outer sleep is allocated
-once; each DNS replay sleep is allocated once when that replay begins.
-Exact isolated source remediation
-`cde7d2ab2498375672c1ec6e124aff04a4020f26`, tree
-`8e8cd69524b4a88f2cc3262ef6d6b2dadc4d1d64`, changes only native
-`web_fetch.rs`. It applies cancellation and outer-deadline precedence and then
-the retained absolute connect deadline after a ready effect result. Exact
-composed code precursor `d4554a9e14b93a90b3e4f1ae58f210cb2ceb5be7` has the
-same tree. This remediation record makes no replacement-gate, formal-review
-outcome, candidate, workflow, integration, or delivery claim.

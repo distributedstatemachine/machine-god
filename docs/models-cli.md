@@ -1,120 +1,12 @@
 # Top-level `models` CLI contract
 
-Status: **DELIVERED** as the twenty-ninth bounded Milestone 03 slice. Exact
-cycle-2 behavior candidate
-`2ea9d94374c4dd18f43255af785ee31088126c56`, tree
-`3a948b2950d870a9cabe479bc6c3889dd5a13a3b`, passed the complete replacement
-gate but three fresh tracks rejected it with a deduplicated union of one high,
-one medium, and one low finding. Rejected cycle-1 candidate
-`6277aa3dc26f9c485707c667f63525a2138f316b`, tree
-`b5e2445ed90df000255b51c2c989d71965db1d77`, had a deduplicated union of two
-medium and six low findings. The provider-neutral core contract is component
-`a6c6ff333176689b0c53bcf35070e9d59afd1b28`, the bounded native catalog is
-component `7c966b23d75a880a23d49e1e6ba9780e512e84b8`, and the thin CLI composition
-is present in local feature commit
-`e84ed2a46b1ac5fe7428414375609af562c65105`. Checked-deadline and terminal-
-precedence remediation is component
-`52e9b7d74f3979f7f7f55387243e96bd78773fe3`. Independent native evidence is
-present at `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`; deadline remediation
-`02c9f86619fbdc202f5065c41090415a179316cf` raises the current focused native
-total to 36 tests split across 15 provider/parser, 15 loopback HTTP, and 6
-credential cases. Signal/config/WASI remediation is
-`d2890c34bc628dd9ad425f5921e3816bbe1f5eef`, and dependency-topology remediation
-is `06c94087e91ec298877fbe981695d2638fa1db1e`. Cycle-2 remediation accepts
-arbitrary-size ignored/defaulted JSON number tokens at `9cf8c741`, replaces
-blocking default DNS and repairs no-runtime composition at `8187b12`, and
-fails closed on unavailable system DNS configuration with no public fallback
-at `499af85`. Pre-review gate attempt `c01139811685ae73031ed6f6cbd771e4ff636714`,
-tree `4ac4e5bd67b98900159aec1772f75d6003ba1d70`, was rejected because synchronous
-platform DNS discovery still occurred inside timed request polling. Bounded
-eager snapshot remediation is `d9922ef1`, and per-runtime absolute-name/custom-
-resolver hardening is `e5248b10`. Cycle-3 focused provider/parser, credential,
-HTTP, private resolver, CLI unit, CLI integration, and manifest evidence was
-17/17, 6/6, 16/16, 6/6, 18/18, 23/23, and 4/4. Catalog HTTP directly activates
-direct `hickory-proto`, `hickory-resolver`, and `sha2` edges; Hickory resolver
-remains only for bounded system-configuration parsing and its Tokio integration
-is disabled. The catalog still omits generation-only direct `bytes`,
-`web-fetch-http`, and Tokio's signal backend. The complete cycle-3 replacement
-gate passed for exact behavior candidate
-`2cecc921e48396e81ab6f434007a7ec8e3e890b5`, tree
-`8c0d235355582d92aaed6fcca7c1862982494e20`, under exact Rust and Cargo 1.94.1.
-Three fresh cycle-3 reviews rejected it with a deduplicated union of 0 blocker,
-0 high, 1 medium, and 3 low findings. Documentation and private bounded-DNS
-remediation is composed at `f80bd056` and `b6cf4cb`. A read-only preflight then
-found an Android platform-loader panic path before the complete cycle-4 gate;
-exact fail-closed remediation is `bd47461`. Formal cycle 4 rejected exact
-candidate `57d2ac2a3cc562763739f49642e6fdd172f036e8`, tree
-`d30bb656dfe52e15858df9d4e52a301cb61da8ce`, after its complete replacement
-gate under exact Rust and Cargo 1.94.1. The raw overlap-deduplicated union was
-0 blocker, 0 high, 1 medium, and 2 low; after prior sealed dispositions,
-0 blocker, 0 high, 1 medium, and 1 low remained unresolved at verdict
-collection. Documentation topology remediation is exact `268d35a`; signal and
-output-lifecycle remediation is integrated at exact
-`aa60db15d016cf97674459a4af66318a18b762ac`, tree
-`278fa365e24504452f8d111a7b08bc49e2aed164`. Exact cycle-5 candidate
-`27c75f4365af92759686402574d310ada596a923`, tree
-`5e40b24259d76196d573f752258c9a764b53f990`, passed the complete exact-1.94.1
-replacement gate without fallback. Three fresh formal cycle-5 correctness/API/
-compatibility, lifecycle/network/portability, and performance/concurrency/
-resources reviews each reported 0 blocker, 0 high, 0 medium, and 0 low
-findings. Their deduplicated union is zero, so the exact behavior candidate is
-formally **GREEN**. Review-exempt seal
-`20640843f49faf3de1b208bc6e8ee49ff0ff9c94`, tree
-`33818a48d3ef4f000789d10574ee2024de95cb29`, passed feature benchmark-
-evidence run `32923421739` for pinned-upstream and bootstrap jobs, but feature
-CI `32923421679` failed solely because exact-1.94.1 Quality Linux Clippy
-rejected one test-helper `needless_continue`; no integration occurred. The
-one-line test-only remediation is exact cycle-6 replacement candidate
-`831d38c8da72b849704ef3ab508588a9d0499c5f`, tree
-`a92acc141cab42061614a2e6f0f9d1f240325e2f`. It passed the complete replacement
-gate and three fresh formal reviews at 0 blocker, 0 high, 0 medium, and 0 low in
-every track, so the replacement is **REVIEW-GREEN**. The pinned comparison input
-remains fx commit
-`b1774fbf6c7602b503026f96f6e960e946c692ef`. Review-exempt delivered seal
-`bacc5c3dbc2bf094cca12102030d21f468f11e7a`, tree
-`da3183a3368273c2b34324a5f33266dfe5644a0d`, passed exact feature CI
-`32925681006`, feature benchmark-evidence `32925681009`, main CI `32926242609`,
-and main benchmark-evidence `32926242564`. `main` was fast-forwarded without
-force from `1de3b7eddf6a4d9046d48098defecf6bfa336442`; each benchmark run retains
-exactly two unexpired exact-SHA artifacts for 90 days. The delivered count is
-twenty-nine and M03 remains in progress. This delivery makes no product-
-performance, speed, latency, memory, binary-size-improvement, catalog-
-equivalence, compatibility-promotion, or fx-equivalence claim. The final
-delivery-record commit is documentation-only and review-exempt; its own exact
-feature and `main` workflows will be reported at handoff rather than claimed
-here.
-
-The cycle-4 DNS remediation replaces Hickory's request-polled resolver with
-private bounded UDP/TCP exchange. It snapshots one fallible query-ID key at
-transport construction, derives IDs deterministically from an atomic sequence,
-and invokes no entropy source or detached resolver task during request polling.
-Android fails closed before any DNS or platform-loader call. Private resolver
-source evidence is 14/14 and manifest evidence is 5/5. The complete cycle-4
-gate passed, but formal cycle 4 rejected that exact candidate. The topology and
-signal/output-lifecycle remediations compose exact replacement-gated cycle-5
-candidate `27c75f4`, tree `5e40b24`. Its three fresh formal reviews are green
-with a zero-finding union. The first review seal's benchmark passed and its CI
-failed solely on the test-only Linux lint described above. Exact cycle-6
-replacement `831d38c8`, tree `a92acc14`, passed its complete gate and three
-fresh zero-finding reviews. Delivered seal `bacc5c3`, tree `da3183a`, passed
-the exact feature and `main` CI and benchmark-evidence workflow pairs recorded
-above and was fast-forwarded to `main` without force.
-
-The slice adds one read-only top-level command:
-
-```text
-machine-god models
-machine-god models --json
-```
-
-It lists the Vercel AI Gateway coding-agent model catalog. The design preserves
-machine-god's existing ownership split: core owns only validated provider-
-neutral available-model, access, result, error, and catalog-provider contracts;
-native owns process credential acquisition and all Gateway parsing, sorting,
-access/fallback, deadline, concurrency, and HTTP behavior; the CLI owns strict
-parsing, thin composition, rendering/output bounds, and a current-thread Tokio
-host. Nothing in this contract changes the engine's model-generation provider
-or its prompt/session/tool orchestration.
+The top-level command lists the bounded Vercel AI Gateway coding-agent model
+catalog in human or JSON form. Core owns provider-neutral model-catalog
+contracts, native owns credential acquisition and bounded Gateway transport,
+parsing, sorting, access, fallback, deadline, and concurrency behavior, and the
+CLI owns strict parsing, bounded rendering, and the current-thread runtime host.
+The command does not change model generation, prompt/session orchestration, or
+tool orchestration.
 
 ## Grammar and parse-before-effects rule
 
@@ -256,7 +148,7 @@ A request is authenticated only by:
 Authorization: Bearer <validated-token>
 ```
 
-Machine-god has no team-selection source in this slice. It sends no team query
+Machine-god has no team-selection source for this command. It sends no team query
 parameter and no `x-vercel-ai-gateway-team` header. Anonymous fallback strips
 the complete authorization header; it does not reuse an authenticated request
 object whose header is merely overwritten.
@@ -656,10 +548,9 @@ intentionally differs by:
 - rejecting duplicate valid IDs and global structural/resource defects; and
 - exposing only redacted fixed operational diagnostics.
 
-This slice adds no picker, model selection, generation call, catalog cache,
+The command adds no picker, model selection, generation call, catalog cache,
 offline catalog, account/team/login flow, pagination, streaming catalog,
 configuration schema field, SDK surface, or compatibility promotion. It makes
 no product-performance, speedup, latency, memory, or fx-equivalence claim.
-Exact feature and `main` workflow delivery evidence is recorded above. A claim-
-eligible M07 benchmark comparison remains a later gate for any product-
+A claim-eligible M07 benchmark comparison remains required for any product-
 performance assertion.

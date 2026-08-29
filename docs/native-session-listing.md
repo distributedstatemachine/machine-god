@@ -1,38 +1,10 @@
 # Native session listing
 
-Status: delivered sixteenth bounded Milestone 03 library slice. Production,
-documentation, and 13 initial independently owned tests were
-composed through `dec98e0`, but each first-round formal review track reported
-confirmed findings. Acquire-first production fix `4b8d8b0`, test hardening
-`446b495`, and the corrected contract are composed in this replacement
-behavior candidate `3fa54635dab00ebba78b233c69fd39e04e9be57e`. Its 18 focused
-tests, full all-target/all-feature workspace suite, and all three replacement
-review tracks are green. First remote CI run `32599591900` exposed a Linux-only
-removed-root liveness gap. Exact portable-fix candidate
-`17f1884c20e84574561eb3cedd96b9aee6d37284` adds linked-descriptor validation
-and is green under both executable review tracks. Documentation seal
-`d3312d7f402a162289524e987a4a1793c18528f5` resolves the remaining exact-lineage
-finding, passed exact feature CI `32600292770` and benchmark evidence
-`32600292779`, was fast-forwarded without force to `main`, and passed exact main
-CI `32600567094` and benchmark evidence `32600567090`. This documentation-only
-commit is the final delivery record; its workflows are reported at handoff.
-
-The exact first-candidate lineage is: integrated base `9ada4b5`; isolated
-production `0accfbf`, composed as `1bffac9`; isolated documentation `63d589c`,
-composed as `87d7de0`; isolated tests `1b531297`, composed as `4b4e468`; and the
-removed-root finding fix plus first formal review candidate `dec98e0`. The
-isolated replacement source fix is `4b8d8b0`; isolated finding-test hardening is
-`446b495`; both are composed in exact behavior candidate
-`3fa54635dab00ebba78b233c69fd39e04e9be57e`. The Linux portable-fix behavior is
-exact candidate `17f1884c20e84574561eb3cedd96b9aee6d37284`. Full lineage and
-findings are recorded in the
-[`native session-listing review`](reviews/m03-native-session-listing-review-01.md).
-
-This slice adds `NativeSessionLifecycle::list_sessions` on supported Linux and
-macOS targets. It returns an owned `NativeSessionList` containing only validated
-session IDs and a `truncated` flag. The operation is a bounded observation of
-the existing flat file-session root; it is not a search index, registry,
-pagination protocol, or multi-record snapshot.
+Native session listing adds `NativeSessionLifecycle::list_sessions` on supported
+Linux and macOS targets. It returns an owned `NativeSessionList` containing
+only validated session IDs and a `truncated` flag. The operation is a bounded
+observation of the existing flat file-session root; it is not a search index,
+registry, pagination protocol, or multi-record snapshot.
 
 ## Result contract
 
@@ -202,30 +174,20 @@ that wrapper's stricter `ai-gateway-http`, non-WebAssembly, Linux/macOS gate.
 
 The current record schema does not contain authoritative workspace, title,
 preview, language, creation time, update time, or display-order fields, and the
-store has no authoritative session index. This slice does not derive those
+store has no authoritative session index. The listing API does not derive those
 values from filesystem modification times, message contents, metadata maps,
 live registry state, or directory order.
 
-Consequently the delivered library slice adds no rich summaries, workspace
-filter, newest or latest selection, ordering other than lexical ID order,
-cursor, pagination, session-ID generation, deletion, cleanup, or slash command.
-Delivered bounded slice 31 consumes this result through strict top-level
-`sessions [--json]`, without adding any of those absent semantics. Its separate
+Consequently the library API adds no rich summaries, workspace filter, newest
+or latest selection, ordering other than lexical ID order, cursor, pagination,
+session-ID generation, deletion, cleanup, or slash command. The strict
+top-level `sessions [--json]` command consumes this result without adding any
+of those absent semantics. Its separate
 [`CLI contract`](sessions-cli.md) uses a no-create, engine-free native process
 facade and preserves the exact scan bounds and per-record lock-sidecar effect.
 It does not implement fx's richer `sessions` behavior and makes no compatibility
 or upstream-equivalence claim.
 
-The in-progress CLI changes the `sessions-json` performance workload only to
-implemented/non-equivalent/not-measured/claim-ineligible. It adds no samples,
-threshold, workflow, product-performance result, or compatibility promotion.
-Zig remains only the pinned toolchain used to build the upstream fx benchmark
-reference; machine-god remains a Rust product.
-
-The combined Milestone 03 root plus native create/list/resume/replay/reset
-library boundary is delivered: replacement regressions, all three formal
-rereviews, exact feature workflows, fast-forward integration, and exact `main`
-workflows are green. Milestone 03 remains in progress for the remaining native
-tools, top-level CLI and
-slash-command ownership, and composed freshly built release-binary end-to-end
-evidence.
+The `sessions-json` comparison remains non-equivalent, not measured, and
+claim-ineligible. This contract establishes no samples, thresholds, product-
+performance result, compatibility promotion, or upstream-equivalence claim.

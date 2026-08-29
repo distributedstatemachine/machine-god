@@ -1,66 +1,11 @@
 # Native `rename_file` contract
 
-Status: **DELIVERED — final documentation record workflows pending**
-
-This document freezes the twenty-third bounded Milestone 03 slice from exact
-delivered base `3d76f2e844312e7f3e809524cb72c1a7957975ff`. That base is
-green under exact feature CI `32665981665`, feature benchmark workflow
-`32665981641`, main CI `32666261656`, and main benchmark workflow
-`32666261525`. Both benchmark workflows retained two nonexpired exact-SHA
-artifacts.
-
-The frozen contract is commit
-`19cad7d10a8fc885e2e70a7345fc0ba27d76872a`. Exact contract benchmark
-workflow `32667647846` is green with both jobs and two exact-SHA artifacts;
-contract CI `32667647822` was cancelled when a later feature push superseded
-it and is not claimed as green.
-Production composes on the feature branch at
-`d8f73676fcfce2cead385fa5b36598da989abe8f`, and independent evidence
-composes at `1dab9a0dfcb4ec2d204625c744171ae923cca458`. Exact composed
-local-gate precursor `43847fe5fd405e8b1d28808f0495dac859ebab15`, tree
-`80cb9a17d9bb2c1151bc43b72faebcb305dd78c2`, is green. Fresh same-SHA review
-cycle 1 is **NOT GREEN** in all three tracks on exact candidate
-`2bc4f9a8ad809cd38a6b7b36488b27bf9bd531f6`, tree
-`44558a0e88019ad9063234642c08097b4123c5f2`. Exact remediation
-`a3491cf8d5e6c388c896374e768794d06bf7be0b`, tree
-`0b195bdf29e7873a4d77169ec4d031491b1b336a`, passes the complete replacement
-local gate. Tree-identical cycle-2 candidate
-`4f224a5447a61a76a3cdea5ced035c164240c02c`, tree
-`cb75dca76eeec80dc526946c9d39d6e3da882c68`, is green with zero findings in
-all three fresh tracks. Feature delivery, fast-forward main integration, and
-exact main workflows remain pending. First documentation seal `a03a57b` passed
-feature benchmark `32671805335` with both jobs and two exact-SHA artifacts;
-feature CI `32671805412` was cancelled after its quality job reproduced a
-pre-existing Linux deadlock in an unrelated session-lifecycle test fixture.
-Exact test-only remediation `2c771edf3d4385c0c94f2cbbee93427ea9e8b13a`, tree
-`5de94a6f90d5316ab84b7f9451e51b7cc25fd6a2`, changes no production or rename
-behavior and passes the complete replacement local gate. A tree-identical
-cycle-3 candidate `5cc1523ebf1ba20264a80f3e703891ace58e1473`, tree
-`99b88ec8653679ca5386c9b0f1c368543f487796`, was **NOT GREEN**: correctness/API
-was green, while filesystem/robustness and performance/concurrency independently
-found that device/inode identity was not pinned against reuse. Exact remediation
-`4cbd46f82d3553009824883de2bc243177459207`, tree
-`35f531eb867e1b08375041b3c74fcf1a650ae063`, retains the validated source
-descriptor through commit verification and passes the complete replacement
-local gate. Exact tree-identical cycle-4 candidate
-`13379800ee2ee6eb6802db76c516e81dd087c62b`, tree
-`ab2bdc2b719061faa69749360fd1399177748c24`, is green with zero findings in all
-three fresh tracks. Replacement documentation seal
-`7cb5ef9fd04338cfe5c06b4d607e708c2bcdc620` is green under exact feature CI
-`32675233513` across all six jobs and benchmark workflow `32675233542` across
-both jobs with exactly two nonexpired exact-SHA artifacts. `main` was
-fast-forwarded without force from exact prior main
-`3d76f2e844312e7f3e809524cb72c1a7957975ff` to that seal. Exact main CI
-`32675562978` passed all six jobs; main benchmark workflow `32675562956` passed
-both jobs and retains exactly two nonexpired exact-SHA artifacts. Native
-`rename_file` is delivered as the twenty-third bounded Milestone 03 slice.
-
 `rename_file` validates and authorizes one existing regular file between two
 confined names, and reports success only when that same file object is observed
 at the destination. It does not accept a directory, symlink, or special-file
 source, read content, overwrite a destination, create a parent, access an
 external path, or fall back to copy-and-delete. The unavoidable final source-
-replacement race is qualified below. It is library-only in this slice. The
+replacement race is qualified below. It is library-only. The
 product remains Rust; Zig remains solely a pinned upstream benchmark build
 input.
 
@@ -109,7 +54,7 @@ are independently capped at 65,536 serialized bytes. Canonical endpoints must
 differ. Direct execution revalidates the same exact shape and requires both
 paths already canonical.
 
-Normalization is the delivered mutation-path rule: repeated `/` separators
+Normalization uses the mutation-path rule: repeated `/` separators
 collapse and exact `.` components disappear. Backslash and space remain literal
 Unix filename characters. Empty paths, absolute paths, any `..` component,
 C0/C1 controls, Unicode line or paragraph separators, Unicode bidirectional-
@@ -254,8 +199,8 @@ All failures are fixed and redacted:
 | `rename_file_cancelled` | `Cancelled` | no | `rename_file execution was cancelled` |
 
 Errors retain no endpoint, root, component, entry name, content, metadata,
-device/inode, OS diagnostic, or errno. Engine-facing tool failures remain the
-delivered generic durable error surface.
+device/inode, OS diagnostic, or errno. Engine-facing tool failures use the
+generic durable error surface.
 
 ## Host composition and compatibility boundary
 
@@ -268,40 +213,13 @@ tool and field names and supports the core rename scenario. Its implementation
 also accepts external paths, creates destination parents, permits same-path
 calls, and can replace existing destinations or resolve some symlink cases,
 despite model-facing guidance warning against overwrites. Machine-god
-intentionally rejects those broader behaviors. This slice makes no complete
+intentionally rejects those broader behaviors. This tool makes no complete
 fx-equivalence or product-performance claim.
 
 ## Deferred scope
 
 Destination overwrite, parent creation, directory trees, symlink moves,
 external paths, cross-filesystem copy/delete, non-Linux/macOS hardening, CLI
-ownership, richer permission modes, benchmark workloads, and performance claims
-remain outside this slice. Production, independent evidence, and the recorded
-precursor local gate were green before formal cycle 1. That exact candidate is
-not green: retained evidence was missing for the terminal replacement-race,
-`EINTR`/errno, postcommit, sync-bound, late-cancellation, and moved-parent
-matrix, and the final directory-replacement wording required clarification.
-Exact remediation `a3491cf8d5e6c388c896374e768794d06bf7be0b`, tree
-`0b195bdf29e7873a4d77169ec4d031491b1b336a`, expands the private suite to 15
-tests, clarifies the directory race, and passes the complete replacement local
-gate recorded in the review. Tree-identical cycle-2 candidate `4f224a5`, tree
-`cb75dca`, is green with zero findings in all three fresh same-SHA tracks.
-First seal `a03a57b` passed the exact feature benchmark workflow, while exact
-feature CI reproduced an unrelated Linux session-lifecycle fixture deadlock.
-Test-only remediation `2c771ed`, tree `5de94a6`, deterministically removes the
-fixture cycle and passes the complete replacement local gate without changing
-production. Cycle-3 candidate `5cc1523`, tree `99b88ec`, was not green because
-two fresh tracks found the unpinned device/inode reuse race. Exact remediation
-`4cbd46f`, tree `35f531e`, retains a non-reading source descriptor through
-commit verification, adds direct macOS permission evidence and deterministic
-unlinked-source evidence, and passes the complete replacement local gate. A
-tree-identical cycle-4 candidate
-`1337980`, tree `ab2bdc2`, is green with zero findings in all three fresh
-same-SHA tracks. Exact replacement feature workflows, fast-forward integration,
-and exact main workflows are green on seal `7cb5ef9`: feature CI
-`32675233513`, feature benchmark `32675233542`, main CI `32675562978`, and main
-benchmark `32675562956`. Both benchmark runs retain exactly two nonexpired
-exact-SHA artifacts. This completes delivery. The final delivery record is
-documentation-only and exempt from adversarial review under the user's
-instruction. Its own exact feature and main workflows remain required after
-push and cannot be self-recorded.
+ownership, richer permission modes, benchmark workloads, performance claims,
+complete fx equivalence, and broader compatibility promotion remain outside
+this tool's scope.

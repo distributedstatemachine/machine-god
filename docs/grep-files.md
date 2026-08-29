@@ -1,118 +1,5 @@
 # Native `grep_files` tool
 
-Status: **DELIVERED — formal fourth-cycle exact behavior SHA
-`8e5fccea1b12483d2de2448e7a4ece0dc840ba39` is green with zero findings
-across correctness/API, filesystem/robustness, and performance/concurrency;
-documentation seal `0f48806` is exact-feature-green and fast-forwarded without
-force to `main`, where exact CI and benchmark-evidence workflows are green**
-nineteenth bounded Milestone 03 slice.
-The exact base is `f6aa458bb875d6cb26565adc878703fe140916d3`.
-The tree-identical integration kickoff is
-`f6ab594c928bead48b48ab080ac12a7ce9c0d3f4`. Production, independent tests,
-and this maintained documentation are owned in parallel, non-overlapping
-worktrees. Production component
-`27eec2f3c25ffecd1ba8ff3c0a4fe0129dbeeac3` and initial independent-test
-component `6eaee93398de8fbf6e87e77cf4d3e7de56e2a8cb` exist. They compose initially
-through `9057feb24fd3f24657148ca8e78198b88c9dbab4` and
-`44e33d7e24c6650a1e375cd095eb9efae31f4e78`, respectively. Reference-host
-fixture fix `bdbb677161322e249aea95a12bfb1b2169ff5b48` makes focused production-
-and-test composition green. Documentation component
-`b04151a7d958875118eebddd67526d74e2ea9526` produces first fully composed
-behavior candidate `42e4793b27902da7390dc54ef6bedb169da7e1bc`. Lint fix and
-exact precursor local gates are green at
-`45ad91fa2689250c47c79d2105f5e3c261cea638`. All three first-cycle formal
-reviews are **NOT GREEN** on exact candidate
-`355a11a6055b0053dff80e71011d7633e8a6ce97`. Isolated production, independent-
-test, documentation, deterministic-evidence, and unsupported-target-test
-remediation commits `012f14d273b15085713fba9092e93486d4e6f0e4`,
-`646286203ab665e9dc9d0a86f7de6d036b7c5c86`,
-`771a3e34816d2d67cd1e08d73abdac7c807313a3`,
-`842d36ae5f7cc8aa5a3011a41bba209e0f35172c`, and
-`325350ce558a7e6f21ef4cf2d4d030e30cc4f740` compose in order through
-`35defb5c7cee021064411535070b9ecd62387e2f`,
-`58550734b77a5a44c4b9452438e34f265013c40b`,
-`3cd282fafb26bb069ac73407fde0fd30c7d1ff82`,
-`630acbb384f2e1b79b6916a10baaac26acafbf41`, and final code/test local-gate
-precursor `275d263dd3c7981e66f6a0f90f3779c271eb4cc3`. Its replacement local
-gates are green. First replacement formal candidate
-`ae87bf1454b1527b2e55ed5e517c21fd7410c980` is **NOT GREEN**: correctness found
-one low literal-compilation ordering mismatch; filesystem review found one low
-deep-FIFO evidence overclaim; and performance review found one medium slashful
-candidate/false-DP cancellation gap plus one low unmetered slashful selected-
-file decision. Second production remediation
-`ac5d7726411744e4f85344edf966d26a3cdb0a26` composes at
-`d67221021aa173299f8f2e99d2574a15870cd5c8`; second documentation remediation
-`7ad0863885d28b7b7a1d6f89d35f525cdd2dd3fa` produces fully composed exact
-local-gate precursor `b498ba06fa808dc9453a7644727cf8166b6f8e87`.
-`ae87bf1` remains historically **NOT GREEN**. Formal second replacement
-candidate `5aeddc1b4cb210b00cb967b938db8d5232062916` has correctness/API and
-filesystem/robustness **GREEN** with zero findings. Performance/concurrency is
-**NOT GREEN**: repeated eligible files can each allocate a 204,801-byte content
-buffer; 10,000 empty files accumulated approximately 2,048,010,000 allocated
-bytes, with an observed 6.10-second diagnostic run that is not a contractual
-timing result. Its two low findings correct the Markdown inventory from 57 to
-58 files and reject the claim that deterministic evidence already exercises
-the recursive dynamic-programming branch. Third production remediation
-`8777825b1b8b8c97dd4eb4bb31c0d8dbed9a7741` composes at
-`ab1c13385a475ac34e8df2180e8c4cbb3b0ee3e9`; independent regression
-`dcf57ad35150b86c84a3f6c1127d9e379f3840fc` composes at
-`d7526d4dcd7f41be1b8d4c95d640da061088517c`; review-findings documentation
-`44afb232f2b8418c0b61eec7d1dab46bbe8e3667` composes at
-`f08c5f2e35befb5e533ef4bb80a4b342dc5ffa46`; lint follow-up
-`1f13f9ae04ee3307d13a363ed28b156d7ee2421f` produces exact fully composed
-local-gate precursor `a8f61794ee5e279558856220b5789526b908015a`.
-Exact Rust 1.94.1 formatting, warnings-denied workspace Clippy, 598 non-
-documentation tests plus two doctests, 25 private native tests, 40 direct
-`grep_files` tests, four engine tests, and diff checks are green. Exact a8f
-cross-target/dependency/link and compatibility/release validators are green.
-Formal third-cycle candidate
-`0bfe68a9692837187c057b5b4efa08ebe3dee058` has filesystem/robustness
-**GREEN** with zero findings. Correctness/API and performance/concurrency are
-**NOT GREEN** only for the same LOW documentation contract mismatch; reviewers
-confirmed zero production defects. In diagnostic allocator instrumentation,
-two 10,000-file boundary scans at `5aeddc1` requested approximately
-4,103,462,456 bytes and made 20,000 allocations of exactly 204,801 bytes;
-`0bfe68a` requested approximately 7,459,007 bytes and made zero maximum-sized
-allocations. Its maximum-plus-384 regression requested approximately 3,349,064
-bytes and made one high-water allocation. Allocation and timing instrumentation
-is diagnostic only, not a contract or product-performance result. Isolated
-wording remediation `993b618bf78d30f6a68f3b248b572e33e4de1126` composes at
-exact `f87f6bef4016aa4ce3cd49e2c795d15bff3e84f4`. Exact f87 documentation
-gates are green: formatting and two doctests pass; 58 Markdown files contain
-420 inline links, including 270 repository-relative links with zero missing;
-and diff, added-line-length, exact 11-file ownership, and clean-worktree checks
-pass. Its behavior tree remains `a8f6179` except for documentation. Formal
-fourth-cycle exact behavior SHA
-`8e5fccea1b12483d2de2448e7a4ece0dc840ba39` is **GREEN** with zero findings
-on each fresh correctness/API, filesystem/robustness, and performance/
-concurrency track. Exact reviewers verified formatting, warnings-denied
-workspace Clippy/tests, Linux/FreeBSD cross-target and WASI gates, two doctests,
-25 private tests, 40 direct `grep_files` tests, four engine tests, and the
-58/420/270/0 documentation inventory. All historical findings are closed,
-including the attempted-read-window storage wording, so behavior is green.
-This commit is a documentation-only seal and is exempt from another adversarial
-review under the user's explicit instruction. Documentation seal
-`0f48806310882caf3c668c72fe1b9d211cae744b` passed exact feature CI run
-`32623585346` with all six jobs green and benchmark-evidence run `32623585349`
-with both jobs and artifacts green. Both runs report exact `0f`. `main` was
-fast-forwarded without force from `f6ab594` to exact `0f`. Main CI run
-`32623904784` is **GREEN** for exact `0f`: all six jobs and every step passed
-without reruns. Main benchmark-evidence run `32623904800` is **GREEN** on
-attempt 1 for exact `0f`: both jobs and every step passed, with two valid non-
-expired exact-SHA artifacts retained. The `grep_files` slice is delivered; the
-remaining native-tool inventory remains pending.
-This final delivery record is documentation-only and explicitly exempt from
-another adversarial review. Its own exact feature and `main` workflows remain
-required after push and cannot be self-recorded in this commit.
-
-This document freezes the behavior that production, independent tests, and
-documentation must compose into one exact behavior candidate before formal
-review. A documentation-only seal or final delivery record made after behavior
-is green is exempt from another adversarial cycle under the user's explicit
-instruction, but its exact feature and `main` workflows must still pass and be
-recorded. Milestone 03 remains `IN PROGRESS`, and its combined native-tool
-checklist remains unchecked.
-
 `grep_files` is a Linux/macOS library capability in `machine-god-native`. It
 searches bounded eligible UTF-8 regular-file content beneath one retained
 workspace identity. The current CLI does not construct an engine, register or
@@ -129,7 +16,7 @@ a fixed redacted construction error. The tool performs no workspace discovery.
 
 Each execution reacquires a fresh descriptor-relative `.` with read-only,
 directory, no-follow, close-on-exec, and nonblocking requirements. It applies
-the delivered linked-root liveness validation: Linux rejects zero link count;
+the linked-root liveness validation: Linux rejects zero link count;
 macOS requires the acquired descriptor's parent/name no-follow identity to
 match its device, inode, and directory type, with the filesystem root handled
 directly. The provider-selected root is then reached only through
@@ -157,7 +44,7 @@ and macOS are deferred.
 
 ## Public constants and construction errors
 
-The candidate exports `GrepFilesTool`, `GrepFilesToolOpenError`,
+The module exports `GrepFilesTool`, `GrepFilesToolOpenError`,
 `GrepFilesToolOpenErrorKind`, and these exact public constants:
 
 | Constant | Value |
@@ -183,8 +70,7 @@ The candidate exports `GrepFilesTool`, `GrepFilesToolOpenError`,
 | `MAX_GREP_FILES_TOTAL_RESULT_TEXT_BYTES` | `8,192` |
 | `MAX_GREP_FILES_SERIALIZED_RESULT_BYTES` | `49,152` |
 
-The line bound was corrected during contract review from an initially proposed
-256 bytes to 4,096 bytes. It now equals the pattern bound, so a bounded matching
+The line bound equals the 4,096-byte pattern bound, so a bounded matching
 excerpt can contain the complete first matched substring. The aggregate text
 and serialized-result bounds remain unchanged.
 
@@ -240,7 +126,7 @@ ignored or clamped. `head_limit` and `offset` affect only the two list modes.
 prepared and echoed in every mode, including where they do not alter output.
 
 Requested and normalized `path` forms are independently bounded to 4,096 UTF-8
-bytes. Normalization is the delivered confined workspace rule: collapse
+bytes. Normalization uses the confined workspace rule: collapse
 repeated `/`, remove `.` components, join ordinary components, and normalize
 current-directory forms to `.`. It rejects an empty present string, absolute
 path, any `..` component, C0 or C1 control, Unicode line or paragraph separator,
@@ -255,12 +141,12 @@ bidirectional-formatting characters reject as an invalid pattern. Backslash,
 spaces, and regex punctuation remain literal.
 
 An `include` string is independently bounded to 4,096 bytes and normalized
-under exactly the delivered [`glob_files`](glob-files.md) grammar and forbidden-
+under exactly the [`glob_files`](glob-files.md) grammar and forbidden-
 character rules. Only `/` separates components; repeated separators and exact
 `.` components normalize away; absolute, parent, empty-normalized, control,
 line/paragraph-separator, and bidirectional-formatting forms reject. Backslash,
 brackets, and braces are literal. `?`, `*`, and an exact `**` segment retain
-their bytewise delivered meanings.
+their documented bytewise meanings.
 
 Execution constructs the fixed literal pattern table and charges that literal
 work before selected-root resolution. It then compiles the optional normalized
@@ -396,13 +282,13 @@ a regular-file classification may cause a content-specific nonblocking open to
 acquire a special object at that same authorized name; authoritative opened-
 descriptor type validation rejects it before content is read. No raced symlink
 is followed. All observed entries still consume entry/name/path budgets. This
-slice never uses a path-based context reread.
+tool never uses a path-based context reread.
 
 The once-compiled optional include pattern is tested against each regular
 candidate before content open. A slash-free include matches the basename
 recursively. A slashful include matches the path relative to the selected
 search root. It filters files only and never prunes directory traversal. Its
-single compile plus every invocation charge the aggregate delivered glob-
+single compile plus every invocation charge the aggregate glob-
 matcher work budget completely. Candidate path splitting checks cancellation
 at intervals of at most 1,024 candidate bytes, including inputs that ultimately
 fail to match. Both recursive and non-recursive dynamic-programming branches
@@ -690,7 +576,7 @@ permissive decoding, different output formatting, a different result cap, or a
 naive fallback matcher. Machine-god does not inherit those authority or
 resource choices.
 
-This candidate deliberately uses strict input, workspace-only normalized paths,
+This tool deliberately uses strict input, workspace-only normalized paths,
 the distinct `SearchContent` authorization kind, retained descriptor-relative
 no-follow access, no symlink targets, deterministic sorted traversal, one
 linear and explicitly metered literal engine, explicit eligibility/skip
@@ -702,7 +588,7 @@ product and this implementation remain Rust.
 
 ## Deferred scope and nonclaims
 
-This candidate does not add:
+This tool does not add:
 
 - regular expressions, captures, Unicode case folding, occurrence counts, or
   cross-line matching;
@@ -721,6 +607,5 @@ This candidate does not add:
 
 The existing core argument/result limits, permission-request identity and risk,
 grant-cache absence, generic durable tool-error mapping, provider/transport,
-session store and lifecycle, configuration, credentials, CLI bytes, benchmark
-evidence, compatibility inventory, workflows, and release thresholds remain
-unchanged by this bounded candidate.
+session store and lifecycle, configuration, credentials, and CLI bytes remain
+outside this contract.

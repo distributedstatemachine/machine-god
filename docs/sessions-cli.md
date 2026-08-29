@@ -1,12 +1,5 @@
 # Top-level sessions command
 
-Status: delivered as bounded Milestone 03 slice 31. Exact candidate `a527652`,
-tree `0249dd0`, passed three fresh cycle-2 review tracks at `0/0/0/0` each.
-Review-exempt seal `b5b9116`, tree `3e61754`, passed exact feature and integrated
-`main` CI/benchmark workflows with two unexpired exact-SHA artifacts in each
-benchmark run. Full evidence is retained in the
-[review ledger](reviews/m03-sessions-cli-review-01.md).
-
 The command exposes the existing bounded native session-ID observation through
 the thin CLI. It does not construct an engine, provider, model transport,
 permission handler, workspace tool, network runtime, or full native reference
@@ -105,7 +98,7 @@ non-truncated success. Existing unsafe, inaccessible, symlink, or wrong-kind
 components fail closed. Unsupported targets return `Unsupported` without
 filesystem access.
 
-The actual observation delegates to the delivered
+The actual observation delegates to the
 [`NativeSessionList`](native-session-listing.md) scan. Its bounds remain 100
 returned IDs, 1,024 processed non-dot entries plus one name-inspected overflow
 witness, 64 MiB of accepted aggregate record bytes plus one transient byte
@@ -131,7 +124,7 @@ Pinned fx supports `--all`, `--limit`, and `--cursor`, defaults to the current
 workspace, returns rich summary objects, orders newest first, supplies cursors,
 and skips/report corrupt records. Current machine-god records have no
 authoritative workspace, title, preview, language, creation time, update time,
-history length, or display rank. This slice therefore lists the selected
+history length, or display rank. The command therefore lists the selected
 machine-god namespace globally, returns ID-only objects in lexical order,
 exposes bounded truncation without pagination, and fails the call on selected
 corruption.

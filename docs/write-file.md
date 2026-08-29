@@ -1,27 +1,8 @@
 # Native `write_file` contract
 
-Status: **DELIVERED — exact feature and `main` workflows are green**
-
-The contract commit is
-`3ee52fd8393bfb86f11048eaa6c624bd18a78798`. Its exact feature CI run
-`32626410935` and benchmark-evidence run `32626410931` are green. Those runs
-validate only the contract kickoff; they are not implementation, behavior-
-review, or final delivery evidence.
-
-Behavior-green candidate `db78c6407c4f603f18e2839a8a291f2de33e579c`
-is sealed and integrated at `bdd27ec969769d94c78efdab8e07cbd6b600ca3f`.
-Exact seal feature CI `32633372927` is green across all six jobs; feature
-benchmark run `32633372982` is green across both jobs with two nonexpired exact-
-SHA artifacts. `main` was fast-forwarded without force from
-`bc042536eb3a40d75ccf4d1fe52032b31defac04` to that seal. Exact main CI
-`32633639774` is green across all six jobs, and main benchmark run `32633639763`
-is green across both jobs with two nonexpired exact-SHA artifacts.
-
-`write_file` is the delivered twentieth Milestone 03 slice. It adds one bounded,
-permission-gated workspace mutation without granting parent creation,
-external-path access, target-content reads, or general filesystem authority.
-The product remains Rust. Zig remains only a pinned upstream benchmark build
-input.
+`write_file` performs one bounded, permission-gated workspace mutation. It
+does not grant parent creation, external-path access, target-content reads, or
+general filesystem authority.
 
 ## Public API, schema, and limits
 
@@ -190,9 +171,8 @@ On Linux and macOS, execution performs this bounded sequence:
 4. In that exact parent, try at most eight fixed-short, high-entropy temporary
    basenames that cannot equal the target basename. Open with write-only,
    create, exclusive, no-follow, close-on-exec, and nonblocking flags at mode
-   `0600`. A collision is never deleted and consumes one attempt. Remediation
-   `9302ec3fa7d6e891fdc4a0c7bd8fe9b7cf8e427d` uses direct Linux `rustix`
-   `getrandom` with `NONBLOCK`. Each 16-byte name fill accepts at most 16
+   `0600`. A collision is never deleted and consumes one attempt. Linux uses
+   direct `rustix` `getrandom` with `NONBLOCK`. Each 16-byte name fill accepts at most 16
    cumulative `EINTR` results and makes at most 31 calls including partial
    progress, with cancellation checked before and after every call. Linux
    `ENOSYS`, `EPERM`, and `EAGAIN` fail closed as retryable
@@ -246,7 +226,7 @@ swap: after final validation, another actor can replace or remove the target
 before rename, and the ordinary rename can replace the new entry or create the
 name. A final parent can also be renamed outside the workspace after the
 identity rewalk; descriptor-relative publication can then land in that retained
-moved directory. Rename never follows a symlink, but the slice does not claim
+moved directory. Rename never follows a symlink, but the tool does not claim
 adversarial concurrent-rename confinement.
 
 Before rename, failures leave the target pathname unchanged. Cleanup is
@@ -254,10 +234,10 @@ best-effort and identity-checked: the staged name is compared by no-follow
 device and inode with the held staged descriptor before unlink is attempted.
 The implementation never intentionally removes a mismatched entry or a
 preexisting collision. Portable metadata-check-to-unlink still has a final
-race. Formal cycle 2 found that the exact candidate can leave its owned staged
-inode carrying the already-applied final mode when cleanup cannot unlink it, so
-such residue is not unconditionally guaranteed private. Remediation `9302ec3`
-now makes one best-effort `fchmod(0600)` call on the held, unpublished staged
+race. An owned staged inode can retain its already-applied final mode when
+cleanup cannot unlink it, so such residue is not unconditionally guaranteed
+private. The implementation makes one best-effort `fchmod(0600)` call on the
+held, unpublished staged
 descriptor before the same identity-checked best-effort unlink. If both mode
 restoration and unlink fail, residue can still retain final mode bits; perfect
 mode restoration and identity-safe unlink are not promised.
@@ -316,176 +296,63 @@ Current reference-host composition and retained-workspace descriptor
 distribution are maintained in the
 [canonical tool catalog](native-reference-host.md#tool-catalog).
 
-Production, independent tests, and the maintained documentation are composed on
-the feature branch. The first exact candidate failed all three formal tracks.
-Cycle-1 code and evidence remediation is composed through `3010e6d`. The tool
-is delivered at exact seal `bdd27ec` after local gates, three fresh same-SHA
-adversarial tracks, exact feature workflows, and fast-forward `main` delivery
-all completed green.
+## Required acceptance coverage
 
-## Formal review status
+Acceptance evidence must cover:
 
-All three fresh formal tracks returned **NOT GREEN** on exact cycle-1 candidate
-`119938240807f8279f83e2ace65a69706e8fcfed`. The confirmed findings are
-unbounded `EINTR` retries in write and sync helpers; missing deterministic real-
-pipeline proofs for target appearance, existing-target replacement, and final-
-parent postvalidation races; missing real-pipeline verification-phase
-cancellation evidence; and stale platform/local-gate and lineage statements in
-the maintained documents.
-
-The cycle-1 candidate is tree-identical only to its immediate parent
-`a7841c19b4b34cecf40e55d7cd001fd1547133c1`. Local-gate precursor
-`072bd69eb6f73944d1db00363da0f965f09dda9f` has a different documentation tree
-and is retained only as precursor evidence. Documentation correction
-`016f8df` and code/evidence remediation `3010e6d` close the confirmed cycle-1
-findings. Replacement local gates are green at `581fe6a`. Formal-review
-preparation `491496aa22aa8855717b74f6a026e8c602bb02e9` is the immediate parent
-of tree-identical exact cycle-2 candidate
-`708f2d08d72d610ca387a62a4cec1f656c188a7d`.
-
-Cycle 2 is **NOT GREEN**. Correctness/API is **GREEN** with zero findings.
-Filesystem/robustness is **NOT GREEN** with two medium findings: retained staged
-inode mode can remain more permissive than `0600`, and Linux entropy acquisition
-can retry interruptions without the contract's finite work/cancellation bound.
-Performance/concurrency is **NOT GREEN** with the same medium entropy finding.
-Production remediation `9302ec3fa7d6e891fdc4a0c7bd8fe9b7cf8e427d`
-implements the bounded entropy path, cancellation evidence, and one-shot best-
-effort `0600` cleanup reset with the failure caveat above. Focused checks are
-green at that exact remediation SHA: 28 private `write_file` tests, 109 native
-library tests, 25 direct integration tests, formatting, workspace/all-target/
-all-feature warnings-denied Clippy, and the Linux cross-check. Exact remediation
-precursor `8432c0c6b5d5955b78a882b651a5bfec76af8814` passes the complete local
-gate recorded below. Cycle 2 itself remains historically not green; cycle 3 and
-delivery are green as recorded below. A later
-documentation-only seal or delivery record remains
-exempt from another adversarial cycle under the user's instruction, while exact
-feature and `main` workflows remain required.
-
-## Independent evidence checklist
-
-The composed feature branch supplies the following local evidence. Checked
-items are still candidate evidence until the formal exact-SHA gates complete:
-
-- [x] Exact exports, constant values, tool/schema descriptions, strict shape,
+- Exact exports, constant values, tool/schema descriptions, strict shape,
   fixed construction/tool errors, `Display`, and debug redaction.
-- [x] Requested and normalized path byte boundaries, component boundary,
+- Requested and normalized path byte boundaries, component boundary,
   forbidden forms, raw-content exact/one-over, serialized-argument exact/one-
   over including escape-heavy JSON, and serialized-result bound.
-- [x] Preparation is effect-free; denial produces no filesystem effect; policy
+- Preparation is effect-free; denial produces no filesystem effect; policy
   and execution observe the same normalized path and exact canonical content.
-- [x] Empty, NUL-containing, Unicode, and maximum-sized content round-trip
+- Empty, NUL-containing, Unicode, and maximum-sized content round-trip
   byte-for-byte with exact `bytes_written`.
-- [x] Missing-target creation, existing-target replacement, identical-content
+- Missing-target creation, existing-target replacement, identical-content
   inode replacement, old-descriptor/new-path atomic visibility, and exact result
   shapes.
-- [x] New files are `0644` under hostile umask; replacements preserve only the
+- New files are `0644` under hostile umask; replacements preserve only the
   nine ordinary rwx bits and strip set-id/sticky bits.
-- [x] Parents are never created; ancestor/final symlinks and directory, FIFO,
+- Parents are never created; ancestor/final symlinks and directory, FIFO,
   socket, device, and other special targets fail closed and outside sentinels
   remain unchanged.
-- [x] Target appearance, existing-target replacement, and final-parent
+- Target appearance, existing-target replacement, and final-parent
   postvalidation races are exercised deterministically through the real
   production pipeline, including native publication into a retained parent
   moved outside the configured workspace.
-- [x] Eight temporary-name collisions exhaust exactly and foreign collisions
+- Eight temporary-name collisions exhaust exactly and foreign collisions
   are preserved; staged-name and cleanup-name swaps avoid a mismatched sentinel;
   and a retained owned staged inode receives one best-effort `0600` reset before
   identity-checked unlink, with the restoration-plus-unlink failure caveat
   documented and successful reset behavior tested.
-- [x] Injected write, chmod, staged-file sync, rename, and parent-directory sync
+- Injected write, chmod, staged-file sync, rename, and parent-directory sync
   failures prove precommit unchanged-target behavior and post-rename commit
   ambiguity.
-- [x] Cancellation is exercised through the real production pipeline during
+- Cancellation is exercised through the real production pipeline during
   and after verification. Traversal, temporary-attempt, write, final-precommit,
   unpolled/drop, and core same-poll durable unknown-result evidence exists.
-- [x] Write and sync interruption handling has a 16-interruption phase bound;
+- Write and sync interruption handling has a 16-interruption phase bound;
   cumulative interleaved write interruptions do not reset on partial progress,
   precommit cancellation wins on the final allowed interruption, and
   postcommit exhaustion is ambiguous.
-- [x] Temporary-name entropy acquisition has a finite cumulative bound across
+- Temporary-name entropy acquisition has a finite cumulative bound across
   partial progress and interruptions, checks cancellation at each retry
   boundary including exhaustion, and fails before staging or target effects.
   Linux uses direct nonblocking `rustix` entropy with at most 16 cumulative
   interruptions and 31 calls per name; macOS's one-call entropy path routes
   through the same checks.
-- [x] Engine deny/allow events and durable results plus canonical reference-host
+- Engine deny/allow events and durable results plus canonical reference-host
   composition and retained-workspace identity all pass.
-- [x] Linux and macOS execute the native behavior; FreeBSD and WASI compile;
+- Linux and macOS execute the native behavior; FreeBSD and WASI compile;
   an active unsupported-target test reaches the fixed public construction
   failure without fabricating an unsafe instance.
-
-Exact local-gate-green behavior precursor
-`072bd69eb6f73944d1db00363da0f965f09dda9f` passed the native macOS gate,
-Linux and FreeBSD cross-compilation checks, WASI compilation and active
-unsupported-target execution, and the repository-wide checks recorded in the
-[`write_file` review](reviews/m03-write-file-review-01.md). The combined
-platform item was completed by exact seal feature CI across the repository's
-Linux and macOS runner matrix. Those local results belong to the precursor,
-whose documentation tree differs from formal candidate
-`119938240807f8279f83e2ace65a69706e8fcfed`.
-
-Exact remediated local-gate precursor
-`581fe6aa9a4190ba8cc303371e02af5aba68a5a1` passes 655 workspace tests,
-two doctests, all focused suites, warnings-denied workspace Clippy, repository
-Python and pinned-compatibility checks, dependency policy/audit, Linux and
-FreeBSD cross-target checks, WASI compilation with active unsupported-target
-execution, documentation links, diff/no-unsafe checks, and a fresh release CLI
-smoke. Exact seal feature CI later completes the supported native Linux/macOS
-platform evidence.
-
-Passing only a subset of this list does not establish delivery. A remediated
-exact composed behavior SHA must pass repository gates and three fresh
-adversarial tracks as recorded in the
-[`write_file` review](reviews/m03-write-file-review-01.md).
-
-## Cycle-2 remediation local gates
-
-Exact clean precursor `8432c0c6b5d5955b78a882b651a5bfec76af8814`
-passes the complete Rust 1.94.1 local gate. Formatting, workspace/all-target/
-all-feature warnings-denied Clippy, workspace tests, and two doctests are green.
-Discovery reports 611 default-feature tests, 660 all-feature tests, and zero
-benchmarks. Focused evidence passes all 30 private module tests, including 28 in
-the supported-platform submodule, plus 25 direct integration tests and five
-engine tests.
-
-Linux, FreeBSD, and WASI cross-platform gates are green under the exact scope
-recorded in the review. Dependency policy and the offline vulnerability audit,
-the sequential 129-test Python rerun, clean pinned-fx compatibility generation,
-the 60/429/279/0 documentation inventory, fresh isolated locked release smoke,
-and whole-feature diff/no-unsafe/clean checks are also green. The first Python
-attempt overlapped an LTO release build and produced one two-second timeout;
-the isolated case and complete sequential rerun both passed, establishing test-
-runner contention rather than a product failure. This exact local evidence
-closes the two cycle-2 findings for review preparation only. It does not make
-historical cycle 2 green, replace cycle 3, satisfy native Linux/macOS feature
-CI, or establish delivery.
-
-## Formal adversarial cycle 3
-
-Exact local-gate record `9a09172ac40d7ec09ebb9fa7a4e4e21f12b2a632`
-retains the complete precursor evidence above. Exact behavior candidate
-`db78c6407c4f603f18e2839a8a291f2de33e579c` is tree-identical to its immediate
-formal-preparation parent `5ed38f3c61d3f29677f41c0b4a41468616a59c7e`.
-Three fresh tracks all returned **GREEN** with zero findings: correctness/API,
-filesystem/robustness, and performance/concurrency. Filesystem/robustness also
-reran 30 private module tests, 25 direct tests, and five engine tests under Rust
-1.94.1 exactly. Candidate formatting, workspace/all-target/all-feature warnings-
-denied Clippy, workspace tests, two doctests, and diff/clean checks are green.
-
-The behavior-green SHA is exactly `db78c6407c4f603f18e2839a8a291f2de33e579c`.
-The earlier full gate record at `8432c0c`/`9a09172` remains applicable evidence,
-including the transparently recorded contended Python timeout and isolated plus
-full sequential green reruns. Exact seal feature CI `32633372927`, feature
-benchmark `32633372982`, main CI `32633639774`, and main benchmark `32633639763`
-are green; both benchmark runs retain two nonexpired exact-SHA artifacts. `main`
-was fast-forwarded without force from `bc042536` to exact seal `bdd27ec`. This
-seal is documentation-only and exempt from further adversarial review.
 
 ## Pinned fx input and deliberate differences
 
 Pinned fx confirms only the required `path` and `content` field names. Its 4 MiB
 content allowance, external paths, parent creation, and permissive unknown-field
-behavior are deliberate differences. This slice makes no fx-equivalence or
+behavior are deliberate differences. This tool makes no fx-equivalence or
 product-performance claim.
 
 Machine-god additionally fixes strict decoding, smaller independent input
@@ -494,12 +361,7 @@ existing-parent-only mutation, same-directory staging, explicit durability,
 fixed redacted errors, and the race/cleanup boundary above. None of those
 differences should be normalized away merely to resemble upstream behavior.
 
-This slice adds no CLI or slash command, parent creation, external path,
+The tool adds no CLI or slash command, parent creation, external path,
 symlink-target write, metadata-only edit, append mode, patch mode, ownership/
 ACL/xattr preservation, non-Linux/macOS hardened execution, benchmark workload,
-compatibility-status change, or product-performance claim. Complete delivery
-lineage is retained in the
-[`write_file` review](reviews/m03-write-file-review-01.md). This final record is
-documentation-only and exempt from adversarial review under the user's
-instruction. Its own exact feature and `main` workflows remain required after
-push and cannot be self-recorded here.
+compatibility-status change, or product-performance claim.

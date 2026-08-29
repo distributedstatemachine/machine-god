@@ -1,61 +1,10 @@
 # Native `open_file` contract
 
-Status: **DELIVERED**
-
-This document records the twenty-sixth bounded Milestone 03 slice from exact
-delivered base `e2ee11f2c728721d2aa93219b5fafa86ea15b0c4`. That base is green
-under exact main CI `32704202572` and exact main benchmark workflow
-`32704202546`. The benchmark workflow passed both jobs and retains exactly two
-nonexpired exact-SHA artifacts, IDs `9511626648` and `9511745538`.
-
-The earlier checkpoint froze documentation only and added no behavior. Its
-contract commit is exempt from adversarial review under the user's instruction,
-but its
-exact feature CI `32707583915` subsequently passed all six jobs. Exact feature
-benchmark workflow `32707583892` passed both jobs and retains exactly two
-nonexpired exact-SHA artifacts, IDs `9512848704` and `9512966283`. These
-workflows validate only that frozen contract checkpoint at
-`6b763c4f1168963dd42087a1fdf5cf72c4212b40`; they are not implementation,
-delivery, performance, or fx-equivalence evidence.
-
-Delivered source implements the core capability, native Linux tool,
-trusted launcher seam, unsupported-target behavior, tests, and the reference-
-host composition recorded in the canonical
-[tool catalog](native-reference-host.md#tool-catalog), without changing
-dependencies, workflows, CLI behavior, benchmark workloads, or compatibility
-status. Formal review cycle 1 rejected exact
-candidate `79e65c19330181955a0c341d62ef39778a18d36d`, tree
-`481fd7c2968f32d3b51f82cbb46a1bd6c7edeb18`. Formal review cycle 2 rejected
-exact candidate `027ba3367eb0853fec828ed0900398c7b7458e71`, tree
-`9002e8f137d5ed2352cd620db6145da2339cdb2c`; its resource-bound, deadline,
-lifecycle, test-fidelity, and frozen-contract findings are recorded below and
-in the review ledger. Formal review cycle 3 rejected exact candidate
-`6815843ac2c8d7731ca6554e5a84772351def850`, tree
-`4a479b51ebdba49afb81a6827f1381d01ed75e52`: correctness/API was green with
-zero findings, while performance/concurrency and filesystem/process-lifecycle
-each reported one low evidence/lifecycle gap. There were zero blocker, high,
-or medium findings, zero other findings, and no production resource escape.
-Candidate remediation passed the complete replacement gate in exact cycle-4
-candidate `4632162f8d3f323fce65263ec92f0802d9416121`, tree
-`ab1ecebe1680813614db3682f505e5de0fc31cfc`. Filesystem/process-lifecycle and
-performance/concurrency were green with zero findings. Correctness/API found no
-production defect and one low maintained-documentation lineage drift, so cycle
-4 is not green. That documentation remediation was composed into exact cycle-5
-candidate `4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
-`90750911b26dc4eed9e54e73c17c11a6c5a12423`. All three tracks rejected cycle 5
-for the same low stale current-lineage wording and found zero production
-defects. That documentation correction is composed in exact cycle-6 candidate
-`b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
-`07243b366f90366135ccbb1f8e146c71f7224f40`. All three fresh correctness/API,
-filesystem/process-lifecycle, and performance/concurrency tracks are **GREEN**
-with zero findings at every severity. Exact feature workflows, delivery, and
-`main` integration are complete on the seal recorded below.
-
 `open_file` asks the fixed Linux desktop launcher to open one existing regular
 file selected beneath the retained workspace root. It does not read or mutate
 the file, accept a directory, URL, external path, parent traversal, or symlink,
 select an application, run a shell, or prove that a graphical application
-displayed the file. The tool is library-only in this slice. The product remains
+displayed the file. The tool is library-only. The product remains
 Rust; Zig remains solely a pinned upstream benchmark build input.
 
 ## Public API and schema
@@ -320,21 +269,15 @@ helper process is detached. A desktop application
 independently started by `xdg-open` is outside the owned helper lifecycle and
 cannot be rolled back by this tool.
 
-### Cycle-2 lifecycle contract amendment
+### Bounded postpublication callback lifecycle
 
-The preceding rule replaces only the original frozen contract checkpoint
-`6b763c4f1168963dd42087a1fdf5cf72c4212b40` clause that no owned worker could
-ever be detached and that every drop synchronously joined it. Legal executor
-Wakers may repoll inline or block on executor-owned locks, making that absolute
-worker-join invariant contradictory: joining can self-deadlock or create a
-cross-thread lock cycle. The amended invariant keeps synchronous join for all
-unpublished work and the normal published path, permits only the bounded
-postpublication callback/bookkeeping tail above, and requires the fixed permit
-to cover its complete lifetime. No other frozen authority, confinement,
-helper-reap, result, or delivery boundary is reopened. This documentation-only
-contract amendment is exempt from its own adversarial review under the owner's
-instruction; replacement production and evidence remain subject to a complete
-fresh three-track same-SHA cycle.
+Legal executor Wakers may repoll inline or block on executor-owned locks, so
+unconditional worker joining could self-deadlock or create a cross-thread lock
+cycle. The lifecycle invariant keeps synchronous join for all unpublished work
+and the normal published path, permits only the bounded postpublication
+callback/bookkeeping tail described above, and requires the fixed permit to
+cover its complete lifetime. No authority, confinement, helper-reap, or result
+boundary is widened by this exception.
 
 ## Fixed tool errors
 
@@ -359,7 +302,7 @@ or proc unavailability, and launcher spawn failure are precommit and guarantee
 zero launch. Raw path bytes, root, PID, descriptor, launcher argv, environment,
 exit status, signal, timeout detail, wait diagnostic, operating-system text,
 and errno are never retained by public errors. Engine-facing non-cancellation
-failures remain the delivered generic durable tool-error surface.
+failures remain the generic durable tool-error surface.
 
 ## Races and host boundary
 
@@ -384,16 +327,7 @@ The canonical reference-host
 [tool catalog](native-reference-host.md#tool-catalog) defines `open_file`'s
 deterministic placement and the retained-workspace allocation for every
 constructor. Both path-based and prepared-root constructors compose the same
-catalog and retained workspace identity. Formal cycle 5 rejected exact candidate
-`4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
-`90750911b26dc4eed9e54e73c17c11a6c5a12423`, for one low documentation-lineage
-finding, so this composition was reviewed but not delivered at that candidate.
-
-Exact cycle-6 candidate
-`b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
-`07243b366f90366135ccbb1f8e146c71f7224f40`, is green with zero findings in all
-three fresh tracks. The composition is therefore review-green and delivered on
-`main`.
+catalog and retained workspace identity.
 
 Pinned fx at `b1774fbf6c7602b503026f96f6e960e946c692ef` uses the same tool
 name and required `path` field, marks the operation approval-required,
@@ -410,221 +344,40 @@ structured result, and fixed redacted errors. External paths, symlink following,
 directories, macOS launch, PATH lookup, and equivalence promotion remain
 deferred. Zig is benchmark input only.
 
-## Formal review cycle 3: not green
+## Required acceptance coverage
 
-All three fresh tracks reviewed exact candidate
-`6815843ac2c8d7731ca6554e5a84772351def850`, tree
-`4a479b51ebdba49afb81a6827f1381d01ed75e52`. The cycle is **NOT GREEN** and
-that candidate is rejected for delivery.
+Acceptance evidence must cover:
 
-- Correctness/API is **GREEN** with zero findings.
-- Performance/concurrency is **NOT GREEN** with one low evidence finding. The
-  deterministic deadline regression stopped at the pre-probe deadline guard,
-  so it did not exercise the authoritative clock read after `try_wait` returns.
-  Replacement evidence must pause after the wait probe and prove an exit-zero
-  status observed at or after the deadline is rejected as timeout.
-- Filesystem/process-lifecycle is **NOT GREEN** with one low lifecycle/evidence
-  finding. In the no-Waker publication gap, the completion flag was not yet
-  visible when the future observed a ready outcome, so ordinary cleanup could
-  detach the worker tail rather than take the required normal join path.
-  The tail remained globally permit-bounded and the helper, launch request, and
-  retained target descriptor were already cleaned; the reviewers found no
-  production resource escape. Remediation requires atomic
-  `notification_complete` publication and a deterministic no-Waker regression
-  proving ready consumption takes the normal join path.
-
-The cycle has zero blocker, high, or medium findings, zero other findings, and
-no production resource escape. These findings do not weaken the authorized
-documentation-only lifecycle amendment, but they reject this implementation
-candidate. Candidate remediation now atomically completes no-Waker publication
-and supplies both deterministic regressions.
-
-## Formal review cycle 4: not green
-
-All three fresh tracks reviewed exact candidate
-`4632162f8d3f323fce65263ec92f0802d9416121`, tree
-`ab1ecebe1680813614db3682f505e5de0fc31cfc`. The complete replacement local
-gate was green, but the cycle is **NOT GREEN** and that candidate is rejected
-for delivery.
-
-- Filesystem/process-lifecycle is **GREEN** with zero findings.
-- Performance/concurrency is **GREEN** with zero findings.
-- Correctness/API found no production or public-API defect and reported one low
-  maintained-documentation lineage drift: `architecture.md`, `core-api.md`,
-  `native-reference-host.md`, and `security.md` still described cycle-2
-  remediation, omitted rejected cycle 3, or called the composition unreviewed.
-
-Cycle 4 has zero blocker, high, or medium findings and one low documentation
-finding. The four maintained summaries now record the exact cycle-3 lineage,
-its two low findings, the cycle-4 remediation and verdict, and reviewed-but-
-rejected composition status.
-
-## Formal review cycle 5: not green
-
-All three fresh tracks reviewed exact candidate
-`4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
-`90750911b26dc4eed9e54e73c17c11a6c5a12423`. The complete replacement gate was
-green, but the cycle is **NOT GREEN** and that candidate is rejected.
-
-- Correctness/API, filesystem/process-lifecycle, and performance/concurrency
-  found zero production, API, lifecycle, performance, concurrency, or resource-
-  bound defects.
-- All three tracks reported the same low maintained-documentation lineage
-  defect: README still called cycle 3 the latest rejection, the host-
-  composition paragraph called the cycle-3 candidate current, and the contract
-  and ledger used generic pending-review wording after four completed cycles.
-- Exact native Linux arm64 Rust 1.94.1 evidence was green at system 14/14,
-  direct 12/12, engine 4/4, warnings-denied Clippy, and five repeated lifecycle
-  runs totaling 70/70.
-
-At the cycle-5 checkpoint, the stale passages were corrected and a fresh
-three-track cycle 6 on one immutable replacement SHA/tree remained required;
-no green-review claim was made at that checkpoint.
-
-## Formal review cycle 6: green
-
-All three fresh tracks reviewed exact candidate
-`b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
-`07243b366f90366135ccbb1f8e146c71f7224f40`. Correctness/API,
-filesystem/process-lifecycle, and performance/concurrency are **GREEN** with
-zero findings at every severity.
-
-Native Linux arm64 Rust 1.94.1 evidence passed system 14/14, direct 12/12,
-engine 4/4, and warnings-denied Clippy. Performance/concurrency repeated its
-focused lifecycle matrix for 70/70 passes. Correctness/API additionally passed
-core serde 1/1, macOS active unsupported behavior 1/1, and all-feature host
-composition 1/1.
-
-The exact candidate also passes workspace formatting, warnings-denied Clippy,
-tests, doctests, and no-run compilation; 130 Python tests with eight expected
-macOS skips; byte-identical compatibility against pinned fx `b1774f`; and
-`cargo-deny` 0.20.2 plus `cargo-audit` 0.22.2 with zero findings. FreeBSD
-compilation, WASI compilation and active Node evidence 1/1, documentation
-checks, and release smokes are green. The fresh 319,152-byte release binary has
-SHA-256
-`4526cbab38ef595a40d30938579e30760e148d9b83241e8b12a7d3325dadfbda`.
-
-Seal and integrated `main` SHA
-`a02c28a6bc39f2981586f02cb76793c430c83a20`, tree
-`03c751cffacee4808b057079dedb02cfc3f193cc`, passed feature CI `32738160229`
-at 6/6 and feature benchmark `32738160725` at 2/2. That benchmark retains
-upstream artifact `9524219365` and bootstrap artifact `9524052760`. Exact main
-CI `32738798417` passed 6/6, and main benchmark `32738798415` passed 2/2 while
-retaining upstream artifact `9524461989` and bootstrap artifact `9524298408`.
-Feature delivery, non-force fast-forward integration, and exact `main`
-workflows are complete. The delivered composition is recorded in the canonical
-[tool catalog](native-reference-host.md#tool-catalog). This makes no product-
-performance or fx-equivalence claim. At that checkpoint, the final docs-only
-record was exempt from adversarial review under the user's instruction; its
-own exact feature and `main` workflows remained required and are reported
-below.
-
-Final delivery-record SHA
-`762d70df106d40e59b599e18b1ac5c62f678927d`, tree
-`909eb320e05df4d56f5bcecf0e3655e6d761f622`, passed feature CI `32740668405`
-at 6/6 and feature benchmark `32740667465` at 2/2, retaining upstream artifact
-`9525188220` and bootstrap artifact `9525017236`. Main benchmark `32741322179`
-passed 2/2 and retained upstream artifact `9525436660` and bootstrap artifact
-`9525268460`. Main CI `32741322249` was not green: five of six jobs passed,
-and Quality alone failed the exact test named by concatenating
-`blocked_wake_releases_request_before_publication_and_holds_` with
-`permit_until_worker_return` because the immediate `exit 0` fixture could
-legitimately publish before the first poll installed `BlockingWake`. This is a
-test-fixture synchronization defect, not a production behavior finding. Exact
-local test-only remediation
-`62c2a5349bc682079c2458ccebe9f9ea9578a3c1`, tree
-`b38984441b6bb470ecb4b1c69bc9a3a9984f0bb0`, adds the existing
-`before_first_wait` barrier and passed the normal native Linux arm64 exact test
-100/100. Exact cycle-7 candidate
-`ea59490c28cc5edd339b3d48bffa39df37634f37`, tree
-`f8a681db319f0a89e21f38e7f9f8c474c270452b`, received **GREEN** correctness/API
-and filesystem/process-lifecycle reviews with zero findings. Performance/
-concurrency was **NOT GREEN** with exactly two low findings and zero blocker,
-high, or medium findings: the unconditional `before_first_wait` rendezvous
-could hang when `Command::spawn` failed before the hook, as reproduced on
-native Linux arm64 with `/tmp` mounted `noexec`; and maintained current/
-operative documentation tails ended at the superseded cycle-6/handoff state.
-The candidate is rejected. Exact test-only code remediation
-`274f4e0f705f33ec2ea4bae60f5bd6bbe02e1f0f`, tree
-`865e93423719cdb5655cb7dd22fd20f207717cbb`, changes the fixture to the existing
-`before_spawn` barrier, reached before every spawn outcome, so Waker
-registration deterministically precedes publication. The normal native Linux
-arm64 exact test passed 100/100, and the `/tmp`-noexec spawn-failure case passed
-1/1. Production source, public API, and manifests are unchanged. This docs
-correction composes atop that commit; its SHA is pending. The full replacement
-local gate and all three fresh cycle-8 tracks remain pending. This executable
-test-only fix is not eligible for the documentation-only exemption. This makes
-no product-performance or fx-equivalence claim.
-
-Exact documentation-correction and cycle-8 candidate
-`6cfc17407cb6fa05d7568cd4f074775fc76c0e25`, tree
-`44aa7c2636f341e8d759ef18626d0565a5a7d05e`, passed the complete replacement
-local gate. Cycle-8 correctness/API was **NOT GREEN** with exactly two low
-findings and zero blocker, high, or medium; lifecycle and
-performance/concurrency were green with zero findings. The first low found no
-successful-helper witness in the normal blocked-Waker fixture, whose remaining
-assertions also passed after a noexec spawn failure. The second found that the
-operative documentation did not identify the known cycle-8 candidate. Exact
-test-only remediation `a8415f2ac79bea979d27651174d21065c6c5d5d7`, tree
-`7210b0a0bd719e8373a7bf15bfc7084d7eff0199`, factors the shared lifecycle
-assertions, makes the successful helper write and verify an exact marker, and
-adds a separate deterministic missing-helper spawn-failure case. Normal Linux
-arm64 focused evidence is 202/202; the failure case under `/tmp` noexec is
-100/100. Production source, public API, manifests, and workflows remain
-unchanged. The documentation correction and exact cycle-9 candidate SHA/tree,
-complete replacement local gate, and three fresh cycle-9 reviews remain
-pending. This makes no product-performance or fx-equivalence claim.
-
-Exact cycle-9 reviewed candidate
-`964c59408bda1a3793978041432b84b808b474a6`, tree
-`7e5306ad77ece822b4f0080c4d6a24f142635e04`, passes the complete replacement
-local gate. All three fresh correctness/API, filesystem/process-lifecycle, and
-performance/concurrency reviews are **GREEN** with zero blocker, high, medium,
-or low findings. Rust 1.94.1 evidence includes Linux arm64 system 15/15, direct
-12/12, engine 4/4, normal split cases 202/202, noexec failure 100/100,
-warnings-denied Clippy, the full Rust workspace, two doctests, Python 130 with
-eight expected macOS skips, pinned-fx compatibility, dependency policy/audit,
-FreeBSD/WASI plus active Node 1/1, documentation checks, and five release CLI
-smokes. The 319,152-byte release binary retains SHA-256
-`4526cbab38ef595a40d30938579e30760e148d9b83241e8b12a7d3325dadfbda`.
-Production source, public API, manifests, and workflows remain unchanged. The
-subsequent documentation-only green seal names this reviewed candidate and is
-exempt from another adversarial cycle under the user's instruction; its exact
-SHA/tree and feature/main workflows remain pending. These are regression and
-delivery checks, not a product-performance or fx-equivalence claim.
-
-## Evidence and delivery gates
-
-- [x] Exact core variant/serde/drop contract, native exports, constants,
+- Exact core variant/serde/drop contract, native exports, constants,
   descriptions, strict schema, construction taxonomy, result, errors, and
   redaction.
-- [x] Exact and one-over 4,096-byte requested/canonical path, 256-component,
+- Exact and one-over 4,096-byte requested/canonical path, 256-component,
   255-byte component, 65,536-byte argument, and 16,384-byte result bounds;
   a much larger hostile path proves rejection occurs before complete-value
   serialization or another path-proportional copy.
-- [x] Rejection of empty/root/dot, absolute, tilde, parent, repeated/trailing
+- Rejection of empty/root/dot, absolute, tilde, parent, repeated/trailing
   separator, dot-component, control, line/paragraph-separator, bidirectional,
   and over-bound paths; byte-for-byte canonical policy/execution agreement.
-- [x] Effect-free preparation, exact
+- Effect-free preparation, exact
   `{"type":"open_file","path":"..."}` authority, denial before lookup,
   direct canonical revalidation, and absence of general process authority.
-- [x] Retained-root liveness, no-follow ancestor/final traversal, regular-file-
+- Retained-root liveness, no-follow ancestor/final traversal, regular-file-
   only enforcement, every symlink/special/directory rejection, root/prefix/
   final replacement, unlink, rename, mixed-device traversal, and outside
   sentinels.
-- [x] Controlled Linux-only source evidence for exact `/usr/bin/xdg-open` and
+- Controlled Linux-only source evidence for exact `/usr/bin/xdg-open` and
   two-element proc-fd argv, fixed `/` cwd,
   inherited host environment, null stdio, no machine-god shell/PATH or model-
   selected launch field, retained target descriptor, trusted downstream host
   dispatch, and exit-zero acceptance semantics.
-- [x] Identity-aware proc-entry closure evidence tracks the exact descriptor
+- Identity-aware proc-entry closure evidence tracks the exact descriptor
   identity rather than treating reuse of the same numeric fd as continued
   ownership.
-- [x] Missing launcher and spawn failure before commit; nonzero, signal,
+- Missing launcher and spawn failure before commit; nonzero, signal,
   timeout, and a wait seam that drives the actual shared `try_wait` `Err` arm
   after commit; exact fixed retryability, `result_unknown`, helper reap, and no
   impossible postspawn waiter-establishment claim.
-- [x] Inert production and fake launcher futures until first poll; a
+- Inert production and fake launcher futures until first poll; a
   deterministic spawn-gate barrier proving cancellation
   that wins the serialized gate has zero launch; successful-spawn boundary;
   postspawn cancellation through the engine's existing drop path; 30-second
@@ -639,35 +392,13 @@ delivery checks, not a product-performance or fx-equivalence claim.
   saturate with the next call precommit unavailable and zero new worker/helper;
   permits remain charged through blocked callback completion; concurrent-call
   isolation.
-- [x] Candidate macOS active unsupported behavior, Linux cross-target warnings-
+- macOS active unsupported behavior, Linux cross-target warnings-
   denied compilation, canonical reference-host
   [tool catalog](native-reference-host.md#tool-catalog) composition, and no new
-  dependency, workflow, CLI, benchmark, or unsafe-Rust source.
-- [x] Composed-remediation native Linux execution, FreeBSD/WASI and active WASI,
+  dependency, CLI, benchmark, or unsafe-Rust source.
+- Native Linux execution, FreeBSD/WASI and active WASI,
   dependency, pinned-compatibility, documentation, clean-diff, and freshly
   built release-binary evidence.
-- [x] Three green formal review tracks on one immutable cycle-6 SHA/tree.
-- [x] Exact feature workflows, fast-forward delivery, and exact `main`
-  workflows.
-
-## Review and delivery protocol
-
-After candidate source and independently owned evidence compose, run the complete
-local gate on one exact SHA. Create a tree-identical candidate and start three
-fresh reviewers against that same immutable SHA and tree:
-
-1. correctness/API;
-2. filesystem/process-lifecycle robustness;
-3. performance/concurrency.
-
-Every confirmed finding is fixed, the complete local gate is rerun, and all
-three tracks restart with fresh reviewers on one replacement SHA. Repeat until
-all three tracks report zero findings. Then push the feature seal, require its
-exact CI and benchmark workflows, fast-forward `main` without force, and
-require exact `main` CI and benchmark workflows. Documentation-only seal and
-delivery-record commits are exempt from another adversarial cycle, but their
-exact workflows remain required. The review ledger is
-[`m03-open-file-review-01.md`](reviews/m03-open-file-review-01.md).
 
 ## Deferred scope
 
@@ -676,44 +407,4 @@ URLs; symlink targets; content reads; file mutation; arbitrary process
 authority; shell execution; model-selected programs, arguments, environment,
 or working directories; PATH lookup; macOS or other non-Linux real launch;
 CLI ownership; new benchmark workloads; product-performance claims; inventory
-promotion; and complete fx equivalence remain outside this slice.
-Formal cycle-6 review is green on the exact SHA/tree recorded above. Exact
-feature workflows, integration, and delivery are complete on the seal recorded
-above. Native `open_file` remains delivered as bounded slice twenty-six.
-Subsequent cycle-7 test-reliability candidate
-`ea59490c28cc5edd339b3d48bffa39df37634f37`, tree
-`f8a681db319f0a89e21f38e7f9f8c474c270452b`, is rejected with two low
-performance/concurrency findings and zero blocker, high, or medium findings;
-correctness/API and lifecycle are green at zero findings. Exact test-only code
-remediation `274f4e0f705f33ec2ea4bae60f5bd6bbe02e1f0f`, tree
-`865e93423719cdb5655cb7dd22fd20f207717cbb`, uses the existing `before_spawn`
-barrier and leaves production source, public API, and manifests unchanged. Its
-docs correction SHA, full replacement local gate, and all three fresh cycle-8
-tracks remain pending. This makes no product-performance or fx-equivalence
-claim.
-
-Subsequent exact cycle-8 candidate
-`6cfc17407cb6fa05d7568cd4f074775fc76c0e25`, tree
-`44aa7c2636f341e8d759ef18626d0565a5a7d05e`, passed the full local gate.
-Correctness/API rejected it with exactly two low findings and zero blocker,
-high, or medium: no successful-helper witness in the normal fixture, and stale
-operative lineage that did not name this candidate. Lifecycle and
-performance/concurrency were green at zero findings. Exact remediation
-`a8415f2ac79bea979d27651174d21065c6c5d5d7`, tree
-`7210b0a0bd719e8373a7bf15bfc7084d7eff0199`, adds distinct successful-marker
-and deterministic spawn-failure tests around shared lifecycle assertions;
-normal Linux arm64 evidence is 202/202 and the noexec failure case is 100/100.
-Production source, public API, manifests, and workflows remain unchanged. The
-documentation correction/cycle-9 candidate, full replacement gate, and three
-fresh cycle-9 reviews remain pending. This makes no product-performance or
-fx-equivalence claim.
-
-Exact cycle-9 candidate `964c59408bda1a3793978041432b84b808b474a6`, tree
-`7e5306ad77ece822b4f0080c4d6a24f142635e04`, passes the full replacement gate.
-All three fresh correctness/API, filesystem/process-lifecycle, and
-performance/concurrency reviews are green with zero findings at every
-severity. Production source, public API, manifests, and workflows remain
-unchanged. A documentation-only green seal naming that reviewed candidate is
-exempt from another adversarial cycle; its exact SHA/tree and feature/main
-workflows remain pending. This makes no product-performance or fx-equivalence
-claim.
+promotion; and complete fx equivalence remain outside this tool's scope.

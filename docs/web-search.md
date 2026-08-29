@@ -1,43 +1,9 @@
 # Native `web_search` tool
 
-Status: **DELIVERED** as bounded Milestone 03 slice 33. The contract was
-frozen from exact delivered base
-`4ba9f5afde89b9666fe9929bb81fbabcaa834334` and pinned fx observation
-`b1774fbf6c7602b503026f96f6e960e946c692ef`. The original production,
-independent-evidence, and documentation components compose through behavior
-precursor
-`3d2984000301e58762e0940504159aeb55b2389e`, tree
-`5222c3e009e9fe440097a86fd46889d1bb2e1434`. Its complete exact-1.94.1 local
-gate was green. Formal cycle 1 rejected exact candidate
-`89c5ec95fb5353efcba34af6a44bc27d7b6027f7`, tree
-`8d91a556f786169d42406e91e8ad2f476b7c6cf4`, with a deduplicated `0/2/5/2`
-finding union. Source remediation is composed from exact isolated lifecycle
-component `096b11c4` and portability/bounds component `ca0b990a`; replacement
-evidence and the complete same-SHA gate pass on exact composed precursor
-`e662fa8047c5ca321d622b9b5920166804a35c27`, tree
-`6c0ace98ea9931af9d16cc9fb2ade969df477d3c`. Formal cycle 2 rejected exact
-candidate `399f5f7a14c1473d9e737d44838549ba305746de`, tree
-`99a88a45fd6f0823b23fd879633784433194cf8d`, with a reported `1/1/1/1`
-finding union; primary-source adjudication rejects its layer-confused blocker,
-leaving an accepted `0/1/1/1`. Exact remediation precursor
-`366cef966d7dcf1b11101a37d4493099e6f421a7`, tree
-`40c05cb2999c641bc7ccbdc369fc6d9251b989b7`, passes the complete replacement
-gate. Formal cycle 3 rejected exact candidate
-`aef6abed174760195e712b2701e241b656733621`, tree
-`5abcef3de31898e158e6c4872ee9b4131863d1b7`, with a deduplicated `1/0/2/2`;
-exact isolated components `5d45dca` and `454f8fd` compose its remediation. The
-exact composed precursor `b834205`, tree `f3557a5`, passes the complete
-replacement gate. Formal cycle 4 rejected exact `cc1d3d1`, tree `ad0c3d3`, with
-a deduplicated `0/0/1/1`. Finish-envelope remediation is composed from exact
-component `dc79c8d`, tree `e2fed70`, and host-fixture component `9f6c474`. Exact
-precursor `2e9c44d`, tree `3e25daa`, passes the complete replacement gate.
-Formal cycle 5 is green on exact `782aa54`, tree `b1ba692`, with a `0/0/0/0`
-union. Review-exempt delivery record `52b5885`, tree `148b358`, passed feature
-CI/Benchmark runs `33023313461`/`33023313463` and main CI/Benchmark runs
-`33023812814`/`33023812808`; every run succeeded for that exact SHA and both
-benchmark runs retained two unexpired exact-SHA artifacts. The delivered count
-is 33. The complete record is in the
-[`slice-33 review ledger`](reviews/m03-web-search-review-01.md).
+`WebSearchTool` is a bounded, locally dispatched native tool backed by one
+approved AI Gateway worker request. Its compatibility reference is the pinned
+fx revision recorded in the implementation plan; this contract defines the
+intentional machine-god differences.
 
 ## Boundary
 
@@ -63,7 +29,7 @@ labels are nonempty, no longer than 63 bytes, use only ASCII letters, digits,
 and interior hyphens, and begin and end with an alphanumeric byte. One call
 retains at most 16 normalized domains and 4,096 aggregate domain bytes. Stable
 first-seen deduplication occurs before those canonical arguments reach policy
-or execution. This slice adds no IDNA conversion, wildcard, scheme, path,
+or execution. The tool adds no IDNA conversion, wildcard, scheme, path,
 port, user-info, or domain-pattern language. Domain filters also reject literal
 IP addresses and every URL-standard numeric IPv4 spelling, including shortened
 decimal, leading-zero/octal, and hexadecimal forms. Numeric syntax is detected
@@ -204,7 +170,7 @@ that supplies more than ten sources rather than silently truncating it.
 
 ## Resource and lifecycle limits
 
-The slice fixes these independent ceilings:
+The tool fixes these independent ceilings:
 
 | Resource | Limit |
 | --- | ---: |
@@ -269,15 +235,15 @@ The request/response values, errors, limits, constants, and injected
 `WebSearchTransport` / `WebSearchDeadline` seams are target-neutral, available
 in no-feature and WebAssembly builds, and perform no I/O themselves. The
 concrete semaphore-owning `WebSearchTool` and Gateway worker adapter are
-non-WebAssembly and gated by `ai-gateway-http`. Slice-33 reference-
-host composition remains Linux/macOS-only because the current native host is
+non-WebAssembly and gated by `ai-gateway-http`. Reference-host composition
+remains Linux/macOS-only because the current native host is
 Linux/macOS-only. Its deterministic catalog and workspace-descriptor ownership
 are defined only by the [native reference-host contract](native-reference-host.md#tool-catalog);
 this tool remains Gateway-backed and owns no workspace descriptor.
 
 ## Deliberately deferred
 
-This slice does not add provider-tool advertisement or provider-executed events
+The tool does not add provider-tool advertisement or provider-executed events
 to the provider-neutral core, expose provider search directly to the outer
 model, select Parallel or another backend, retry or fail over, perform multiple
 search uses per tool execution, report progress or inner billing/token usage,

@@ -1,21 +1,12 @@
 # Native `terminal` foreground-exec contract
 
-Status: **DELIVERED** as bounded Milestone 03 slice 34. The contract is
-frozen from exact delivered base
-`52b5885f275c9f6f4f16b378f71780c29f2ebab2` and pinned fx observation
-`b1774fbf6c7602b503026f96f6e960e946c692ef`.
-Exact cycle-6 behavior head `8705811`, tree `8a319c1`, passes the complete
-exact-1.94.1 replacement gate. Formal cycle 6 rejected exact candidate
-`28292b7`, tree `487f160`, because pending outer-future drop can leave stale
-Waker delivery open. Exact cycle-7 behavior head `9810ee9`, tree `cf7390e`,
-passes the complete exact-1.94.1 replacement gate. Formal cycle 7 is green on
-exact candidate `3f07389`, tree `f048cdc`, with a `0/0/0/0` union. Review-
-exempt delivered record `ddd6a89`, tree `4a227b3`, passed feature and main
-CI/Benchmark gates; the delivered count is 34.
+The native tool executes one bounded foreground shell command after explicit
+process authorization. It is registered by the reference host and has no
+top-level CLI command.
 
 ## Boundary
 
-This slice implements only the foreground `exec` subset of fx's `terminal`
+The tool implements only the foreground `exec` subset of fx's `terminal`
 tool. One approved call starts one fixed shell in one workspace-relative
 starting directory, captures bounded standard output and error separately, and
 waits for the direct child to terminate. It is a native library tool registered
@@ -55,7 +46,7 @@ The exact tool description is:
 Run one foreground shell command from a workspace-relative directory
 ```
 
-This slice deliberately excludes `start`, `read`, `screen`, `write`, `wait`,
+The tool deliberately excludes `start`, `read`, `screen`, `write`, `wait`,
 `monitor`, `inspect`, `list`, `resize`, `signal`, and `close`; PTYs; interactive
 stdin; background or durable sessions; streaming output; artifacts; custom or
 login shells; user shell profiles; retries; external working directories; and
@@ -103,7 +94,7 @@ descriptor constrains only the child's starting-directory identity. Once
 approved, `/bin/sh` and the command can use absolute paths, inherited
 credentials in the approved snapshot, child processes, and network or other
 host authority available to the machine account. Hosts requiring isolation
-must add an external sandbox; this slice claims none.
+must add an external sandbox; this contract claims none.
 
 ## Workspace and platform boundary
 
@@ -119,7 +110,7 @@ directory.
 
 Safe standard Rust has no descriptor-relative `Command` cwd primitive on
 macOS, and unsafe Rust is forbidden by repository policy. The production system
-executor is therefore Linux-only in this slice. Public `TerminalTool::open` and
+executor is therefore Linux-only. Public `TerminalTool::open` and
 `TerminalTool::open_with_limits` construction on macOS, FreeBSD, WASI, and other
 non-Linux targets fails with the fixed unsupported category before filesystem
 lookup, environment inspection, thread creation, or spawn.
@@ -340,9 +331,9 @@ rule makes no wall-clock bound for executor destruction, native thread return,
 or callback completion. The outer activity remains retained through bounded
 rendering, the final cancellation check, and public return.
 
-## Acceptance evidence
+## Required acceptance coverage
 
-Before delivery, focused and workspace evidence must cover strict schema and
+Focused and workspace evidence must cover strict schema and
 canonical arguments; exact capability serde and policy/execution equality;
 denial with zero effects; retained-root cwd and symlink/replacement races;
 shell quoting, newlines, fixed program/argv, null stdin, and exact environment;
@@ -372,7 +363,3 @@ exact-once active-slot release; exact-tilde and tilde-prefixed cwd literals;
 redaction; public-
 construction and private-host unsupported behavior; engine event/output
 persistence; and canonical reference-host catalog composition.
-The required exact Rust checks, release-mode focused tests, fresh release-binary
-smokes, portability checks, three fresh adversarial product reviews, exact
-feature workflows, fast-forward integration, exact main workflows, and clean
-worktree removal must all be green for the same reviewed behavior.
