@@ -245,12 +245,9 @@ remain the delivered generic durable error surface.
 
 ## Host composition and compatibility boundary
 
-At slice-twenty-four delivery, the native reference host registers exactly ten
-alphabetical workspace tools: `copy_file`, `delete_file`, `edit_file`,
-`file_info`, `glob_files`, `grep_files`, `list_files`, `read_file`,
-`rename_file`, and `write_file`.
-Workspace-root composition consumes the original descriptor for one tool and
-makes exactly nine identity-preserving clones.
+Current reference-host composition and retained-workspace descriptor
+distribution are maintained in the
+[canonical tool catalog](native-reference-host.md#tool-catalog).
 
 Pinned fx at `b1774fbf6c7602b503026f96f6e960e946c692ef` uses the same tool
 and field names and supports the core source-preserving copy scenario. Its
@@ -275,7 +272,7 @@ makes no complete fx-equivalence or product-performance claim.
   source stability, digest mismatch, stage identity, cleanup dual failure,
   parent-sync bounds, cancellation, drop, and same-poll engine recovery.
 - Native Linux/macOS, FreeBSD/WASI compilation, active unsupported target,
-  ten-tool catalog, nine-clone identity, dependency, compatibility,
+  canonical reference-host composition, dependency, compatibility,
   documentation, no-unsafe, diff, and fresh release-binary smoke evidence.
 
 ## Deferred scope

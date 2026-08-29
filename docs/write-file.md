@@ -312,17 +312,16 @@ status is uncertain.
 
 ## Reference-host composition
 
-The reference host distributes one retained workspace descriptor plus five
-identity-preserving clones and registers exactly six tools alphabetically:
-`file_info`, `glob_files`, `grep_files`, `list_files`, `read_file`, and
-`write_file`.
+Current reference-host composition and retained-workspace descriptor
+distribution are maintained in the
+[canonical tool catalog](native-reference-host.md#tool-catalog).
 
 Production, independent tests, and the maintained documentation are composed on
 the feature branch. The first exact candidate failed all three formal tracks.
-Cycle-1 code and evidence remediation is composed through `3010e6d`. The six-
-tool catalog is delivered at exact seal `bdd27ec` after local gates, three fresh
-same-SHA adversarial tracks, exact feature workflows, and fast-forward `main`
-delivery all completed green.
+Cycle-1 code and evidence remediation is composed through `3010e6d`. The tool
+is delivered at exact seal `bdd27ec` after local gates, three fresh same-SHA
+adversarial tracks, exact feature workflows, and fast-forward `main` delivery
+all completed green.
 
 ## Formal review status
 
@@ -409,8 +408,8 @@ items are still candidate evidence until the formal exact-SHA gates complete:
   Linux uses direct nonblocking `rustix` entropy with at most 16 cumulative
   interruptions and 31 calls per name; macOS's one-call entropy path routes
   through the same checks.
-- [x] Engine deny/allow events and durable results, exact six-tool alphabetical
-  catalog, and original-plus-five-clones workspace identity all pass.
+- [x] Engine deny/allow events and durable results plus canonical reference-host
+  composition and retained-workspace identity all pass.
 - [x] Linux and macOS execute the native behavior; FreeBSD and WASI compile;
   an active unsupported-target test reaches the fixed public construction
   failure without fabricating an unsafe instance.

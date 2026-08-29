@@ -298,20 +298,9 @@ through the engine retain core's existing generic durable error behavior.
 
 ## Reference-host composition
 
-The reference host distributes one retained workspace descriptor plus seven
-identity-preserving clones and registers exactly eight tools in alphabetical
-order:
-
-```text
-delete_file
-edit_file
-file_info
-glob_files
-grep_files
-list_files
-read_file
-write_file
-```
+Current reference-host composition and retained-workspace descriptor
+distribution are maintained in the
+[canonical tool catalog](native-reference-host.md#tool-catalog).
 
 The CLI remains byte-unchanged and thin. This slice adds no CLI command,
 invocation path, prompt, status field, or output byte.
@@ -633,10 +622,9 @@ The composed candidate must prove:
 - cancellation at every traversal/metadata boundary, immediately after both
   validation phases, immediately before the real delete, and after the real
   delete, plus unpolled/drop and engine same-poll unknown-result recovery;
-- the exact eight-tool alphabetical host catalog and original-plus-seven-clone
-  retained workspace identity;
+- canonical reference-host composition and retained-workspace identity;
 - native Linux/macOS execution, FreeBSD/WASI compilation, active unsupported-
-  target behavior, no unsafe Rust, and complete regression of all seven
+  target behavior, no unsafe Rust, and complete regression of the previously
   delivered workspace tools.
 
 Focused suites have run first on the local precursor. The formal behavior

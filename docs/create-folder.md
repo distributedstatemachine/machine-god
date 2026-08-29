@@ -55,8 +55,7 @@ all three fresh tracks.
 Delivery seal `e75578b9d9b37238a819e336705ec419f1492d1f` passed exact feature
 CI `32702785549`, feature benchmark `32702785574`, main CI `32703303933`, and
 main benchmark `32703303931`. Both benchmark runs retain exactly two nonexpired
-exact-SHA artifacts. The slice is delivered and integrated on `main`; the
-delivered count is twenty-five and the host has eleven tools.
+exact-SHA artifacts. The slice is delivered and integrated on `main`.
 
 `create_folder` creates one confined directory path, including its missing
 parent directories. It does not create a file, overwrite or remove an entry,
@@ -280,16 +279,10 @@ trusted host authority.
 
 ## Host composition and compatibility boundary
 
-The last delivered reference host remains exactly the ten alphabetical tools:
-`copy_file`, `delete_file`, `edit_file`, `file_info`, `glob_files`,
-`grep_files`, `list_files`, `read_file`, `rename_file`, and `write_file`, using
-the original retained descriptor plus nine identity-preserving clones.
-
-The composed slice-twenty-five source registers `create_folder` immediately
-after `copy_file`, yielding exactly eleven alphabetical tools and using one
-original retained descriptor plus ten identity-preserving clones. Both path-
-based and prepared-root constructors compose that same catalog and retained
-workspace identity. Exact remediation `f527293`, tree `40eef14`, passes the
+Current path-based and prepared-root reference-host composition and retained-
+workspace descriptor distribution are maintained in the
+[canonical tool catalog](native-reference-host.md#tool-catalog). Exact
+remediation `f527293`, tree `40eef14`, passes the
 complete replacement local gate after cycle 2, which was not green. Cycle-3
 candidate `c1e572e`, tree `b5fb1c2`, is not green only for one low documentation-
 lineage finding. Exact lineage remediation `12c11ba`, tree `b96575b`, passes the
@@ -335,9 +328,9 @@ behaviors. Zig is benchmark input only.
   detached work, and same-poll engine unknown-result recovery.
 - [x] Native macOS execution, Linux and FreeBSD cross-target test compilation,
   Linux library warnings-denied Clippy, WASI compilation and active unsupported-
-  target behavior, exact delivered ten-tool checkpoint, composed eleven-tool/
-  ten-clone candidate, no-unsafe, dependency, compatibility, documentation,
-  clean-diff, and fresh release-binary smoke evidence.
+  target behavior, canonical reference-host composition, no-unsafe, dependency,
+  compatibility, documentation, clean-diff, and fresh release-binary smoke
+  evidence.
 - [x] Native Linux and macOS execution in all four exact native jobs of feature
   CI `32699750602`; the overall workflow remains not green for the separate
   Linux Quality test-Clippy failure.
@@ -437,5 +430,4 @@ Cycle-5 candidate `ff18a9a`, tree `f77b198`, is green with zero findings in all
 three fresh tracks. Seal `e75578b` passed exact feature CI `32702785549`,
 feature benchmark `32702785574`, main CI `32703303933`, and main benchmark
 `32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
-artifacts. Delivery and `main` integration are complete; the delivered-slice
-count is twenty-five.
+artifacts. Delivery and `main` integration are complete.

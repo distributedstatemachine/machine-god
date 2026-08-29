@@ -386,19 +386,9 @@ system text. `Display` is exactly `<code>: <message>`.
 
 ## Reference-host composition
 
-The composed reference host distributes one retained workspace descriptor
-plus six identity-preserving clones and registers exactly seven tools in
-alphabetical order:
-
-```text
-edit_file
-file_info
-glob_files
-grep_files
-list_files
-read_file
-write_file
-```
+Current reference-host composition and retained-workspace descriptor
+distribution are maintained in the
+[canonical tool catalog](native-reference-host.md#tool-catalog).
 
 The CLI remains byte-unchanged and thin. The new tool is library-only in this
 slice.
@@ -608,9 +598,9 @@ review tracks confirmed that evidence covers:
   construction, initial/revalidation root and intermediate traversal, entropy,
   staging creation and writes, final verification, immediately before and after
   the real rename, unpolled/drop behavior, and engine same-poll recovery;
-- exact seven-tool alphabetical host catalog, original-plus-six-clone retained
-  identity, native Linux/macOS execution, FreeBSD/WASI compilation, and active
-  unsupported-target behavior; and
+- canonical reference-host composition and retained-workspace identity, native
+  Linux/macOS execution, FreeBSD/WASI compilation, and active unsupported-
+  target behavior; and
 - complete regression of the delivered `write_file` contract if shared private
   staging/publication mechanics are extracted.
 
