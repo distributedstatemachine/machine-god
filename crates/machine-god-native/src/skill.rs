@@ -333,7 +333,7 @@ fn decode_execution_arguments(arguments: &Value) -> Result<ExecutionArguments, T
 }
 
 fn decode_offset(offset: &serde_json::Number) -> Result<usize, ToolError> {
-    let value = offset.as_u64().ok_or_else(invalid_arguments)?;
+    let value = offset.as_u64().ok_or_else(invalid_offset)?;
     usize::try_from(value).map_err(|_| invalid_offset())
 }
 
@@ -727,7 +727,12 @@ fn map_root_open_error(error: rustix::io::Errno) -> SkillToolOpenError {
 fn map_path_open_error(error: rustix::io::Errno) -> ToolError {
     if error == rustix::io::Errno::NOENT {
         not_found()
-    } else if error == rustix::io::Errno::LOOP || error == rustix::io::Errno::NOTDIR {
+    } else if error == rustix::io::Errno::LOOP
+        || error == rustix::io::Errno::NOTDIR
+        || error == rustix::io::Errno::NXIO
+        || error == rustix::io::Errno::NOTSUP
+        || error == rustix::io::Errno::OPNOTSUPP
+    {
         path_rejected()
     } else if error == rustix::io::Errno::ACCESS || error == rustix::io::Errno::PERM {
         permission_denied()
