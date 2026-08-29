@@ -439,4 +439,4 @@ jobs:
       - name: Install exact Rust target and Clippy
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy --target x86_64-unknown-freebsd
       - name: Compile unsupported-platform native surfaces
-        run: cargo +"${RUST_TOOLCHAIN}" clippy --locked -p machine-god-native --lib --test semantic_search_unsupported --test vision_unsupported --no-default-features --features vision --target x86_64-unknown-freebsd -- -D warnings
+        run: cargo +"${RUST_TOOLCHAIN}" clippy --locked -p machine-god-native --lib --test memory_unsupported --test semantic_search_unsupported --test vision_unsupported --no-default-features --features vision --target x86_64-unknown-freebsd -- -D warnings
