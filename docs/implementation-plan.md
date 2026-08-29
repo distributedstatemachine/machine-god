@@ -79,7 +79,7 @@ record the last exact green delivery and report a later seal's runs at handoff.
 | M02 | Provider-neutral streaming engine and deterministic testkit | COMPLETE |
 | M03 | Providers, native tools, permissions, sessions, configuration, and CLI | IN PROGRESS |
 | M04 | Security, lifecycle, concurrency, and persistence hardening | NOT STARTED |
-| M05 | Skills, MCP, ACP, and subagent extensibility | NOT STARTED |
+| M05 | Skills, MCP, ACP, and subagent extensibility | IN PROGRESS |
 | M06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | M07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
 
