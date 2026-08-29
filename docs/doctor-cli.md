@@ -1,26 +1,11 @@
 # Native `doctor` CLI contract
 
-Status: **DELIVERED**.
-
-This is the frozen contract for bounded Milestone 03 slice 30. It starts from
-exact delivered base `f82ce46736f7bac4154da508e3b768d0b9248e15` and adds only
-top-level `doctor [--json]` to the thin native host. Exact behavior candidate
-`15f8176b9322ef989a8c3db01bd404b79d6469fb`, tree
-`8278a777dbfe375e126ce782f581182a73d1e25e`, passed the complete exact-1.94.1
-local gate and three fresh adversarial tracks with `0/0/0/0` findings in each.
-Review-exempt seal `345f8125f3ffa029b7ad1df4cf3673428fcf023d`, tree
-`889984990d700712978da933587a437bd13e2a71`, passed exact feature CI
-`32933464234`, feature benchmark-evidence `32933464047`, main CI `32933879888`,
-and main benchmark-evidence `32933879930`. `main` was fast-forwarded without
-force from the delivered base, and each benchmark run retains two unexpired
-exact-SHA artifacts. The delivered-slice count is thirty.
-
 The comparison observation remains pinned to `vercel-labs/fx` commit
 `b1774fbf6c7602b503026f96f6e960e946c692ef`. Machine-god deliberately does
 not copy fx's complete diagnostic inventory, report schema, remediation text,
 or exit semantics. This bounded command has exactly four machine-god checks
 and the output below. It is implemented but non-equivalent, not measured, and
-claim-ineligible in bootstrap evidence. This slice makes no compatibility,
+claim-ineligible in bootstrap evidence. This command makes no compatibility,
 fx-equivalence, latency, throughput, memory, size-improvement, or other product-
 performance claim.
 
@@ -108,7 +93,7 @@ this check reports generation-host readiness.
 State inspection uses the existing XDG/HOME selection and metadata-only state
 classification. A missing directory is `warn`; doctor never prepares it. The
 platform check is compile-time target classification. Linux and macOS are the
-only supported native-host platforms in this slice; another target still
+only supported native-host platforms for this command; another target still
 receives a complete four-check report whose platform check is `fail`.
 
 ## Exact output
@@ -190,11 +175,3 @@ Independent evidence must cover:
 - no configuration rewrite and no config/state/home root creation; and
 - freshly built release-binary human/JSON/count-consistency/no-create smokes on
   isolated missing XDG roots.
-
-After focused evidence, the exact candidate must pass the complete Rust 1.94.1
-gate, pinned compatibility generator check, Python mutation tests,
-documentation integrity, and release smokes. Three fresh correctness/API,
-configuration/credential/state security, and performance/CLI portability
-reviews must all report zero findings on the same exact SHA. Any finding rejects
-the candidate. Feature workflows, non-force integration, exact `main`
-workflows, and delivery follow only after a green replacement cycle.

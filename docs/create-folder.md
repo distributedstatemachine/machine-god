@@ -1,72 +1,15 @@
 # Native `create_folder` contract
 
-Status: **DELIVERED**
-
-This document records the twenty-fifth bounded Milestone 03 slice from exact
-delivered base `d1a5bc24112bcede8c2d12789e763a12cf44bd4a`. That base is green
-under exact feature CI `32685885104`, feature benchmark workflow `32685885086`,
-main CI `32686210561`, and main benchmark workflow `32686210659`. Both
-benchmark workflows retain exactly two nonexpired exact-SHA artifacts.
-
-The normative contract was frozen in exact documentation-only commit
-`9fab189c9c1add76a38775d08f4342c6bcc7635b`. Its exact CI `32687614476`
-passed all six jobs, and exact benchmark workflow `32687614442` passed both
-jobs and retains exactly two nonexpired exact-SHA artifacts. Those workflows
-validate the contract checkpoint only; they are not implementation, delivery,
-performance, or fx-equivalence evidence.
-
-Production behavior, exports, independently owned evidence, and both reference-
-host constructors are composed. Tree-identical cycle-2 candidate
-`6e1f885aa1e167e902b5cda729023fd7c283895e`, tree
-`ac57575c3ee300050f5a92d4cae5f507fe654002`, is historically not green:
-correctness/API and performance/concurrency are green with zero findings, while
-filesystem/robustness reported two low evidence/documentation findings and zero
-production defects. Exact remediation
-`f52729379a4c2352cbb9817bcd19e8bb6e3b2b8f`, tree
-`40eef148230a79e5d9700b5ca2bdfd0ace2f192c`, passes the complete replacement
-local gate. Documentation record `9d0bacd656d09b8ff57edfbfe7cbf701af9fef1e`,
-tree `b5fb1c2b5268e46793d48be1a02611381feca7c3`, and tree-identical cycle-3
-candidate `c1e572eb1ac1ac39a8a53f522e74f57fd1d4f85d` retain identical non-
-documentation behavior. Cycle 3 is not green: filesystem/robustness and
-performance/concurrency are green with zero findings, while correctness/API
-reported one low documentation-lineage finding and zero production defects.
-Exact lineage remediation `12c11baa0187f530a6c088326b869991f6f627f6`, tree
-`b96575b57c2c805a845294ae16b323dd1ea4ecd2`, passes the complete replacement
-gate. Documentation gate record `f6f65847a47a009b5203044ce18e6f0c4253f17a`
-is the parent of tree-identical cycle-4 candidate
-`a78b693e5ce45688084fe1215073e2d859f2d438`, tree
-`2b913e8d65b1da518f2c148f1b9b1b6b899e1e64`. Correctness/API and performance/
-concurrency are green with zero findings. Filesystem/robustness found zero
-production defects and one low stale documentation-seal sentence, corrected
-under the user's explicit seal-review exemption. First feature benchmark
-`32699750662` is green and retains exactly two nonexpired exact-SHA artifacts.
-First feature CI `32699750602` has all four native Linux/macOS jobs and the
-dependency-policy job green, but the overall workflow is not green because
-Linux Quality rejected a test-only redundant conversion from `Mode::bits()`.
-The trace now stores platform-native `rustix::fs::RawMode`; focused macOS,
-Linux warnings-denied test-target Clippy, and FreeBSD compilation checks are
-green. Exact remediation `1effcbb5fd5affa1bc23df938afc7d786e5c05ea`, tree
-`b5eccb193db00b39c9e029cb3e3b472283b3e6ba`, passes the complete replacement
-gate. No CLI behavior, benchmark workload, product-performance claim, or fx-
-equivalence claim is added. Tree-identical cycle-5 candidate
-`ff18a9ae5411c31c51a15b6e30993790595afa80`, tree
-`f77b198d9b834dc39c1d1967c8f1feefb40d2984`, is green with zero findings in
-all three fresh tracks.
-Delivery seal `e75578b9d9b37238a819e336705ec419f1492d1f` passed exact feature
-CI `32702785549`, feature benchmark `32702785574`, main CI `32703303933`, and
-main benchmark `32703303931`. Both benchmark runs retain exactly two nonexpired
-exact-SHA artifacts. The slice is delivered and integrated on `main`.
-
 `create_folder` creates one confined directory path, including its missing
 parent directories. It does not create a file, overwrite or remove an entry,
 follow a symlink, enumerate or read content, accept an external path, normalize
 effective permissions after creation, or roll back a created prefix. It is
-library-only in this slice. The product remains Rust; Zig remains solely a
+library-only. The product remains Rust; Zig remains solely a
 pinned upstream benchmark build input.
 
 ## Public API and schema
 
-The composed `machine-god-native` implementation exports
+The `machine-god-native` implementation exports
 `CREATE_FOLDER_TOOL_NAME`, `CreateFolderTool`, `CreateFolderToolOpenError`,
 `CreateFolderToolOpenErrorKind`, and these limits:
 
@@ -107,7 +50,7 @@ requested and canonical path are each capped at 4,096 UTF-8 bytes, with at most
 capped at 65,536 serialized bytes. Direct execution revalidates the exact
 shape, bounds, and canonical representation.
 
-Normalization is the delivered mutation-path rule: repeated `/` separators
+Normalization is the existing mutation-path rule: repeated `/` separators
 collapse and exact `.` components disappear. Backslash and space remain literal
 Unix filename characters. Empty paths, absolute paths, `~`-prefixed paths, any
 `..` component, C0/C1 controls, Unicode line or paragraph separators, Unicode
@@ -259,7 +202,7 @@ All failures are fixed and redacted:
 not a no-follow directory, including a final symlink or special entry. A
 symlink or non-directory selected as an ancestor is confinement rejection.
 Errors retain no path, root, component, entry name, mode, ACL, device/inode,
-OS diagnostic, or errno. Engine-facing failures remain the delivered generic
+OS diagnostic, or errno. Engine-facing failures remain the existing generic
 durable tool-error surface.
 
 ## Races and confinement boundary
@@ -281,138 +224,49 @@ trusted host authority.
 
 Current path-based and prepared-root reference-host composition and retained-
 workspace descriptor distribution are maintained in the
-[canonical tool catalog](native-reference-host.md#tool-catalog). Exact
-remediation `f527293`, tree `40eef14`, passes the
-complete replacement local gate after cycle 2, which was not green. Cycle-3
-candidate `c1e572e`, tree `b5fb1c2`, is not green only for one low documentation-
-lineage finding. Exact lineage remediation `12c11ba`, tree `b96575b`, passes the
-complete replacement gate. Cycle-4 candidate `a78b693`, tree `2b913e8`, has
-zero production findings; its sole low stale seal-record finding is corrected
-in the exempt documentation seal. It is not a delivered or `main`-integrated
-authority surface.
+[canonical tool catalog](native-reference-host.md#tool-catalog).
 
 Pinned fx at `b1774fbf6c7602b503026f96f6e960e946c692ef` uses the same tool
 name and required `path` field, recursively creates missing parents, treats an
 existing final directory as success, and rejects an existing final
 non-directory. It also accepts absolute, `~/...`, and escaping relative paths,
 uses broader pathname resolution that can follow symlinks, and lacks this
-slice's strict shape, confinement, explicit bounds, durability protocol, and
+contract's strict shape, confinement, explicit bounds, durability protocol, and
 redacted diagnostics. Machine-god intentionally rejects those broader
 behaviors. Zig is benchmark input only.
 
 ## Required implementation evidence
 
-- [x] Exact constants, descriptions, strict schema, construction taxonomy,
+- Exact constants, descriptions, strict schema, construction taxonomy,
   success shape, error codes/messages/kinds/retryability, and redaction.
-- [x] Exact and one-over requested/canonical path, component, serialized
+- Exact and one-over requested/canonical path, component, serialized
   argument, serialized result, 256-`mkdirat`, 257-site, 16-call-per-site, and
   4,112-total sync bounds.
-- [x] Effect-free preparation, exact stable `Create` capability JSON, denial
+- Effect-free preparation, exact stable `Create` capability JSON, denial
   before lookup, canonical direct execution, and policy/execution agreement.
-- [x] Single and 256-component creation, recursive missing-parent creation,
+- Single and 256-component creation, recursive missing-parent creation,
   existing-directory idempotence, existing-final-nondirectory failure, and no
   file/content/enumeration/delete/overwrite authority.
-- [x] Ancestor and final symlink, file, FIFO, socket, and device rejection;
+- Ancestor and final symlink, file, FIFO, socket, and device rejection;
   concurrent directory and hostile-entry appearance; root and prefix
   replacement; moved retained parents; deterministic mixed-device identity
   traversal; outside sentinels. This is not privileged real-mount testing or a
   sandbox guarantee.
-- [x] Requested `0755`, benign and hostile umasks, inherited ACLs, no
+- Requested `0755`, benign and hostile umasks, inherited ACLs, no
   permission or ACL rewriting, unopenable new intermediate ambiguity, and
   retained safe partial prefixes.
-- [x] Exact-once `mkdirat`, no retry after any result including `EINTR`, first-
+- Exact-once `mkdirat`, no retry after any result including `EINTR`, first-
   effect commit transition, fresh postcommit no-follow rewalk, bottom-up
   best-effort sync despite earlier verification/sync failure, and no rollback.
-- [x] Precommit cancellation ordering and precedence, postcommit cancellation
+- Precommit cancellation ordering and precedence, postcommit cancellation
   suppression, inert-until-poll, synchronous one-poll completion, drop, no
   detached work, and same-poll engine unknown-result recovery.
-- [x] Native macOS execution, Linux and FreeBSD cross-target test compilation,
+- Native macOS execution, Linux and FreeBSD cross-target test compilation,
   Linux library warnings-denied Clippy, WASI compilation and active unsupported-
   target behavior, canonical reference-host composition, no-unsafe, dependency,
   compatibility, documentation, clean-diff, and fresh release-binary smoke
   evidence.
-- [x] Native Linux and macOS execution in all four exact native jobs of feature
-  CI `32699750602`; the overall workflow remains not green for the separate
-  Linux Quality test-Clippy failure.
-
-The historical cycle-2 precursor local gate recorded in the
-[`create_folder` review](reviews/m03-create-folder-review-01.md) passed 16
-private, 20 direct, six engine, seven reference-host, and one core-contract
-focused tests; 877 default and 925 all-feature discovered tests with zero
-benchmarks; workspace formatting, warnings-denied Clippy, tests, and doctests;
-130 Python tests with eight expected macOS-only skips; compatibility,
-dependency, native macOS execution, Linux/FreeBSD cross-target compilation,
-Linux library Clippy, active WASI, documentation, diff, and release-binary
-checks. Cycle-2 evidence remediation added a seventeenth private deterministic
-mixed-device identity-chain test.
-
-Exact remediation `f52729379a4c2352cbb9817bcd19e8bb6e3b2b8f`, tree
-`40eef148230a79e5d9700b5ca2bdfd0ace2f192c`, passes the complete replacement
-local gate with fresh evidence:
-
-- exact Rust 1.94.1 workspace formatting, all-target/all-feature warnings-
-  denied Clippy, full workspace tests, and two workspace doctests;
-- 17 private, 20 direct, six engine, seven reference-host, and one core-
-  contract focused tests; 878 default and 926 all-target/all-feature discovered
-  tests with zero benchmarks;
-- 130 repo-wide Python tests with eight expected macOS skips;
-- byte-identical compatibility regeneration against pinned fx revision
-  `b1774fbf6c7602b503026f96f6e960e946c692ef`;
-- `cargo-deny` 0.20.2 green and `cargo-audit` 0.22.2 green with zero findings
-  across 175 dependencies and 1,225 advisories;
-- Linux and FreeBSD cross-target checks and Linux warnings-denied library
-  Clippy only, plus WASI compilation and active Node 22.22.0 evidence 1/1;
-- 70 Markdown files, 502 links, 352 relative file links, and zero missing
-  targets; clean diff, no unsafe additions, and no Cargo manifest, lockfile,
-  CLI, workflow, or benchmark-workload changes; and
-- a fresh 319,152-byte Mach-O arm64 release binary with SHA-256
-  `71e7bfc79acc08fb3037b36f8b45ed24f9bbf9b9158dae359b5f544fa1e0fe78`
-  passing bare, version, help, and inert missing-path human/JSON smokes.
-
-First feature CI `32699750602` supplies green native Linux and macOS execution
-in all four native jobs, but the overall workflow is not green because Linux
-Quality rejected the test-only `u32::from(Mode::bits())` trace conversion.
-The trace now stores exact platform-native `RawMode`; focused macOS checks,
-Linux warnings-denied test-target Clippy, and FreeBSD compilation are green.
-Exact remediation `1effcbb5fd5affa1bc23df938afc7d786e5c05ea`, tree
-`b5eccb193db00b39c9e029cb3e3b472283b3e6ba`, passes the complete replacement
-gate: exact Rust 1.94.1 workspace formatting, warnings-denied all-target/all-
-feature Clippy, all-target/all-feature tests, two doctests, focused
-17/20/6/7/1, discovery 878/926/0, Python 130 with eight expected skips,
-byte-identical pinned-fx compatibility, dependency policy/audit, Linux/
-FreeBSD/WASI and active Node 1/1, documentation 70/502/352/0, clean diff/no
-unsafe/no forbidden changes, and the unchanged release binary/smokes are green.
-Tree-identical cycle-5 candidate `ff18a9a`, tree `f77b198`, is green with zero
-findings in all three fresh tracks. Feature benchmark `32699750662` is green
-and retains exactly two nonexpired exact-SHA artifacts. This is not delivery,
-product-performance, or fx-equivalence evidence. Documentation
-record `9d0bacd`, tree `b5fb1c2`, and tree-identical cycle-3 candidate `c1e572e`
-preserve identical non-documentation behavior. Cycle 3 is not green only for
-one low documentation-lineage finding; the other two tracks are green and all
-three found zero production defects. Exact lineage remediation `12c11ba`, tree
-`b96575b`, passes the complete replacement gate. Gate record `f6f6584` parents
-tree-identical cycle-4 candidate `a78b693`, tree `2b913e8`. Cycle 4 found zero
-production defects; its sole low stale documentation-seal finding is corrected
-under the user's seal-review exemption. Production preflight API and filesystem
-audits reported zero findings, but they are not formal tracks.
-
-## Review and delivery protocol
-
-Production and independently owned evidence are composed. Run the complete
-local gate on one exact SHA, then create a tree-identical candidate and start
-three fresh reviewers against that same immutable SHA and tree:
-
-1. correctness/API;
-2. filesystem/robustness;
-3. performance/concurrency.
-
-Every confirmed finding is fixed, the complete local gate is rerun, and all
-three tracks restart with fresh reviewers on one replacement SHA. Repeat until
-all three tracks report zero findings. Then push the feature seal, require its
-exact CI and benchmark workflows, fast-forward `main` without force, and
-require exact `main` CI and benchmark workflows. Documentation-only seal and
-delivery-record commits are exempt from another adversarial cycle, but their
-exact workflows remain required.
+- Native Linux and macOS execution in the repository's platform gate.
 
 ## Deferred scope
 
@@ -420,14 +274,4 @@ File creation, overwrite, removal, rollback, exact effective mode, ACL
 normalization, external paths, symlink traversal, directory enumeration,
 content access, non-Linux/macOS hardened execution, CLI ownership, benchmark
 workloads, product-performance claims, and complete fx equivalence remain
-outside this slice. The replacement complete local gate is green at
-`f527293`, tree `40eef14`. Cycle-3 candidate `c1e572e`, tree `b5fb1c2`, is not
-green only for one low documentation-lineage finding. Exact lineage remediation
-`12c11ba`, tree `b96575b`, passes the complete replacement gate. Cycle-4
-candidate `a78b693`, tree `2b913e8`, has zero production findings; its sole low
-stale seal-record finding is corrected in this exempt documentation seal.
-Cycle-5 candidate `ff18a9a`, tree `f77b198`, is green with zero findings in all
-three fresh tracks. Seal `e75578b` passed exact feature CI `32702785549`,
-feature benchmark `32702785574`, main CI `32703303933`, and main benchmark
-`32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
-artifacts. Delivery and `main` integration are complete.
+outside this contract.

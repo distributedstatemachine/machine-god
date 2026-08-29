@@ -1,25 +1,10 @@
 # Native `copy_file` contract
 
-Status: **DELIVERED — final documentation record workflows pending**
-
-This document freezes the twenty-fourth bounded Milestone 03 slice from exact
-delivered base `226040780eb14dd72e86d0a002dc4bf61ba2ddfc`. That base is green
-under exact feature CI `32675981622`, feature benchmark workflow `32675981593`,
-main CI `32676296870`, and main benchmark workflow `32676296945`. Both
-benchmark workflows retained exactly two nonexpired exact-SHA artifacts.
-
-Replacement documentation seal
-`3bdd7cb36c2ef3be0ffcd0ac118adb39706c6be8` is green under exact feature CI
-`32684856309`, feature benchmark workflow `32684856373`, main CI `32685192453`,
-and main benchmark workflow `32685192394`. Both benchmark workflows retain
-exactly two nonexpired exact-SHA artifacts. Native `copy_file` is delivered as
-the twenty-fourth bounded Milestone 03 slice.
-
 `copy_file` copies the bounded bytes of one existing confined regular file to
 one absent confined destination without modifying the source. It does not
 overwrite a destination, create a parent, copy a directory, follow a symlink,
 access an external path, or allocate the complete file in memory. It is
-library-only in this slice. The product remains Rust; Zig remains solely a
+library-only. The product remains Rust; Zig remains solely a
 pinned upstream benchmark build input.
 
 ## Public API and schema
@@ -71,7 +56,7 @@ and prepared JSON values are independently capped at 65,536 serialized bytes.
 Canonical endpoints must differ. Direct execution revalidates the same exact
 shape and requires both paths already canonical.
 
-Normalization is the delivered mutation-path rule: repeated `/` separators
+Normalization is the existing mutation-path rule: repeated `/` separators
 collapse and exact `.` components disappear. Backslash and space remain literal
 Unix filename characters. Empty paths, absolute paths, any `..` component,
 C0/C1 controls, Unicode line or paragraph separators, Unicode bidirectional-
@@ -143,7 +128,7 @@ authority. For one call it performs this bounded sequence:
 4. In the destination parent, try at most eight fixed-short, high-entropy stage
    basenames. Open at `0600` with create, exclusive, no-follow, close-on-exec,
    and nonblocking flags. A collision is never removed and consumes one attempt.
-   Entropy acquisition uses the delivered bounded nonblocking 16-byte protocol,
+   Entropy acquisition uses the bounded nonblocking 16-byte protocol,
    with at most 16 cumulative interruptions and 31 total calls per name fill.
 5. Stream source bytes to the stage in chunks of at most 64 KiB while computing a
    SHA-256 digest. Each logical source-read and stage-write phase permits at
@@ -241,7 +226,7 @@ All failures are fixed and redacted:
 
 Errors retain no endpoint, root, component, entry name, content, digest,
 metadata, temporary name, OS diagnostic, or errno. Engine-facing tool failures
-remain the delivered generic durable error surface.
+remain the existing generic durable error surface.
 
 ## Host composition and compatibility boundary
 
@@ -253,7 +238,7 @@ Pinned fx at `b1774fbf6c7602b503026f96f6e960e946c692ef` uses the same tool
 and field names and supports the core source-preserving copy scenario. Its
 implementation also creates destination parents, permits same-path calls,
 replaces existing destinations, accepts external paths, and follows a source
-symlink. Machine-god intentionally rejects those broader behaviors. This slice
+symlink. Machine-god intentionally rejects those broader behaviors. This contract
 makes no complete fx-equivalence or product-performance claim.
 
 ## Required evidence
@@ -280,12 +265,4 @@ makes no complete fx-equivalence or product-performance claim.
 Destination overwrite, parent creation, directory trees, symlink copies,
 external paths, source files above 16 MiB, source sparse-layout preservation,
 non-Linux/macOS hardened execution, CLI ownership, richer permission modes,
-benchmark workloads, and performance claims remain outside this slice.
-Production, independent evidence, and three fresh same-SHA adversarial reviews
-are green. Exact replacement delivery is green on seal `3bdd7cb`: feature CI
-`32684856309`, feature benchmark `32684856373`, main CI `32685192453`, and main
-benchmark `32685192394`. Each benchmark run retains exactly two nonexpired
-exact-SHA artifacts. This final delivery record is documentation-only and
-exempt from adversarial review under the user's instruction; its own exact
-feature and main workflows remain required after push and cannot be
-self-recorded.
+benchmark workloads, and performance claims remain outside this contract.

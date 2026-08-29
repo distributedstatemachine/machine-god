@@ -1,26 +1,7 @@
 # Native `file_info` tool
 
-Status: integrated contract for the delivered seventeenth bounded Milestone 03
-slice.
-Production is present at isolated SHA
-`5c2d129a3755dca0c8f7913b27614b70352fe2a4`; independent tests are present at
-isolated SHA `ca0091c181d8ffbecda008ee0f981516dc5cff7b` and compose with
-production at `f228c06bbda5d01b50905c66f378a2b29e0560bf`, where all 34
-initial focused tests are green. Finding-test hardening composes at `b69ec4b`,
-bringing the focused total to 36 plus five private unit tests. The first formal
-candidate is `8399ec7`; its three tracks were not all green. Required local
-gates are green on the replacement through `d445eb3`. Three replacement
-adversarial review tracks are green on exact candidate `4193ecc`.
-Documentation seal and integrated `main` SHA
-`60dd54f273afc7e62fb4b3cc1fb1a347d739998b` passed exact feature CI run
-`32605071080` on successful retry attempt 2, feature benchmark-evidence run
-`32605071063`, main CI run `32606050292`, and main benchmark-evidence run
-`32606050294`; all four workflows report that exact seal SHA. Benchmark success
-is delivery evidence only and makes no product-performance claim. This
-documentation-only commit is the final delivery record, is explicitly exempt
-from another adversarial review because behavior is already green, and reports
-its own exact feature and `main` workflows at handoff. `file_info` is a library
-capability in `machine-god-native`; the current CLI does not construct an
+`file_info` is a library capability in `machine-god-native`; the current CLI
+does not construct an
 engine, register this tool, prompt for permission, or change any invocation or
 output byte.
 
@@ -47,7 +28,7 @@ root. Resolution of ancestors leading to the host-supplied path and mount
 points visible below the retained directory remain trusted host boundaries.
 This is not a chroot or a sandbox against the host. Hardened root construction
 and traversal on targets other than Linux and macOS are deferred, and this
-slice makes no security claim for them.
+contract makes no security claim for them.
 
 ## Provider input and preflight
 
@@ -234,7 +215,7 @@ Execution starts no detached task or thread.
 
 ## Deferred scope
 
-This slice does not accept absolute, external, or parent-traversing paths. It
+This tool does not accept absolute, external, or parent-traversing paths. It
 does not follow any selected symlink or inspect a symlink target, read content,
 recurse, enumerate children, derive MIME type or a content hash, report
 ownership, mode bits, ACLs, extended attributes, birth/access/change times, or
@@ -242,6 +223,6 @@ additional timestamps, or mutate anything. It adds no CLI command or output
 change, non-Linux/macOS hardening, compatibility or upstream-equivalence
 claim, benchmark workload, or product-performance claim.
 
-The pinned fx inventory, benchmark classification, and workflows are unchanged.
+The pinned fx inventory and benchmark classification are unchanged.
 Zig remains only the pinned upstream benchmark build input; machine-god is a
 Rust product and does not use Zig as a product language or runtime dependency.

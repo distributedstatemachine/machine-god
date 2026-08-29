@@ -1,22 +1,5 @@
 # Native `glob_files` tool
 
-Status: delivered eighteenth bounded Milestone 03 slice.
-The exact base is `bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. The first formal
-review at `1f5de6a` found a high unmetered matcher-work defect. The checked
-matcher budget, independent both-mode regression, and all replacement local
-gates are green at exact code-and-test head
-`4171a4a8811a98888b7e4e161281a1216564746f`; all three replacement tracks are
-green on exact behavior SHA `523df85822a27102d7e7100e274e3bad7b25494f`.
-Documentation seal and integrated `main` SHA
-`35c853605077f2ac700f4be1dd79eabd2ace4dd4` passed exact feature CI run
-`32610950593`, feature benchmark-evidence run `32610950594`, main CI run
-`32611208411`, and main benchmark-evidence run `32611208415`; all four report
-that exact seal SHA. Benchmark success is delivery evidence only and makes no
-product-performance claim. This documentation-only commit is the final delivery
-record and is explicitly exempt from another adversarial review after behavior
-was green. Milestone 03 remains
-`IN PROGRESS`, and its combined native-tool checklist remains unchecked.
-
 `glob_files` is a Linux/macOS library capability in `machine-god-native`. The
 current CLI does not construct an engine, register or invoke this tool, prompt
 for its permission, or change any accepted invocation or output byte.
@@ -54,12 +37,12 @@ The retained descriptor confines model-selected components beneath the
 workspace. Resolution of ancestors leading to the injected host root and mount
 points visible below the retained directory remain trusted-host boundaries.
 This is not a chroot or a sandbox against the host. Hardened construction and
-traversal on targets other than Linux and macOS are deferred, and this slice
+traversal on targets other than Linux and macOS are deferred, and this contract
 makes no security claim for them.
 
 ## Public constants and construction errors
 
-The candidate exports `GlobFilesTool`, `GlobFilesToolOpenError`,
+The native crate exports `GlobFilesTool`, `GlobFilesToolOpenError`,
 `GlobFilesToolOpenErrorKind`, and these fixed constants:
 
 | Constant | Value |
@@ -380,13 +363,8 @@ session, runtime, or CLI authority change.
 
 ## Deferred scope
 
-This slice adds no CLI or slash command, external-path access, workspace
+This tool adds no CLI or slash command, external-path access, workspace
 discovery, non-Linux/macOS hardening, ignore-file or Git behavior, Git or shell
 subprocess, content or symlink-target read, mutation, pagination, snapshot,
 watcher, new dependency, benchmark workload, product-performance claim, or fx-
-equivalence claim. It does not implement any other remaining native tool and
-does not complete the M03 combined tool boundary.
-
-The exact ownership and composed lineage, required three-track review, and
-delivery gates are recorded in the
-[`glob_files` review record](reviews/m03-glob-files-review-01.md).
+equivalence claim.

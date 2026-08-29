@@ -1,12 +1,5 @@
 # Native ask permission handler
 
-Status: Milestone 03 ninth integrated slice. The implementation, black-box
-tests, three-track adversarial review, documentation seal, and exact feature and
-`main` workflows are green. It is integrated on `main` at
-`27e3f2b3ff170044732d9124ffb210beabcda206`; exact main CI run `32570197911`
-and benchmark run `32570197870` are green. This remains a library surface and
-is not evidence that the CLI prompts today.
-
 `AskPermissionHandler` is an executor-neutral native adapter from core's
 `PermissionHandler` boundary to an explicitly injected `PermissionPrompter`.
 The adapter owns no prompt presentation or input authority. A host may place a
@@ -58,7 +51,7 @@ PermissionPrompter::prompt(
 ) -> BoxFuture<'_, Result<PermissionPromptDecision, PermissionPromptError>>
 ```
 
-`PermissionPromptDecision` is a closed structured host result for this slice:
+`PermissionPromptDecision` is a closed structured host result:
 
 | Prompt decision | Core decision returned by the adapter |
 | --- | --- |
@@ -111,7 +104,7 @@ The adapter discards the prompt error value and constructs a core
 | `ASK_PERMISSION_PROMPT_ERROR_MESSAGE` | `permission prompt failed` |
 | `ASK_PERMISSION_DENIED_REASON` | `permission denied` |
 
-`PermissionError` has only a code and message, so this slice makes no retry
+`PermissionError` has only a code and message, so this adapter makes no retry
 classification claim. `AskPermissionHandler` debugging is exactly
 `AskPermissionHandler { .. }`; it does not format the injected prompter.
 
@@ -136,15 +129,6 @@ The adapter is executor-neutral and does not read terminal input, write terminal
 output, inspect environment variables, access files, start processes, contact a
 network, discover configuration, or select a runtime. All presentation,
 interaction, scheduling, and any associated authority belong to the explicitly
-injected prompter. This slice does not provide a concrete prompter, wire the
+injected prompter. This adapter does not provide a concrete prompter, wire the
 CLI, change the configured `ask` mode, implement modes beyond `ask`, or persist
 grant decisions.
-
-## Delivery evidence
-
-Feature implementation, black-box tests, local checks, three-track adversarial
-review, the documentation seal, exact feature-branch workflows, fast-forward
-integration, and exact `main` workflows are green. The exact lineage and run
-links are retained in the
-[`ask permission handler review`](reviews/m03-ask-permission-review-01.md).
-This delivery did not change existing CLI bytes.

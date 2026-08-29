@@ -1,60 +1,9 @@
 # Native AI Gateway credential discovery
 
-Status: Milestone 03 tenth slice integrated on `main` at
-`ef6901d33c45f0b78b9ddf0042ad27b0ee1953c0`. Exact main CI run `32573320962`
-and benchmark-evidence run `32573320937` are green. The delivered generation-
-credential behavior remains unchanged. The delivered `models [--json]` slice
-reuses the snapshot and adds a catalog-specific optional-auth projection. Its
-six focused independent credential cases are present in
-native evidence `12263afa458e48f2963ae3d0e3db5cf219f8bdf6`. Exact catalog
-behavior candidate `2ea9d94`, tree `3a948b2`, passed its complete replacement
-gate but was rejected by cycle-2 review; none of its findings changed credential
-selection. Parser and HTTP lifecycle remediation is locally composed. The
-pre-review cycle-3 gate attempt was rejected for request-time DNS configuration;
-eager snapshot remediation does not change credential selection. The complete
-cycle-3 gate passed at exact candidate `2cecc921`, tree `8c0d235`, but formal
-review rejected it for one native DNS lifecycle finding and three documentation
-findings, none of which changed credential selection. Formal cycle 4 rejected
-exact candidate `57d2ac2`, tree `d30bb656`, after its complete exact-1.94.1
-replacement gate. Its raw overlap-deduplicated union was 0 blocker, 0 high,
-1 medium, and 2 low; after prior sealed dispositions, 0 blocker, 0 high,
-1 medium, and 1 low remained unresolved at verdict collection. Topology
-documentation is fixed at `268d35a`; signal/output-lifecycle remediation is
-integrated at exact `aa60db1`, tree `278fa365`, without changing credential
-selection. Exact cycle-5 candidate `27c75f4`, tree `5e40b24`, passed the
-complete exact-1.94.1 replacement gate without fallback. Three fresh formal
-reviews each reported 0 blocker, 0 high, 0 medium, and 0 low findings; their
-deduplicated union is zero and the behavior candidate is **GREEN**. Its pushed
-review seal passed feature benchmark run `32923421739`, but feature CI
-`32923421679` failed solely on one Linux test-helper Clippy diagnostic; no
-integration occurred. Exact test-only cycle-6 replacement candidate `831d38c8`,
-tree `a92acc14`, passed the complete replacement gate and three fresh formal
-reviews with a zero-finding union. Documentation-only delivered seal
-`bacc5c3dbc2bf094cca12102030d21f468f11e7a`, tree
-`da3183a3368273c2b34324a5f33266dfe5644a0d`, passed exact feature CI
-`32925681006`, feature benchmark-evidence `32925681009`, main CI
-`32926242609`, and main benchmark-evidence `32926242564`. `main` was fast-
-forwarded without force from `1de3b7eddf6a4d9046d48098defecf6bfa336442`;
-each benchmark run retains two unexpired exact-SHA artifacts for 90 days.
-The final delivery-record commit is documentation-only and review-exempt; its
-own workflows will be reported at handoff rather than claimed here.
-Review details for the delivered generation behavior are in the
-[`credential discovery review`](reviews/m03-ai-gateway-credential-review-01.md).
-
-The in-progress slice-30 [`doctor` command](doctor-cli.md) projects this
-existing precedence into one fixed local readiness check without constructing
-a transport or making a request. Valid OIDC or API-key selection is `ok` and
-names only the non-secret fixed environment-variable name. Missing credentials
-are `fail`; a selected invalid environment value or bearer token fails closed
-without fallback and uses a fixed redacted detail. Credential bytes, lengths,
-fragments, arbitrary environment values, models, and paths are never emitted.
-The exact candidate, local gates, review, workflows, integration, and delivery
-remain pending from base `f82ce46736f7bac4154da508e3b768d0b9248e15`.
-
 The adapter discovers one Vercel AI Gateway bearer credential from an
 explicitly owned environment snapshot. It is separate from core, the CLI, and
-native configuration. Bearer-token bytes are fields in no schema. The
-thirteenth slice's schema v3 adds only the closed non-secret acquisition
+native configuration. Bearer-token bytes are fields in no schema. Configuration
+schema v3 adds only the closed non-secret acquisition
 kind `credential_source: "environment"`; exact v1/v2 files project that kind
 only in memory. The only ambient lookup remains the explicitly named process-
 snapshot constructor or process convenience function.
@@ -201,41 +150,22 @@ access. Core receives no ambient credential authority. The HTTP transport still
 receives an explicit validated bearer token and retains its existing endpoint,
 origin, redirect, proxy, status, timeout, and cancellation policy.
 
-This integrated adapter does not store or rotate credentials, write environment
+This adapter does not store or rotate credentials, write environment
 variables, add a setup command, select a generation model, or itself make a
 network request. The local CLI catalog composition explicitly calls the new
 process catalog convenience function after config validation; that host use
-does not give this adapter transport authority. The thirteenth slice
+does not give this adapter transport authority. The
 [`native configuration schema-v3 contract`](configuration.md) adds a
 declarative non-secret acquisition-kind field; it adds no bearer value,
 arbitrary environment name, or ambient lookup and does not invoke this adapter.
-The separate twelfth
-[`native reference-host slice`](native-reference-host.md) implements a
+The [`native reference host`](native-reference-host.md) implements a
 production library constructor that consumes an explicitly injected snapshot
-and retains only the selected source metadata. Its implementation, independent
-tests, three fresh adversarial tracks, and exact feature and `main` workflows
-are green; its final delivery record is `ac3984fb`. Its custom-
-transport authority override skips discovery
+and retains only the selected source metadata. Its custom-transport authority
+override skips discovery
 and reports no native-discovery source. The production constructor validates
 configured `Environment` and then consumes its already injected snapshot;
 `NativeReferenceHost::credential_source()` still reports the concrete selected
-OIDC-token or API-key source. The broader M03 credential-and-configuration
-checklist item is complete after the thirteenth slice passed every local,
-adversarial, feature, integration, and exact `main` gate. It is integrated at
-`8755757d`; all three adversarial tracks are green on exact behavior SHA
-`35ce591e`.
-The delivered generation adapter's adversarial, feature-branch,
-documentation-seal, and `main` gates are green at the exact lineage recorded in
-its review. The new catalog projection and CLI composition are explicitly
-outside that historical green claim; benchmark workloads remain unchanged.
+OIDC-token or API-key source. The catalog projection and CLI composition do not
+change credential selection or grant this adapter network authority.
 Zig remains only a build input for the
 pinned upstream benchmark; machine-god remains a Rust product.
-
-## Delivery evidence
-
-Production, independent black-box tests, required local checks, and three fresh
-adversarial tracks are green. Exact feature CI run `32573044224` and
-benchmark-evidence run `32573044159` are green for the documentation seal at
-`ef6901d33c45f0b78b9ddf0042ad27b0ee1953c0`. The branch was fast-forwarded
-without force to `main`; exact main CI run `32573320962` and benchmark-evidence
-run `32573320937` are green for that same SHA.

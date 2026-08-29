@@ -1,61 +1,9 @@
 # Native `delete_file` contract
 
-Status: **DELIVERED — final documentation record workflows pending**
-
-This document freezes the twenty-second bounded Milestone 03 slice from exact
-delivered base `719a9bded86fd7ce394d482798b9064c736f43ab`. That base is green
-under exact feature CI `32651168514` across all six jobs and feature benchmark
-workflow `32651168515` across both jobs with two nonexpired exact-SHA artifacts.
-`main` was fast-forwarded without force from
-`c1268fdf463e11242b7b916add70675ae91ed115` to that exact base and is green
-under exact CI `32651488265` across all six jobs and benchmark workflow
-`32651488282` across both jobs with two nonexpired exact-SHA artifacts.
-
-Documentation-only contract commit
-`78ed6292386f86e5807bcf72591d6cb5d9f45c45` is green under exact feature CI
-`32652361712` across all six jobs and benchmark workflow `32652361692` across
-both jobs with two nonexpired exact-SHA artifacts. Those workflows froze only
-the contract. Production and independently owned evidence are now composed
-through exact local-gate precursor
-`5e340155f9a38b81a2812942d6ad0a796164beb5`. Formal cycle 1 reviewed exact
-behavior candidate `7c6f7eed407f93d2ae335e6e3b5b4ad099a615cf` and all three
-tracks reported **NOT GREEN**. Remediation, replacement same-SHA review, and
-remote delivery remain pending. Exact remediation
-`60e81a633557bc90aca01e3579782340c7c154c9` passes the complete replacement
-local gate. Tree-identical formal cycle-2 candidate
-`88026f10ed8c194c7160a754f226241c276579fc` is **NOT GREEN**;
-exact remediation `225e9617a8a8f469d663693b61cc4f9b97af8094` passes the
-complete replacement local gate. Tree-identical formal cycle-3 candidate
-`24f851d2d3db21735124729bb1b0a14adf7ae864` is **NOT GREEN** with
-two low findings. Exact remediation
-`77884a9fceed6268cbdbec1310de3f94a9c5a230` passes the complete replacement
-local gate. Tree-identical formal cycle-4 candidate
-`0b732d2746d5c821a5294901f8b4cc641bc98530` is **NOT GREEN** with
-one overlapping medium finding. Exact remediation
-`4273de513007175be94829aef85aaaa0d09bc02c` passes the complete replacement
-local gate. Tree-identical formal cycle-5 candidate
-`8575354542803f5e8ba8faf311e7524ed87eacba` is **GREEN** with zero findings
-in all three fresh tracks. Documentation seal
-`9e2a2764420519a94e11986a758592b442faa65d` passed exact feature benchmark
-workflow `32663557187` across both jobs with two nonexpired exact-SHA artifacts,
-but exact feature CI `32663557182` failed one of six jobs because its aarch64
-Linux filesystem immediately reused a test fixture's unlinked inode. Exact
-test-only remediation `c6744ab5416fc4bde330d09f59dd507bd9991d72`
-passes the complete replacement local gate. Tree-identical cycle-6 candidate
-`9e817beb92b14ce718c9c6a2b35637fb6fa2cf7e` is **GREEN** with zero
-findings in all three fresh tracks. Replacement documentation seal
-`fe56f4c57ef18f87c742340a6060dc56b91f00f9` is green under exact feature CI
-`32665295323` across all six jobs and benchmark workflow `32665295321` across
-both jobs with two nonexpired exact-SHA artifacts. `main` was fast-forwarded
-without force from the delivered base to that seal and is green under exact CI
-`32665564381` across all six jobs and benchmark workflow `32665564382` across
-both jobs with two nonexpired exact-SHA artifacts. Native `delete_file` is
-delivered as the twenty-second bounded Milestone 03 slice.
-
 `delete_file` deletes exactly one existing confined regular file or empty
 directory. It does not recurse, follow a symlink, remove the workspace root,
 read file content, enumerate a directory, create a path, or grant general
-filesystem authority. It is library-only in this slice. The product remains
+filesystem authority. It is library-only. The product remains
 Rust; Zig remains solely a pinned upstream benchmark build input.
 
 ## Public API, schema, and limits
@@ -120,7 +68,7 @@ native execution is supported only on Linux and macOS.
 
 Preparation is deterministic, synchronous, bounded, nonblocking, and effect-
 free. It performs strict JSON validation and the exact lexical mutation-path
-normalization delivered for `write_file` and `edit_file`; it does not inspect
+normalization used by `write_file` and `edit_file`; it does not inspect
 the retained root or requested target.
 
 Repeated `/` separators collapse and exact `.` components are removed.
@@ -147,7 +95,7 @@ failed preparation performs no filesystem lookup, deletion, or sync.
 ## Supported deletion protocol
 
 Allowed Linux/macOS execution uses only the workspace descriptor retained at
-construction. Root construction uses the delivered lexical host-root handling,
+construction. Root construction uses the existing lexical host-root handling,
 final-component no-follow open, and exact linked-root validation. The host path
 string is not reopened as authority after construction.
 
@@ -237,7 +185,7 @@ symlink referent and unrelated sentinels remain untouched. A directory
 replacement presented to the file-class call fails the flags/type boundary;
 the inverse file-class replacement presented to a `REMOVEDIR` call likewise
 fails. The directory-class call may still remove a different empty directory.
-These portable final-window limits are disclosed and tested; the slice makes
+These portable final-window limits are disclosed and tested; the contract makes
 no stronger adversarial concurrent-mutation or final-entry-type claim.
 
 A retained final parent can be renamed outside the public workspace path after
@@ -249,7 +197,7 @@ concurrent actor may also recreate the pathname immediately after successful
 deletion, so success does not promise that a later lookup is absent.
 
 There is no staged file, temporary name, content buffer, ACL operation, chmod,
-rename, or cleanup-unlink protocol in this slice. Those `write_file` and
+rename, or cleanup-unlink protocol in this tool. Those `write_file` and
 `edit_file` mechanisms are intentionally inapplicable to a one-entry delete.
 
 ## Fixed redacted errors
@@ -302,301 +250,12 @@ Current reference-host composition and retained-workspace descriptor
 distribution are maintained in the
 [canonical tool catalog](native-reference-host.md#tool-catalog).
 
-The CLI remains byte-unchanged and thin. This slice adds no CLI command,
+The CLI remains byte-unchanged and thin. This tool adds no CLI command,
 invocation path, prompt, status field, or output byte.
-
-## Composed local evidence
-
-Exact precursor `5e340155f9a38b81a2812942d6ad0a796164beb5` is locally green
-under Rust and Cargo 1.94.1. Focused evidence passes 19 default-feature and 20
-all-feature private tests, 19 direct tests, five engine tests, and seven
-reference-host tests. Workspace formatting, all-target/all-feature warnings-
-denied Clippy, workspace tests, and two doctests pass. Discovery inventories
-728 default-feature tests, 778 all-feature tests, and zero benchmarks.
-
-The repository harness passes all 130 tests with eight expected macOS skips.
-Pinned-fx revision `b1774fbf6c7602b503026f96f6e960e946c692ef`
-compatibility, cargo-deny 0.20.2, and cargo-audit 0.22.2 over 1,225 advisories
-and 175 dependencies are green. Linux cross-Clippy, FreeBSD library check and
-Clippy plus unsupported-test type-check, and WASI library/test build gates pass;
-Node actively executes the WASI unsupported-target test 1/1. The optional
-all-feature Linux cross-build remains a host C-sysroot limitation in
-`aws-lc-sys`, before product Rust compilation, rather than a `delete_file`
-failure.
-
-Documentation integrity covers 64 Markdown files, 445 inline links, and 295
-repository-relative links with zero missing targets. The base diff is clean,
-adds zero unsafe Rust, changes no Cargo metadata or CLI source, and changes only
-Rust files under crates. A fresh locked arm64 Mach-O release CLI has SHA-256
-`d5e91bac9cf07f389b98341ed0532d54d666f8aff2b92ffbd01f4a65cdfd8751`
-and passes bare, help, and status smoke paths.
-
-These are local precursor results only. Formal cycle 1 then reviewed exact
-candidate `7c6f7eed407f93d2ae335e6e3b5b4ad099a615cf` and found four
-unique issues: over-limit path work precedence, retained-root permission
-taxonomy, macOS cancellation around post-`EPERM` diagnostic metadata, and an
-under-specified non-directory replacement race. The cycle is **NOT GREEN** and
-establishes no feature-delivery, `main`, compatibility, equivalence, or
-product-performance approval.
-
-Exact remediation `60e81a633557bc90aca01e3579782340c7c154c9` is green under
-the complete replacement local gate on Rust and Cargo 1.94.1. Focused totals
-are 22 default-feature and 23 all-feature private tests, 20 direct tests, five
-engine tests, and seven reference-host tests. Workspace formatting, all-target/
-all-feature warnings-denied Clippy, workspace tests, and two doctests pass;
-discovery inventories 732 default-feature tests, 782 all-feature tests, and
-zero benchmarks.
-
-The 130-test Python harness passes with eight expected macOS skips. Pinned-fx
-compatibility, cargo-deny 0.20.2, and cargo-audit 0.22.2 over 1,225 advisories
-and 175 dependencies are green. Linux no-default-feature cross-Clippy,
-FreeBSD library check and Clippy plus unsupported-test type-check, WASI
-library/test builds, and Node's active unsupported test 1/1 pass. The optional
-all-feature Linux cross-build remains blocked only by the host's missing Linux
-C sysroot in `aws-lc-sys`, before product Rust compilation.
-
-Documentation integrity remains 64 Markdown files, 445 inline links, 295
-repository-relative links, and zero missing targets. The base diff is clean,
-adds zero unsafe Rust, and changes neither Cargo metadata nor CLI source. A
-fresh locked arm64 Mach-O release CLI is 319,152 bytes with SHA-256
-`d143cb7ef8ba0871a4449cd1f3a6ebb868dcb0f43f433819ea5110698e260304`
-and passes bare, help, and unavailable-environment status smoke paths with empty
-stderr. These results qualify only the replacement local gate, not formal
-review or delivery.
-
-Formal cycle 2 reviewed exact tree-identical candidate
-`88026f10ed8c194c7160a754f226241c276579fc`. Performance/concurrency is
-**GREEN** with zero findings. Correctness/API and filesystem/robustness are
-**NOT GREEN** with three overlapping medium findings: failed operations skipped
-their after-cancellation checks, macOS `EPERM` diagnosis did not compare full
-identity, and non-root revalidation permission errors lost the fixed taxonomy.
-Correctness/API also found one low public-Rustdoc race-boundary mismatch.
-Remediation and another complete local and fresh three-track cycle are pending.
-
-Exact cycle-2 remediation `225e9617a8a8f469d663693b61cc4f9b97af8094`
-passes the complete replacement local gate on Rust/Cargo 1.94.1. Focused totals
-are 28 default-feature and 29 all-feature private tests, 20 direct tests, five
-engine tests, seven reference-host tests, and one core `Delete` contract test.
-Workspace formatting, all-target/all-feature warnings-denied Clippy, tests, and
-two doctests pass; discovery inventories 738 default-feature tests, 788 all-
-feature tests, and zero benchmarks.
-
-The 130-test Python harness passes with eight expected macOS skips. Pinned-fx
-compatibility, cargo-deny 0.20.2, cargo-audit 0.22.2 over 1,225 advisories and
-175 dependencies, Linux/FreeBSD/WASI gates, and Node's active unsupported test
-1/1 are green. Documentation integrity remains 64/445/295/0. The delivered-
-base diff covers 16 files with 6,172 insertions and 63 deletions, adds zero
-unsafe Rust, and changes no Cargo metadata or CLI source. The optional all-
-feature Linux cross-build remains blocked in `aws-lc-sys` by the host's missing
-Linux C sysroot before product Rust. A fresh locked 319,152-byte arm64 Mach-O
-CLI has SHA-256
-`951ff7ce945a6fa446dfd87a7d54a6dd962776a8a021d4af6e68d6bd18e963e8`
-and passes bare, help, and unavailable-status smoke paths with empty stderr.
-These results qualify the replacement local gate only, not formal review or
-delivery.
-
-Formal cycle 3 reviewed exact tree-identical candidate
-`24f851d2d3db21735124729bb1b0a14adf7ae864`. Performance/concurrency is
-**GREEN** with zero findings. Correctness/API is **NOT GREEN** with one low
-finding because validation-site `EROFS` did not follow the frozen read-only-
-filesystem permission taxonomy. Filesystem/robustness is **NOT GREEN** with one
-low evidence gap: hostile-umask deletion was required by this matrix but not
-retained in a deterministic regression. It found no production protocol defect,
-and a manual restrictive-umask execution passed. Exact mapping/matrix and
-isolated child-process evidence remediations are in progress; another complete
-local gate and three fresh reviewers remain mandatory.
-
-Exact cycle-3 remediation `77884a9fceed6268cbdbec1310de3f94a9c5a230`
-passes the complete replacement local gate on Rust/Cargo 1.94.1. Focused totals
-are 28 default-feature and 29 all-feature private tests, 21 direct tests, five
-engine tests, seven reference-host tests, and one core `Delete` contract test.
-Workspace formatting, all-target/all-feature warnings-denied Clippy, tests, and
-two doctests pass; discovery inventories 739 default-feature tests, 789 all-
-feature tests, and zero benchmarks.
-
-The 130-test Python harness passes with eight expected macOS skips. Pinned-fx
-compatibility, cargo-deny 0.20.2, cargo-audit 0.22.2 over 1,225 advisories and
-175 dependencies, Linux/FreeBSD/WASI gates, and Node's active unsupported test
-1/1 are green. Documentation integrity remains 64/445/295/0. The delivered-
-base diff covers 16 files with 6,404 insertions and 63 deletions, adds zero
-unsafe Rust, and changes no Cargo metadata or CLI source. The optional all-
-feature Linux cross-build remains blocked in `aws-lc-sys` by the host's missing
-Linux C sysroot before product Rust. A fresh locked 319,152-byte arm64 Mach-O
-CLI has SHA-256
-`951ff7ce945a6fa446dfd87a7d54a6dd962776a8a021d4af6e68d6bd18e963e8`
-and passes bare, help, human-status, and JSON-status smoke paths with empty
-stderr. These results qualify the replacement local gate only, not formal
-review or delivery.
-
-Formal cycle 4 reviewed exact tree-identical candidate
-`0b732d2746d5c821a5294901f8b4cc641bc98530`. Correctness/API,
-filesystem/robustness, and performance/concurrency all reported **NOT GREEN**
-with the same single medium finding and no others: definitive non-`EINTR`
-`unlinkat` errors mapped directly without observing cancellation raised during
-the syscall. Source and representative file/directory errno-matrix evidence are
-being remediated; another complete local gate and three fresh reviewers remain
-mandatory.
-
-Exact cycle-4 remediation `4273de513007175be94829aef85aaaa0d09bc02c`
-passes the complete replacement local gate on Rust/Cargo 1.94.1. Definitive
-non-`EINTR` deletion failures now check cancellation after the actual syscall
-and evidence hook but before errno or macOS diagnostic mapping. A ten-case
-file/directory failure matrix covers file `EIO`, `EACCES`, `EPERM`, `EROFS`,
-`ENOENT`, `ENOTDIR`, `EISDIR`, and `ELOOP`, plus directory `ENOTEMPTY` and
-`EEXIST`; every cancelled case retains target and sentinel state, performs one
-delete call with exact flags, and performs zero syncs. Existing success and
-`EINTR` regressions continue to prove later cancellation is ignored only after
-the commit or ambiguity boundary.
-
-Focused totals are 29 default-feature and 30 all-feature private tests, 21
-direct tests plus the hostile-umask child, five engine tests, seven reference-
-host tests, and one core `Delete` contract test. Workspace formatting, all-
-target/all-feature warnings-denied Clippy, tests, and two doctests pass;
-discovery inventories 740 default-feature tests and 790 all-feature tests,
-including two doctests, with zero benchmarks.
-
-The 130-test Python harness passes with eight expected macOS skips. Pinned-fx
-compatibility, cargo-deny 0.20.2, and cargo-audit 0.22.2 over 1,225 advisories
-and 175 dependencies are green. Linux no-default-feature cross-Clippy,
-FreeBSD library check and Clippy plus unsupported-test type-check, WASI
-library/test builds, and Node's active unsupported test 1/1 pass.
-Documentation integrity remains 64/445/295/0. The clean delivered-base diff
-covers 16 files with 6,582 insertions and 63 deletions, adds zero unsafe Rust,
-and changes no Cargo metadata or CLI source. The optional all-feature Linux
-cross-build remains blocked only by the host's missing Linux C sysroot in
-`aws-lc-sys`, before product Rust compilation. A fresh locked 319,152-byte
-arm64 Mach-O release CLI has SHA-256
-`126ecc47857cb327e3b483daecf9c50ce6b04585f4cdaed60e6f20cb9f82b107`
-and passes bare, help, human-status, and JSON-status smoke paths with exact
-stdout and empty stderr. These results qualified only the replacement local
-gate and required three fresh reviewers to green-light one tree-identical
-behavior candidate before remote delivery.
-
-Formal cycle 5 reviewed exact tree-identical candidate
-`8575354542803f5e8ba8faf311e7524ed87eacba`, tree
-`13f28f2a687960e17cd4061c849a0bae17604ae7`. Correctness/API,
-filesystem/robustness, and performance/concurrency are all **GREEN** with zero
-findings. Every reviewer used a clean detached worktree, verified the exact
-candidate and tree, and confirmed that crate content is identical to exact
-remediation `4273de513007175be94829aef85aaaa0d09bc02c`.
-
-Correctness/API reran formatting, 29/30 private tests, 21 direct tests, five
-engine tests, one core contract test, and all-feature reference-host
-composition. Filesystem/robustness reran 29/30 private, 21 direct including the
-hostile-umask child, five engine, and seven host tests plus FreeBSD/WASI checks
-and the WASI unsupported-test build. Performance/concurrency reran 29/30
-private, 21 direct including the hostile-umask child, and five engine tests.
-All three independently confirmed the ten-case definitive-failure cancellation
-matrix, the success/`EINTR` commit boundary, and closure of every historical
-finding in their tracks.
-
-This establishes behavior-green review only. Delivery still requires the
-documentation seal's exact feature CI and benchmark workflows, a no-force
-fast-forward to `main`, and exact `main` CI and benchmark workflows. The
-documentation-only seal and later delivery record are exempt from another
-adversarial cycle under the user's instruction, but not from their applicable
-remote workflows.
-
-The first documentation seal's exact feature CI `32663557182` passed quality,
-dependency, x86_64 Linux, x86_64 macOS, and aarch64 macOS, but failed aarch64
-Linux in the same-type revalidation evidence. That fixture unlinked and
-immediately recreated a regular file; the runner legitimately reused the same
-inode, making the replacement equal under the protocol's portable
-`(device, inode, exact type)` identity. This was an evidence nondeterminism, not
-a production failure: the other 177 private tests in that job passed, every
-other CI job passed, and exact benchmark workflow `32663557187` passed both
-jobs with two nonexpired artifacts bound to the seal SHA.
-
-Test-only remediation `c6744ab5416fc4bde330d09f59dd507bd9991d72`
-retains an open handle to the original regular file while unlinking and
-recreating the same-type replacement. The original inode therefore cannot be
-recycled before final revalidation. No production, public API, Cargo, CLI, or
-contract behavior changed from the cycle-5-reviewed candidate.
-
-Exact remediation tree `2ac83ee846e1b74b5e103f8fabcb14d828024c89`
-passes the complete replacement gate. Rust/Cargo 1.94.1 formatting, workspace
-warnings-denied Clippy, workspace tests, two doctests, 29/30 private, 21 direct
-including hostile umask, five engine, seven host, one core, and 740/790
-discovery with zero benchmarks are green. Python 130 with eight expected skips,
-pinned-fx compatibility, cargo-deny 0.20.2, cargo-audit 0.22.2 over 1,225
-advisories and 175 dependencies, Linux/FreeBSD/WASI and active Node 1/1, and
-documentation 64/445/295/0 pass. The clean delivered-base diff covers 16 files
-with 6,766 insertions and 62 deletions, adds zero unsafe Rust, and changes no
-Cargo or CLI path. Optional all-feature Linux cross remains blocked only by the
-host C sysroot in `aws-lc-sys`, before product Rust. A fresh locked 319,152-byte
-arm64 Mach-O release CLI has SHA-256
-`d5e91bac9cf07f389b98341ed0532d54d666f8aff2b92ffbd01f4a65cdfd8751`
-and passes exact bare/help/human-status/JSON-status smoke with empty stderr.
-This test-evidence change required three fresh exact-candidate reviewers before
-a replacement seal could be pushed; its documentation-only record did not.
-
-Formal cycle 6 reviewed exact tree-identical candidate
-`9e817beb92b14ce718c9c6a2b35637fb6fa2cf7e`, tree
-`d63a92fd606ac14467eda1e1d86d2f6980547176`. Correctness/API,
-filesystem/robustness, and performance/concurrency all report **GREEN** with
-zero findings from clean detached worktrees. Production and public integration
-content remain byte-identical to the cycle-5-reviewed behavior.
-
-Correctness/API and filesystem/robustness each stress-ran the repaired same-type
-identity case 500/500 times. Both confirmed that the owned original handle spans
-unlink, replacement creation, and final revalidation, then closes by RAII.
-Performance/concurrency passed 64 parallel focused invocations and confirmed
-one bounded per-fixture handle, no shared state, no leak on success or unwind,
-and zero production runtime overhead. The reviewers also reran exact Rust 1.94.1
-formatting, warnings-denied Clippy, workspace tests/doctests, 29/30 private, 21
-direct, five engine, seven host, one core, Linux no-default, FreeBSD, WASI, and
-active Node evidence applicable to their tracks. All historical production and
-evidence findings remain closed.
-
-Replacement documentation seal
-`fe56f4c57ef18f87c742340a6060dc56b91f00f9` passed exact feature CI
-`32665295323` across all six jobs. Exact feature benchmark workflow
-`32665295321` passed both jobs and retains two nonexpired artifacts bound to the
-seal SHA. `main` was fast-forwarded without force from exact prior main
-`719a9bded86fd7ce394d482798b9064c736f43ab` to the replacement seal. Exact
-main CI `32665564381` passed all six jobs; exact main benchmark workflow
-`32665564382` passed both jobs and retains two nonexpired exact-SHA artifacts.
-This completes delivery of native `delete_file` as the twenty-second bounded
-Milestone 03 slice.
-
-The remaining Milestone 03 native tools, top-level CLI ownership, and composed
-end-to-end boundary remain pending, so Milestone 03 is not complete. This final
-delivery record is documentation-only and exempt from adversarial review under
-the user's instruction. Its own exact feature CI and benchmark workflows and
-exact `main` CI and benchmark workflows remain required after push and cannot
-be self-recorded. This record makes no product-performance, fx-equivalence, or
-compatibility-status promotion claim.
-
-## Parallel ownership and formal review
-
-Implementation proceeds with three non-overlapping owners:
-
-- production owns native behavior, exports, prepared-root and reference-host
-  wiring, and any core contract regression needed for the existing `Delete`
-  authority;
-- independent tests own direct, engine, host, portability, fault, race, bound,
-  cancellation, and unsupported-target evidence; and
-- documentation owns this normative contract, maintained indexes and plan
-  status, and the review lineage record.
-
-Production should use a statically dispatched evidence seam in the real
-pipeline for root and intermediate opens, ordinal-aware descriptor `fstat` and
-pathname `statat`, checkpoints after initial and final validation, the actual
-`unlinkat` flags and outcome, the checkpoint after a real deletion, and parent
-`fsync`. It must add no global mutable evidence state, dynamic dispatch in the
-release path, unbounded retry, or behavior-only test fork.
-
-After one exact composed behavior candidate passes focused and complete local
-gates, three fresh agents must adversarially review that same SHA for
-correctness/API, filesystem/robustness, and performance/concurrency. Every
-finding is fixed and all three tracks restart on a new exact candidate until
-all report **GREEN** with zero findings. Documentation-only contract, seal, and
-delivery commits are exempt from another adversarial cycle under the user's
-explicit instruction, but still require their exact remote workflows.
 
 ## Required independent evidence
 
-The composed candidate must prove:
+Evidence must cover:
 
 - exact exports, constants, schema/property descriptions, strict shape,
   construction and tool errors, retryability, result, `Display`, and redaction;
@@ -624,17 +283,7 @@ The composed candidate must prove:
   delete, plus unpolled/drop and engine same-poll unknown-result recovery;
 - canonical reference-host composition and retained-workspace identity;
 - native Linux/macOS execution, FreeBSD/WASI compilation, active unsupported-
-  target behavior, no unsafe Rust, and complete regression of the previously
-  delivered workspace tools.
-
-Focused suites have run first on the local precursor. The formal behavior
-candidate repeats Rust 1.94.1 formatting, workspace all-
-target/all-feature warnings-denied Clippy, workspace tests, workspace doctests,
-the repository Python and pinned-compatibility checks, dependency policy and
-audit, portability gates, documentation integrity, diff/no-unsafe checks, and
-a freshly built locked release CLI smoke. Green local evidence alone is not
-delivery: the exact reviewed SHA must pass feature workflows, fast-forward
-`main`, and pass exact `main` workflows.
+  target behavior, no unsafe Rust, and complete regression of the existing workspace tools.
 
 ## Pinned fx input and deliberate differences
 
@@ -651,8 +300,8 @@ cancellation boundaries, one non-retried delete call, and explicit durability
 ambiguity. It does not adopt upstream external paths or broader pathname
 behavior.
 
-This slice adds no recursion, parent or target creation, wildcard or multi-path
-deletion, trash/recovery mode, secure erasure, symlink-target mutation, content
+This contract adds no recursion, parent or target creation, wildcard or multi-
+path deletion, trash/recovery mode, secure erasure, symlink-target mutation, content
 read, directory enumeration, external path, CLI change, new dependency,
 non-Linux/macOS hardening, compatibility promotion, benchmark workload,
 product-performance claim, or fx-equivalence claim.

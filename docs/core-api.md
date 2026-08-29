@@ -12,9 +12,9 @@ host requirement; the optional native AI Gateway HTTP transport requires a
 host-owned Tokio runtime. All public extension traits are object-safe, `Send`,
 and `Sync`.
 
-## Slice-34 `terminal` process capability
+## `terminal` process capability
 
-The in-progress native [`terminal` slice](terminal.md) extends the existing
+The native [`terminal` tool](terminal.md) extends the existing
 provider-neutral `Capability::Process` with exact `working_directory` and a
 `ProcessEnvironment { profile, sha256 }` identity. Core receives strings and a
 digest only; it gains no process, filesystem, environment, timer, or executor
@@ -43,9 +43,9 @@ reference-host composition retains the advertised tool and returns fixed
 unsupported only after strict preparation, permission, and execution argument
 validation, before cwd lookup or spawn.
 
-## Delivered slice-33 `web_search` boundary
+## `web_search` boundary
 
-The delivered native [`web_search` slice](web-search.md) requires no new core
+The native [`web_search` tool](web-search.md) requires no new core
 provider event, provider-tool advertisement, permission mode, or ambient
 authority. The outer model receives an ordinary `ToolSpec`; its `ToolCall`
 passes through the existing registered-tool, strict-round, effect-free
@@ -60,22 +60,7 @@ not enter `ModelEvent`, `ContentBlock`, `ToolCall`, or `ModelRequest`, and the
 ordinary AI Gateway `ModelProvider` continues to reject provider-executed
 records. This keeps provider-specific wire identity and network authority in
 `machine-god-native` while preserving core's provider-neutral local-tool
-invariants. Slice 33's exact-1.94.1 local gate is green on composed behavior
-precursor `3d2984000301e58762e0940504159aeb55b2389e`. Formal cycle 1 rejected
-exact `89c5ec95`, tree `8d91a55`. Source remediation is composed from exact
-isolated components `096b11c4` and `ca0b990a`. Exact composed precursor
-`e662fa8`, tree `6c0ace9`, passes the complete local gate. Exact cycle-2
-remediation `366cef9`, tree `40c05cb`, also passed its complete gate. Formal
-cycle 3 rejected exact candidate `aef6abe`, tree `5abcef3`, with a deduplicated
-`1/0/2/2`. Exact isolated components `5d45dca` and `454f8fd` compose its
-remediation. Exact precursor `b834205`, tree `f3557a5`, passes the complete
-replacement gate. Formal cycle 4 rejected exact `cc1d3d1`, tree `ad0c3d3`, with
-a deduplicated `0/0/1/1`. Exact finish-envelope remediation component
-`dc79c8d`, tree `e2fed70`, and host-fixture component `9f6c474` are composed in
-exact precursor `2e9c44d`, tree `3e25daa`, which passes the complete replacement
-gate. Formal cycle 5 is green on exact `782aa54`, tree `b1ba692`, with a
-`0/0/0/0` union. Exact delivery record `52b5885` passed feature and main
-CI/Benchmark workflows. The slice makes no performance or fx-equivalence claim.
+invariants.
 
 ```rust,no_run
 use machine_god_core::{Engine, SessionId, SessionIncarnationId};
@@ -168,7 +153,7 @@ iteratively if this configuration check fails.
 
 ## Available-model catalog boundary
 
-The delivered twenty-ninth Milestone 03 slice adds provider-neutral
+The available-model catalog adds provider-neutral
 catalog types without changing `Engine`, `ModelProvider`, generation model
 selection, or turn orchestration. `AvailableModel::new` accepts one 1–128-byte
 ID whose bytes are all visible ASCII `0x21..=0x7e`; failures expose only
@@ -186,54 +171,12 @@ ProviderError>>` operation. Its future is inert until polled.
 Core owns no catalog URL, Gateway fields, credential, access attempt,
 authentication fallback, deadline, clock, runtime, HTTP, parser, sort, vector
 cap, or output representation. The bounded native implementation validates and
-orders before constructing the core result; the thin CLI renders it. The local
-components through feature commit
-`e84ed2a46b1ac5fe7428414375609af562c65105`, terminal-precedence remediation
-`52e9b7d74f3979f7f7f55387243e96bd78773fe3`, and 35-test native evidence
-`12263afa458e48f2963ae3d0e3db5cf219f8bdf6` are included in exact cycle-2
-behavior candidate `2ea9d94`, tree `3a948b2`, which passed the complete
-replacement gate but was rejected by its review union. The findings and local
-native-only remediation at `9cf8c74`, `8187b12`, and `499af85` do not expand
-core authority. Pre-review gate attempt `c011398` was rejected for a concrete
-native DNS-config lifecycle issue; remediation at `d9922ef` and `e5248b1` also
-does not expand core authority. Exact cycle-3 candidate `2cecc921`, tree
-`8c0d235`, passed its complete gate but formal review rejected it. Documentation,
-private bounded-DNS, and Android fail-closed remediation at `f80bd056`,
-`b6cf4cb`, and `bd47461` also leaves core authority unchanged. Formal cycle 4
-rejected exact candidate `57d2ac2`, tree `d30bb656`, after its complete exact-
-1.94.1 replacement gate. Its raw overlap-deduplicated union was 0 blocker,
-0 high, 1 medium, and 2 low; after prior sealed dispositions, 0 blocker, 0 high,
-1 medium, and 1 low remained unresolved at verdict collection. Topology
-documentation is fixed at `268d35a`; signal/output-lifecycle remediation is
-integrated at exact `aa60db1`, tree `278fa365`, without expanding core
-authority. Exact cycle-5 candidate `27c75f4`, tree `5e40b24`, passed the
-complete exact-1.94.1 replacement gate without fallback. Three fresh formal
-reviews each reported 0 blocker, 0 high, 0 medium, and 0 low findings; their
-deduplicated union is zero and the behavior candidate is **GREEN**. Exact
-feature-SHA workflows, non-force integration, exact `main` workflows, and
-delivery remained pending at that cycle-5 checkpoint. First pushed review seal
-`2064084`, tree `33818a4`,
-passed feature benchmark run `32923421739`, while feature CI `32923421679`
-failed solely on one Linux test-helper Clippy diagnostic; no integration
-occurred. Exact test-only cycle-6 replacement candidate `831d38c8`, tree
-`a92acc14`, passed the complete replacement gate and three fresh formal reviews
-with zero findings. Review-exempt delivered seal
-`bacc5c3dbc2bf094cca12102030d21f468f11e7a`, tree
-`da3183a3368273c2b34324a5f33266dfe5644a0d`, passed exact feature CI
-`32925681006`, feature benchmark-evidence `32925681009`, main CI `32926242609`,
-and main benchmark-evidence `32926242564`. `main` was fast-forwarded without
-force from `1de3b7eddf6a4d9046d48098defecf6bfa336442`; each benchmark run retains
-exactly two unexpired exact-SHA artifacts for 90 days. The delivered count is
-twenty-nine and M03 remains in progress. This delivery makes no product-
-performance, speed, latency, memory, binary-size-improvement, catalog-
-equivalence, compatibility-promotion, or fx-equivalence claim. The final
-delivery-record commit is documentation-only and review-exempt; its own exact
-feature and `main` workflows will be reported at handoff rather than claimed
-here. See [`models-cli.md`](models-cli.md).
+orders before constructing the core result; the thin CLI renders it. See
+[`models-cli.md`](models-cli.md).
 
 ## Native ask handler
 
-The integrated ninth bounded Milestone 03 slice implements the existing
+The native ask handler implements the existing
 provider-neutral `PermissionHandler` boundary as
 `machine_god_native::AskPermissionHandler`. It does not change core's trait or
 give core terminal, UI, environment, filesystem, process, network, clock, or
@@ -260,13 +203,12 @@ Dropping it before first poll does not call the prompter; dropping it while
 pending drops the underlying prompt future. Core cancellation relies on that
 drop behavior and supplies no permission-specific cancellation token. The
 complete contract and host obligations are in
-[`ask-permission.md`](ask-permission.md), with delivery evidence in the
-[`ask handler review`](reviews/m03-ask-permission-review-01.md). Existing CLI
+[`ask-permission.md`](ask-permission.md). Existing CLI
 behavior is unchanged.
 
 ## Native file store
 
-The eighth bounded Milestone 03 slice implements this unchanged
+The native file store implements this unchanged
 provider-neutral boundary as `machine_god_native::FileSessionStore` on Linux
 and macOS Unix targets. A host explicitly supplies one existing absolute root;
 the native constructor opens and retains its directory descriptor without
@@ -295,12 +237,7 @@ on filesystems honoring the assumed Unix semantics. A directory-sync error
 after rename has an ambiguous outcome and requires load-and-reconcile. This is
 not an NFS, multi-record transaction, hostile-writer, or full sudden-power-loss
 guarantee. The exact layout, failure taxonomy, trust boundary, and deferred
-scope are normative in [`session-store.md`](session-store.md). Its exact feature,
-documentation-seal, and `main` checks are green, with evidence retained in the
-[`native file session store review`](reviews/m03-session-store-review-01.md).
-It is integrated on `main` at
-`8f7b47db9580b14570bf9fb55763858f71a81271`; exact main CI run `32541315998`
-and benchmark run `32541315997` are green.
+scope are normative in [`session-store.md`](session-store.md).
 
 ## Turn lifecycle
 
@@ -464,7 +401,7 @@ A round ending without `Stop` fails. A `ToolCalls` stop requires one or more
 calls, while any call paired with another stop reason fails. Calls are validated
 as they arrive for count, unique turn-wide ID, registered name, and serialized
 argument size. The complete round is valid before any permission request or tool
-execution begins. M02 advertises JSON Schema in `ToolSpec` but deliberately
+execution begins. Core advertises JSON Schema in `ToolSpec` but deliberately
 leaves schema enforcement to the tool implementation; it does not claim core
 JSON-Schema validation.
 
@@ -552,117 +489,24 @@ JSON. In particular, native filesystem, process, and network tools must execute
 the normalized path, command, or destination represented by that capability and
 must not reinterpret their prepared arguments into broader authority.
 
-The delivered twenty-seventh [`web_fetch` tool](web-fetch.md) applies this
+The native [`web_fetch` tool](web-fetch.md) applies this
 existing rule to one rootless network tool. Effect-free preparation must turn
 the sole bounded URL into both one canonical HTTPS execution URL and the exact
 `Capability::Network { target: NetworkTarget { .. } }` presented to policy.
 Allowed execution may contact only that scheme, host, and effective port; DNS
 admission and connection pinning cannot broaden it. Existing core behavior
 continues to classify network authority as `Critical`, so the default path is
-`Ask`. The slice adds no new capability variant or core ambient network
-authority. It is delivered on reviewed seal
-`aac9e5f417bec1c00501bad2343955009d7ed96e`, tree
-`633ddd44406e22f373962c6a2ec965eae4b9cbdb`, after exact feature CI
-`32874471757`, feature benchmark-evidence `32874471812`, main CI `32875016066`,
-and main benchmark-evidence `32875015892` passed. The retained review history
-starts from exact base `a56ff350c2aace1dc22cb14c269aee89d399cd8e`.
-Formal cycle 2 rejected exact
-candidate `6f50ed092bfe21b4febef561d5e66f300a8893a9`, tree
-`6dc095e796b70fa5964e2d9a24163d75667e1c7a`, with 0 blocker, 0 high, 2 medium,
-and 2 low deduplicated findings. Exact isolated production remediation
-component `6b02c212deaf78da7dc1fd27e5f00f7fb588a50e`, tree
-`490f628caa20449c3db96069b34356b0117b7ae4`, leaves core's provider-neutral
-surface unchanged. Exact composed cycle-2 remediation precursor
-`1a78f6437eb17f646bdd11337464c949beea49f0`, tree
-`b25e992b3fed4d5f9eb2cb62dcb240af98604145`, passes the complete replacement
-local gate under exact Rust and Cargo 1.94.1 without fallback. This gate record
-makes no formal-review outcome, workflow, integration, or delivery claim;
-formal candidates are identified only by exact-SHA review results. Formal
-cycle 3 is **NOT GREEN** on exact candidate
-`16f5afea28ee8a0102377634c2b447364fa3ee32`, tree
-`0440e1eda3cad5ba1a4138bbd0808622de285420`. Correctness/API reported 0
-blocker, 0 high, 1 medium, and 1 low; network/HTTP lifecycle reported 0
-blocker, 0 high, 1 medium, and 1 low; performance/concurrency reported zero
-findings. The deduplicated union is 0 blocker, 0 high, 2 medium, and 1 low:
-blocking per-query entropy, missing native pre-effect cancellation/deadline
-authority, and one duplicated cancellation waiter reported in both non-green
-tracks. The rejected candidate does not alter core's executor-neutral API. The
-native remediation snapshots query-ID entropy during transport construction,
-uses an atomic per-query sequence, reuses one bounded cancellation waiter for
-permit/DNS/HTTP/body waits, and checks cancellation plus the same absolute
-deadline before sequential DNS, HTTP, and body effects. The final synchronous
-boundary checks token/deadline state directly without another waiter. Hostname
-prerequisite failure is fixed until transport reconstruction; literal IP
-execution bypasses it. Exact isolated production
-remediation component
-`9abef298352ea3d9517543c384d9703b949cda75`, tree
-`b1ad6f79a9de3414d87c9ff01b28e8c216e6b676`, changes only native
-`web_fetch.rs`; core remains byte-unchanged. It implements the 32-byte key,
-`AtomicU32` plus bounded SHA-256 derivation, carried pre/post-effect deadline
-checks, and single cancellation owner. Exact isolated independent-evidence
-commit `3da79a08eab706f6dd6cd4b1592eb0ffa97f61c6`, tree
-`f690b9b377dedc32776a5fc7b76d4944774b354b`, changes only native
-`web_fetch_http.rs` atop production. Its 13/13 focused checks prove exactly one
-cancellation wake, a cancelled result, and pending owned-work drop/release for
-bounded and raw seams without sleep or network. This remediation record makes no
-replacement-gate, formal-review, workflow, integration, or delivery claim;
-formal candidates are identified only by exact-SHA review results. The
-delivered count remains twenty-six. Formal cycle 4 is **NOT GREEN** on exact
-candidate `af043dc860ab88941df1385543a92c3d9880beed`, tree
-`095bac47e4db4001b9010b4f66b46202c620dfaa`. Correctness/API reported
-0 blocker, 0 high, 1 medium, and 2 low findings; network/HTTP lifecycle was
-green at 0/0/0/0; performance/concurrency reported 0 blocker, 0 high, 1
-medium, and 0 low. The deduplicated union is 0 blocker, 0 high, 2 medium, and
-2 low, so the exact candidate is rejected. The native replacement must
-preserve core's exact network authority while stably deduplicating admitted
-A/AAAA addresses in first-seen order before client construction and bounding
-truncated-DNS TCP connect by the configured connect timeout, cancellation, and
-any earlier overall deadline. Production and explicitly injected/custom
-reference-host composition paths each use the canonical
-[tool catalog](native-reference-host.md#tool-catalog). Exact isolated production
-remediation component
-`9d793035422cd449c9160c7fccd62221382b5ac5`, tree
-`87c48e4a7cf1a7b057adbcef40de5a62d0aa35d6`, changes only native
-`web_fetch.rs`; core remains byte-unchanged. Exact isolated independent-
-evidence commit `408e33ec07171988a8f78ee6175adac16532e966`, tree
-`6172f1092561fb06316836f1b7f789db038a4a57`, changes only native
-`web_fetch_http.rs` and adds a deterministic same-poll authority regression;
-it makes no native-DNS proof. Exact composed code/evidence precursor
-`d4cebe5f5d1fac00f239a260fa64853ce44cb3b5`, tree
-`56a1d73538cf78c5f7c891498deb5bfef9c9e1b0`, contains both. This remediation
-record makes no replacement-gate, formal-review outcome, candidate, workflow,
-integration, or delivery claim; formal reviewer reports identify the exact
-candidate they reviewed.
-Formal cycle 5 is **NOT GREEN** on exact candidate
-`81b963ad5a2033fb2295f7325a28fba6b66197d5`, tree
-`f5ede2e70637f5cd8ab373c9dfc893189dd5775c`. Correctness/API reported
-0 blocker, 0 high, 0 medium, and 1 low finding; network/HTTP lifecycle reported
-0 blocker, 0 high, 1 medium, and 0 low; performance/concurrency reported
-0 blocker, 0 high, 0 medium, and 1 low. The timer-accounting low is duplicated
-across correctness and performance, so the union is 0 blocker, 0 high,
-1 medium, and 1 low; the exact candidate is rejected. The medium same-poll DNS
-TCP-connect defect and its replacement remain entirely native. Core's
-executor-neutral `NetworkTarget`, critical classification, policy ordering,
-and orchestration are byte-unchanged. The native replacement must preserve
-cancellation and outer-deadline precedence, then reject an expired configured
-connect deadline before accepting either a ready connect success or error.
-Exact isolated source remediation
-`cde7d2ab2498375672c1ec6e124aff04a4020f26`, tree
-`8e8cd69524b4a88f2cc3262ef6d6b2dadc4d1d64`, changes only native
-`web_fetch.rs`; exact composed code precursor
-`d4554a9e14b93a90b3e4f1ae58f210cb2ceb5be7` has the same tree. Core remains
-byte-unchanged. This remediation record makes no replacement-gate, formal-
-review outcome, candidate, workflow, integration, or delivery claim.
+`Ask`. The tool adds no new capability variant or core ambient network
+authority.
 
 The concrete consumers are the native
 [`read_file` tool](read-file.md), [`list_files` tool](list-files.md),
 [`file_info` tool](file-info.md), [`glob_files` tool](glob-files.md),
 [`grep_files` tool](grep-files.md), [`write_file` tool](write-file.md),
-[`edit_file` tool](edit-file.md), [`delete_file` tool](delete-file.md), and the
-delivered twenty-third [`rename_file` tool](rename-file.md), and the delivered
-twenty-fourth [`copy_file` tool](copy-file.md), and the delivered twenty-fifth
-[`create_folder` behavior](create-folder.md), plus the implemented-candidate
-twenty-sixth [`open_file` contract](open-file.md). `create_folder` is another
+[`edit_file` tool](edit-file.md), [`delete_file` tool](delete-file.md),
+[`rename_file` tool](rename-file.md), [`copy_file` tool](copy-file.md),
+[`create_folder` behavior](create-folder.md), and the [`open_file`
+contract](open-file.md). `create_folder` is another
 single-path consumer.
 `read_file` effect-free preflight turns the strict
 provider `{path:string}` object into both a prepared
@@ -690,7 +534,7 @@ so it remains within the default 64 KiB result limit. A configured lower result
 limit still applies after execution. Core does not add recursion, ordering,
 snapshot, or filesystem semantics to this native result.
 
-The delivered slice adds `FilesystemAccess::Metadata` as a distinct serialized
+`FilesystemAccess::Metadata` is a distinct serialized
 filesystem operation. It authorizes inspection of metadata for exactly one
 normalized path; it does not imply `Read`, `Enumerate`, mutation, symlink-target,
 or external-path authority. `file_info` effect-free preflight accepts only a
@@ -707,8 +551,7 @@ extension}` content remains below 17 KiB at its independent worst case. Core
 does not infer any relationship among `Metadata`, `Read`, or `Enumerate`, and
 adds no filesystem or snapshot semantics to this result.
 
-The delivered eighteenth slice adds
-`FilesystemAccess::EnumerateRecursive` as another distinct serialized
+`FilesystemAccess::EnumerateRecursive` is another distinct serialized
 filesystem operation. It authorizes recursive enumeration beneath exactly one
 normalized selected subtree. It neither implies nor is implied by one-level
 `Enumerate`, and it does not imply `Read`, `Metadata`, mutation, symlink-target,
@@ -734,33 +577,7 @@ without partial output. Its exact matches content is `{path, pattern, mode:
 snapshot, or filesystem semantics to these results. The complete contract is
 in [`glob-files.md`](glob-files.md).
 
-Production and independent-test lineage is green through replacement behavior
-candidate `4193ecc`. Documentation seal and integrated `main` SHA
-`60dd54f273afc7e62fb4b3cc1fb1a347d739998b` passed exact feature CI run
-`32605071080` on successful retry attempt 2, feature benchmark-evidence run
-`32605071063`, main CI run `32606050292`, and main benchmark-evidence run
-`32606050294`; all four workflows report that exact seal SHA. Benchmark success
-is evidence only, not a product-performance claim. This documentation-only
-commit is the final delivery record, is explicitly exempt from another
-adversarial review after behavior was green, and reports its own exact workflows
-at handoff.
-
-The `glob_files` production, independent-test, documentation, composed-
-behavior, and initial local-gate lineage is green through `60070d8` from base
-`bbe8ce4cd4b0b131b7670171c2e9ea5d0ffee2da`. The first formal review at
-`1f5de6a` found a high matcher-work bound defect; its checked-budget fix,
-independent regression, public-bound assertion, and replacement local gates are
-green through exact `4171a4a8811a98888b7e4e161281a1216564746f`. All three
-replacement adversarial tracks are green on exact behavior SHA `523df858`;
-documentation seal and integrated `main` SHA
-`35c853605077f2ac700f4be1dd79eabd2ace4dd4` passed exact feature CI
-`32610950593`, feature benchmark evidence `32610950594`, main CI `32611208411`,
-and main benchmark evidence `32611208415`; all four report that exact seal SHA.
-This delivered slice does not alter
-core result limits, generic durable error mapping, CLI behavior, benchmark
-evidence, or compatibility/performance status.
-
-The delivered nineteenth slice adds `FilesystemAccess::SearchContent` as a distinct
+`FilesystemAccess::SearchContent` is a distinct
 serialized filesystem operation. It authorizes bounded recursive entry-name
 observation and bounded regular-file content inspection at exactly one
 normalized selected path: that object if it is a regular file, or eligible
@@ -799,60 +616,7 @@ adds no content-search grammar, traversal, eligibility, pagination, excerpt,
 context, ordering, race, or snapshot semantics. The complete contract is in
 [`grep-files.md`](grep-files.md).
 
-This candidate starts from exact base
-`f6aa458bb875d6cb26565adc878703fe140916d3` with tree-identical kickoff
-`f6ab594c928bead48b48ab080ac12a7ce9c0d3f4`. Exact production `27eec2f` and
-initial independent-test `6eaee93` components exist and initially compose
-through `9057feb` and `44e33d7`; reference-host fixture fix `bdbb677` makes
-focused production/test composition green. Documentation component `b04151a`
-produces fully composed behavior `42e4793`; lint fix and exact local gates are
-green at `45ad91f`. All three first-cycle tracks are **NOT GREEN** on exact
-`355a11a`. Remediation and exact replacement local gates are green at final
-code/test precursor `275d263`. First replacement candidate `ae87bf1` is **NOT
-GREEN** across all three tracks. Second-fix production and documentation compose
-through `ac5d772`, `d672210`, `7ad0863`, and exact local-gate-green precursor
-`b498ba0`. Formal second replacement candidate `5aeddc1` has correctness/API
-and filesystem/robustness **GREEN** with zero findings and
-performance/concurrency **NOT GREEN** with one medium allocation-amplification
-finding and two low documentation/evidence findings. Third production
-remediation `8777825` composes at `ab1c133`; independent regression `dcf57ad`
-composes at `d7526d4`; review-findings documentation `44afb23` composes at
-`f08c5f2`; lint follow-up `1f13f9a` produces exact fully composed local-gate
-precursor `a8f6179`. Exact Rust 1.94.1 formatting, warnings-denied workspace
-Clippy, 598 non-documentation tests plus two doctests, 25 private native tests,
-40 direct `grep_files` tests, four engine tests, and diff checks are green.
-Exact a8f cross-target/dependency/link and compatibility/release validators are
-green. Formal third-cycle candidate
-`0bfe68a9692837187c057b5b4efa08ebe3dee058` has filesystem/robustness
-**GREEN** with zero findings. Correctness/API and performance/concurrency are
-**NOT GREEN** only for the same LOW documentation contract mismatch; reviewers
-confirmed zero production defects. Isolated wording remediation
-`993b618bf78d30f6a68f3b248b572e33e4de1126` composes at exact
-`f87f6bef4016aa4ce3cd49e2c795d15bff3e84f4`; its documentation gates are
-green, and its behavior tree remains `a8f6179` except for documentation. Formal
-fourth-cycle exact behavior SHA
-`8e5fccea1b12483d2de2448e7a4ece0dc840ba39` is **GREEN** with zero findings
-in all three fresh tracks: correctness/API, filesystem/robustness, and
-performance/concurrency. Exact-SHA formatting, warnings-denied workspace
-Clippy/tests, Linux/FreeBSD cross-target and WASI gates, two doctests, 25 private
-tests, 40 direct `grep_files` tests, four engine tests, and the 58/420/270/0
-documentation inventory are green. All historical findings are closed,
-including the attempted-read-window storage wording. This documentation-only
-seal is exempt from another adversarial review under the user's explicit
-instruction. Documentation seal `0f48806310882caf3c668c72fe1b9d211cae744b`
-is feature-green: CI run `32623585346` passed all six jobs and benchmark-
-evidence run `32623585349` passed both jobs and artifacts, all for exact `0f`.
-`main` was fast-forwarded without force from `f6ab594` to exact `0f`. Main CI
-run `32623904784` is **GREEN** for exact `0f`: all six jobs and every step
-passed without reruns. Main benchmark-evidence run `32623904800` is **GREEN**
-on attempt 1 for exact `0f`: both jobs and every step passed, with two valid
-non-expired exact-SHA artifacts retained. The `grep_files` slice is delivered;
-later mutation-tool slices are recorded in their own normative contracts.
-This final delivery record is documentation-only and exempt from adversarial
-review; its own exact remote workflows are required after push and cannot be
-self-recorded.
-
-The twenty-third slice adds the provider-neutral typed capability
+The provider-neutral API includes the typed capability
 `Capability::FilesystemRename { old_path, new_path }`, serialized with the
 exact tag `filesystem_rename`. Unlike single-path `Capability::Filesystem`, it
 places both canonical endpoints in the permission request so policy can decide
@@ -866,7 +630,7 @@ confined no-follow, regular-file-only, absent-destination, exactly-once
 `NOREPLACE`, postcommit identity-check, and bounded parent-sync contract in
 [`rename-file.md`](rename-file.md).
 
-The delivered twenty-fourth slice adds the provider-neutral typed capability
+The provider-neutral API includes the typed capability
 `Capability::FilesystemCopy { source, destination }`, serialized with the exact
 tag `filesystem_copy`. Both canonical endpoints are therefore visible to policy
 without embedding a JSON value; whole-capability serialized-byte limits apply,
@@ -879,11 +643,9 @@ implementation owns the confined regular-file-only, absent-destination,
 commit, postcommit verification, and destination-parent synchronization
 contract in [`copy-file.md`](copy-file.md). A successful tool result contains
 exactly canonical `source`, canonical `destination`, and `bytes_copied`; core
-continues to apply the ordinary prepared-value and result limits. Three fresh
-same-SHA reviews and exact feature and `main` delivery gates are green; this API
-description makes no equivalence or performance claim.
+continues to apply the ordinary prepared-value and result limits.
 
-The composed twenty-fifth slice requires no new provider-neutral core variant.
+`create_folder` requires no new provider-neutral core variant.
 It uses the existing
 `Capability::Filesystem { access: FilesystemAccess::Create, path }`, whose
 stable policy JSON is exactly:
@@ -897,36 +659,10 @@ canonical capability and identical prepared execution arguments. Core assigns
 no recursive creation, mode, umask, ACL, traversal, commit, rollback, or
 durability semantics to `Create`; the Linux/macOS native tool owns the no-
 follow recursive protocol and bounds in [`create-folder.md`](create-folder.md).
-The one exact core-contract test and focused native/engine/host evidence are
-green under Rust 1.94.1. Cycle-2 candidate `6e1f885`, tree `ac57575`, is
-historically not green: correctness/API and performance/concurrency are green
-with zero findings, while filesystem/robustness reported two low evidence/
-documentation findings and zero production defects. Exact remediation
-`f52729379a4c2352cbb9817bcd19e8bb6e3b2b8f`, tree
-`40eef148230a79e5d9700b5ca2bdfd0ace2f192c`, passes the complete replacement
-local gate across 17 private, 20 direct, six engine, seven host, and one core-
-contract focused tests. Documentation record `9d0bacd`, tree `b5fb1c2`, and
-tree-identical cycle-3 candidate `c1e572e` preserve the same non-documentation
-behavior. Cycle 3 is not green only for one low documentation-lineage finding;
-filesystem and performance are green, and all tracks found zero production
-defects. Exact lineage remediation `12c11ba`, tree `b96575b`, passes the
-complete replacement gate. Gate record `f6f6584` parents tree-identical cycle-4
-candidate `a78b693`, tree `2b913e8`. Cycle 4 found zero production/API defects;
-its sole low stale documentation-seal finding is fixed under the user's seal-
-review exemption. First feature CI `32699750602` has all native Linux/macOS jobs
-green but is not green because Linux Quality rejected a test-only mode
-conversion. Platform-native `RawMode` evidence remediation `1effcbb`, tree
-`b5eccb1`, passes the complete replacement gate. Tree-identical cycle-5
-candidate `ff18a9a`, tree `f77b198`, is green with zero findings in all three
-fresh tracks. Seal `e75578b` passed exact feature CI `32702785549`, feature
-benchmark `32702785574`, main CI `32703303933`, and main benchmark
-`32703303931`; both benchmark runs retain exactly two nonexpired exact-SHA
-artifacts. The behavior is delivered and integrated on `main`.
 
-The delivered twenty-sixth slice, green under formal cycle 6, adds one
-dedicated provider-neutral capability rather than reusing filesystem read,
-metadata, or arbitrary process
-authority. Its stable policy JSON is:
+`open_file` uses one dedicated provider-neutral capability rather than reusing
+filesystem read, metadata, or arbitrary process authority. Its stable policy
+JSON is:
 
 ```json
 {"type":"open_file","path":"canonical/path"}
@@ -951,131 +687,14 @@ cancellation/drop linearize through one serialized gate: abort-first guarantees
 zero launch and successful spawn commits. Before publication, cleanup suppresses
 waking, reaps the helper, drops request/descriptor ownership, and synchronously
 joins. Normal published completion joins. Inline or blocking arbitrary Waker
-overlap may release the handle to avoid self-join/cross-thread deadlock; only
 permit-bounded callback/final bookkeeping may outlive future drop after helper/
-request cleanup. This documentation-only amendment replaces the frozen
-absolute no-worker-detach invariant and is exempt from its own adversarial
-review under the owner's instruction.
-The system launcher uses fixed `/` working directory and null stdio, makes its
-timeout decision at 30 seconds, and maps postspawn uncertainty to a fixed
-redacted result. `open_file`'s reference-host placement and retained-workspace
+request cleanup. The system launcher uses fixed `/` working directory and null
+stdio, makes its timeout decision at 30 seconds, and maps postspawn uncertainty
+to a fixed redacted result. `open_file`'s reference-host placement and retained-workspace
 allocation are recorded in the canonical
 [tool catalog](native-reference-host.md#tool-catalog). On macOS the catalog
 entry is present but execution returns unsupported before filesystem lookup or
 spawn.
-Formal cycle 3 rejected exact candidate
-`6815843ac2c8d7731ca6554e5a84772351def850`, tree
-`4a479b51ebdba49afb81a6827f1381d01ed75e52`, for two low findings: the
-authoritative post-`try_wait` clock branch was not truly exercised, and
-ordinary no-Waker publication could detach a bounded worker tail instead of
-joining it. Exact cycle-4 candidate
-`4632162f8d3f323fce65263ec92f0802d9416121`, tree
-`ab1ecebe1680813614db3682f505e5de0fc31cfc`, remediates both and passes the
-complete replacement local gate. Cycle 4 is rejected because correctness/API
-found one low maintained-documentation lineage drift; filesystem/process-
-lifecycle and performance/concurrency are green with zero findings.
-That remediation was composed into cycle-5 candidate
-`4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
-`90750911b26dc4eed9e54e73c17c11a6c5a12423`. All three tracks found zero
-production defects and the same low remaining current-lineage wording defect.
-That correction is composed in exact cycle-6 candidate
-`b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
-`07243b366f90366135ccbb1f8e146c71f7224f40`. All three fresh correctness/API,
-filesystem/process-lifecycle, and performance/concurrency tracks are green with
-zero findings at every severity. This reviewed source is now delivered. Seal
-and integrated `main` SHA
-`a02c28a6bc39f2981586f02cb76793c430c83a20`, tree
-`03c751cffacee4808b057079dedb02cfc3f193cc`, passed feature CI `32738160229`
-at 6/6 and feature benchmark `32738160725` at 2/2, retaining upstream artifact
-`9524219365` and bootstrap artifact `9524052760`. Exact main CI `32738798417`
-passed 6/6, and main benchmark `32738798415` passed 2/2 while retaining
-upstream artifact `9524461989` and bootstrap artifact `9524298408`. The current
-host composition is recorded in the canonical
-[tool catalog](native-reference-host.md#tool-catalog). This makes no product-
-performance or fx-equivalence claim. At that checkpoint, the final docs-only
-record was exempt from adversarial review under the user's instruction; its
-own exact feature and `main` workflows remained required and are reported
-below.
-
-Final delivery-record SHA
-`762d70df106d40e59b599e18b1ac5c62f678927d`, tree
-`909eb320e05df4d56f5bcecf0e3655e6d761f622`, passed feature CI `32740668405`
-at 6/6 and feature benchmark `32740667465` at 2/2, retaining upstream artifact
-`9525188220` and bootstrap artifact `9525017236`. Main benchmark `32741322179`
-passed 2/2 and retained upstream artifact `9525436660` and bootstrap artifact
-`9525268460`. Main CI `32741322249` was not green: five of six jobs passed,
-and Quality alone failed the exact test named by concatenating
-`blocked_wake_releases_request_before_publication_and_holds_` with
-`permit_until_worker_return` because the immediate `exit 0` fixture could
-legitimately publish before the first poll installed `BlockingWake`. This is a
-test-fixture synchronization defect, not a production behavior finding. Exact
-local test-only remediation
-`62c2a5349bc682079c2458ccebe9f9ea9578a3c1`, tree
-`b38984441b6bb470ecb4b1c69bc9a3a9984f0bb0`, adds the existing
-`before_first_wait` barrier and passed the normal native Linux arm64 exact test
-100/100. Exact cycle-7 candidate
-`ea59490c28cc5edd339b3d48bffa39df37634f37`, tree
-`f8a681db319f0a89e21f38e7f9f8c474c270452b`, received **GREEN** correctness/API
-and filesystem/process-lifecycle reviews with zero findings. Performance/
-concurrency was **NOT GREEN** with exactly two low findings and zero blocker,
-high, or medium findings: the unconditional `before_first_wait` rendezvous
-could hang when `Command::spawn` failed before the hook, as reproduced on
-native Linux arm64 with `/tmp` mounted `noexec`; and maintained current/
-operative documentation tails ended at the superseded cycle-6/handoff state.
-The candidate is rejected. Exact test-only code remediation
-`274f4e0f705f33ec2ea4bae60f5bd6bbe02e1f0f`, tree
-`865e93423719cdb5655cb7dd22fd20f207717cbb`, changes the fixture to the existing
-`before_spawn` barrier, reached before every spawn outcome, so Waker
-registration deterministically precedes publication. The normal native Linux
-arm64 exact test passed 100/100, and the `/tmp`-noexec spawn-failure case passed
-1/1. Production source, public API, and manifests are unchanged. This docs
-correction composes atop that commit; its SHA is pending. The full replacement
-local gate and all three fresh cycle-8 tracks remain pending. This executable
-test-only fix is not eligible for the documentation-only exemption. This makes
-no product-performance or fx-equivalence claim.
-
-Exact documentation-correction and cycle-8 candidate
-`6cfc17407cb6fa05d7568cd4f074775fc76c0e25`, tree
-`44aa7c2636f341e8d759ef18626d0565a5a7d05e`, passed the complete replacement
-local gate. Cycle-8 correctness/API was **NOT GREEN** with exactly two low
-findings and zero blocker, high, or medium; lifecycle and
-performance/concurrency were green with zero findings. The first low found no
-successful-helper witness in the normal blocked-Waker fixture, whose remaining
-assertions also passed after a noexec spawn failure. The second found that the
-operative documentation did not identify the known cycle-8 candidate. Exact
-test-only remediation `a8415f2ac79bea979d27651174d21065c6c5d5d7`, tree
-`7210b0a0bd719e8373a7bf15bfc7084d7eff0199`, factors the shared lifecycle
-assertions, makes the successful helper write and verify an exact marker, and
-adds a separate deterministic missing-helper spawn-failure case. Normal Linux
-arm64 focused evidence is 202/202; the failure case under `/tmp` noexec is
-100/100. Production source, public API, manifests, and workflows remain
-unchanged. The documentation correction and exact cycle-9 candidate SHA/tree,
-complete replacement local gate, and three fresh cycle-9 reviews remain
-pending. This makes no product-performance or fx-equivalence claim.
-
-Exact cycle-9 reviewed candidate
-`964c59408bda1a3793978041432b84b808b474a6`, tree
-`7e5306ad77ece822b4f0080c4d6a24f142635e04`, passes the complete replacement
-local gate. All three fresh correctness/API, filesystem/process-lifecycle, and
-performance/concurrency reviews are **GREEN** with zero blocker, high, medium,
-or low findings. Rust 1.94.1 evidence includes Linux arm64 system 15/15, direct
-12/12, engine 4/4, normal split cases 202/202, noexec failure 100/100,
-warnings-denied Clippy, the full Rust workspace, two doctests, Python 130 with
-eight expected macOS skips, pinned-fx compatibility, dependency policy/audit,
-FreeBSD/WASI plus active Node 1/1, documentation checks, and five release CLI
-smokes. The 319,152-byte release binary retains SHA-256
-`4526cbab38ef595a40d30938579e30760e148d9b83241e8b12a7d3325dadfbda`.
-Production source, public API, manifests, and workflows remain unchanged. The
-subsequent documentation-only green seal names this reviewed candidate and is
-exempt from another adversarial cycle under the user's instruction; its exact
-SHA/tree and feature/main workflows remain pending. These are regression and
-delivery checks, not a product-performance or fx-equivalence claim.
-
-Maintained behavior
-must compose into the exact SHA reviewed by all three adversarial tracks. A
-later documentation-only seal or delivery record is exempt from another
-adversarial cycle under the user's instruction but still requires exact feature
-and `main` workflows.
 
 Each completed result replaces its matching placeholder in place with an exact
 transcript-prefix compare-and-save before `ToolFinished`, the next call, or the
@@ -1150,7 +769,7 @@ it. Values still queued inside a provider stream that core never receives
 remain the provider's responsibility; its stream destructor must be stack-safe
 or its decoder/construction limits must keep those values safe to drop.
 
-The live-turn lease remains process-local to one `Engine`. M02 does not claim
+The live-turn lease remains process-local to one `Engine`. Core does not claim
 cross-engine fencing. A crash after a tool side effect but before placeholder
 replacement leaves an explicit unknown result, which prevents automatic replay
 but cannot establish whether the external side effect completed; stronger
