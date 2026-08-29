@@ -242,10 +242,12 @@ regression/delivery claim unless a milestone explicitly promotes it.
   classifier and link projections while tracking ordered quote/list and
   reference-continuation boundaries, valid fences, empty list items, indented
   code, whole-line block and paragraph-bound inline comments, raw HTML
-  boundaries, and ATX/Setext headings. Compact
+  boundaries (without synthetic blank lines), lazy container continuations,
+  and ATX/Setext headings. Compact
   forward indexes and delimiter-class lower bounds recognize only complete
-  escaped, nested, inline, image, and single-line or multiline reference syntax
-  without suffix rescans or repeated opener searches, keeping hostile input
+  escaped, inline, image, and single-line or multiline reference syntax, reject
+  invalid nested full-reference suffixes while releasing valid inner links,
+  and avoid suffix rescans or repeated opener searches, keeping hostile input
   linear in the 256 KiB raw and 512 KiB expanded per-file ceilings. The corpus
   is capped by pruned 4,096-entry filesystem discovery, 256 regular maintained
   files, 4 MiB of raw Markdown, and 4,096 relative-target checks, so cached

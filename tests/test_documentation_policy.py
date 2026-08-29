@@ -1548,11 +1548,49 @@ class DocumentationPolicyTests(unittest.TestCase):
         )
 
     def test_indented_code_after_reference_definition_remains_inert(self) -> None:
-        markup = "[r]: missing.md\n    [x][r]\n"
+        for markup in (
+            "[r]: missing.md\n    [x][r]\n",
+            "[r]: missing.md\n    [x](missing.md)\n",
+        ):
+            with self.subTest(markup=markup):
+                self.assertEqual(
+                    [], list(check_documentation._markdown_link_targets(markup))
+                )
 
-        self.assertEqual(
-            [], list(check_documentation._markdown_link_targets(markup))
+    def test_reference_suffix_and_pending_destination_follow_block_ownership(
+        self,
+    ) -> None:
+        cases = (
+            ("[a\\[b\\]c]: missing.md\n\n[x][a[b]c]\n", []),
+            ("[r]:\n[r]: missing.md\n", []),
         )
+        for markup, expected in cases:
+            with self.subTest(markup=markup):
+                self.assertEqual(
+                    expected,
+                    list(check_documentation._markdown_link_targets(markup)),
+                )
+
+    def test_block_comments_preserve_raw_html_and_lazy_container_context(
+        self,
+    ) -> None:
+        cases = (
+            ("<div>\n<!--x-->\n[x](missing.md)\n", []),
+            ("> - [\n  text\n> ](missing.md)\n", ["missing.md"]),
+            ("- [a b]( <!--x--> missing.md)\n", []),
+            ("> [a b](\n> x%20y.md)\n", ["x%20y.md"]),
+        )
+        for markup, expected in cases:
+            with self.subTest(markup=markup):
+                scan = check_documentation._scan_markdown_inert_blocks(markup)
+                self.assertEqual(
+                    expected,
+                    list(
+                        check_documentation._markdown_link_targets(
+                            scan.link_markup
+                        )
+                    ),
+                )
 
     def test_inline_boundaries_follow_lazy_and_sibling_container_ownership(
         self,

@@ -706,13 +706,18 @@ def _backtick_runs(
         content = raw_line.rstrip("\r\n")
         line_start = offset
         offset += len(raw_line)
+        prior_ambient = ambient
         paragraph_continues, _ = _paragraph_line_continuation(
             content,
-            ambient,
+            prior_ambient,
             html_blocks_interrupt=False,
         )
-        parsed = _parse_container_line(content, ambient)
-        ambient = parsed.state
+        parsed = _parse_container_line(content, prior_ambient)
+        ambient = (
+            prior_ambient
+            if paragraph_continues and prior_ambient.frames
+            else parsed.state
+        )
         fence_boundary = (
             _fence_opener(parsed.content) is not None
             or FENCE_CLOSE_RE.match(parsed.content) is not None
@@ -899,6 +904,7 @@ def _scan_markdown_inert_blocks(source: str) -> MarkdownScan:
     block_comment: ContainerState | None = None
     inline_comment: ContainerState | None = None
     inline_pending: list[str] = []
+    inline_link_pending: list[str] = []
     inline_newlines: list[str] = []
     unclosed_fence = False
     fence_lines = 0
@@ -955,7 +961,7 @@ def _scan_markdown_inert_blocks(source: str) -> MarkdownScan:
             blank_list_continuation = not content.strip() and block_comment.list_only
             if blank_list_continuation:
                 policy.append(newline)
-                links.append(newline)
+                links.append(raw_line)
                 ambient = block_comment
                 continue
             matched, comment_offset = _match_container_path(
@@ -965,12 +971,14 @@ def _scan_markdown_inert_blocks(source: str) -> MarkdownScan:
                 end = text.find("-->", line_start + comment_offset, line_end)
                 if end < 0:
                     policy.append(newline)
-                    links.append(newline)
+                    links.append(raw_line)
                     ambient = block_comment
                     continue
                 block_comment = None
                 ambient = _container_state(matched)
-                cursor = line_end
+                policy.append(newline)
+                links.append(raw_line)
+                continue
             else:
                 block_comment = None
                 cursor = line_start
@@ -988,19 +996,34 @@ def _scan_markdown_inert_blocks(source: str) -> MarkdownScan:
                 policy.append(restored)
                 links.append(restored)
                 inline_pending.clear()
+                inline_link_pending.clear()
                 inline_newlines.clear()
                 inline_comment = None
                 cursor = line_start
             elif end >= 0:
                 policy.extend(inline_newlines)
-                links.extend(inline_newlines)
+                links.extend(inline_link_pending)
+                links.append(text[line_start : line_start + owner_offset])
+                links.append(
+                    _blank_for_links(
+                        text[line_start + owner_offset : end + 3]
+                    )
+                )
                 inline_pending.clear()
+                inline_link_pending.clear()
                 inline_newlines.clear()
                 closing_owner = inline_comment
                 inline_comment = None
                 cursor = end + 3
             else:
                 inline_pending.append(raw_line)
+                inline_link_pending.append(
+                    text[line_start : line_start + owner_offset]
+                    + _blank_for_links(
+                        text[line_start + owner_offset : line_end]
+                    )
+                    + newline
+                )
                 inline_newlines.append(newline)
                 continue
         else:
@@ -1110,11 +1133,16 @@ def _scan_markdown_inert_blocks(source: str) -> MarkdownScan:
                 comment_index += 1
                 if end >= 0:
                     if block_candidate:
+                        links.append(text[comment_start:line_end])
                         cursor = line_end
                         break
+                    links.append(
+                        _blank_for_links(text[comment_start : end + 3])
+                    )
                     cursor = end + 3
                     continue
                 if block_candidate:
+                    links.append(text[comment_start:line_end])
                     block_comment = parsed.state
                     cursor = line_end
                     break
@@ -1130,6 +1158,9 @@ def _scan_markdown_inert_blocks(source: str) -> MarkdownScan:
                     break
                 inline_comment = parsed.state
                 inline_pending.append(text[comment_start:line_end] + newline)
+                inline_link_pending.append(
+                    _blank_for_links(text[comment_start:line_end]) + newline
+                )
                 inline_newlines.append(newline)
                 defer_inline_line = True
                 cursor = line_end
@@ -2090,6 +2121,7 @@ def _reference_definitions(markup: str) -> tuple[dict[str, str], str]:
                 )
                 paragraph_open = False
                 continue
+            paragraph_open = bool(content.strip())
         if pending_title_owner is not None:
             owner = pending_title_owner
             line_continuation, continuation_offset = _reference_line_continuation(
@@ -2449,7 +2481,9 @@ def _without_html_blocks_for_links(markup: str) -> str:
             if re.match(rf"<{tag}(?:[ \t]|>|$)", lowered):
                 end_marker = f"</{tag}>"
                 break
-        if lowered.startswith("<?"):
+        if lowered.startswith("<!--"):
+            end_marker = "-->"
+        elif lowered.startswith("<?"):
             end_marker = "?>"
         elif lowered.startswith("<![cdata["):
             end_marker = "]]>"
@@ -2498,12 +2532,13 @@ def _reference_suffix(
     syntax: LinkSyntaxIndex,
     cursor: int,
     boundaries: array | None = None,
-) -> tuple[str, int] | None:
+) -> tuple[str, int, bool] | None:
     if cursor >= len(markup) or markup[cursor] != "[" or syntax.escaped[cursor]:
         return None
     label_start = cursor + 1
     cursor = label_start
     depth = 0
+    valid = True
     while cursor < len(markup) and cursor - label_start <= 999:
         if _crosses_inline_boundary(boundaries, cursor, cursor + 1):
             return None
@@ -2512,9 +2547,10 @@ def _reference_suffix(
                 depth -= 1
                 cursor += 1
                 continue
-            return markup[label_start:cursor], cursor + 1
+            return markup[label_start:cursor], cursor + 1, valid
         if markup[cursor] == "[" and not syntax.escaped[cursor]:
             depth += 1
+            valid = False
         cursor += 1
     return None
 
@@ -2529,9 +2565,16 @@ def _inline_paragraph_boundaries(markup: str) -> array:
         content = raw_line.rstrip("\r\n")
         line_start = offset
         offset += len(raw_line)
-        continuation, _ = _paragraph_line_continuation(content, ambient)
-        parsed = _parse_container_line(content, ambient)
-        ambient = parsed.state
+        prior_ambient = ambient
+        continuation, _ = _paragraph_line_continuation(
+            content, prior_ambient
+        )
+        parsed = _parse_container_line(content, prior_ambient)
+        ambient = (
+            prior_ambient
+            if continuation and prior_ambient.frames
+            else parsed.state
+        )
         leaf_boundary = (
             _fence_opener(parsed.content) is not None
             or FENCE_CLOSE_RE.match(parsed.content) is not None
@@ -2556,14 +2599,41 @@ def _inline_paragraph_boundaries(markup: str) -> array:
     return boundaries
 
 
+def _without_container_prefixes_for_inline(markup: str) -> str:
+    """Blank explicit quote/list prefixes without shifting inline offsets."""
+
+    chunks: list[str] = []
+    ambient = EMPTY_CONTAINER
+    for raw_line in markup.splitlines(keepends=True):
+        content = raw_line.rstrip("\r\n")
+        newline = raw_line[len(content) :]
+        prior_ambient = ambient
+        continuation, _ = _paragraph_line_continuation(
+            content, prior_ambient
+        )
+        parsed = _parse_container_line(content, prior_ambient)
+        ambient = (
+            prior_ambient
+            if continuation and prior_ambient.frames
+            else parsed.state
+        )
+        chunks.append(
+            " " * parsed.content_offset
+            + content[parsed.content_offset :]
+            + newline
+        )
+    return "".join(chunks)
+
+
 def _markdown_link_targets(markup: str) -> Iterator[str]:
     """Yield complete rendered inline and reference-link targets."""
 
     markup = _without_html_blocks_for_links(markup)
     definitions, markup = _reference_definitions(markup)
     markup = _without_indented_code(markup)
-    syntax = _link_syntax_index(markup)
     boundaries = _inline_paragraph_boundaries(markup)
+    markup = _without_container_prefixes_for_inline(markup)
+    syntax = _link_syntax_index(markup)
     opener_positions = array("I")
     opener_generations = array("I")
     opener_images = bytearray()
@@ -2663,10 +2733,10 @@ def _markdown_link_targets(markup: str) -> Iterator[str]:
 
         suffix = _reference_suffix(markup, syntax, cursor + 1, boundaries)
         if suffix is not None:
-            reference_label, suffix_end = suffix
-            if reference_label:
+            reference_label, suffix_end, valid_label = suffix
+            if reference_label and valid_label:
                 key = _normalize_reference_label(reference_label)
-            elif not nested_label:
+            elif valid_label and not nested_label:
                 key = _normalize_reference_label(markup[opener + 1 : cursor])
             else:
                 key = ""
@@ -2850,10 +2920,10 @@ def _normalize_policy_markup(prose: str) -> str:
                 prose, syntax, cursor + 1, boundaries
             )
             if suffix is not None:
-                reference_label, suffix_end = suffix
-                if reference_label:
+                reference_label, suffix_end, valid_label = suffix
+                if reference_label and valid_label:
                     key = _normalize_reference_label(reference_label)
-                elif not nested_label:
+                elif valid_label and not nested_label:
                     key = _normalize_reference_label(prose[opener + 1 : cursor])
                 else:
                     key = ""
