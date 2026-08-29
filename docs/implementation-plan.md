@@ -239,9 +239,10 @@ regression/delivery claim unless a milestone explicitly promotes it.
   600-line plan ceiling, sole-live-ledger restrictions across every maintained
   non-review document, rendered relative Markdown link targets, and canonical
   reference-host catalog ownership. One bounded scan produces separate rendered
-  classifier and link projections while tracking ordered quote/list containers,
-  valid fences, empty list items, indented code, block and paragraph-bound
-  comments and inline code, raw HTML boundaries, and ATX/Setext headings. Compact
+  classifier and link projections while tracking ordered quote/list and
+  reference-continuation boundaries, valid fences, empty list items, indented
+  code, whole-line block and paragraph-bound inline comments, raw HTML
+  boundaries, and ATX/Setext headings. Compact
   forward indexes and delimiter-class lower bounds recognize only complete
   escaped, nested, inline, image, and single-line or multiline reference syntax
   without suffix rescans or repeated opener searches, keeping hostile input

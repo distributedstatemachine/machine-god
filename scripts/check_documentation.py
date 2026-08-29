@@ -757,7 +757,7 @@ def _paragraph_line_continuation(
         return False, 0
     matched, owner_offset = _match_container_path(line, owner.frames)
     explicit_owner = matched == owner.frames
-    candidate_offset = owner_offset if explicit_owner else 0
+    candidate_offset = owner_offset
     candidate = line[candidate_offset:]
     if (
         _fence_opener(candidate) is not None
@@ -779,9 +779,24 @@ def _paragraph_line_continuation(
     if marker is not None:
         _, _, token, empty = marker
         ordered = token[0].isdigit()
-        if not empty and (not ordered or int(token[:-1]) == 1):
+        if not empty and (
+            not ordered
+            or int(token[:-1]) == 1
+            or not explicit_owner
+        ):
             return False, candidate_offset
     return True, candidate_offset
+
+
+def _reference_line_continuation(
+    line: str, owner: ContainerState
+) -> tuple[bool, int]:
+    """Classify a continued definition before any new list block starts."""
+
+    continuation, offset = _paragraph_line_continuation(line, owner)
+    if continuation and _list_marker(line[offset:], 0) is not None:
+        return False, offset
+    return continuation, offset
 
 
 def _blank_for_links(value: str) -> str:
@@ -955,7 +970,7 @@ def _scan_markdown_inert_blocks(source: str) -> MarkdownScan:
                     continue
                 block_comment = None
                 ambient = _container_state(matched)
-                cursor = end + 3
+                cursor = line_end
             else:
                 block_comment = None
                 cursor = line_start
@@ -1487,6 +1502,7 @@ class LinkSyntaxIndex:
     next_invalid_whitespace: array
     next_single_quote: array
     next_double_quote: array
+    next_paren_open: array
     next_paren_close: array
 
 
@@ -1527,6 +1543,7 @@ def _link_syntax_index(markup: str) -> LinkSyntaxIndex:
         next_invalid_whitespace=next_invalid_whitespace,
         next_single_quote=_next_unescaped(markup, escaped, "'"),
         next_double_quote=_next_unescaped(markup, escaped, '"'),
+        next_paren_open=_next_unescaped(markup, escaped, "("),
         next_paren_close=_next_unescaped(markup, escaped, ")"),
     )
 
@@ -1572,6 +1589,9 @@ def _title_end(
         end = syntax.next_single_quote[cursor + 1]
     elif delimiter == "(":
         end = syntax.next_paren_close[cursor + 1]
+        nested = syntax.next_paren_open[cursor + 1]
+        if nested >= 0 and (end < 0 or nested < end):
+            return None
     else:
         return None
     if end < 0 or end >= limit:
@@ -1949,14 +1969,11 @@ def _reference_definitions(markup: str) -> tuple[dict[str, str], str]:
             paragraph_open = False
         if pending_label is not None:
             owner, logical_definition, first_chunk = pending_label
-            matched, owner_offset = _match_container_path(content, owner.frames)
-            lazy_continuation, lazy_offset = _paragraph_line_continuation(
+            line_continuation, continuation_offset = _reference_line_continuation(
                 content, owner
             )
-            explicit_owner = matched == owner.frames
-            if explicit_owner or lazy_continuation:
-                fragment_offset = owner_offset if explicit_owner else lazy_offset
-                fragment = content[fragment_offset:]
+            if line_continuation:
+                fragment = content[continuation_offset:]
                 candidate = logical_definition + "\n" + fragment
                 if fragment.strip() and _pending_reference_definition_label(
                     candidate
@@ -2016,16 +2033,10 @@ def _reference_definitions(markup: str) -> tuple[dict[str, str], str]:
             paragraph_open = line_continuation
         if pending_multiline_title is not None:
             owner, label, target, closer, first_chunk = pending_multiline_title
-            matched, owner_offset = _match_container_path(content, owner.frames)
-            lazy_continuation, lazy_offset = _paragraph_line_continuation(
+            line_continuation, continuation_offset = _reference_line_continuation(
                 content, owner
             )
-            if matched == owner.frames:
-                fragment = content[owner_offset:]
-            elif lazy_continuation:
-                fragment = content[lazy_offset:]
-            else:
-                fragment = ""
+            fragment = content[continuation_offset:] if line_continuation else ""
             state = (
                 "invalid"
                 if not fragment.strip()
@@ -2042,14 +2053,17 @@ def _reference_definitions(markup: str) -> tuple[dict[str, str], str]:
                 paragraph_open = False
                 continue
             pending_multiline_title = None
-            paragraph_open = lazy_continuation
+            paragraph_open = line_continuation
         if pending_destination is not None:
             owner, label, chunk_index = pending_destination
             pending_destination = None
+            reference_continuation, _ = _reference_line_continuation(
+                content, owner
+            )
             indentation = len(parsed.content) - len(parsed.content.lstrip(" "))
             parsed_definition = None
             pending_definition = None
-            if parsed.path == owner.frames or line_continuation:
+            if reference_continuation:
                 synthetic = "[continuation]: " + parsed.content[indentation:]
                 parsed_definition = _reference_definition(synthetic)
                 pending_definition = _pending_reference_definition(
@@ -2078,17 +2092,13 @@ def _reference_definitions(markup: str) -> tuple[dict[str, str], str]:
                 continue
         if pending_title_owner is not None:
             owner = pending_title_owner
-            matched, owner_offset = _match_container_path(content, owner.frames)
-            lazy_continuation, lazy_offset = _paragraph_line_continuation(
+            line_continuation, continuation_offset = _reference_line_continuation(
                 content, owner
             )
-            same_owner = matched == owner.frames
             pending_title_owner = None
             candidate = (
-                content[owner_offset:]
-                if same_owner
-                else content[lazy_offset:]
-                if lazy_continuation
+                content[continuation_offset:]
+                if line_continuation
                 else ""
             )
             title = _reference_title_start(candidate)
@@ -2549,8 +2559,9 @@ def _inline_paragraph_boundaries(markup: str) -> array:
 def _markdown_link_targets(markup: str) -> Iterator[str]:
     """Yield complete rendered inline and reference-link targets."""
 
-    markup = _without_html_blocks_for_links(_without_indented_code(markup))
+    markup = _without_html_blocks_for_links(markup)
     definitions, markup = _reference_definitions(markup)
+    markup = _without_indented_code(markup)
     syntax = _link_syntax_index(markup)
     boundaries = _inline_paragraph_boundaries(markup)
     opener_positions = array("I")
@@ -2761,8 +2772,8 @@ def _delimiter_flanking(prose: str, start: int, end: int) -> tuple[bool, bool]:
 def _normalize_policy_markup(prose: str) -> str:
     """Project rendered classifier text without inline presentation wrappers."""
 
-    prose = _without_indented_code(prose)
     definitions, prose = _reference_definitions(prose)
+    prose = _without_indented_code(prose)
     syntax = _link_syntax_index(prose)
     boundaries = (
         _inline_paragraph_boundaries(prose)

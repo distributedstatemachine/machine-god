@@ -1179,6 +1179,24 @@ class DocumentationPolicyTests(unittest.TestCase):
                     list(check_documentation._markdown_link_targets(markup)),
                 )
 
+    def test_reference_continuations_stop_at_siblings_and_leaf_blocks(
+        self,
+    ) -> None:
+        cases = (
+            ("- [r]:\n- missing.md\n\n[r]\n", []),
+            ("[r]:\n2. missing.md\n\n[r]\n", []),
+            (
+                "[r]: missing.md\n\n[r]:\n---\n",
+                ["missing.md"],
+            ),
+        )
+        for markup, expected in cases:
+            with self.subTest(markup=markup):
+                self.assertEqual(
+                    expected,
+                    list(check_documentation._markdown_link_targets(markup)),
+                )
+
     def test_incomplete_multiline_reference_title_does_not_define_link(
         self,
     ) -> None:
@@ -1287,6 +1305,13 @@ class DocumentationPolicyTests(unittest.TestCase):
             list(check_documentation._markdown_link_targets(scan.link_markup)),
         )
 
+    def test_parenthesized_inline_title_cannot_nest(self) -> None:
+        markup = "[x](missing.md (bad(inner)))\n"
+
+        self.assertEqual(
+            [], list(check_documentation._markdown_link_targets(markup))
+        )
+
     def test_inline_code_projection_cannot_create_indented_code(self) -> None:
         markup = "`ab`[x](missing.md)\n"
         scan = check_documentation._scan_markdown_inert_blocks(markup)
@@ -1298,6 +1323,15 @@ class DocumentationPolicyTests(unittest.TestCase):
 
     def test_same_line_html_comment_block_owns_trailing_content(self) -> None:
         markup = "<!--x-->[x](ignored.md)\n\n[x](missing.md)\n"
+        scan = check_documentation._scan_markdown_inert_blocks(markup)
+
+        self.assertEqual(
+            ["missing.md"],
+            list(check_documentation._markdown_link_targets(scan.link_markup)),
+        )
+
+    def test_multiline_html_comment_closing_line_is_entirely_inert(self) -> None:
+        markup = "<!--\nx\n-->[x](ignored.md)\n\n[x](missing.md)\n"
         scan = check_documentation._scan_markdown_inert_blocks(markup)
 
         self.assertEqual(
@@ -1512,6 +1546,27 @@ class DocumentationPolicyTests(unittest.TestCase):
             "x" * 1_000,
             check_documentation._normalize_policy_markup(markup),
         )
+
+    def test_indented_code_after_reference_definition_remains_inert(self) -> None:
+        markup = "[r]: missing.md\n    [x][r]\n"
+
+        self.assertEqual(
+            [], list(check_documentation._markdown_link_targets(markup))
+        )
+
+    def test_inline_boundaries_follow_lazy_and_sibling_container_ownership(
+        self,
+    ) -> None:
+        cases = (
+            ("> - [\n> [x]](missing.md)\n", ["missing.md"]),
+            ("2. [\n2. [x]](missing.md)\n", []),
+        )
+        for markup, expected in cases:
+            with self.subTest(markup=markup):
+                self.assertEqual(
+                    expected,
+                    list(check_documentation._markdown_link_targets(markup)),
+                )
 
     def test_classifier_treats_indented_code_as_inert(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
