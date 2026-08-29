@@ -1,99 +1,12 @@
 # Top-level session command
 
-Status: bounded Milestone 03 slice 32 is **DELIVERED** from exact base
-`6e687b6872e11845a306c6eaff77b1252a66c393`. Exact cycle-2 candidate
-`1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
-`72a63c07e4a48356f87c918a85def12b5943dad3`, passed its complete same-SHA local
-gate but is rejected. Correctness/API reported `0/0/1/2`, native boundary/
-effects `0/0/1/2`, and performance/concurrency/resources `0/0/1/1`, in
-blocker/high/medium/low order. The deduplicated findings are two medium themes
-(canonical-number mismatch and residual payload-proportional allocations) and
-two low themes (duplicate-key mismatch and stale maintained documentation).
-The contract below is the synchronized replacement contract. Cycle-2
-replacement source was composed at exact
-`f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
-`86971aca0f78e637de55d2a79eda64e88bff8734`, and passed the complete required
-exact-1.94.1 local gate without fallback. Its focused evidence was green at 56
-CLI unit, 54 CLI process, and 21 native inspection tests; the full Python,
-pinned-fx, target, documentation, no-delta, release-hash, and release-matrix
-record is in the review ledger. Formal cycle 3 rejected exact candidate
-`9282b404`, tree `6d41f7ee`, with track counts `0/0/1/0`, `0/0/1/0`, and
-`0/0/1/1`, deduplicated to one medium context-free recursion-budget mismatch
-and one low self-counted allocation-evidence finding. Exact remediation
-`af055ff3`, tree `14eafad`, uses `serde_json` 1.0.151-equivalent 127-active-
-container accounting with typed parent counts 3/6/7 and exact nested-array
-boundaries 123/124, 120/121, 119/120, and 119/120. Focused evidence is now 58
-CLI process tests, including ten equivalence cases, and 22 native inspection
-tests. The complete replacement gate is green on exact `af055ff3`/`14eafad`
-under Rust/Cargo 1.94.1 without fallback, including the Python, pinned-fx,
-target, documentation, dependency, diff/inventory/no-added-unsafe, release-
-hash, and 18/18 release-session matrix recorded in the ledger. Formal cycle 4
-rejected exact candidate `df72e08404f1fb92c02d1e1af880430941d6abcc`, tree
-`99bf524033c6212a05c22e7417ea6f93c202104f`. The three track counts are
-`0/0/1/0`, `0/0/1/0`, and `0/0/1/0`; the deduplicated `0/0/2/0` union is an
-ordinary-versus-streamed wire-form mismatch and eager approximately 8.9 MB
-duplicate-tracker reservation. Exact remediation
-`1f96c4bf05f93a99b86f0ca549621e739953e520`, tree
-`b320f55219ebc808790138dfd293d32e83da77c3`, implements the replacement
-contract and passed its complete local gate under exact Rust/Cargo 1.94.1
-without fallback. Focused evidence is green at 24 native inspection and 64 CLI
-process tests, including 16 differentials. The 3,985,216-byte release binary,
-SHA-256 `c0e83dbfdfba7c4843a1af4c3689bda568045c84dc87ef4d6098cc7a4cd6975c`,
-passed the release matrix recorded in the ledger. Formal cycle 5 then rejected
-exact candidate `8f533cdec235660c3e17b70fc5bbd5dd0ab8c1f6`, tree
-`8215fb94fa3de08841b26dd9d7c63a2ecb7e8a8d`. Correctness/API reported
-`0/0/0/1`, native boundary/effects `0/0/0/0`, and performance/concurrency/
-resources `0/0/0/1`; the deduplicated union is `0/0/0/1`. The sole low is
-stale cycle/allocation status in maintained summary pages. Production review
-was otherwise green: 312 generated valid/boundary and 1,200 randomized mutation
-differentials had zero mismatch, the native track was green, and the
-performance allocation/resource audit was green. Cross-document status
-remediation is composed in exact cycle-6 candidate
-`5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
-`d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Correctness/API, native effects,
-and performance/resources each reported `0/0/0/1`; the deduplicated `0/0/0/1`
-is solely that the candidate's pages described their own committed remediation
-as pending. There was no additional production, API, native, or performance
-finding. Formal cycle 7 rejected exact
-`399e75eda0f61501fe179a22de6a0f4f2abfce06`, tree
-`d056b96ef8361e841c936c5f61c138de913b5fff`: correctness/API and native effects
-each reported `0/0/0/0`, while performance/resources reported `0/0/0/1`; the
-deduplicated union is `0/0/0/1`. The sole low corrects resource wording:
-shadowed duplicate values may parse more nodes than survive in the final tree.
-The 65,536 caps apply separately to tracker entries and aggregate final decoded-
-tree logical-node accounting, while the 8,651,165-byte file ceiling bounds
-total parse work. Production and resource behavior were otherwise green. The
-wording correction is present. Formal cycle 8 is **GREEN** on exact reviewed
-candidate `d724b6195324349cc5628a47f8ab7fa496123cd5`, tree
-`6439863a9b7fd1720156c790fedc4798256c2b6d`: correctness/API, native/effects,
-and performance/resources each reported `0/0/0/0`, with a deduplicated
-`0/0/0/0` union. Independent evidence included 598 release-binary
-differentials with zero mismatches plus focused 24 native, 14 CLI unit, and 24
-CLI process tests; native also reconfirmed focused 24 and green WASI/FreeBSD
-checks with the established `read_file` warning; performance confirmed the
-exact allocator tuples recorded in the review ledger and the corrected cap
-semantics. This documentation-only result seal is review-exempt: it records
-review of `d724b61` / `6439863` and does not imply that the seal commit itself
-was reviewed. Review-exempt documentation seal
-`b6db9a67c070f7ef599d994c44b4a21731a004c5`, tree
-`59dd628fd0552c5083449f7a31aa4241a8ecb952`, passed feature CI run
-`32965947722` and Benchmark evidence run `32965947723`, was integrated on
-`main`, and passed main CI run `32966531225` and Benchmark evidence run
-`32966531319`. All four runs succeeded for exact `b6db9a6`; each benchmark
-run retained exactly two unexpired exact-SHA artifacts. Slice 32 is delivered,
-and the delivered count is 32. No product-performance or fx-equivalence claim
-is made. Zig is used only to build the pinned upstream fx comparison input;
-`machine-god` remains a Rust product and is neither written in nor shipped as
-Zig. This final delivery-record commit is docs-only and user-exempt from
-adversarial review. A commit cannot contain its own future workflow IDs, so
-the exact workflow IDs for this record will be reported at handoff.
-The live evidence record is the
-[`session` review ledger](reviews/m03-session-cli-review-01.md).
-
-This slice adds a strict, engine-free inspection of one current-schema
-machine-god session record. It exposes structural summary data only. It does
-not expose transcript content or metadata values and does not construct the
-native reference host.
+The `session` command performs a strict, engine-free inspection of one
+current-schema machine-god session record. It exposes structural summary data
+only. It does not expose transcript content or metadata values, and it does not
+construct the native reference host. Historical candidates, findings, and
+delivery evidence are retained in the
+[`session` review ledger](reviews/m03-session-cli-review-01.md); this page states
+only the durable command contract.
 
 ## Grammar and exits
 
@@ -106,8 +19,8 @@ machine-god session <id> --json
 
 `<id>` must satisfy the core portable `SessionId` contract: 1 through 128
 ASCII bytes containing only letters, digits, `-`, `_`, `.`, or `:`. The exact
-tokens `last`, `--id`, and `--json` are reserved and invalid in ID position for
-this slice. `last`, `--id <id>`, `--json <id>`, `--json=true`, reordered or
+tokens `last`, `--id`, and `--json` are reserved and invalid in ID position.
+`last`, `--id <id>`, `--json <id>`, `--json=true`, reordered or
 repeated flags, extra arguments, missing IDs, invalid IDs, and non-Unicode
 arguments are rejected before environment or filesystem access. There is no
 implicit current, latest, or workspace-relative session.
@@ -205,7 +118,7 @@ missing or empty value permits a `HOME` request. It never requests
 fails without requesting or falling back to `HOME`.
 
 The facade then opens only an already-existing selected state base and fixed
-machine-god suffix using the delivered descriptor-relative, no-follow,
+machine-god suffix using the descriptor-relative, no-follow,
 effective-user, mode, and macOS ACL policy. Missing selected bases, fixed
 suffixes, or exact records are `NotFound`; no missing component is created.
 Unsafe, inaccessible, symlink, wrong-kind, or otherwise unavailable roots fail
@@ -237,11 +150,6 @@ JSON content block, and seven for tool-call/result JSON. Exact nested-array
 accept/reject boundaries are consequently 123/124, 120/121, 119/120, and
 119/120, including values later shadowed by duplicate keys. Corrupt or future
 records are not skipped, repaired, migrated, or rewritten.
-
-Allocation evidence for the replacement must bound small-record allocator
-high-water use and compare long and short discarded values at equal structural
-shape. A file near the byte ceiling is not, by itself, evidence that empty or
-small records avoid eager maximum-capacity reservation.
 
 The command creates no state root and does not create, repair, rewrite,
 migrate, reset, or delete a record. Inspecting a present canonical record may
@@ -275,8 +183,4 @@ or terminal-tape fields and does not read upstream `.fx` data. `replay` remains
 reserved for a future content/privacy contract, while `resume` remains reserved
 for future live continuation.
 
-The fixed bootstrap benchmark workload has no `session-json` case and is not
-expanded by this slice. Compatibility generation and the existing six workload
-records remain byte-stable. This feature is intentionally non-equivalent,
-unmeasured, and claim-ineligible: no samples, threshold, product-performance
-result, compatibility promotion, or fx-equivalence claim is introduced.
+The command makes no upstream-equivalence or product-performance claim.

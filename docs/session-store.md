@@ -1,12 +1,10 @@
 # Native file session store
 
-This page is the normative contract for the eighth bounded Milestone 03 slice.
-`FileSessionStore` is the integrated library implementation of core's
-`SessionStore` contract in `machine-god-native`. Its exact feature,
-documentation-seal, and `main` checks are green; it is integrated at
-`8f7b47db9580b14570bf9fb55763858f71a81271`. Review evidence is retained in the
+`FileSessionStore` is the native implementation of core's `SessionStore`
+contract. This page defines its durable authority, layout, persistence,
+resource, concurrency, and error semantics. Historical candidates, findings,
+and delivery evidence are retained in the
 [`native file session store review`](reviews/m03-session-store-review-01.md).
-This is not a production-readiness claim.
 
 ## Root authority and platform scope
 
@@ -40,48 +38,31 @@ there.
 Each category has fixed redacted `Display` and `Debug` output. The error retains
 no root path, operating-system diagnostic, or raw error number.
 
-The integrated fourteenth
-[`native root-selection slice`](native-root-selection.md) does not change
+The [`native root-selection boundary`](native-root-selection.md) does not change
 `FileSessionStore::open`: direct callers must still supply one existing absolute
-root and the constructor still creates nothing. The slice instead prepares
+root and the constructor still creates nothing. That boundary instead prepares
 and retains a private state root through a narrowly bounded descriptor-relative
 creation API, then lets new reference-host constructors transfer that retained
-descriptor into the store without reopening its path. That addition is
-integrated through final delivery record `d6b1b21` under exact green feature and
-`main` workflows.
+descriptor into the store without reopening its path.
 
-The delivered fifteenth
-[`native session-lifecycle slice`](native-session-lifecycle.md) composes a
+[`Native session lifecycle`](native-session-lifecycle.md) composes a
 `NativeSessionLifecycle` over the exact shared `FileSessionStore` already used
 by the engine. It does not change this constructor, retained-root identity,
 flat file layout, current schema, ordinary `SessionStore::load`/`save`
-behavior, or direct-caller contract. Production, fourteen independently owned
-focused tests, one formal finding regression, and all three adversarial tracks
-are green on exact candidate `e6a3804`. Feature record `dbba2c7` is green on the
-feature branch and `main` under exact CI and benchmark workflows.
+behavior, or direct-caller contract.
 
-The delivered sixteenth
-[`native session-listing slice`](native-session-listing.md) observes the
+[`Native session listing`](native-session-listing.md) observes the
 same retained flat root through `NativeSessionLifecycle`; it does not add a
 listing method to core's provider-neutral `SessionStore` trait or change the
 ordinary by-ID load/save contract on this page. It recognizes only exact
 canonical `.json` record names and validates them under the same no-follow
 regular-file, strict schema, fixed record bound, decoded-ID, and permanent
-per-ID locking rules. Production and 13 initial independent tests are composed
-through `dec98e0`, whose three first formal tracks were not green. The fixes are
-composed into exact behavior candidate `3fa5463`; 18 focused tests, the required
-local gates, and all three replacement review tracks are green. First remote CI
-`32599591900` exposed the Linux
-removed-root gap. Exact candidate `17f1884` adds the portable acquired-
-descriptor link check and is green under both executable review tracks. Seal
-`d3312d7` resolves the documentation lineage finding and passed exact feature
-and `main` delivery gates.
-Listing processes/selects at
+per-ID locking rules. Listing processes/selects at
 most 1,024 non-dot entries plus one fetched/name-inspected overflow witness and
 accepts/decodes at most 64 MiB of aggregate canonical record bytes plus one
 transient transfer byte used only to detect concurrent growth.
 
-The replacement listing path first acquires a fresh retained-root-relative `.`
+The listing path first acquires a fresh retained-root-relative `.`
 descriptor and then validates that exact acquired descriptor's linked identity.
 This order closes the macOS time-of-check/time-of-use gap where an unlinked
 retained descriptor can still reopen `.`. A stable completed rename preserves
@@ -186,82 +167,10 @@ artifact.
 
 ## Specialized inspection summary
 
-Current bounded slice 32 is **DELIVERED**. Cycle 4 rejected exact
-`df72e084`, tree `99bf524`, with correctness/API, native effects, and
-performance/resources each at `0/0/1/0`; its deduplicated `0/0/2/0` union is
-the ordinary/streamed wire-form mismatch and eager
-approximately 8.9 MB tracker allocation. Exact remediation `1f96c4bf`, tree
-`b320f552`, makes `StoredEnvelope`, `StoredRecord`, `StoredMessage`,
-`StoredToolCall`, and `StoredToolOutput` object-only and `Role` string-only,
-keeps the canonical writer unchanged, and grows fixed-fingerprint tracker
-storage fallibly with unique keys, with at most 65,536 tracker entries. Exact
-gate-record candidate `8f533cde`, tree `8215fb94`, passed the complete exact-1.94.1
-local gate without fallback: focused 24 native/64 CLI process/16 differential,
-Python 135/8 skips, byte-stable pinned fx `b1774fb`, WASI/FreeBSD with only the
-established `read_file` warning, docs 85/147/626/81, `cargo-deny` 0.20.2 with
-three established duplicate warnings,
-`cargo-audit` 0.22.2 over 211 dependencies/1,226 advisories with zero
-vulnerabilities, the unchanged 364-line production graph, and diff/inventory/
-no-added-unsafe evidence are green.
-
-The 3,985,216-byte release binary has SHA-256
-`c0e83dbfdfba7c4843a1af4c3689bda568045c84dc87ef4d6098cc7a4cd6975c` and
-passed 16 equivalence categories across 20 records, 12 grammar cases, missing/
-no-create, held-lock, engine-over-default, and 8,650,857-byte near-cap evidence;
-the native near-cap probe passed 1/1. Allocator
-total/current/maximum tuples are `12/2/7` and `819/14/645` bytes for empty/
-short/long text, `14/2/8` and `1,427/14/1,059` for short/long JSON, and
-`35/2/9` and `2,228,435/14/1,606,083` for 5,000 keys. Cycle 5 rejected exact
-`8f533cde`: correctness/API `0/0/0/1`, native effects `0/0/0/0`, and
-performance/resources `0/0/0/1`, deduplicated to one low stale cross-document-
-summary finding. That documentation remediation is already composed in exact
-cycle-6 candidate `5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
-`d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Formal cycle 6 rejected it:
-correctness/API, native effects, and performance/resources each reported
-`0/0/0/1`; the deduplicated `0/0/0/1` is solely that these pages described the
-committed remediation as pending. There was no additional production, API,
-native, or performance finding. Formal cycle 7 rejected exact
-`399e75eda0f61501fe179a22de6a0f4f2abfce06`, tree
-`d056b96ef8361e841c936c5f61c138de913b5fff`: correctness/API and native effects
-each reported `0/0/0/0`, while performance/resources reported `0/0/0/1`; the
-deduplicated union is `0/0/0/1`. The sole low corrects resource wording:
-shadowed duplicate values may parse more nodes than survive in the final tree.
-The 65,536 caps apply separately to tracker entries and aggregate final decoded-
-tree logical-node accounting, while the 8,651,165-byte file ceiling bounds
-total parse work. Production and resource behavior were otherwise green. The
-wording correction is present. Formal cycle 8 is **GREEN** on exact reviewed
-candidate `d724b6195324349cc5628a47f8ab7fa496123cd5`, tree
-`6439863a9b7fd1720156c790fedc4798256c2b6d`: correctness/API, native/effects,
-and performance/resources each reported `0/0/0/0`, with a deduplicated
-`0/0/0/0` union. Independent evidence included 598 release-binary
-differentials with zero mismatches plus focused 24 native, 14 CLI unit, and 24
-CLI process tests; native also reconfirmed focused 24 and green WASI/FreeBSD
-checks with the established `read_file` warning; performance confirmed the
-exact allocator tuples above and the corrected cap semantics. This
-documentation-only result seal is review-exempt: it records review of
-`d724b61` / `6439863` and does not imply that the seal commit itself was
-reviewed. Review-exempt documentation seal
-`b6db9a67c070f7ef599d994c44b4a21731a004c5`, tree
-`59dd628fd0552c5083449f7a31aa4241a8ecb952`, passed feature CI run
-`32965947722` and Benchmark evidence run `32965947723`, was integrated on
-`main`, and passed main CI run `32966531225` and Benchmark evidence run
-`32966531319`. All four runs succeeded for exact `b6db9a6`; each benchmark
-run retained exactly two unexpired exact-SHA artifacts. Slice 32 is delivered,
-and the delivered count is 32. No product-performance or fx-equivalence claim
-is made. Zig is used only to build the pinned upstream fx comparison input;
-`machine-god` remains a Rust product and is neither written in nor shipped as
-Zig. This final delivery-record commit is docs-only and user-exempt from
-adversarial review. A commit cannot contain its own future workflow IDs, so
-the exact workflow IDs for this record will be reported at handoff. The
-slice remains non-equivalent, unmeasured, and claim-ineligible; no product-
-performance or fx-
-equivalence claim is made. Full evidence is in the
-[`live ledger`](reviews/m03-session-cli-review-01.md).
-
-The delivered slice-32 native inspection boundary adds a crate-private
+The native inspection boundary adds a crate-private
 summary operation beside ordinary `SessionStore::load`; it does not change the
-provider-neutral trait or the load behavior above. The synchronized replacement
-contract requires one forward pass over the same no-follow, locked record with
+provider-neutral trait or the load behavior above. Its contract requires one
+forward pass over the same no-follow, locked record with
 OS read requests of at most 4 KiB. The operation does not buffer the complete
 file and does not construct a `SessionRecord`. Known schema and variant tokens
 use fixed-stack scratch space. Transcript strings and arbitrary JSON payloads
@@ -293,31 +202,10 @@ block has six, and tool-call/result JSON has seven. The specialized inspector
 therefore accepts/rejects nested-array depths at 123/124, 120/121, 119/120, and
 119/120 respectively, including a value later shadowed by a duplicate key.
 
-Historical review/gate lineage through cycle 3: exact cycle-2 candidate
-`1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
-`72a63c07e4a48356f87c918a85def12b5943dad3`, is rejected and does not satisfy
-this synchronized contract. Cycle-2 replacement source was composed at exact
-`f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
-`86971aca0f78e637de55d2a79eda64e88bff8734`, and passed its complete required
-exact-1.94.1 local gate without fallback. Native inspection evidence is green
-at 21 tests, including near-cap, engine-over-default, process-differential, and
-held-lock cases. Formal cycle 3 then rejected exact candidate
-`9282b4044c5fb5a249598d23d098562c96850c99`, tree
-`6d41f7ee6eb017dfc65d6f6623d049ac09c2966f`. Correctness/API and native
-effects each reported `0/0/1/0`; performance/resources reported `0/0/1/1`.
-The deduplicated `0/0/1/1` findings were context-free recursion accounting and
-self-counted allocation evidence. Exact remediation source
-`af055ff3b22e157b1c42d1579b041c3cc4c05b0e`, tree
-`14eafada4b3dddd62a9cb8e6077ad8f0b81753e8`, implements the parent-aware budget
-above and adds real dev-only allocation instrumentation isolated per child
-process. Focused evidence is 22 native inspection and 58 CLI process tests,
-including ten equivalence cases. The complete replacement gate is green on
-exact `af055ff3`/`14eafad` under Rust/Cargo 1.94.1 without fallback. Its
-18/18 release-session matrix includes those ten equivalence cases, held-lock
-behavior, and engine-over-default records; direct 8,650,857-byte near-cap and
-native near-cap/allocation probes each passed 1/1. At that superseded
-checkpoint, cycle-4 review remained pending; no review-green or delivered claim
-was made.
+The complete native projection and error-mapping contract lives in
+[`Native session inspection`](native-session-inspection.md); historical review
+lineage is retained in the
+[`session` review ledger](reviews/m03-session-cli-review-01.md).
 
 ## Save, compare-and-swap, and durability
 
@@ -441,21 +329,18 @@ otherwise isolate the synchronous store.
 
 ## Deferred scope
 
-This store slice adds no CLI command or existing CLI-byte change, provider or
+The store adds no CLI command or existing CLI-byte change, provider or
 transport wiring, credential discovery, permission prompt or new permission
 mode, public store-trait listing, deletion, reset, or automatic cleanup.
-Environment-based
-state-root selection and fixed-suffix creation are integrated through the
-separate fourteenth slice and do not alter this path constructor. The composed
-fifteenth slice adds host-level by-ID create, resume, replay, and reset over
-the exact shared store, including a reset-specific atomic incarnation
+Environment-based state-root selection and fixed-suffix creation are owned by
+the native root-selection boundary and do not alter this path constructor.
+Native session lifecycle adds host-level by-ID create, resume, replay, and
+reset over the exact shared store, including a reset-specific atomic incarnation
 replacement; it does not change the ordinary store trait described by this
-page. The delivered sixteenth slice adds bounded lifecycle-level IDs-only
-listing above the same retained root; it adds no index, rich summary, cursor,
-pagination, CLI, or global snapshot. Migration and legacy import,
+page. Native session listing adds bounded lifecycle-level IDs-only listing above
+the same retained root; it adds no index, rich summary, cursor, pagination, CLI,
+or global snapshot. Migration and legacy import,
 schema upgrades, encryption at rest, authenticated records, secure erasure,
 key management, backup/restore, multi-record transactions, cross-host
-coordination, and non-Unix hardening remain deferred. It adds no compatibility,
-upstream-equivalence, or product-performance claim and does not change the
-pinned fx inventory, benchmark workloads or classification, workflows, or Zig
-benchmark-only toolchain input.
+coordination, and non-Unix hardening remain deferred. The store makes no
+upstream-equivalence or product-performance claim.

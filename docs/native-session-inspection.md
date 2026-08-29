@@ -1,87 +1,12 @@
 # Native session inspection
 
-Status: bounded Milestone 03 slice 32 is **DELIVERED** from exact base
-`6e687b6872e11845a306c6eaff77b1252a66c393`. Exact cycle-2 candidate
-`1d09a0d8a289fd00533e35b975e0b53dff23d0e0`, tree
-`72a63c07e4a48356f87c918a85def12b5943dad3`, passed its complete same-SHA local
-gate but is rejected. The three formal verdicts were `0/0/1/2`, `0/0/1/2`, and
-`0/0/1/1`; the deduplicated findings are canonical-number mismatch, residual
-payload-proportional allocations, duplicate-key mismatch, and stale maintained
-documentation. This page now states the synchronized replacement contract.
-Cycle-2 replacement source was composed at exact
-`f4dbe3d576c80f61b671b723eaf92ed5f29c4bbf`, tree
-`86971aca0f78e637de55d2a79eda64e88bff8734`, and passed the complete required
-exact-1.94.1 local gate without fallback. Its focused evidence was green at 21
-native inspection, 56 CLI unit, and 54 CLI process tests. Formal cycle 3 then
-rejected exact candidate `9282b404`, tree `6d41f7ee`, with track counts
-`0/0/1/0`, `0/0/1/0`, and `0/0/1/1`. The deduplicated `0/0/1/1` union is a
-medium context-free recursion-budget mismatch and low self-counted allocation
-evidence. Exact remediation `af055ff3`, tree `14eafad`, is composed; its
-complete replacement gate is green under exact Rust/Cargo 1.94.1 without
-fallback. Formal cycle 4 rejected exact candidate
-`df72e08404f1fb92c02d1e1af880430941d6abcc`, tree
-`99bf524033c6212a05c22e7417ea6f93c202104f`. All three tracks reported
-`0/0/1/0`; the deduplicated `0/0/2/0` union is an ordinary-versus-streamed
-wire-form mismatch and eager approximately 8.9 MB duplicate-tracker
-reservation. Exact remediation
-`1f96c4bf05f93a99b86f0ca549621e739953e520`, tree
-`b320f55219ebc808790138dfd293d32e83da77c3`, implements the replacement
-contract and passed its complete local gate under exact Rust/Cargo 1.94.1
-without fallback. Focused evidence is green at 24 native inspection and 64 CLI
-process tests, including 16 differentials. Formal cycle 5 rejected exact
-candidate `8f533cdec235660c3e17b70fc5bbd5dd0ab8c1f6`, tree
-`8215fb94fa3de08841b26dd9d7c63a2ecb7e8a8d`. Correctness/API, native boundary/
-effects, and performance/concurrency/resources reported `0/0/0/1`, `0/0/0/0`,
-and `0/0/0/1`, respectively, deduplicated to `0/0/0/1`. The sole low is stale
-cycle/allocation status in maintained summary pages, not a native production
-finding. Independent correctness evidence completed 312 generated valid/
-boundary and 1,200 randomized mutation differentials with zero mismatch; the
-native track and performance allocation/resource audit were green. Cross-
-document status remediation is composed in exact cycle-6 candidate
-`5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
-`d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. Correctness/API, native effects,
-and performance/resources each reported `0/0/0/1`; the deduplicated `0/0/0/1`
-is solely that the candidate's pages described their own committed remediation
-as pending. There was no additional production, API, native, or performance
-finding. Formal cycle 7 rejected exact
-`399e75eda0f61501fe179a22de6a0f4f2abfce06`, tree
-`d056b96ef8361e841c936c5f61c138de913b5fff`: correctness/API and native effects
-each reported `0/0/0/0`, while performance/resources reported `0/0/0/1`; the
-deduplicated union is `0/0/0/1`. The sole low corrects the resource contract:
-shadowed duplicate values may parse more nodes than survive in the final tree.
-The 65,536 caps apply separately to tracker entries and aggregate final decoded-
-tree logical-node accounting, while the 8,651,165-byte file ceiling bounds
-total parse work. Production and resource behavior were otherwise green. The
-wording correction is present. Formal cycle 8 is **GREEN** on exact reviewed
-candidate `d724b6195324349cc5628a47f8ab7fa496123cd5`, tree
-`6439863a9b7fd1720156c790fedc4798256c2b6d`: correctness/API, native/effects,
-and performance/resources each reported `0/0/0/0`, with a deduplicated
-`0/0/0/0` union. Independent evidence included 598 release-binary
-differentials with zero mismatches plus focused 24 native, 14 CLI unit, and 24
-CLI process tests; native also reconfirmed focused 24 and green WASI/FreeBSD
-checks with the established `read_file` warning; performance confirmed the
-exact allocator tuples recorded in the review ledger and the corrected cap
-semantics. This documentation-only result seal is review-exempt: it records
-review of `d724b61` / `6439863` and does not imply that the seal commit itself
-was reviewed. Review-exempt documentation seal
-`b6db9a67c070f7ef599d994c44b4a21731a004c5`, tree
-`59dd628fd0552c5083449f7a31aa4241a8ecb952`, passed feature CI run
-`32965947722` and Benchmark evidence run `32965947723`, was integrated on
-`main`, and passed main CI run `32966531225` and Benchmark evidence run
-`32966531319`. All four runs succeeded for exact `b6db9a6`; each benchmark
-run retained exactly two unexpired exact-SHA artifacts. Slice 32 is delivered,
-and the delivered count is 32. No product-performance or fx-equivalence claim
-is made. Zig is used only to build the pinned upstream fx comparison input;
-`machine-god` remains a Rust product and is neither written in nor shipped as
-Zig. This final delivery-record commit is docs-only and user-exempt from
-adversarial review. A commit cannot contain its own future workflow IDs, so
-the exact workflow IDs for this record will be reported at handoff. Its sole
-first consumer is the strict
-[`session` CLI contract](session-cli.md).
-
 The native layer owns an engine-free, by-ID projection of one current-schema
 file session record. Core remains provider-neutral and unchanged; the CLI does
-not receive a full `SessionRecord`.
+not receive a full `SessionRecord`. Its user-visible consumer is the strict
+[`session` CLI contract](session-cli.md). Historical candidates, findings, and
+delivery evidence are retained in the
+[`session` review ledger](reviews/m03-session-cli-review-01.md); this page states
+only the durable native boundary.
 
 ## Public boundary
 
@@ -174,8 +99,8 @@ and aggregate final decoded-tree logical-node accounting is separately capped
 at 65,536; shadowed duplicate values can make total parse work visit more nodes.
 That total work remains bounded by the 8,651,165-byte file ceiling, and final-
 tree container depth is capped at 64. Independently, parsing matches
-`serde_json` 1.0.151's 127-
-active-container recursion accounting even for values later shadowed by a
+`serde_json` 1.0.151's 127-active-container recursion accounting even for
+values later shadowed by a
 duplicate key. Typed parents consume three slots before metadata JSON, six
 before JSON content, and seven before tool-call or tool-result JSON. Exact
 nested-array accept/reject boundaries are therefore 123/124, 120/121,
@@ -214,49 +139,4 @@ have no wall-clock or attempt ceiling. They execute synchronously and may block
 the polling and CLI thread. Inspection is one point-in-time durable snapshot;
 a later writer may advance the record after the inspection linearization point.
 
-Replacement evidence must cover inert construction, state capture, supported
-and unsupported targets, missing hierarchy/record, exact projection of a
-nonempty record, chunk boundaries, canonical and out-of-range number behavior,
-duplicate metadata/nested keys with last-value-wins counts, fixed resource
-ceilings, lock-sidecar permissions, invalid and unsafe roots, corrupt/
-oversized/wrong-ID/nonregular/symlink records, retained-root replacement,
-redaction, and all category mappings. CLI and release-binary evidence is owned
-separately. Replacement allocation evidence must bound allocator high-water
-use for an empty or small record and compare long versus short discarded values
-at equal structural shape; a near-cap file alone does not prove the absence of
-eager maximum-capacity reservation. Cycle-3 remediation focused evidence is
-green at 22 native tests
-and 58 CLI process tests, including ten exact ordinary-store/listing/session
-equivalence cases. Real dev-only allocation instrumentation runs five shapes in
-separate child processes; all five have exact totals/current/max of 14/2/8
-allocations and 8,913,715/14/8,913,347 bytes. The complete exact-remediation
-gate is green: required Rust, Python 135/8 skips, pinned fx, WASI/FreeBSD, docs
-85/147/626/81, dependency policy/audit, diff/inventory/no-added-unsafe, release-
-hash, the 18/18 session matrix, and direct/native near-cap probes all passed.
-Those results belong to the rejected cycle-4 candidate. Exact replacement
-`1f96c4bf05f93a99b86f0ca549621e739953e520`, tree
-`b320f55219ebc808790138dfd293d32e83da77c3`, passes 24 focused native tests and
-the complete exact-1.94.1 local gate without fallback. Its allocator evidence
-reports `12/2/7` allocations and `819/14/645` bytes for empty, short-text, and
-long-text records; `14/2/8` and `1,427/14/1,059` for short/long JSON; and
-`35/2/9` and `2,228,435/14/1,606,083` for 5,000 keys, in total/current/maximum
-order. The direct native near-cap probe passed 1/1. Full evidence is retained in
-the review ledger. Formal cycle 5 rejected exact candidate `8f533cd`, tree
-`8215fb9`, only because maintained summary pages were stale. The native track
-reported `0/0/0/0`; production review and the performance allocation/resource
-audit were otherwise green. Cross-document remediation is composed in exact
-cycle-6 candidate `5332d6a841521f3aa3c26b7c2b9a0e77cb1f7e31`, tree
-`d2fec0815b60c61368298e7f4f0d7bef0fc2e097`. All three cycle-6 tracks reported
-`0/0/0/1`, deduplicated to the sole self-pending wording low; no additional
-production finding exists. Formal cycle 7 rejected exact `399e75e`, tree
-`d056b96`, with correctness/API and native at `0/0/0/0` and performance/
-resources at `0/0/0/1`, deduplicated to the sole imprecise node/work-cap wording
-low. Production and resources were otherwise green. Formal cycle 8 is green on
-exact reviewed candidate `d724b61`, tree `6439863`, with all three tracks and
-the deduplicated union at `0/0/0/0`. This review-exempt result seal records only
-that reviewed SHA/tree; it does not claim that its own commit was reviewed.
-Review-exempt seal `b6db9a6`, tree `59dd628`, passed exact feature CI/
-benchmark runs `32965947722`/`32965947723` and exact main CI/benchmark runs
-`32966531225`/`32966531319`; each benchmark retained two unexpired exact-SHA
-artifacts. Slice 32 is delivered and the delivered count is 32. No product-
-performance or fx-equivalence claim is made.
+The operation makes no upstream-equivalence or product-performance claim.
