@@ -66,6 +66,7 @@ contract together when exact numeric limits matter.
 - [doctor](doctor-cli.md)
 - [sessions](sessions-cli.md)
 - [session](session-cli.md)
+- [resume](resume-cli.md)
 
 ## Decisions and historical evidence
 
