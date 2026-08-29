@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33250415686` (`GREEN`)
 - Main Benchmark evidence: `33250415718` (`GREEN`)
 - Active branch: `agent/m05-memory`
-- Active phase: `bounded native memory tool replacement rejected by second product-review cycle; combined cancellation-and-umask regression proof added`
-- Next gate: `pass the complete exact local gate for the new replacement, then restart three fresh product reviews`
+- Active phase: `bounded native memory behavior candidate accepted by third fresh three-track product-review cycle; compact review seal in progress`
+- Next gate: `push the exact documentation-only review seal and require feature CI and Benchmark evidence to pass for that SHA`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,

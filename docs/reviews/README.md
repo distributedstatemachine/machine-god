@@ -102,3 +102,4 @@ product behavior; they are not penetration tests.
 ## Milestone 05: extensibility tools
 
 - [semantic_search](m05-semantic-search-review-01.md)
+- [memory](m05-memory-review-01.md)
