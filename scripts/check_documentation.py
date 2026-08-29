@@ -785,25 +785,33 @@ def _expand_markdown_tabs(source: str) -> str:
     """Expand block tabs while retaining invalid inline-link leading tabs."""
 
     protected = bytearray(len(source))
-    last_non_whitespace = -1
-    line_breaks_since_content = 0
+    inline_link_candidate = False
+    candidate_line_breaks = 0
+    candidate_line_has_content = False
     for index, token in enumerate(source):
-        if not token.isspace():
-            last_non_whitespace = index
-            line_breaks_since_content = 0
-            continue
-        if token == "\n" or (
+        line_break = token == "\n" or (
             token == "\r" and (index + 1 == len(source) or source[index + 1] != "\n")
-        ):
-            line_breaks_since_content += 1
+        )
+        if line_break:
+            if inline_link_candidate:
+                candidate_line_breaks += 1
+                candidate_line_has_content = False
+                if candidate_line_breaks > 1:
+                    inline_link_candidate = False
+            continue
         if (
             token == "\t"
-            and line_breaks_since_content <= 1
-            and last_non_whitespace > 0
-            and source[last_non_whitespace] == "("
-            and source[last_non_whitespace - 1] == "]"
+            and inline_link_candidate
+            and (candidate_line_breaks == 0 or candidate_line_has_content)
         ):
             protected[index] = 1
+        if not token.isspace():
+            if index > 0 and token == "(" and source[index - 1] == "]":
+                inline_link_candidate = True
+                candidate_line_breaks = 0
+                candidate_line_has_content = False
+            elif inline_link_candidate and candidate_line_breaks:
+                candidate_line_has_content = True
 
     expanded: list[str] = []
     column = 0
@@ -1600,7 +1608,9 @@ def _inline_link_target(
         target = markup[target_start:cursor]
 
     destination_end = cursor
-    cursor = _skip_link_whitespace(syntax, cursor, len(markup))
+    cursor = _skip_link_whitespace(
+        syntax, cursor, len(markup), allow_tabs=False
+    )
     if cursor is None or cursor >= len(markup):
         return None
     if markup[cursor] == ")" and not syntax.escaped[cursor]:
@@ -1610,7 +1620,9 @@ def _inline_link_target(
     title_end = _title_end(markup, syntax, cursor, len(markup))
     if title_end is None:
         return None
-    cursor = _skip_link_whitespace(syntax, title_end, len(markup))
+    cursor = _skip_link_whitespace(
+        syntax, title_end, len(markup), allow_tabs=False
+    )
     if (
         cursor is None
         or cursor >= len(markup)

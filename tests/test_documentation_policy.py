@@ -1058,6 +1058,20 @@ class DocumentationPolicyTests(unittest.TestCase):
             [],
             list(check_documentation._markdown_link_targets("[x](\tmissing.md)")),
         )
+        tab_cases = (
+            ("[x](\tmissing.md)", []),
+            ("[x](\n\tmissing.md)", ["missing.md"]),
+            ("[x](foo.md\t \"title\")", []),
+            ("[x](\nfoo.md\t \"title\")", []),
+            ("[x](foo.md\n\t\"title\")", ["foo.md"]),
+        )
+        for markup, expected in tab_cases:
+            with self.subTest(markup=markup):
+                scan = check_documentation._scan_markdown_inert_blocks(markup)
+                self.assertEqual(
+                    expected,
+                    list(check_documentation._markdown_link_targets(scan.link_markup)),
+                )
 
     def test_invalid_decoded_relative_link_target_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
