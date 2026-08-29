@@ -48,6 +48,7 @@ MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\(\s*(<[^>]+>|[^)\s]+)")
 FENCE_OPEN_RE = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})(.*)$")
 FENCE_CLOSE_RE = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})[ \t]*$")
 BLOCK_QUOTE_PREFIX_RE = re.compile(r"[ ]{0,3}>[ \t]?")
+LIST_MARKER_RE = re.compile(r"[ ]{0,3}(?:[-+*]|[0-9]{1,9}[.)])[ \t]+")
 BACKTICK_RUN_RE = re.compile(r"`+")
 HTML_COMMENT_OPEN_RE = re.compile(r"<!--")
 ACTIONS_RUN_ID_RE = re.compile(
@@ -145,7 +146,7 @@ INVENTORY_VERB_RE = re.compile(
 )
 OPERATIONAL_VERB_RE = re.compile(
     r"\b(?:accepts?|allows?|permits?|batches?|executes?|runs?|schedules?|queues?|"
-    r"records?)\b",
+    r"records?|marks?|labels?|classifies?|tracks?)\b",
     re.IGNORECASE,
 )
 OPERATIONAL_MODAL_AFTER_RE = re.compile(
@@ -174,14 +175,16 @@ INVENTORY_TOTAL_RE = re.compile(
 INVENTORY_BARE_COUNT_RE = re.compile(
     rf"\b(?:register(?:s|ed)?|expos(?:e|es|ed)|include(?:s|d)?|"
     rf"provid(?:e|es|ed)|contain(?:s|ed)?|has)\s+"
-    rf"(?:exactly\s+)?{COUNT_WORD_RE}(?=\s*(?:$|[.,;!?]))",
+    rf"(?:exactly\s+|at\s+most\s+|up\s+to\s+|a\s+maximum\s+of\s+)?"
+    rf"{COUNT_WORD_RE}(?=\s*(?:$|[.,;!?]))",
     re.IGNORECASE,
 )
 INVENTORY_NUMBER_OF_RE = re.compile(
-    rf"\bnumber\s+of\s+(?:tools?(?=\s+(?:is|was|are|were|exposed|registered|"
-    rf"provided|installed|owned|supplied|listed|in|across)\b)|entries|built-ins?|"
-    rf"ToolSpec\s+(?:values?|objects?))"
-    rf"\b[^.!?]{{0,120}}\b(?:is|was|equals?|totals?)\s+{COUNT_WORD_RE}\b",
+    rf"(?:\b(?:number|count)\s+of\s+(?:tools?(?=\s+(?:is|was|are|were|exposed|"
+    rf"registered|provided|installed|owned|supplied|listed|in|across)\b)|entries|"
+    rf"built-ins?|ToolSpec\s+(?:values?|objects?))\b|"
+    rf"\btool\s+count\s+of\b)"
+    rf"[^.!?]{{0,120}}\b(?:is|was|equals?|totals?)\s+{COUNT_WORD_RE}\b",
     re.IGNORECASE,
 )
 REFERENCE_HOST_INVENTORY_SHORTHAND_RE = re.compile(
@@ -211,7 +214,7 @@ SETEXT_HEADING_RE = re.compile(r"^[ ]{0,3}(=+|-+)[ \t]*$")
 CLAUSE_SPLIT_RE = re.compile(r"\s+(?:and|but|whereas)\s+|\s*;\s*", re.IGNORECASE)
 SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 SENTENCE_CONTEXT_RE = re.compile(
-    r"^\s*(?:(?:However|Additionally|Therefore|Consequently|Moreover),?\s+)?"
+    r"^\s*(?:[A-Za-z][A-Za-z-]*,\s+)?"
     r"(?:It|Its|This\s+(?:host|catalog|composition)|"
     r"The\s+(?:host|catalog|composition))\b",
     re.IGNORECASE,
@@ -387,6 +390,27 @@ def _block_quote_content(line: str) -> tuple[int, int, str]:
     return depth, cursor, line[cursor:]
 
 
+def _opening_container_content(line: str) -> tuple[int, int, str]:
+    """Strip block-quote and one list marker for fence opening."""
+
+    quote_depth, _, quoted_content = _block_quote_content(line)
+    list_marker = LIST_MARKER_RE.match(quoted_content)
+    if list_marker is None:
+        return quote_depth, 0, quoted_content
+    return quote_depth, list_marker.end(), quoted_content[list_marker.end() :]
+
+
+def _continuation_content(content: str, indent: int) -> str | None:
+    """Strip one list continuation indent or report container exit."""
+
+    if indent == 0:
+        return content
+    spaces = len(content) - len(content.lstrip(" "))
+    if spaces < indent:
+        return None
+    return content[indent:]
+
+
 def _backtick_runs(text: str) -> tuple[array, array, array]:
     """Index paragraph-local exact backtick runs in compact numeric arrays."""
 
@@ -412,7 +436,7 @@ def _backtick_runs(text: str) -> tuple[array, array, array]:
         content = raw_line.rstrip("\r\n")
         line_start = offset
         offset += len(raw_line)
-        _, _, block_content = _block_quote_content(content)
+        _, _, block_content = _opening_container_content(content)
         is_block_boundary = (
             not content.strip()
             or _fence_opener(block_content) is not None
@@ -431,9 +455,9 @@ def _scan_markdown_inert_blocks(text: str) -> tuple[str, int, bool]:
     run_starts, run_ends, next_same_run = _backtick_runs(text)
     comment_starts = [match.start() for match in HTML_COMMENT_OPEN_RE.finditer(text)]
     prose: list[str] = []
-    open_fence: tuple[str, int, int] | None = None
+    open_fence: tuple[str, int, int, int] | None = None
     unclosed_fence = False
-    in_comment = False
+    comment_container: tuple[int, int] | None = None
     fence_lines = 0
     run_index = 0
     code_span_end: int | None = None
@@ -458,17 +482,32 @@ def _scan_markdown_inert_blocks(text: str) -> tuple[str, int, bool]:
         ):
             comment_index += 1
 
-        quote_depth, _, block_content = _block_quote_content(content)
+        quote_depth, _, quoted_content = _block_quote_content(content)
+        _, opening_list_indent, opening_content = _opening_container_content(content)
+        if comment_container is not None:
+            comment_quote_depth, comment_list_indent = comment_container
+            if (
+                quote_depth < comment_quote_depth
+                or _continuation_content(quoted_content, comment_list_indent) is None
+            ):
+                comment_container = None
         if open_fence is not None:
             required_quote_depth = open_fence[2]
-            if required_quote_depth > 0 and quote_depth < required_quote_depth:
+            required_list_indent = open_fence[3]
+            fence_content = _continuation_content(
+                quoted_content, required_list_indent
+            )
+            if (
+                (required_quote_depth > 0 and quote_depth < required_quote_depth)
+                or fence_content is None
+            ):
                 unclosed_fence = True
                 open_fence = None
             else:
                 if (
                     quote_depth == required_quote_depth
                     and _is_fence_closer(
-                        block_content, (open_fence[0], open_fence[1])
+                        fence_content, (open_fence[0], open_fence[1])
                     )
                 ):
                     open_fence = None
@@ -484,10 +523,15 @@ def _scan_markdown_inert_blocks(text: str) -> tuple[str, int, bool]:
         if code_span_end is not None and code_span_end <= line_start:
             code_span_end = None
         continues_code_span = code_span_end is not None
-        if not in_comment and not continues_code_span:
-            opener = _fence_opener(block_content)
+        if comment_container is None and not continues_code_span:
+            opener = _fence_opener(opening_content)
             if opener is not None:
-                open_fence = (opener[0], opener[1], quote_depth)
+                open_fence = (
+                    opener[0],
+                    opener[1],
+                    quote_depth,
+                    opening_list_indent,
+                )
                 fence_lines += 1
                 while (
                     run_index < len(run_starts)
@@ -507,12 +551,12 @@ def _scan_markdown_inert_blocks(text: str) -> tuple[str, int, bool]:
                 if cursor >= code_span_end:
                     code_span_end = None
                 continue
-            if in_comment:
+            if comment_container is not None:
                 end = text.find("-->", cursor, line_end)
                 if end < 0:
                     cursor = line_end
                     break
-                in_comment = False
+                comment_container = None
                 cursor = end + 3
                 continue
 
@@ -555,7 +599,7 @@ def _scan_markdown_inert_blocks(text: str) -> tuple[str, int, bool]:
                 continue
             if comment_start < line_end:
                 visible.append(text[cursor:comment_start])
-                in_comment = True
+                comment_container = (quote_depth, opening_list_indent)
                 cursor = comment_start + 4
                 comment_index += 1
                 continue

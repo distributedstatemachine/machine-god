@@ -205,12 +205,16 @@ class DocumentationPolicyTests(unittest.TestCase):
             "NativeReferenceHost is stable. It registers nineteen tools.\n",
             "NativeReferenceHost is stable.\n\nIt registers nineteen tools.\n",
             "NativeReferenceHost is stable.\n\nHowever, it registers nineteen tools.\n",
+            "NativeReferenceHost is stable. Nevertheless, it registers nineteen "
+            "tools.\n",
             "The catalog is defined in docs/native-reference-host.md. It contains "
             "nineteen tools.\n",
             "NativeReferenceHost (e.g. in production) registers nineteen tools.\n",
             "## NativeReferenceHost\n\nIt registers nineteen tools.\n",
             "The number of tools exposed by NativeReferenceHost is nineteen.\n",
             "NativeReferenceHost exposes nineteen.\n",
+            "NativeReferenceHost exposes at most nineteen.\n",
+            "The tool count of NativeReferenceHost is nineteen.\n",
         )
         for claim in claims:
             with self.subTest(claim=claim), tempfile.TemporaryDirectory() as directory:
@@ -370,6 +374,7 @@ class DocumentationPolicyTests(unittest.TestCase):
                 "recycling them.\n\n"
                 "NativeReferenceHost records nineteen tool retries, nineteen tool "
                 "handles, and nineteen tool latencies.\n\n"
+                "NativeReferenceHost marks nineteen tool entries active.\n\n"
                 "NativeReferenceHost: four workspace tools may execute "
                 "concurrently.\n\n"
                 "At one scheduler checkpoint, four workspace tools may execute "
@@ -388,14 +393,26 @@ class DocumentationPolicyTests(unittest.TestCase):
 
     def test_html_comment_fence_cannot_hide_visible_inventory(self) -> None:
         payloads = (
-            "<!--\n```md\n-->\n"
-            "NativeReferenceHost has nineteen tools.\n"
-            "```\n",
-            "```text\n<!--\n```\n"
-            "NativeReferenceHost has nineteen tools.\n"
-            "-->\n```\n",
+            (
+                "<!--\n```md\n-->\n"
+                "NativeReferenceHost has nineteen tools.\n"
+                "```\n",
+                True,
+            ),
+            (
+                "```text\n<!--\n```\n"
+                "NativeReferenceHost has nineteen tools.\n"
+                "-->\n```\n",
+                True,
+            ),
+            (
+                "> > <!--\n"
+                "> NativeReferenceHost has nineteen tools.\n"
+                "> > -->\n",
+                False,
+            ),
         )
-        for payload in payloads:
+        for payload, unclosed in payloads:
             with self.subTest(payload=payload), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 self._write_minimal_repository(root)
@@ -409,7 +426,11 @@ class DocumentationPolicyTests(unittest.TestCase):
                 rendered = "\n".join(errors)
 
                 self.assertIn("reference-host inventory counts belong only", rendered)
-                self.assertIn(f"{relative}: unclosed Markdown fence", errors)
+                self.assertEqual(
+                    unclosed,
+                    f"{relative}: unclosed Markdown fence" in errors,
+                    rendered,
+                )
 
     def test_inline_code_comment_marker_cannot_hide_policy_prose(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -483,6 +504,12 @@ class DocumentationPolicyTests(unittest.TestCase):
             (
                 "quoted fence",
                 "> ```text\n> NativeReferenceHost has nineteen tools.\n> ```\n",
+                False,
+                False,
+            ),
+            (
+                "list fence",
+                "- ```text\n  NativeReferenceHost has nineteen tools.\n  ```\n",
                 False,
                 False,
             ),
