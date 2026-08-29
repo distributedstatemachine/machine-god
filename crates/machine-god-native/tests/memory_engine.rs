@@ -166,13 +166,13 @@ fn collect(engine: &Engine, name: &str) -> (SessionId, Vec<EngineEvent>) {
     (session_id, events)
 }
 
-fn assert_completed(events: &[EngineEvent], reason: StopReason) {
+fn assert_completed(events: &[EngineEvent], reason: &StopReason) {
     assert!(matches!(
         events.last().map(|event| &event.payload),
         Some(TurnEvent::Completed {
             reason: actual,
             ..
-        }) if actual == &reason
+        }) if actual == reason
     ));
 }
 
@@ -224,7 +224,7 @@ fn engine_denial_uses_exact_custom_capability_and_is_effect_free() {
 
     let (session_id, events) = collect(&engine, "memory-denied");
 
-    assert_completed(&events, StopReason::Completed);
+    assert_completed(&events, &StopReason::Completed);
     assert_eq!(policy.requests().len(), 1);
     assert_exact_memory_request(&policy, 0, arguments);
     assert!(events.iter().all(|event| !matches!(
@@ -253,6 +253,7 @@ fn engine_denial_uses_exact_custom_capability_and_is_effect_free() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn engine_save_then_list_orders_policy_and_durably_continues_with_visible_fact() {
     let state = TemporaryDirectory::new();
     let fact = "Prefer exact provider continuation checks";
@@ -278,7 +279,7 @@ fn engine_save_then_list_orders_policy_and_durably_continues_with_visible_fact()
 
     let (session_id, events) = collect(&engine, "memory-save-list");
 
-    assert_completed(&events, StopReason::Completed);
+    assert_completed(&events, &StopReason::Completed);
     assert_eq!(policy.requests().len(), 2);
     assert_exact_memory_request(&policy, 0, save_arguments);
     assert_exact_memory_request(&policy, 1, list_arguments);
@@ -397,7 +398,7 @@ fn same_poll_cancellation_after_save_commit_keeps_durable_unknown_result() {
 
     let (session_id, events) = collect(&engine, "memory-same-poll-cancellation");
 
-    assert_completed(&events, StopReason::Cancelled);
+    assert_completed(&events, &StopReason::Cancelled);
     assert_eq!(policy.requests().len(), 1);
     assert_exact_memory_request(&policy, 0, arguments);
     assert!(

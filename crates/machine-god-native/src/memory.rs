@@ -36,9 +36,13 @@ pub const MAX_MEMORY_SERIALIZED_RESULT_BYTES: usize = 65_536;
 /// Maximum charged native I/O dispatches in one operation.
 pub const MAX_MEMORY_IO_ATTEMPTS: usize = 65_536;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const DATA_NAME: &str = "memories.json";
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const LOCK_NAME: &str = "memories.lock";
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const TEMP_NAME: &str = "memories.tmp";
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const READ_CHUNK_BYTES: usize = 8 * 1_024;
 
 const MEMORY_DESCRIPTION: &str = "Store durable user preferences across sessions. Use save only after an explicit user request. Do not store secrets, credentials, task notes, repository facts, or temporary context";
@@ -1031,10 +1035,12 @@ fn map_root_open_error(root: &Path, error: rustix::io::Errno) -> MemoryToolOpenE
     MemoryToolOpenError::new(kind)
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn build_save_output(stored: bool, count: usize) -> Result<ToolOutput, ToolError> {
     bounded_output(json!({"action": "save", "stored": stored, "count": count}))
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn build_list_output(memories: &[String]) -> Result<ToolOutput, ToolError> {
     bounded_output(json!({
         "action": "list",
@@ -1043,10 +1049,12 @@ fn build_list_output(memories: &[String]) -> Result<ToolOutput, ToolError> {
     }))
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn build_clear_output(cleared: usize) -> Result<ToolOutput, ToolError> {
     bounded_output(json!({"action": "clear", "cleared": cleared}))
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn bounded_output(content: Value) -> Result<ToolOutput, ToolError> {
     let output = ToolOutput::success(content);
     if serialized_value_fits(&output, MAX_MEMORY_SERIALIZED_RESULT_BYTES) {
