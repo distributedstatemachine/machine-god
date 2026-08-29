@@ -166,7 +166,7 @@ struct RequestedArguments {
     offset: Option<usize>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 struct ExecutionArguments {
     name: String,
     resource: String,
@@ -229,9 +229,9 @@ impl Tool for SkillTool {
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
             check_cancellation(&cancellation)?;
-            let decoded = decode_execution_arguments(&arguments)?;
+            let decoded = decode_execution_arguments(arguments)?;
             validate_canonical_arguments(&decoded)?;
-            ensure_serialized_arguments(&arguments)?;
+            ensure_serialized_arguments(&decoded)?;
 
             #[cfg(not(unix))]
             {
@@ -309,26 +309,29 @@ fn decode_requested_arguments(arguments: Value) -> Result<RequestedArguments, To
     })
 }
 
-fn decode_execution_arguments(arguments: &Value) -> Result<ExecutionArguments, ToolError> {
-    let Value::Object(object) = arguments else {
+fn decode_execution_arguments(arguments: Value) -> Result<ExecutionArguments, ToolError> {
+    let Value::Object(mut object) = arguments else {
         return Err(invalid_arguments());
     };
     if object.len() != 3 {
         return Err(invalid_arguments());
     }
-    let Some(Value::String(name)) = object.get("name") else {
+    let Some(Value::String(name)) = object.remove("name") else {
         return Err(invalid_arguments());
     };
-    let Some(Value::String(resource)) = object.get("resource") else {
+    let Some(Value::String(resource)) = object.remove("resource") else {
         return Err(invalid_arguments());
     };
-    let Some(Value::Number(offset)) = object.get("offset") else {
+    let Some(Value::Number(offset)) = object.remove("offset") else {
         return Err(invalid_arguments());
     };
+    if !object.is_empty() {
+        return Err(invalid_arguments());
+    }
     Ok(ExecutionArguments {
-        name: name.clone(),
-        resource: resource.clone(),
-        offset: decode_offset(offset)?,
+        name,
+        resource,
+        offset: decode_offset(&offset)?,
     })
 }
 
@@ -427,7 +430,7 @@ fn validate_offset_limit(offset: usize) -> Result<(), ToolError> {
     }
 }
 
-fn ensure_serialized_arguments(arguments: &Value) -> Result<(), ToolError> {
+fn ensure_serialized_arguments(arguments: &(impl Serialize + ?Sized)) -> Result<(), ToolError> {
     if serialized_value_fits(arguments, MAX_SKILL_SERIALIZED_ARGUMENT_BYTES) {
         Ok(())
     } else {
@@ -567,13 +570,15 @@ fn read_resource(
     if !FileType::from_raw_mode(metadata.st_mode).is_file() {
         return Err(path_rejected());
     }
-    if u64::try_from(metadata.st_size).is_ok_and(|size| size > MAX_SKILL_FILE_BYTES as u64) {
+    let metadata_size = usize::try_from(metadata.st_size).unwrap_or(0);
+    if metadata_size > MAX_SKILL_FILE_BYTES {
         return Err(resource_limit());
     }
 
     let mut bytes = Vec::new();
+    let initial_capacity = metadata_size.checked_add(1).ok_or_else(resource_limit)?;
     bytes
-        .try_reserve_exact(MAX_SKILL_FILE_BYTES + 1)
+        .try_reserve_exact(initial_capacity)
         .map_err(|_| resource_limit())?;
     let mut chunk = [0_u8; READ_CHUNK_BYTES];
     loop {
@@ -590,6 +595,7 @@ fn read_resource(
         })? {
             Ok(0) => break,
             Ok(read) => {
+                bytes.try_reserve(read).map_err(|_| resource_limit())?;
                 bytes.extend_from_slice(&chunk[..read]);
                 if bytes.len() > MAX_SKILL_FILE_BYTES {
                     return Err(resource_limit());
@@ -635,8 +641,12 @@ fn fit_output_page(
         raw_end = raw_end.checked_sub(1).ok_or_else(resource_limit)?;
     }
     let mut boundaries = Vec::new();
+    let boundary_capacity = raw_end
+        .checked_sub(arguments.offset)
+        .and_then(|length| length.checked_add(1))
+        .ok_or_else(resource_limit)?;
     boundaries
-        .try_reserve(MAX_SKILL_CHUNK_BYTES.saturating_add(1))
+        .try_reserve_exact(boundary_capacity)
         .map_err(|_| resource_limit())?;
     boundaries.push(arguments.offset);
     for (relative, character) in content[arguments.offset..raw_end].char_indices() {

@@ -487,6 +487,48 @@ fn direct_execution_requires_canonical_expanded_arguments() {
 }
 
 #[test]
+fn direct_oversized_arguments_and_tiny_reads_do_not_reserve_maximum_buffers() {
+    let temporary = TemporaryDirectory::new();
+    fs::write(
+        skill_directory(temporary.path(), "tiny").join("SKILL.md"),
+        "x",
+    )
+    .unwrap();
+    let tool = tool(temporary.path());
+
+    let oversized_name = "x".repeat(4 * 1024 * 1024);
+    let oversized_arguments = canonical(&oversized_name, "SKILL.md", 0);
+    drop(oversized_name);
+    let mut oversized_result = None;
+    let oversized_allocations = allocation_counter::measure(|| {
+        oversized_result = Some(execute(
+            &tool,
+            oversized_arguments,
+            CancellationToken::new(),
+        ));
+    });
+    assert_code(oversized_result.unwrap().unwrap_err(), "skill_invalid_name");
+    assert!(
+        oversized_allocations.bytes_total < 128 * 1024,
+        "oversized direct rejection duplicated input storage: {oversized_allocations:?}"
+    );
+
+    let tiny_arguments = canonical("tiny", "SKILL.md", 0);
+    let mut tiny_result = None;
+    let tiny_allocations = allocation_counter::measure(|| {
+        tiny_result = Some(execute(&tool, tiny_arguments, CancellationToken::new()));
+    });
+    assert_eq!(
+        tiny_result.unwrap().unwrap(),
+        expected("tiny", "SKILL.md", 0, "x", 1, 1)
+    );
+    assert!(
+        tiny_allocations.bytes_total < 128 * 1024,
+        "tiny resource reserved maximum file or page buffers: {tiny_allocations:?}"
+    );
+}
+
+#[test]
 fn missing_and_special_entries_fail_with_fixed_redacted_errors() {
     let temporary = TemporaryDirectory::new();
     let directory = skill_directory(temporary.path(), "rust");
