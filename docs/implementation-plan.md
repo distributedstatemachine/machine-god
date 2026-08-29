@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33250415686` (`GREEN`)
 - Main Benchmark evidence: `33250415718` (`GREEN`)
 - Active branch: `agent/m05-memory`
-- Active phase: `bounded native memory tool contract frozen; implementation and focused tests in progress`
-- Next gate: `integrate the memory tool through the retained state identity, pass focused tests, then run the complete exact local gate`
+- Active phase: `bounded native memory tool candidate rejected by first product-review cycle; lifecycle and correctness remediations in progress`
+- Next gate: `pass focused and complete exact local gates for the replacement memory candidate, then restart three fresh product reviews`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,

@@ -511,6 +511,14 @@ fn unexpected_fixed_child_types_fail_closed_and_remain_untouched() {
     assert_corrupt(
         execute(
             &tool,
+            json!({"action": "save", "fact": "live"}),
+            CancellationToken::new(),
+        )
+        .unwrap_err(),
+    );
+    assert_corrupt(
+        execute(
+            &tool,
             json!({"action": "save", "fact": "new"}),
             CancellationToken::new(),
         )

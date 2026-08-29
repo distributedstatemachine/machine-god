@@ -55,8 +55,10 @@ state valid by raw counts but exceed either serialized-state or future-list
 result capacity fails before publication. Reads retain at most one byte beyond
 the file limit as an overflow witness. Every retried or short native I/O call is
 charged before dispatch; exhaustion is a fixed resource-limit failure rather
-than an unbounded retry loop. Filesystem calls may still block for a
-kernel-dependent duration.
+than an unbounded retry loop. Once rename or unlink has crossed the commit
+point, attempt exhaustion is instead the fixed `memory_commit_ambiguous`
+failure because rollback can no longer be claimed. Filesystem calls may still
+block for a kernel-dependent duration.
 
 ## State-root authority and layout
 
@@ -80,10 +82,13 @@ either component.
 
 Child opens use no-follow, close-on-exec, and nonblocking flags and require
 regular files before reading, writing, locking, or unlinking. New lock and
-temporary files have mode `0600`. The permanent lock sidecar is never unlinked
-or recreated after successful acquisition, so cooperating processes keep one
-lock identity. The state-root owner and processes that ignore or replace
-advisory-lock artifacts remain trusted host boundaries.
+temporary files have mode `0600`. After exclusive creation makes the permanent
+lock visible, owner read/write access is established before cancellation is
+observed again, including under an owner-masking process umask. The permanent
+lock sidecar is never unlinked or recreated after successful acquisition, so
+cooperating processes keep one lock identity. The state-root owner and
+processes that ignore or replace advisory-lock artifacts remain trusted host
+boundaries.
 
 The compact version-one document is:
 
@@ -107,12 +112,14 @@ for another cooperating process. Independent tool instances therefore cannot
 silently lose a cooperating concurrent save.
 
 While holding the exclusive lock, `save` validates the current document and
-deduplicates the requested fact. A changed document is compact-serialized
-within all limits, written to the fixed exclusive temporary child, synchronized,
-atomically renamed over `memories.json`, and followed by state-directory
-synchronization. A stale regular temporary file from an interrupted operation
-may be removed under the lock before a new save; a symlink, directory, FIFO,
-socket, or other unexpected artifact fails closed and is left untouched.
+validates the fixed temporary child before deduplicating the requested fact. A
+changed document is compact-serialized within all limits, written to the fixed
+exclusive temporary child, synchronized, atomically renamed over
+`memories.json`, and followed by state-directory synchronization. A stale
+regular temporary file from an interrupted operation may be removed under the
+lock before any save result; a symlink, directory, FIFO, socket, or other
+unexpected artifact fails closed and is left untouched, including for an exact
+duplicate save.
 
 `clear` validates the current document so it can report the exact removed
 count, removes a stale regular temporary child when present, unlinks the live

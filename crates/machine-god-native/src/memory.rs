@@ -383,6 +383,8 @@ impl LoadedMemories {
 #[derive(Default)]
 struct IoBudget {
     attempts: usize,
+    #[cfg(test)]
+    cancel_after_attempt: Option<(usize, CancellationToken)>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -394,7 +396,14 @@ impl IoBudget {
     ) -> Result<Result<T, rustix::io::Errno>, ToolError> {
         check_cancellation(cancellation)?;
         self.charge()?;
-        Ok(operation())
+        let result = operation();
+        #[cfg(test)]
+        if let Some((attempt, token)) = &self.cancel_after_attempt
+            && *attempt == self.attempts
+        {
+            token.cancel();
+        }
+        Ok(result)
     }
 
     fn charge(&mut self) -> Result<(), ToolError> {
@@ -411,6 +420,14 @@ impl IoBudget {
         }
         self.attempts += 1;
         Ok(())
+    }
+
+    #[cfg(test)]
+    fn cancelling_after_attempt(attempt: usize, cancellation: CancellationToken) -> Self {
+        Self {
+            attempts: 0,
+            cancel_after_attempt: Some((attempt, cancellation)),
+        }
     }
 }
 
@@ -450,6 +467,7 @@ impl MemoryTool {
         cancellation: &CancellationToken,
     ) -> Result<ToolOutput, ToolError> {
         let loaded = read_memories(self.root.as_fd(), budget, cancellation)?;
+        remove_stale_temp(self.root.as_fd(), budget, cancellation)?;
         if loaded.as_slice().iter().any(|memory| memory == &fact) {
             check_cancellation(cancellation)?;
             return build_save_output(false, loaded.as_slice().len());
@@ -467,7 +485,6 @@ impl MemoryTool {
         let _future_list = build_list_output(&memories)?;
         let output = build_save_output(true, memories.len())?;
 
-        remove_stale_temp(self.root.as_fd(), budget, cancellation)?;
         publish_document(self.root.as_fd(), &bytes, budget, cancellation)?;
         Ok(output)
     }
@@ -555,14 +572,14 @@ fn open_lock(
             )?);
         }
     };
-    ensure_regular(&lock, budget, cancellation)?;
     if was_created {
-        budget
-            .dispatch(cancellation, || {
-                rustix::fs::fchmod(&lock, Mode::RUSR | Mode::WUSR)
-            })?
-            .map_err(|_| memory_unavailable())?;
+        // O_EXCL has made the permanent child visible. Establish its owner
+        // access invariant before observing cancellation again so a hostile
+        // umask cannot turn cancellation into a permanently unusable lock.
+        budget.charge()?;
+        rustix::fs::fchmod(&lock, Mode::RUSR | Mode::WUSR).map_err(|_| memory_unavailable())?;
     }
+    ensure_regular(&lock, budget, cancellation)?;
     check_cancellation(cancellation)?;
     Ok(lock)
 }
@@ -1176,4 +1193,76 @@ fn cancelled() -> ToolError {
         "memory operation was cancelled",
         false,
     )
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod tests {
+    use super::{IoBudget, LOCK_NAME, Mode, OFlags, open_lock};
+    use machine_god_core::CancellationToken;
+    use rustix::fd::AsFd;
+    use std::fs;
+    use std::os::unix::fs::MetadataExt;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMPORARY_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+    struct TemporaryDirectory(PathBuf);
+
+    impl TemporaryDirectory {
+        fn new() -> Self {
+            for _ in 0..1_000 {
+                let identifier = NEXT_TEMPORARY_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+                let path = std::env::temp_dir().join(format!(
+                    "mg-memory-lock-cancel-{}-{identifier}",
+                    std::process::id()
+                ));
+                match fs::create_dir(&path) {
+                    Ok(()) => return Self(path),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(error) => panic!("failed to create temporary directory: {error}"),
+                }
+            }
+            panic!("failed to allocate a unique temporary directory");
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TemporaryDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn cancellation_after_lock_creation_leaves_owner_access_established() {
+        let temporary = TemporaryDirectory::new();
+        let root = rustix::fs::open(
+            temporary.path(),
+            OFlags::RDONLY
+                | OFlags::DIRECTORY
+                | OFlags::NOFOLLOW
+                | OFlags::CLOEXEC
+                | OFlags::NONBLOCK,
+            Mode::empty(),
+        )
+        .unwrap();
+        let cancellation = CancellationToken::new();
+        let mut budget = IoBudget::cancelling_after_attempt(1, cancellation.clone());
+
+        let error = open_lock(root.as_fd(), &mut budget, &cancellation).unwrap_err();
+
+        assert_eq!(error.code, "memory_cancelled");
+        assert!(cancellation.is_cancelled());
+        assert_eq!(
+            fs::symlink_metadata(temporary.path().join(LOCK_NAME))
+                .unwrap()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
 }
