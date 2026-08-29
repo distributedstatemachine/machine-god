@@ -17,7 +17,7 @@ mod ask;
 #[cfg(not(target_family = "wasm"))]
 use std::sync::Arc;
 
-use ask::{AskCommandHost, ProductionAskCommandHost, parse_prompt_arguments, run_ask};
+use ask::{AskCommandHost, ProductionAskCommandHost, parse_prompt_arguments, run_ask, run_resume};
 use machine_god_core::{BoxFuture, SessionId, SessionIncarnationId};
 #[cfg(not(target_family = "wasm"))]
 use machine_god_core::{CancellationToken, ModelCatalogProvider, ProviderError, ProviderErrorKind};
@@ -39,7 +39,7 @@ use machine_god_native::{
 
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | doctor [--json] | models [--json] | permissions [--json] | session <id> [--json] | sessions [--json] | status [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | doctor [--json] | models [--json] | permissions [--json] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--json] | status [--json]]\n",
 );
 const CONFIGURATION_FAILURE: &str = "machine-god: failed to load configuration\n";
 const DOCTOR_RENDER_FAILURE: &str = "machine-god doctor: could not render report\n";
@@ -178,6 +178,7 @@ enum Command {
     Doctor { json: bool },
     Models { json: bool },
     Permissions { json: bool },
+    Resume { id: SessionId, prompt: String },
     Session { id: SessionId, json: bool },
     Sessions { json: bool },
     Status { json: bool },
@@ -1228,6 +1229,9 @@ fn run_with_hosts(
             };
             permissions(loaded.config().permission_mode(), json)
         }
+        Command::Resume { id, prompt } => {
+            return run_resume(ask_host, id, prompt, stdout, stderr, OUTPUT_FAILURE);
+        }
         Command::Session { id, json } => {
             return run_session(inspection_host, id, json, stdout, stderr);
         }
@@ -1283,17 +1287,15 @@ fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Comm
             };
             Command::Permissions { json }
         }
-        "session" => {
-            let Some(id) = arguments.next() else {
-                return Err(());
-            };
-            let Some(id) = id.to_str() else {
-                return Err(());
-            };
-            if matches!(id, "last" | "--id" | "--json") {
-                return Err(());
+        "resume" => {
+            let id = parse_explicit_session_id(arguments.next().ok_or(())?)?;
+            Command::Resume {
+                id,
+                prompt: parse_prompt_arguments(arguments.by_ref())?,
             }
-            let id = SessionId::new(id.to_owned()).map_err(|_| ())?;
+        }
+        "session" => {
+            let id = parse_explicit_session_id(arguments.next().ok_or(())?)?;
             let json = match arguments.next() {
                 None => false,
                 Some(argument) if argument == "--json" => true,
@@ -1326,6 +1328,14 @@ fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Comm
     Ok(command)
 }
 
+fn parse_explicit_session_id(argument: OsString) -> Result<SessionId, ()> {
+    let id = argument.into_string().map_err(|_| ())?;
+    if id == "last" || id.starts_with('-') {
+        return Err(());
+    }
+    SessionId::new(id).map_err(|_| ())
+}
+
 fn identity() -> String {
     format!(
         "machine-god {} (engine API {})\n",
@@ -1347,6 +1357,7 @@ fn help() -> String {
             "  machine-god doctor [--json]\n",
             "  machine-god models [--json]\n",
             "  machine-god permissions [--json]\n",
+            "  machine-god resume <id> [--] <prompt...>\n",
             "  machine-god session <id> [--json]\n",
             "  machine-god sessions [--json]\n",
             "  machine-god status [--json]\n",
@@ -1357,6 +1368,7 @@ fn help() -> String {
             "  doctor       Run local health and preflight checks\n",
             "  models       List available models\n",
             "  permissions  Show the permission mode and rules\n",
+            "  resume       Resume a saved session with one prompt\n",
             "  session      Inspect a saved session\n",
             "  sessions     List saved sessions\n",
             "  status       Show configuration and runtime information\n",
@@ -1983,7 +1995,10 @@ mod tests {
         TokioModelsSignalSource, list_models_with_signal_source, list_models_with_signals,
         run_models, terminate_signal_event,
     };
-    use crate::ask::{AskCommandExecution, AskCommandHost, AskCommandOutcome};
+    use crate::ask::{
+        AskCommandExecution, AskCommandHost, AskCommandOutcome, MAX_ASK_PROMPT_BYTES,
+        SessionSelection,
+    };
     use machine_god_core::{
         AvailableModel, BoxFuture, ModelCatalog, ModelCatalogAccess, PublicCatalogReason,
     };
@@ -2035,6 +2050,7 @@ mod tests {
     struct FakeAskHost {
         outcome: AskCommandOutcome,
         calls: Cell<usize>,
+        selections: RefCell<Vec<Option<String>>>,
         prompts: RefCell<Vec<String>>,
         output: &'static [u8],
     }
@@ -2044,6 +2060,7 @@ mod tests {
             Self {
                 outcome,
                 calls: Cell::new(0),
+                selections: RefCell::new(Vec::new()),
                 prompts: RefCell::new(Vec::new()),
                 output,
             }
@@ -2051,8 +2068,17 @@ mod tests {
     }
 
     impl AskCommandHost for FakeAskHost {
-        fn execute(&self, prompt: String, output: &mut dyn io::Write) -> AskCommandExecution {
+        fn execute(
+            &self,
+            selection: SessionSelection,
+            prompt: String,
+            output: &mut dyn io::Write,
+        ) -> AskCommandExecution {
             self.calls.set(self.calls.get() + 1);
+            self.selections.borrow_mut().push(match selection {
+                SessionSelection::CreateGenerated => None,
+                SessionSelection::Resume(id) => Some(id.as_str().to_owned()),
+            });
             self.prompts.borrow_mut().push(prompt);
             let outcome = if output.write_all(self.output).is_err() {
                 AskCommandOutcome::OutputFailure
@@ -3333,6 +3359,7 @@ mod tests {
             vec![OsString::from("session")],
             vec![OsString::from("session"), OsString::from("last")],
             vec![OsString::from("session"), OsString::from("--id")],
+            vec![OsString::from("session"), OsString::from("--flag")],
             vec![
                 OsString::from("session"),
                 OsString::from("--id"),
@@ -3370,6 +3397,103 @@ mod tests {
     }
 
     #[test]
+    fn resume_parser_accepts_only_an_explicit_id_and_bounded_prompt() {
+        assert_eq!(
+            parse_arguments([
+                OsString::from("resume"),
+                OsString::from("alpha"),
+                OsString::from("hello"),
+                OsString::from("世界"),
+            ]),
+            Ok(Command::Resume {
+                id: machine_god_core::SessionId::new("alpha").unwrap(),
+                prompt: "hello 世界".to_owned(),
+            })
+        );
+        assert_eq!(
+            parse_arguments([
+                OsString::from("resume"),
+                OsString::from("alpha"),
+                OsString::from("--"),
+                OsString::from("--flag"),
+            ]),
+            Ok(Command::Resume {
+                id: machine_god_core::SessionId::new("alpha").unwrap(),
+                prompt: "--flag".to_owned(),
+            })
+        );
+
+        let oversized_prompt = "x".repeat(MAX_ASK_PROMPT_BYTES + 1);
+        for arguments in [
+            vec![OsString::from("resume")],
+            vec![
+                OsString::from("resume"),
+                OsString::from("last"),
+                OsString::from("prompt"),
+            ],
+            vec![
+                OsString::from("resume"),
+                OsString::from("--id"),
+                OsString::from("alpha"),
+                OsString::from("prompt"),
+            ],
+            vec![
+                OsString::from("resume"),
+                OsString::from("--json"),
+                OsString::from("prompt"),
+            ],
+            vec![
+                OsString::from("resume"),
+                OsString::from("--flag"),
+                OsString::from("prompt"),
+            ],
+            vec![OsString::from("resume"), OsString::from("alpha")],
+            vec![
+                OsString::from("resume"),
+                OsString::from("alpha"),
+                OsString::from("--"),
+            ],
+            vec![
+                OsString::from("resume"),
+                OsString::from("alpha"),
+                OsString::from("--flag"),
+            ],
+            vec![
+                OsString::from("resume"),
+                OsString::from("alpha"),
+                OsString::from(" \t\r\n"),
+            ],
+            vec![
+                OsString::from("resume"),
+                OsString::from("alpha"),
+                OsString::from("nul\0prompt"),
+            ],
+            vec![
+                OsString::from("resume"),
+                OsString::from("bad/session"),
+                OsString::from("prompt"),
+            ],
+            vec![
+                OsString::from("resume"),
+                OsString::from("café"),
+                OsString::from("prompt"),
+            ],
+            vec![
+                OsString::from("resume"),
+                OsString::from("a".repeat(129)),
+                OsString::from("prompt"),
+            ],
+            vec![
+                OsString::from("resume"),
+                OsString::from("alpha"),
+                OsString::from(oversized_prompt),
+            ],
+        ] {
+            assert_eq!(parse_arguments(arguments), Err(()));
+        }
+    }
+
+    #[test]
     fn help_lists_doctor_before_models_with_the_frozen_summary() {
         let output = help();
         assert!(output.contains("  machine-god ask [--] <prompt...>\n"));
@@ -3393,6 +3517,9 @@ mod tests {
         let permissions_usage = output
             .find("  machine-god permissions [--json]\n")
             .expect("permissions usage");
+        let resume_usage = output
+            .find("  machine-god resume <id> [--] <prompt...>\n")
+            .expect("resume usage");
         let inspection_usage = output
             .find("  machine-god session <id> [--json]\n")
             .expect("session usage");
@@ -3402,13 +3529,17 @@ mod tests {
         let status_usage = output
             .find("  machine-god status [--json]\n")
             .expect("status usage");
-        assert!(permissions_usage < inspection_usage);
+        assert!(permissions_usage < resume_usage);
+        assert!(resume_usage < inspection_usage);
         assert!(inspection_usage < listing_usage);
         assert!(listing_usage < status_usage);
 
         let permissions_command = output
             .find("  permissions  Show the permission mode and rules\n")
             .expect("permissions command");
+        let resume_command = output
+            .find("  resume       Resume a saved session with one prompt\n")
+            .expect("resume command");
         let inspection_command = output
             .find("  session      Inspect a saved session\n")
             .expect("session command");
@@ -3418,7 +3549,8 @@ mod tests {
         let status_command = output
             .find("  status       Show configuration and runtime information\n")
             .expect("status command");
-        assert!(permissions_command < inspection_command);
+        assert!(permissions_command < resume_command);
+        assert!(resume_command < inspection_command);
         assert!(inspection_command < listing_command);
         assert!(listing_command < status_command);
     }
@@ -3440,6 +3572,7 @@ mod tests {
         );
         assert_eq!(exit, 0);
         assert_eq!(host.calls.get(), 1);
+        assert_eq!(*host.selections.borrow(), [None]);
         assert_eq!(*host.prompts.borrow(), ["hello world"]);
         assert_eq!(stdout, "one\0β".as_bytes());
         assert!(stderr.is_empty());
@@ -3465,6 +3598,79 @@ mod tests {
             assert_eq!(stderr, INVALID_ARGUMENTS.as_bytes());
         }
         assert_eq!(host.calls.get(), 0);
+        assert!(host.selections.borrow().is_empty());
+        assert!(host.prompts.borrow().is_empty());
+    }
+
+    #[test]
+    fn resume_dispatches_the_validated_id_and_prompt_once() {
+        let host = FakeAskHost::new(AskCommandOutcome::Completed, b"continued");
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let exit = run_with_ask_host(
+            [
+                OsString::from("resume"),
+                OsString::from("alpha"),
+                OsString::from("continue"),
+                OsString::from("now"),
+            ],
+            &mut stdout,
+            &mut stderr,
+            &host,
+        );
+
+        assert_eq!(exit, 0);
+        assert_eq!(host.calls.get(), 1);
+        assert_eq!(*host.selections.borrow(), [Some("alpha".to_owned())]);
+        assert_eq!(*host.prompts.borrow(), ["continue now"]);
+        assert_eq!(stdout, b"continued");
+        assert!(stderr.is_empty());
+    }
+
+    #[test]
+    fn invalid_resume_arguments_precede_all_host_effects() {
+        let host = FakeAskHost::new(AskCommandOutcome::Completed, b"never");
+        let oversized_prompt = "x".repeat(MAX_ASK_PROMPT_BYTES + 1);
+        for arguments in [
+            vec![OsString::from("resume")],
+            vec![
+                OsString::from("resume"),
+                OsString::from("last"),
+                OsString::from("prompt"),
+            ],
+            vec![
+                OsString::from("resume"),
+                OsString::from("--flag"),
+                OsString::from("prompt"),
+            ],
+            vec![OsString::from("resume"), OsString::from("alpha")],
+            vec![
+                OsString::from("resume"),
+                OsString::from("alpha"),
+                OsString::from("--flag"),
+            ],
+            vec![
+                OsString::from("resume"),
+                OsString::from("alpha"),
+                OsString::from("nul\0prompt"),
+            ],
+            vec![
+                OsString::from("resume"),
+                OsString::from("alpha"),
+                OsString::from(oversized_prompt),
+            ],
+        ] {
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            assert_eq!(
+                run_with_ask_host(arguments, &mut stdout, &mut stderr, &host),
+                2
+            );
+            assert!(stdout.is_empty());
+            assert_eq!(stderr, INVALID_ARGUMENTS.as_bytes());
+        }
+        assert_eq!(host.calls.get(), 0);
+        assert!(host.selections.borrow().is_empty());
         assert!(host.prompts.borrow().is_empty());
     }
 
@@ -4857,6 +5063,18 @@ mod tests {
         );
         assert_eq!(
             parse_arguments([OsString::from("session"), OsString::from_vec(vec![0xff]),]),
+            Err(())
+        );
+        assert_eq!(
+            parse_arguments([OsString::from("resume"), OsString::from_vec(vec![0xff]),]),
+            Err(())
+        );
+        assert_eq!(
+            parse_arguments([
+                OsString::from("resume"),
+                OsString::from("alpha"),
+                OsString::from_vec(vec![0xff]),
+            ]),
             Err(())
         );
         assert_eq!(

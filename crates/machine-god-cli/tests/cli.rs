@@ -54,6 +54,7 @@ const HELP: &str = concat!(
     "  machine-god doctor [--json]\n",
     "  machine-god models [--json]\n",
     "  machine-god permissions [--json]\n",
+    "  machine-god resume <id> [--] <prompt...>\n",
     "  machine-god session <id> [--json]\n",
     "  machine-god sessions [--json]\n",
     "  machine-god status [--json]\n",
@@ -64,6 +65,7 @@ const HELP: &str = concat!(
     "  doctor       Run local health and preflight checks\n",
     "  models       List available models\n",
     "  permissions  Show the permission mode and rules\n",
+    "  resume       Resume a saved session with one prompt\n",
     "  session      Inspect a saved session\n",
     "  sessions     List saved sessions\n",
     "  status       Show configuration and runtime information\n",
@@ -74,7 +76,7 @@ const HELP: &str = concat!(
 );
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | doctor [--json] | models [--json] | permissions [--json] | session <id> [--json] | sessions [--json] | status [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | doctor [--json] | models [--json] | permissions [--json] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--json] | status [--json]]\n",
 );
 const CONFIG_FAILURE: &str = "machine-god: failed to load configuration\n";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -773,9 +775,21 @@ fn malformed_arguments_have_one_diagnostic_and_exit_two() {
         &["permissions", "extra"][..],
         &["permissions", "--json", "extra"][..],
         &["permissions", "--json", "--json"][..],
+        &["resume"][..],
+        &["resume", "last", "prompt"][..],
+        &["resume", "--id", "alpha", "prompt"][..],
+        &["resume", "--json", "prompt"][..],
+        &["resume", "--flag", "prompt"][..],
+        &["resume", "alpha"][..],
+        &["resume", "alpha", "--"][..],
+        &["resume", "alpha", "--flag"][..],
+        &["resume", "alpha", " \t\r\n"][..],
+        &["resume", "alpha", "prompt", "--"][..],
+        &["resume", "bad/session", "prompt"][..],
         &["session"][..],
         &["session", "last"][..],
         &["session", "--id"][..],
+        &["session", "--flag"][..],
         &["session", "--id", "alpha"][..],
         &["session", "--json"][..],
         &["session", "--json", "alpha"][..],
@@ -816,6 +830,41 @@ fn invalid_ask_grammar_precedes_configuration_state_credentials_and_stdin() {
             .env("XDG_CONFIG_HOME", &config_root)
             .env("XDG_STATE_HOME", &state_root)
             .env("VERCEL_OIDC_TOKEN", "ASK_INVALID_CREDENTIAL_SECRET")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert_eq!(output.stderr, INVALID_ARGUMENTS.as_bytes());
+        assert!(!config_root.exists());
+        assert!(!state_root.exists());
+    }
+}
+
+#[test]
+fn invalid_resume_grammar_precedes_configuration_state_credentials_and_stdin() {
+    let temporary = TestDirectory::new("resume-invalid-no-effects");
+    let config_root = temporary.path().join("missing-config");
+    let state_root = temporary.path().join("missing-state");
+
+    for arguments in [
+        &["resume"][..],
+        &["resume", "last", "prompt"][..],
+        &["resume", "--id", "alpha", "prompt"][..],
+        &["resume", "--json", "prompt"][..],
+        &["resume", "--flag", "prompt"][..],
+        &["resume", "alpha"][..],
+        &["resume", "alpha", "--"][..],
+        &["resume", "alpha", "--flag"][..],
+        &["resume", "alpha", " \t\r\n"][..],
+        &["resume", "bad/session", "prompt"][..],
+    ] {
+        let output = machine_god()
+            .args(arguments)
+            .env_remove("HOME")
+            .env("XDG_CONFIG_HOME", &config_root)
+            .env("XDG_STATE_HOME", &state_root)
+            .env("VERCEL_OIDC_TOKEN", "RESUME_INVALID_CREDENTIAL_SECRET")
             .stdin(std::process::Stdio::null())
             .output()
             .unwrap();
@@ -2854,6 +2903,12 @@ fn non_unicode_arguments_are_rejected_by_the_process_boundary() {
         vec![OsString::from_vec(vec![0xff])],
         vec![OsString::from("ask"), OsString::from_vec(vec![0xff])],
         vec![OsString::from("doctor"), OsString::from_vec(vec![0xff])],
+        vec![OsString::from("resume"), OsString::from_vec(vec![0xff])],
+        vec![
+            OsString::from("resume"),
+            OsString::from("alpha"),
+            OsString::from_vec(vec![0xff]),
+        ],
         vec![OsString::from("session"), OsString::from_vec(vec![0xff])],
         vec![
             OsString::from("session"),
