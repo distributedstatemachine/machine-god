@@ -236,27 +236,14 @@ regression/delivery claim unless a milestone explicitly promotes it.
   stay evergreen. They must not duplicate live phase, delivered count, or
   Actions run IDs.
 - `scripts/check_documentation.py` enforces canonical markers and fields, the
-  600-line plan ceiling, sole-live-ledger restrictions across every maintained
-  non-review document, rendered relative Markdown link targets, and canonical
-  reference-host catalog ownership. One bounded scan produces separate rendered
-  classifier and link projections while tracking ordered quote/list and
-  reference-continuation boundaries, valid fences, empty list items, indented
-  code, whole-line block and paragraph-bound inline comments, raw HTML
-  boundaries (without synthetic blank lines), lazy container continuations,
-  and ATX/Setext headings. Compact
-  forward indexes and delimiter-class lower bounds recognize only complete
-  escaped, inline, image, and single-line or multiline reference syntax, reject
-  invalid nested full-reference suffixes while releasing valid inner links,
-  and avoid suffix rescans or repeated opener searches, keeping hostile input
-  linear in the 256 KiB raw and 512 KiB expanded per-file ceilings. The corpus
-  is capped by pruned 4,096-entry filesystem discovery, 256 regular maintained
-  files, 4 MiB of raw Markdown, and 4,096 relative-target checks, so cached
-  projections, filesystem probes, and diagnostics remain repository-bounded.
-  Reserved live-status field labels are rejected outside this plan. Each
-  maintained Markdown file is read/scanned once per validation through a
-  nonblocking descriptor, requesting no-follow where the platform supports it
-  and requiring a regular file after open; the checker prints current-run
-  inventory but never persists it.
+  600-line plan ceiling, evergreen overview restrictions, obvious relative
+  Markdown link targets, and balanced fences. It is intentionally a small
+  repository-policy check, not a CommonMark implementation, and prints
+  inventory counts for the current run without persisting them.
+- Documentation-checker parser changes are separate, non-product maintenance.
+  Product feature iterations use the existing checker and do not expand its
+  Markdown grammar in response to product-review edge cases; a future richer
+  validator should use an established parser behind explicit repository bounds.
 - Compact this plan after every five delivered slices or whenever it exceeds
   600 lines. Keep the live block, milestone state, compact slice inventory,
   remaining boundary, and gates; move cycle detail to review ledgers.
