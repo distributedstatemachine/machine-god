@@ -725,7 +725,10 @@ const fn file_open_flags() -> OFlags {
 
 #[cfg(unix)]
 fn map_root_open_error(error: rustix::io::Errno) -> SkillToolOpenError {
-    let kind = if error == rustix::io::Errno::LOOP || error == rustix::io::Errno::NOTDIR {
+    let kind = if error == rustix::io::Errno::LOOP
+        || error == rustix::io::Errno::MLINK
+        || error == rustix::io::Errno::NOTDIR
+    {
         SkillToolOpenErrorKind::InvalidFileType
     } else {
         SkillToolOpenErrorKind::Unavailable
@@ -738,6 +741,7 @@ fn map_path_open_error(error: rustix::io::Errno) -> ToolError {
     if error == rustix::io::Errno::NOENT {
         not_found()
     } else if error == rustix::io::Errno::LOOP
+        || error == rustix::io::Errno::MLINK
         || error == rustix::io::Errno::NOTDIR
         || error == rustix::io::Errno::NXIO
         || error == rustix::io::Errno::NOTSUP
@@ -890,7 +894,10 @@ mod tests {
         validate_canonical_arguments,
     };
     #[cfg(unix)]
-    use super::{IoBudget, MAX_SKILL_CHUNK_BYTES, MAX_SKILL_IO_ATTEMPTS, fit_output_page};
+    use super::{
+        IoBudget, MAX_SKILL_CHUNK_BYTES, MAX_SKILL_IO_ATTEMPTS, SkillToolOpenErrorKind,
+        fit_output_page, map_path_open_error, map_root_open_error,
+    };
     #[cfg(unix)]
     use machine_god_core::CancellationToken;
 
@@ -956,5 +963,17 @@ mod tests {
             .dispatch(&cancellation, || Ok::<_, rustix::io::Errno>(()))
             .unwrap_err();
         assert_eq!(error.code, "skill_resource_limit");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn freebsd_nofollow_symlink_error_is_rejected() {
+        assert_eq!(
+            map_root_open_error(rustix::io::Errno::MLINK).kind(),
+            SkillToolOpenErrorKind::InvalidFileType
+        );
+        let error = map_path_open_error(rustix::io::Errno::MLINK);
+        assert_eq!(error.code, "skill_path_rejected");
+        assert!(!error.retryable);
     }
 }
