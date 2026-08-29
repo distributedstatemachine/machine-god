@@ -618,9 +618,9 @@ preserve core's exact network authority while stably deduplicating admitted
 A/AAAA addresses in first-seen order before client construction and bounding
 truncated-DNS TCP connect by the configured connect timeout, cancellation, and
 any earlier overall deadline. Production and explicitly injected/custom
-reference-host composition paths each contain thirteen alphabetical tools;
-exactly twelve workspace-backed tools share the retained descriptor as one
-original plus eleven clones. Exact isolated production remediation component
+reference-host composition paths each use the canonical
+[tool catalog](native-reference-host.md#tool-catalog). Exact isolated production
+remediation component
 `9d793035422cd449c9160c7fccd62221382b5ac5`, tree
 `87c48e4a7cf1a7b057adbcef40de5a62d0aa35d6`, changes only native
 `web_fetch.rs`; core remains byte-unchanged. Exact isolated independent-
@@ -958,10 +958,11 @@ absolute no-worker-detach invariant and is exempt from its own adversarial
 review under the owner's instruction.
 The system launcher uses fixed `/` working directory and null stdio, makes its
 timeout decision at 30 seconds, and maps postspawn uncertainty to a fixed
-redacted result. Delivered reference-host composition registers `open_file`
-between `list_files` and `read_file`, producing twelve tools from one original
-retained workspace descriptor plus eleven clones. On macOS the catalog entry is
-present but execution returns unsupported before filesystem lookup or spawn.
+redacted result. `open_file`'s reference-host placement and retained-workspace
+allocation are recorded in the canonical
+[tool catalog](native-reference-host.md#tool-catalog). On macOS the catalog
+entry is present but execution returns unsupported before filesystem lookup or
+spawn.
 Formal cycle 3 rejected exact candidate
 `6815843ac2c8d7731ca6554e5a84772351def850`, tree
 `4a479b51ebdba49afb81a6827f1381d01ed75e52`, for two low findings: the
@@ -989,11 +990,12 @@ at 6/6 and feature benchmark `32738160725` at 2/2, retaining upstream artifact
 `9524219365` and bootstrap artifact `9524052760`. Exact main CI `32738798417`
 passed 6/6, and main benchmark `32738798415` passed 2/2 while retaining
 upstream artifact `9524461989` and bootstrap artifact `9524298408`. The current
-host has exactly twelve alphabetical tools using one retained descriptor plus
-eleven identity-preserving clones. This makes no product-performance or fx-
-equivalence claim. At that checkpoint, the final docs-only record was exempt
-from adversarial review under the user's instruction; its own exact feature and
-`main` workflows remained required and are reported below.
+host composition is recorded in the canonical
+[tool catalog](native-reference-host.md#tool-catalog). This makes no product-
+performance or fx-equivalence claim. At that checkpoint, the final docs-only
+record was exempt from adversarial review under the user's instruction; its
+own exact feature and `main` workflows remained required and are reported
+below.
 
 Final delivery-record SHA
 `762d70df106d40e59b599e18b1ac5c62f678927d`, tree

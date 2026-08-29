@@ -17,8 +17,9 @@ The candidate starts from exact delivered base
 The upstream behavior was inspected to understand its tool surface; the
 deliberate differences and deferrals below are normative. Production source,
 independently owned direct/engine/production-boundary evidence, core network
-serde evidence, and shared thirteen-tool production/custom reference-host
-composition are present.
+serde evidence, and the shared production/custom reference-host composition
+recorded in the canonical
+[tool catalog](native-reference-host.md#tool-catalog) are present.
 Pre-review gate record `0ba79c9ceacba9a986c217bdb3a659a380823676`,
 tree `5742e4084272120a4531e0d59f0199a5873f39d1`, passed the complete local
 Rust 1.94.1, integrity, dependency, baseline portability, WASI, and release-
@@ -193,11 +194,10 @@ FreeBSD/Windows default trees omit it, while `web-fetch-http` supplies the
 optional edge on those targets and includes the dependency on every supported
 non-WASM target. WASM trees omit it with or without the feature.
 
-Every production and explicitly injected/custom candidate reference-host
-composition contains thirteen alphabetical tools. Exactly twelve workspace-
-backed tools share one original retained workspace descriptor plus eleven
-identity-preserving clones; rootless `web_fetch` adds no descriptor. This slice
-adds no CLI surface.
+Every production and explicitly injected/custom reference-host composition
+uses the canonical [tool catalog](native-reference-host.md#tool-catalog).
+`web_fetch` remains rootless and adds no workspace descriptor. This slice adds
+no CLI surface.
 
 ## Model input and effect-free preparation
 
@@ -584,10 +584,9 @@ current state still said a new exact candidate was pending. The corrected
 contract stably deduplicates fully validated admitted addresses before client
 construction, makes the configured connect timeout govern DNS TCP replay
 subordinate to cancellation and any earlier overall deadline, and states that
-both production and explicitly injected/custom composition paths have thirteen
-alphabetical tools while exactly twelve workspace-backed tools share one
-original retained descriptor plus eleven clones. Exact isolated production
-remediation component
+both production and explicitly injected/custom composition paths use the
+canonical [tool catalog](native-reference-host.md#tool-catalog). Exact isolated
+production remediation component
 `9d793035422cd449c9160c7fccd62221382b5ac5`, tree
 `87c48e4a7cf1a7b057adbcef40de5a62d0aa35d6`, changes only native
 `web_fetch.rs`. Its exact focused checks passed 29 private, 14 direct, 13 HTTP,

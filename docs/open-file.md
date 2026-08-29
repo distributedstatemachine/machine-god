@@ -19,9 +19,11 @@ workflows validate only that frozen contract checkpoint at
 delivery, performance, or fx-equivalence evidence.
 
 Delivered source implements the core capability, native Linux tool,
-trusted launcher seam, unsupported-target behavior, tests, and twelve-tool host
-composition without changing dependencies, workflows, CLI behavior, benchmark
-workloads, or compatibility status. Formal review cycle 1 rejected exact
+trusted launcher seam, unsupported-target behavior, tests, and the reference-
+host composition recorded in the canonical
+[tool catalog](native-reference-host.md#tool-catalog), without changing
+dependencies, workflows, CLI behavior, benchmark workloads, or compatibility
+status. Formal review cycle 1 rejected exact
 candidate `79e65c19330181955a0c341d62ef39778a18d36d`, tree
 `481fd7c2968f32d3b51f82cbb46a1bd6c7edeb18`. Formal review cycle 2 rejected
 exact candidate `027ba3367eb0853fec828ed0900398c7b7458e71`, tree
@@ -378,28 +380,20 @@ application behavior.
 
 ## Host composition and compatibility boundary
 
-Before `open_file` delivery, the delivered base reference host contained
-exactly
-the eleven alphabetical tools: `copy_file`, `create_folder`, `delete_file`,
-`edit_file`, `file_info`, `glob_files`, `grep_files`, `list_files`,
-`read_file`, `rename_file`, and `write_file`, using the original retained
-descriptor plus ten identity-preserving clones.
-
-The delivered composition inserts `open_file` after
-`list_files` and before `read_file`, yielding exactly twelve alphabetical tools
-and using one original retained descriptor plus eleven identity-preserving
-clones. Both path-based and prepared-root reference-host constructors compose
-the same catalog and retained workspace identity. Formal cycle 5 rejected exact
-candidate `4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
+The canonical reference-host
+[tool catalog](native-reference-host.md#tool-catalog) defines `open_file`'s
+deterministic placement and the retained-workspace allocation for every
+constructor. Both path-based and prepared-root constructors compose the same
+catalog and retained workspace identity. Formal cycle 5 rejected exact candidate
+`4317ac61feb57b706b6a023d2b2518c10e140d69`, tree
 `90750911b26dc4eed9e54e73c17c11a6c5a12423`, for one low documentation-lineage
-finding, so this composition is reviewed but not delivered; `main` remains at
-eleven tools.
+finding, so this composition was reviewed but not delivered at that candidate.
 
 Exact cycle-6 candidate
 `b8fd0c2061e2bbd20704d9e9e0c49f6d8a89f9d6`, tree
 `07243b366f90366135ccbb1f8e146c71f7224f40`, is green with zero findings in all
-three fresh tracks. The twelve-tool composition is therefore review-green but
-is now delivered on `main`.
+three fresh tracks. The composition is therefore review-green and delivered on
+`main`.
 
 Pinned fx at `b1774fbf6c7602b503026f96f6e960e946c692ef` uses the same tool
 name and required `path` field, marks the operation approval-required,
@@ -518,12 +512,12 @@ upstream artifact `9524219365` and bootstrap artifact `9524052760`. Exact main
 CI `32738798417` passed 6/6, and main benchmark `32738798415` passed 2/2 while
 retaining upstream artifact `9524461989` and bootstrap artifact `9524298408`.
 Feature delivery, non-force fast-forward integration, and exact `main`
-workflows are complete. The current host has exactly twelve alphabetical tools
-using one retained descriptor plus eleven identity-preserving clones. This
-makes no product-performance or fx-equivalence claim. At that checkpoint, the
-final docs-only record was exempt from adversarial review under the user's
-instruction; its own exact feature and `main` workflows remained required and
-are reported below.
+workflows are complete. The delivered composition is recorded in the canonical
+[tool catalog](native-reference-host.md#tool-catalog). This makes no product-
+performance or fx-equivalence claim. At that checkpoint, the final docs-only
+record was exempt from adversarial review under the user's instruction; its
+own exact feature and `main` workflows remained required and are reported
+below.
 
 Final delivery-record SHA
 `762d70df106d40e59b599e18b1ac5c62f678927d`, tree
@@ -646,7 +640,8 @@ delivery checks, not a product-performance or fx-equivalence claim.
   permits remain charged through blocked callback completion; concurrent-call
   isolation.
 - [x] Candidate macOS active unsupported behavior, Linux cross-target warnings-
-  denied compilation, exact twelve-tool/eleven-clone composition, and no new
+  denied compilation, canonical reference-host
+  [tool catalog](native-reference-host.md#tool-catalog) composition, and no new
   dependency, workflow, CLI, benchmark, or unsafe-Rust source.
 - [x] Composed-remediation native Linux execution, FreeBSD/WASI and active WASI,
   dependency, pinned-compatibility, documentation, clean-diff, and freshly
