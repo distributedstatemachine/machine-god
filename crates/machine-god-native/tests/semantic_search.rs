@@ -298,6 +298,31 @@ fn query_and_path_bounds_are_byte_exact_and_direct_execution_revalidates_canonic
         )
         .unwrap_err(),
     );
+
+    let deep_path = std::iter::repeat_n("a", MAX_SEMANTIC_SEARCH_DEPTH + 1)
+        .collect::<Vec<_>>()
+        .join("/");
+    let prepared = tool
+        .prepare(call(json!({"query": "alpha", "path": deep_path})))
+        .unwrap();
+    let expected_capability = Capability::Filesystem {
+        access: FilesystemAccess::SearchContent,
+        path: deep_path.clone(),
+    };
+    assert_eq!(prepared.capability(), Some(&expected_capability));
+    assert_eq!(prepared.arguments(), &canonical("alpha", &deep_path));
+    assert_tool_error(
+        execute(
+            &tool,
+            canonical("alpha", &deep_path),
+            CancellationToken::new(),
+        )
+        .unwrap_err(),
+        ToolErrorKind::Unavailable,
+        "semantic_search_not_found",
+        "requested search root is unavailable",
+        false,
+    );
 }
 
 #[test]

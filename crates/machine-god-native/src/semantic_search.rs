@@ -380,16 +380,11 @@ fn normalize_relative_path(path: &str) -> Result<String, ToolError> {
         return Err(invalid_path());
     }
     let mut normalized = String::with_capacity(path.len());
-    let mut component_count = 0_usize;
     for component in path.split('/') {
         if component.is_empty() || component == "." {
             continue;
         }
         if component == ".." {
-            return Err(invalid_path());
-        }
-        component_count = component_count.checked_add(1).ok_or_else(invalid_path)?;
-        if component_count > MAX_SEMANTIC_SEARCH_DEPTH {
             return Err(invalid_path());
         }
         if !normalized.is_empty() {
