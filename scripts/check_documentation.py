@@ -19,6 +19,9 @@ START_MARKER = "<!-- canonical-live-status:start -->"
 END_MARKER = "<!-- canonical-live-status:end -->"
 MAX_PLAN_LINES = 600
 MAX_MARKDOWN_BYTES = 262_144
+MAX_EXPANDED_MARKDOWN_BYTES = 524_288
+MAX_MARKDOWN_FILES = 256
+MAX_MARKDOWN_TOTAL_BYTES = 4_194_304
 
 GOVERNED_OVERVIEWS = (
     Path("README.md"),
@@ -110,7 +113,8 @@ DELIVERY_LINEAGE_RE = re.compile(
 )
 NON_PLAN_LIVE_FIELD_RE = re.compile(
     r"^[ ]{0,3}(?:#{1,6}[ \t]+)?"
-    r"(Main CI|Main Benchmark evidence|Active branch|Active phase|Next gate):"
+    r"(Main CI|Main Benchmark evidence|Delivered main|Active branch|Active phase|"
+    r"Next gate):"
     r"[ \t]+\S",
     re.IGNORECASE,
 )
@@ -285,6 +289,7 @@ class MarkdownScan:
     link_markup: str
     fence_lines: int
     unclosed_fence: bool
+    expanded_overflow: bool = False
 
 
 @dataclass
@@ -295,33 +300,59 @@ class ValidationContext:
     errors: list[str]
     texts: dict[Path, str | None] = field(default_factory=dict)
     scans: dict[Path, MarkdownScan | None] = field(default_factory=dict)
+    total_bytes: int = 0
+    aggregate_exceeded: bool = False
 
     def read(self, path: Path) -> str | None:
         if path not in self.texts:
-            self.texts[path] = _read(path, self.root, self.errors)
+            result = _read(path, self.root, self.errors)
+            if result is None:
+                self.texts[path] = None
+            else:
+                text, byte_length = result
+                if self.total_bytes + byte_length > MAX_MARKDOWN_TOTAL_BYTES:
+                    if not self.aggregate_exceeded:
+                        self.errors.append(
+                            "documentation: aggregate Markdown input exceeds the "
+                            f"{MAX_MARKDOWN_TOTAL_BYTES}-byte ceiling"
+                        )
+                    self.aggregate_exceeded = True
+                    self.texts[path] = None
+                else:
+                    self.total_bytes += byte_length
+                    self.texts[path] = text
         return self.texts[path]
 
     def scan(self, path: Path) -> MarkdownScan | None:
         if path not in self.scans:
             text = self.read(path)
-            self.scans[path] = (
-                None if text is None else _scan_markdown_inert_blocks(text)
-            )
+            scan = None if text is None else _scan_markdown_inert_blocks(text)
+            if scan is not None and scan.expanded_overflow:
+                self.errors.append(
+                    f"{path.relative_to(self.root)}: tab-expanded Markdown exceeds "
+                    f"the {MAX_EXPANDED_MARKDOWN_BYTES}-byte ceiling"
+                )
+                scan = None
+            self.scans[path] = scan
         return self.scans[path]
 
 
 def markdown_files(root: Path) -> list[Path]:
-    """Return maintained Markdown files, excluding checkout/build state."""
+    """Return a bounded maintained Markdown inventory."""
 
     ignored_parts = {".bench", ".git", "target"}
-    return sorted(
-        path
-        for path in root.rglob("*.md")
-        if ignored_parts.isdisjoint(path.relative_to(root).parts)
-    )
+    files: list[Path] = []
+    for path in root.rglob("*.md"):
+        if ignored_parts.isdisjoint(path.relative_to(root).parts):
+            files.append(path)
+            if len(files) > MAX_MARKDOWN_FILES:
+                break
+    return sorted(files)
 
 
-def _read(path: Path, root: Path, errors: list[str]) -> str | None:
+def _read(
+    path: Path, root: Path, errors: list[str]
+) -> tuple[str, int] | None:
     try:
         with path.open("rb") as source:
             data = source.read(MAX_MARKDOWN_BYTES + 1)
@@ -331,7 +362,7 @@ def _read(path: Path, root: Path, errors: list[str]) -> str | None:
                 f"{MAX_MARKDOWN_BYTES}-byte Markdown ceiling"
             )
             return None
-        return data.decode("utf-8")
+        return data.decode("utf-8"), len(data)
     except (OSError, UnicodeError) as error:
         errors.append(f"{path.relative_to(root)}: cannot read UTF-8: {error}")
         return None
@@ -678,13 +709,36 @@ def _blank_for_links(value: str) -> str:
     return re.sub(r"[^\r\n]", " ", value)
 
 
+def _escaped_punctuation_mask(markup: str) -> bytearray:
+    """Mark ASCII punctuation escaped by an odd backslash run."""
+
+    escaped = bytearray(len(markup))
+    slash_run = 0
+    for index, token in enumerate(markup):
+        if token == "\\":
+            slash_run += 1
+            continue
+        if slash_run % 2 and token.isascii() and not token.isalnum():
+            escaped[index] = 1
+        slash_run = 0
+    return escaped
+
+
 def _scan_markdown_inert_blocks(source: str) -> MarkdownScan:
     """Project bounded Markdown once with ordered container ownership."""
 
     text = source.expandtabs(4)
+    if len(text.encode("utf-8")) > MAX_EXPANDED_MARKDOWN_BYTES:
+        return MarkdownScan("", "", "", 0, False, expanded_overflow=True)
     run_starts, run_ends, next_same_run, escaped_runs = _backtick_runs(text)
+    escaped_punctuation = _escaped_punctuation_mask(text)
     comment_starts = array(
-        "I", (match.start() for match in HTML_COMMENT_OPEN_RE.finditer(text))
+        "I",
+        (
+            match.start()
+            for match in HTML_COMMENT_OPEN_RE.finditer(text)
+            if not escaped_punctuation[match.start()]
+        ),
     )
     policy: list[str] = []
     links: list[str] = []
@@ -1307,15 +1361,7 @@ def _next_unescaped(markup: str, escaped: bytearray, token: str) -> array:
 def _link_syntax_index(markup: str) -> LinkSyntaxIndex:
     """Index escapes and bounded lookahead without rescanning suffixes."""
 
-    escaped = bytearray(len(markup))
-    slash_run = 0
-    for index, token in enumerate(markup):
-        if token == "\\":
-            slash_run += 1
-            continue
-        if slash_run % 2 and token.isascii() and not token.isalnum():
-            escaped[index] = 1
-        slash_run = 0
+    escaped = _escaped_punctuation_mask(markup)
 
     next_nonspace = array("i", [-1]) * (len(markup) + 1)
     nearest_nonspace = -1
@@ -1426,11 +1472,14 @@ def _inline_link_target(
             return None
         target = markup[target_start:cursor]
 
+    destination_end = cursor
     cursor = _skip_link_whitespace(syntax, cursor, len(markup))
     if cursor is None or cursor >= len(markup):
         return None
     if markup[cursor] == ")" and not syntax.escaped[cursor]:
         return target, cursor + 1
+    if cursor == destination_end:
+        return None
     title_end = _title_end(markup, syntax, cursor, len(markup))
     if title_end is None:
         return None
@@ -1461,10 +1510,8 @@ def _normalize_reference_label(label: str) -> str:
     return " ".join("".join(rendered).split()).casefold()
 
 
-def _reference_definition(
-    content: str,
-) -> tuple[str, str, bool] | None:
-    """Parse one single-line CommonMark reference definition."""
+def _reference_definition_label(content: str) -> tuple[str, int] | None:
+    """Parse the label and colon prefix of a reference definition."""
 
     cursor = len(content) - len(content.lstrip(" "))
     if cursor > 3 or cursor >= len(content) or content[cursor] != "[":
@@ -1489,7 +1536,18 @@ def _reference_definition(
     cursor += 1
     if not label or cursor >= len(content) or content[cursor] != ":":
         return None
-    cursor += 1
+    return label, cursor + 1
+
+
+def _reference_definition(
+    content: str,
+) -> tuple[str, str, bool] | None:
+    """Parse one complete single-line CommonMark reference definition."""
+
+    prefix = _reference_definition_label(content)
+    if prefix is None:
+        return None
+    label, cursor = prefix
     while cursor < len(content) and content[cursor] in " \t":
         cursor += 1
     if cursor >= len(content):
@@ -1539,10 +1597,13 @@ def _reference_definition(
             return None
         target = content[target_start:cursor]
 
+    destination_end = cursor
     while cursor < len(content) and content[cursor] in " \t":
         cursor += 1
     has_title = cursor < len(content)
     if has_title:
+        if cursor == destination_end:
+            return None
         delimiter = content[cursor]
         closer = {"\"": "\"", "'": "'", "(": ")"}.get(delimiter)
         if closer is None:
@@ -1564,6 +1625,16 @@ def _reference_definition(
         if content[cursor:].strip():
             return None
     return label, target, has_title
+
+
+def _reference_definition_prefix(content: str) -> str | None:
+    """Return a label whose destination must begin on the following line."""
+
+    prefix = _reference_definition_label(content)
+    if prefix is None:
+        return None
+    label, cursor = prefix
+    return label if not content[cursor:].strip(" \t") else None
 
 
 def _reference_title_line(content: str) -> bool:
@@ -1595,11 +1666,31 @@ def _reference_definitions(markup: str) -> tuple[dict[str, str], str]:
     chunks: list[str] = []
     ambient = EMPTY_CONTAINER
     pending_title_owner: ContainerState | None = None
+    pending_destination: tuple[ContainerState, str, int] | None = None
     for raw_line in markup.splitlines(keepends=True):
         content = raw_line.rstrip("\r\n")
         newline = raw_line[len(content) :]
         parsed = _parse_container_line(content, ambient)
         ambient = parsed.state
+        if pending_destination is not None:
+            owner, label, chunk_index = pending_destination
+            pending_destination = None
+            indentation = len(parsed.content) - len(parsed.content.lstrip(" "))
+            continuation = None
+            if parsed.path == owner.frames and indentation <= 3:
+                continuation = _reference_definition(
+                    "[continuation]: " + parsed.content[indentation:]
+                )
+            if continuation is not None:
+                _, target, has_title = continuation
+                definitions.setdefault(label, target)
+                prior_content = chunks[chunk_index].rstrip("\r\n")
+                prior_newline = chunks[chunk_index][len(prior_content) :]
+                chunks[chunk_index] = " " * len(prior_content) + prior_newline
+                chunks.append(" " * len(content) + newline)
+                if not has_title:
+                    pending_title_owner = parsed.state
+                continue
         if pending_title_owner is not None:
             same_owner = parsed.path == pending_title_owner.frames
             pending_title_owner = None
@@ -1607,14 +1698,17 @@ def _reference_definitions(markup: str) -> tuple[dict[str, str], str]:
                 chunks.append(" " * len(content) + newline)
                 continue
         definition = _reference_definition(parsed.content)
-        if definition is None:
-            chunks.append(raw_line)
+        if definition is not None:
+            label, target, has_title = definition
+            definitions.setdefault(label, target)
+            chunks.append(" " * len(content) + newline)
+            if not has_title:
+                pending_title_owner = parsed.state
             continue
-        label, target, has_title = definition
-        definitions.setdefault(label, target)
-        chunks.append(" " * len(content) + newline)
-        if not has_title:
-            pending_title_owner = parsed.state
+        prefix = _reference_definition_prefix(parsed.content)
+        chunks.append(raw_line)
+        if prefix is not None:
+            pending_destination = (parsed.state, prefix, len(chunks) - 1)
     return definitions, "".join(chunks)
 
 
@@ -1666,6 +1760,100 @@ def _without_indented_code(markup: str) -> str:
     return "".join(chunks)
 
 
+def _html_tag_end(markup: str, start: int) -> int | None:
+    """Return the end of one complete CommonMark open or closing tag."""
+
+    if start >= len(markup) or markup[start] != "<":
+        return None
+    cursor = start + 1
+    closing = cursor < len(markup) and markup[cursor] == "/"
+    if closing:
+        cursor += 1
+    name_start = cursor
+    if (
+        cursor >= len(markup)
+        or not markup[cursor].isascii()
+        or not markup[cursor].isalpha()
+    ):
+        return None
+    cursor += 1
+    while cursor < len(markup) and (
+        (markup[cursor].isascii() and markup[cursor].isalnum())
+        or markup[cursor] == "-"
+    ):
+        cursor += 1
+    if cursor == name_start:
+        return None
+
+    whitespace = " \t\r\n"
+    if closing:
+        while cursor < len(markup) and markup[cursor] in whitespace:
+            cursor += 1
+        return (
+            cursor + 1
+            if cursor < len(markup) and markup[cursor] == ">"
+            else None
+        )
+
+    while cursor < len(markup):
+        while cursor < len(markup) and markup[cursor] in whitespace:
+            cursor += 1
+        if cursor >= len(markup):
+            return None
+        if markup[cursor] == ">":
+            return cursor + 1
+        if markup.startswith("/>", cursor):
+            return cursor + 2
+        token = markup[cursor]
+        if not (
+            (token.isascii() and token.isalpha()) or token in "_:"
+        ):
+            return None
+        cursor += 1
+        while cursor < len(markup):
+            token = markup[cursor]
+            if (token.isascii() and token.isalnum()) or token in "_.:-":
+                cursor += 1
+            else:
+                break
+        while cursor < len(markup) and markup[cursor] in whitespace:
+            cursor += 1
+        if cursor >= len(markup) or markup[cursor] != "=":
+            continue
+        cursor += 1
+        while cursor < len(markup) and markup[cursor] in whitespace:
+            cursor += 1
+        if cursor >= len(markup):
+            return None
+        quote = markup[cursor] if markup[cursor] in "\"'" else None
+        if quote is not None:
+            cursor += 1
+            while cursor < len(markup) and markup[cursor] != quote:
+                cursor += 1
+            if cursor >= len(markup):
+                return None
+            cursor += 1
+            continue
+        value_start = cursor
+        while (
+            cursor < len(markup)
+            and markup[cursor] not in whitespace
+            and markup[cursor] not in "\"'=<>`"
+        ):
+            cursor += 1
+        if cursor == value_start:
+            return None
+    return None
+
+
+def _complete_type7_html_tag(content: str) -> bool:
+    indentation = len(content) - len(content.lstrip(" "))
+    if indentation > 3:
+        return False
+    end = _html_tag_end(content, indentation)
+    return end is not None and not content[end:].strip()
+
+
 def _without_html_blocks_for_links(markup: str) -> str:
     """Blank CommonMark HTML block contents where Markdown links are inert."""
 
@@ -1673,6 +1861,7 @@ def _without_html_blocks_for_links(markup: str) -> str:
     ambient = EMPTY_CONTAINER
     html_owner: ContainerState | None = None
     html_end: str | None = None
+    paragraph_open = False
     for raw_line in markup.splitlines(keepends=True):
         content = raw_line.rstrip("\r\n")
         newline = raw_line[len(content) :]
@@ -1685,6 +1874,7 @@ def _without_html_blocks_for_links(markup: str) -> str:
                 html_end = None
             elif html_end is None and not content.strip():
                 html_owner = None
+                paragraph_open = False
                 chunks.append(raw_line)
                 continue
             else:
@@ -1693,6 +1883,7 @@ def _without_html_blocks_for_links(markup: str) -> str:
                 if html_end is not None and html_end in candidate:
                     html_owner = None
                     html_end = None
+                    paragraph_open = False
                 continue
 
         parsed = _parse_container_line(content, ambient)
@@ -1700,8 +1891,18 @@ def _without_html_blocks_for_links(markup: str) -> str:
         candidate = parsed.content
         raw = HTML_RAW_BLOCK_RE.match(candidate)
         declaration = HTML_DECLARATION_BLOCK_RE.match(candidate)
-        if raw is None and declaration is None:
+        type_seven = not paragraph_open and _complete_type7_html_tag(candidate)
+        if raw is None and declaration is None and not type_seven:
             chunks.append(raw_line)
+            if not content.strip():
+                paragraph_open = False
+            else:
+                paragraph_open = not (
+                    _fence_opener(candidate) is not None
+                    or PARAGRAPH_ATX_RE.match(candidate) is not None
+                    or SETEXT_HEADING_RE.match(candidate) is not None
+                    or THEMATIC_BREAK_RE.match(candidate) is not None
+                )
             continue
 
         stripped = candidate.lstrip(" ")
@@ -1719,6 +1920,7 @@ def _without_html_blocks_for_links(markup: str) -> str:
             end_marker = ">"
 
         chunks.append(" " * len(content) + newline)
+        paragraph_open = False
         if end_marker is None:
             html_owner = parsed.state
         elif end_marker not in lowered:
@@ -1754,7 +1956,9 @@ def _markdown_link_targets(markup: str) -> Iterator[str]:
     opener_positions = array("I")
     opener_generations = array("I")
     opener_images = bytearray()
+    opener_in_images = bytearray()
     opener_nested = bytearray()
+    image_depth = 0
     generation = 0
     cursor = 0
     while cursor < len(markup):
@@ -1764,11 +1968,15 @@ def _markdown_link_targets(markup: str) -> Iterator[str]:
                 opener_nested[-1] = 1
             opener_positions.append(cursor)
             opener_generations.append(generation)
-            opener_images.append(
+            image = (
                 cursor > 0
                 and markup[cursor - 1] == "!"
                 and not syntax.escaped[cursor - 1]
             )
+            opener_images.append(image)
+            opener_in_images.append(image_depth > 0)
+            if image:
+                image_depth += 1
             opener_nested.append(0)
             cursor += 1
             continue
@@ -1783,6 +1991,9 @@ def _markdown_link_targets(markup: str) -> Iterator[str]:
         opener = opener_positions.pop()
         opener_generation = opener_generations.pop()
         image = bool(opener_images.pop())
+        in_image = bool(opener_in_images.pop())
+        if image:
+            image_depth -= 1
         nested_label = bool(opener_nested.pop())
         active = image or opener_generation == generation
         if cursor - opener - 1 > 999 or not active:
@@ -1794,9 +2005,9 @@ def _markdown_link_targets(markup: str) -> Iterator[str]:
             inline = _inline_link_target(markup, syntax, cursor + 1)
         if inline is not None:
             target, cursor = inline
-            if target:
+            if target and not in_image:
                 yield target
-            if not image:
+            if not image and not in_image:
                 generation += 1
             continue
 
@@ -1811,9 +2022,10 @@ def _markdown_link_targets(markup: str) -> Iterator[str]:
                 key = ""
             target = definitions.get(key)
             if target is not None:
-                yield target
+                if not in_image:
+                    yield target
                 cursor = suffix_end
-                if not image:
+                if not image and not in_image:
                     generation += 1
                 continue
             cursor = suffix_end
@@ -1827,8 +2039,9 @@ def _markdown_link_targets(markup: str) -> Iterator[str]:
             else None
         )
         if target is not None:
-            yield target
-            if not image:
+            if not in_image:
+                yield target
+            if not image and not in_image:
                 generation += 1
         cursor += 1
 
@@ -1860,46 +2073,12 @@ def _policy_html_tag_mask(
         if prose[cursor] != "<" or code[cursor] or escaped[cursor]:
             cursor += 1
             continue
-        end = cursor + 1
-        if end < len(prose) and prose[end] == "/":
-            end += 1
-        name_start = end
-        while end < len(prose) and (
-            prose[end].isalnum() or prose[end] in "-_"
-        ):
-            end += 1
-        if (
-            end == name_start
-            or not prose[name_start].isascii()
-            or not prose[name_start].isalpha()
-            or (
-                end < len(prose)
-                and prose[end] not in " \t\r\n/>"
-            )
-        ):
+        end = _html_tag_end(prose, cursor)
+        if end is None:
             cursor += 1
             continue
-
-        quote: str | None = None
-        while end < len(prose):
-            token = prose[end]
-            if quote is not None:
-                if token == quote:
-                    quote = None
-            elif token in "\"'":
-                quote = token
-            elif token == ">":
-                end += 1
-                mask[cursor:end] = b"\x01" * (end - cursor)
-                break
-            elif token == "<" or (
-                token in "\r\n"
-                and end + 1 < len(prose)
-                and prose[end + 1] in "\r\n"
-            ):
-                break
-            end += 1
-        cursor = max(cursor + 1, end)
+        mask[cursor:end] = b"\x01" * (end - cursor)
+        cursor = end
     return mask
 
 
@@ -2009,10 +2188,17 @@ def _normalize_policy_markup(prose: str) -> str:
             generation += 1
         cursor = syntax_end
 
-    delimiter_stacks: dict[str, array] = {}
+    delimiter_stacks: dict[str, tuple[array, array, bytearray]] = {}
     cursor = 0
     line_has_content = False
     while cursor < len(prose):
+        if (
+            prose[cursor] == "\r"
+            and cursor + 1 < len(prose)
+            and prose[cursor + 1] == "\n"
+        ):
+            cursor += 1
+            continue
         if prose[cursor] in "\r\n":
             if not line_has_content:
                 delimiter_stacks.clear()
@@ -2038,26 +2224,59 @@ def _normalize_policy_markup(prose: str) -> str:
             run_end < len(prose)
             and prose[run_end] == marker
             and not code[run_end]
+            and not html_tags[run_end]
+            and not removed[run_end]
             and not syntax.escaped[run_end]
         ):
             run_end += 1
-        if marker == "~" and run_end - cursor < 2:
+        run_length = run_end - cursor
+        if marker == "~" and run_length < 2:
             cursor = run_end
             continue
-        token = prose[cursor:run_end]
         can_open, can_close = _delimiter_flanking(prose, cursor, run_end)
         if marker == "_":
             before = prose[cursor - 1] if cursor else "\n"
             after = prose[run_end] if run_end < len(prose) else "\n"
-            can_open = can_open and (not can_close or not before.isalnum())
-            can_close = can_close and (not can_open or not after.isalnum())
-        stack = delimiter_stacks.setdefault(token, array("I"))
-        if can_close and stack:
-            opener = stack.pop()
-            removed[opener : opener + len(token)] = b"\x01" * len(token)
-            removed[cursor:run_end] = b"\x01" * (run_end - cursor)
-        elif can_open:
-            stack.append(cursor)
+            raw_open, raw_close = can_open, can_close
+            can_open = raw_open and (not raw_close or not before.isalnum())
+            can_close = raw_close and (not raw_open or not after.isalnum())
+        starts, lengths, closes = delimiter_stacks.setdefault(
+            marker, (array("I"), array("I"), bytearray())
+        )
+        remaining = run_length
+        consumed = 0
+        while can_close and remaining and starts:
+            opener_length = lengths[-1]
+            if marker == "~" and (remaining < 2 or opener_length < 2):
+                break
+            if (
+                marker in "*_"
+                and (closes[-1] or can_open)
+                and (opener_length + remaining) % 3 == 0
+                and (
+                    opener_length % 3 != 0
+                    or remaining % 3 != 0
+                )
+            ):
+                break
+            use = 2 if opener_length >= 2 and remaining >= 2 else 1
+            if marker == "~":
+                use = 2
+            opener = starts[-1] + opener_length - use
+            removed[opener : opener + use] = b"\x01" * use
+            closer = cursor + consumed
+            removed[closer : closer + use] = b"\x01" * use
+            lengths[-1] -= use
+            remaining -= use
+            consumed += use
+            if lengths[-1] == 0:
+                starts.pop()
+                lengths.pop()
+                closes.pop()
+        if can_open and (remaining >= 2 if marker == "~" else remaining > 0):
+            starts.append(run_end - remaining)
+            lengths.append(remaining)
+            closes.append(can_close)
         cursor = run_end
 
     rendered: list[str] = []
@@ -2098,7 +2317,10 @@ def _relative_link_target(raw_target: str) -> str | None:
             cursor += 1
         rendered.append(target[cursor])
         cursor += 1
-    target = unquote("".join(rendered))
+    target = HTML_ENTITY_RE.sub(
+        lambda match: unescape_html(match.group(0)), "".join(rendered)
+    )
+    target = unquote(target)
     if target.startswith("#"):
         return None
     parsed = urlsplit(target)
@@ -2165,6 +2387,12 @@ def validate_repository(root: Path) -> tuple[list[str], DocumentationStats]:
     errors: list[str] = []
     context = ValidationContext(root, errors)
     files = markdown_files(root)
+    if len(files) > MAX_MARKDOWN_FILES:
+        errors.append(
+            "documentation: maintained Markdown file count exceeds the "
+            f"{MAX_MARKDOWN_FILES}-file ceiling"
+        )
+        return errors, DocumentationStats(markdown_files=len(files))
     _validate_live_status(context, files)
     _validate_live_ledger_ownership(context, files)
     _validate_reference_host_inventory(context, files)

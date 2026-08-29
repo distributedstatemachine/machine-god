@@ -182,6 +182,7 @@ class DocumentationPolicyTests(unittest.TestCase):
         payload = (
             "Main CI: `123` (`GREEN`)\n\n"
             "- Main Benchmark evidence: pending\n\n"
+            "Delivered main: pending\n\n"
             "> - > Active branch: `agent/m05-other`\n\n"
             "## Active phase: implementing memory\n\n"
             "1. Next gate: push main\n"
@@ -198,6 +199,7 @@ class DocumentationPolicyTests(unittest.TestCase):
             for field in (
                 "Main CI",
                 "Main Benchmark evidence",
+                "Delivered main",
                 "Active branch",
                 "Active phase",
                 "Next gate",
@@ -555,6 +557,23 @@ class DocumentationPolicyTests(unittest.TestCase):
                 "docs/native-reference-host.md#tool-catalog",
                 errors,
             )
+
+    def test_escaped_html_comment_opener_remains_rendered(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            relative = Path("docs/tool-contract.md")
+            (root / relative).write_text(
+                "\\<!-- NativeReferenceHost has nineteen tools. "
+                "[broken](missing.md) -->\n",
+                encoding="utf-8",
+            )
+
+            errors, _ = check_documentation.validate_repository(root)
+            rendered = "\n".join(errors)
+
+            self.assertIn("reference-host inventory counts belong only", rendered)
+            self.assertIn("missing relative link target: missing.md", rendered)
 
     def test_multiline_code_span_and_unmatched_tick_preserve_comment_semantics(
         self,
@@ -980,6 +999,7 @@ class DocumentationPolicyTests(unittest.TestCase):
             ("[x](missing.md \"title\")", ["missing.md"]),
             ("[x](missing.md 'title')", ["missing.md"]),
             ("[x](missing.md (title))", ["missing.md"]),
+            ("[x](<foo.md>\"title\")", []),
             ("[x](missing.md\n\n\"title\")", []),
             ("[x](missing.md \"multi\n\nline\")", []),
             ("[x](missing-eof.md", []),
@@ -1013,10 +1033,20 @@ class DocumentationPolicyTests(unittest.TestCase):
             "dir/a b.md",
             check_documentation._relative_link_target(r"<dir/a\ b.md>"),
         )
+        self.assertIsNone(
+            check_documentation._relative_link_target(
+                "https&#58;//example.invalid/path"
+            )
+        )
+        self.assertEqual(
+            "foo&bar.md",
+            check_documentation._relative_link_target("foo&amp;bar.md"),
+        )
 
     def test_reference_style_relative_links_are_validated(self) -> None:
         payloads = (
             "[real][key]\n\n[key]: missing-full.md\n",
+            "[real][key]\n\n[key]:\n  missing-multiline.md\n",
             "[collapsed][]\n\n[collapsed]: missing-collapsed.md\n",
             "[shortcut]\n\n[shortcut]: missing-shortcut.md\n",
             "![image][asset]\n\n[asset]: missing-image.png\n",
@@ -1048,16 +1078,34 @@ class DocumentationPolicyTests(unittest.TestCase):
             ["missing.md"],
             list(check_documentation._markdown_link_targets(markup)),
         )
+        self.assertEqual(
+            [],
+            list(
+                check_documentation._markdown_link_targets(
+                    "[real][key]\n\n[key]: <ignored.md>\"title\"\n"
+                )
+            ),
+        )
 
     def test_html_block_markdown_links_are_inert(self) -> None:
         markup = (
             "<div>\n[raw](ignored-one.md)\n</div>\n\n"
             "<script>[raw](ignored-two.md)</script>\n"
+            "<x-widget data-kind='demo'>\n"
+            "[raw](ignored-three.md)\n\n"
             "[real](checked.md)\n"
         )
 
         self.assertEqual(
             ["checked.md"],
+            list(check_documentation._markdown_link_targets(markup)),
+        )
+
+    def test_links_nested_in_image_alt_text_are_not_rendered(self) -> None:
+        markup = "![[inner](ignored.md)](image.png)"
+
+        self.assertEqual(
+            ["image.png"],
             list(check_documentation._markdown_link_targets(markup)),
         )
 
@@ -1123,6 +1171,15 @@ class DocumentationPolicyTests(unittest.TestCase):
             self.assertIn("canonical live-status field 'Active branch'", rendered)
             self.assertIn("live status header", rendered)
             self.assertIn("reference-host inventory counts belong only", rendered)
+
+    def test_classifier_pairs_mixed_emphasis_runs(self) -> None:
+        prose = check_documentation._normalize_policy_markup(
+            "**Main *CI:*** pending\n"
+            "Delivered **slices: *999***\r\n"
+        )
+
+        self.assertIn("Main CI: pending", prose)
+        self.assertIn("Delivered slices: 999", prose)
 
     def test_classifier_treats_indented_code_as_inert(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1251,6 +1308,43 @@ class DocumentationPolicyTests(unittest.TestCase):
                 ],
                 errors,
             )
+
+    def test_repository_wide_documentation_bounds_fail_closed(self) -> None:
+        cases = (
+            (
+                "files",
+                "MAX_MARKDOWN_FILES",
+                14,
+                "maintained Markdown file count exceeds",
+            ),
+            (
+                "aggregate bytes",
+                "MAX_MARKDOWN_TOTAL_BYTES",
+                1,
+                "aggregate Markdown input exceeds",
+            ),
+            (
+                "expanded bytes",
+                "MAX_EXPANDED_MARKDOWN_BYTES",
+                1,
+                "tab-expanded Markdown exceeds",
+            ),
+        )
+        for name, constant, value, expected in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_minimal_repository(root)
+                original = getattr(check_documentation, constant)
+                setattr(check_documentation, constant, value)
+                try:
+                    errors, _ = check_documentation.validate_repository(root)
+                finally:
+                    setattr(check_documentation, constant, original)
+
+                self.assertTrue(
+                    any(expected in error for error in errors),
+                    "\n".join(errors),
+                )
 
     def test_validation_scans_each_markdown_file_once(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

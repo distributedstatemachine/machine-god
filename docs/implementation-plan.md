@@ -244,9 +244,11 @@ regression/delivery claim unless a milestone explicitly promotes it.
   comments and inline code, raw HTML boundaries, and ATX/Setext headings. Compact
   forward indexes recognize only complete escaped, nested, inline, image, and
   reference-link syntax without suffix rescans, keeping hostile input linear in
-  the 256 KiB per-file ceiling. Reserved live-status field labels are rejected
-  outside this plan. Each maintained Markdown file is read/scanned once per
-  validation; the checker prints current-run inventory but never persists it.
+  the 256 KiB raw and 512 KiB expanded per-file ceilings. The maintained corpus
+  is capped at 256 files and 4 MiB of raw Markdown, so cached projections remain
+  repository-bounded. Reserved live-status field labels are rejected outside
+  this plan. Each maintained Markdown file is read/scanned once per validation;
+  the checker prints current-run inventory but never persists it.
 - Compact this plan after every five delivered slices or whenever it exceeds
   600 lines. Keep the live block, milestone state, compact slice inventory,
   remaining boundary, and gates; move cycle detail to review ledgers.
