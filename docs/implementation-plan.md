@@ -25,9 +25,9 @@ input; it is not a machine-god product language or runtime dependency.
 - Delivered main: `ea315a5c8fd521773f948c922fb0ae4831f1eaa4`
 - Main CI: `33221912386` (`GREEN`)
 - Main Benchmark evidence: `33221912387` (`GREEN`)
-- Active branch: `agent/m03-session-docs-consolidation`
-- Active phase: `bounded session contract consolidation and single-source checker coverage after delivered slice 38`
-- Next gate: `land the documentation-only consolidation through exact remote gates, clean every iteration worktree, then begin the bounded M05 semantic_search tool slice`
+- Active branch: `agent/m05-semantic-search`
+- Active phase: `bounded M05 semantic_search tool implementation after delivered slice 38`
+- Next gate: `freeze one exact semantic_search behavior SHA after local gates, close three fresh adversarial review tracks, then pass exact feature and main CI plus Benchmark evidence`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
