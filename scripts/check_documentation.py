@@ -6,7 +6,8 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from dataclasses import dataclass
+from array import array
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -15,6 +16,7 @@ PLAN_PATH = Path("docs/implementation-plan.md")
 START_MARKER = "<!-- canonical-live-status:start -->"
 END_MARKER = "<!-- canonical-live-status:end -->"
 MAX_PLAN_LINES = 600
+MAX_MARKDOWN_BYTES = 262_144
 
 GOVERNED_OVERVIEWS = (
     Path("README.md"),
@@ -45,6 +47,7 @@ REQUIRED_LIVE_FIELDS = {
 MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\(\s*(<[^>]+>|[^)\s]+)")
 FENCE_OPEN_RE = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})(.*)$")
 FENCE_CLOSE_RE = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})[ \t]*$")
+BLOCK_QUOTE_PREFIX_RE = re.compile(r"[ ]{0,3}>[ \t]?")
 BACKTICK_RUN_RE = re.compile(r"`+")
 HTML_COMMENT_OPEN_RE = re.compile(r"<!--")
 ACTIONS_RUN_ID_RE = re.compile(
@@ -98,7 +101,9 @@ INVENTORY_COUNT_NOUN_PATTERN = (
     rf"(?:values?|objects?)\b|"
     rf"\b{COUNT_WORD_RE}\s+"
     rf"(?:[A-Za-z][A-Za-z0-9_-]*\s+){{0,5}}"
-    rf"(?:tools?(?!\s+(?:calls?|catalog|events?|outputs?|results?|schemas?|specs?)\b)|"
+    rf"(?:tools?(?=\s*(?:$|[.,;:!?)]+|\b(?:are|is|were|was|that|which|who|"
+    rf"run|execute|remain|exposed|registered|provided|installed|owned|supplied|"
+    rf"listed|share|shares|shared|make|makes|made|use|uses|used|in|across)\b))|"
     rf"entries|clones?|built-ins?)\b|"
     rf"\b{COUNT_WORD_RE}\s+tool\s+(?:schemas?|specs?)\b"
 )
@@ -139,7 +144,8 @@ INVENTORY_VERB_RE = re.compile(
     re.IGNORECASE,
 )
 OPERATIONAL_VERB_RE = re.compile(
-    r"\b(?:accepts?|allows?|permits?|batches?|executes?|runs?|schedules?|queues?)\b",
+    r"\b(?:accepts?|allows?|permits?|batches?|executes?|runs?|schedules?|queues?|"
+    r"records?)\b",
     re.IGNORECASE,
 )
 OPERATIONAL_MODAL_AFTER_RE = re.compile(
@@ -147,7 +153,7 @@ OPERATIONAL_MODAL_AFTER_RE = re.compile(
     re.IGNORECASE,
 )
 STRONG_OPERATIONAL_AFTER_RE = re.compile(
-    r"\b(?:per\s+(?:call|invocation|turn|round|request|batch)|"
+    r"\b(?:per\s+[A-Za-z][A-Za-z-]*|"
     r"for\s+each\s+(?:supplied\s+)?Waker|"
     r"while\s+(?:a\s+)?calls?\s+is\s+active)\b",
     re.IGNORECASE,
@@ -163,6 +169,19 @@ INVENTORY_TOTAL_RE = re.compile(
     rf"\b(?:register(?:s|ed)?|expos(?:e|es|ed)|include(?:s|d)?|"
     rf"provid(?:e|es|ed)|contain(?:s|ed)?|has)\s+"
     rf"a\s+total\s+of\s+{COUNT_WORD_RE}\b",
+    re.IGNORECASE,
+)
+INVENTORY_BARE_COUNT_RE = re.compile(
+    rf"\b(?:register(?:s|ed)?|expos(?:e|es|ed)|include(?:s|d)?|"
+    rf"provid(?:e|es|ed)|contain(?:s|ed)?|has)\s+"
+    rf"(?:exactly\s+)?{COUNT_WORD_RE}(?=\s*(?:$|[.,;!?]))",
+    re.IGNORECASE,
+)
+INVENTORY_NUMBER_OF_RE = re.compile(
+    rf"\bnumber\s+of\s+(?:tools?(?=\s+(?:is|was|are|were|exposed|registered|"
+    rf"provided|installed|owned|supplied|listed|in|across)\b)|entries|built-ins?|"
+    rf"ToolSpec\s+(?:values?|objects?))"
+    rf"\b[^.!?]{{0,120}}\b(?:is|was|equals?|totals?)\s+{COUNT_WORD_RE}\b",
     re.IGNORECASE,
 )
 REFERENCE_HOST_INVENTORY_SHORTHAND_RE = re.compile(
@@ -192,7 +211,8 @@ SETEXT_HEADING_RE = re.compile(r"^[ ]{0,3}(=+|-+)[ \t]*$")
 CLAUSE_SPLIT_RE = re.compile(r"\s+(?:and|but|whereas)\s+|\s*;\s*", re.IGNORECASE)
 SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 SENTENCE_CONTEXT_RE = re.compile(
-    r"^\s*(?:It|Its|This\s+(?:host|catalog|composition)|"
+    r"^\s*(?:(?:However|Additionally|Therefore|Consequently|Moreover),?\s+)?"
+    r"(?:It|Its|This\s+(?:host|catalog|composition)|"
     r"The\s+(?:host|catalog|composition))\b",
     re.IGNORECASE,
 )
@@ -205,6 +225,29 @@ class DocumentationStats:
     fence_lines: int = 0
     relative_links: int = 0
     unique_relative_targets: int = 0
+
+
+@dataclass
+class ValidationContext:
+    """Cache bounded text and one inert-block scan per maintained file."""
+
+    root: Path
+    errors: list[str]
+    texts: dict[Path, str | None] = field(default_factory=dict)
+    scans: dict[Path, tuple[str, int, bool] | None] = field(default_factory=dict)
+
+    def read(self, path: Path) -> str | None:
+        if path not in self.texts:
+            self.texts[path] = _read(path, self.root, self.errors)
+        return self.texts[path]
+
+    def scan(self, path: Path) -> tuple[str, int, bool] | None:
+        if path not in self.scans:
+            text = self.read(path)
+            self.scans[path] = (
+                None if text is None else _scan_markdown_inert_blocks(text)
+            )
+        return self.scans[path]
 
 
 def markdown_files(root: Path) -> list[Path]:
@@ -220,15 +263,25 @@ def markdown_files(root: Path) -> list[Path]:
 
 def _read(path: Path, root: Path, errors: list[str]) -> str | None:
     try:
-        return path.read_text(encoding="utf-8")
+        with path.open("rb") as source:
+            data = source.read(MAX_MARKDOWN_BYTES + 1)
+        if len(data) > MAX_MARKDOWN_BYTES:
+            errors.append(
+                f"{path.relative_to(root)}: exceeds the "
+                f"{MAX_MARKDOWN_BYTES}-byte Markdown ceiling"
+            )
+            return None
+        return data.decode("utf-8")
     except (OSError, UnicodeError) as error:
         errors.append(f"{path.relative_to(root)}: cannot read UTF-8: {error}")
         return None
 
 
-def _validate_live_status(root: Path, files: list[Path], errors: list[str]) -> None:
+def _validate_live_status(context: ValidationContext, files: list[Path]) -> None:
+    root = context.root
+    errors = context.errors
     plan = root / PLAN_PATH
-    text = _read(plan, root, errors)
+    text = context.read(plan)
     if text is None:
         return
 
@@ -240,7 +293,7 @@ def _validate_live_status(root: Path, files: list[Path], errors: list[str]) -> N
 
     marker_locations: dict[str, list[Path]] = {START_MARKER: [], END_MARKER: []}
     for path in files:
-        candidate = _read(path, root, errors)
+        candidate = context.read(path)
         if candidate is None:
             continue
         for marker in marker_locations:
@@ -320,30 +373,66 @@ def _is_fence_closer(line: str, open_fence: tuple[str, int]) -> bool:
     return token[0] == open_fence[0] and len(token) >= open_fence[1]
 
 
-def _backtick_runs(text: str) -> tuple[list[tuple[int, int, int]], list[int | None]]:
-    """Index exact backtick runs and their next equal-length run."""
+def _block_quote_content(line: str) -> tuple[int, int, str]:
+    """Return block-quote depth, content offset, and container-free content."""
 
-    runs = [
-        (match.start(), match.end(), match.end() - match.start())
-        for match in BACKTICK_RUN_RE.finditer(text)
-    ]
-    next_same: list[int | None] = [None] * len(runs)
-    nearest: dict[int, int] = {}
-    for index in range(len(runs) - 1, -1, -1):
-        length = runs[index][2]
-        next_same[index] = nearest.get(length)
-        nearest[length] = index
+    depth = 0
+    cursor = 0
+    while True:
+        match = BLOCK_QUOTE_PREFIX_RE.match(line, cursor)
+        if match is None:
+            break
+        depth += 1
+        cursor = match.end()
+    return depth, cursor, line[cursor:]
 
-    return runs, next_same
+
+def _backtick_runs(text: str) -> tuple[array, array, array]:
+    """Index paragraph-local exact backtick runs in compact numeric arrays."""
+
+    starts = array("I")
+    ends = array("I")
+    next_same = array("i")
+
+    def add_segment(segment_start: int, segment_end: int) -> None:
+        first_index = len(starts)
+        for match in BACKTICK_RUN_RE.finditer(text, segment_start, segment_end):
+            starts.append(match.start())
+            ends.append(match.end())
+            next_same.append(-1)
+        nearest: dict[int, int] = {}
+        for index in range(len(starts) - 1, first_index - 1, -1):
+            length = ends[index] - starts[index]
+            next_same[index] = nearest.get(length, -1)
+            nearest[length] = index
+
+    segment_start = 0
+    offset = 0
+    for raw_line in text.splitlines(keepends=True):
+        content = raw_line.rstrip("\r\n")
+        line_start = offset
+        offset += len(raw_line)
+        _, _, block_content = _block_quote_content(content)
+        is_block_boundary = (
+            not content.strip()
+            or _fence_opener(block_content) is not None
+            or FENCE_CLOSE_RE.match(block_content) is not None
+        )
+        if is_block_boundary:
+            add_segment(segment_start, line_start)
+            segment_start = offset
+    add_segment(segment_start, len(text))
+    return starts, ends, next_same
 
 
 def _scan_markdown_inert_blocks(text: str) -> tuple[str, int, bool]:
     """Strip fences/comments with linear, shared Markdown state."""
 
-    backtick_runs, next_same_run = _backtick_runs(text)
+    run_starts, run_ends, next_same_run = _backtick_runs(text)
     comment_starts = [match.start() for match in HTML_COMMENT_OPEN_RE.finditer(text)]
     prose: list[str] = []
-    open_fence: tuple[str, int] | None = None
+    open_fence: tuple[str, int, int] | None = None
+    unclosed_fence = False
     in_comment = False
     fence_lines = 0
     run_index = 0
@@ -359,8 +448,8 @@ def _scan_markdown_inert_blocks(text: str) -> tuple[str, int, bool]:
         offset += len(raw_line)
 
         while (
-            run_index < len(backtick_runs)
-            and backtick_runs[run_index][1] <= line_start
+            run_index < len(run_starts)
+            and run_ends[run_index] <= line_start
         ):
             run_index += 1
         while (
@@ -369,29 +458,40 @@ def _scan_markdown_inert_blocks(text: str) -> tuple[str, int, bool]:
         ):
             comment_index += 1
 
+        quote_depth, _, block_content = _block_quote_content(content)
         if open_fence is not None:
-            if _is_fence_closer(content, open_fence):
+            required_quote_depth = open_fence[2]
+            if required_quote_depth > 0 and quote_depth < required_quote_depth:
+                unclosed_fence = True
                 open_fence = None
-                fence_lines += 1
-            while (
-                run_index < len(backtick_runs)
-                and backtick_runs[run_index][0] < line_end
-            ):
-                run_index += 1
-            prose.append(newline)
-            continue
+            else:
+                if (
+                    quote_depth == required_quote_depth
+                    and _is_fence_closer(
+                        block_content, (open_fence[0], open_fence[1])
+                    )
+                ):
+                    open_fence = None
+                    fence_lines += 1
+                while (
+                    run_index < len(run_starts)
+                    and run_starts[run_index] < line_end
+                ):
+                    run_index += 1
+                prose.append(newline)
+                continue
 
         if code_span_end is not None and code_span_end <= line_start:
             code_span_end = None
         continues_code_span = code_span_end is not None
         if not in_comment and not continues_code_span:
-            opener = _fence_opener(content)
+            opener = _fence_opener(block_content)
             if opener is not None:
-                open_fence = opener
+                open_fence = (opener[0], opener[1], quote_depth)
                 fence_lines += 1
                 while (
-                    run_index < len(backtick_runs)
-                    and backtick_runs[run_index][0] < line_end
+                    run_index < len(run_starts)
+                    and run_starts[run_index] < line_end
                 ):
                     run_index += 1
                 prose.append(newline)
@@ -417,8 +517,8 @@ def _scan_markdown_inert_blocks(text: str) -> tuple[str, int, bool]:
                 continue
 
             while (
-                run_index < len(backtick_runs)
-                and backtick_runs[run_index][1] <= cursor
+                run_index < len(run_starts)
+                and run_ends[run_index] <= cursor
             ):
                 run_index += 1
             while (
@@ -427,8 +527,11 @@ def _scan_markdown_inert_blocks(text: str) -> tuple[str, int, bool]:
             ):
                 comment_index += 1
 
-            run = backtick_runs[run_index] if run_index < len(backtick_runs) else None
-            run_start = run[0] if run is not None and run[0] < line_end else line_end
+            run_start = (
+                run_starts[run_index]
+                if run_index < len(run_starts) and run_starts[run_index] < line_end
+                else line_end
+            )
             comment_start = (
                 comment_starts[comment_index]
                 if comment_index < len(comment_starts)
@@ -436,13 +539,13 @@ def _scan_markdown_inert_blocks(text: str) -> tuple[str, int, bool]:
                 else line_end
             )
 
-            if run_start < comment_start and run is not None:
+            if run_start < comment_start and run_index < len(run_starts):
                 close_index = next_same_run[run_index]
-                if close_index is None:
-                    segment_end = run[1]
+                if close_index < 0:
+                    segment_end = run_ends[run_index]
                     run_index += 1
                 else:
-                    code_span_end = backtick_runs[close_index][1]
+                    code_span_end = run_ends[close_index]
                     run_index = close_index + 1
                     segment_end = min(code_span_end, line_end)
                 visible.append(text[cursor:segment_end])
@@ -462,7 +565,7 @@ def _scan_markdown_inert_blocks(text: str) -> tuple[str, int, bool]:
 
         prose.append("".join(visible) + newline)
 
-    return "".join(prose), fence_lines, open_fence is not None
+    return "".join(prose), fence_lines, unclosed_fence or open_fence is not None
 
 
 def _prose_without_fenced_blocks(text: str) -> str:
@@ -504,13 +607,15 @@ def _without_unique_markdown_section(text: str, title: str) -> tuple[str, int]:
     return "\n".join(lines), 1
 
 
-def _validate_governed_overviews(root: Path, errors: list[str]) -> None:
+def _validate_governed_overviews(context: ValidationContext) -> None:
+    root = context.root
+    errors = context.errors
     for relative in GOVERNED_OVERVIEWS:
         path = root / relative
-        text = _read(path, root, errors)
-        if text is None:
+        scan = context.scan(path)
+        if scan is None:
             continue
-        prose = _prose_without_fenced_blocks(text)
+        prose = scan[0]
         if ACTIONS_RUN_ID_RE.search(prose):
             errors.append(f"{relative}: must not contain GitHub Actions run IDs")
         if DELIVERED_COUNT_RE.search(prose):
@@ -524,10 +629,12 @@ def _validate_governed_overviews(root: Path, errors: list[str]) -> None:
 
 
 def _validate_reference_host_inventory(
-    root: Path, files: list[Path], errors: list[str]
+    context: ValidationContext, files: list[Path]
 ) -> None:
     """Keep mutable reference-host inventory facts in their canonical contract."""
 
+    root = context.root
+    errors = context.errors
     for path in files:
         relative = path.relative_to(root)
         if relative in REFERENCE_HOST_INVENTORY_EXEMPTIONS:
@@ -535,10 +642,10 @@ def _validate_reference_host_inventory(
         if len(relative.parts) >= 2 and relative.parts[:2] == ("docs", "reviews"):
             continue
 
-        text = _read(path, root, errors)
-        if text is None:
+        scan = context.scan(path)
+        if scan is None:
             continue
-        prose = _prose_without_fenced_blocks(text)
+        prose = scan[0]
         if relative == REFERENCE_HOST_CONTRACT_PATH:
             prose, section_count = _without_unique_markdown_section(
                 prose, "Tool catalog"
@@ -699,12 +806,15 @@ def _contains_reference_host_inventory(
                 return True
 
             if has_host_context or has_catalog_context:
-                for total in INVENTORY_TOTAL_RE.finditer(clause):
-                    after = clause[
-                        total.end() : min(len(clause), total.end() + 120)
-                    ].split(",", 1)[0]
-                    if STRONG_OPERATIONAL_AFTER_RE.search(after) is None:
-                        return True
+                if INVENTORY_NUMBER_OF_RE.search(clause) is not None:
+                    return True
+                for pattern in (INVENTORY_TOTAL_RE, INVENTORY_BARE_COUNT_RE):
+                    for total in pattern.finditer(clause):
+                        after = clause[
+                            total.end() : min(len(clause), total.end() + 120)
+                        ].split(",", 1)[0]
+                        if STRONG_OPERATIONAL_AFTER_RE.search(after) is None:
+                            return True
 
             has_count = INVENTORY_COUNT_TOKEN_RE.search(clause) is not None
             has_catalog_size = re.search(
@@ -764,18 +874,21 @@ def _relative_link_target(raw_target: str) -> str | None:
 
 
 def _validate_markdown(
-    root: Path, files: list[Path], errors: list[str]
+    context: ValidationContext, files: list[Path]
 ) -> DocumentationStats:
+    root = context.root
+    errors = context.errors
     fence_lines = 0
     relative_links = 0
     unique_targets: set[Path] = set()
 
     for path in files:
-        text = _read(path, root, errors)
-        if text is None:
+        text = context.read(path)
+        scan = context.scan(path)
+        if text is None or scan is None:
             continue
 
-        _, file_fence_lines, unclosed_fence = _scan_markdown_inert_blocks(text)
+        _, file_fence_lines, unclosed_fence = scan
         fence_lines += file_fence_lines
         if unclosed_fence:
             errors.append(f"{path.relative_to(root)}: unclosed Markdown fence")
@@ -810,11 +923,12 @@ def _validate_markdown(
 def validate_repository(root: Path) -> tuple[list[str], DocumentationStats]:
     root = root.resolve()
     errors: list[str] = []
+    context = ValidationContext(root, errors)
     files = markdown_files(root)
-    _validate_live_status(root, files, errors)
-    _validate_governed_overviews(root, errors)
-    _validate_reference_host_inventory(root, files, errors)
-    stats = _validate_markdown(root, files, errors)
+    _validate_live_status(context, files)
+    _validate_governed_overviews(context)
+    _validate_reference_host_inventory(context, files)
+    stats = _validate_markdown(context, files)
     return errors, stats
 
 

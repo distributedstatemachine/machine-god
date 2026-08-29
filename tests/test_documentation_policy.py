@@ -204,10 +204,13 @@ class DocumentationPolicyTests(unittest.TestCase):
             "NativeReferenceHost has a dozen tools.\n",
             "NativeReferenceHost is stable. It registers nineteen tools.\n",
             "NativeReferenceHost is stable.\n\nIt registers nineteen tools.\n",
+            "NativeReferenceHost is stable.\n\nHowever, it registers nineteen tools.\n",
             "The catalog is defined in docs/native-reference-host.md. It contains "
             "nineteen tools.\n",
             "NativeReferenceHost (e.g. in production) registers nineteen tools.\n",
             "## NativeReferenceHost\n\nIt registers nineteen tools.\n",
+            "The number of tools exposed by NativeReferenceHost is nineteen.\n",
+            "NativeReferenceHost exposes nineteen.\n",
         )
         for claim in claims:
             with self.subTest(claim=claim), tempfile.TemporaryDirectory() as directory:
@@ -363,6 +366,10 @@ class DocumentationPolicyTests(unittest.TestCase):
                 "NativeReferenceHost owns two clones for each Waker.\n\n"
                 "NativeReferenceHost owns two clones while a call is active.\n\n"
                 "NativeReferenceHost provides four tools per request.\n\n"
+                "NativeReferenceHost records nineteen tool invocations before "
+                "recycling them.\n\n"
+                "NativeReferenceHost records nineteen tool retries, nineteen tool "
+                "handles, and nineteen tool latencies.\n\n"
                 "NativeReferenceHost: four workspace tools may execute "
                 "concurrently.\n\n"
                 "At one scheduler checkpoint, four workspace tools may execute "
@@ -464,15 +471,23 @@ class DocumentationPolicyTests(unittest.TestCase):
                 "invalid backtick info",
                 "```bad`info\nNativeReferenceHost has nineteen tools.\n```\n",
                 True,
+                True,
             ),
             (
                 "trailing closer text",
                 "```text\n```not-a-close\n"
                 "NativeReferenceHost has nineteen tools.\n```\n",
                 False,
+                False,
+            ),
+            (
+                "quoted fence",
+                "> ```text\n> NativeReferenceHost has nineteen tools.\n> ```\n",
+                False,
+                False,
             ),
         )
-        for name, payload, rejected in cases:
+        for name, payload, rejected, unclosed in cases:
             with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 self._write_minimal_repository(root)
@@ -488,10 +503,30 @@ class DocumentationPolicyTests(unittest.TestCase):
                 ]
 
                 self.assertEqual(rejected, bool(inventory_errors), "\n".join(errors))
-                self.assertFalse(
+                self.assertEqual(
+                    unclosed,
                     any("unclosed Markdown fence" in error for error in errors),
                     "\n".join(errors),
                 )
+
+    def test_inline_code_cannot_pair_across_fenced_block_boundaries(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            relative = Path("docs/tool-contract.md")
+            (root / relative).write_text(
+                "# Durable tool contract\n\n"
+                "The unmatched literal starts `here.\n\n"
+                "```text\n"
+                "NativeReferenceHost has nineteen tools.\n"
+                "```\n\n"
+                "The other unmatched literal ends ` here.\n",
+                encoding="utf-8",
+            )
+
+            errors, _ = check_documentation.validate_repository(root)
+
+            self.assertEqual([], errors)
 
     def test_markdown_scanner_tokenizes_many_code_spans_once(self) -> None:
         class RecordingPattern:
@@ -528,7 +563,7 @@ class DocumentationPolicyTests(unittest.TestCase):
                 return super().__getitem__(key)  # type: ignore[arg-type]
 
         clause = SliceRecordingStr(
-            "x" * 100_000 + " NativeReferenceHost permits two active tools per turn"
+            "x" * 100_000 + " NativeReferenceHost permits two active tools."
         )
         match = check_documentation.REFERENCE_HOST_INVENTORY_COUNT_RE.search(clause)
         self.assertIsNotNone(match)
@@ -537,6 +572,56 @@ class DocumentationPolicyTests(unittest.TestCase):
             check_documentation._counted_noun_is_operational(clause, match)
         )
         self.assertLessEqual(max(clause.widths), 120)
+
+    def test_markdown_input_ceiling_bounds_scanner_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            relative = Path("docs/generated.md")
+            (root / relative).write_bytes(
+                b"x" * (check_documentation.MAX_MARKDOWN_BYTES + 1)
+            )
+
+            errors, _ = check_documentation.validate_repository(root)
+
+            self.assertEqual(
+                [
+                    f"{relative}: exceeds the "
+                    f"{check_documentation.MAX_MARKDOWN_BYTES}-byte Markdown ceiling"
+                ],
+                errors,
+            )
+
+    def test_validation_scans_each_markdown_file_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            original = check_documentation._scan_markdown_inert_blocks
+            calls = 0
+
+            def recording(text: str) -> tuple[str, int, bool]:
+                nonlocal calls
+                calls += 1
+                return original(text)
+
+            check_documentation._scan_markdown_inert_blocks = recording
+            try:
+                errors, stats = check_documentation.validate_repository(root)
+            finally:
+                check_documentation._scan_markdown_inert_blocks = original
+
+            self.assertEqual([], errors)
+            self.assertEqual(stats.markdown_files, calls)
+
+    def test_backtick_index_uses_compact_numeric_arrays(self) -> None:
+        starts, ends, next_same = check_documentation._backtick_runs("`x` " * 10_000)
+
+        self.assertEqual(20_000, len(starts))
+        self.assertEqual(len(starts), len(ends))
+        self.assertEqual(len(starts), len(next_same))
+        self.assertEqual(4, starts.itemsize)
+        self.assertEqual(4, ends.itemsize)
+        self.assertEqual(4, next_same.itemsize)
 
     def test_durable_limits_hashes_and_policy_terms_are_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
