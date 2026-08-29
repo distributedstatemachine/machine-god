@@ -86,7 +86,9 @@ COUNT_WORD_RE = (
     r"twenty)"
 )
 INVENTORY_COUNT_NOUN_PATTERN = (
-    rf"\b{COUNT_WORD_RE}-(?:tool|clone)\b|"
+    rf"\b{COUNT_WORD_RE}-(?:tool|clone|entry)\b|"
+    rf"\b{COUNT_WORD_RE}\s+(?:ToolSpec|tool-spec)\s+"
+    rf"(?:values?|objects?)\b|"
     rf"\b{COUNT_WORD_RE}\s+"
     rf"(?:[A-Za-z][A-Za-z0-9_-]*\s+){{0,5}}"
     rf"(?:tools?(?!\s+(?:calls?|catalog|events?|outputs?|results?|schemas?|specs?)\b)|"
@@ -106,24 +108,36 @@ REFERENCE_HOST_CATALOG_CONTEXT_RE = re.compile(
     r"\breference[- ]host\s+catalog\b|docs/native-reference-host\.md",
     re.IGNORECASE,
 )
-REFERENCE_HOST_OPERATIONAL_LIMIT_RE = re.compile(
-    rf"\b(?:at\s+most|up\s+to|no\s+more\s+than|maximum\s+of)\b"
-    rf"[^.!?]{{0,120}}(?:{INVENTORY_COUNT_NOUN_PATTERN})|"
-    rf"\b(?:concurrency|execution|scheduler|queue)\s+"
-    rf"(?:limit|capacity)\b[^.!?]{{0,120}}(?:{INVENTORY_COUNT_NOUN_PATTERN})|"
-    rf"\b{COUNT_WORD_RE}\s+(?:[A-Za-z][A-Za-z0-9_-]*\s+){{0,4}}"
-    rf"(?:active|executing|concurrent|in[- ]flight|queued|running)\s+tools?\b|"
-    rf"(?:{INVENTORY_COUNT_NOUN_PATTERN})[^.!?]{{0,120}}"
-    rf"\b(?:active|executing|concurrent(?:ly)?|in[- ]flight|queued|running|"
-    rf"at\s+once|"
-    rf"per\s+(?:call|invocation)|while\s+(?:a\s+)?calls?\s+is\s+active)\b|"
-    rf"\b(?:Waker|scheduler|queue|calls?|invocations?)\b"
-    rf"[^.!?]{{0,120}}(?:{INVENTORY_COUNT_NOUN_PATTERN})|"
-    rf"(?:{INVENTORY_COUNT_NOUN_PATTERN})[^.!?]{{0,120}}"
-    rf"\b(?:Waker|scheduler|queue|calls?|invocations?)\b|"
-    rf"\b(?:accepts?|allows?|permits?|executes?|runs?|schedules?|queues?)\b"
-    rf"[^.!?]{{0,80}}"
-    rf"(?:{INVENTORY_COUNT_NOUN_PATTERN})",
+OPERATIONAL_QUANTIFIER_RE = re.compile(
+    r"\b(?:at\s+most|up\s+to|no\s+more\s+than|maximum\s+of)\b",
+    re.IGNORECASE,
+)
+OPERATIONAL_SCOPE_RE = re.compile(
+    r"\b(?:concurrency|execution|scheduler|queue)\s+(?:limit|capacity)\b|"
+    r"\b(?:active|executing|concurrent|in[- ]flight|queued|running)\s+"
+    r"(?:set|pool|batch)\b",
+    re.IGNORECASE,
+)
+OPERATIONAL_COUNT_RE = re.compile(
+    r"\b(?:active|executing|concurrent|in[- ]flight|queued|running|Waker)\b",
+    re.IGNORECASE,
+)
+INVENTORY_VERB_RE = re.compile(
+    r"\b(?:register(?:s|ed)?|expos(?:e|es|ed)|include(?:s|d)?|"
+    r"compris(?:e|es|ed)|provid(?:e|es|ed)|"
+    r"install(?:s|ed)?|owns?|suppl(?:y|ies|ied)|lists?|totals?)\b|"
+    r"\b(?:make|makes|made)\s+up\b|\bcomposed\s+of\b",
+    re.IGNORECASE,
+)
+OPERATIONAL_VERB_RE = re.compile(
+    r"\b(?:accepts?|allows?|permits?|batches?|executes?|runs?|schedules?|queues?)\b",
+    re.IGNORECASE,
+)
+OPERATIONAL_AFTER_RE = re.compile(
+    r"\b(?:active|executing|concurrent(?:ly)?|in[- ]flight|queued|running|"
+    r"at\s+once|per\s+(?:call|invocation|turn|round|request|batch)|"
+    r"while\s+(?:a\s+)?calls?\s+is\s+active|Waker|scheduler|queue|"
+    r"calls?|invocations?)\b",
     re.IGNORECASE,
 )
 REFERENCE_HOST_INVENTORY_SHORTHAND_RE = re.compile(
@@ -149,6 +163,8 @@ REFERENCE_HOST_INVENTORY_SHORTHAND_RE = re.compile(
 MARKDOWN_HEADING_RE = re.compile(
     r"^[ ]{0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$"
 )
+SETEXT_HEADING_RE = re.compile(r"^[ ]{0,3}(=+|-+)[ \t]*$")
+CLAUSE_SPLIT_RE = re.compile(r"\s+(?:and|but|whereas)\s+|\s*;\s*", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -250,47 +266,107 @@ def _validate_live_status(root: Path, files: list[Path], errors: list[str]) -> N
             )
 
 
-def _prose_without_fenced_blocks(text: str) -> str:
-    """Return prose lines so policy examples inside fenced blocks stay inert."""
+def _scan_markdown_inert_blocks(text: str) -> tuple[str, int, bool]:
+    """Strip fenced blocks and HTML comments with shared Markdown state."""
 
     prose: list[str] = []
     open_fence: tuple[str, int] | None = None
-    for line in text.splitlines():
-        match = FENCE_RE.match(line)
-        if match is not None:
-            token = match.group(1)
-            if open_fence is None:
+    in_comment = False
+    fence_lines = 0
+    for raw_line in text.splitlines():
+        if open_fence is not None:
+            match = FENCE_RE.match(raw_line)
+            if match is not None:
+                fence_lines += 1
+                token = match.group(1)
+                if token[0] == open_fence[0] and len(token) >= open_fence[1]:
+                    open_fence = None
+            prose.append("")
+            continue
+
+        if not in_comment:
+            match = FENCE_RE.match(raw_line)
+            if match is not None:
+                token = match.group(1)
                 open_fence = (token[0], len(token))
-            elif token[0] == open_fence[0] and len(token) >= open_fence[1]:
-                open_fence = None
+                fence_lines += 1
+                prose.append("")
+                continue
+
+        visible: list[str] = []
+        cursor = 0
+        while cursor < len(raw_line):
+            if in_comment:
+                end = raw_line.find("-->", cursor)
+                if end < 0:
+                    cursor = len(raw_line)
+                    break
+                in_comment = False
+                cursor = end + 3
+                continue
+
+            start = _find_html_comment_start(raw_line, cursor)
+            if start < 0:
+                visible.append(raw_line[cursor:])
+                break
+            visible.append(raw_line[cursor:start])
+            in_comment = True
+            cursor = start + 4
+
+        if in_comment and not visible:
             prose.append("")
-        elif open_fence is None:
-            prose.append(line)
         else:
-            prose.append("")
-    return "\n".join(prose)
+            prose.append("".join(visible))
+    return "\n".join(prose), fence_lines, open_fence is not None
 
 
-def _prose_without_html_comments(text: str) -> str:
-    """Remove Markdown HTML comments while retaining their line boundaries."""
+def _find_html_comment_start(line: str, cursor: int) -> int:
+    """Find a comment opener outside a same-line Markdown code span."""
 
-    return re.sub(
-        r"<!--.*?(?:-->|$)",
-        lambda match: "\n" * match.group(0).count("\n"),
-        text,
-        flags=re.DOTALL,
-    )
+    position = cursor
+    while True:
+        comment = line.find("<!--", position)
+        if comment < 0:
+            return -1
+        tick = line.find("`", position)
+        if tick < 0 or comment < tick:
+            return comment
+
+        run_end = tick + 1
+        while run_end < len(line) and line[run_end] == "`":
+            run_end += 1
+        delimiter = line[tick:run_end]
+        close = line.find(delimiter, run_end)
+        if close < 0:
+            return -1
+        position = close + len(delimiter)
+
+
+def _prose_without_fenced_blocks(text: str) -> str:
+    """Return visible prose while fenced blocks and HTML comments stay inert."""
+
+    prose, _, _ = _scan_markdown_inert_blocks(text)
+    return prose
 
 
 def _without_unique_markdown_section(text: str, title: str) -> tuple[str, int]:
     """Blank one uniquely named section through the next peer heading."""
 
     lines = text.splitlines()
-    headings = [
-        (index, len(match.group(1)), match.group(2).strip().casefold())
-        for index, line in enumerate(lines)
-        if (match := MARKDOWN_HEADING_RE.match(line)) is not None
-    ]
+    headings: list[tuple[int, int, str]] = []
+    for index, line in enumerate(lines):
+        atx = MARKDOWN_HEADING_RE.match(line)
+        if atx is not None:
+            headings.append(
+                (index, len(atx.group(1)), atx.group(2).strip().casefold())
+            )
+            continue
+        if index + 1 >= len(lines) or not line.strip():
+            continue
+        setext = SETEXT_HEADING_RE.match(lines[index + 1])
+        if setext is not None:
+            level = 1 if setext.group(1).startswith("=") else 2
+            headings.append((index, level, line.strip().casefold()))
     matches = [heading for heading in headings if heading[2] == title.casefold()]
     if len(matches) != 1:
         return text, len(matches)
@@ -339,7 +415,7 @@ def _validate_reference_host_inventory(
         text = _read(path, root, errors)
         if text is None:
             continue
-        prose = _prose_without_html_comments(_prose_without_fenced_blocks(text))
+        prose = _prose_without_fenced_blocks(text)
         if relative == REFERENCE_HOST_CONTRACT_PATH:
             prose, section_count = _without_unique_markdown_section(
                 prose, "Tool catalog"
@@ -369,31 +445,71 @@ def _contains_reference_host_inventory(paragraph: str) -> bool:
         return False
 
     for sentence in re.split(r"(?<=[.!?])\s+", normalized):
-        if REFERENCE_HOST_OPERATIONAL_LIMIT_RE.search(sentence) is not None:
-            continue
-        if REFERENCE_HOST_INVENTORY_SHORTHAND_RE.search(sentence) is not None:
-            return True
-
-        has_host_context = REFERENCE_HOST_CONTEXT_RE.search(sentence) is not None
-        has_catalog_context = (
+        sentence_has_host = REFERENCE_HOST_CONTEXT_RE.search(sentence) is not None
+        sentence_has_catalog = (
             REFERENCE_HOST_CATALOG_CONTEXT_RE.search(sentence) is not None
         )
-        has_counted_noun = REFERENCE_HOST_INVENTORY_COUNT_RE.search(sentence) is not None
-        if (has_host_context or has_catalog_context) and has_counted_noun:
-            return True
+        for clause in CLAUSE_SPLIT_RE.split(sentence):
+            counts = list(REFERENCE_HOST_INVENTORY_COUNT_RE.finditer(clause))
+            nonoperational_counts = [
+                match
+                for match in counts
+                if not _counted_noun_is_operational(clause, match)
+            ]
+            if (
+                REFERENCE_HOST_INVENTORY_SHORTHAND_RE.search(clause) is not None
+                and nonoperational_counts
+            ):
+                return True
 
-        has_count = INVENTORY_COUNT_TOKEN_RE.search(sentence) is not None
-        has_catalog_size = re.search(
-            r"\bcatalog\s+size\b|\bsize\s+(?:is|of)\b", sentence, re.IGNORECASE
-        )
-        if (
-            (has_host_context or has_catalog_context)
-            and has_count
-            and has_catalog_size is not None
-        ):
-            return True
+            has_host_context = (
+                sentence_has_host or REFERENCE_HOST_CONTEXT_RE.search(clause) is not None
+            )
+            has_catalog_context = (
+                sentence_has_catalog
+                or REFERENCE_HOST_CATALOG_CONTEXT_RE.search(clause) is not None
+            )
+            if (
+                (has_host_context or has_catalog_context)
+                and nonoperational_counts
+            ):
+                return True
+
+            has_count = INVENTORY_COUNT_TOKEN_RE.search(clause) is not None
+            has_catalog_size = re.search(
+                r"\bcatalog\s+size\b|\bsize\s+(?:is|of)\b",
+                clause,
+                re.IGNORECASE,
+            )
+            if (
+                (has_host_context or has_catalog_context)
+                and has_count
+                and has_catalog_size is not None
+            ):
+                return True
 
     return False
+
+
+def _counted_noun_is_operational(clause: str, match: re.Match[str]) -> bool:
+    """Classify one counted noun from its bounded local clause context."""
+
+    before = clause[: match.start()].rsplit(",", 1)[-1][-120:]
+    counted = match.group(0)
+    after = clause[match.end() :].split(",", 1)[0][:120]
+    if OPERATIONAL_COUNT_RE.search(counted) is not None:
+        return True
+    if (
+        OPERATIONAL_QUANTIFIER_RE.search(before) is not None
+        or OPERATIONAL_SCOPE_RE.search(before) is not None
+    ):
+        return True
+    if INVENTORY_VERB_RE.search(before) is not None:
+        return False
+    return (
+        OPERATIONAL_VERB_RE.search(before) is not None
+        or OPERATIONAL_AFTER_RE.search(after) is not None
+    )
 
 
 def _relative_link_target(raw_target: str) -> str | None:
@@ -419,18 +535,9 @@ def _validate_markdown(
         if text is None:
             continue
 
-        open_fence: tuple[str, int] | None = None
-        for line_number, line in enumerate(text.splitlines(), start=1):
-            match = FENCE_RE.match(line)
-            if match is None:
-                continue
-            fence_lines += 1
-            token = match.group(1)
-            if open_fence is None:
-                open_fence = (token[0], len(token))
-            elif token[0] == open_fence[0] and len(token) >= open_fence[1]:
-                open_fence = None
-        if open_fence is not None:
+        _, file_fence_lines, unclosed_fence = _scan_markdown_inert_blocks(text)
+        fence_lines += file_fence_lines
+        if unclosed_fence:
             errors.append(f"{path.relative_to(root)}: unclosed Markdown fence")
 
         for match in MARKDOWN_LINK_RE.finditer(text):

@@ -182,6 +182,16 @@ class DocumentationPolicyTests(unittest.TestCase):
             "NativeReferenceHost owns nineteen tools.\n",
             "NativeReferenceHost supplies nineteen tools.\n",
             "NativeReferenceHost's nineteen tools are deterministic.\n",
+            "NativeReferenceHost exposes a nineteen-entry catalog.\n",
+            "NativeReferenceHost registers nineteen ToolSpec values.\n",
+            "NativeReferenceHost registers nineteen tools and permits two active "
+            "tool calls.\n",
+            "NativeReferenceHost registers nineteen tools, permitting two active "
+            "tool calls.\n",
+            "NativeReferenceHost permits two active tool calls; registers nineteen "
+            "tools.\n",
+            "NativeReferenceHost registers nineteen tools\n"
+            "and permits two active tool calls.\n",
         )
         for claim in claims:
             with self.subTest(claim=claim), tempfile.TemporaryDirectory() as directory:
@@ -286,6 +296,29 @@ class DocumentationPolicyTests(unittest.TestCase):
                     "\n".join(errors),
                 )
 
+    def test_setext_peer_heading_ends_tool_catalog_section(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            relative = Path("docs/native-reference-host.md")
+            (root / relative).write_text(
+                "# Reference host\n\n"
+                "## Tool catalog\n\n"
+                "The engine registers exactly fourteen tools.\n\n"
+                "Construction effects\n"
+                "--------------------\n\n"
+                "NativeReferenceHost has thirteen tools.\n",
+                encoding="utf-8",
+            )
+
+            errors, _ = check_documentation.validate_repository(root)
+
+            self.assertIn(
+                f"{relative}: reference-host inventory counts belong only in "
+                "docs/native-reference-host.md#tool-catalog",
+                errors,
+            )
+
     def test_reference_host_inventory_policy_allows_unrelated_numeric_limits(
         self,
     ) -> None:
@@ -303,11 +336,14 @@ class DocumentationPolicyTests(unittest.TestCase):
                 "The reference host permits two clones of the supplied Waker.\n\n"
                 "NativeReferenceHost contains two supplied Waker clones while a "
                 "call is active.\n\n"
+                "NativeReferenceHost contains two clones while a call is active.\n\n"
                 "NativeReferenceHost has at most four active tools.\n\n"
                 "NativeReferenceHost has four active tools.\n\n"
                 "NativeReferenceHost has a concurrency limit of four tools.\n\n"
                 "NativeReferenceHost runs four tools at once.\n\n"
                 "NativeReferenceHost queues four tools.\n\n"
+                "NativeReferenceHost's active set contains four tools.\n\n"
+                "NativeReferenceHost batches four tools per turn.\n\n"
                 "At one scheduler checkpoint, four workspace tools may execute "
                 "concurrently.\n\n"
                 "Pipeline composition accepts four tools.\n\n"
@@ -321,6 +357,51 @@ class DocumentationPolicyTests(unittest.TestCase):
             errors, _ = check_documentation.validate_repository(root)
 
             self.assertEqual([], errors)
+
+    def test_html_comment_fence_cannot_hide_visible_inventory(self) -> None:
+        payloads = (
+            "<!--\n```md\n-->\n"
+            "NativeReferenceHost has nineteen tools.\n"
+            "```\n",
+            "```text\n<!--\n```\n"
+            "NativeReferenceHost has nineteen tools.\n"
+            "-->\n```\n",
+        )
+        for payload in payloads:
+            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_minimal_repository(root)
+                relative = Path("docs/tool-contract.md")
+                (root / relative).write_text(
+                    f"# Durable tool contract\n\n{payload}",
+                    encoding="utf-8",
+                )
+
+                errors, _ = check_documentation.validate_repository(root)
+                rendered = "\n".join(errors)
+
+                self.assertIn("reference-host inventory counts belong only", rendered)
+                self.assertIn(f"{relative}: unclosed Markdown fence", errors)
+
+    def test_inline_code_comment_marker_cannot_hide_policy_prose(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            relative = Path("docs/tool-contract.md")
+            (root / relative).write_text(
+                "# Durable tool contract\n\n"
+                "The literal opener is `<!--`.\n"
+                "NativeReferenceHost has nineteen tools.\n",
+                encoding="utf-8",
+            )
+
+            errors, _ = check_documentation.validate_repository(root)
+
+            self.assertIn(
+                f"{relative}: reference-host inventory counts belong only in "
+                "docs/native-reference-host.md#tool-catalog",
+                errors,
+            )
 
     def test_durable_limits_hashes_and_policy_terms_are_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
