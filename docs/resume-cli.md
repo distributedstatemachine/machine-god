@@ -126,8 +126,10 @@ compare-and-swap validation may reread the bounded record, and reservation may
 perform the bounded conflict retries described above. The command may create
 the record's permanent lock sidecar. It adds no directory enumeration or
 ID-generation retry. It reuses `ask`'s bounded scoped worker and owned signal
-guardian; no thread or task remains detached, and there is no unbounded
-application retry.
+guardian, so no thread or task remains detached. Semantic provider and conflict
+retries are bounded, but the inherited file store has no attempt or wall-clock
+ceiling for advisory-lock acquisition, filesystem latency, or retries after
+`EINTR`.
 
 The pinned upstream fx surface accepts implicit-last selection, aliases,
 recording, and interactive continuation forms. Machine-god intentionally
