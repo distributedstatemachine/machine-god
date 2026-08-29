@@ -926,7 +926,7 @@ mod tests {
         let cancellation = CancellationToken::new();
         let text = "\0".repeat(MAX_SKILL_CHUNK_BYTES + 1);
         let output = fit_output_page(&arguments, &text, &cancellation).unwrap();
-        let next = output.content["next_offset"].as_u64().unwrap() as usize;
+        let next = usize::try_from(output.content["next_offset"].as_u64().unwrap()).unwrap();
         assert!(next < MAX_SKILL_CHUNK_BYTES);
         assert!(next > 0);
         assert!(text.is_char_boundary(next));
