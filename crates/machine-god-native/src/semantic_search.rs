@@ -34,10 +34,13 @@ pub const MAX_SEMANTIC_SEARCH_TOTAL_ENTRY_NAME_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_SEMANTIC_SEARCH_FILE_BYTES: usize = 100 * 1024;
 /// Maximum aggregate file bytes accepted by one search.
 pub const MAX_SEMANTIC_SEARCH_TOTAL_CONTENT_BYTES: usize = 64 * 1024 * 1024;
+/// Maximum file-read attempts, including successful, EOF, witness, and interrupted reads.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub const MAX_SEMANTIC_SEARCH_CONTENT_READ_ATTEMPTS: usize = 12 * 1024;
 /// Maximum UTF-8 bytes displayed from the best line in one result.
 pub const MAX_SEMANTIC_SEARCH_RESULT_LINE_BYTES: usize = 2_000;
 /// Maximum checked matcher work steps.
-pub const MAX_SEMANTIC_SEARCH_MATCH_STEPS: usize = 2_147_483_648;
+pub const MAX_SEMANTIC_SEARCH_MATCH_STEPS: usize = 64 * 1024 * 1024;
 /// Maximum scored results retained before final ordering.
 pub const MAX_SEMANTIC_SEARCH_RETAINED_RESULTS: usize = 200;
 /// Maximum ordered results displayed to the model.
@@ -483,6 +486,7 @@ struct ScanBudget {
     total_entry_name_bytes: usize,
     candidate_files: usize,
     total_content_bytes: usize,
+    content_read_attempts: usize,
     match_steps: usize,
 }
 
@@ -535,14 +539,25 @@ impl ScanBudget {
         Ok(())
     }
 
+    fn charge_content_read_attempt(&mut self) -> Result<(), ToolError> {
+        if self.content_read_attempts >= MAX_SEMANTIC_SEARCH_CONTENT_READ_ATTEMPTS {
+            return Err(scan_limit());
+        }
+        self.content_read_attempts = self
+            .content_read_attempts
+            .checked_add(1)
+            .ok_or_else(scan_limit)?;
+        Ok(())
+    }
+
     fn observe_match_step(&mut self, cancellation: &CancellationToken) -> Result<(), ToolError> {
         if self.match_steps.is_multiple_of(CANCELLATION_CHECK_INTERVAL) {
             check_cancellation(cancellation)?;
         }
-        self.match_steps = self.match_steps.checked_add(1).ok_or_else(scan_limit)?;
-        if self.match_steps > MAX_SEMANTIC_SEARCH_MATCH_STEPS {
+        if self.match_steps >= MAX_SEMANTIC_SEARCH_MATCH_STEPS {
             return Err(scan_limit());
         }
+        self.match_steps = self.match_steps.checked_add(1).ok_or_else(scan_limit)?;
         Ok(())
     }
 }
@@ -742,13 +757,12 @@ impl Keyword {
         let mut prefix = vec![0_usize; folded.len()];
         let mut matched = 0_usize;
         for index in 1..folded.len() {
-            budget.observe_match_step(cancellation)?;
-            while matched > 0 && folded[index] != folded[matched] {
+            while matched > 0
+                && !charged_byte_equality(folded[index], folded[matched], budget, cancellation)?
+            {
                 matched = prefix[matched - 1];
-                budget.observe_match_step(cancellation)?;
             }
-            budget.observe_match_step(cancellation)?;
-            if folded[index] == folded[matched] {
+            if charged_byte_equality(folded[index], folded[matched], budget, cancellation)? {
                 matched = matched.checked_add(1).ok_or_else(scan_limit)?;
             }
             prefix[index] = matched;
@@ -768,13 +782,12 @@ impl Keyword {
     ) -> Result<bool, ToolError> {
         let mut matched = 0_usize;
         for byte in haystack.iter().copied().map(fold_ascii) {
-            budget.observe_match_step(cancellation)?;
-            while matched > 0 && byte != self.folded[matched] {
+            while matched > 0
+                && !charged_byte_equality(byte, self.folded[matched], budget, cancellation)?
+            {
                 matched = self.prefix[matched - 1];
-                budget.observe_match_step(cancellation)?;
             }
-            budget.observe_match_step(cancellation)?;
-            if byte == self.folded[matched] {
+            if charged_byte_equality(byte, self.folded[matched], budget, cancellation)? {
                 matched = matched.checked_add(1).ok_or_else(scan_limit)?;
                 if matched == self.folded.len() {
                     return Ok(true);
@@ -783,6 +796,28 @@ impl Keyword {
         }
         Ok(false)
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn charged_byte_equality(
+    left: u8,
+    right: u8,
+    budget: &mut ScanBudget,
+    cancellation: &CancellationToken,
+) -> Result<bool, ToolError> {
+    budget.observe_match_step(cancellation)?;
+    Ok(left == right)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn probe_keyword_presence(
+    keyword: &Keyword,
+    haystack: &[u8],
+    budget: &mut ScanBudget,
+    cancellation: &CancellationToken,
+) -> Result<bool, ToolError> {
+    budget.observe_match_step(cancellation)?;
+    keyword.is_present(haystack, budget, cancellation)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -829,7 +864,7 @@ impl SemanticSearchTool {
                 Mode::empty(),
             )
         })?
-        .map_err(|_| unavailable())?;
+        .map_err(map_retained_root_reacquisition_error)?;
         ensure_root_is_linked(current.as_fd(), cancellation)?;
         if search_path == "." {
             return Ok(SearchRoot::Directory(current));
@@ -1260,6 +1295,18 @@ fn read_bounded_content<'a>(
     budget: &mut ScanBudget,
     cancellation: &CancellationToken,
 ) -> Result<&'a [u8], ToolError> {
+    read_bounded_content_with(content_buffer, budget, cancellation, |window| {
+        rustix::io::read(file, window)
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn read_bounded_content_with<'a>(
+    content_buffer: &'a mut ContentBuffer,
+    budget: &mut ScanBudget,
+    cancellation: &CancellationToken,
+    mut read: impl FnMut(&mut [u8]) -> Result<usize, rustix::io::Errno>,
+) -> Result<&'a [u8], ToolError> {
     content_buffer.reset();
     loop {
         check_cancellation(cancellation)?;
@@ -1271,9 +1318,9 @@ fn read_bounded_content<'a>(
             .ok_or_else(scan_limit)?;
         if aggregate_remaining == 0 {
             let mut witness = [0_u8; 1];
-            let read =
-                execution_filesystem_call(cancellation, || rustix::io::read(file, &mut witness))?;
-            match read {
+            budget.charge_content_read_attempt()?;
+            let observed = execution_filesystem_call(cancellation, || read(&mut witness))?;
+            match observed {
                 Ok(0) => break,
                 Ok(_) => return Err(scan_limit()),
                 Err(error) if error == rustix::io::Errno::INTR => continue,
@@ -1284,15 +1331,16 @@ fn read_bounded_content<'a>(
             .min(aggregate_remaining)
             .min(CONTENT_READ_CHUNK_BYTES);
         let window = content_buffer.read_window(requested)?;
-        let read = execution_filesystem_call(cancellation, || rustix::io::read(file, window))?;
-        match read {
+        budget.charge_content_read_attempt()?;
+        let observed = execution_filesystem_call(cancellation, || read(window))?;
+        match observed {
             Ok(0) => break,
-            Ok(read) => {
-                if read > requested {
+            Ok(bytes_read) => {
+                if bytes_read > requested {
                     return Err(read_failed());
                 }
-                budget.observe_content_bytes(read)?;
-                content_buffer.commit_read(read)?;
+                budget.observe_content_bytes(bytes_read)?;
+                content_buffer.commit_read(bytes_read)?;
             }
             Err(error) if error == rustix::io::Errno::INTR => {}
             Err(_) => return Err(read_failed()),
@@ -1356,7 +1404,7 @@ fn score_text_file(
 
     let basename = workspace_path.rsplit('/').next().unwrap_or(workspace_path);
     for keyword in keywords {
-        if keyword.is_present(basename.as_bytes(), budget, cancellation)? {
+        if probe_keyword_presence(keyword, basename.as_bytes(), budget, cancellation)? {
             total_score = total_score.checked_add(3).ok_or_else(scan_limit)?;
         }
     }
@@ -1389,7 +1437,7 @@ fn score_line(
 ) -> Result<(), ToolError> {
     let mut line_score = 0_u64;
     for keyword in keywords {
-        if keyword.is_present(line.as_bytes(), budget, cancellation)? {
+        if probe_keyword_presence(keyword, line.as_bytes(), budget, cancellation)? {
             line_score = line_score.checked_add(1).ok_or_else(scan_limit)?;
         }
     }
@@ -1738,6 +1786,15 @@ fn map_search_root_open_error(error: rustix::io::Errno) -> ToolError {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+fn map_retained_root_reacquisition_error(error: rustix::io::Errno) -> ToolError {
+    if error == rustix::io::Errno::ACCESS || error == rustix::io::Errno::PERM {
+        permission_denied()
+    } else {
+        unavailable()
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn map_directory_stream_error(error: rustix::io::Errno) -> ToolError {
     if error == rustix::io::Errno::ACCESS || error == rustix::io::Errno::PERM {
         permission_denied()
@@ -1912,6 +1969,15 @@ mod cancellation_checkpoint_tests {
         assert_eq!(error.code, "semantic_search_cancelled");
     }
 
+    fn assert_scan_limit<T>(result: Result<T, ToolError>) {
+        let Err(error) = result else {
+            panic!("semantic search work exceeded its hard budget");
+        };
+        assert_eq!(error.kind, ToolErrorKind::Execution);
+        assert_eq!(error.code, "semantic_search_scan_limit");
+        assert!(!error.retryable);
+    }
+
     #[test]
     fn execution_filesystem_call_checks_before_invocation() {
         let cancellation = CancellationToken::new();
@@ -1978,5 +2044,190 @@ mod cancellation_checkpoint_tests {
             assert!(cancellation.cancel());
             Ok::<usize, rustix::io::Errno>(1)
         }));
+    }
+
+    #[test]
+    fn repeated_interrupted_reads_stop_before_an_unmetered_attempt() {
+        assert_eq!(MAX_SEMANTIC_SEARCH_CONTENT_READ_ATTEMPTS, 12_288);
+        let cancellation = CancellationToken::new();
+        let mut budget = ScanBudget {
+            content_read_attempts: MAX_SEMANTIC_SEARCH_CONTENT_READ_ATTEMPTS - 2,
+            ..ScanBudget::default()
+        };
+        let mut content = ContentBuffer::default();
+        let calls = Cell::new(0_usize);
+
+        assert_scan_limit(read_bounded_content_with(
+            &mut content,
+            &mut budget,
+            &cancellation,
+            |_| {
+                calls.set(calls.get() + 1);
+                Err(rustix::io::Errno::INTR)
+            },
+        ));
+        assert_eq!(calls.get(), 2);
+        assert_eq!(
+            budget.content_read_attempts,
+            MAX_SEMANTIC_SEARCH_CONTENT_READ_ATTEMPTS
+        );
+    }
+
+    #[test]
+    fn repeated_one_byte_reads_stop_before_an_unmetered_attempt() {
+        let cancellation = CancellationToken::new();
+        let mut budget = ScanBudget {
+            content_read_attempts: MAX_SEMANTIC_SEARCH_CONTENT_READ_ATTEMPTS - 2,
+            ..ScanBudget::default()
+        };
+        let mut content = ContentBuffer::default();
+        let calls = Cell::new(0_usize);
+
+        assert_scan_limit(read_bounded_content_with(
+            &mut content,
+            &mut budget,
+            &cancellation,
+            |window| {
+                calls.set(calls.get() + 1);
+                window[0] = b'x';
+                Ok(1)
+            },
+        ));
+        assert_eq!(calls.get(), 2);
+        assert_eq!(budget.total_content_bytes, 2);
+        assert_eq!(content.as_slice(), b"xx");
+    }
+
+    #[test]
+    fn final_inclusive_read_and_eof_attempts_succeed_at_the_exact_boundary() {
+        let cancellation = CancellationToken::new();
+        let mut budget = ScanBudget {
+            content_read_attempts: MAX_SEMANTIC_SEARCH_CONTENT_READ_ATTEMPTS - 2,
+            ..ScanBudget::default()
+        };
+        let mut content = ContentBuffer::default();
+        let calls = Cell::new(0_usize);
+
+        let bytes = read_bounded_content_with(&mut content, &mut budget, &cancellation, |window| {
+            let call = calls.get();
+            calls.set(call + 1);
+            if call == 0 {
+                window[0] = b'x';
+                Ok(1)
+            } else {
+                Ok(0)
+            }
+        })
+        .expect("the inclusive attempt ceiling admits EOF")
+        .to_vec();
+        assert_eq!(bytes, b"x");
+        assert_eq!(calls.get(), 2);
+        assert_eq!(
+            budget.content_read_attempts,
+            MAX_SEMANTIC_SEARCH_CONTENT_READ_ATTEMPTS
+        );
+    }
+
+    #[test]
+    fn aggregate_eof_witness_is_charged_and_admitted_at_the_exact_boundary() {
+        let cancellation = CancellationToken::new();
+        let mut budget = ScanBudget {
+            total_content_bytes: MAX_SEMANTIC_SEARCH_TOTAL_CONTENT_BYTES,
+            content_read_attempts: MAX_SEMANTIC_SEARCH_CONTENT_READ_ATTEMPTS - 1,
+            ..ScanBudget::default()
+        };
+        let mut content = ContentBuffer::default();
+        let calls = Cell::new(0_usize);
+
+        let bytes = read_bounded_content_with(&mut content, &mut budget, &cancellation, |window| {
+            assert_eq!(window.len(), 1);
+            calls.set(calls.get() + 1);
+            Ok(0)
+        })
+        .expect("the inclusive attempt ceiling admits an aggregate EOF witness");
+        assert!(bytes.is_empty());
+        assert_eq!(calls.get(), 1);
+        assert_eq!(
+            budget.content_read_attempts,
+            MAX_SEMANTIC_SEARCH_CONTENT_READ_ATTEMPTS
+        );
+    }
+
+    #[test]
+    fn empty_haystack_dispatch_and_byte_comparison_use_the_exact_match_boundary() {
+        let cancellation = CancellationToken::new();
+        let keyword = Keyword {
+            raw: "x".to_owned(),
+            folded: vec![b'x'],
+            prefix: vec![0],
+        };
+        let mut empty_budget = ScanBudget {
+            match_steps: MAX_SEMANTIC_SEARCH_MATCH_STEPS - 1,
+            ..ScanBudget::default()
+        };
+        assert!(
+            !probe_keyword_presence(&keyword, b"", &mut empty_budget, &cancellation)
+                .expect("one dispatch is admitted at the inclusive boundary")
+        );
+        assert_eq!(empty_budget.match_steps, MAX_SEMANTIC_SEARCH_MATCH_STEPS);
+        assert_scan_limit(probe_keyword_presence(
+            &keyword,
+            b"",
+            &mut empty_budget,
+            &cancellation,
+        ));
+
+        let mut comparison_budget = ScanBudget {
+            match_steps: MAX_SEMANTIC_SEARCH_MATCH_STEPS - 2,
+            ..ScanBudget::default()
+        };
+        assert!(
+            probe_keyword_presence(&keyword, b"x", &mut comparison_budget, &cancellation,)
+                .expect("one dispatch and one comparison reach the inclusive boundary")
+        );
+        assert_eq!(
+            comparison_budget.match_steps,
+            MAX_SEMANTIC_SEARCH_MATCH_STEPS
+        );
+    }
+
+    #[test]
+    fn newline_heavy_empty_lines_charge_every_keyword_dispatch() {
+        let cancellation = CancellationToken::new();
+        let keywords = (0..MAX_SEMANTIC_SEARCH_KEYWORDS)
+            .map(|index| {
+                let raw = format!("kw{index:02}");
+                Keyword {
+                    folded: raw.as_bytes().to_vec(),
+                    prefix: vec![0; raw.len()],
+                    raw,
+                }
+            })
+            .collect::<Vec<_>>();
+        let newline_count = 4_096_usize;
+        let content = "\n".repeat(newline_count);
+        let mut budget = ScanBudget::default();
+
+        let result = score_text_file(&content, "", &keywords, &mut budget, &cancellation)
+            .expect("newline-heavy bounded input remains searchable");
+        assert!(result.is_none());
+        assert_eq!(
+            budget.match_steps,
+            (newline_count + 1) * MAX_SEMANTIC_SEARCH_KEYWORDS
+        );
+    }
+
+    #[test]
+    fn retained_root_reacquisition_maps_only_access_denials_to_permission() {
+        for raw_error in [rustix::io::Errno::ACCESS, rustix::io::Errno::PERM] {
+            let error = map_retained_root_reacquisition_error(raw_error);
+            assert_eq!(error.kind, ToolErrorKind::PermissionDenied);
+            assert_eq!(error.code, "semantic_search_permission_denied");
+            assert!(!error.retryable);
+        }
+        let error = map_retained_root_reacquisition_error(rustix::io::Errno::IO);
+        assert_eq!(error.kind, ToolErrorKind::Unavailable);
+        assert_eq!(error.code, "semantic_search_unavailable");
+        assert!(error.retryable);
     }
 }

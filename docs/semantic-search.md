@@ -135,6 +135,18 @@ not partially scored: it increments `skipped_oversized_files`. Across the call,
 at most 67,108,864 file bytes are admitted for text classification and scoring,
 including bounded bytes from a file later classified as non-text.
 
+Every content-read attempt is charged before the operating-system call. The
+global 12,288-attempt ceiling includes successful full or short reads, EOF
+probes, aggregate-overflow witnesses, and interrupted reads that will be
+retried. The existing 64 MiB aggregate and 2,000-candidate ceilings require at
+most 12,191 attempts when each ordinary regular-file call returns all bytes
+currently available up to the request: at most 10,191 data reads after
+per-file chunk-boundary fragmentation plus one EOF probe per candidate. The
+remaining fixed allowance tolerates incidental interruptions without
+permitting an interrupt loop or one-byte source to make unbounded calls.
+Attempt exhaustion is the nonretryable
+`semantic_search_scan_limit` hard failure and returns no partial result.
+
 Eligible content must be valid UTF-8 and contain no NUL byte. Invalid UTF-8 and
 NUL-containing files increment `skipped_non_text_files` and contribute no
 score. No lossy decoding, binary-to-text conversion, MIME or extension filter,
@@ -168,9 +180,15 @@ replace it. A filename-only match has line number zero and an empty sample.
 Only files with a positive total score are matching results.
 
 Matching work is charged across the call and uses checked arithmetic. At most
-2,147,483,648 keyword-comparison steps are admitted, covering no more than
-sixteen bounded keyword scans over admitted content and basenames. Exhaustion
-cannot wrap a counter or start an unmetered fallback.
+67,108,864 work steps are admitted. One step is charged before every
+line-keyword and basename-keyword matcher dispatch, including an empty line or
+basename, and one step is charged before every ASCII-folded KMP byte
+comparison in keyword compilation and content matching. Thus newline-heavy
+content cannot create unmetered fixed dispatch work, while the ceiling remains
+a fixed synchronous-work bound independent of the 64 MiB content-admission
+ceiling. Exhaustion cannot wrap a counter or start an unmetered fallback; it is
+the nonretryable `semantic_search_scan_limit` hard failure and returns no
+partial result.
 
 Results are ordered by descending score, then by ascending raw UTF-8 path
 bytes. A worst-first bounded heap retains the globally best 200 matching files
@@ -248,12 +266,13 @@ not by themselves make the scan incomplete; their fixed eligibility rules and
 counters make those exclusions explicit. A stopword-only query has no
 filesystem observations and therefore reports zero statistics.
 
-Aggregate content or name bytes, keyword-work steps, path or depth bounds, and
-checked counter overflow are hard scan-limit failures. They return no partial
-result and are never represented by `traversal_cap`. Raw-name accounting
-includes the one bounded overflow witness even though that witness does not
-increment `visited_entries`. The partial traversal reason is reserved solely
-for atomic directory rejection at the 2,000-entry ceiling.
+Aggregate content or name bytes, content-read attempts, keyword-work steps,
+path or depth bounds, and checked counter overflow are hard scan-limit
+failures. They return no partial result and are never represented by
+`traversal_cap`. Raw-name accounting includes the one bounded overflow witness
+even though that witness does not increment `visited_entries`. The partial
+traversal reason is reserved solely for atomic directory rejection at the
+2,000-entry ceiling.
 
 ## Errors, lifecycle, and cancellation
 
@@ -289,6 +308,12 @@ and after each bounded file read, at fixed intervals through keyword matching,
 before result reconstruction, and immediately before publication. One
 operating-system open, metadata, directory-read, or file-read call already in
 flight cannot be preempted; cancellation is cooperative when that call returns.
+
+If descriptor-relative reacquisition of the retained workspace root fails
+with operating-system access or permission denial, execution returns the
+nonretryable `semantic_search_permission_denied` category. Other reacquisition
+failures remain retryable `semantic_search_unavailable`; neither mapping
+includes a raw path, error number, or operating-system diagnostic.
 
 No task, thread, process, timer, producer, cache, or indexer is detached.
 Dropping an unpolled future performs no filesystem effect. Dropping a polled

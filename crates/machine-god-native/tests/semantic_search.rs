@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fs;
 use std::future::Future;
 use std::io;
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -67,6 +67,21 @@ impl Drop for TemporaryDirectory {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => panic!("failed to remove temporary directory: {error}"),
         }
+    }
+}
+
+struct PermissionRestore {
+    path: PathBuf,
+    permissions: fs::Permissions,
+}
+
+impl Drop for PermissionRestore {
+    fn drop(&mut self) {
+        let result = fs::set_permissions(&self.path, self.permissions.clone());
+        if std::thread::panicking() {
+            return;
+        }
+        result.expect("failed to restore temporary directory permissions");
     }
 }
 
@@ -205,7 +220,7 @@ fn public_limits_are_frozen_and_coherent() {
     assert_eq!(MAX_SEMANTIC_SEARCH_FILE_BYTES, 102_400);
     assert_eq!(MAX_SEMANTIC_SEARCH_TOTAL_CONTENT_BYTES, 67_108_864);
     assert_eq!(MAX_SEMANTIC_SEARCH_RESULT_LINE_BYTES, 2_000);
-    assert_eq!(MAX_SEMANTIC_SEARCH_MATCH_STEPS, 2_147_483_648);
+    assert_eq!(MAX_SEMANTIC_SEARCH_MATCH_STEPS, 67_108_864);
     assert_eq!(MAX_SEMANTIC_SEARCH_KEYWORDS, 16);
     assert_eq!(MAX_SEMANTIC_SEARCH_RETAINED_RESULTS, 200);
     assert_eq!(MAX_SEMANTIC_SEARCH_SHOWN_RESULTS, 100);
@@ -396,6 +411,24 @@ fn splitters_stopwords_short_tokens_and_sixteen_keyword_cap_match_pinned_behavio
 }
 
 #[test]
+fn newline_heavy_content_with_sixteen_keywords_remains_bounded_and_complete() {
+    let temporary = TemporaryDirectory::new();
+    fs::write(temporary.path().join("newlines.txt"), "\n".repeat(4_096)).unwrap();
+    let query = (0..MAX_SEMANTIC_SEARCH_KEYWORDS)
+        .map(|index| format!("kw{index:02}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let output = run(&tool(temporary.path()), &query, ".");
+    assert_eq!(output.content["keywords"].as_array().unwrap().len(), 16);
+    assert_eq!(output.content["candidate_files"], 1);
+    assert_eq!(output.content["searched_files"], 1);
+    assert_eq!(output.content["matching_files"], 0);
+    assert_eq!(output.content["results"], json!([]));
+    assert_eq!(output.content["incomplete"], false);
+}
+
+#[test]
 fn direct_file_root_and_utf8_line_clipping_are_bounded() {
     let temporary = TemporaryDirectory::new();
     let line = format!(
@@ -517,6 +550,55 @@ fn selected_symlink_missing_root_and_removed_retained_root_fail_closed_and_redac
         "requested semantic search is unavailable",
         true,
     );
+}
+
+#[test]
+fn retained_root_permission_revocation_is_nonretryable_when_the_platform_enforces_it() {
+    let temporary = TemporaryDirectory::new();
+    fs::write(temporary.path().join("needle.txt"), "needle\n").unwrap();
+    let search_tool = tool(temporary.path());
+    let original_permissions = fs::metadata(temporary.path()).unwrap().permissions();
+    let mut revoked_permissions = original_permissions.clone();
+    revoked_permissions.set_mode(0o000);
+    fs::set_permissions(temporary.path(), revoked_permissions).unwrap();
+    let restore = PermissionRestore {
+        path: temporary.path().to_owned(),
+        permissions: original_permissions,
+    };
+
+    let ordinary_access = fs::read_dir(temporary.path());
+    let result = execute(
+        &search_tool,
+        canonical("needle", "."),
+        CancellationToken::new(),
+    );
+    drop(restore);
+
+    match ordinary_access {
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            assert_tool_error(
+                result.unwrap_err(),
+                ToolErrorKind::PermissionDenied,
+                "semantic_search_permission_denied",
+                "requested search root cannot be searched",
+                false,
+            );
+        }
+        Ok(_) => {
+            // Privileged CI users may bypass mode-bit denial. If native search
+            // still observes a denial, its stable mapping remains mandatory.
+            if let Err(error) = result {
+                assert_tool_error(
+                    error,
+                    ToolErrorKind::PermissionDenied,
+                    "semantic_search_permission_denied",
+                    "requested search root cannot be searched",
+                    false,
+                );
+            }
+        }
+        Err(error) => panic!("unexpected permission probe failure: {error}"),
+    }
 }
 
 #[test]
