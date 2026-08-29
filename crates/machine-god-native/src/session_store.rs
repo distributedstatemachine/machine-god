@@ -302,6 +302,7 @@ impl FileSessionStore {
     /// Descriptor-relative native components use this instead of reopening the
     /// selected path, so later pathname replacement cannot split their state
     /// authority from the session store's retained directory identity.
+    #[cfg(feature = "ai-gateway-http")]
     pub(crate) fn try_clone_root_descriptor(&self) -> io::Result<OwnedFd> {
         self.root.try_clone()
     }
