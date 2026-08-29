@@ -60,6 +60,7 @@ mod session_inspection;
 mod session_lifecycle;
 mod session_listing;
 mod session_store;
+mod skill;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod state_environment;
 mod terminal;
@@ -318,6 +319,13 @@ pub use session_store::{
     FILE_SESSION_SCHEMA_VERSION, FileSessionStore, FileSessionStoreOpenError,
     FileSessionStoreOpenErrorKind, MAX_FILE_SESSION_BYTES, MAX_LIST_SESSION_DIRECTORY_ENTRIES,
     MAX_LIST_SESSION_TOTAL_RECORD_BYTES, MAX_LIST_SESSIONS,
+};
+pub use skill::{
+    MAX_SKILL_CHUNK_BYTES, MAX_SKILL_FILE_BYTES, MAX_SKILL_IO_ATTEMPTS, MAX_SKILL_NAME_BYTES,
+    MAX_SKILL_PATH_BYTES, MAX_SKILL_PATH_COMPONENT_BYTES, MAX_SKILL_PATH_COMPONENTS,
+    MAX_SKILL_RESOURCE_BYTES, MAX_SKILL_SERIALIZED_ARGUMENT_BYTES,
+    MAX_SKILL_SERIALIZED_RESULT_BYTES, SKILL_TOOL_NAME, SkillTool, SkillToolOpenError,
+    SkillToolOpenErrorKind,
 };
 pub use terminal::{
     MAX_TERMINAL_COMMAND_BYTES, MAX_TERMINAL_CWD_BYTES, MAX_TERMINAL_CWD_COMPONENT_BYTES,

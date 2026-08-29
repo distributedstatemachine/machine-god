@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33254454283` (`GREEN`)
 - Main Benchmark evidence: `33254454281` (`GREEN`)
 - Active branch: `agent/m05-skill`
-- Active phase: `bounded native memory delivered; documentation-only delivery record seal in progress`
-- Next gate: `push the exact documentation-only delivery record seal and require main CI and Benchmark evidence to pass for that SHA, then freeze the bounded workspace-local skill contract on agent/m05-skill`
+- Active phase: `bounded workspace-local skill contract freeze in progress`
+- Next gate: `freeze the opaque UTF-8 skill-resource contract, then implement the confined native tool and focused evidence`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,

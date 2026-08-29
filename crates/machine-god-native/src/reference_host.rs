@@ -458,6 +458,7 @@ impl NativeReferenceHost {
             .tool(read_tool_result)
             .tool(workspace_tools.rename_file)
             .tool(workspace_tools.semantic_search)
+            .tool(workspace_tools.skill)
             .tool(terminal)
             .tool(vision)
             .tool(web_fetch)
