@@ -785,9 +785,9 @@ def _paragraph_line_continuation(
 
 
 def _blank_for_links(value: str) -> str:
-    """Blank inert inline code without joining surrounding link syntax."""
+    """Mask inert inline code without creating block indentation or links."""
 
-    return re.sub(r"[^\r\n]", " ", value)
+    return re.sub(r"[^\r\n]", "\x01", value)
 
 
 def _escaped_punctuation_mask(markup: str) -> bytearray:
@@ -1094,6 +1094,9 @@ def _scan_markdown_inert_blocks(source: str) -> MarkdownScan:
                 end = text.find("-->", comment_start + 4, line_end)
                 comment_index += 1
                 if end >= 0:
+                    if block_candidate:
+                        cursor = line_end
+                        break
                     cursor = end + 3
                     continue
                 if block_candidate:
@@ -1585,13 +1588,19 @@ def _inline_link_target(
     markup: str,
     syntax: LinkSyntaxIndex,
     open_paren: int,
+    boundaries: array | None = None,
 ) -> tuple[str, int] | None:
     """Parse one complete inline destination and optional title."""
 
+    whitespace_start = open_paren + 1
     cursor = _skip_link_whitespace(
-        syntax, open_paren + 1, len(markup), allow_tabs=False
+        syntax, whitespace_start, len(markup), allow_tabs=False
     )
-    if cursor is None or cursor >= len(markup):
+    if (
+        cursor is None
+        or cursor >= len(markup)
+        or _crosses_inline_boundary(boundaries, whitespace_start, cursor)
+    ):
         return None
 
     if markup[cursor] == "<" and not syntax.escaped[cursor]:
@@ -1602,6 +1611,7 @@ def _inline_link_target(
             angle_end < 0
             or (nested_angle >= 0 and nested_angle < angle_end)
             or (line_break >= 0 and line_break < angle_end)
+            or _crosses_inline_boundary(boundaries, cursor, angle_end + 1)
         ):
             return None
         target = markup[cursor : angle_end + 1]
@@ -1610,7 +1620,18 @@ def _inline_link_target(
         target_start = cursor
         depth = 0
         while cursor < len(markup):
+            if _crosses_inline_boundary(boundaries, cursor, cursor + 1):
+                return None
             token = markup[cursor]
+            if token == "\\" and cursor + 1 < len(markup):
+                if markup[cursor + 1] == " ":
+                    return None
+                cursor += (
+                    3
+                    if markup[cursor + 1 : cursor + 3] == "\r\n"
+                    else 2
+                )
+                continue
             if syntax.escaped[cursor]:
                 cursor += 1
                 continue
@@ -1627,29 +1648,39 @@ def _inline_link_target(
             elif ord(token) < 0x20:
                 return None
             cursor += 1
-        if cursor == target_start or cursor >= len(markup):
+        if depth or cursor == target_start or cursor >= len(markup):
             return None
         target = markup[target_start:cursor]
 
     destination_end = cursor
+    whitespace_start = cursor
     cursor = _skip_link_whitespace(
         syntax, cursor, len(markup), allow_tabs=False
     )
-    if cursor is None or cursor >= len(markup):
+    if (
+        cursor is None
+        or cursor >= len(markup)
+        or _crosses_inline_boundary(boundaries, whitespace_start, cursor)
+    ):
         return None
     if markup[cursor] == ")" and not syntax.escaped[cursor]:
         return target, cursor + 1
     if cursor == destination_end:
         return None
-    title_end = _title_end(markup, syntax, cursor, len(markup))
-    if title_end is None:
+    title_start = cursor
+    title_end = _title_end(markup, syntax, title_start, len(markup))
+    if title_end is None or _crosses_inline_boundary(
+        boundaries, title_start, title_end
+    ):
         return None
+    whitespace_start = title_end
     cursor = _skip_link_whitespace(
         syntax, title_end, len(markup), allow_tabs=False
     )
     if (
         cursor is None
         or cursor >= len(markup)
+        or _crosses_inline_boundary(boundaries, whitespace_start, cursor)
         or markup[cursor] != ")"
         or syntax.escaped[cursor]
     ):
@@ -1680,16 +1711,18 @@ def _reference_definition_label(content: str) -> tuple[str, int] | None:
         return None
     label_start = cursor + 1
     cursor = label_start
-    escaped = False
     while cursor < len(content):
         token = content[cursor]
-        if escaped:
-            escaped = False
-        elif token == "\\":
-            escaped = True
-        elif token == "[":
+        if (
+            token == "\\"
+            and cursor + 1 < len(content)
+            and content[cursor + 1] in MARKDOWN_ESCAPABLE_PUNCTUATION
+        ):
+            cursor += 2
+            continue
+        if token == "[":
             return None
-        elif token == "]":
+        if token == "]":
             break
         cursor += 1
     if cursor >= len(content) or cursor - label_start > 999:
@@ -1699,6 +1732,29 @@ def _reference_definition_label(content: str) -> tuple[str, int] | None:
     if not label or cursor >= len(content) or content[cursor] != ":":
         return None
     return label, cursor + 1
+
+
+def _pending_reference_definition_label(content: str) -> bool:
+    """Recognize a valid reference-definition label awaiting a later line."""
+
+    cursor = len(content) - len(content.lstrip(" "))
+    if cursor > 3 or cursor >= len(content) or content[cursor] != "[":
+        return False
+    label_start = cursor + 1
+    cursor = label_start
+    while cursor < len(content):
+        token = content[cursor]
+        if (
+            token == "\\"
+            and cursor + 1 < len(content)
+            and content[cursor + 1] in MARKDOWN_ESCAPABLE_PUNCTUATION
+        ):
+            cursor += 2
+            continue
+        if token in "[]\0":
+            return False
+        cursor += 1
+    return cursor - label_start <= 999
 
 
 def _parse_reference_definition(
@@ -1737,14 +1793,16 @@ def _parse_reference_definition(
     else:
         target_start = cursor
         depth = 0
-        escaped = False
         while cursor < len(content):
             token = content[cursor]
-            if escaped:
-                escaped = False
-            elif token == "\\":
-                escaped = True
-            elif token == "(" and depth < 32:
+            if (
+                token == "\\"
+                and cursor + 1 < len(content)
+                and content[cursor + 1] in MARKDOWN_ESCAPABLE_PUNCTUATION
+            ):
+                cursor += 2
+                continue
+            if token == "(" and depth < 32:
                 depth += 1
             elif token == "(":
                 return None
@@ -1858,11 +1916,13 @@ def _reference_title_start(content: str) -> tuple[str, str] | None:
     return closer, _reference_title_fragment(content[cursor + 1 :], closer)
 
 
-def _reference_title_line(content: str) -> bool:
-    """Recognize one complete continuation title for a link definition."""
+def _blank_reference_chunks(chunks: list[str], first_chunk: int) -> None:
+    """Blank a completed multiline definition without shifting offsets."""
 
-    title = _reference_title_start(content)
-    return title is not None and title[1] == "complete"
+    for chunk_index in range(first_chunk, len(chunks)):
+        content = chunks[chunk_index].rstrip("\r\n")
+        newline = chunks[chunk_index][len(content) :]
+        chunks[chunk_index] = " " * len(content) + newline
 
 
 def _reference_definitions(markup: str) -> tuple[dict[str, str], str]:
@@ -1871,6 +1931,7 @@ def _reference_definitions(markup: str) -> tuple[dict[str, str], str]:
     ambient = EMPTY_CONTAINER
     pending_title_owner: ContainerState | None = None
     pending_destination: tuple[ContainerState, str, int] | None = None
+    pending_label: tuple[ContainerState, str, int] | None = None
     pending_multiline_title: (
         tuple[ContainerState, str | None, str | None, str, int] | None
     ) = None
@@ -1886,6 +1947,73 @@ def _reference_definitions(markup: str) -> tuple[dict[str, str], str]:
         )
         if paragraph_open and not line_continuation:
             paragraph_open = False
+        if pending_label is not None:
+            owner, logical_definition, first_chunk = pending_label
+            matched, owner_offset = _match_container_path(content, owner.frames)
+            lazy_continuation, lazy_offset = _paragraph_line_continuation(
+                content, owner
+            )
+            explicit_owner = matched == owner.frames
+            if explicit_owner or lazy_continuation:
+                fragment_offset = owner_offset if explicit_owner else lazy_offset
+                fragment = content[fragment_offset:]
+                candidate = logical_definition + "\n" + fragment
+                if fragment.strip() and _pending_reference_definition_label(
+                    candidate
+                ):
+                    chunks.append(raw_line)
+                    pending_label = (owner, candidate, first_chunk)
+                    continue
+
+                definition = (
+                    _reference_definition(candidate) if fragment.strip() else None
+                )
+                pending_definition = (
+                    _pending_reference_definition(candidate)
+                    if fragment.strip()
+                    else None
+                )
+                prefix = (
+                    _reference_definition_prefix(candidate)
+                    if fragment.strip()
+                    else None
+                )
+                if definition is not None:
+                    label, target, has_title = definition
+                    definitions.setdefault(label, target)
+                    chunks.append(raw_line)
+                    _blank_reference_chunks(chunks, first_chunk)
+                    pending_label = None
+                    if not has_title:
+                        pending_title_owner = owner
+                    paragraph_open = False
+                    continue
+                if pending_definition is not None:
+                    label, target, closer = pending_definition
+                    chunks.append(raw_line)
+                    pending_label = None
+                    pending_multiline_title = (
+                        owner,
+                        label,
+                        target,
+                        closer,
+                        first_chunk,
+                    )
+                    paragraph_open = False
+                    continue
+                if prefix is not None:
+                    chunks.append(raw_line)
+                    pending_label = None
+                    pending_destination = (owner, prefix, first_chunk)
+                    paragraph_open = False
+                    continue
+                if fragment.strip():
+                    chunks.append(raw_line)
+                    pending_label = None
+                    paragraph_open = True
+                    continue
+            pending_label = None
+            paragraph_open = line_continuation
         if pending_multiline_title is not None:
             owner, label, target, closer, first_chunk = pending_multiline_title
             matched, owner_offset = _match_container_path(content, owner.frames)
@@ -1909,12 +2037,7 @@ def _reference_definitions(markup: str) -> tuple[dict[str, str], str]:
                     continue
                 if label is not None and target is not None:
                     definitions.setdefault(label, target)
-                for chunk_index in range(first_chunk, len(chunks)):
-                    prior_content = chunks[chunk_index].rstrip("\r\n")
-                    prior_newline = chunks[chunk_index][len(prior_content) :]
-                    chunks[chunk_index] = (
-                        " " * len(prior_content) + prior_newline
-                    )
+                _blank_reference_chunks(chunks, first_chunk)
                 pending_multiline_title = None
                 paragraph_open = False
                 continue
@@ -1926,10 +2049,7 @@ def _reference_definitions(markup: str) -> tuple[dict[str, str], str]:
             indentation = len(parsed.content) - len(parsed.content.lstrip(" "))
             parsed_definition = None
             pending_definition = None
-            if (
-                (parsed.path == owner.frames or line_continuation)
-                and indentation <= 3
-            ):
+            if parsed.path == owner.frames or line_continuation:
                 synthetic = "[continuation]: " + parsed.content[indentation:]
                 parsed_definition = _reference_definition(synthetic)
                 pending_definition = _pending_reference_definition(
@@ -1938,10 +2058,8 @@ def _reference_definitions(markup: str) -> tuple[dict[str, str], str]:
             if parsed_definition is not None:
                 _, target, has_title = parsed_definition
                 definitions.setdefault(label, target)
-                prior_content = chunks[chunk_index].rstrip("\r\n")
-                prior_newline = chunks[chunk_index][len(prior_content) :]
-                chunks[chunk_index] = " " * len(prior_content) + prior_newline
-                chunks.append(" " * len(content) + newline)
+                chunks.append(raw_line)
+                _blank_reference_chunks(chunks, chunk_index)
                 if not has_title:
                     pending_title_owner = owner
                 paragraph_open = False
@@ -1991,6 +2109,17 @@ def _reference_definitions(markup: str) -> tuple[dict[str, str], str]:
                     )
                     paragraph_open = False
                     continue
+        if not paragraph_open and _pending_reference_definition_label(
+            parsed.content
+        ):
+            chunks.append(raw_line)
+            pending_label = (
+                parsed.state,
+                parsed.content,
+                len(chunks) - 1,
+            )
+            paragraph_open = False
+            continue
         pending_definition = (
             None
             if paragraph_open
@@ -2327,22 +2456,94 @@ def _without_html_blocks_for_links(markup: str) -> str:
     return "".join(chunks)
 
 
+def _crosses_inline_boundary(
+    boundaries: array | None, start: int, end: int
+) -> bool:
+    """Return whether one half-open inline span crosses a block boundary."""
+
+    if boundaries is None or start >= end:
+        return False
+    boundary = boundaries[start]
+    return boundary >= 0 and boundary < end
+
+
+def _empty_inline_destination_before_boundary(
+    markup: str,
+    syntax: LinkSyntaxIndex,
+    open_paren: int,
+    boundaries: array,
+) -> bool:
+    """Recognize an inline opener with no destination in its paragraph."""
+
+    start = open_paren + 1
+    if start >= len(markup):
+        return True
+    nonspace = syntax.next_nonspace[start]
+    boundary = boundaries[start]
+    return nonspace < 0 or (boundary >= 0 and boundary <= nonspace)
+
+
 def _reference_suffix(
     markup: str,
     syntax: LinkSyntaxIndex,
     cursor: int,
+    boundaries: array | None = None,
 ) -> tuple[str, int] | None:
     if cursor >= len(markup) or markup[cursor] != "[" or syntax.escaped[cursor]:
         return None
     label_start = cursor + 1
     cursor = label_start
+    depth = 0
     while cursor < len(markup) and cursor - label_start <= 999:
+        if _crosses_inline_boundary(boundaries, cursor, cursor + 1):
+            return None
         if markup[cursor] == "]" and not syntax.escaped[cursor]:
+            if depth:
+                depth -= 1
+                cursor += 1
+                continue
             return markup[label_start:cursor], cursor + 1
         if markup[cursor] == "[" and not syntax.escaped[cursor]:
-            return None
+            depth += 1
         cursor += 1
     return None
+
+
+def _inline_paragraph_boundaries(markup: str) -> array:
+    """Index the next position where CommonMark inline state must reset."""
+
+    marked = bytearray(len(markup) + 1)
+    ambient = EMPTY_CONTAINER
+    offset = 0
+    for raw_line in markup.splitlines(keepends=True):
+        content = raw_line.rstrip("\r\n")
+        line_start = offset
+        offset += len(raw_line)
+        continuation, _ = _paragraph_line_continuation(content, ambient)
+        parsed = _parse_container_line(content, ambient)
+        ambient = parsed.state
+        leaf_boundary = (
+            _fence_opener(parsed.content) is not None
+            or FENCE_CLOSE_RE.match(parsed.content) is not None
+            or PARAGRAPH_ATX_RE.match(parsed.content) is not None
+            or SETEXT_HEADING_RE.match(parsed.content) is not None
+            or THEMATIC_BREAK_RE.match(parsed.content) is not None
+            or HTML_RAW_BLOCK_RE.match(parsed.content) is not None
+            or HTML_DECLARATION_BLOCK_RE.match(parsed.content) is not None
+        )
+        blank = not content.strip()
+        if blank or leaf_boundary or not continuation:
+            marked[line_start] = 1
+        if blank or leaf_boundary:
+            marked[offset] = 1
+
+    boundaries = array("i", [-1]) * (len(markup) + 1)
+    nearest = -1
+    for index in range(len(markup), -1, -1):
+        if marked[index]:
+            nearest = index
+        boundaries[index] = nearest
+    return boundaries
 
 
 def _markdown_link_targets(markup: str) -> Iterator[str]:
@@ -2351,15 +2552,28 @@ def _markdown_link_targets(markup: str) -> Iterator[str]:
     markup = _without_html_blocks_for_links(_without_indented_code(markup))
     definitions, markup = _reference_definitions(markup)
     syntax = _link_syntax_index(markup)
+    boundaries = _inline_paragraph_boundaries(markup)
     opener_positions = array("I")
     opener_generations = array("I")
     opener_images = bytearray()
     opener_in_images = bytearray()
     opener_nested = bytearray()
+    image_pending_starts = array("I")
+    pending_image_targets: list[str] = []
     image_depth = 0
     generation = 0
     cursor = 0
     while cursor < len(markup):
+        if boundaries[cursor] == cursor:
+            yield from pending_image_targets
+            opener_positions.clear()
+            opener_generations.clear()
+            opener_images.clear()
+            opener_in_images.clear()
+            opener_nested.clear()
+            image_pending_starts.clear()
+            pending_image_targets.clear()
+            image_depth = 0
         token = markup[cursor]
         if token == "[" and not syntax.escaped[cursor]:
             if opener_nested:
@@ -2374,6 +2588,7 @@ def _markdown_link_targets(markup: str) -> Iterator[str]:
             opener_images.append(image)
             opener_in_images.append(image_depth > 0)
             if image:
+                image_pending_starts.append(len(pending_image_targets))
                 image_depth += 1
             opener_nested.append(0)
             cursor += 1
@@ -2390,6 +2605,7 @@ def _markdown_link_targets(markup: str) -> Iterator[str]:
         opener_generation = opener_generations.pop()
         image = bool(opener_images.pop())
         in_image = bool(opener_in_images.pop())
+        pending_image_start = image_pending_starts.pop() if image else 0
         if image:
             image_depth -= 1
         nested_label = bool(opener_nested.pop())
@@ -2399,21 +2615,42 @@ def _markdown_link_targets(markup: str) -> Iterator[str]:
             continue
 
         inline = None
-        if cursor + 1 < len(markup) and markup[cursor + 1] == "(":
-            inline = _inline_link_target(markup, syntax, cursor + 1)
+        inline_open = cursor + 1
+        if inline_open < len(markup) and markup[inline_open] == "(":
+            inline = _inline_link_target(
+                markup, syntax, inline_open, boundaries
+            )
         if inline is not None:
             target, cursor = inline
-            if target and not in_image:
-                yield target
+            if image:
+                del pending_image_targets[pending_image_start:]
+            if target:
+                if image_depth > 0:
+                    pending_image_targets.append(target)
+                else:
+                    yield target
             if not image and not in_image:
                 generation += 1
             continue
-
-        if cursor - opener - 1 > 999:
+        if inline_open < len(markup) and markup[inline_open] == "(" and (
+            _empty_inline_destination_before_boundary(
+                markup, syntax, inline_open, boundaries
+            )
+        ):
+            if image and image_depth == 0:
+                yield from pending_image_targets
+                pending_image_targets.clear()
             cursor += 1
             continue
 
-        suffix = _reference_suffix(markup, syntax, cursor + 1)
+        if cursor - opener - 1 > 999:
+            if image and image_depth == 0:
+                yield from pending_image_targets
+                pending_image_targets.clear()
+            cursor += 1
+            continue
+
+        suffix = _reference_suffix(markup, syntax, cursor + 1, boundaries)
         if suffix is not None:
             reference_label, suffix_end = suffix
             if reference_label:
@@ -2424,13 +2661,20 @@ def _markdown_link_targets(markup: str) -> Iterator[str]:
                 key = ""
             target = definitions.get(key)
             if target is not None:
-                if not in_image:
+                if image:
+                    del pending_image_targets[pending_image_start:]
+                if image_depth > 0:
+                    pending_image_targets.append(target)
+                else:
                     yield target
                 cursor = suffix_end
                 if not image and not in_image:
                     generation += 1
                 continue
-            cursor = suffix_end
+            if image and image_depth == 0:
+                yield from pending_image_targets
+                pending_image_targets.clear()
+            cursor += 1
             continue
 
         target = (
@@ -2441,11 +2685,20 @@ def _markdown_link_targets(markup: str) -> Iterator[str]:
             else None
         )
         if target is not None:
-            if not in_image:
+            if image:
+                del pending_image_targets[pending_image_start:]
+            if image_depth > 0:
+                pending_image_targets.append(target)
+            else:
                 yield target
             if not image and not in_image:
                 generation += 1
+        elif image and image_depth == 0:
+            yield from pending_image_targets
+            pending_image_targets.clear()
         cursor += 1
+
+    yield from pending_image_targets
 
 
 def _policy_code_mask(prose: str) -> bytearray:
@@ -2511,6 +2764,11 @@ def _normalize_policy_markup(prose: str) -> str:
     prose = _without_indented_code(prose)
     definitions, prose = _reference_definitions(prose)
     syntax = _link_syntax_index(prose)
+    boundaries = (
+        _inline_paragraph_boundaries(prose)
+        if any(marker in prose for marker in "[*_~")
+        else None
+    )
     code = _policy_code_mask(prose)
     html_tags = _policy_html_tag_mask(prose, code, syntax.escaped)
     removed = bytearray(len(prose))
@@ -2521,6 +2779,11 @@ def _normalize_policy_markup(prose: str) -> str:
     generation = 0
     cursor = 0
     while cursor < len(prose):
+        if boundaries is not None and boundaries[cursor] == cursor:
+            opener_positions.clear()
+            opener_generations.clear()
+            opener_images.clear()
+            opener_nested.clear()
         if code[cursor]:
             cursor += 1
             continue
@@ -2556,15 +2819,25 @@ def _normalize_policy_markup(prose: str) -> str:
             continue
 
         syntax_end: int | None = None
-        if cursor + 1 < len(prose) and prose[cursor + 1] == "(":
-            inline = _inline_link_target(prose, syntax, cursor + 1)
+        inline_open = cursor + 1
+        if inline_open < len(prose) and prose[inline_open] == "(":
+            inline = _inline_link_target(
+                prose, syntax, inline_open, boundaries
+            )
             if inline is not None:
                 _, syntax_end = inline
+            elif _empty_inline_destination_before_boundary(
+                prose, syntax, inline_open, boundaries
+            ):
+                cursor += 1
+                continue
         if syntax_end is None and cursor - opener - 1 > 999:
             cursor += 1
             continue
         if syntax_end is None:
-            suffix = _reference_suffix(prose, syntax, cursor + 1)
+            suffix = _reference_suffix(
+                prose, syntax, cursor + 1, boundaries
+            )
             if suffix is not None:
                 reference_label, suffix_end = suffix
                 if reference_label:
@@ -2576,7 +2849,7 @@ def _normalize_policy_markup(prose: str) -> str:
                 if key in definitions:
                     syntax_end = suffix_end
                 else:
-                    cursor = suffix_end
+                    cursor += 1
                     continue
         if syntax_end is None and definitions and not nested_label:
             key = _normalize_reference_label(prose[opener + 1 : cursor])
@@ -2612,7 +2885,11 @@ def _normalize_policy_markup(prose: str) -> str:
         previous = array("i", range(-1, count - 1))
         following = array("i", range(1, count + 1))
         following[-1] = -1
-        openers_bottom = {"*": -1, "_": -1, "~": -1}
+        openers_bottom = {
+            "*": array("i", [-1]) * 6,
+            "_": array("i", [-1]) * 6,
+            "~": array("i", [-1]) * 6,
+        }
 
         def unlink(index: int) -> None:
             before = previous[index]
@@ -2628,10 +2905,17 @@ def _normalize_policy_markup(prose: str) -> str:
                 closer = following[closer]
                 continue
             marker = delimiter_markers[closer]
+            closer_class = (
+                (3 if delimiter_opens[closer] else 0)
+                + delimiter_originals[closer] % 3
+            )
             opener = previous[closer]
             opener_found = -1
             odd_match = False
-            while opener >= 0 and opener != openers_bottom[marker]:
+            while (
+                opener >= 0
+                and opener != openers_bottom[marker][closer_class]
+            ):
                 odd_match = (
                     marker in "*_"
                     and bool(delimiter_opens[closer] or delimiter_closes[opener])
@@ -2688,10 +2972,9 @@ def _normalize_policy_markup(prose: str) -> str:
                 continue
 
             closer = following[closer]
-            if not odd_match:
-                openers_bottom[marker] = previous[old_closer]
-                if not delimiter_opens[old_closer]:
-                    unlink(old_closer)
+            openers_bottom[marker][closer_class] = previous[old_closer]
+            if not delimiter_opens[old_closer]:
+                unlink(old_closer)
 
         delimiter_starts.clear()
         delimiter_lengths.clear()
@@ -2703,6 +2986,8 @@ def _normalize_policy_markup(prose: str) -> str:
     cursor = 0
     line_has_content = False
     while cursor < len(prose):
+        if boundaries is not None and boundaries[cursor] == cursor:
+            process_delimiters()
         if (
             prose[cursor] == "\r"
             and cursor + 1 < len(prose)
@@ -2830,7 +3115,7 @@ def _relative_link_target(raw_target: str) -> str | None:
         cursor += 1
     target = HTML_ENTITY_RE.sub(
         lambda match: unescape_html(match.group(0)), "".join(rendered)
-    )
+    ).rstrip("\t\r\n")
     classification_target = "".join(
         f"%{ord(token):02X}" if ord(token) <= 0x20 else token
         for token in target

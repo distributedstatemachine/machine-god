@@ -1045,6 +1045,10 @@ class DocumentationPolicyTests(unittest.TestCase):
             check_documentation._relative_link_target("foo&amp;bar.md"),
         )
         self.assertEqual(
+            "foo\\",
+            check_documentation._relative_link_target("foo\\\n"),
+        )
+        self.assertEqual(
             "foo\tbar.md",
             check_documentation._relative_link_target("foo%09bar.md"),
         )
@@ -1159,6 +1163,22 @@ class DocumentationPolicyTests(unittest.TestCase):
                     list(check_documentation._markdown_link_targets(markup)),
                 )
 
+    def test_multiline_reference_labels_and_indented_destinations_are_validated(
+        self,
+    ) -> None:
+        cases = (
+            "[a\nb]: missing.md\n\n[x][a\nb]\n",
+            "> [a\n> b]: missing.md\n\n[x][a b]\n",
+            "[r]:\n    missing.md\n\n[r]\n",
+            "[r]:\n\t\tmissing.md\n\n[r]\n",
+        )
+        for markup in cases:
+            with self.subTest(markup=markup):
+                self.assertEqual(
+                    ["missing.md"],
+                    list(check_documentation._markdown_link_targets(markup)),
+                )
+
     def test_incomplete_multiline_reference_title_does_not_define_link(
         self,
     ) -> None:
@@ -1178,6 +1198,15 @@ class DocumentationPolicyTests(unittest.TestCase):
         self.assertEqual(
             ["missing.md"],
             list(check_documentation._markdown_link_targets(markup)),
+        )
+
+    def test_reference_destination_only_escapes_commonmark_punctuation(
+        self,
+    ) -> None:
+        markup = "[r]: missing\\ file.md\n\n[x][r]\n"
+
+        self.assertEqual(
+            [], list(check_documentation._markdown_link_targets(markup))
         )
 
     def test_reference_definition_cannot_interrupt_a_paragraph(self) -> None:
@@ -1258,6 +1287,24 @@ class DocumentationPolicyTests(unittest.TestCase):
             list(check_documentation._markdown_link_targets(scan.link_markup)),
         )
 
+    def test_inline_code_projection_cannot_create_indented_code(self) -> None:
+        markup = "`ab`[x](missing.md)\n"
+        scan = check_documentation._scan_markdown_inert_blocks(markup)
+
+        self.assertEqual(
+            ["missing.md"],
+            list(check_documentation._markdown_link_targets(scan.link_markup)),
+        )
+
+    def test_same_line_html_comment_block_owns_trailing_content(self) -> None:
+        markup = "<!--x-->[x](ignored.md)\n\n[x](missing.md)\n"
+        scan = check_documentation._scan_markdown_inert_blocks(markup)
+
+        self.assertEqual(
+            ["missing.md"],
+            list(check_documentation._markdown_link_targets(scan.link_markup)),
+        )
+
     def test_reference_definitions_own_literal_delimiters(self) -> None:
         cases = (
             '[note]: good.md "`"\n[x](missing.md) `\n',
@@ -1291,6 +1338,44 @@ class DocumentationPolicyTests(unittest.TestCase):
             ["image.png"],
             list(check_documentation._markdown_link_targets(markup)),
         )
+
+    def test_unresolved_prefix_and_unmatched_image_release_rendered_links(
+        self,
+    ) -> None:
+        cases = (
+            ("[a][x](missing.md)", ["missing.md"]),
+            ("![[x](missing.md)", ["missing.md"]),
+            ("![[x](ignored.md)](image.png)", ["image.png"]),
+            (
+                "[a][[b]]\n\n[a]: ignored.md\n[b]: missing.md\n",
+                ["missing.md"],
+            ),
+        )
+        for markup, expected in cases:
+            with self.subTest(markup=markup):
+                self.assertEqual(
+                    expected,
+                    list(check_documentation._markdown_link_targets(markup)),
+                )
+
+    def test_inline_links_cannot_cross_blank_paragraph_boundaries(self) -> None:
+        cases = (
+            "[\n\n[a]](missing.md)\n",
+            "[x](!(missing.md\n)\n",
+            "[x](missing\\ file.md)\n",
+            "[a](\n\n[a]: missing.md\n",
+        )
+        for markup in cases:
+            with self.subTest(markup=markup):
+                scan = check_documentation._scan_markdown_inert_blocks(markup)
+                self.assertEqual(
+                    [],
+                    list(
+                        check_documentation._markdown_link_targets(
+                            scan.link_markup
+                        )
+                    ),
+                )
 
     def test_indented_code_links_are_inert_but_paragraph_continuations_render(
         self,
@@ -1379,6 +1464,17 @@ class DocumentationPolicyTests(unittest.TestCase):
         elapsed = time.monotonic() - started
 
         self.assertEqual("a" * (check_documentation.MAX_MARKDOWN_BYTES // 2), prose)
+        self.assertLess(elapsed, 1.5)
+
+    def test_classifier_bounds_rule_of_three_mismatch_searches(self) -> None:
+        unit_count = 16_000
+        markup = ("*a " * unit_count) + ("b**c" * unit_count) + "\n"
+
+        started = time.monotonic()
+        prose = check_documentation._normalize_policy_markup(markup)
+        elapsed = time.monotonic() - started
+
+        self.assertEqual(("*a " * unit_count) + ("bc" * unit_count) + "\n", prose)
         self.assertLess(elapsed, 1.5)
 
     def test_classifier_applies_commonmark_backslash_escapes(self) -> None:
