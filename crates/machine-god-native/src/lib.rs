@@ -77,6 +77,7 @@ mod web_fetch;
 mod web_search;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod workspace;
+mod workspace_inspection;
 mod write_file;
 
 pub use ai_gateway::{
@@ -375,6 +376,10 @@ pub use web_search::{
     WebSearchConfigErrorKind, WebSearchDeadline, WebSearchLimits, WebSearchRequest,
     WebSearchResponse, WebSearchSource, WebSearchTransport, WebSearchTransportError,
     WebSearchTransportErrorKind,
+};
+pub use workspace_inspection::{
+    MAX_WORKSPACE_PATH_BYTES, NativeWorkspaceInspection, NativeWorkspaceInspectionError,
+    NativeWorkspaceInspectionErrorKind, inspect_process_workspace,
 };
 pub use write_file::{
     MAX_WRITE_FILE_CHUNK_BYTES, MAX_WRITE_FILE_CONTENT_BYTES, MAX_WRITE_FILE_PATH_BYTES,
