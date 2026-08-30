@@ -200,62 +200,44 @@ class CiChangeClassificationTests(unittest.TestCase):
         self.assertIn("no unique merge base", completed.stdout)
 
     def test_ignored_submodule_pointer_change_uses_full_gate(self) -> None:
-        submodule_path = Path(self.temporary_directory.name) / "submodule"
-        submodule_path.mkdir()
-        submodule = GitRepository(submodule_path)
-        submodule.write("payload", "one\n")
-        first = submodule.commit("first")
-        submodule.write("payload", "two\n")
-        second = submodule.commit("second")
-
-        self.repository.git(
-            "-c",
-            "protocol.file.allow=always",
-            "submodule",
-            "add",
-            str(submodule_path),
-            "module",
+        self.repository.write(
+            ".gitmodules",
+            '[submodule "module"]\n\tpath = module\n\turl = ../module\n\tignore = all\n',
         )
-        self.repository.git("-C", "module", "checkout", first)
+        self.repository.git("add", ".gitmodules")
         self.repository.git(
-            "config", "-f", ".gitmodules", "submodule.module.ignore", "all"
+            "update-index", "--add", "--cacheinfo", f"160000,{'1' * 40},module"
         )
-        before = self.repository.commit("add ignored submodule")
+        self.repository.git("commit", "-m", "add ignored submodule")
+        before = self.repository.git("rev-parse", "HEAD")
 
-        self.repository.git("-C", "module", "checkout", second)
         self.repository.write("docs/submodule.md", "docs\n")
-        head = self.repository.commit("update ignored submodule")
+        self.repository.git("add", "docs/submodule.md")
+        self.repository.git(
+            "update-index", "--cacheinfo", f"160000,{'2' * 40},module"
+        )
+        self.repository.git("commit", "-m", "update ignored submodule")
+        head = self.repository.git("rev-parse", "HEAD")
         completed, output = self.run_classifier(before=before, head=head)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assert_result(output, full=True, docs_only=False)
         self.assertIn("'module'", completed.stdout)
 
     def test_docs_suffixed_gitlink_change_uses_full_gate(self) -> None:
-        submodule_path = Path(self.temporary_directory.name) / "docs-submodule"
-        submodule_path.mkdir()
-        submodule = GitRepository(submodule_path)
-        submodule.write("payload", "one\n")
-        first = submodule.commit("first")
-        submodule.write("payload", "two\n")
-        second = submodule.commit("second")
+        self.repository.git(
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            f"160000,{'3' * 40},docs/manual.md",
+        )
+        self.repository.git("commit", "-m", "add docs-suffixed gitlink")
+        before = self.repository.git("rev-parse", "HEAD")
 
         self.repository.git(
-            "-c",
-            "protocol.file.allow=always",
-            "submodule",
-            "add",
-            str(submodule_path),
-            "docs/manual.md",
+            "update-index", "--cacheinfo", f"160000,{'4' * 40},docs/manual.md"
         )
-        self.repository.git("-C", "docs/manual.md", "checkout", first)
-        self.repository.git(
-            "config", "-f", ".gitmodules", "submodule.docs/manual.md.ignore", "all"
-        )
-        before = self.repository.commit("add docs-suffixed submodule")
-
-        self.repository.git("-C", "docs/manual.md", "checkout", second)
-        self.repository.git("add", "-f", "docs/manual.md")
-        head = self.repository.commit("update docs-suffixed submodule")
+        self.repository.git("commit", "-m", "update docs-suffixed gitlink")
+        head = self.repository.git("rev-parse", "HEAD")
         completed, output = self.run_classifier(before=before, head=head)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assert_result(output, full=True, docs_only=False)
