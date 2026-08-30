@@ -21,23 +21,22 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `42`
-- Delivered main: `ef5ab4021da515cfcabed7f2cb40a23f775012c5`
-- Main CI: `33257985954` (`GREEN`)
-- Main Benchmark evidence: `33257985878` (`GREEN`)
-- Active branch: `agent/m05-install-skill`
-- Active phase: `install_skill candidate 91630b2 accepted by all three fresh adversarial product-review tracks`
-- Next gate: `push the review-sealed feature commit and require exact feature CI and Benchmark evidence`
+- Delivered slices: `43`
+- Delivered main: `25b62a02b133c7fa3e01ad9f769416647005e0c8`
+- Main CI: `33306328776` (`GREEN`)
+- Main Benchmark evidence: `33306328774` (`GREEN`)
+- Active branch: `agent/m03-workspace`
+- Active phase: `install_skill delivered; bounded top-level workspace CLI next`
+- Next gate: `define and implement the bounded read-only workspace CLI candidate, then run focused and complete local gates`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
 and the Benchmark evidence run retained the required exact-SHA artifacts. The
-bounded workspace-local [`skill`](skill.md) tool is delivered as slice 42. The
-next product candidate is the bounded local-only
-[`install_skill`](install-skill.md) tool, which installs one workspace-confined
-skill without process or network authority. Documentation parser maintenance
-remains a separate non-product task; product iterations use the existing
-bounded repository-policy checker.
+bounded local-only [`install_skill`](install-skill.md) tool is delivered as
+slice 43. The next product candidate is the bounded read-only top-level
+`workspace` CLI surface. Documentation parser maintenance remains a separate
+non-product task; product iterations use the existing bounded
+repository-policy checker.
 
 ## Architecture ownership
 
@@ -138,8 +137,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 40 | Bounded explicit-ID top-level `resume` CLI | [contract](resume-cli.md) | [review](reviews/m03-resume-cli-review-01.md) | `136d44e` |
 | 41 | Bounded native `memory` | [contract](memory.md) | [review](reviews/m05-memory-review-01.md) | `33bdd76` |
 | 42 | Bounded workspace-local `skill` | [contract](skill.md) | [review](reviews/m05-skill-review-01.md) | `ef5ab40` |
+| 43 | Bounded local-only `install_skill` | [contract](install-skill.md) | [review](reviews/m05-install-skill-review-01.md) | `25b62a0` |
 
-The exact delivered-main record after slice 42 is in the canonical live-status
+The exact delivered-main record after slice 43 is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.
@@ -154,11 +154,11 @@ requires an explicit reviewed plan change.
 - Provider-neutral engine integration with the native provider, transport,
   permission, session, configuration, and reference-host seams represented by
   delivered slices 1-16.
-- Twenty native tools: `list_files`, `glob_files`, `grep_files`, `read_file`,
+- Twenty-one native tools: `list_files`, `glob_files`, `grep_files`, `read_file`,
   `write_file`, `edit_file`, `delete_file`, `rename_file`, `copy_file`,
   `create_folder`, `file_info`, `open_file`, `web_fetch`, `web_search`,
-  `terminal`, `ask_user_question`, `read_tool_result`, `vision`, `memory`, and
-  `skill`.
+  `terminal`, `ask_user_question`, `read_tool_result`, `vision`, `memory`,
+  `skill`, and `install_skill`.
 - Delivered CLI slices for `ask`, `resume`, `permissions`, `models`, `doctor`,
   `sessions`, and strict summary-only `session <id>`.
 
