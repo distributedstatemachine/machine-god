@@ -31,6 +31,10 @@ class ProvisionZigTests(unittest.TestCase):
         checkout = Path(__file__).resolve().parents[1]
         self.assertFalse(options.cache_root.resolve().is_relative_to(checkout))
 
+    def test_wrapper_forbids_checkout_bytecode_for_itself_and_child(self) -> None:
+        self.assertTrue(with_zig.sys.dont_write_bytecode)
+        self.assertEqual(with_zig.os.environ["PYTHONDONTWRITEBYTECODE"], "1")
+
     def test_validated_archive_requires_exact_bytes_and_regular_file(self) -> None:
         payload = b"pinned archive"
         spec = provision_zig.ToolchainSpec(

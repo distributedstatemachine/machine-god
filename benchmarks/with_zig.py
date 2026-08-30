@@ -14,6 +14,8 @@ from typing import Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.dont_write_bytecode = True
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 
 from scripts.provision_zig import (  # noqa: E402
     ProvisionError,
