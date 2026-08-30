@@ -1516,11 +1516,12 @@ class ProvisionZigTests(unittest.TestCase):
                 [sys.executable, "-c", "import time; time.sleep(60)"],
                 process_group=0,
             )
-            worker = subprocess.Popen(
-                [sys.executable, "-c", worker_source, str(worker_pid_path)],
-                process_group=leader.pid,
-            )
+            worker: subprocess.Popen | None = None
             try:
+                worker = subprocess.Popen(
+                    [sys.executable, "-c", worker_source, str(worker_pid_path)],
+                    process_group=leader.pid,
+                )
                 deadline = time.monotonic() + 5.0
                 while time.monotonic() < deadline and not worker_pid_path.exists():
                     time.sleep(0.01)
@@ -1551,11 +1552,12 @@ class ProvisionZigTests(unittest.TestCase):
                 except subprocess.TimeoutExpired:
                     leader.kill()
                     leader.wait(timeout=1.0)
-                try:
-                    worker.kill()
-                except ProcessLookupError:
-                    pass
-                worker.wait(timeout=1.0)
+                if worker is not None:
+                    try:
+                        worker.kill()
+                    except ProcessLookupError:
+                        pass
+                    worker.wait(timeout=1.0)
 
     def test_wrapper_signal_lets_upstream_reap_its_grouped_child(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
