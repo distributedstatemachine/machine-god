@@ -39,7 +39,7 @@ Current delivery state and gate evidence are maintained only in the
 | `resume <id> [--] <prompt...>` | Continue one saved session with one prompt | [resume](resume-cli.md) |
 | `session <id> [--json]` | Inspect one saved session summary | [session](session-cli.md) |
 | `sessions [--json]` | List bounded saved-session identities | [sessions](sessions-cli.md) |
-| `status [--json]` | Report configuration and state metadata | This page |
+| `status [--json]` | Report the effective local runtime snapshot | This page |
 | `workspace [list] [--json]` | Report the primary workspace | [workspace](workspace-cli.md) |
 
 The pinned upstream inventory contains a broader command and option surface.
@@ -115,57 +115,71 @@ error and writes this compact LF-terminated object to standard output:
 ```
 
 Help and complete status parsing occur before process-environment capture or
-native metadata authority. `status` and its JSON form inspect process
-configuration and state-location
-metadata without loading configuration contents, constructing the engine,
-creating directories, starting a runtime, or contacting a provider. The human
-form is exactly four LF-terminated lines in this field order:
+native runtime-status authority. A valid invocation loads the bounded strict
+native configuration, discovers only the configured environment credential
+source, and canonicalizes the current workspace. It does not construct the
+engine, create directories, write configuration or state, start a session, or
+contact a provider. The human form uses the following exact field order, with
+one LF-terminated line per present field:
 
 ```text
-machine-god <package-version> (engine API <api-version>)
-permission_mode: ask
-config_file: state=<config-state> path=<JSON-string-or-null>
-state_directory: state=<state-directory-state> path=<JSON-string-or-null>
+[status] model=<configured-model>
+[status] update_channel=stable
+[status] build_channel=stable
+[status] build_revision=<compiled-revision> # omitted when unavailable
+[status] auth=<credential-source-or-missing>
+[status] auth_refreshable=false
+[status] auth_help=Machine God needs access to Vercel AI Gateway. Set VERCEL_OIDC_TOKEN or AI_GATEWAY_API_KEY. # missing auth only
+[status] permission_mode=ask
+[status] sandbox=none
+[status] workspace=<canonical-current-directory>
+[status] history_turns=0
+[status] session_permission_grants=0
+[status] agent_step_limit=8
 ```
 
-The angle-bracketed version values are the compiled package version and the
-supported core API version. `status --json` writes one compact object followed
-by LF, with this exact nested key order:
+The comments above describe conditional lines and are not output. The model
+and permission mode come from the loaded configuration, including built-in
+defaults when the configuration file is absent. The build and update channels
+are `stable`. A compile-time `MACHINE_GOD_BUILD_REVISION` containing one to 12
+ASCII hexadecimal characters supplies the human `build_revision` line;
+otherwise that line is omitted. `status --json` writes one compact object
+followed by LF in this exact key order:
 
 ```text
-{"name":"machine-god","version":"<package-version>","engine_api_version":<api-version>,"permission_mode":"ask","config_file":{"path":<JSON-string-or-null>,"state":"<config-state>"},"state_directory":{"path":<JSON-string-or-null>,"state":"<state-directory-state>"}}
+{"kind":"status","model":"<configured-model>","update_channel":"stable","build_channel":"stable","build_revision":"<compiled-revision-or-empty>","auth":"<credential-source-or-missing>","auth_refreshable":false,"auth_help":"Machine God needs access to Vercel AI Gateway. Set VERCEL_OIDC_TOKEN or AI_GATEWAY_API_KEY.","permission_mode":"ask","sandbox":"none","workspace":"<canonical-current-directory>","history_turns":0,"session_permission_grants":0,"agent_step_limit":8}
 ```
 
-Config state is exactly one of `file`, `missing`, `not_file`, `inaccessible`,
-`unavailable`, or `invalid_environment`. State-directory state is exactly one
-of `directory`, `missing`, `not_directory`, `inaccessible`, `unavailable`, or
-`invalid_environment`. A resolved path is present even when it is missing,
-inaccessible, or the wrong kind; only `unavailable` and
-`invalid_environment` have a `null` path. Status reports the fixed native
-permission default `ask` and does not parse configuration, so it does not
-report configured provider, transport, model, credential source, or schema.
+The JSON `build_revision` key is always present and is the empty string when no
+revision was compiled in. `auth` is exactly `VERCEL_OIDC_TOKEN`,
+`AI_GATEWAY_API_KEY`, or `missing`. A nonempty valid `VERCEL_OIDC_TOKEN` takes
+precedence over a valid `AI_GATEWAY_API_KEY`; tokens are never rendered.
+`auth_help` has the exact branded text shown above and is present only while
+authentication is missing. Environment credentials are not refreshable, so
+`auth_refreshable` is always `false` in this bounded native host.
 
-Present paths use JSON-string encoding in both forms. Quotes, backslashes,
-C0/C1 controls and DEL, Unicode line and paragraph separators, and Unicode
-bidirectional-formatting controls are escaped; unresolved paths use the
-unquoted token `null` in human output and JSON `null` in JSON output.
+Status describes a fresh, non-session runtime boundary. Its effective sandbox
+is `none`, its history and session-grant counts are zero, and its agent step
+limit is eight. The workspace is the Unicode canonical current directory.
+Quotes, backslashes, C0/C1 controls and DEL, Unicode line and paragraph
+separators, and Unicode bidirectional-formatting controls in rendered string
+fields are escaped. The configured model retains its existing 128-byte bound,
+and the canonical Unicode workspace is limited to 4,096 UTF-8 bytes. Every
+rendered value must also fit the inclusive report-output bound below.
 
-Config and state locations are resolved independently. A nonempty
-`XDG_CONFIG_HOME` selects
-`$XDG_CONFIG_HOME/machine-god/config.json`; otherwise a nonempty `HOME`
-selects `$HOME/.config/machine-god/config.json`. A nonempty `XDG_STATE_HOME`
-selects `$XDG_STATE_HOME/machine-god`; otherwise a nonempty `HOME` selects
-`$HOME/.local/state/machine-god`. Empty XDG values are absent and fall back to
-`HOME`. Every selected root must be absolute Unicode. A nonempty invalid XDG
-root produces `invalid_environment` for its location and never falls back to
-`HOME`; an invalid selected `HOME` does the same. Missing or empty `HOME` makes
-a location that needs it `unavailable`.
+Invalid configuration, a selected invalid credential, a non-Unicode or
+unavailable current directory, or another runtime-snapshot inspection failure
+exits `1`, writes no standard output, and writes exactly this redacted standard
+error diagnostic:
 
-Inspection uses no-follow metadata for each final path. A final config symlink
-is `not_file`, and a final state-directory symlink is `not_directory`; neither
-target is followed. The command does not canonicalize paths, read or parse the
-configuration file, create missing paths or ancestors, write state, construct
-an engine, start a runtime, discover credentials, or use the network.
+```text
+machine-god status: could not inspect runtime
+```
+
+Inspection reads at most the existing 65,536-byte configuration-file ceiling.
+A missing configuration file selects the built-in runtime defaults without
+creating it. Status does not inspect or initialize the state root. It performs
+no product write or network request.
 
 Both successful forms are fully rendered before the first output write. The
 inclusive rendered-output ceiling is 65,536 bytes, including the final LF and
@@ -182,13 +196,10 @@ uses the global fixed `machine-god: failed to write output` standard-error
 diagnostic. No alternate representation, configuration access, or other product
 effect follows either failure.
 
-This status remains machine-god's metadata-only native observation. Pinned fx
-reports a richer runtime snapshot including model, build and update channel,
-authentication, sandbox, workspace, history, grants, and agent-step limit.
-Those fields and fx's configuration semantics are intentional scenario
-differences here. The retained help and status benchmark workloads remain
-non-equivalent, unmeasured, and claim-ineligible; this contract makes no
-comparative performance claim.
+The command-specific help transcript is the bounded common `status --help`
+scenario with product-name normalization. Top-level help remains an honest
+capability-aware machine-god index rather than a claim of full pinned-fx
+catalog parity. This contract makes no comparative performance claim.
 
 ## Output ownership
 

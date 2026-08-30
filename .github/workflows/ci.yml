@@ -271,14 +271,33 @@ jobs:
                   "status smoke exits: "
                   f"human={status_human.returncode} json={status_machine.returncode} "
                   f"repeated={status_repeated.returncode}"
-              )
-          config_path = config_root / "machine-god" / "config.json"
-          state_path = state_root / "machine-god"
+          )
+          workspace = str(Path.cwd().resolve())
+          revision_candidate = os.environ.get("MACHINE_GOD_BUILD_REVISION", "")
+          revision = (
+              revision_candidate
+              if 1 <= len(revision_candidate) <= 12
+              and all(character in "0123456789abcdefABCDEF" for character in revision_candidate)
+              else ""
+          )
           expected_status_human = (
-              "machine-god 0.1.0 (engine API 1)\n"
-              "permission_mode: ask\n"
-              f"config_file: state=missing path={json.dumps(str(config_path))}\n"
-              f"state_directory: state=missing path={json.dumps(str(state_path))}\n"
+              "[status] model=zai/glm-5.2\n"
+              "[status] update_channel=stable\n"
+              "[status] build_channel=stable\n"
+          )
+          if revision:
+              expected_status_human += f"[status] build_revision={revision}\n"
+          expected_status_human += (
+              "[status] auth=missing\n"
+              "[status] auth_refreshable=false\n"
+              "[status] auth_help=Machine God needs access to Vercel AI Gateway. "
+              "Set VERCEL_OIDC_TOKEN or AI_GATEWAY_API_KEY.\n"
+              "[status] permission_mode=ask\n"
+              "[status] sandbox=none\n"
+              f"[status] workspace={workspace}\n"
+              "[status] history_turns=0\n"
+              "[status] session_permission_grants=0\n"
+              "[status] agent_step_limit=8\n"
           )
           if status_human.stdout != expected_status_human:
               raise SystemExit(f"unexpected human status output: {status_human.stdout!r}")
@@ -286,23 +305,49 @@ jobs:
               raise SystemExit("repeated status --json was not idempotent")
           status_report = json.loads(status_machine.stdout)
           if list(status_report) != [
-              "name",
-              "version",
-              "engine_api_version",
+              "kind",
+              "model",
+              "update_channel",
+              "build_channel",
+              "build_revision",
+              "auth",
+              "auth_refreshable",
+              "auth_help",
               "permission_mode",
-              "config_file",
-              "state_directory",
+              "sandbox",
+              "workspace",
+              "history_turns",
+              "session_permission_grants",
+              "agent_step_limit",
           ]:
               raise SystemExit("status JSON top-level key order changed")
           if status_report != {
-              "name": "machine-god",
-              "version": "0.1.0",
-              "engine_api_version": 1,
+              "kind": "status",
+              "model": "zai/glm-5.2",
+              "update_channel": "stable",
+              "build_channel": "stable",
+              "build_revision": revision,
+              "auth": "missing",
+              "auth_refreshable": False,
+              "auth_help": (
+                  "Machine God needs access to Vercel AI Gateway. "
+                  "Set VERCEL_OIDC_TOKEN or AI_GATEWAY_API_KEY."
+              ),
               "permission_mode": "ask",
-              "config_file": {"path": str(config_path), "state": "missing"},
-              "state_directory": {"path": str(state_path), "state": "missing"},
+              "sandbox": "none",
+              "workspace": workspace,
+              "history_turns": 0,
+              "session_permission_grants": 0,
+              "agent_step_limit": 8,
           }:
               raise SystemExit(f"unexpected status JSON payload: {status_report!r}")
+          expected_status_machine = json.dumps(
+              status_report,
+              ensure_ascii=False,
+              separators=(",", ":"),
+          ) + "\n"
+          if status_machine.stdout != expected_status_machine:
+              raise SystemExit("status JSON was not compact or exactly LF-terminated")
           if any(len(result.stdout.encode()) > 65_536 for result in (status_human, status_machine, status_repeated)):
               raise SystemExit("status output bound changed")
 

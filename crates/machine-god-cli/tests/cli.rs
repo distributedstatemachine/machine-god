@@ -94,7 +94,11 @@ const STATUS_JSON_ARGUMENT_FAILURE: &str = concat!(
     "{\"kind\":\"status\",\"error\":\"invalid arguments\",",
     "\"code\":\"InvalidLocalSurfaceArgs\"}\n",
 );
-const STATUS_RENDER_FAILURE: &str = "machine-god status: could not render report\n";
+const STATUS_INSPECTION_FAILURE: &str = "machine-god status: could not inspect runtime\n";
+const STATUS_MISSING_AUTH_HELP: &str = concat!(
+    "Machine God needs access to Vercel AI Gateway. ",
+    "Set VERCEL_OIDC_TOKEN or AI_GATEWAY_API_KEY.",
+);
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
     "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--json] | status [--json] | workspace [list] [--json]]\n",
@@ -239,6 +243,91 @@ fn run_without_roots(arguments: &[&str]) -> Output {
         .env_remove("XDG_STATE_HOME")
         .output()
         .unwrap()
+}
+
+fn status_command(workspace: &Path, config: &OsStr, state: &OsStr) -> Command {
+    let mut command = machine_god();
+    command
+        .current_dir(workspace)
+        .env_remove("HOME")
+        .env("XDG_CONFIG_HOME", config)
+        .env("XDG_STATE_HOME", state)
+        .env_remove("VERCEL_OIDC_TOKEN")
+        .env_remove("AI_GATEWAY_API_KEY");
+    command
+}
+
+fn compiled_status_revision() -> &'static str {
+    option_env!("MACHINE_GOD_BUILD_REVISION")
+        .filter(|revision| {
+            !revision.is_empty()
+                && revision.len() <= 12
+                && revision.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+        .unwrap_or("")
+}
+
+fn expected_status_human(model: &str, auth: &str, workspace: &str) -> String {
+    let mut output = format!(
+        concat!(
+            "[status] model={model}\n",
+            "[status] update_channel=stable\n",
+            "[status] build_channel=stable\n",
+        ),
+        model = model,
+    );
+    let revision = compiled_status_revision();
+    if !revision.is_empty() {
+        writeln!(output, "[status] build_revision={revision}").unwrap();
+    }
+    writeln!(output, "[status] auth={auth}").unwrap();
+    output.push_str("[status] auth_refreshable=false\n");
+    if auth == "missing" {
+        writeln!(output, "[status] auth_help={STATUS_MISSING_AUTH_HELP}").unwrap();
+    }
+    write!(
+        output,
+        concat!(
+            "[status] permission_mode=ask\n",
+            "[status] sandbox=none\n",
+            "[status] workspace={workspace}\n",
+            "[status] history_turns=0\n",
+            "[status] session_permission_grants=0\n",
+            "[status] agent_step_limit=8\n",
+        ),
+        workspace = workspace,
+    )
+    .unwrap();
+    output
+}
+
+fn expected_status_json(model: &str, auth: &str, workspace: &str) -> String {
+    let revision = compiled_status_revision();
+    let mut output = format!(
+        concat!(
+            "{{\"kind\":\"status\",\"model\":{model:?},",
+            "\"update_channel\":\"stable\",\"build_channel\":\"stable\",",
+            "\"build_revision\":{revision:?},\"auth\":{auth:?},",
+            "\"auth_refreshable\":false",
+        ),
+        model = model,
+        revision = revision,
+        auth = auth,
+    );
+    if auth == "missing" {
+        write!(output, ",\"auth_help\":{STATUS_MISSING_AUTH_HELP:?}").unwrap();
+    }
+    write!(
+        output,
+        concat!(
+            ",\"permission_mode\":\"ask\",\"sandbox\":\"none\",",
+            "\"workspace\":{workspace:?},\"history_turns\":0,",
+            "\"session_permission_grants\":0,\"agent_step_limit\":8}}\n",
+        ),
+        workspace = workspace,
+    )
+    .unwrap();
+    output
 }
 
 fn doctor_command(config: &OsStr, state: &OsStr) -> Command {
@@ -2836,173 +2925,247 @@ fn invalid_config_environment_is_a_fixed_redacted_failure_without_fallback() {
 }
 
 #[test]
-fn missing_paths_are_reported_without_being_created() {
-    let temporary = TestDirectory::new("missing");
+fn status_default_runtime_snapshot_is_exact_bounded_and_read_only() {
+    let temporary = TestDirectory::new("status-default-runtime");
+    let workspace = temporary.path().join("workspace");
     let config_root = temporary.path().join("missing-config");
     let state_root = temporary.path().join("missing-state");
-    let config_path = config_root.join("machine-god/config.json");
-    let state_path = state_root.join("machine-god");
+    fs::create_dir(&workspace).unwrap();
+    let workspace = fs::canonicalize(workspace).unwrap();
+    let workspace_text = workspace.to_str().unwrap();
 
-    let output = run_with_roots(&["status"], config_root.as_os_str(), state_root.as_os_str());
-    let expected = format!(
-        concat!(
-            "{IDENTITY}",
-            "permission_mode: ask\n",
-            "config_file: state=missing path={config_path:?}\n",
-            "state_directory: state=missing path={state_path:?}\n",
-        ),
-        IDENTITY = IDENTITY,
-        config_path = config_path.to_str().unwrap(),
-        state_path = state_path.to_str().unwrap(),
+    let human = status_command(&workspace, config_root.as_os_str(), state_root.as_os_str())
+        .arg("status")
+        .output()
+        .unwrap();
+    assert_success(
+        &human,
+        &expected_status_human("zai/glm-5.2", "missing", workspace_text),
     );
-    assert_success(&output, &expected);
-    assert!(output.stdout.len() <= MAX_STATUS_OUTPUT_BYTES);
+
+    let json = status_command(&workspace, config_root.as_os_str(), state_root.as_os_str())
+        .args(["status", "--json"])
+        .output()
+        .unwrap();
+    assert_success(
+        &json,
+        &expected_status_json("zai/glm-5.2", "missing", workspace_text),
+    );
+    assert!(human.stdout.len() <= MAX_STATUS_OUTPUT_BYTES);
+    assert!(json.stdout.len() <= MAX_STATUS_OUTPUT_BYTES);
+    assert_eq!(human.stdout.last(), Some(&b'\n'));
+    assert_eq!(json.stdout.last(), Some(&b'\n'));
+    assert_eq!(fs::read_dir(&workspace).unwrap().count(), 0);
     assert!(!config_root.exists());
     assert!(!state_root.exists());
 }
 
 #[test]
-fn json_status_is_compact_valid_and_has_fixed_shape() {
-    let temporary = TestDirectory::new("json");
+fn configured_status_reports_model_permission_and_oidc_precedence_without_secrets() {
+    let temporary = TestDirectory::new("status-configured-runtime");
+    let workspace = temporary.path().join("workspace");
     let config_root = temporary.path().join("config");
-    let state_root = temporary.path().join("state");
-    let config_path = config_root.join("machine-god/config.json");
-    let state_path = state_root.join("machine-god");
-    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
-    fs::create_dir_all(&state_path).unwrap();
-    fs::write(&config_path, b"not parsed").unwrap();
-
-    let output = run_with_roots(
-        &["status", "--json"],
-        config_root.as_os_str(),
-        state_root.as_os_str(),
-    );
-    let expected = format!(
+    let state_root = temporary.path().join("missing-state");
+    fs::create_dir(&workspace).unwrap();
+    let workspace = fs::canonicalize(workspace).unwrap();
+    let workspace_text = workspace.to_str().unwrap();
+    let model = "custom/status-model";
+    let contents = format!(
         concat!(
-            "{{\"name\":\"machine-god\",\"version\":\"0.1.0\",",
-            "\"engine_api_version\":1,\"permission_mode\":\"ask\",",
-            "\"config_file\":{{\"path\":{config_path:?},\"state\":\"file\"}},",
-            "\"state_directory\":{{\"path\":{state_path:?},\"state\":\"directory\"}}}}\n",
+            "{{\"schema_version\":3,\"permission_mode\":\"ask\",",
+            "\"provider\":\"vercel_ai_gateway\",",
+            "\"transport\":\"ai_gateway_http\",\"model\":{model:?},",
+            "\"credential_source\":\"environment\"}}",
         ),
-        config_path = config_path.to_str().unwrap(),
-        state_path = state_path.to_str().unwrap(),
+        model = model,
     );
-    assert_success(&output, &expected);
-    assert!(output.stdout.len() <= MAX_STATUS_OUTPUT_BYTES);
+    let config_path = write_config(&config_root, contents.as_bytes());
+    let oidc_secret = "status-oidc-secret-NEVER-REFLECT";
+    let api_secret = "status-api-secret-NEVER-REFLECT";
+
+    let human = status_command(&workspace, config_root.as_os_str(), state_root.as_os_str())
+        .arg("status")
+        .env("VERCEL_OIDC_TOKEN", oidc_secret)
+        .env("AI_GATEWAY_API_KEY", api_secret)
+        .output()
+        .unwrap();
+    assert_success(
+        &human,
+        &expected_status_human(model, "VERCEL_OIDC_TOKEN", workspace_text),
+    );
+
+    let json = status_command(&workspace, config_root.as_os_str(), state_root.as_os_str())
+        .args(["status", "--json"])
+        .env("VERCEL_OIDC_TOKEN", oidc_secret)
+        .env("AI_GATEWAY_API_KEY", api_secret)
+        .output()
+        .unwrap();
+    assert_success(
+        &json,
+        &expected_status_json(model, "VERCEL_OIDC_TOKEN", workspace_text),
+    );
+    assert_output_omits(&human, &[oidc_secret, api_secret]);
+    assert_output_omits(&json, &[oidc_secret, api_secret]);
+    assert!(!String::from_utf8_lossy(&json.stdout).contains("auth_help"));
+    assert_eq!(fs::read(config_path).unwrap(), contents.as_bytes());
+    assert_eq!(fs::read_dir(&workspace).unwrap().count(), 0);
+    assert!(!state_root.exists());
 }
 
 #[test]
-fn repeated_exact_status_json_options_are_idempotent() {
-    let temporary = TestDirectory::new("status-json-idempotent");
+fn status_api_key_source_and_repeated_json_are_exact_and_idempotent() {
+    let temporary = TestDirectory::new("status-api-key-idempotent");
+    let workspace = temporary.path().join("workspace");
     let config_root = temporary.path().join("missing-config");
     let state_root = temporary.path().join("missing-state");
+    fs::create_dir(&workspace).unwrap();
+    let workspace = fs::canonicalize(workspace).unwrap();
+    let workspace_text = workspace.to_str().unwrap();
+    let secret = "status-api-key-only-NEVER-REFLECT";
 
-    let once = run_with_roots(
-        &["status", "--json"],
-        config_root.as_os_str(),
-        state_root.as_os_str(),
-    );
-    let repeated = run_with_roots(
-        &["status", "--json", "--json", "--json"],
-        config_root.as_os_str(),
-        state_root.as_os_str(),
-    );
+    let once = status_command(&workspace, config_root.as_os_str(), state_root.as_os_str())
+        .args(["status", "--json"])
+        .env("AI_GATEWAY_API_KEY", secret)
+        .output()
+        .unwrap();
+    let repeated = status_command(&workspace, config_root.as_os_str(), state_root.as_os_str())
+        .args(["status", "--json", "--json", "--json"])
+        .env("AI_GATEWAY_API_KEY", secret)
+        .output()
+        .unwrap();
 
-    assert!(once.status.success());
-    assert!(once.stderr.is_empty());
+    assert_success(
+        &once,
+        &expected_status_json("zai/glm-5.2", "AI_GATEWAY_API_KEY", workspace_text),
+    );
     assert_eq!(repeated.status, once.status);
     assert_eq!(repeated.stdout, once.stdout);
     assert_eq!(repeated.stderr, once.stderr);
+    assert_output_omits(&repeated, &[secret]);
     assert!(repeated.stdout.len() <= MAX_STATUS_OUTPUT_BYTES);
     assert!(!config_root.exists());
     assert!(!state_root.exists());
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn schema_v2_composition_does_not_change_status_bytes_or_rewrite_config() {
-    let temporary = TestDirectory::new("schema-v2-status");
-    let config_root = temporary.path().join("config");
-    let state_root = temporary.path().join("state");
-    let config_path = config_root.join("machine-god/config.json");
-    let state_path = state_root.join("machine-god");
-    let distinctive_model = "CLI_DISTINCTIVE_MODEL_MARKER";
-    let contents = format!(
-        concat!(
-            "{{\"schema_version\":2,\"permission_mode\":\"ask\",",
-            "\"provider\":\"vercel_ai_gateway\",",
-            "\"transport\":\"ai_gateway_http\",",
-            "\"model\":\"{distinctive_model}\"}}",
-        ),
-        distinctive_model = distinctive_model,
-    )
-    .into_bytes();
-    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
-    fs::create_dir_all(&state_path).unwrap();
-    fs::write(&config_path, &contents).unwrap();
+fn status_uses_no_proxy_network_and_creates_no_product_paths() {
+    let temporary = TestDirectory::new("status-no-network");
+    let workspace = temporary.path().join("workspace");
+    let config_root = temporary.path().join("missing-config");
+    let state_root = temporary.path().join("missing-state");
+    fs::create_dir(&workspace).unwrap();
+    let workspace = fs::canonicalize(workspace).unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let proxy = format!("http://{}", listener.local_addr().unwrap());
 
-    let text = run_with_roots(&["status"], config_root.as_os_str(), state_root.as_os_str());
-    let expected_text = format!(
-        concat!(
-            "{IDENTITY}",
-            "permission_mode: ask\n",
-            "config_file: state=file path={config_path:?}\n",
-            "state_directory: state=directory path={state_path:?}\n",
-        ),
-        IDENTITY = IDENTITY,
-        config_path = config_path.to_str().unwrap(),
-        state_path = state_path.to_str().unwrap(),
-    );
-    assert_success(&text, &expected_text);
+    let output = status_command(&workspace, config_root.as_os_str(), state_root.as_os_str())
+        .args(["status", "--json"])
+        .env("VERCEL_OIDC_TOKEN", "status-no-network-credential")
+        .env("HTTP_PROXY", &proxy)
+        .env("HTTPS_PROXY", &proxy)
+        .env("ALL_PROXY", &proxy)
+        .env_remove("NO_PROXY")
+        .output()
+        .unwrap();
 
-    let json = run_with_roots(
-        &["status", "--json"],
-        config_root.as_os_str(),
-        state_root.as_os_str(),
-    );
-    let expected_json = format!(
-        concat!(
-            "{{\"name\":\"machine-god\",\"version\":\"0.1.0\",",
-            "\"engine_api_version\":1,\"permission_mode\":\"ask\",",
-            "\"config_file\":{{\"path\":{config_path:?},\"state\":\"file\"}},",
-            "\"state_directory\":{{\"path\":{state_path:?},\"state\":\"directory\"}}}}\n",
-        ),
-        config_path = config_path.to_str().unwrap(),
-        state_path = state_path.to_str().unwrap(),
-    );
-    assert_success(&json, &expected_json);
-
-    for output in [&text.stdout, &json.stdout] {
-        assert!(
-            !output
-                .windows(distinctive_model.len())
-                .any(|window| window == distinctive_model.as_bytes())
-        );
-        assert!(
-            !output
-                .windows("vercel_ai_gateway".len())
-                .any(|window| window == b"vercel_ai_gateway")
-        );
-        assert!(
-            !output
-                .windows("ai_gateway_http".len())
-                .any(|window| window == b"ai_gateway_http")
-        );
-    }
-    assert_eq!(fs::read(config_path).unwrap(), contents);
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert!(matches!(
+        listener.accept(),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+    ));
+    assert_eq!(fs::read_dir(&workspace).unwrap().count(), 0);
+    assert!(!config_root.exists());
+    assert!(!state_root.exists());
 }
 
 #[test]
-fn unavailable_environment_uses_null_paths() {
-    let output = run_without_roots(&["status", "--json"]);
-    assert_success(
-        &output,
-        concat!(
-            "{\"name\":\"machine-god\",\"version\":\"0.1.0\",",
-            "\"engine_api_version\":1,\"permission_mode\":\"ask\",",
-            "\"config_file\":{\"path\":null,\"state\":\"unavailable\"},",
-            "\"state_directory\":{\"path\":null,\"state\":\"unavailable\"}}\n",
-        ),
-    );
+fn status_invalid_config_and_credentials_use_one_fixed_redacted_failure() {
+    let temporary = TestDirectory::new("status-invalid-inputs");
+    let workspace = temporary.path().join("workspace");
+    let config_root = temporary.path().join("config-PATH-SECRET");
+    let state_root = temporary.path().join("missing-state");
+    fs::create_dir(&workspace).unwrap();
+    let config_secret = "STATUS_INVALID_CONFIG_SECRET";
+    let config_path = write_config(&config_root, config_secret.as_bytes());
+
+    let invalid_config =
+        status_command(&workspace, config_root.as_os_str(), state_root.as_os_str())
+            .args(["status", "--json"])
+            .output()
+            .unwrap();
+    assert_eq!(invalid_config.status.code(), Some(1));
+    assert!(invalid_config.stdout.is_empty());
+    assert_eq!(invalid_config.stderr, STATUS_INSPECTION_FAILURE.as_bytes());
+    assert_output_omits(&invalid_config, &[config_secret, "PATH-SECRET"]);
+    assert_eq!(fs::read(&config_path).unwrap(), config_secret.as_bytes());
+
+    fs::remove_file(&config_path).unwrap();
+    let selected_secret = "STATUS INVALID OIDC SECRET";
+    let lower_secret = "status-valid-lower-secret-NEVER-REFLECT";
+    let invalid_oidc = status_command(&workspace, config_root.as_os_str(), state_root.as_os_str())
+        .arg("status")
+        .env("VERCEL_OIDC_TOKEN", selected_secret)
+        .env("AI_GATEWAY_API_KEY", lower_secret)
+        .output()
+        .unwrap();
+    assert_eq!(invalid_oidc.status.code(), Some(1));
+    assert!(invalid_oidc.stdout.is_empty());
+    assert_eq!(invalid_oidc.stderr, STATUS_INSPECTION_FAILURE.as_bytes());
+    assert_output_omits(&invalid_oidc, &[selected_secret, lower_secret]);
+
+    let invalid_api_secret = "STATUS INVALID API SECRET";
+    let invalid_api = status_command(&workspace, config_root.as_os_str(), state_root.as_os_str())
+        .args(["status", "--json"])
+        .env("AI_GATEWAY_API_KEY", invalid_api_secret)
+        .output()
+        .unwrap();
+    assert_eq!(invalid_api.status.code(), Some(1));
+    assert!(invalid_api.stdout.is_empty());
+    assert_eq!(invalid_api.stderr, STATUS_INSPECTION_FAILURE.as_bytes());
+    assert_output_omits(&invalid_api, &[invalid_api_secret]);
+    assert_eq!(fs::read_dir(&workspace).unwrap().count(), 0);
+    assert!(!state_root.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn status_unavailable_current_directory_is_a_fixed_redacted_failure() {
+    let temporary = TestDirectory::new("status-unavailable-cwd");
+    let workspace = temporary.path().join("cwd-PATH-SECRET");
+    let config_root = temporary.path().join("missing-config");
+    let state_root = temporary.path().join("missing-state");
+    fs::create_dir(&workspace).unwrap();
+
+    let output = Command::new("/bin/sh")
+        .args([
+            OsStr::new("-c"),
+            OsStr::new("cd \"$1\" && rmdir \"$1\" && exec \"$2\" status --json"),
+            OsStr::new("machine-god-status-cwd"),
+            workspace.as_os_str(),
+            OsStr::new(env!("CARGO_BIN_EXE_machine-god")),
+        ])
+        .env_remove("HOME")
+        .env("XDG_CONFIG_HOME", &config_root)
+        .env("XDG_STATE_HOME", &state_root)
+        .env_remove("VERCEL_OIDC_TOKEN")
+        .env_remove("AI_GATEWAY_API_KEY")
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(output.stderr, STATUS_INSPECTION_FAILURE.as_bytes());
+    assert_output_omits(&output, &["PATH-SECRET"]);
+    assert!(!workspace.exists());
+    assert!(!config_root.exists());
+    assert!(!state_root.exists());
+}
+
+#[test]
+fn unavailable_environment_still_uses_permission_defaults() {
     assert_success(&run_without_roots(&["permissions"]), PERMISSIONS);
     assert_success(
         &run_without_roots(&["permissions", "--json"]),
@@ -3011,37 +3174,40 @@ fn unavailable_environment_uses_null_paths() {
 }
 
 #[test]
-fn relative_selected_roots_are_invalid_and_do_not_fall_back() {
+fn relative_status_config_root_is_a_fixed_redacted_failure_without_fallback() {
     let temporary = TestDirectory::new("relative");
     let output = machine_god()
         .args(["status", "--json"])
         .env("HOME", temporary.path())
         .env("XDG_CONFIG_HOME", "relative-config")
         .env("XDG_STATE_HOME", "relative-state")
+        .env_remove("VERCEL_OIDC_TOKEN")
+        .env_remove("AI_GATEWAY_API_KEY")
         .output()
         .unwrap();
-    assert_success(
-        &output,
-        concat!(
-            "{\"name\":\"machine-god\",\"version\":\"0.1.0\",",
-            "\"engine_api_version\":1,\"permission_mode\":\"ask\",",
-            "\"config_file\":{\"path\":null,\"state\":\"invalid_environment\"},",
-            "\"state_directory\":{\"path\":null,\"state\":\"invalid_environment\"}}\n",
-        ),
-    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(output.stderr, STATUS_INSPECTION_FAILURE.as_bytes());
+    assert_output_omits(&output, &["relative-config", "relative-state"]);
+    assert_eq!(fs::read_dir(temporary.path()).unwrap().count(), 0);
 }
 
 #[cfg(unix)]
 #[test]
-fn status_escapes_path_control_characters() {
+fn status_escapes_canonical_workspace_control_characters() {
     let temporary = TestDirectory::new("escaping");
-    let config_root = temporary
+    let workspace = temporary
         .path()
-        .join("config-\u{1b}[31m\nquoted-\"-\u{061c}-\u{202e}");
-    let state_root = temporary.path().join("state-\\slash-\u{200f}-\u{2066}");
+        .join("workspace-\u{1b}[31m\nquoted-\"-\u{061c}-\u{202e}");
+    let config_root = temporary.path().join("missing-config");
+    let state_root = temporary.path().join("missing-state");
+    fs::create_dir(&workspace).unwrap();
 
     for arguments in [&["status"][..], &["status", "--json"][..]] {
-        let output = run_with_roots(arguments, config_root.as_os_str(), state_root.as_os_str());
+        let output = status_command(&workspace, config_root.as_os_str(), state_root.as_os_str())
+            .args(arguments)
+            .output()
+            .unwrap();
         let stdout = String::from_utf8(output.stdout.clone()).unwrap();
 
         assert!(output.status.success());
@@ -3049,26 +3215,11 @@ fn status_escapes_path_control_characters() {
         for raw_control in ['\u{1b}', '\u{061c}', '\u{200f}', '\u{202e}', '\u{2066}'] {
             assert!(!stdout.contains(raw_control));
         }
-        assert!(stdout.contains("\\u001b[31m\\nquoted-\\\"-\\u061c-\\u202e"));
-        assert!(stdout.contains("state-\\\\slash-\\u200f-\\u2066"));
+        assert!(stdout.contains("workspace-\\u001b[31m\\nquoted-\\\"-\\u061c-\\u202e"));
+        assert!(stdout.len() <= MAX_STATUS_OUTPUT_BYTES);
     }
-}
-
-#[cfg(unix)]
-#[test]
-fn oversized_status_render_fails_before_stdout_with_a_fixed_diagnostic() {
-    let oversized_root = PathBuf::from(format!("/{}", "\u{7f}".repeat(12_000)));
-
-    for arguments in [&["status"][..], &["status", "--json"][..]] {
-        let output = run_with_roots(
-            arguments,
-            oversized_root.as_os_str(),
-            oversized_root.as_os_str(),
-        );
-        assert_eq!(output.status.code(), Some(1));
-        assert!(output.stdout.is_empty());
-        assert_eq!(output.stderr, STATUS_RENDER_FAILURE.as_bytes());
-    }
+    assert!(!config_root.exists());
+    assert!(!state_root.exists());
 }
 
 #[cfg(target_os = "linux")]
@@ -3083,6 +3234,8 @@ fn status_stdout_failure_uses_the_global_fixed_diagnostic() {
         .env_remove("HOME")
         .env_remove("XDG_CONFIG_HOME")
         .env_remove("XDG_STATE_HOME")
+        .env_remove("VERCEL_OIDC_TOKEN")
+        .env_remove("AI_GATEWAY_API_KEY")
         .stdout(Stdio::from(full))
         .output()
         .unwrap();
