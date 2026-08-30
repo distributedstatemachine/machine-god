@@ -1601,7 +1601,73 @@ class ProvisionZigTests(unittest.TestCase):
         self.assertIsNone(supervisor.child)
         self.assertIsNone(supervisor.group_leader)
 
-    def test_wrapper_post_reap_signal_never_reuses_closed_pgid(self) -> None:
+    def test_wrapper_failed_command_spawn_falls_back_to_direct_anchor_kill(
+        self,
+    ) -> None:
+        failure = OSError("sentinel command spawn failure")
+        real_popen = subprocess.Popen
+        spawned: list[subprocess.Popen] = []
+
+        def spawn_once(*arguments, **keywords):
+            if spawned:
+                raise failure
+            process = real_popen(*arguments, **keywords)
+            spawned.append(process)
+            return process
+
+        supervisor = with_zig.ChildSupervisor()
+        with (
+            mock.patch.object(with_zig.subprocess, "Popen", side_effect=spawn_once),
+            mock.patch.object(
+                with_zig.os, "killpg", side_effect=OSError("killpg failed")
+            ) as killpg,
+            mock.patch.object(with_zig, "KILL_GRACE_SECONDS", 1.0),
+            self.assertRaises(OSError) as caught,
+        ):
+            supervisor.run(["ignored"])
+
+        self.assertIs(caught.exception, failure)
+        self.assertEqual(len(spawned), 1)
+        self.assertEqual(spawned[0].returncode, -signal.SIGKILL)
+        self.assertEqual(killpg.call_count, with_zig.FINAL_SIGNAL_ATTEMPTS)
+        self.assertIsNone(supervisor.group_leader)
+
+    def test_wrapper_failed_group_kill_reaps_live_direct_children(self) -> None:
+        real_popen = subprocess.Popen
+        spawned: list[subprocess.Popen] = []
+
+        def capture_process(*arguments, **keywords):
+            process = real_popen(*arguments, **keywords)
+            spawned.append(process)
+            return process
+
+        supervisor = with_zig.ChildSupervisor()
+        started = time.monotonic()
+        with (
+            mock.patch.object(
+                with_zig.subprocess, "Popen", side_effect=capture_process
+            ),
+            mock.patch.object(
+                with_zig.os, "killpg", side_effect=OSError("killpg failed")
+            ) as killpg,
+            mock.patch.object(with_zig, "KILL_GRACE_SECONDS", 1.0),
+            self.assertRaises(subprocess.TimeoutExpired),
+        ):
+            supervisor.run(
+                [sys.executable, "-c", "import time; time.sleep(60)"],
+                timeout=0.05,
+            )
+
+        self.assertLess(time.monotonic() - started, 2.0)
+        self.assertEqual(len(spawned), 2)
+        self.assertTrue(
+            all(process.returncode == -signal.SIGKILL for process in spawned)
+        )
+        self.assertEqual(killpg.call_count, with_zig.FINAL_SIGNAL_ATTEMPTS)
+        self.assertIsNone(supervisor.child)
+        self.assertIsNone(supervisor.group_leader)
+
+    def test_wrapper_signal_during_reap_never_reuses_closed_pgid(self) -> None:
         events: list[tuple[str, int | None]] = []
         supervisor = with_zig.ChildSupervisor()
 
@@ -1613,7 +1679,7 @@ class ProvisionZigTests(unittest.TestCase):
                 del timeout
                 events.append(("anchor-wait", None))
                 self.reaped = True
-                supervisor.caught_signal = signal.SIGTERM
+                supervisor.handle_signal(signal.SIGTERM, None)
 
         class Child:
             pid = 424_242
@@ -1657,6 +1723,112 @@ class ProvisionZigTests(unittest.TestCase):
                 ("child-wait", None),
             ],
         )
+
+    def test_wrapper_authority_close_exception_still_reaps_both_children(
+        self,
+    ) -> None:
+        events: list[str] = []
+        supervisor = with_zig.ChildSupervisor()
+
+        class Anchor:
+            pid = 424_241
+
+            def __init__(self) -> None:
+                self.wait_calls = 0
+
+            def wait(self, *, timeout=None) -> None:
+                del timeout
+                self.wait_calls += 1
+                events.append("anchor-wait")
+                if self.wait_calls == 1:
+                    raise KeyboardInterrupt("interrupted anchor wait")
+
+        class Child:
+            pid = 424_242
+            returncode = None
+
+            def __init__(self) -> None:
+                self.communicate_calls = 0
+                self.wait_calls = 0
+
+            def communicate(self, *, timeout=None):
+                del timeout
+                self.communicate_calls += 1
+                events.append("child-communicate")
+                self.returncode = 0
+                return b"", b""
+
+            def wait(self, *, timeout=None) -> None:
+                del timeout
+                self.wait_calls += 1
+                events.append("child-wait")
+                if self.wait_calls == 1:
+                    raise KeyboardInterrupt("interrupted child wait")
+
+        anchor = Anchor()
+        child = Child()
+        real_close = supervisor.close_group_authority
+
+        def close_then_interrupt(group_leader: subprocess.Popen) -> None:
+            real_close(group_leader)
+            raise with_zig.CaughtSignal(signal.SIGTERM)
+
+        with (
+            mock.patch.object(
+                with_zig.subprocess, "Popen", side_effect=(anchor, child)
+            ),
+            mock.patch.object(with_zig.os, "killpg", return_value=None),
+            mock.patch.object(
+                supervisor,
+                "close_group_authority",
+                side_effect=close_then_interrupt,
+            ),
+            self.assertRaises(with_zig.CaughtSignal),
+        ):
+            supervisor.run(["ignored"])
+
+        self.assertEqual(
+            events,
+            [
+                "child-communicate",
+                "anchor-wait",
+                "anchor-wait",
+                "child-communicate",
+                "child-wait",
+                "child-wait",
+            ],
+        )
+        self.assertIsNone(supervisor.child)
+        self.assertIsNone(supervisor.group_leader)
+
+    def test_wrapper_prompt_child_exit_skips_remaining_signal_grace(self) -> None:
+        supervisor = with_zig.ChildSupervisor()
+
+        class Process:
+            pid = 424_241
+
+            def communicate(self, *, timeout=None):
+                del timeout
+                return b"", b""
+
+            def wait(self, *, timeout=None) -> None:
+                del timeout
+
+        anchor = Process()
+        child = Process()
+        supervisor.group_leader = anchor
+        with (
+            mock.patch.object(with_zig.os, "killpg", return_value=None),
+            mock.patch.object(supervisor, "wait_until") as wait_until,
+        ):
+            supervisor.terminate_and_reap(
+                child,
+                anchor,
+                initial_signal=signal.SIGTERM,
+                grace_seconds=60.0,
+            )
+
+        wait_until.assert_not_called()
 
     def test_wrapper_kills_survivor_after_group_leader_exits(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

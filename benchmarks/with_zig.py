@@ -44,6 +44,8 @@ FORWARDED_SIGNALS = tuple(
 )
 SIGNAL_GRACE_SECONDS = 5.0
 KILL_GRACE_SECONDS = 5.0
+FINAL_SIGNAL_ATTEMPTS = 3
+REAP_ATTEMPTS = 3
 
 
 class CaughtSignal(BaseException):
@@ -58,6 +60,7 @@ class ChildSupervisor:
         self.caught_signal: int | None = None
         self.signal_forwarded = False
         self.spawning = False
+        self.cleaning = False
 
     def forward(self, signum: int) -> None:
         group_leader = self.group_leader
@@ -72,9 +75,9 @@ class ChildSupervisor:
         if self.caught_signal is not None:
             return
         self.caught_signal = signum
-        if self.child is not None:
+        if self.group_leader is not None:
             self.forward_once(signum)
-        if not self.spawning:
+        if not self.spawning and not self.cleaning:
             raise CaughtSignal(signum)
 
     @contextmanager
@@ -101,6 +104,31 @@ class ChildSupervisor:
             pass
 
     @staticmethod
+    def terminate_group(group_leader: subprocess.Popen) -> bool:
+        """Boundedly deliver the final group signal while the PGID is reserved."""
+        for _attempt in range(FINAL_SIGNAL_ATTEMPTS):
+            try:
+                os.killpg(group_leader.pid, signal.SIGKILL)
+                return True
+            except ProcessLookupError:
+                return True
+            except BaseException:
+                pass
+        return False
+
+    @staticmethod
+    def terminate_process(process: subprocess.Popen) -> None:
+        """Best-effort identity-safe fallback for an unreaped direct child."""
+        for _attempt in range(FINAL_SIGNAL_ATTEMPTS):
+            try:
+                process.kill()
+                return
+            except ProcessLookupError:
+                return
+            except BaseException:
+                pass
+
+    @staticmethod
     def remaining(deadline: float) -> float:
         try:
             return max(0.0, deadline - time.monotonic())
@@ -123,14 +151,26 @@ class ChildSupervisor:
         if self.group_leader is group_leader:
             self.group_leader = None
 
-    def communicate_until(self, child: subprocess.Popen, deadline: float) -> None:
+    def communicate_until(self, child: subprocess.Popen, deadline: float) -> bool:
         remaining = self.remaining(deadline)
         if remaining <= 0.0:
-            return
+            return False
         try:
             child.communicate(timeout=remaining)
+            return True
         except BaseException:
-            pass
+            return False
+
+    def reap_until(self, process: subprocess.Popen, deadline: float) -> None:
+        """Boundedly retry wait so one interruption cannot abandon a child."""
+        for _attempt in range(REAP_ATTEMPTS):
+            try:
+                process.wait(timeout=self.remaining(deadline))
+                return
+            except subprocess.TimeoutExpired:
+                return
+            except BaseException:
+                pass
 
     def terminate_and_reap(
         self,
@@ -141,45 +181,67 @@ class ChildSupervisor:
         grace_seconds: float | None = None,
     ) -> None:
         """Best-effort bounded cleanup which never replaces an active exception."""
-        if initial_signal is not None:
-            self.signal_group(group_leader, initial_signal)
+        previous_cleaning = self.cleaning
+        self.cleaning = True
+        try:
+            if initial_signal is not None:
+                self.signal_group(group_leader, initial_signal)
 
-        if grace_seconds is None:
-            grace_seconds = SIGNAL_GRACE_SECONDS
-        try:
-            grace_deadline = time.monotonic() + max(0.0, grace_seconds)
-        except BaseException:
-            grace_deadline = 0.0
-        self.communicate_until(child, grace_deadline)
-        self.wait_until(grace_deadline)
+            if grace_seconds is None:
+                grace_seconds = SIGNAL_GRACE_SECONDS
+            try:
+                grace_deadline = time.monotonic() + max(0.0, grace_seconds)
+            except BaseException:
+                grace_deadline = 0.0
+            child_completed = self.communicate_until(child, grace_deadline)
+            if not child_completed:
+                self.wait_until(grace_deadline)
 
-        # The unreaped anchor owns the numeric PGID until this final signal is
-        # complete. Close forwarding authority before either process is reaped
-        # so no later signal handler can act on a reusable numeric identifier.
-        self.signal_group(group_leader, signal.SIGKILL)
-        self.close_group_authority(group_leader)
+            # The unreaped anchor reserves the numeric PGID through every final
+            # group-signal attempt. If group signaling fails, the still-owned
+            # Popen handles provide identity-safe direct-child fallbacks.
+            group_terminated = self.terminate_group(group_leader)
+            if not group_terminated:
+                self.terminate_process(child)
+                self.terminate_process(group_leader)
 
-        try:
-            kill_deadline = time.monotonic() + max(0.0, KILL_GRACE_SECONDS)
-        except BaseException:
-            kill_deadline = 0.0
-        try:
-            group_leader.wait(timeout=self.remaining(kill_deadline))
-        except BaseException:
-            pass
-        self.communicate_until(child, kill_deadline)
-        try:
-            child.wait(timeout=self.remaining(kill_deadline))
-        except BaseException:
-            pass
+            # Close forwarding authority before either child is reaped, since
+            # the numeric PGID can become reusable as soon as the anchor exits.
+            # Reaping belongs in finally so an asynchronous exception injected
+            # at this boundary cannot abandon either direct child.
+            try:
+                self.close_group_authority(group_leader)
+            finally:
+                try:
+                    kill_deadline = time.monotonic() + max(
+                        0.0, KILL_GRACE_SECONDS
+                    )
+                except BaseException:
+                    kill_deadline = 0.0
+                self.reap_until(group_leader, kill_deadline)
+                self.communicate_until(child, kill_deadline)
+                self.reap_until(child, kill_deadline)
+        finally:
+            self.cleaning = previous_cleaning
 
     def terminate_anchor(self, group_leader: subprocess.Popen) -> None:
-        self.signal_group(group_leader, signal.SIGKILL)
-        self.close_group_authority(group_leader)
+        previous_cleaning = self.cleaning
+        self.cleaning = True
         try:
-            group_leader.wait(timeout=KILL_GRACE_SECONDS)
-        except BaseException:
-            pass
+            if not self.terminate_group(group_leader):
+                self.terminate_process(group_leader)
+            try:
+                self.close_group_authority(group_leader)
+            finally:
+                try:
+                    kill_deadline = time.monotonic() + max(
+                        0.0, KILL_GRACE_SECONDS
+                    )
+                except BaseException:
+                    kill_deadline = 0.0
+                self.reap_until(group_leader, kill_deadline)
+        finally:
+            self.cleaning = previous_cleaning
 
     @staticmethod
     def anchor_command() -> list[str]:

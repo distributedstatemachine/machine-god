@@ -57,12 +57,15 @@ library tree from entering repository-cleanliness scans. Each run re-hashes the
 retained official archive, extracts a fresh toolchain, passes that executable
 explicitly to the harness, and removes the extraction on success or failure.
 The wrapper forwards `SIGHUP`, `SIGINT`, and `SIGTERM` to the active child
-process group, cleans the group after every post-launch exception, and bounds
-graceful reaping before killing any surviving group members and unwinding the
-extraction context. The upstream harness converts the first forwarded signal
-into structured unwinding. On Linux it defers delivery from process creation
-through containment attachment, so independently grouped build or sample
-processes and their descendants are owned and reaped before the harness exits.
+process group, whose numeric identity remains reserved by an unreaped private
+anchor through final group signaling. Cleanup after every post-launch exception
+defers handled signals, skips unused grace time once the command exits, retries
+final group termination, and retains identity-safe direct-child kill and reap
+fallbacks before unwinding the extraction context. The upstream harness converts
+the first forwarded signal into structured unwinding. On Linux it defers
+delivery from process creation through containment attachment, so independently
+grouped build or sample processes and their descendants are owned and reaped
+before the harness exits.
 Linux process-table discovery stops after 65,536 numeric entries, builds one
 parent-to-children index, and traverses at most 4,096 contained identities per
 refresh; overflow is retained as owned cleanup work and fails closed instead of
