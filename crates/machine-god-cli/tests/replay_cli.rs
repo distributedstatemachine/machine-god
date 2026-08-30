@@ -237,6 +237,72 @@ fn replay_parse_errors_exit_one_and_raw_json_selects_structured_errors() {
 }
 
 #[test]
+fn malformed_fxtp_headers_preserve_pinned_error_precedence() {
+    let root = TestDirectory::new("malformed-headers");
+    let mut truncated_version = Vec::new();
+    truncated_version.extend_from_slice(b"FXTP\x01");
+    truncated_version.extend_from_slice(&2_u16.to_le_bytes());
+    truncated_version.extend_from_slice(&1_u16.to_le_bytes());
+    truncated_version.extend_from_slice(&0_i64.to_le_bytes());
+    truncated_version.push(2);
+    truncated_version.push(b'v');
+
+    for (name, tape_bytes, code, message) in [
+        (
+            "empty",
+            Vec::new(),
+            "TapeTooShort",
+            "bad tape: TapeTooShort",
+        ),
+        (
+            "short-wrong-magic",
+            b"NOPE".to_vec(),
+            "TapeTooShort",
+            "bad tape: TapeTooShort",
+        ),
+        (
+            "fixed-header-wrong-magic",
+            vec![0; 18],
+            "BadTapeMagic",
+            "bad tape: BadTapeMagic",
+        ),
+        (
+            "truncated-version",
+            truncated_version,
+            "TruncatedVersion",
+            "bad tape: TruncatedVersion",
+        ),
+    ] {
+        let tape = root.path().join(format!("{name}.fxtape"));
+        fs::write(&tape, tape_bytes).unwrap();
+
+        let human = run(root.path(), [OsStr::new("replay"), tape.as_os_str()]);
+        assert_eq!(human.status.code(), Some(1), "{name}");
+        assert!(human.stdout.is_empty(), "{name}");
+        assert_eq!(
+            human.stderr,
+            format!("machine-god replay: {message}\n").as_bytes(),
+            "{name}"
+        );
+
+        let json = run(
+            root.path(),
+            [OsStr::new("replay"), tape.as_os_str(), OsStr::new("--json")],
+        );
+        assert_eq!(json.status.code(), Some(1), "{name}");
+        assert!(json.stderr.is_empty(), "{name}");
+        assert_eq!(
+            json.stdout,
+            format!(
+                "{{\"kind\":\"replay\",\"error\":\"machine-god replay: {message}\",\"code\":\"{code}\"}}\n"
+            )
+            .as_bytes(),
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn incomplete_tail_warning_is_machine_god_branded() {
     let root = TestDirectory::new("incomplete-tail");
     let tape = root.path().join("incomplete.fxtape");
