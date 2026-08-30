@@ -378,6 +378,7 @@ fn map_path_open_error(error: rustix::io::Errno) -> ToolError {
     }
 }
 
+#[cfg(unix)]
 fn check_cancellation(cancellation: &CancellationToken) -> Result<(), ToolError> {
     if cancellation.is_cancelled() {
         Err(ToolError::new(
