@@ -14,6 +14,7 @@ use std::thread::JoinHandle;
 
 mod ask;
 mod replay;
+mod status;
 
 #[cfg(not(target_family = "wasm"))]
 use std::sync::Arc;
@@ -33,12 +34,13 @@ use machine_god_native::{
     MAX_LIST_SESSIONS, MAX_WORKSPACE_PATH_BYTES, NativeCredentialSourceKind,
     NativeDoctorCheckStatus, NativeDoctorReport, NativeProviderKind, NativeSessionInspection,
     NativeSessionInspectionError, NativeSessionInspectionErrorKind, NativeSessionList,
-    NativeSessionListingError, NativeSessionListingErrorKind, NativeStatus, NativeTransportKind,
+    NativeSessionListingError, NativeSessionListingErrorKind, NativeTransportKind,
     NativeWorkspaceInspection, NativeWorkspaceInspectionError, NativeWorkspaceInspectionErrorKind,
-    PermissionMode, inspect_process_doctor, inspect_process_session, inspect_process_status,
-    inspect_process_workspace, list_process_sessions, load_process_config,
+    PermissionMode, inspect_process_doctor, inspect_process_session, inspect_process_workspace,
+    list_process_sessions, load_process_config,
 };
 use replay::{ProductionReplayCommandHost, ReplayCommandHost, is_replay_command, run_replay};
+use status::{ProductionStatusCommandHost, StatusCommandHost, is_status_command, run_status};
 
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
@@ -215,7 +217,6 @@ enum Command {
     Resume { id: SessionId, prompt: String },
     Session { id: SessionId, json: bool },
     Sessions { json: bool },
-    Status { json: bool },
     Workspace { json: bool },
 }
 
@@ -1349,6 +1350,54 @@ fn run_with_hosts(
         &impl AskCommandHost,
     ),
 ) -> u8 {
+    run_with_hosts_and_status(
+        arguments,
+        stdout,
+        stderr,
+        hosts,
+        &ProductionStatusCommandHost,
+    )
+}
+
+#[cfg(test)]
+fn run_with_status_host(
+    arguments: impl IntoIterator<Item = OsString>,
+    stdout: &mut impl io::Write,
+    stderr: &mut impl io::Write,
+    status_host: &impl StatusCommandHost,
+) -> u8 {
+    run_with_hosts_and_status(
+        arguments,
+        stdout,
+        stderr,
+        (
+            &ProductionModelsCommandHost,
+            &ProductionDoctorCommandHost,
+            &ProductionSessionCommandHost,
+            &ProductionSessionsCommandHost,
+            &ProductionWorkspaceCommandHost,
+            &ProductionReplayCommandHost,
+            &ProductionAskCommandHost,
+        ),
+        status_host,
+    )
+}
+
+fn run_with_hosts_and_status(
+    arguments: impl IntoIterator<Item = OsString>,
+    stdout: &mut impl io::Write,
+    stderr: &mut impl io::Write,
+    hosts: (
+        &impl ModelsCommandHost,
+        &impl DoctorCommandHost,
+        &impl SessionCommandHost,
+        &impl SessionsCommandHost,
+        &impl WorkspaceCommandHost,
+        &impl ReplayCommandHost,
+        &impl AskCommandHost,
+    ),
+    status_host: &impl StatusCommandHost,
+) -> u8 {
     let (
         models_host,
         doctor_host,
@@ -1360,6 +1409,24 @@ fn run_with_hosts(
     ) = hosts;
     let mut arguments = arguments.into_iter();
     let first = arguments.next();
+    if first.as_deref().is_some_and(is_help_command) {
+        let output = help();
+        if stdout.write_all(output.as_bytes()).is_err() {
+            let _ = stderr.write_all(OUTPUT_FAILURE.as_bytes());
+            return 1;
+        }
+        return 0;
+    }
+    if first.as_deref().is_some_and(is_status_command) {
+        let status_arguments = arguments.collect::<Vec<_>>();
+        return run_status(
+            status_host,
+            &status_arguments,
+            stdout,
+            stderr,
+            OUTPUT_FAILURE,
+        );
+    }
     if first.as_deref().is_some_and(is_replay_command) {
         let replay_arguments = arguments.collect::<Vec<_>>();
         return run_replay(
@@ -1403,7 +1470,6 @@ fn run_with_hosts(
         Command::Sessions { json } => {
             return run_sessions(listing_host, json, stdout, stderr);
         }
-        Command::Status { json } => status(&inspect_process_status(), json),
         Command::Workspace { json } => {
             return run_workspace(workspace_host, json, stdout, stderr);
         }
@@ -1414,6 +1480,10 @@ fn run_with_hosts(
         return 1;
     }
     0
+}
+
+fn is_help_command(argument: &std::ffi::OsStr) -> bool {
+    argument == "help" || argument == "--help" || argument == "-h"
 }
 
 fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Command, ()> {
@@ -1482,14 +1552,6 @@ fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Comm
                 Some(_) => return Err(()),
             };
             Command::Sessions { json }
-        }
-        "status" => {
-            let json = match arguments.next() {
-                None => false,
-                Some(argument) if argument == "--json" => true,
-                Some(_) => return Err(()),
-            };
-            Command::Status { json }
         }
         "workspace" => {
             let json = match arguments.next() {
@@ -2191,67 +2253,6 @@ fn json_permissions(permission_mode: PermissionMode) -> String {
     output
 }
 
-fn status(status: &NativeStatus, json: bool) -> String {
-    if json {
-        json_status(status)
-    } else {
-        human_status(status)
-    }
-}
-
-fn human_status(status: &NativeStatus) -> String {
-    let mut output = identity();
-    let _ = writeln!(
-        output,
-        "permission_mode: {}",
-        status.permission_mode().as_str()
-    );
-    let _ = write!(
-        output,
-        "config_file: state={} path=",
-        status.config_file_state().as_str()
-    );
-    push_json_path(&mut output, status.config_file_path());
-    output.push('\n');
-    let _ = write!(
-        output,
-        "state_directory: state={} path=",
-        status.state_directory_state().as_str()
-    );
-    push_json_path(&mut output, status.state_directory_path());
-    output.push('\n');
-    output
-}
-
-fn json_status(status: &NativeStatus) -> String {
-    let mut output = String::from("{\"name\":\"machine-god\",\"version\":");
-    push_json_string(&mut output, env!("CARGO_PKG_VERSION"));
-    let _ = write!(
-        output,
-        ",\"engine_api_version\":{},\"permission_mode\":",
-        machine_god_native::supported_core_api_version()
-    );
-    push_json_string(&mut output, status.permission_mode().as_str());
-    output.push_str(",\"config_file\":{\"path\":");
-    push_json_path(&mut output, status.config_file_path());
-    output.push_str(",\"state\":");
-    push_json_string(&mut output, status.config_file_state().as_str());
-    output.push_str("},\"state_directory\":{\"path\":");
-    push_json_path(&mut output, status.state_directory_path());
-    output.push_str(",\"state\":");
-    push_json_string(&mut output, status.state_directory_state().as_str());
-    output.push_str("}}\n");
-    output
-}
-
-fn push_json_path(output: &mut String, path: Option<&Path>) {
-    if let Some(path) = path.and_then(Path::to_str) {
-        push_json_string(output, path);
-    } else {
-        output.push_str("null");
-    }
-}
-
 fn push_json_string(output: &mut String, value: &str) {
     write_json_string(output, value).expect("writing JSON to a String cannot fail");
 }
@@ -2296,7 +2297,7 @@ mod tests {
         json_permissions, parse_arguments, permissions, push_json_string, render_doctor,
         render_session, render_sessions, render_workspace, run, run_with_ask_host,
         run_with_doctor_host, run_with_models_host, run_with_session_host, run_with_sessions_host,
-        run_with_workspace_host,
+        run_with_status_host, run_with_workspace_host,
     };
     #[cfg(not(target_family = "wasm"))]
     use super::{ModelsCompositionEffects, classify_provider_error, list_models_with_effects};
@@ -2310,6 +2311,7 @@ mod tests {
         AskCommandExecution, AskCommandHost, AskCommandOutcome, MAX_ASK_PROMPT_BYTES,
         SessionSelection,
     };
+    use crate::status::StatusCommandHost;
     use machine_god_core::{
         AvailableModel, BoxFuture, ModelCatalog, ModelCatalogAccess, PublicCatalogReason,
     };
@@ -2318,8 +2320,9 @@ mod tests {
     #[cfg(not(target_family = "wasm"))]
     use machine_god_core::{ProviderError, ProviderErrorKind};
     use machine_god_native::{
-        MAX_WORKSPACE_PATH_BYTES, NativeSessionInspectionErrorKind, NativeSessionListingErrorKind,
-        NativeWorkspaceInspectionErrorKind,
+        MAX_WORKSPACE_PATH_BYTES, NativeEnvironment, NativeSessionInspectionErrorKind,
+        NativeSessionListingErrorKind, NativeStatus, NativeWorkspaceInspectionErrorKind,
+        inspect_native_status,
     };
     use std::cell::{Cell, RefCell};
     use std::ffi::OsString;
@@ -2357,6 +2360,28 @@ mod tests {
         fn list_models(&self) -> ModelsCommandExecution {
             self.calls.set(self.calls.get() + 1);
             ModelsCommandExecution::without_signal_guard(self.result.clone())
+        }
+    }
+
+    #[derive(Debug)]
+    struct FakeStatusHost {
+        calls: Cell<usize>,
+        status: NativeStatus,
+    }
+
+    impl FakeStatusHost {
+        fn unavailable() -> Self {
+            Self {
+                calls: Cell::new(0),
+                status: inspect_native_status(&NativeEnvironment::new(None, None, None)),
+            }
+        }
+    }
+
+    impl StatusCommandHost for FakeStatusHost {
+        fn inspect_status(&self) -> NativeStatus {
+            self.calls.set(self.calls.get() + 1);
+            self.status.clone()
         }
     }
 
@@ -3589,14 +3614,6 @@ mod tests {
             parse_arguments([OsString::from("sessions"), OsString::from("--json")]),
             Ok(Command::Sessions { json: true })
         );
-        assert_eq!(
-            parse_arguments([OsString::from("status")]),
-            Ok(Command::Status { json: false })
-        );
-        assert_eq!(
-            parse_arguments([OsString::from("status"), OsString::from("--json")]),
-            Ok(Command::Status { json: true })
-        );
         for arguments in [
             vec![OsString::from("unknown")],
             vec![OsString::from("help"), OsString::from("extra")],
@@ -3626,15 +3643,86 @@ mod tests {
                 OsString::from("--json"),
                 OsString::from("extra"),
             ],
-            vec![OsString::from("status"), OsString::from("--json=true")],
-            vec![
-                OsString::from("status"),
-                OsString::from("--json"),
-                OsString::from("extra"),
-            ],
         ] {
             assert_eq!(parse_arguments(arguments), Err(()));
         }
+    }
+
+    #[test]
+    fn global_help_first_token_ignores_every_tail_without_status_effects() {
+        let host = FakeStatusHost::unavailable();
+        for arguments in [
+            vec![OsString::from("help"), OsString::from("status")],
+            vec![OsString::from("--help"), OsString::from("--json")],
+            vec![OsString::from("-h"), OsString::from("unknown")],
+        ] {
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            assert_eq!(
+                run_with_status_host(arguments, &mut stdout, &mut stderr, &host),
+                0
+            );
+            assert_eq!(stdout, help().as_bytes());
+            assert!(stderr.is_empty());
+        }
+        assert_eq!(host.calls.get(), 0);
+    }
+
+    #[test]
+    fn main_dispatches_status_through_the_injected_host_only_after_validation() {
+        let host = FakeStatusHost::unavailable();
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        assert_eq!(
+            run_with_status_host(
+                [OsString::from("status"), OsString::from("unknown")],
+                &mut stdout,
+                &mut stderr,
+                &host,
+            ),
+            1
+        );
+        assert!(stdout.is_empty());
+        assert_eq!(stderr, b"usage: machine-god status [--json]\n");
+        assert_eq!(host.calls.get(), 0);
+
+        stdout.clear();
+        stderr.clear();
+        assert_eq!(
+            run_with_status_host(
+                [
+                    OsString::from("status"),
+                    OsString::from("--json"),
+                    OsString::from("--json"),
+                ],
+                &mut stdout,
+                &mut stderr,
+                &host,
+            ),
+            0
+        );
+        assert!(stdout.starts_with(b"{\"name\":\"machine-god\""));
+        assert!(stderr.is_empty());
+        assert_eq!(host.calls.get(), 1);
+    }
+
+    #[test]
+    fn global_help_output_failure_is_fixed_without_status_effects() {
+        let host = FakeStatusHost::unavailable();
+        let mut stdout = BrokenWriter;
+        let mut stderr = Vec::new();
+        assert_eq!(
+            run_with_status_host(
+                [OsString::from("help"), OsString::from("status")],
+                &mut stdout,
+                &mut stderr,
+                &host,
+            ),
+            1
+        );
+        assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
+        assert_eq!(host.calls.get(), 0);
     }
 
     #[test]

@@ -1,0 +1,445 @@
+use std::ffi::{OsStr, OsString};
+use std::fmt::Write as _;
+use std::io;
+use std::path::Path;
+
+use machine_god_native::{NativeStatus, inspect_process_status};
+
+use super::{identity, write_json_string};
+
+pub(crate) const MAX_STATUS_OUTPUT_BYTES: usize = 64 * 1024;
+
+const STATUS_HELP: &str = concat!(
+    "machine-god status\n",
+    "\n",
+    "Show configuration and runtime information\n",
+    "\n",
+    "Usage:\n",
+    "  machine-god status [--json]\n",
+    "\n",
+    "Options:\n",
+    "  --json  Emit machine-readable JSON instead of text\n",
+);
+const STATUS_USAGE: &str = "usage: machine-god status [--json]\n";
+const STATUS_INVALID_JSON: &str = concat!(
+    "{\"kind\":\"status\",\"error\":\"invalid arguments\",",
+    "\"code\":\"InvalidLocalSurfaceArgs\"}\n",
+);
+const STATUS_RENDER_FAILURE: &str = "machine-god status: could not render report\n";
+
+pub(crate) trait StatusCommandHost {
+    fn inspect_status(&self) -> NativeStatus;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ProductionStatusCommandHost;
+
+impl StatusCommandHost for ProductionStatusCommandHost {
+    fn inspect_status(&self) -> NativeStatus {
+        inspect_process_status()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StatusParseOutcome {
+    Help,
+    Invoke { json: bool },
+    Invalid { json: bool },
+}
+
+#[derive(Debug)]
+struct BoundedStatusOutput {
+    value: String,
+}
+
+impl BoundedStatusOutput {
+    fn new() -> Self {
+        Self {
+            value: String::with_capacity(1024),
+        }
+    }
+
+    fn finish(self) -> String {
+        self.value
+    }
+}
+
+impl std::fmt::Write for BoundedStatusOutput {
+    fn write_str(&mut self, value: &str) -> std::fmt::Result {
+        let Some(new_len) = self.value.len().checked_add(value.len()) else {
+            return Err(std::fmt::Error);
+        };
+        if new_len > MAX_STATUS_OUTPUT_BYTES {
+            return Err(std::fmt::Error);
+        }
+        self.value.push_str(value);
+        Ok(())
+    }
+}
+
+pub(crate) fn is_status_command(argument: &OsStr) -> bool {
+    argument == "status"
+}
+
+pub(crate) fn run_status(
+    host: &impl StatusCommandHost,
+    arguments: &[OsString],
+    stdout: &mut impl io::Write,
+    stderr: &mut impl io::Write,
+    output_failure: &str,
+) -> u8 {
+    match parse_arguments(arguments) {
+        StatusParseOutcome::Help => {
+            write_stdout(STATUS_HELP.as_bytes(), stdout, stderr, output_failure)
+        }
+        StatusParseOutcome::Invalid { json: true } => {
+            if stdout.write_all(STATUS_INVALID_JSON.as_bytes()).is_err() {
+                let _ = stderr.write_all(output_failure.as_bytes());
+            }
+            1
+        }
+        StatusParseOutcome::Invalid { json: false } => {
+            if stderr.write_all(STATUS_USAGE.as_bytes()).is_err() {
+                let _ = stderr.write_all(output_failure.as_bytes());
+            }
+            1
+        }
+        StatusParseOutcome::Invoke { json } => {
+            let status = host.inspect_status();
+            let Ok(output) = render_status(&status, json) else {
+                let _ = stderr.write_all(STATUS_RENDER_FAILURE.as_bytes());
+                return 1;
+            };
+            write_stdout(output.as_bytes(), stdout, stderr, output_failure)
+        }
+    }
+}
+
+fn parse_arguments(arguments: &[OsString]) -> StatusParseOutcome {
+    if arguments
+        .iter()
+        .any(|argument| argument == "--help" || argument == "-h")
+    {
+        return StatusParseOutcome::Help;
+    }
+
+    let mut json = false;
+    let mut invalid = false;
+    for argument in arguments {
+        if argument == "--json" {
+            json = true;
+        } else {
+            invalid = true;
+        }
+    }
+    if invalid {
+        StatusParseOutcome::Invalid { json }
+    } else {
+        StatusParseOutcome::Invoke { json }
+    }
+}
+
+fn render_status(status: &NativeStatus, json: bool) -> Result<String, std::fmt::Error> {
+    if json {
+        json_status(status)
+    } else {
+        human_status(status)
+    }
+}
+
+fn human_status(status: &NativeStatus) -> Result<String, std::fmt::Error> {
+    let mut output = BoundedStatusOutput::new();
+    output.write_str(&identity())?;
+    writeln!(
+        output,
+        "permission_mode: {}",
+        status.permission_mode().as_str()
+    )?;
+    write!(
+        output,
+        "config_file: state={} path=",
+        status.config_file_state().as_str()
+    )?;
+    write_json_path(&mut output, status.config_file_path())?;
+    output.write_char('\n')?;
+    write!(
+        output,
+        "state_directory: state={} path=",
+        status.state_directory_state().as_str()
+    )?;
+    write_json_path(&mut output, status.state_directory_path())?;
+    output.write_char('\n')?;
+    Ok(output.finish())
+}
+
+fn json_status(status: &NativeStatus) -> Result<String, std::fmt::Error> {
+    let mut output = BoundedStatusOutput::new();
+    output.write_str("{\"name\":\"machine-god\",\"version\":")?;
+    write_json_string(&mut output, env!("CARGO_PKG_VERSION"))?;
+    write!(
+        output,
+        ",\"engine_api_version\":{},\"permission_mode\":",
+        machine_god_native::supported_core_api_version()
+    )?;
+    write_json_string(&mut output, status.permission_mode().as_str())?;
+    output.write_str(",\"config_file\":{\"path\":")?;
+    write_json_path(&mut output, status.config_file_path())?;
+    output.write_str(",\"state\":")?;
+    write_json_string(&mut output, status.config_file_state().as_str())?;
+    output.write_str("},\"state_directory\":{\"path\":")?;
+    write_json_path(&mut output, status.state_directory_path())?;
+    output.write_str(",\"state\":")?;
+    write_json_string(&mut output, status.state_directory_state().as_str())?;
+    output.write_str("}}\n")?;
+    Ok(output.finish())
+}
+
+fn write_json_path(output: &mut impl std::fmt::Write, path: Option<&Path>) -> std::fmt::Result {
+    if let Some(path) = path.and_then(Path::to_str) {
+        write_json_string(output, path)
+    } else {
+        output.write_str("null")
+    }
+}
+
+fn write_stdout(
+    output: &[u8],
+    stdout: &mut impl io::Write,
+    stderr: &mut impl io::Write,
+    output_failure: &str,
+) -> u8 {
+    if stdout.write_all(output).is_err() {
+        let _ = stderr.write_all(output_failure.as_bytes());
+        1
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::ffi::OsString;
+    use std::fmt::Write as _;
+    use std::io;
+
+    use machine_god_native::{NativeEnvironment, NativeStatus, inspect_native_status};
+
+    use super::{
+        BoundedStatusOutput, MAX_STATUS_OUTPUT_BYTES, STATUS_HELP, STATUS_INVALID_JSON,
+        STATUS_RENDER_FAILURE, STATUS_USAGE, StatusCommandHost, StatusParseOutcome,
+        parse_arguments, run_status, write_json_string,
+    };
+
+    const OUTPUT_FAILURE: &str = "machine-god: failed to write output\n";
+
+    #[derive(Debug)]
+    struct FakeStatusHost {
+        calls: Cell<usize>,
+        status: NativeStatus,
+    }
+
+    impl FakeStatusHost {
+        fn unavailable() -> Self {
+            Self {
+                calls: Cell::new(0),
+                status: inspect_native_status(&NativeEnvironment::new(None, None, None)),
+            }
+        }
+    }
+
+    impl StatusCommandHost for FakeStatusHost {
+        fn inspect_status(&self) -> NativeStatus {
+            self.calls.set(self.calls.get() + 1);
+            self.status.clone()
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct BrokenWriter;
+
+    impl io::Write for BrokenWriter {
+        fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "closed"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn parser_preempts_with_help_and_treats_json_as_idempotent() {
+        for arguments in [
+            vec![OsString::from("--help")],
+            vec![OsString::from("unknown"), OsString::from("-h")],
+            vec![OsString::from("--json"), OsString::from("--help")],
+        ] {
+            assert_eq!(parse_arguments(&arguments), StatusParseOutcome::Help);
+        }
+        assert_eq!(
+            parse_arguments(&[]),
+            StatusParseOutcome::Invoke { json: false }
+        );
+        assert_eq!(
+            parse_arguments(&[OsString::from("--json"), OsString::from("--json")]),
+            StatusParseOutcome::Invoke { json: true }
+        );
+        assert_eq!(
+            parse_arguments(&[OsString::from("unknown")]),
+            StatusParseOutcome::Invalid { json: false }
+        );
+        assert_eq!(
+            parse_arguments(&[OsString::from("unknown"), OsString::from("--json")]),
+            StatusParseOutcome::Invalid { json: true }
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parser_rejects_non_unicode_but_still_honors_raw_help_and_json() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let invalid = OsString::from_vec(vec![0xff]);
+        assert_eq!(
+            parse_arguments(std::slice::from_ref(&invalid)),
+            StatusParseOutcome::Invalid { json: false }
+        );
+        assert_eq!(
+            parse_arguments(&[invalid.clone(), OsString::from("--json")]),
+            StatusParseOutcome::Invalid { json: true }
+        );
+        assert_eq!(
+            parse_arguments(&[invalid, OsString::from("--help")]),
+            StatusParseOutcome::Help
+        );
+    }
+
+    #[test]
+    fn help_and_invalid_arguments_have_exact_outputs_without_host_calls() {
+        let host = FakeStatusHost::unavailable();
+        for (arguments, expected_exit, expected_stdout, expected_stderr) in [
+            (
+                vec![OsString::from("--help")],
+                0,
+                STATUS_HELP.as_bytes(),
+                &[][..],
+            ),
+            (
+                vec![OsString::from("unknown")],
+                1,
+                &[][..],
+                STATUS_USAGE.as_bytes(),
+            ),
+            (
+                vec![OsString::from("unknown"), OsString::from("--json")],
+                1,
+                STATUS_INVALID_JSON.as_bytes(),
+                &[][..],
+            ),
+        ] {
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let exit = run_status(&host, &arguments, &mut stdout, &mut stderr, OUTPUT_FAILURE);
+            assert_eq!(exit, expected_exit);
+            assert_eq!(stdout, expected_stdout);
+            assert_eq!(stderr, expected_stderr);
+        }
+        assert_eq!(host.calls.get(), 0);
+    }
+
+    #[test]
+    fn valid_status_calls_the_host_once_and_preserves_exact_bytes() {
+        let host = FakeStatusHost::unavailable();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let exit = run_status(
+            &host,
+            &[OsString::from("--json"), OsString::from("--json")],
+            &mut stdout,
+            &mut stderr,
+            OUTPUT_FAILURE,
+        );
+        assert_eq!(exit, 0);
+        assert_eq!(host.calls.get(), 1);
+        assert_eq!(
+            stdout,
+            concat!(
+                "{\"name\":\"machine-god\",\"version\":\"0.1.0\",",
+                "\"engine_api_version\":1,\"permission_mode\":\"ask\",",
+                "\"config_file\":{\"path\":null,\"state\":\"unavailable\"},",
+                "\"state_directory\":{\"path\":null,\"state\":\"unavailable\"}}\n",
+            )
+            .as_bytes()
+        );
+        assert!(stderr.is_empty());
+    }
+
+    #[test]
+    fn bounded_writer_accepts_the_cap_rejects_one_over_and_counts_escaping() {
+        let mut exact = BoundedStatusOutput::new();
+        exact
+            .write_str(&"x".repeat(MAX_STATUS_OUTPUT_BYTES))
+            .unwrap();
+        assert_eq!(exact.value.len(), MAX_STATUS_OUTPUT_BYTES);
+        assert!(exact.write_char('x').is_err());
+
+        let mut escaped = BoundedStatusOutput::new();
+        write_json_string(&mut escaped, "\u{1b}\u{202e}\n\\\"").unwrap();
+        assert_eq!(escaped.value, "\"\\u001b\\u202e\\n\\\\\\\"\"");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn render_overflow_is_atomic_and_uses_the_fixed_diagnostic() {
+        let root = format!("/{}", "x".repeat(MAX_STATUS_OUTPUT_BYTES));
+        let status = inspect_native_status(&NativeEnvironment::new(
+            Some(OsString::from(&root)),
+            Some(OsString::from(root)),
+            None,
+        ));
+        let host = FakeStatusHost {
+            calls: Cell::new(0),
+            status,
+        };
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        assert_eq!(
+            run_status(&host, &[], &mut stdout, &mut stderr, OUTPUT_FAILURE),
+            1
+        );
+        assert_eq!(host.calls.get(), 1);
+        assert!(stdout.is_empty());
+        assert_eq!(stderr, STATUS_RENDER_FAILURE.as_bytes());
+    }
+
+    #[test]
+    fn output_failures_are_fixed_and_do_not_repeat_host_effects() {
+        let host = FakeStatusHost::unavailable();
+        for arguments in [vec![OsString::from("--help")], Vec::new()] {
+            let mut stdout = BrokenWriter;
+            let mut stderr = Vec::new();
+            assert_eq!(
+                run_status(&host, &arguments, &mut stdout, &mut stderr, OUTPUT_FAILURE,),
+                1
+            );
+            assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
+        }
+        assert_eq!(host.calls.get(), 1);
+
+        let mut stdout = BrokenWriter;
+        let mut stderr = Vec::new();
+        assert_eq!(
+            run_status(
+                &host,
+                &[OsString::from("unknown"), OsString::from("--json")],
+                &mut stdout,
+                &mut stderr,
+                OUTPUT_FAILURE,
+            ),
+            1
+        );
+        assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
+        assert_eq!(host.calls.get(), 1);
+    }
+}
