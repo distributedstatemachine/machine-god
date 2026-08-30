@@ -3268,6 +3268,43 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         self.assertEqual(supervisor._discovery_incomplete, {(103, 1_003)})
         self.assertEqual(set(closed), {100, 101, 102})
 
+    def test_termination_retains_process_table_witness_when_deadline_expires(self) -> None:
+        supervisor = LinuxProcessSupervisor(set())
+        supervisor.root_pid = 100
+        supervisor.root_identity = (100, 1_000)
+
+        class FinishedProcess:
+            pid = 100
+            stdout = None
+            stderr = None
+
+            def poll(self) -> int:
+                return 0
+
+            def kill(self) -> None:
+                raise AssertionError("finished root must not be killed directly")
+
+            def wait(self, timeout: float | None = None) -> int:
+                del timeout
+                return 0
+
+        with (
+            mock.patch.object(
+                upstream,
+                "linux_process_table",
+                side_effect=upstream.LinuxProcessTableLimit(65_537),
+            ),
+            mock.patch.object(supervisor, "signal_known"),
+            mock.patch.object(supervisor, "reap_adopted"),
+            mock.patch.object(upstream, "kill_process_group"),
+        ):
+            remaining = upstream.terminate_contained_process(
+                FinishedProcess(), supervisor, cleanup_seconds=0.0
+            )
+
+        self.assertIn(65_537, remaining)
+        self.assertEqual(supervisor._table_scan_incomplete, {65_537})
+
     def test_supervisor_stop_attempts_every_close_and_preserves_caller_exception(self) -> None:
         class CallerFailure(BaseException):
             pass
@@ -3333,6 +3370,73 @@ runpy.run_path(sys.argv[0], run_name="__main__")
                 observed = error
 
         self.assertIs(observed, failure)
+        self.assertEqual(attempted, [10, 11, 12])
+        self.assertEqual(supervisor._known, {})
+
+    @unittest.skipUnless(os.name == "posix", "termination signals require POSIX")
+    def test_successful_stop_defers_signal_raised_inside_close_until_all_closed(self) -> None:
+        supervisor = LinuxProcessSupervisor(set())
+        supervisor._known = {
+            (100, 1_000): 10,
+            (101, 1_001): 11,
+            (102, 1_002): 12,
+        }
+        attempted: list[int] = []
+        injected = False
+
+        def signal_inside_close(descriptor: int) -> None:
+            nonlocal injected
+            attempted.append(descriptor)
+            if not injected:
+                injected = True
+                state = upstream.ACTIVE_HARNESS_SIGNAL_STATE
+                if state is None:
+                    raise AssertionError("termination handlers were not installed")
+                state.handle(signal.SIGTERM, None)
+
+        with (
+            mock.patch.object(supervisor, "settle_and_reap_adopted", return_value=set()),
+            mock.patch.object(upstream.os, "close", signal_inside_close),
+            self.assertRaises(upstream.HarnessSignal) as raised,
+            upstream.termination_signal_handlers(),
+        ):
+            upstream.finalize_successful_process(mock.Mock(), supervisor)
+
+        self.assertEqual(raised.exception.signum, signal.SIGTERM)
+        self.assertEqual(attempted, [10, 11, 12])
+        self.assertEqual(supervisor._known, {})
+
+    @unittest.skipUnless(os.name == "posix", "termination signals require POSIX")
+    def test_successful_stop_defers_signal_between_closes_until_all_closed(self) -> None:
+        supervisor = LinuxProcessSupervisor(set())
+        supervisor._known = {
+            (100, 1_000): 10,
+            (101, 1_001): 11,
+            (102, 1_002): 12,
+        }
+        attempted: list[int] = []
+
+        def close_then_signal_once(descriptor: int | None) -> None:
+            if descriptor is None:
+                raise AssertionError("supervisor passed an empty descriptor")
+            attempted.append(descriptor)
+            if len(attempted) == 1:
+                state = upstream.ACTIVE_HARNESS_SIGNAL_STATE
+                if state is None:
+                    raise AssertionError("termination handlers were not installed")
+                state.handle(signal.SIGINT, None)
+
+        with (
+            mock.patch.object(supervisor, "settle_and_reap_adopted", return_value=set()),
+            mock.patch.object(
+                upstream, "close_descriptor_nonthrowing", close_then_signal_once
+            ),
+            self.assertRaises(upstream.HarnessSignal) as raised,
+            upstream.termination_signal_handlers(),
+        ):
+            upstream.finalize_successful_process(mock.Mock(), supervisor)
+
+        self.assertEqual(raised.exception.signum, signal.SIGINT)
         self.assertEqual(attempted, [10, 11, 12])
         self.assertEqual(supervisor._known, {})
 

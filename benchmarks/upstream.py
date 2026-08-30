@@ -1949,6 +1949,12 @@ MAX_LINUX_PROCESS_TABLE_ENTRIES = 65_536
 MAX_LINUX_CONTAINED_PROCESSES = 4_096
 
 
+class LinuxProcessTableLimit(RuntimeError):
+    def __init__(self, overflow_pid: int) -> None:
+        self.overflow_pid = overflow_pid
+        super().__init__("Linux /proc process table exceeded the containment entry limit")
+
+
 class LinuxContainmentProcessLimit(RuntimeError):
     def __init__(
         self,
@@ -2001,9 +2007,7 @@ def linux_process_table(
                 continue
             numeric_entries += 1
             if numeric_entries > max_entries:
-                raise RuntimeError(
-                    "Linux /proc process table exceeded the containment entry limit"
-                )
+                raise LinuxProcessTableLimit(int(entry.name))
             try:
                 if entry.stat().st_uid != os.getuid():
                     continue
@@ -2107,6 +2111,7 @@ class LinuxProcessSupervisor:
         self.baseline_children = baseline_children
         self._known: dict[tuple[int, int], int] = {}
         self._discovery_incomplete: set[tuple[int, int]] = set()
+        self._table_scan_incomplete: set[int] = set()
         self._lock = threading.Lock()
 
     @staticmethod
@@ -2158,7 +2163,14 @@ class LinuxProcessSupervisor:
             self._known[self.root_identity] = descriptor
 
     def refresh(self) -> dict[int, LinuxProcessInfo]:
-        table = linux_process_table()
+        try:
+            table = linux_process_table()
+        except LinuxProcessTableLimit as error:
+            with self._lock:
+                incomplete = getattr(self, "_table_scan_incomplete", set())
+                incomplete.add(error.overflow_pid)
+                self._table_scan_incomplete = incomplete
+            raise
         with self._lock:
             for identity, descriptor in list(self._known.items()):
                 pid, start_time = identity
@@ -2191,6 +2203,7 @@ class LinuxProcessSupervisor:
             if limit_error is not None:
                 raise limit_error
             self._discovery_incomplete = set()
+            self._table_scan_incomplete = set()
             return table
 
     def live_pids(self) -> set[int]:
@@ -2249,6 +2262,7 @@ class LinuxProcessSupervisor:
                 pid
                 for pid, _start_time in getattr(self, "_discovery_incomplete", set())
             }
+            incomplete_pids.update(getattr(self, "_table_scan_incomplete", set()))
         present = incomplete_pids
         for (pid, _), descriptor in identities:
             if pid == self.root_pid:
@@ -2279,11 +2293,12 @@ class LinuxProcessSupervisor:
         return self.adopted_pids(include_zombies=True)
 
     def stop(self) -> None:
-        with self._lock:
-            descriptors = list(self._known.values())
-            self._known.clear()
-        for descriptor in descriptors:
-            close_descriptor_nonthrowing(descriptor)
+        with defer_harness_signal_while_cleaning():
+            with self._lock:
+                descriptors = list(self._known.values())
+                self._known.clear()
+            for descriptor in descriptors:
+                close_descriptor_nonthrowing(descriptor)
 
 
 class LinuxExitObserver:
@@ -2868,6 +2883,7 @@ def finalize_successful_process(
             + (f" and containment is incomplete for PIDs {sorted(remaining)}" if remaining else "")
         )
     supervisor.stop()
+    surface_deferred_harness_signal()
 
 
 def run_process(
