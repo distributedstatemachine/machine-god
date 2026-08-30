@@ -96,13 +96,16 @@ def _is_ancestor(ancestor: str, descendant: str) -> bool:
 
 
 def _merge_base(left: str, right: str) -> str:
-    raw = _run_git(["merge-base", left, right])
+    raw = _run_git(["merge-base", "--all", left, right])
     try:
-        base = raw.decode("ascii").strip()
+        bases = raw.decode("ascii").splitlines()
     except UnicodeDecodeError as error:
         raise ClassificationError("merge base was not a commit ID") from error
-    if not base or "\n" in base:
+    if len(bases) != 1:
         raise ClassificationError("revisions have no unique merge base")
+    base = bases[0]
+    if not base or any(character not in "0123456789abcdefABCDEF" for character in base):
+        raise ClassificationError("merge base was not a commit ID")
     return base
 
 
@@ -110,6 +113,8 @@ def _push_range(before: str | None, head: str | None, default_ref: str | None) -
     resolved_head = _resolve_commit(head, "head")
     before = _validate_revision(before, "before")
     if set(before) == {"0"}:
+        if len(before) != len(resolved_head):
+            raise ClassificationError("new-branch sentinel has an invalid length")
         resolved_default = _resolve_commit(default_ref, "default ref")
         base = _merge_base(resolved_default, resolved_head)
         return base, resolved_head, "new branch from default-ref merge base"
@@ -129,7 +134,15 @@ def _pull_request_range(base: str | None, head: str | None) -> tuple[str, str, s
 
 def _changed_paths(base: str, head: str) -> list[tuple[str, str]]:
     raw = _run_git(
-        ["diff", "--name-status", "-z", "--no-renames", f"{base}..{head}", "--"]
+        [
+            "diff",
+            "--name-status",
+            "-z",
+            "--no-renames",
+            "--ignore-submodules=none",
+            f"{base}..{head}",
+            "--",
+        ]
     )
     if not raw:
         return []

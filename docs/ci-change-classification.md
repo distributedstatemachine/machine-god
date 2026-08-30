@@ -33,17 +33,34 @@ fail closed to the complete gate.
 
 For an ordinary push whose nonzero `before` commit exists and is an ancestor
 of the new commit, classification uses that exact push range. A new branch uses
-the merge base with the repository default branch. Missing objects,
-non-ancestor updates, failure to establish the new-branch base, and every other
-uncertain push history select the complete gate. Pull requests use the merge
-base of the event's base and head commits. Manual dispatch and unknown event
-types always select the complete gate.
+the unique merge base with the repository default branch. A malformed
+new-branch sentinel, missing objects, multiple or missing merge bases,
+non-ancestor updates, and every other uncertain push history select the
+complete gate. Pull requests use the unique merge base of the event's base and
+head commits. Manual dispatch and unknown event types always select the
+complete gate.
 
 Git diff is invoked without rename detection and with NUL-delimited output so
 both sides of a rename remain visible and unusual path bytes cannot alter the
-classification. CI runs are not cancelled by a later commit: a documentation
-follow-up cannot erase the separate exact-SHA result for the preceding product
-candidate.
+classification. Repository submodule-ignore configuration is overridden so a
+changed gitlink cannot disappear from the classified path set. CI runs are not
+cancelled by a later commit: a documentation follow-up cannot erase the
+separate exact-SHA result for the preceding product candidate.
+
+## Trust and delivery boundary
+
+Change classification is a cost optimization for this repository's trusted
+delivery workflow, not an authorization or hostile-contributor boundary. A
+writer who may replace a workflow can also replace its inline conditions and
+aggregate gate. Repositories that accept untrusted workflow changes need
+separate branch protection, required reviews for CI-policy files, and required
+`CI gate` and `Benchmark gate` contexts.
+
+A lightweight documentation result is never benchmark evidence for an
+ancestor. The delivery workflow must wait for the exact product commit's full
+CI and artifact-producing Benchmark run before pushing a documentation-only
+child. Later lightweight children preserve those completed runs; they do not
+replace their SHA or artifacts in the implementation plan.
 
 ## Workflow gates
 

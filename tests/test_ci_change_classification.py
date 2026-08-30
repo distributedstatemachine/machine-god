@@ -158,6 +158,77 @@ class CiChangeClassificationTests(unittest.TestCase):
         self.assert_result(output, full=False, docs_only=True)
         self.assertIn("new branch from default-ref merge base", completed.stdout)
 
+    def test_malformed_new_branch_sentinels_fail_closed(self) -> None:
+        self.repository.git("update-ref", "refs/remotes/origin/main", self.initial)
+        self.repository.write("docs/new-branch.md", "new branch\n")
+        head = self.repository.commit("new branch docs")
+        for before in ("0", "00", "0" * 39, "0" * 41):
+            with self.subTest(before=before):
+                completed, output = self.run_classifier(
+                    before=before,
+                    head=head,
+                    default_ref="refs/remotes/origin/main",
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assert_result(output, full=True, docs_only=False)
+                self.assertIn("invalid length", completed.stdout)
+
+    def test_multiple_merge_bases_fail_closed(self) -> None:
+        self.repository.git("switch", "-c", "left")
+        self.repository.write("docs/left.md", "left\n")
+        left = self.repository.commit("left")
+
+        self.repository.git("switch", "-c", "right", self.initial)
+        self.repository.write("src/lib.rs", "pub fn changed() {}\n")
+        right = self.repository.commit("right")
+
+        self.repository.git("switch", "left")
+        self.repository.git("merge", "--no-ff", "--no-edit", right)
+        left_merge = self.repository.git("rev-parse", "HEAD")
+        self.repository.git("switch", "right")
+        self.repository.git("merge", "--no-ff", "--no-edit", left)
+        right_merge = self.repository.git("rev-parse", "HEAD")
+
+        bases = self.repository.git("merge-base", "--all", left_merge, right_merge)
+        self.assertEqual(len(bases.splitlines()), 2)
+        completed, output = self.run_classifier(
+            event="pull_request", base=right_merge, head=left_merge
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assert_result(output, full=True, docs_only=False)
+        self.assertIn("no unique merge base", completed.stdout)
+
+    def test_ignored_submodule_pointer_change_uses_full_gate(self) -> None:
+        submodule_path = Path(self.temporary_directory.name) / "submodule"
+        submodule_path.mkdir()
+        submodule = GitRepository(submodule_path)
+        submodule.write("payload", "one\n")
+        first = submodule.commit("first")
+        submodule.write("payload", "two\n")
+        second = submodule.commit("second")
+
+        self.repository.git(
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            str(submodule_path),
+            "module",
+        )
+        self.repository.git("-C", "module", "checkout", first)
+        self.repository.git(
+            "config", "-f", ".gitmodules", "submodule.module.ignore", "all"
+        )
+        before = self.repository.commit("add ignored submodule")
+
+        self.repository.git("-C", "module", "checkout", second)
+        self.repository.write("docs/submodule.md", "docs\n")
+        head = self.repository.commit("update ignored submodule")
+        completed, output = self.run_classifier(before=before, head=head)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assert_result(output, full=True, docs_only=False)
+        self.assertIn("'module'", completed.stdout)
+
     def test_pull_request_uses_merge_base_not_base_tip(self) -> None:
         self.repository.git("switch", "-c", "feature")
         self.repository.write("docs/pr.md", "pull request\n")
