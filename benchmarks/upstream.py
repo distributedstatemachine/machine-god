@@ -1950,8 +1950,13 @@ MAX_LINUX_CONTAINED_PROCESSES = 4_096
 
 
 class LinuxContainmentProcessLimit(RuntimeError):
-    def __init__(self, discovered: Sequence[LinuxProcessInfo]) -> None:
+    def __init__(
+        self,
+        discovered: Sequence[LinuxProcessInfo],
+        overflow: LinuxProcessInfo,
+    ) -> None:
         self.discovered = tuple(discovered)
+        self.overflow = overflow
         super().__init__(
             "Linux descendant set exceeded the containment process limit"
         )
@@ -2050,7 +2055,7 @@ def linux_descendant_processes(
         if identity in discovered:
             return
         if len(discovered) >= max_processes:
-            raise LinuxContainmentProcessLimit(frontier)
+            raise LinuxContainmentProcessLimit(frontier, info)
         discovered.add(identity)
         frontier.append(info)
 
@@ -2101,6 +2106,7 @@ class LinuxProcessSupervisor:
         self.owner_pid = os.getpid()
         self.baseline_children = baseline_children
         self._known: dict[tuple[int, int], int] = {}
+        self._discovery_incomplete: set[tuple[int, int]] = set()
         self._lock = threading.Lock()
 
     @staticmethod
@@ -2175,12 +2181,16 @@ class LinuxProcessSupervisor:
                 )
             except LinuxContainmentProcessLimit as error:
                 descendants = error.discovered
+                incomplete = getattr(self, "_discovery_incomplete", set())
+                incomplete.add((error.overflow.pid, error.overflow.start_time))
+                self._discovery_incomplete = incomplete
                 limit_error = error
             for info in descendants:
                 if (info.pid, info.start_time) not in self._known:
                     self._open_pidfd(info)
             if limit_error is not None:
                 raise limit_error
+            self._discovery_incomplete = set()
             return table
 
     def live_pids(self) -> set[int]:
@@ -2235,7 +2245,11 @@ class LinuxProcessSupervisor:
 
         with self._lock:
             identities = list(self._known.items())
-        present: set[int] = set()
+            incomplete_pids = {
+                pid
+                for pid, _start_time in getattr(self, "_discovery_incomplete", set())
+            }
+        present = incomplete_pids
         for (pid, _), descriptor in identities:
             if pid == self.root_pid:
                 continue
@@ -2269,7 +2283,7 @@ class LinuxProcessSupervisor:
             descriptors = list(self._known.values())
             self._known.clear()
         for descriptor in descriptors:
-            os.close(descriptor)
+            close_descriptor_nonthrowing(descriptor)
 
 
 class LinuxExitObserver:

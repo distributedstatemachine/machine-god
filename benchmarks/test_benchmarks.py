@@ -3211,6 +3211,130 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         self.assertEqual(
             {pid for pid, _start_time in supervisor._known}, {100, 101, 102}
         )
+        self.assertEqual(supervisor._discovery_incomplete, {(103, 1_003)})
+
+    def test_termination_retains_overflow_witness_when_deadline_expires(self) -> None:
+        table = {
+            100: LinuxProcessInfo(100, 1, "S", 1_000),
+            101: LinuxProcessInfo(101, 100, "S", 1_001),
+            102: LinuxProcessInfo(102, 101, "S", 1_002),
+            103: LinuxProcessInfo(103, 102, "S", 1_003),
+        }
+        supervisor = LinuxProcessSupervisor(set())
+        supervisor.root_pid = 100
+        supervisor.root_identity = (100, 1_000)
+        original_discovery = upstream.linux_descendant_processes
+
+        def capped_discovery(*args: object, **kwargs: object):
+            kwargs["max_processes"] = 3
+            return original_discovery(*args, **kwargs)
+
+        def record_open(info: LinuxProcessInfo) -> None:
+            supervisor._known[(info.pid, info.start_time)] = info.pid
+
+        class FinishedProcess:
+            pid = 100
+            stdout = None
+            stderr = None
+
+            def poll(self) -> int:
+                return 0
+
+            def kill(self) -> None:
+                raise AssertionError("finished root must not be killed directly")
+
+            def wait(self, timeout: float | None = None) -> int:
+                del timeout
+                return 0
+
+        closed: list[int] = []
+        with (
+            mock.patch.object(upstream, "linux_process_table", return_value=table),
+            mock.patch.object(
+                upstream, "linux_descendant_processes", capped_discovery
+            ),
+            mock.patch.object(supervisor, "_open_pidfd", record_open),
+            mock.patch.object(supervisor, "signal_known"),
+            mock.patch.object(supervisor, "reap_adopted"),
+            mock.patch.object(upstream, "kill_process_group"),
+            mock.patch.object(upstream.signal, "pidfd_send_signal", create=True),
+            mock.patch.object(upstream.os, "close", side_effect=closed.append),
+        ):
+            remaining = upstream.terminate_contained_process(
+                FinishedProcess(), supervisor, cleanup_seconds=0.0
+            )
+
+        self.assertIn(103, remaining)
+        self.assertEqual(supervisor._discovery_incomplete, {(103, 1_003)})
+        self.assertEqual(set(closed), {100, 101, 102})
+
+    def test_supervisor_stop_attempts_every_close_and_preserves_caller_exception(self) -> None:
+        class CallerFailure(BaseException):
+            pass
+
+        class CloseFailure(BaseException):
+            pass
+
+        class StopOnlySupervisor(LinuxProcessSupervisor):
+            def refresh(self) -> None:
+                return None
+
+            def signal_known(self, _signal_number: int) -> None:
+                return None
+
+            def reap_adopted(self) -> None:
+                return None
+
+            def known_present_pids(self) -> set[int]:
+                return set()
+
+        class FinishedProcess:
+            pid = 100
+            stdout = None
+            stderr = None
+
+            def poll(self) -> int:
+                return 0
+
+            def kill(self) -> None:
+                raise AssertionError("finished root must not be killed directly")
+
+            def wait(self, timeout: float | None = None) -> int:
+                del timeout
+                return 0
+
+        supervisor = StopOnlySupervisor(set())
+        supervisor._known = {
+            (100, 1_000): 10,
+            (101, 1_001): 11,
+            (102, 1_002): 12,
+        }
+        attempted: list[int] = []
+
+        def hostile_close(descriptor: int) -> None:
+            attempted.append(descriptor)
+            if descriptor == 10:
+                raise CloseFailure("first close failed")
+
+        failure = CallerFailure("caller")
+        observed: BaseException | None = None
+        with (
+            mock.patch.object(upstream.os, "close", hostile_close),
+            mock.patch.object(upstream, "kill_process_group"),
+        ):
+            try:
+                try:
+                    raise failure
+                finally:
+                    upstream.terminate_contained_process(
+                        FinishedProcess(), supervisor, cleanup_seconds=0.0
+                    )
+            except BaseException as error:
+                observed = error
+
+        self.assertIs(observed, failure)
+        self.assertEqual(attempted, [10, 11, 12])
+        self.assertEqual(supervisor._known, {})
 
     def test_process_table_stops_at_first_entry_over_declared_cap(self) -> None:
         class FakeEntry:
