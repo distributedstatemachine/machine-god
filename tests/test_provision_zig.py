@@ -960,6 +960,74 @@ class ProvisionZigTests(unittest.TestCase):
                 66,
             )
 
+    def test_full_root_cursorless_recovery_rotates_past_live_window(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "archives").mkdir()
+            (root / "active").mkdir()
+            with provision_zig.cache_lock(root):
+                pass
+            with provision_zig.cache_lock(root, provision_zig.ACTIVE_LOCK_NAME):
+                pass
+
+            live_descriptors: list[int] = []
+            for index in range(64):
+                path = root / f"{provision_zig.TRASH_PREFIX}a{index:03d}"
+                path.mkdir()
+                descriptor = provision_zig.open_private_file(
+                    provision_zig.trash_lease_path(path), exclusive=True
+                )
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                live_descriptors.append(descriptor)
+            abandoned = root / f"{provision_zig.TRASH_PREFIX}z-abandoned"
+            abandoned.mkdir()
+            abandoned_lease = provision_zig.open_private_file(
+                provision_zig.trash_lease_path(abandoned), exclusive=True
+            )
+            os.close(abandoned_lease)
+            filler = 0
+            while len(list(root.iterdir())) < provision_zig.CACHE_DIRECTORY_CAPACITY:
+                (root / f"filler-{filler:03d}").write_bytes(b"")
+                filler += 1
+            self.assertFalse((root / provision_zig.TRASH_CURSOR_NAME).exists())
+
+            try:
+                for _attempt in range(3):
+                    with provision_zig.cache_lock(
+                        root, provision_zig.ACTIVE_LOCK_NAME
+                    ) as lock_descriptor:
+                        names = sorted(
+                            provision_zig.bounded_directory_names(
+                                root,
+                                provision_zig.CACHE_DIRECTORY_SCAN_CAP,
+                                "Zig cache root",
+                            )
+                        )
+                        trash_names = [
+                            name
+                            for name in names
+                            if name.startswith(provision_zig.TRASH_PREFIX)
+                        ]
+                        window = provision_zig.rotating_descriptor_trash_window(
+                            lock_descriptor, trash_names
+                        )
+                        claimed = provision_zig.claim_abandoned_trash(root, window)
+                    for trash in claimed:
+                        provision_zig.remove_private_trash(trash)
+                    self.assertLessEqual(
+                        len(list(root.iterdir())),
+                        provision_zig.CACHE_DIRECTORY_CAPACITY,
+                    )
+                    if not abandoned.exists():
+                        break
+            finally:
+                for descriptor in live_descriptors:
+                    os.close(descriptor)
+
+            self.assertFalse(abandoned.exists())
+            self.assertFalse(provision_zig.trash_lease_path(abandoned).exists())
+            self.assertFalse((root / provision_zig.TRASH_CURSOR_NAME).exists())
+
     def test_concurrent_admission_uses_current_locked_active_count(self) -> None:
         spec = provision_zig.host_spec("Linux", "x86_64")
         with tempfile.TemporaryDirectory() as temporary:

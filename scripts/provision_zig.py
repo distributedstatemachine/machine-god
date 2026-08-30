@@ -423,7 +423,7 @@ def defer_termination_signals() -> Iterator[None]:
 
 
 @contextmanager
-def cache_lock(cache_root: Path, name: str = CACHE_LOCK_NAME) -> Iterator[None]:
+def cache_lock(cache_root: Path, name: str = CACHE_LOCK_NAME) -> Iterator[int]:
     lock_path = cache_root / name
     try:
         lock_path.lstat()
@@ -446,7 +446,7 @@ def cache_lock(cache_root: Path, name: str = CACHE_LOCK_NAME) -> Iterator[None]:
                 if time.monotonic() >= deadline:
                     raise ProvisionError("timed out waiting for the Zig cache lock") from None
                 time.sleep(CACHE_LOCK_RETRY_SECONDS)
-        yield
+        yield descriptor
     finally:
         try:
             fcntl.flock(descriptor, fcntl.LOCK_UN)
@@ -689,6 +689,30 @@ def write_scan_cursor(cache_root: Path, name: str, cursor: str) -> None:
         os.close(descriptor)
 
 
+def read_descriptor_cursor(descriptor: int) -> str:
+    """Read a bounded cursor from an already exclusively locked descriptor."""
+
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    payload = os.read(descriptor, 512)
+    try:
+        return payload.decode("utf-8")
+    except UnicodeDecodeError:
+        return ""
+
+
+def write_descriptor_cursor(descriptor: int, cursor: str) -> None:
+    """Persist a bounded cursor in an already exclusively locked descriptor."""
+
+    payload = cursor.encode("utf-8")[:511]
+    os.ftruncate(descriptor, 0)
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    while payload:
+        written = os.write(descriptor, payload)
+        if written <= 0:
+            raise OSError("could not update the Zig trash-cache cursor")
+        payload = payload[written:]
+
+
 def rotating_active_window(
     cache_root: Path,
     candidate_names: list[str],
@@ -724,6 +748,24 @@ def rotating_trash_window(
     rotated = names[start:] + names[:start]
     selected = rotated[:scan_limit]
     write_scan_cursor(cache_root, TRASH_CURSOR_NAME, selected[-1])
+    return selected
+
+
+def rotating_descriptor_trash_window(
+    descriptor: int,
+    candidate_names: list[str],
+    *,
+    scan_limit: int = TRASH_SCAN_LIMIT,
+) -> list[str]:
+    """Rotate trash recovery using existing fixed coordination storage."""
+
+    if not candidate_names or scan_limit <= 0:
+        return []
+    cursor = read_descriptor_cursor(descriptor)
+    start = bisect.bisect_right(candidate_names, cursor)
+    rotated = candidate_names[start:] + candidate_names[:start]
+    selected = rotated[:scan_limit]
+    write_descriptor_cursor(descriptor, selected[-1])
     return selected
 
 
@@ -843,7 +885,7 @@ def provisioned_zig(
         active_root = cache_root / "active"
         for attempt in range(RECOVERY_ADMISSION_ATTEMPTS):
             claimed_existing = False
-            with cache_lock(cache_root, ACTIVE_LOCK_NAME):
+            with cache_lock(cache_root, ACTIVE_LOCK_NAME) as active_lock_descriptor:
                 ensure_capacity_bounded_directory(
                     cache_root, active_root, "Zig active-cache directory"
                 )
@@ -879,7 +921,9 @@ def provisioned_zig(
                 if TRASH_CURSOR_NAME in cache_names or can_create_missing_cursors:
                     trash_window = rotating_trash_window(cache_root, trash_names)
                 else:
-                    trash_window = trash_names[:TRASH_SCAN_LIMIT]
+                    trash_window = rotating_descriptor_trash_window(
+                        active_lock_descriptor, trash_names
+                    )
                 if ACTIVE_CURSOR_NAME in cache_names or can_create_missing_cursors:
                     active_window = rotating_active_window(cache_root, active_names)
                 else:
