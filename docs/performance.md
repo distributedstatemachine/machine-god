@@ -50,6 +50,12 @@ provenance-complete evidence object. `benchmarks/run.py` collects the local
 bootstrap record; `benchmarks/check.py` validates its schema and classification.
 CI uploads the resulting JSON as short-lived evidence.
 
+`scripts/provision_zig.py` provides the exact checksum-pinned upstream build
+tool under `.bench/toolchains` on supported Linux and macOS hosts. Each use
+re-hashes the retained official archive and extracts a fresh toolchain so the
+harness never trusts an old installation. The harness receives that executable
+explicitly and never replaces or depends on a system Zig installation.
+
 The current bootstrap inventory deliberately includes non-equivalent scenarios.
 Its classifier forbids promotion to a product claim. Zig participates only as
 the upstream fx build tool; it is not a machine-god implementation or runtime
