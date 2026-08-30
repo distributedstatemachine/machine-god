@@ -13,8 +13,47 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  change-classification:
+    name: Change classification
+    runs-on: ubuntu-latest
+    outputs:
+      full: ${{ steps.classify.outputs.full }}
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Classify changed paths
+        id: classify
+        env:
+          CI_EVENT_NAME: ${{ github.event_name }}
+          CI_BEFORE_SHA: ${{ github.event.before || '' }}
+          CI_HEAD_SHA: ${{ github.sha }}
+          CI_BASE_SHA: ""
+          CI_DEFAULT_REF: refs/remotes/origin/${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          arguments=(
+            --event "${CI_EVENT_NAME}"
+            --head "${CI_HEAD_SHA}"
+            --default-ref "${CI_DEFAULT_REF}"
+            --output "${GITHUB_OUTPUT}"
+          )
+          if [[ -n "${CI_BEFORE_SHA}" ]]; then
+            arguments+=(--before "${CI_BEFORE_SHA}")
+          fi
+          if [[ -n "${CI_BASE_SHA}" ]]; then
+            arguments+=(--base "${CI_BASE_SHA}")
+          fi
+          python3 scripts/classify_ci_changes.py "${arguments[@]}"
+
   bootstrap-evidence:
     name: Bootstrap benchmark evidence
+    needs: change-classification
+    if: ${{ needs.change-classification.outputs.full == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -41,6 +80,8 @@ jobs:
 
   pinned-upstream-evidence:
     name: Pinned upstream benchmark evidence
+    needs: change-classification
+    if: ${{ needs.change-classification.outputs.full == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -123,3 +164,56 @@ jobs:
           path: benchmarks/results/upstream-bootstrap.json
           if-no-files-found: error
           retention-days: 90
+
+  benchmark-gate:
+    name: Benchmark gate
+    if: ${{ always() }}
+    needs:
+      - change-classification
+      - bootstrap-evidence
+      - pinned-upstream-evidence
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the applicable benchmark evidence
+        env:
+          CLASSIFICATION_RESULT: ${{ needs.change-classification.result }}
+          FULL: ${{ needs.change-classification.outputs.full }}
+          DOCS_ONLY: ${{ needs.change-classification.outputs.docs_only }}
+          BOOTSTRAP_RESULT: ${{ needs.bootstrap-evidence.result }}
+          UPSTREAM_RESULT: ${{ needs.pinned-upstream-evidence.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${CLASSIFICATION_RESULT}" != "success" ]]; then
+            echo "change classification did not succeed: ${CLASSIFICATION_RESULT}" >&2
+            exit 1
+          fi
+
+          case "${FULL}:${DOCS_ONLY}" in
+            true:false)
+              expected="success"
+              ;;
+            false:true)
+              expected="skipped"
+              ;;
+            *)
+              echo "invalid classification full=${FULL} docs_only=${DOCS_ONLY}" >&2
+              exit 1
+              ;;
+          esac
+
+          for result in "${BOOTSTRAP_RESULT}" "${UPSTREAM_RESULT}"
+          do
+            if [[ "${result}" != "${expected}" ]]; then
+              echo "benchmark job was ${result}; expected ${expected}" >&2
+              exit 1
+            fi
+          done
+
+          if [[ "${DOCS_ONLY}" == "true" ]]; then
+            echo "Documentation-only change: benchmark jobs were skipped; no artifacts were produced." \
+              | tee -a "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "Full benchmark evidence succeeded."
+          fi

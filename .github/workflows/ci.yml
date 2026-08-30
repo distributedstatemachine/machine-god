@@ -9,16 +9,67 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.sha }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
   RUST_TOOLCHAIN: 1.94.1
 
 jobs:
+  change-classification:
+    name: Change classification
+    runs-on: ubuntu-latest
+    outputs:
+      full: ${{ steps.classify.outputs.full }}
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Classify changed paths
+        id: classify
+        env:
+          CI_EVENT_NAME: ${{ github.event_name }}
+          CI_BEFORE_SHA: ${{ github.event.before || '' }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          CI_DEFAULT_REF: refs/remotes/origin/${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          arguments=(
+            --event "${CI_EVENT_NAME}"
+            --head "${CI_HEAD_SHA}"
+            --default-ref "${CI_DEFAULT_REF}"
+            --output "${GITHUB_OUTPUT}"
+          )
+          if [[ -n "${CI_BEFORE_SHA}" ]]; then
+            arguments+=(--before "${CI_BEFORE_SHA}")
+          fi
+          if [[ -n "${CI_BASE_SHA}" ]]; then
+            arguments+=(--base "${CI_BASE_SHA}")
+          fi
+          python3 scripts/classify_ci_changes.py "${arguments[@]}"
+
+  documentation-policy:
+    name: Documentation policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check documentation policy
+        run: python3 scripts/check_documentation.py
+      - name: Test documentation policy
+        run: python3 -m unittest --verbose tests/test_documentation_policy.py
+
   quality:
     name: Quality and tests
+    needs: change-classification
+    if: ${{ needs.change-classification.outputs.full == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -479,6 +530,8 @@ jobs:
 
   security:
     name: Dependency policy and vulnerability audit
+    needs: change-classification
+    if: ${{ needs.change-classification.outputs.full == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -509,6 +562,8 @@ jobs:
 
   native-target-tests:
     name: Native tests (${{ matrix.target }})
+    needs: change-classification
+    if: ${{ needs.change-classification.outputs.full == 'true' }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -533,6 +588,8 @@ jobs:
 
   unsupported-native-tools:
     name: Unsupported native tools (FreeBSD)
+    needs: change-classification
+    if: ${{ needs.change-classification.outputs.full == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -542,3 +599,63 @@ jobs:
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy --target x86_64-unknown-freebsd
       - name: Compile unsupported-platform native surfaces
         run: cargo +"${RUST_TOOLCHAIN}" clippy --locked -p machine-god-native --lib --test install_skill_unsupported --test memory_unsupported --test semantic_search_unsupported --test vision_unsupported --no-default-features --features vision --target x86_64-unknown-freebsd -- -D warnings
+
+  ci-gate:
+    name: CI gate
+    if: ${{ always() }}
+    needs:
+      - change-classification
+      - documentation-policy
+      - quality
+      - security
+      - native-target-tests
+      - unsupported-native-tools
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the applicable checks
+        env:
+          CLASSIFICATION_RESULT: ${{ needs.change-classification.result }}
+          DOCUMENTATION_RESULT: ${{ needs.documentation-policy.result }}
+          FULL: ${{ needs.change-classification.outputs.full }}
+          DOCS_ONLY: ${{ needs.change-classification.outputs.docs_only }}
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+          NATIVE_RESULT: ${{ needs.native-target-tests.result }}
+          FREEBSD_RESULT: ${{ needs.unsupported-native-tools.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${CLASSIFICATION_RESULT}" != "success" ]]; then
+            echo "change classification did not succeed: ${CLASSIFICATION_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${DOCUMENTATION_RESULT}" != "success" ]]; then
+            echo "documentation policy did not succeed: ${DOCUMENTATION_RESULT}" >&2
+            exit 1
+          fi
+
+          case "${FULL}:${DOCS_ONLY}" in
+            true:false)
+              expected="success"
+              ;;
+            false:true)
+              expected="skipped"
+              ;;
+            *)
+              echo "invalid classification full=${FULL} docs_only=${DOCS_ONLY}" >&2
+              exit 1
+              ;;
+          esac
+
+          for result in \
+            "${QUALITY_RESULT}" \
+            "${SECURITY_RESULT}" \
+            "${NATIVE_RESULT}" \
+            "${FREEBSD_RESULT}"
+          do
+            if [[ "${result}" != "${expected}" ]]; then
+              echo "heavy CI job was ${result}; expected ${expected}" >&2
+              exit 1
+            fi
+          done
