@@ -182,6 +182,19 @@ fn strict_input_and_canonical_direct_execution_are_enforced() {
 }
 
 #[test]
+fn unicode_case_fold_aliases_of_the_managed_root_are_rejected_as_overlap() {
+    let workspace = TemporaryDirectory::new();
+    let tool = tool(workspace.path());
+
+    for source in ["ſkills/rust", "sKills/rust"] {
+        let error = tool.prepare(call(json!({"source": source}))).unwrap_err();
+        assert_eq!(code(error), "install_skill_overlap", "source: {source}");
+    }
+
+    assert!(!workspace.path().join("skills").exists());
+}
+
+#[test]
 fn installs_one_tree_and_the_skill_reader_can_read_it() {
     let workspace = TemporaryDirectory::new();
     let source = source(workspace.path(), "release-checks", b"# Release checks\n");
@@ -374,6 +387,60 @@ fn entry_and_file_limits_fail_before_publication() {
         "install_skill_resource_limit"
     );
     assert!(!workspace.path().join("skills").exists());
+}
+
+#[test]
+fn exact_entry_limit_publishes_the_complete_inventory_without_stage_residue() {
+    let workspace = TemporaryDirectory::new();
+    let manifest = b"manifest\n";
+    let inventory = source(workspace.path(), "inventory", manifest);
+    fs::create_dir(inventory.join("empty-directory")).unwrap();
+
+    let file_count = MAX_INSTALL_SKILL_ENTRIES - 2;
+    let mut total_bytes = manifest.len();
+    for index in 0..file_count {
+        let contents = format!("{index:03}");
+        total_bytes += contents.len();
+        fs::write(inventory.join(format!("entry-{index:03}")), contents).unwrap();
+    }
+
+    let output = execute(
+        &tool(workspace.path()),
+        json!({"source":"incoming/inventory","skill":"inventory"}),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    assert_eq!(
+        output,
+        ToolOutput::success(json!({
+            "source":"incoming/inventory",
+            "skill":"inventory",
+            "destination":"skills/inventory",
+            "entries":MAX_INSTALL_SKILL_ENTRIES,
+            "total_bytes":total_bytes,
+        }))
+    );
+
+    let installed = workspace.path().join("skills/inventory");
+    assert_eq!(fs::read(installed.join("SKILL.md")).unwrap(), manifest);
+    assert!(installed.join("empty-directory").is_dir());
+    for index in 0..file_count {
+        assert_eq!(
+            fs::read_to_string(installed.join(format!("entry-{index:03}"))).unwrap(),
+            format!("{index:03}")
+        );
+    }
+    assert_eq!(
+        fs::read_dir(&installed).unwrap().count(),
+        MAX_INSTALL_SKILL_ENTRIES
+    );
+    assert_eq!(
+        fs::read_dir(workspace.path().join("skills"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>(),
+        [std::ffi::OsString::from("inventory")]
+    );
 }
 
 #[test]
