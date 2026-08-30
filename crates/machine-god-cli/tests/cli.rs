@@ -58,6 +58,7 @@ const HELP: &str = concat!(
     "  machine-god session <id> [--json]\n",
     "  machine-god sessions [--json]\n",
     "  machine-god status [--json]\n",
+    "  machine-god workspace [list] [--json]\n",
     "\n",
     "Commands:\n",
     "  help         Show this help\n",
@@ -69,6 +70,7 @@ const HELP: &str = concat!(
     "  session      Inspect a saved session\n",
     "  sessions     List saved sessions\n",
     "  status       Show configuration and runtime information\n",
+    "  workspace    List configured workspace directories\n",
     "\n",
     "Options:\n",
     "  -h, --help       Show this help\n",
@@ -76,7 +78,7 @@ const HELP: &str = concat!(
 );
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | doctor [--json] | models [--json] | permissions [--json] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--json] | status [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | doctor [--json] | models [--json] | permissions [--json] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--json] | status [--json] | workspace [list] [--json]]\n",
 );
 const CONFIG_FAILURE: &str = "machine-god: failed to load configuration\n";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -86,6 +88,7 @@ const OUTPUT_FAILURE: &str = "machine-god: failed to write output\n";
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
 const MAX_DOCTOR_OUTPUT_BYTES: usize = 4096;
 const MAX_SESSION_OUTPUT_BYTES: usize = 4096;
+const MAX_WORKSPACE_OUTPUT_BYTES: usize = 32 * 1024;
 
 static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -751,6 +754,129 @@ fn help_aliases_are_byte_stable() {
 }
 
 #[test]
+fn workspace_aliases_are_exact_read_only_and_ignore_unrelated_process_inputs() {
+    let temporary = TestDirectory::new("workspace-read-only");
+    let workspace = temporary.path().join("workspace-café");
+    let config_root = temporary.path().join("config-CLI_WORKSPACE_CONFIG_SECRET");
+    let state_root = temporary
+        .path()
+        .join("missing-state-CLI_WORKSPACE_STATE_SECRET");
+    let home = temporary
+        .path()
+        .join("missing-home-CLI_WORKSPACE_HOME_SECRET");
+    fs::create_dir(&workspace).unwrap();
+    let config_contents = b"CLI_WORKSPACE_INVALID_CONFIG_SECRET:not-json";
+    let config_path = write_config(&config_root, config_contents);
+    let primary = fs::canonicalize(&workspace).unwrap();
+    let primary = primary.to_str().unwrap();
+    let expected_human = format!(
+        "[workspace] primary={primary:?}\n[workspace] additional_directories=unsupported\n"
+    );
+    let expected_json = format!(
+        concat!(
+            "{{\"kind\":\"workspace\",\"action\":\"list\",",
+            "\"primary_directory\":{primary:?},",
+            "\"additional_directories_supported\":false,",
+            "\"additional_directories\":[]}}\n",
+        ),
+        primary = primary,
+    );
+
+    for (arguments, expected) in [
+        (&["workspace"][..], expected_human.as_str()),
+        (&["workspace", "list"][..], expected_human.as_str()),
+        (&["workspace", "--json"][..], expected_json.as_str()),
+        (&["workspace", "list", "--json"][..], expected_json.as_str()),
+    ] {
+        let output = machine_god()
+            .args(arguments)
+            .current_dir(&workspace)
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", &config_root)
+            .env("XDG_STATE_HOME", &state_root)
+            .env("VERCEL_OIDC_TOKEN", "CLI_WORKSPACE_CREDENTIAL_SECRET")
+            .env(
+                "AI_GATEWAY_API_KEY",
+                "CLI_WORKSPACE_LOWER_CREDENTIAL_SECRET",
+            )
+            .output()
+            .unwrap();
+
+        assert_success(&output, expected);
+        assert!(output.stdout.len() <= MAX_WORKSPACE_OUTPUT_BYTES);
+        assert_eq!(fs::read(&config_path).unwrap(), config_contents);
+        assert!(!state_root.exists());
+        assert!(!home.exists());
+        assert_eq!(fs::read_dir(&workspace).unwrap().count(), 0);
+        assert_output_omits(
+            &output,
+            &[
+                "CLI_WORKSPACE_CONFIG_SECRET",
+                "CLI_WORKSPACE_STATE_SECRET",
+                "CLI_WORKSPACE_HOME_SECRET",
+                "CLI_WORKSPACE_INVALID_CONFIG_SECRET",
+                "CLI_WORKSPACE_CREDENTIAL_SECRET",
+                "CLI_WORKSPACE_LOWER_CREDENTIAL_SECRET",
+            ],
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn workspace_paths_escape_terminal_controls_in_human_and_json_output() {
+    let temporary = TestDirectory::new("workspace-escaping");
+    let workspace = temporary
+        .path()
+        .join("quoted-\"-slash-\\-line-\n-escape-\u{1b}-bidi-\u{202e}-separator-\u{2028}");
+    fs::create_dir(&workspace).unwrap();
+
+    for arguments in [&["workspace"][..], &["workspace", "--json"][..]] {
+        let output = machine_god()
+            .args(arguments)
+            .current_dir(&workspace)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8(output.stdout.clone()).unwrap();
+
+        assert!(output.status.success());
+        assert!(output.stderr.is_empty());
+        for raw_control in ['\u{1b}', '\u{202e}', '\u{2028}'] {
+            assert!(!stdout.contains(raw_control));
+        }
+        assert!(stdout.contains(
+            "quoted-\\\"-slash-\\\\-line-\\n-escape-\\u001b-bidi-\\u202e-separator-\\u2028"
+        ));
+        assert!(stdout.len() <= MAX_WORKSPACE_OUTPUT_BYTES);
+    }
+}
+
+#[test]
+fn invalid_workspace_grammar_is_exact_and_does_not_create_roots() {
+    let temporary = TestDirectory::new("workspace-invalid-no-effects");
+    for arguments in [
+        &["workspace", "add"][..],
+        &["workspace", "--json", "list"][..],
+        &["workspace", "list", "--json", "extra"][..],
+    ] {
+        let config_root = temporary.path().join("missing-config");
+        let state_root = temporary.path().join("missing-state");
+        let output = machine_god()
+            .args(arguments)
+            .env_remove("HOME")
+            .env("XDG_CONFIG_HOME", &config_root)
+            .env("XDG_STATE_HOME", &state_root)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert_eq!(output.stderr, INVALID_ARGUMENTS.as_bytes());
+        assert!(!config_root.exists());
+        assert!(!state_root.exists());
+    }
+}
+
+#[test]
 fn malformed_arguments_have_one_diagnostic_and_exit_two() {
     for arguments in [
         &["unknown"][..],
@@ -803,6 +929,17 @@ fn malformed_arguments_have_one_diagnostic_and_exit_two() {
         &["status", "--json=true"][..],
         &["status", "--json", "extra"][..],
         &["status", "--json", "--json"][..],
+        &["--json", "workspace"][..],
+        &["workspace", "add"][..],
+        &["workspace", "remove"][..],
+        &["workspace", "clear"][..],
+        &["workspace", "--json=true"][..],
+        &["workspace", "--json", "list"][..],
+        &["workspace", "--json", "--json"][..],
+        &["workspace", "list", "list"][..],
+        &["workspace", "list", "--json=true"][..],
+        &["workspace", "list", "--json", "extra"][..],
+        &["workspace", "list", "--json", "--json"][..],
     ] {
         let output = run(arguments);
         assert_eq!(output.status.code(), Some(2));
@@ -2915,6 +3052,12 @@ fn non_unicode_arguments_are_rejected_by_the_process_boundary() {
             OsString::from_vec(vec![0xff]),
         ],
         vec![OsString::from("sessions"), OsString::from_vec(vec![0xff])],
+        vec![OsString::from("workspace"), OsString::from_vec(vec![0xff])],
+        vec![
+            OsString::from("workspace"),
+            OsString::from("list"),
+            OsString::from_vec(vec![0xff]),
+        ],
     ] {
         let output = machine_god().args(arguments).output().unwrap();
         assert_eq!(output.status.code(), Some(2));
