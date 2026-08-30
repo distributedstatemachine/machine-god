@@ -25,6 +25,11 @@ class ProvisionZigTests(unittest.TestCase):
         with self.assertRaisesRegex(provision_zig.ProvisionError, "unsupported"):
             provision_zig.host_spec("Plan9", "mips")
 
+    def test_default_install_root_is_outside_the_checkout(self) -> None:
+        options = provision_zig.parse_arguments([])
+        checkout = Path(__file__).resolve().parents[1]
+        self.assertFalse(options.install_root.resolve().is_relative_to(checkout))
+
     def test_validated_archive_requires_exact_bytes_and_regular_file(self) -> None:
         payload = b"pinned archive"
         spec = provision_zig.ToolchainSpec(

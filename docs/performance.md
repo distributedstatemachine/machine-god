@@ -51,7 +51,9 @@ bootstrap record; `benchmarks/check.py` validates its schema and classification.
 CI uploads the resulting JSON as short-lived evidence.
 
 `scripts/provision_zig.py` provides the exact checksum-pinned upstream build
-tool under `.bench/toolchains` on supported Linux and macOS hosts. Each use
+tool in a private operating-system temporary directory on supported Linux and
+macOS hosts. Keeping the toolchain outside the checkout prevents its large
+ignored library tree from entering repository-cleanliness scans. Each use
 re-hashes the retained official archive and extracts a fresh toolchain so the
 harness never trusts an old installation. The harness receives that executable
 explicitly and never replaces or depends on a system Zig installation.

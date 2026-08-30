@@ -270,8 +270,8 @@ def parse_arguments(arguments: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--install-root",
         type=Path,
-        default=Path(".bench/toolchains"),
-        help="private toolchain directory (default: .bench/toolchains)",
+        default=Path(tempfile.gettempdir()) / f"machine-god-zig-{os.getuid()}",
+        help="private toolchain directory (default: an OS temporary directory)",
     )
     return parser.parse_args(arguments)
 
