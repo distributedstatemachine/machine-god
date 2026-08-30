@@ -33,6 +33,7 @@ Current delivery state and gate evidence are maintained only in the
 | `doctor [--json]` | Run bounded local health checks | [doctor](doctor-cli.md) |
 | `models [--json]` | List the bounded AI Gateway model catalog | [models](models-cli.md) |
 | `permissions [--json]` | Report configured permission mode | [permissions](permissions-cli.md) |
+| `replay <tape> [options]` | Replay an FXTP terminal tape | [replay](replay-cli.md) |
 | `resume <id> [--] <prompt...>` | Continue one saved session with one prompt | [resume](resume-cli.md) |
 | `session <id> [--json]` | Inspect one saved session summary | [session](session-cli.md) |
 | `sessions [--json]` | List bounded saved-session identities | [sessions](sessions-cli.md) |

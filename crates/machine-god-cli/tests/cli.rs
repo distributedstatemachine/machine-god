@@ -54,6 +54,7 @@ const HELP: &str = concat!(
     "  machine-god doctor [--json]\n",
     "  machine-god models [--json]\n",
     "  machine-god permissions [--json]\n",
+    "  machine-god replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>]\n",
     "  machine-god resume <id> [--] <prompt...>\n",
     "  machine-god session <id> [--json]\n",
     "  machine-god sessions [--json]\n",
@@ -66,6 +67,7 @@ const HELP: &str = concat!(
     "  doctor       Run local health and preflight checks\n",
     "  models       List available models\n",
     "  permissions  Show the permission mode and rules\n",
+    "  replay       Replay a recorded terminal session\n",
     "  resume       Resume a saved session with one prompt\n",
     "  session      Inspect a saved session\n",
     "  sessions     List saved sessions\n",
@@ -78,7 +80,7 @@ const HELP: &str = concat!(
 );
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | doctor [--json] | models [--json] | permissions [--json] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--json] | status [--json] | workspace [list] [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--json] | status [--json] | workspace [list] [--json]]\n",
 );
 const CONFIG_FAILURE: &str = "machine-god: failed to load configuration\n";
 #[cfg(any(target_os = "linux", target_os = "macos"))]

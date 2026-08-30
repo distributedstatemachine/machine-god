@@ -71,6 +71,7 @@ contract together when exact numeric limits matter.
 - [doctor](doctor-cli.md)
 - [sessions](sessions-cli.md)
 - [session](session-cli.md)
+- [replay](replay-cli.md)
 - [resume](resume-cli.md)
 - [workspace](workspace-cli.md)
 

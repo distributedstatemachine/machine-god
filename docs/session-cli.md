@@ -179,9 +179,10 @@ the same command family also participates in resume, migration, and recovery.
 Machine-god instead inspects only an explicit positional ID in its global,
 separate state namespace and returns the six structural fields above. It has no
 authoritative workspace, timestamp, language, title, preview, history-length,
-or terminal-tape fields and does not read upstream `.fx` data. `replay` remains
-reserved for a future content/privacy contract. Live continuation is available
-only through the bounded, explicit-ID, one-prompt [`resume`](resume-cli.md)
-contract.
+or terminal-tape fields and does not read upstream `.fx` data. The top-level
+[`replay`](replay-cli.md) command operates on an explicit FXTP terminal tape;
+it does not expose this durable record's transcript. Live continuation is
+available only through the bounded, explicit-ID, one-prompt
+[`resume`](resume-cli.md) contract.
 
 The command makes no upstream-equivalence or product-performance claim.

@@ -26,15 +26,15 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33312631865` (`GREEN`)
 - Main Benchmark evidence: `33312631875` (`GREEN`)
 - Active branch: `agent/m03-replay-cli`
-- Active phase: `returning to bounded top-level replay CLI product work after delivering conservative CI change classification`
-- Next gate: `define the replay CLI contract and freeze its parser, authority, output, and composed-host boundaries before implementation`
+- Active phase: `validating the integrated pinned-fx-compatible FXTP replay candidate and retained differential evidence`
+- Next gate: `pass the complete exact-1.94.1 local gate, freeze one behavior SHA, and open three fresh adversarial review tracks`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
 and the Benchmark evidence run retained the required exact-SHA artifacts. The
-bounded local-only [`install_skill`](install-skill.md) tool is delivered as
-slice 43. The next product candidate is the bounded read-only top-level
-`workspace` CLI surface. Documentation parser maintenance remains a separate
+bounded read-only top-level [`workspace`](workspace-cli.md) command is delivered
+as slice 44. The current product candidate is pinned-fx-compatible offline
+terminal-tape `replay`. Documentation parser maintenance remains a separate
 non-product task; product iterations use the existing bounded
 repository-policy checker.
 

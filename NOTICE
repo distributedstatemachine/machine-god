@@ -4,3 +4,7 @@ Copyright 2026 distributedstatemachine contributors
 This product is inspired by vercel-labs/fx, licensed under Apache-2.0.
 No endorsement by Vercel is implied.
 
+Portions of the terminal-tape replay and Unicode display-width implementation
+are derived from vercel-labs/fx at the revision pinned by
+benchmarks/upstream.lock.
+Copyright 2025 Vercel, Inc.
