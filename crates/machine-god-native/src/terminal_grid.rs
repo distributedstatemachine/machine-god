@@ -75,6 +75,9 @@ struct SavedCursor {
     origin_mode: bool,
 }
 
+// These independent booleans are the terminal modes serialized by the pinned
+// state machine; packing them would obscure the one-for-one restore contract.
+#[allow(clippy::struct_excessive_bools)]
 struct SavedScreen {
     cells: Vec<Cell>,
     row_origin: u16,
@@ -100,6 +103,9 @@ enum ParserState {
     Dcs,
 }
 
+// Parser flags and DEC modes intentionally remain named independent state, as
+// in the pinned engine, so every transition stays explicit and reviewable.
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct TerminalGrid {
     cols: u16,
     rows: u16,
@@ -310,6 +316,9 @@ impl TerminalGrid {
         Ok(output)
     }
 
+    // Keeping the five parser states in one dispatch loop makes byte
+    // consumption and cancellation atomic and directly auditable against fx.
+    #[allow(clippy::too_many_lines)]
     fn feed_direct(
         &mut self,
         bytes: &[u8],
@@ -396,7 +405,7 @@ impl TerminalGrid {
                     if self.csi_has_digit || self.csi_param_count > 0 {
                         self.csi_param_count += 1;
                     }
-                    self.dispatch_csi(byte)?;
+                    self.dispatch_csi(byte);
                     self.state = ParserState::Normal;
                     index += 1;
                     if stop_on_sync_start && self.sync_active {
@@ -543,10 +552,6 @@ impl TerminalGrid {
                 self.move_tabs_forward(1);
                 return Ok(1);
             }
-            0x07 => {
-                self.last_printable_idx = None;
-                return Ok(1);
-            }
             0x00..=0x1f | 0x7f => {
                 self.last_printable_idx = None;
                 return Ok(1);
@@ -615,7 +620,7 @@ impl TerminalGrid {
         Ok(consumed)
     }
 
-    fn dispatch_csi(&mut self, final_byte: u8) -> Result<(), TerminalGridError> {
+    fn dispatch_csi(&mut self, final_byte: u8) {
         match final_byte {
             b'H' | b'f' => self.position_cursor(self.param(0, 1), self.param(1, 1)),
             b'A' => {
@@ -676,7 +681,7 @@ impl TerminalGrid {
             b'I' => self.move_tabs_forward(self.param(0, 1)),
             b'Z' => self.move_tabs_backward(self.param(0, 1)),
             b'g' => self.clear_tab_stops(self.param_raw(0, 0)),
-            b'h' | b'l' => self.set_reset(final_byte == b'h')?,
+            b'h' | b'l' => self.set_reset(final_byte == b'h'),
             b'r' => self.set_scroll_region(),
             b's' => self.save_cursor(),
             b'u' if self.csi_private == 0 => self.restore_cursor(),
@@ -684,18 +689,17 @@ impl TerminalGrid {
             // are deliberately consumed with no visible plain-grid effect.
             _ => {}
         }
-        Ok(())
     }
 
-    fn set_reset(&mut self, set: bool) -> Result<(), TerminalGridError> {
+    fn set_reset(&mut self, set: bool) {
         if self.csi_private == 0 {
             if self.csi_params[..self.csi_param_count].contains(&4) {
                 self.insert_mode = set;
             }
-            return Ok(());
+            return;
         }
         if self.csi_private != b'?' {
-            return Ok(());
+            return;
         }
         let params = self.csi_params[..self.csi_param_count].to_vec();
         for param in params {
@@ -708,7 +712,7 @@ impl TerminalGrid {
                 25 => self.cursor_visible = set,
                 47 | 1047 | 1049 => {
                     if set {
-                        self.enter_alternate_screen()?;
+                        self.enter_alternate_screen();
                     } else {
                         self.leave_alternate_screen();
                     }
@@ -717,7 +721,6 @@ impl TerminalGrid {
                 _ => {}
             }
         }
-        Ok(())
     }
 
     fn reset_csi(&mut self) {
@@ -812,9 +815,9 @@ impl TerminalGrid {
         self.position_cursor(1, 1);
     }
 
-    fn enter_alternate_screen(&mut self) -> Result<(), TerminalGridError> {
+    fn enter_alternate_screen(&mut self) {
         if self.saved_normal_screen.is_some() {
-            return Ok(());
+            return;
         }
         let alternate = vec![Cell::default(); self.cells.len()];
         let saved = SavedScreen {
@@ -844,7 +847,6 @@ impl TerminalGrid {
         self.insert_mode = false;
         self.last_printable_idx = None;
         self.saved_cursor = None;
-        Ok(())
     }
 
     fn leave_alternate_screen(&mut self) {
@@ -1151,7 +1153,8 @@ impl TerminalGrid {
         combined.extend_from_slice(bytes);
         self.suffix_pool_bytes += combined.len();
         self.suffix_pool.push(combined);
-        self.cells[cell_index].suffix_id = self.suffix_pool.len() as u32;
+        self.cells[cell_index].suffix_id = u32::try_from(self.suffix_pool.len())
+            .map_err(|_| TerminalGridError::CombiningPoolCapacityExceeded)?;
         Ok(())
     }
 
@@ -1175,8 +1178,8 @@ impl TerminalGrid {
 
     fn physical_index_for_logical_offset(&self, offset: usize) -> usize {
         let cols = usize::from(self.cols);
-        physical_row_index(self.row_origin, (offset / cols) as u16, self.rows) * cols
-            + offset % cols
+        let logical_row = u16::try_from(offset / cols).expect("logical row fits grid dimensions");
+        physical_row_index(self.row_origin, logical_row, self.rows) * cols + offset % cols
     }
 }
 
