@@ -54,16 +54,17 @@ class CaughtSignal(BaseException):
 class ChildSupervisor:
     def __init__(self) -> None:
         self.child: subprocess.Popen | None = None
+        self.group_leader: subprocess.Popen | None = None
         self.caught_signal: int | None = None
         self.signal_forwarded = False
         self.spawning = False
 
     def forward(self, signum: int) -> None:
-        child = self.child
-        if child is None:
+        group_leader = self.group_leader
+        if group_leader is None:
             return
         try:
-            os.killpg(child.pid, signum)
+            os.killpg(group_leader.pid, signum)
         except BaseException:
             pass
 
@@ -93,24 +94,9 @@ class ChildSupervisor:
             self.signal_forwarded = True
 
     @staticmethod
-    def group_is_alive(child: subprocess.Popen) -> bool:
+    def signal_group(group_leader: subprocess.Popen, signum: int) -> None:
         try:
-            os.killpg(child.pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        except BaseException:
-            # Cleanup must never replace the exception that initiated it. An
-            # indeterminate group is conservatively treated as live so that a
-            # best-effort kill still follows.
-            return True
-        return True
-
-    @staticmethod
-    def signal_group(child: subprocess.Popen, signum: int) -> None:
-        try:
-            os.killpg(child.pid, signum)
+            os.killpg(group_leader.pid, signum)
         except BaseException:
             pass
 
@@ -121,8 +107,8 @@ class ChildSupervisor:
         except BaseException:
             return 0.0
 
-    def wait_for_group_exit(self, child: subprocess.Popen, deadline: float) -> None:
-        while self.group_is_alive(child):
+    def wait_until(self, deadline: float) -> None:
+        while True:
             remaining = self.remaining(deadline)
             if remaining <= 0.0:
                 return
@@ -132,6 +118,10 @@ class ChildSupervisor:
                 # A second asynchronous exception must not displace the one
                 # whose unwinding is already in progress.
                 pass
+
+    def close_group_authority(self, group_leader: subprocess.Popen) -> None:
+        if self.group_leader is group_leader:
+            self.group_leader = None
 
     def communicate_until(self, child: subprocess.Popen, deadline: float) -> None:
         remaining = self.remaining(deadline)
@@ -145,13 +135,14 @@ class ChildSupervisor:
     def terminate_and_reap(
         self,
         child: subprocess.Popen,
+        group_leader: subprocess.Popen,
         *,
         initial_signal: int | None,
         grace_seconds: float | None = None,
     ) -> None:
         """Best-effort bounded cleanup which never replaces an active exception."""
         if initial_signal is not None:
-            self.signal_group(child, initial_signal)
+            self.signal_group(group_leader, initial_signal)
 
         if grace_seconds is None:
             grace_seconds = SIGNAL_GRACE_SECONDS
@@ -160,33 +151,49 @@ class ChildSupervisor:
         except BaseException:
             grace_deadline = 0.0
         self.communicate_until(child, grace_deadline)
-        self.wait_for_group_exit(child, grace_deadline)
+        self.wait_until(grace_deadline)
 
-        # The process-group leader may already have exited while one of its
-        # descendants remains. Address the group unconditionally after the
-        # grace period instead of using the direct child's return code as a
-        # proxy for group lifetime.
-        if self.group_is_alive(child):
-            self.signal_group(child, signal.SIGKILL)
+        # The unreaped anchor owns the numeric PGID until this final signal is
+        # complete. Close forwarding authority before either process is reaped
+        # so no later signal handler can act on a reusable numeric identifier.
+        self.signal_group(group_leader, signal.SIGKILL)
+        self.close_group_authority(group_leader)
 
         try:
             kill_deadline = time.monotonic() + max(0.0, KILL_GRACE_SECONDS)
         except BaseException:
             kill_deadline = 0.0
-        self.communicate_until(child, kill_deadline)
-        self.wait_for_group_exit(child, kill_deadline)
-
-        # communicate() can itself be the operation that raised. Retrying it
-        # above normally reaps the leader, but retain a final bounded direct
-        # child fallback without allowing any cleanup failure to escape.
         try:
-            child.kill()
+            group_leader.wait(timeout=self.remaining(kill_deadline))
         except BaseException:
             pass
+        self.communicate_until(child, kill_deadline)
         try:
             child.wait(timeout=self.remaining(kill_deadline))
         except BaseException:
             pass
+
+    def terminate_anchor(self, group_leader: subprocess.Popen) -> None:
+        self.signal_group(group_leader, signal.SIGKILL)
+        self.close_group_authority(group_leader)
+        try:
+            group_leader.wait(timeout=KILL_GRACE_SECONDS)
+        except BaseException:
+            pass
+
+    @staticmethod
+    def anchor_command() -> list[str]:
+        return [
+            sys.executable,
+            "-c",
+            (
+                "import signal,time\n"
+                "for name in ('SIGHUP','SIGINT','SIGTERM'):\n"
+                " signum=getattr(signal,name,None)\n"
+                " if signum is not None: signal.signal(signum,signal.SIG_IGN)\n"
+                "time.sleep(86400)\n"
+            ),
+        ]
 
     def run(
         self,
@@ -198,20 +205,29 @@ class ChildSupervisor:
         stderr: object = None,
         text: bool = False,
     ) -> subprocess.CompletedProcess:
-        if self.child is not None:
+        if self.child is not None or self.group_leader is not None:
             raise RuntimeError("the Zig wrapper attempted overlapping child processes")
         if self.caught_signal is not None:
             raise CaughtSignal(self.caught_signal)
         child: subprocess.Popen | None = None
+        group_leader: subprocess.Popen | None = None
         try:
             self.spawning = True
             try:
+                group_leader = subprocess.Popen(
+                    self.anchor_command(),
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    process_group=0,
+                )
+                self.group_leader = group_leader
                 child = subprocess.Popen(
                     command,
                     stdout=stdout,
                     stderr=stderr,
                     text=text,
-                    start_new_session=True,
+                    process_group=group_leader.pid,
                 )
                 self.child = child
             finally:
@@ -226,31 +242,50 @@ class ChildSupervisor:
                 captured_stdout,
                 captured_stderr,
             )
+            self.terminate_and_reap(
+                child,
+                group_leader,
+                initial_signal=None,
+                grace_seconds=0.0,
+            )
+            if self.caught_signal is not None:
+                raise CaughtSignal(self.caught_signal)
             if check:
                 completed.check_returncode()
             return completed
         except BaseException as error:
-            if child is not None:
+            owns_group = (
+                group_leader is not None and self.group_leader is group_leader
+            )
+            if child is not None and group_leader is not None and owns_group:
                 try:
                     if isinstance(error, CaughtSignal):
                         self.forward_once(error.signum)
-                        self.terminate_and_reap(child, initial_signal=None)
+                        self.terminate_and_reap(
+                            child, group_leader, initial_signal=None
+                        )
                     elif isinstance(error, subprocess.TimeoutExpired):
                         self.terminate_and_reap(
                             child,
-                            initial_signal=signal.SIGKILL,
+                            group_leader,
+                            initial_signal=None,
                             grace_seconds=0.0,
                         )
                     else:
-                        self.terminate_and_reap(child, initial_signal=signal.SIGTERM)
+                        self.terminate_and_reap(
+                            child, group_leader, initial_signal=signal.SIGTERM
+                        )
                 except BaseException:
                     # Cleanup is deliberately subordinate to the active
                     # exception, including asynchronous exceptions delivered
                     # while cleanup itself is running.
                     pass
+            elif group_leader is not None and owns_group:
+                self.terminate_anchor(group_leader)
             raise
         finally:
             self.child = None
+            self.group_leader = None
 
 
 def default_cache_root() -> Path:

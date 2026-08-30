@@ -1461,6 +1461,12 @@ class ProvisionZigTests(unittest.TestCase):
     def test_wrapper_preserves_arbitrary_launch_exception_during_cleanup(self) -> None:
         failure = OSError("sentinel communicate failure")
 
+        class Anchor:
+            pid = 424_241
+
+            def wait(self, *, timeout=None) -> None:
+                del timeout
+
         class BrokenChild:
             pid = 424_242
             returncode = None
@@ -1482,10 +1488,13 @@ class ProvisionZigTests(unittest.TestCase):
                 del timeout
                 raise RuntimeError("cleanup wait failed")
 
+        anchor = Anchor()
         child = BrokenChild()
         supervisor = with_zig.ChildSupervisor()
         with (
-            mock.patch.object(with_zig.subprocess, "Popen", return_value=child),
+            mock.patch.object(
+                with_zig.subprocess, "Popen", side_effect=(anchor, child)
+            ),
             mock.patch.object(with_zig.os, "killpg", return_value=None) as killpg,
             mock.patch.object(with_zig, "SIGNAL_GRACE_SECONDS", 0.0),
             mock.patch.object(with_zig, "KILL_GRACE_SECONDS", 0.0),
@@ -1495,8 +1504,159 @@ class ProvisionZigTests(unittest.TestCase):
 
         self.assertIs(caught.exception, failure)
         self.assertIsNone(supervisor.child)
-        self.assertIn(mock.call(child.pid, signal.SIGTERM), killpg.call_args_list)
-        self.assertIn(mock.call(child.pid, signal.SIGKILL), killpg.call_args_list)
+        self.assertIn(mock.call(anchor.pid, signal.SIGTERM), killpg.call_args_list)
+        self.assertIn(mock.call(anchor.pid, signal.SIGKILL), killpg.call_args_list)
+
+    def test_wrapper_anchor_owns_group_through_command_reap(self) -> None:
+        events: list[tuple[str, int | None]] = []
+
+        class Anchor:
+            pid = 424_241
+            reaped = False
+
+            def wait(self, *, timeout=None) -> None:
+                del timeout
+                events.append(("anchor-wait", None))
+                self.reaped = True
+
+        class Child:
+            pid = 424_242
+            returncode = None
+
+            def communicate(self, *, timeout=None):
+                del timeout
+                events.append(("child-communicate", None))
+                self.returncode = 0
+                return b"", b""
+
+            def wait(self, *, timeout=None) -> None:
+                del timeout
+                events.append(("child-wait", None))
+
+        anchor = Anchor()
+        child = Child()
+
+        def signal_group(pgid: int, signum: int) -> None:
+            self.assertEqual(pgid, anchor.pid)
+            self.assertFalse(anchor.reaped)
+            events.append(("signal", signum))
+
+        supervisor = with_zig.ChildSupervisor()
+        with (
+            mock.patch.object(
+                with_zig.subprocess, "Popen", side_effect=(anchor, child)
+            ),
+            mock.patch.object(with_zig.os, "killpg", side_effect=signal_group),
+            mock.patch.object(with_zig, "KILL_GRACE_SECONDS", 1.0),
+        ):
+            completed = supervisor.run(["ignored"])
+
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(
+            events,
+            [
+                ("child-communicate", None),
+                ("signal", signal.SIGKILL),
+                ("anchor-wait", None),
+                ("child-communicate", None),
+                ("child-wait", None),
+            ],
+        )
+
+    def test_wrapper_failed_command_spawn_reaps_anchor_without_pgid_reuse(self) -> None:
+        failure = OSError("sentinel command spawn failure")
+        events: list[tuple[str, int | None]] = []
+
+        class Anchor:
+            pid = 424_241
+            reaped = False
+
+            def wait(self, *, timeout=None) -> None:
+                del timeout
+                events.append(("anchor-wait", None))
+                self.reaped = True
+
+        anchor = Anchor()
+
+        def signal_group(pgid: int, signum: int) -> None:
+            self.assertEqual(pgid, anchor.pid)
+            self.assertFalse(anchor.reaped)
+            events.append(("signal", signum))
+
+        supervisor = with_zig.ChildSupervisor()
+        with (
+            mock.patch.object(
+                with_zig.subprocess, "Popen", side_effect=(anchor, failure)
+            ),
+            mock.patch.object(with_zig.os, "killpg", side_effect=signal_group),
+            self.assertRaises(OSError) as caught,
+        ):
+            supervisor.run(["ignored"])
+
+        self.assertIs(caught.exception, failure)
+        self.assertEqual(
+            events,
+            [("signal", signal.SIGKILL), ("anchor-wait", None)],
+        )
+        self.assertIsNone(supervisor.child)
+        self.assertIsNone(supervisor.group_leader)
+
+    def test_wrapper_post_reap_signal_never_reuses_closed_pgid(self) -> None:
+        events: list[tuple[str, int | None]] = []
+        supervisor = with_zig.ChildSupervisor()
+
+        class Anchor:
+            pid = 424_241
+            reaped = False
+
+            def wait(self, *, timeout=None) -> None:
+                del timeout
+                events.append(("anchor-wait", None))
+                self.reaped = True
+                supervisor.caught_signal = signal.SIGTERM
+
+        class Child:
+            pid = 424_242
+            returncode = None
+
+            def communicate(self, *, timeout=None):
+                del timeout
+                events.append(("child-communicate", None))
+                self.returncode = 0
+                return b"", b""
+
+            def wait(self, *, timeout=None) -> None:
+                del timeout
+                events.append(("child-wait", None))
+
+        anchor = Anchor()
+        child = Child()
+
+        def signal_group(pgid: int, signum: int) -> None:
+            self.assertEqual(pgid, anchor.pid)
+            self.assertFalse(anchor.reaped)
+            events.append(("signal", signum))
+
+        with (
+            mock.patch.object(
+                with_zig.subprocess, "Popen", side_effect=(anchor, child)
+            ),
+            mock.patch.object(with_zig.os, "killpg", side_effect=signal_group),
+            self.assertRaises(with_zig.CaughtSignal) as caught,
+        ):
+            supervisor.run(["ignored"])
+
+        self.assertEqual(caught.exception.signum, signal.SIGTERM)
+        self.assertEqual(
+            events,
+            [
+                ("child-communicate", None),
+                ("signal", signal.SIGKILL),
+                ("anchor-wait", None),
+                ("child-communicate", None),
+                ("child-wait", None),
+            ],
+        )
 
     def test_wrapper_kills_survivor_after_group_leader_exits(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1512,15 +1672,23 @@ class ProvisionZigTests(unittest.TestCase):
             # Keep both group members as direct test children so their exit
             # status can be reaped. On Linux, kill(pid, 0) also succeeds for
             # a terminated orphan that container PID 1 has left as a zombie.
-            leader = subprocess.Popen(
-                [sys.executable, "-c", "import time; time.sleep(60)"],
+            group_anchor = subprocess.Popen(
+                with_zig.ChildSupervisor.anchor_command(),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 process_group=0,
             )
+            leader: subprocess.Popen | None = None
             worker: subprocess.Popen | None = None
             try:
+                leader = subprocess.Popen(
+                    [sys.executable, "-c", "import time; time.sleep(60)"],
+                    process_group=group_anchor.pid,
+                )
                 worker = subprocess.Popen(
                     [sys.executable, "-c", worker_source, str(worker_pid_path)],
-                    process_group=leader.pid,
+                    process_group=group_anchor.pid,
                 )
                 deadline = time.monotonic() + 5.0
                 while time.monotonic() < deadline and not worker_pid_path.exists():
@@ -1531,10 +1699,12 @@ class ProvisionZigTests(unittest.TestCase):
                 )
 
                 supervisor = with_zig.ChildSupervisor()
+                supervisor.group_leader = group_anchor
                 started = time.monotonic()
                 with mock.patch.object(with_zig, "KILL_GRACE_SECONDS", 1.0):
                     supervisor.terminate_and_reap(
                         leader,
+                        group_anchor,
                         initial_signal=signal.SIGTERM,
                         grace_seconds=0.1,
                     )
@@ -1542,22 +1712,16 @@ class ProvisionZigTests(unittest.TestCase):
                 self.assertIsNotNone(leader.returncode)
                 worker.wait(timeout=2.0)
                 self.assertEqual(worker.returncode, -signal.SIGKILL)
+                self.assertEqual(group_anchor.returncode, -signal.SIGKILL)
             finally:
-                try:
-                    os.killpg(leader.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                try:
-                    leader.wait(timeout=1.0)
-                except subprocess.TimeoutExpired:
-                    leader.kill()
-                    leader.wait(timeout=1.0)
-                if worker is not None:
+                for process in (worker, leader, group_anchor):
+                    if process is None:
+                        continue
                     try:
-                        worker.kill()
+                        process.kill()
                     except ProcessLookupError:
                         pass
-                    worker.wait(timeout=1.0)
+                    process.wait(timeout=1.0)
 
     def test_wrapper_signal_lets_upstream_reap_its_grouped_child(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
