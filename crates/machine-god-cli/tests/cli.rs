@@ -3432,7 +3432,7 @@ fn non_unicode_arguments_are_rejected_by_the_process_boundary() {
 
 #[cfg(unix)]
 #[test]
-fn final_symlinks_are_reported_as_wrong_kinds() {
+fn final_config_symlinks_are_fixed_permission_failures() {
     use std::os::unix::fs::symlink;
 
     let temporary = TestDirectory::new("symlinks");
@@ -3448,17 +3448,6 @@ fn final_symlinks_are_reported_as_wrong_kinds() {
     fs::create_dir_all(state_path.parent().unwrap()).unwrap();
     symlink(&target_file, config_path).unwrap();
     symlink(&target_directory, state_path).unwrap();
-
-    let output = run_with_roots(
-        &["status", "--json"],
-        config_root.as_os_str(),
-        state_root.as_os_str(),
-    );
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(output.status.success());
-    assert!(output.stderr.is_empty());
-    assert!(stdout.contains("\"state\":\"not_file\""));
-    assert!(stdout.contains("\"state\":\"not_directory\""));
 
     let permissions = run_with_roots(
         &["permissions"],

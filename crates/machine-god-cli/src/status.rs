@@ -1,11 +1,12 @@
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
 use std::io;
-use std::path::Path;
 
-use machine_god_native::{NativeStatus, inspect_process_status};
+use machine_god_native::{
+    NativeRuntimeStatus, NativeRuntimeStatusError, inspect_process_runtime_status,
+};
 
-use super::{identity, write_json_string};
+use super::{write_json_string, write_json_string_content};
 
 pub(crate) const MAX_STATUS_OUTPUT_BYTES: usize = 64 * 1024;
 
@@ -26,17 +27,18 @@ const STATUS_INVALID_JSON: &str = concat!(
     "\"code\":\"InvalidLocalSurfaceArgs\"}\n",
 );
 const STATUS_RENDER_FAILURE: &str = "machine-god status: could not render report\n";
+const STATUS_INSPECTION_FAILURE: &str = "machine-god status: could not inspect runtime\n";
 
 pub(crate) trait StatusCommandHost {
-    fn inspect_status(&self) -> NativeStatus;
+    fn inspect_status(&self) -> Result<NativeRuntimeStatus, NativeRuntimeStatusError>;
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct ProductionStatusCommandHost;
 
 impl StatusCommandHost for ProductionStatusCommandHost {
-    fn inspect_status(&self) -> NativeStatus {
-        inspect_process_status()
+    fn inspect_status(&self) -> Result<NativeRuntimeStatus, NativeRuntimeStatusError> {
+        inspect_process_runtime_status()
     }
 }
 
@@ -105,7 +107,10 @@ pub(crate) fn run_status(
             1
         }
         StatusParseOutcome::Invoke { json } => {
-            let status = host.inspect_status();
+            let Ok(status) = host.inspect_status() else {
+                let _ = stderr.write_all(STATUS_INSPECTION_FAILURE.as_bytes());
+                return 1;
+            };
             let Ok(output) = render_status(&status, json) else {
                 let _ = stderr.write_all(STATUS_RENDER_FAILURE.as_bytes());
                 return 1;
@@ -139,7 +144,7 @@ fn parse_arguments(arguments: &[OsString]) -> StatusParseOutcome {
     }
 }
 
-fn render_status(status: &NativeStatus, json: bool) -> Result<String, std::fmt::Error> {
+fn render_status(status: &NativeRuntimeStatus, json: bool) -> Result<String, std::fmt::Error> {
     if json {
         json_status(status)
     } else {
@@ -147,59 +152,100 @@ fn render_status(status: &NativeStatus, json: bool) -> Result<String, std::fmt::
     }
 }
 
-fn human_status(status: &NativeStatus) -> Result<String, std::fmt::Error> {
+fn human_status(status: &NativeRuntimeStatus) -> Result<String, std::fmt::Error> {
     let mut output = BoundedStatusOutput::new();
-    output.write_str(&identity())?;
+    writeln!(output, "[status] model={}", status.model())?;
     writeln!(
         output,
-        "permission_mode: {}",
+        "[status] update_channel={}",
+        status.update_channel()
+    )?;
+    writeln!(output, "[status] build_channel={}", status.build_channel())?;
+    if !status.build_revision().is_empty() {
+        writeln!(
+            output,
+            "[status] build_revision={}",
+            status.build_revision()
+        )?;
+    }
+    writeln!(output, "[status] auth={}", status.auth_label())?;
+    writeln!(
+        output,
+        "[status] auth_refreshable={}",
+        status.auth_refreshable()
+    )?;
+    if let Some(help) = status.auth_help() {
+        writeln!(output, "[status] auth_help={help}")?;
+    }
+    writeln!(
+        output,
+        "[status] permission_mode={}",
         status.permission_mode().as_str()
     )?;
-    write!(
-        output,
-        "config_file: state={} path=",
-        status.config_file_state().as_str()
+    writeln!(output, "[status] sandbox={}", status.sandbox())?;
+    output.write_str("[status] workspace=")?;
+    write_json_string_content(
+        &mut output,
+        status.workspace().to_str().ok_or(std::fmt::Error)?,
     )?;
-    write_json_path(&mut output, status.config_file_path())?;
     output.write_char('\n')?;
-    write!(
+    writeln!(output, "[status] history_turns={}", status.history_turns())?;
+    writeln!(
         output,
-        "state_directory: state={} path=",
-        status.state_directory_state().as_str()
+        "[status] session_permission_grants={}",
+        status.session_permission_grants()
     )?;
-    write_json_path(&mut output, status.state_directory_path())?;
-    output.write_char('\n')?;
+    writeln!(
+        output,
+        "[status] agent_step_limit={}",
+        status.agent_step_limit()
+    )?;
     Ok(output.finish())
 }
 
-fn json_status(status: &NativeStatus) -> Result<String, std::fmt::Error> {
+fn json_status(status: &NativeRuntimeStatus) -> Result<String, std::fmt::Error> {
     let mut output = BoundedStatusOutput::new();
-    output.write_str("{\"name\":\"machine-god\",\"version\":")?;
-    write_json_string(&mut output, env!("CARGO_PKG_VERSION"))?;
+    output.write_str("{\"kind\":\"status\",\"model\":")?;
+    write_json_string(&mut output, status.model())?;
+    output.write_str(",\"update_channel\":")?;
+    write_json_string(&mut output, status.update_channel())?;
+    output.write_str(",\"build_channel\":")?;
+    write_json_string(&mut output, status.build_channel())?;
+    output.write_str(",\"build_revision\":")?;
+    write_json_string(&mut output, status.build_revision())?;
+    output.write_str(",\"auth\":")?;
+    write_json_string(&mut output, status.auth_label())?;
     write!(
         output,
-        ",\"engine_api_version\":{},\"permission_mode\":",
-        machine_god_native::supported_core_api_version()
+        ",\"auth_refreshable\":{}",
+        status.auth_refreshable()
     )?;
+    if let Some(help) = status.auth_help() {
+        output.write_str(",\"auth_help\":")?;
+        write_json_string(&mut output, help)?;
+    }
+    output.write_str(",\"permission_mode\":")?;
     write_json_string(&mut output, status.permission_mode().as_str())?;
-    output.write_str(",\"config_file\":{\"path\":")?;
-    write_json_path(&mut output, status.config_file_path())?;
-    output.write_str(",\"state\":")?;
-    write_json_string(&mut output, status.config_file_state().as_str())?;
-    output.write_str("},\"state_directory\":{\"path\":")?;
-    write_json_path(&mut output, status.state_directory_path())?;
-    output.write_str(",\"state\":")?;
-    write_json_string(&mut output, status.state_directory_state().as_str())?;
-    output.write_str("}}\n")?;
+    output.write_str(",\"sandbox\":")?;
+    write_json_string(&mut output, status.sandbox())?;
+    output.write_str(",\"workspace\":")?;
+    write_json_status_path(&mut output, status.workspace())?;
+    write!(
+        output,
+        ",\"history_turns\":{},\"session_permission_grants\":{},\"agent_step_limit\":{}",
+        status.history_turns(),
+        status.session_permission_grants(),
+        status.agent_step_limit()
+    )?;
+    output.write_str("}\n")?;
     Ok(output.finish())
 }
 
-fn write_json_path(output: &mut impl std::fmt::Write, path: Option<&Path>) -> std::fmt::Result {
-    if let Some(path) = path.and_then(Path::to_str) {
-        write_json_string(output, path)
-    } else {
-        output.write_str("null")
-    }
+fn write_json_status_path(
+    output: &mut impl std::fmt::Write,
+    path: &std::path::Path,
+) -> std::fmt::Result {
+    write_json_string(output, path.to_str().ok_or(std::fmt::Error)?)
 }
 
 fn write_stdout(
@@ -223,12 +269,16 @@ mod tests {
     use std::fmt::Write as _;
     use std::io;
 
-    use machine_god_native::{NativeEnvironment, NativeStatus, inspect_native_status};
+    use machine_god_native::{
+        AI_GATEWAY_DEFAULT_MODEL, NativeRuntimeCredentialEnvironment, NativeRuntimeStatus,
+        NativeRuntimeStatusError, NativeRuntimeStatusInput, PermissionMode,
+        inspect_native_runtime_status,
+    };
 
     use super::{
-        BoundedStatusOutput, MAX_STATUS_OUTPUT_BYTES, STATUS_HELP, STATUS_INVALID_JSON,
-        STATUS_RENDER_FAILURE, STATUS_USAGE, StatusCommandHost, StatusParseOutcome,
-        parse_arguments, run_status, write_json_string,
+        BoundedStatusOutput, MAX_STATUS_OUTPUT_BYTES, STATUS_HELP, STATUS_INSPECTION_FAILURE,
+        STATUS_INVALID_JSON, STATUS_USAGE, StatusCommandHost, StatusParseOutcome, parse_arguments,
+        run_status, write_json_string,
     };
 
     const OUTPUT_FAILURE: &str = "machine-god: failed to write output\n";
@@ -236,20 +286,26 @@ mod tests {
     #[derive(Debug)]
     struct FakeStatusHost {
         calls: Cell<usize>,
-        status: NativeStatus,
+        status: Result<NativeRuntimeStatus, NativeRuntimeStatusError>,
     }
 
     impl FakeStatusHost {
         fn unavailable() -> Self {
             Self {
                 calls: Cell::new(0),
-                status: inspect_native_status(&NativeEnvironment::new(None, None, None)),
+                status: inspect_native_runtime_status(NativeRuntimeStatusInput::new(
+                    AI_GATEWAY_DEFAULT_MODEL,
+                    PermissionMode::Ask,
+                    NativeRuntimeCredentialEnvironment::new(None, None),
+                    "/workspace",
+                    None,
+                )),
             }
         }
     }
 
     impl StatusCommandHost for FakeStatusHost {
-        fn inspect_status(&self) -> NativeStatus {
+        fn inspect_status(&self) -> Result<NativeRuntimeStatus, NativeRuntimeStatusError> {
             self.calls.set(self.calls.get() + 1);
             self.status.clone()
         }
@@ -365,10 +421,15 @@ mod tests {
         assert_eq!(
             stdout,
             concat!(
-                "{\"name\":\"machine-god\",\"version\":\"0.1.0\",",
-                "\"engine_api_version\":1,\"permission_mode\":\"ask\",",
-                "\"config_file\":{\"path\":null,\"state\":\"unavailable\"},",
-                "\"state_directory\":{\"path\":null,\"state\":\"unavailable\"}}\n",
+                "{\"kind\":\"status\",\"model\":\"zai/glm-5.2\",",
+                "\"update_channel\":\"stable\",\"build_channel\":\"stable\",",
+                "\"build_revision\":\"\",\"auth\":\"missing\",",
+                "\"auth_refreshable\":false,\"auth_help\":",
+                "\"Machine God needs access to Vercel AI Gateway. Set ",
+                "VERCEL_OIDC_TOKEN or AI_GATEWAY_API_KEY.\",",
+                "\"permission_mode\":\"ask\",\"sandbox\":\"none\",",
+                "\"workspace\":\"/workspace\",\"history_turns\":0,",
+                "\"session_permission_grants\":0,\"agent_step_limit\":8}\n",
             )
             .as_bytes()
         );
@@ -389,18 +450,20 @@ mod tests {
         assert_eq!(escaped.value, "\"\\u001b\\u202e\\n\\\\\\\"\"");
     }
 
-    #[cfg(unix)]
     #[test]
-    fn render_overflow_is_atomic_and_uses_the_fixed_diagnostic() {
-        let root = format!("/{}", "x".repeat(MAX_STATUS_OUTPUT_BYTES));
-        let status = inspect_native_status(&NativeEnvironment::new(
-            Some(OsString::from(&root)),
-            Some(OsString::from(root)),
-            None,
-        ));
+    fn inspection_failure_is_atomic_and_uses_the_fixed_diagnostic() {
         let host = FakeStatusHost {
             calls: Cell::new(0),
-            status,
+            status: inspect_native_runtime_status(NativeRuntimeStatusInput::new(
+                AI_GATEWAY_DEFAULT_MODEL,
+                PermissionMode::Ask,
+                NativeRuntimeCredentialEnvironment::new(
+                    Some(OsString::from("invalid credential")),
+                    None,
+                ),
+                "/workspace",
+                None,
+            )),
         };
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
@@ -410,7 +473,7 @@ mod tests {
         );
         assert_eq!(host.calls.get(), 1);
         assert!(stdout.is_empty());
-        assert_eq!(stderr, STATUS_RENDER_FAILURE.as_bytes());
+        assert_eq!(stderr, STATUS_INSPECTION_FAILURE.as_bytes());
     }
 
     #[test]

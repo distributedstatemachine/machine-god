@@ -1496,7 +1496,10 @@ fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Comm
     };
 
     let command = match first {
-        "help" | "--help" | "-h" => Command::Help,
+        // Help owns the complete tail. Keep the reusable parser consistent
+        // with the process entry point, which dispatches this fast path before
+        // any command-specific parsing or effects.
+        "help" | "--help" | "-h" => return Ok(Command::Help),
         "--version" | "-V" => Command::Identity,
         "ask" => Command::Ask {
             prompt: parse_prompt_arguments(arguments.by_ref())?,
@@ -2259,6 +2262,11 @@ fn push_json_string(output: &mut String, value: &str) {
 
 fn write_json_string(output: &mut impl std::fmt::Write, value: &str) -> std::fmt::Result {
     output.write_char('"')?;
+    write_json_string_content(output, value)?;
+    output.write_char('"')
+}
+
+fn write_json_string_content(output: &mut impl std::fmt::Write, value: &str) -> std::fmt::Result {
     for character in value.chars() {
         match character {
             '"' => output.write_str("\\\"")?,
@@ -2279,7 +2287,7 @@ fn write_json_string(output: &mut impl std::fmt::Write, value: &str) -> std::fmt
             _ => output.write_char(character)?,
         }
     }
-    output.write_char('"')
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2320,9 +2328,10 @@ mod tests {
     #[cfg(not(target_family = "wasm"))]
     use machine_god_core::{ProviderError, ProviderErrorKind};
     use machine_god_native::{
-        MAX_WORKSPACE_PATH_BYTES, NativeEnvironment, NativeSessionInspectionErrorKind,
-        NativeSessionListingErrorKind, NativeStatus, NativeWorkspaceInspectionErrorKind,
-        inspect_native_status,
+        AI_GATEWAY_DEFAULT_MODEL, MAX_WORKSPACE_PATH_BYTES, NativeRuntimeCredentialEnvironment,
+        NativeRuntimeStatus, NativeRuntimeStatusError, NativeRuntimeStatusInput,
+        NativeSessionInspectionErrorKind, NativeSessionListingErrorKind,
+        NativeWorkspaceInspectionErrorKind, inspect_native_runtime_status,
     };
     use std::cell::{Cell, RefCell};
     use std::ffi::OsString;
@@ -2366,20 +2375,26 @@ mod tests {
     #[derive(Debug)]
     struct FakeStatusHost {
         calls: Cell<usize>,
-        status: NativeStatus,
+        status: Result<NativeRuntimeStatus, NativeRuntimeStatusError>,
     }
 
     impl FakeStatusHost {
         fn unavailable() -> Self {
             Self {
                 calls: Cell::new(0),
-                status: inspect_native_status(&NativeEnvironment::new(None, None, None)),
+                status: inspect_native_runtime_status(NativeRuntimeStatusInput::new(
+                    AI_GATEWAY_DEFAULT_MODEL,
+                    PermissionMode::Ask,
+                    NativeRuntimeCredentialEnvironment::new(None, None),
+                    "/workspace",
+                    None,
+                )),
             }
         }
     }
 
     impl StatusCommandHost for FakeStatusHost {
-        fn inspect_status(&self) -> NativeStatus {
+        fn inspect_status(&self) -> Result<NativeRuntimeStatus, NativeRuntimeStatusError> {
             self.calls.set(self.calls.get() + 1);
             self.status.clone()
         }
@@ -3575,6 +3590,14 @@ mod tests {
         assert_eq!(parse_arguments([]), Ok(Command::Identity));
         for alias in ["help", "--help", "-h"] {
             assert_eq!(parse_arguments([OsString::from(alias)]), Ok(Command::Help));
+            assert_eq!(
+                parse_arguments([
+                    OsString::from(alias),
+                    OsString::from("ignored"),
+                    OsString::from("--json"),
+                ]),
+                Ok(Command::Help)
+            );
         }
         for alias in ["--version", "-V"] {
             assert_eq!(
@@ -3616,7 +3639,6 @@ mod tests {
         );
         for arguments in [
             vec![OsString::from("unknown")],
-            vec![OsString::from("help"), OsString::from("extra")],
             vec![OsString::from("--json"), OsString::from("status")],
             vec![OsString::from("doctor"), OsString::from("--json=true")],
             vec![
@@ -3702,7 +3724,7 @@ mod tests {
             ),
             0
         );
-        assert!(stdout.starts_with(b"{\"name\":\"machine-god\""));
+        assert!(stdout.starts_with(b"{\"kind\":\"status\""));
         assert!(stderr.is_empty());
         assert_eq!(host.calls.get(), 1);
     }
