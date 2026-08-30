@@ -2290,16 +2290,16 @@ class GatedProcess:
         descriptor = self.gate_descriptor
         if descriptor is None:
             raise RuntimeError("measurement gate was already released")
+        self.gate_descriptor = None
         try:
             os.write(descriptor, b"\x01")
         finally:
-            os.close(descriptor)
-            self.gate_descriptor = None
+            close_descriptor_nonthrowing(descriptor)
 
     def close_gate(self) -> None:
-        if self.gate_descriptor is not None:
-            os.close(self.gate_descriptor)
-            self.gate_descriptor = None
+        descriptor = self.gate_descriptor
+        self.gate_descriptor = None
+        close_descriptor_nonthrowing(descriptor)
 
     def _record_status(self, status: int) -> int:
         self.returncode = os.waitstatus_to_exitcode(status)
@@ -2941,8 +2941,9 @@ def run_process(
                 output_capture.stop()
             except BaseException:
                 pass
-        if root_descriptor is not None:
-            os.close(root_descriptor)
+        descriptor = root_descriptor
+        root_descriptor = None
+        close_descriptor_nonthrowing(descriptor)
 
 
 def invocation_path(command: str, path_value: str) -> str:

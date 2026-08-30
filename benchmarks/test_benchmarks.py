@@ -3422,6 +3422,88 @@ runpy.run_path(sys.argv[0], run_name="__main__")
                 with self.assertRaises(ChildProcessError):
                     os.waitpid(child_pids[0], os.WNOHANG)
 
+    @unittest.skipUnless(os.name == "posix", "gated process requires POSIX pipes")
+    def test_gated_process_detaches_descriptor_before_ambiguous_close(self) -> None:
+        class CloseFailure(BaseException):
+            pass
+
+        original_close = upstream.os.close
+        for operation in ("release", "close_gate"):
+            with self.subTest(operation=operation):
+                read_descriptor, gate_descriptor = os.pipe()
+                process = upstream.GatedProcess(424242, gate_descriptor, ["tool"])
+                injected = False
+
+                def ambiguous_close(descriptor: int) -> None:
+                    nonlocal injected
+                    original_close(descriptor)
+                    if descriptor == gate_descriptor and not injected:
+                        injected = True
+                        raise CloseFailure("close result was ambiguous")
+
+                try:
+                    with mock.patch.object(upstream.os, "close", ambiguous_close):
+                        if operation == "release":
+                            process.release()
+                        else:
+                            process.close_gate()
+                    self.assertTrue(injected)
+                    self.assertIsNone(process.gate_descriptor)
+                    process.close_gate()
+                    if operation == "release":
+                        self.assertEqual(os.read(read_descriptor, 1), b"\x01")
+                finally:
+                    original_close(read_descriptor)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "pidfd regression")
+    def test_pidfd_close_failure_preserves_attach_exception_identity(self) -> None:
+        class AttachFailure(BaseException):
+            pass
+
+        class CloseFailure(BaseException):
+            pass
+
+        linux_containment_preflight()
+        failure = AttachFailure("attach failed")
+        original_pidfd_open = upstream.os.pidfd_open
+        original_close = upstream.os.close
+        root_descriptors: list[int] = []
+        injected = False
+
+        def recording_pidfd_open(pid: int, flags: int) -> int:
+            descriptor = original_pidfd_open(pid, flags)
+            root_descriptors.append(descriptor)
+            return descriptor
+
+        def ambiguous_close(descriptor: int) -> None:
+            nonlocal injected
+            if root_descriptors and descriptor == root_descriptors[-1] and not injected:
+                injected = True
+                original_close(descriptor)
+                raise CloseFailure("pidfd close result was ambiguous")
+            original_close(descriptor)
+
+        with (
+            mock.patch.object(upstream.os, "pidfd_open", recording_pidfd_open),
+            mock.patch.object(upstream.os, "close", ambiguous_close),
+            mock.patch.object(
+                upstream.LinuxProcessSupervisor, "attach_root", side_effect=failure
+            ),
+            self.assertRaises(AttachFailure) as raised,
+        ):
+            upstream.run_process(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                cwd=Path.cwd(),
+                environment={
+                    **os.environ,
+                    upstream.CONTAINMENT_ENVIRONMENT_KEY: "1" * 32,
+                },
+                timeout_seconds=1.0,
+            )
+
+        self.assertIs(raised.exception, failure)
+        self.assertTrue(injected)
+
     def test_termination_cleanup_continues_through_hostile_baseexceptions(self) -> None:
         class HostileFailure(BaseException):
             pass
