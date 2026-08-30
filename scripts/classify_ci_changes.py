@@ -1,0 +1,247 @@
+#!/usr/bin/env python3
+"""Conservatively classify a GitHub Actions change set.
+
+Only a small, explicit set of documentation paths may skip the full product
+gate.  Missing or surprising Git data always selects the full gate.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import PurePosixPath
+import subprocess
+import sys
+from dataclasses import dataclass
+from typing import Sequence
+
+
+DOC_EXCEPTIONS = {
+    "docs/compatibility.md",
+    "docs/core-api.md",
+    "docs/testkit.md",
+}
+KNOWN_STATUSES = {"A", "B", "D", "M", "T", "U", "X"}
+
+
+class ClassificationError(RuntimeError):
+    """A Git or input uncertainty that requires the full gate."""
+
+
+@dataclass(frozen=True)
+class Classification:
+    full: bool
+    docs_only: bool
+    reason: str
+
+
+def _run_git(arguments: Sequence[str]) -> bytes:
+    try:
+        completed = subprocess.run(
+            ["git", *arguments],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except OSError as error:
+        raise ClassificationError(f"could not execute git: {error}") from error
+    if completed.returncode != 0:
+        detail = completed.stderr.decode("utf-8", errors="replace").strip()
+        if detail:
+            detail = " ".join(detail.split())[:240]
+            raise ClassificationError(f"git {' '.join(arguments[:2])} failed: {detail}")
+        raise ClassificationError(f"git {' '.join(arguments[:2])} failed")
+    return completed.stdout
+
+
+def _validate_revision(revision: str | None, label: str) -> str:
+    if not revision or revision.startswith("-") or "\x00" in revision:
+        raise ClassificationError(f"{label} revision is missing or invalid")
+    try:
+        revision.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ClassificationError(f"{label} revision is not UTF-8") from error
+    return revision
+
+
+def _resolve_commit(revision: str | None, label: str) -> str:
+    revision = _validate_revision(revision, label)
+    raw = _run_git(
+        ["rev-parse", "--verify", "--end-of-options", f"{revision}^{{commit}}"]
+    )
+    try:
+        resolved = raw.decode("ascii").strip()
+    except UnicodeDecodeError as error:
+        raise ClassificationError(f"{label} revision did not resolve to a commit") from error
+    if not resolved or any(character not in "0123456789abcdefABCDEF" for character in resolved):
+        raise ClassificationError(f"{label} revision did not resolve to a commit")
+    return resolved
+
+
+def _is_ancestor(ancestor: str, descendant: str) -> bool:
+    completed = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode == 0:
+        return True
+    if completed.returncode == 1:
+        return False
+    detail = completed.stderr.decode("utf-8", errors="replace").strip()
+    detail = " ".join(detail.split())[:240]
+    suffix = f": {detail}" if detail else ""
+    raise ClassificationError(f"git ancestry check failed{suffix}")
+
+
+def _merge_base(left: str, right: str) -> str:
+    raw = _run_git(["merge-base", left, right])
+    try:
+        base = raw.decode("ascii").strip()
+    except UnicodeDecodeError as error:
+        raise ClassificationError("merge base was not a commit ID") from error
+    if not base or "\n" in base:
+        raise ClassificationError("revisions have no unique merge base")
+    return base
+
+
+def _push_range(before: str | None, head: str | None, default_ref: str | None) -> tuple[str, str, str]:
+    resolved_head = _resolve_commit(head, "head")
+    before = _validate_revision(before, "before")
+    if set(before) == {"0"}:
+        resolved_default = _resolve_commit(default_ref, "default ref")
+        base = _merge_base(resolved_default, resolved_head)
+        return base, resolved_head, "new branch from default-ref merge base"
+
+    resolved_before = _resolve_commit(before, "before")
+    if not _is_ancestor(resolved_before, resolved_head):
+        raise ClassificationError("push before revision is not an ancestor of head")
+    return resolved_before, resolved_head, "normal push range"
+
+
+def _pull_request_range(base: str | None, head: str | None) -> tuple[str, str, str]:
+    resolved_base = _resolve_commit(base, "base")
+    resolved_head = _resolve_commit(head, "head")
+    merge_base = _merge_base(resolved_base, resolved_head)
+    return merge_base, resolved_head, "pull-request merge-base range"
+
+
+def _changed_paths(base: str, head: str) -> list[tuple[str, str]]:
+    raw = _run_git(
+        ["diff", "--name-status", "-z", "--no-renames", f"{base}..{head}", "--"]
+    )
+    if not raw:
+        return []
+    fields = raw.split(b"\x00")
+    if fields[-1] != b"":
+        raise ClassificationError("git diff produced an unterminated record")
+    fields.pop()
+    if len(fields) % 2:
+        raise ClassificationError("git diff produced a malformed name-status record")
+
+    changes: list[tuple[str, str]] = []
+    for index in range(0, len(fields), 2):
+        try:
+            status = fields[index].decode("ascii")
+            path = fields[index + 1].decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ClassificationError("git diff contained a non-UTF-8 record") from error
+        if status not in KNOWN_STATUSES:
+            raise ClassificationError(f"git diff contained unexpected status {status!r}")
+        if not path or "\n" in path or "\r" in path or "\x00" in path:
+            raise ClassificationError("git diff contained an invalid path")
+        changes.append((status, path))
+    return changes
+
+
+def _is_cheap_documentation(path: str) -> bool:
+    if path == "README.md":
+        return True
+    if path in DOC_EXCEPTIONS or not path.startswith("docs/") or not path.endswith(".md"):
+        return False
+    if "\\" in path:
+        return False
+    parts = PurePosixPath(path).parts
+    return len(parts) >= 2 and parts[0] == "docs" and all(part not in {"", ".", ".."} for part in parts)
+
+
+def classify(
+    event: str,
+    before: str | None,
+    head: str | None,
+    base: str | None,
+    default_ref: str | None,
+) -> Classification:
+    if event == "workflow_dispatch":
+        return Classification(True, False, "workflow_dispatch always runs the full gate")
+    try:
+        if event == "push":
+            start, end, range_reason = _push_range(before, head, default_ref)
+        elif event in {"pull_request", "pull_request_target"}:
+            start, end, range_reason = _pull_request_range(base, head)
+        else:
+            return Classification(True, False, f"unknown event {event!r}")
+        changes = _changed_paths(start, end)
+    except (ClassificationError, OSError) as error:
+        return Classification(True, False, f"uncertain change set: {error}")
+
+    if not changes:
+        return Classification(True, False, f"empty {range_reason}")
+    non_docs = [path for _status, path in changes if not _is_cheap_documentation(path)]
+    if non_docs:
+        return Classification(
+            True,
+            False,
+            f"{range_reason} includes full-gate path {non_docs[0]!r}",
+        )
+    return Classification(
+        False,
+        True,
+        f"{range_reason} contains only cheap documentation ({len(changes)} path(s))",
+    )
+
+
+def _write_github_output(path: str, result: Classification) -> None:
+    with open(path, "a", encoding="utf-8", newline="\n") as output:
+        output.write(f"full={'true' if result.full else 'false'}\n")
+        output.write(f"docs_only={'true' if result.docs_only else 'false'}\n")
+
+
+def _parse_arguments(arguments: Sequence[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--event", required=True)
+    parser.add_argument("--before")
+    parser.add_argument("--head")
+    parser.add_argument("--base")
+    parser.add_argument("--default-ref")
+    parser.add_argument("--output")
+    return parser.parse_args(arguments)
+
+
+def main(arguments: Sequence[str] | None = None) -> int:
+    options = _parse_arguments(sys.argv[1:] if arguments is None else arguments)
+    result = classify(
+        options.event,
+        options.before,
+        options.head,
+        options.base,
+        options.default_ref,
+    )
+    output_path = options.output or os.environ.get("GITHUB_OUTPUT")
+    if output_path:
+        try:
+            _write_github_output(output_path, result)
+        except OSError as error:
+            print(f"CI change classification could not write GitHub output: {error}", file=sys.stderr)
+            return 2
+    print(
+        "CI change classification: "
+        f"full={'true' if result.full else 'false'} "
+        f"docs_only={'true' if result.docs_only else 'false'}; {result.reason}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
