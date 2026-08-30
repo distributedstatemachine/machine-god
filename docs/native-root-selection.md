@@ -36,6 +36,12 @@ environment variables. Current-directory capture failure returns the fixed
 passes through the same lexical validation and state selection as
 `from_environment`.
 
+The read-only top-level [`workspace`](workspace-cli.md) command does not use
+this selector. Its separate native inspection boundary captures and validates
+only the current directory and never selects or prepares a state root. As a
+result, workspace reporting neither reads state environment nor inherits this
+selector's state-root availability and validation failures.
+
 `NativeRootSelection::from_environment(&NativeEnvironment, &Path)` consumes no
 ambient process state. The caller supplies the environment snapshot and the
 workspace path. The workspace must be absolute and contain no lexical `..`

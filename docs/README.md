@@ -70,6 +70,7 @@ contract together when exact numeric limits matter.
 - [sessions](sessions-cli.md)
 - [session](session-cli.md)
 - [resume](resume-cli.md)
+- [workspace](workspace-cli.md)
 
 ## Decisions and historical evidence
 

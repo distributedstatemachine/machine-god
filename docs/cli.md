@@ -37,6 +37,7 @@ Current delivery state and gate evidence are maintained only in the
 | `session <id> [--json]` | Inspect one saved session summary | [session](session-cli.md) |
 | `sessions [--json]` | List bounded saved-session identities | [sessions](sessions-cli.md) |
 | `status [--json]` | Report configuration and state metadata | This page |
+| `workspace [list] [--json]` | Report the primary workspace | [workspace](workspace-cli.md) |
 
 The pinned upstream inventory contains a broader command and option surface.
 Unsupported forms remain invalid until their owning milestone freezes a

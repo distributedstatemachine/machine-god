@@ -211,6 +211,108 @@ jobs:
           if any(path.exists() for path in (config_root, state_root, home)):
               raise SystemExit("doctor created an isolated missing root")
 
+          workspace_smoke_root = Path(
+              tempfile.mkdtemp(prefix="machine-god-workspace-", dir=os.environ["RUNNER_TEMP"])
+          )
+          workspace_root = workspace_smoke_root / "primary workspace"
+          workspace_root.mkdir()
+          workspace_config_root = workspace_smoke_root / "missing-config"
+          workspace_state_root = workspace_smoke_root / "missing-state"
+          workspace_home = workspace_smoke_root / "missing-home"
+          workspace_environment = os.environ.copy()
+          workspace_environment.update(
+              {
+                  "XDG_CONFIG_HOME": str(workspace_config_root),
+                  "XDG_STATE_HOME": str(workspace_state_root),
+                  "HOME": str(workspace_home),
+              }
+          )
+          workspace_environment.pop("VERCEL_OIDC_TOKEN", None)
+          workspace_environment.pop("AI_GATEWAY_API_KEY", None)
+
+          def run_workspace(*arguments: str) -> subprocess.CompletedProcess[str]:
+              return subprocess.run(
+                  [str(binary), *arguments],
+                  check=False,
+                  capture_output=True,
+                  text=True,
+                  cwd=workspace_root,
+                  env=workspace_environment,
+              )
+
+          workspace_human_default = run_workspace("workspace")
+          workspace_human_list = run_workspace("workspace", "list")
+          workspace_json_default = run_workspace("workspace", "--json")
+          workspace_json_list = run_workspace("workspace", "list", "--json")
+          workspace_results = (
+              workspace_human_default,
+              workspace_human_list,
+              workspace_json_default,
+              workspace_json_list,
+          )
+          if any(result.returncode != 0 for result in workspace_results):
+              raise SystemExit(
+                  "workspace smoke exits: "
+                  + ", ".join(str(result.returncode) for result in workspace_results)
+              )
+          if any(result.stderr for result in workspace_results):
+              raise SystemExit("workspace smoke wrote unexpected stderr")
+
+          encoded_workspace_path = json.dumps(str(workspace_root), ensure_ascii=False)
+          expected_workspace_human = (
+              f"[workspace] primary={encoded_workspace_path}\n"
+              "[workspace] additional_directories=unsupported\n"
+          )
+          if workspace_human_default.stdout != expected_workspace_human:
+              raise SystemExit(
+                  f"unexpected default human workspace output: {workspace_human_default.stdout!r}"
+              )
+          if workspace_human_list.stdout != expected_workspace_human:
+              raise SystemExit(
+                  f"unexpected explicit-list workspace output: {workspace_human_list.stdout!r}"
+              )
+
+          expected_workspace_json = (
+              json.dumps(
+                  {
+                      "kind": "workspace",
+                      "action": "list",
+                      "primary_directory": str(workspace_root),
+                      "additional_directories_supported": False,
+                      "additional_directories": [],
+                  },
+                  ensure_ascii=False,
+                  separators=(",", ":"),
+              )
+              + "\n"
+          )
+          if workspace_json_default.stdout != expected_workspace_json:
+              raise SystemExit(
+                  f"unexpected default JSON workspace output: {workspace_json_default.stdout!r}"
+              )
+          if workspace_json_list.stdout != expected_workspace_json:
+              raise SystemExit(
+                  f"unexpected explicit-list JSON workspace output: {workspace_json_list.stdout!r}"
+              )
+          workspace_report = json.loads(workspace_json_default.stdout)
+          if list(workspace_report) != [
+              "kind",
+              "action",
+              "primary_directory",
+              "additional_directories_supported",
+              "additional_directories",
+          ]:
+              raise SystemExit("workspace JSON top-level key order changed")
+          if any(len(result.stdout.encode()) > 32768 for result in workspace_results):
+              raise SystemExit("workspace success output bound changed")
+          if list(workspace_root.iterdir()):
+              raise SystemExit("workspace inspection changed its dedicated current directory")
+          if any(
+              path.exists()
+              for path in (workspace_config_root, workspace_state_root, workspace_home)
+          ):
+              raise SystemExit("workspace inspection created an isolated missing root")
+
           sessions_root = Path(
               tempfile.mkdtemp(prefix="machine-god-sessions-", dir=os.environ["RUNNER_TEMP"])
           )
