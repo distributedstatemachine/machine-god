@@ -26,17 +26,18 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33257985954` (`GREEN`)
 - Main Benchmark evidence: `33257985878` (`GREEN`)
 - Active branch: `agent/m05-install-skill`
-- Active phase: `bounded workspace-local skill delivered; bounded local-only single-skill install_skill contract freeze next`
-- Next gate: `create the feature branch from the delivery seal, freeze the install_skill authority and lifecycle contract, then implement focused product evidence without changing documentation tooling`
+- Active phase: `bounded local-only single-skill install_skill candidate passed the complete exact local gate`
+- Next gate: `freeze one behavior SHA and run three fresh adversarial product-review tracks`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
 and the Benchmark evidence run retained the required exact-SHA artifacts. The
 bounded workspace-local [`skill`](skill.md) tool is delivered as slice 42. The
-next product slice is a bounded local-only `install_skill` tool that installs one
-workspace-confined skill without process or network authority. Documentation
-parser maintenance remains a separate non-product task; product iterations use
-the existing bounded repository-policy checker.
+next product candidate is the bounded local-only
+[`install_skill`](install-skill.md) tool, which installs one workspace-confined
+skill without process or network authority. Documentation parser maintenance
+remains a separate non-product task; product iterations use the existing
+bounded repository-policy checker.
 
 ## Architecture ownership
 

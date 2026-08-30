@@ -6,8 +6,8 @@ use rustix::fs::{FileType, Mode, OFlags};
 #[cfg(feature = "ai-gateway-http")]
 use crate::{
     CopyFileTool, CreateFolderTool, DeleteFileTool, EditFileTool, FileInfoTool, GlobFilesTool,
-    GrepFilesTool, ListFilesTool, OpenFileTool, ReadFileTool, RenameFileTool, SemanticSearchTool,
-    SkillTool, WriteFileTool,
+    GrepFilesTool, InstallSkillTool, ListFilesTool, OpenFileTool, ReadFileTool, RenameFileTool,
+    SemanticSearchTool, SkillTool, WriteFileTool,
 };
 
 #[cfg(feature = "ai-gateway-http")]
@@ -19,6 +19,7 @@ pub(crate) struct WorkspaceTools {
     pub(crate) file_info: FileInfoTool,
     pub(crate) glob_files: GlobFilesTool,
     pub(crate) grep_files: GrepFilesTool,
+    pub(crate) install_skill: InstallSkillTool,
     pub(crate) list_files: ListFilesTool,
     pub(crate) open_file: OpenFileTool,
     pub(crate) read_file: ReadFileTool,
@@ -83,6 +84,7 @@ impl WorkspaceRoot {
         let edit_file_root = clone_descriptor(&self.descriptor)?;
         let file_info_root = clone_descriptor(&self.descriptor)?;
         let grep_files_root = clone_descriptor(&self.descriptor)?;
+        let install_skill_root = clone_descriptor(&self.descriptor)?;
         let list_files_root = clone_descriptor(&self.descriptor)?;
         let open_file_root = clone_descriptor(&self.descriptor)?;
         let read_file_root = clone_descriptor(&self.descriptor)?;
@@ -100,6 +102,7 @@ impl WorkspaceRoot {
             file_info: FileInfoTool::from_root_descriptor(file_info_root),
             glob_files: GlobFilesTool::from_root_descriptor(self.descriptor),
             grep_files: GrepFilesTool::from_root_descriptor(grep_files_root),
+            install_skill: InstallSkillTool::from_root_descriptor(install_skill_root),
             list_files: ListFilesTool::from_root_descriptor(list_files_root),
             open_file: OpenFileTool::from_root_descriptor(open_file_root),
             read_file: ReadFileTool::from_root_descriptor(read_file_root),
@@ -124,7 +127,7 @@ mod tests {
     use super::{WorkspaceRoot, WorkspaceRootError};
 
     #[test]
-    fn workspace_composition_uses_exactly_fifteen_identity_preserving_clones() {
+    fn workspace_composition_uses_exactly_sixteen_identity_preserving_clones() {
         let root = WorkspaceRoot::open(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
             .unwrap_or_else(|_| panic!("open workspace root for clone evidence"));
         let original_metadata = rustix::fs::fstat(root.descriptor()).unwrap();
@@ -146,7 +149,7 @@ mod tests {
             })
             .unwrap_or_else(|_| panic!("compose workspace tools for clone evidence"));
 
-        assert_eq!(clone_identities, vec![original_identity; 15]);
+        assert_eq!(clone_identities, vec![original_identity; 16]);
         let terminal_metadata = rustix::fs::fstat(&tools.terminal_root).unwrap();
         assert_eq!(
             (
@@ -167,7 +170,7 @@ mod tests {
 
     #[test]
     fn every_descriptor_clone_failure_aborts_workspace_composition() {
-        for failing_attempt in 1..=15 {
+        for failing_attempt in 1..=16 {
             let root = WorkspaceRoot::open(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
                 .unwrap_or_else(|_| panic!("open workspace root for clone failure evidence"));
             let attempts = Cell::new(0);

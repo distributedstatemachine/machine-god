@@ -451,6 +451,7 @@ impl NativeReferenceHost {
             .tool(workspace_tools.file_info)
             .tool(workspace_tools.glob_files)
             .tool(workspace_tools.grep_files)
+            .tool(workspace_tools.install_skill)
             .tool(workspace_tools.list_files)
             .tool(memory)
             .tool(workspace_tools.open_file)

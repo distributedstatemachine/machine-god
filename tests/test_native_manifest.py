@@ -583,7 +583,8 @@ class NativeManifestTests(unittest.TestCase):
         )
         clippy_command = (
             'cargo +"${RUST_TOOLCHAIN}" clippy --locked '
-            "-p machine-god-native --lib --test memory_unsupported "
+            "-p machine-god-native --lib --test install_skill_unsupported "
+            "--test memory_unsupported "
             "--test semantic_search_unsupported "
             "--test vision_unsupported "
             "--no-default-features "

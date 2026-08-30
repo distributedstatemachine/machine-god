@@ -49,6 +49,13 @@ and does not broaden the authorized object. Loaded text remains untrusted opaque
 workspace content; it cannot grant installation, process, network, persistence,
 MCP, subagent, or additional filesystem authority.
 
+The local `install_skill` tool requests one exact custom capability containing
+the canonical source and managed destination. Approval is required before it
+observes either path. It admits only a bounded no-follow tree with a regular
+UTF-8 `SKILL.md`, stages private copies, and atomically publishes one absent
+destination. Installed bytes remain untrusted and grant no execution or
+additional authority.
+
 Authority-bearing capabilities pass through the injected permission handler.
 An error is never approval. The native ask adapter maps prompt failure to a
 fixed denial-class error and does not cache grants.
@@ -82,6 +89,11 @@ The `skill` reader additionally fixes the leading `skills` directory and one
 validated skill-name component, admits the complete selected regular file
 within a fixed byte limit, validates all bytes as UTF-8, and returns bounded
 pages without interpreting Markdown, YAML, frontmatter, references, or code.
+
+The `install_skill` writer rejects managed-source overlap and all links or
+special entries. It retains source descriptors, copies into a private staged
+tree, and uses one no-replace rename as its commit boundary. It does not fetch,
+unpack, parse, or execute skill content.
 
 This prevents ordinary lexical escape and symlink traversal, but it is not a
 general filesystem sandbox. Portable pathname operations are not atomic
@@ -214,8 +226,8 @@ The following remain explicit future work rather than implied guarantees:
 - hardened non-Unix workspace and store construction;
 - a true process sandbox or stronger descendant containment;
 - private/authenticated web destinations and redirect authorization; and
-- managed skill discovery/installation and extension, MCP, ACP, subagent, and
-  SDK authority models.
+- remote or packaged skill discovery/installation and extension, MCP, ACP,
+  subagent, and SDK authority models.
 
 Each subsystem contract is normative for its exact platform, effect, limits,
 and race semantics.
