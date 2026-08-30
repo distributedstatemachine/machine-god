@@ -1945,6 +1945,16 @@ def validate_upstream_evidence(
 
 _LINUX_PREFLIGHT_COMPLETE = False
 _LINUX_PREFLIGHT_LOCK = threading.Lock()
+MAX_LINUX_PROCESS_TABLE_ENTRIES = 65_536
+MAX_LINUX_CONTAINED_PROCESSES = 4_096
+
+
+class LinuxContainmentProcessLimit(RuntimeError):
+    def __init__(self, discovered: Sequence[LinuxProcessInfo]) -> None:
+        self.discovered = tuple(discovered)
+        super().__init__(
+            "Linux descendant set exceeded the containment process limit"
+        )
 
 
 def linux_process_info(pid: int) -> LinuxProcessInfo:
@@ -1968,7 +1978,9 @@ def linux_process_info(pid: int) -> LinuxProcessInfo:
         raise RuntimeError(f"invalid process metadata for PID {pid}") from error
 
 
-def linux_process_table() -> dict[int, LinuxProcessInfo]:
+def linux_process_table(
+    *, max_entries: int = MAX_LINUX_PROCESS_TABLE_ENTRIES
+) -> dict[int, LinuxProcessInfo]:
     """Read the same-user process table without trusting mutable environments."""
 
     proc = Path("/proc")
@@ -1978,28 +1990,89 @@ def linux_process_table() -> dict[int, LinuxProcessInfo]:
         raise RuntimeError("Linux /proc process supervision is unavailable") from error
     processes: dict[int, LinuxProcessInfo] = {}
     try:
-        entries = list(proc.iterdir())
+        numeric_entries = 0
+        for entry in proc.iterdir():
+            if not entry.name.isdigit():
+                continue
+            numeric_entries += 1
+            if numeric_entries > max_entries:
+                raise RuntimeError(
+                    "Linux /proc process table exceeded the containment entry limit"
+                )
+            try:
+                if entry.stat().st_uid != os.getuid():
+                    continue
+                pid = int(entry.name)
+                processes[pid] = linux_process_info(pid)
+            except (FileNotFoundError, ProcessLookupError):
+                continue
+            except PermissionError as error:
+                raise RuntimeError(
+                    f"Linux /proc process metadata is unreadable for same-user PID {entry.name}"
+                ) from error
+            except (IndexError, ValueError) as error:
+                raise RuntimeError(f"invalid process metadata for PID {entry.name}") from error
     except OSError as error:
         raise RuntimeError("Linux /proc process supervision is unavailable") from error
-    for entry in entries:
-        if not entry.name.isdigit():
-            continue
-        try:
-            if entry.stat().st_uid != os.getuid():
-                continue
-            pid = int(entry.name)
-            processes[pid] = linux_process_info(pid)
-        except (FileNotFoundError, ProcessLookupError):
-            continue
-        except PermissionError as error:
-            raise RuntimeError(
-                f"Linux /proc process metadata is unreadable for same-user PID {entry.name}"
-            ) from error
-        except (IndexError, ValueError) as error:
-            raise RuntimeError(f"invalid process metadata for PID {entry.name}") from error
     if os.getpid() not in processes:
         raise RuntimeError("Linux /proc did not report the benchmark supervisor")
     return processes
+
+
+def linux_descendant_processes(
+    table: Mapping[int, LinuxProcessInfo],
+    known_identities: Sequence[tuple[int, int]],
+    root_identity: tuple[int, int] | None,
+    owner_pid: int,
+    baseline_children: set[tuple[int, int]],
+    *,
+    max_processes: int = MAX_LINUX_CONTAINED_PROCESSES,
+) -> list[LinuxProcessInfo]:
+    """Find contained identities with one bounded adjacency build and BFS."""
+
+    children: dict[int, list[LinuxProcessInfo]] = {}
+    adopted: list[LinuxProcessInfo] = []
+    for info in table.values():
+        children.setdefault(info.ppid, []).append(info)
+        identity = (info.pid, info.start_time)
+        if (
+            info.ppid == owner_pid
+            and identity not in baseline_children
+            and info.pid != owner_pid
+        ):
+            adopted.append(info)
+
+    discovered: set[tuple[int, int]] = set()
+    frontier: list[LinuxProcessInfo] = []
+
+    def admit(info: LinuxProcessInfo) -> None:
+        identity = (info.pid, info.start_time)
+        if identity in discovered:
+            return
+        if len(discovered) >= max_processes:
+            raise LinuxContainmentProcessLimit(frontier)
+        discovered.add(identity)
+        frontier.append(info)
+
+    for pid, start_time in known_identities:
+        info = table.get(pid)
+        if info is not None and info.start_time == start_time:
+            admit(info)
+    if root_identity is not None:
+        root_pid, root_start_time = root_identity
+        root = table.get(root_pid)
+        if root is not None and root.start_time == root_start_time:
+            admit(root)
+    for info in adopted:
+        admit(info)
+
+    cursor = 0
+    while cursor < len(frontier):
+        parent = frontier[cursor]
+        cursor += 1
+        for child in children.get(parent.pid, ()):
+            admit(child)
+    return frontier
 
 
 def enable_linux_subreaper() -> None:
@@ -2081,33 +2154,33 @@ class LinuxProcessSupervisor:
     def refresh(self) -> dict[int, LinuxProcessInfo]:
         table = linux_process_table()
         with self._lock:
-            known_pids = {
-                pid
-                for pid, start_time in self._known
-                if (current := table.get(pid)) is not None
-                and current.start_time == start_time
-            }
-            if self.root_identity is not None:
-                root_pid, root_start_time = self.root_identity
-                root = table.get(root_pid)
-                if root is not None and root.start_time == root_start_time:
-                    self._open_pidfd(root)
-                    known_pids.add(root.pid)
-            changed = True
-            while changed:
-                changed = False
-                for info in table.values():
-                    identity = (info.pid, info.start_time)
-                    adopted = (
-                        info.ppid == self.owner_pid
-                        and identity not in self.baseline_children
-                        and info.pid != self.owner_pid
-                    )
-                    if info.ppid in known_pids or adopted:
-                        if identity not in self._known:
-                            self._open_pidfd(info)
-                            known_pids.add(info.pid)
-                            changed = True
+            for identity, descriptor in list(self._known.items()):
+                pid, start_time = identity
+                current = table.get(pid)
+                if current is not None and current.start_time == start_time:
+                    continue
+                try:
+                    os.close(descriptor)
+                except BaseException:
+                    pass
+                del self._known[identity]
+            limit_error: LinuxContainmentProcessLimit | None = None
+            try:
+                descendants = linux_descendant_processes(
+                    table,
+                    tuple(self._known),
+                    self.root_identity,
+                    self.owner_pid,
+                    self.baseline_children,
+                )
+            except LinuxContainmentProcessLimit as error:
+                descendants = error.discovered
+                limit_error = error
+            for info in descendants:
+                if (info.pid, info.start_time) not in self._known:
+                    self._open_pidfd(info)
+            if limit_error is not None:
+                raise limit_error
             return table
 
     def live_pids(self) -> set[int]:

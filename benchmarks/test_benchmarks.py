@@ -3102,10 +3102,150 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         with (
             mock.patch.object(upstream, "linux_process_table", return_value=table),
             mock.patch.object(supervisor, "_open_pidfd") as open_pidfd,
+            mock.patch.object(upstream.os, "close") as close_descriptor,
         ):
             supervisor.refresh()
         open_pidfd.assert_not_called()
-        self.assertEqual(set(supervisor._known), {(100, 10), (200, 20)})
+        self.assertEqual(close_descriptor.call_count, 2)
+        self.assertEqual(supervisor._known, {})
+
+    def test_descendant_discovery_is_one_pass_for_reverse_ordered_scale_chain(self) -> None:
+        class CountingTable(dict[int, LinuxProcessInfo]):
+            def __init__(self, entries: list[tuple[int, LinuxProcessInfo]]) -> None:
+                super().__init__(entries)
+                self.values_calls = 0
+
+            def values(self):  # type: ignore[override]
+                self.values_calls += 1
+                return super().values()
+
+        process_count = 2_048
+        entries = [
+            (
+                100 + offset,
+                LinuxProcessInfo(
+                    100 + offset,
+                    1 if offset == 0 else 99 + offset,
+                    "S",
+                    1_000 + offset,
+                ),
+            )
+            for offset in range(process_count)
+        ]
+        table = CountingTable(list(reversed(entries)))
+        supervisor = object.__new__(LinuxProcessSupervisor)
+        supervisor.root_pid = 100
+        supervisor.root_identity = (100, 1_000)
+        supervisor.owner_pid = 999_999
+        supervisor.baseline_children = set()
+        supervisor._known = {(100, 1_000): 1}
+        supervisor._lock = upstream.threading.Lock()
+
+        def record_open(info: LinuxProcessInfo) -> None:
+            supervisor._known[(info.pid, info.start_time)] = info.pid
+
+        with (
+            mock.patch.object(upstream, "linux_process_table", return_value=table),
+            mock.patch.object(supervisor, "_open_pidfd", record_open),
+        ):
+            observed = supervisor.refresh()
+
+        self.assertIs(observed, table)
+        self.assertEqual(table.values_calls, 1)
+        self.assertEqual(len(supervisor._known), process_count)
+        self.assertEqual(
+            {pid for pid, _start_time in supervisor._known}, set(range(100, 2_148))
+        )
+
+    def test_descendant_discovery_fails_closed_at_declared_cap(self) -> None:
+        table = {
+            100: LinuxProcessInfo(100, 1, "S", 1_000),
+            101: LinuxProcessInfo(101, 100, "S", 1_001),
+            102: LinuxProcessInfo(102, 101, "S", 1_002),
+            103: LinuxProcessInfo(103, 102, "S", 1_003),
+        }
+
+        with self.assertRaisesRegex(RuntimeError, "containment process limit"):
+            upstream.linux_descendant_processes(
+                table,
+                [(100, 1_000)],
+                (100, 1_000),
+                owner_pid=999_999,
+                baseline_children=set(),
+                max_processes=3,
+            )
+
+    def test_refresh_owns_capped_batch_before_reporting_overflow(self) -> None:
+        table = {
+            100: LinuxProcessInfo(100, 1, "S", 1_000),
+            101: LinuxProcessInfo(101, 100, "S", 1_001),
+            102: LinuxProcessInfo(102, 101, "S", 1_002),
+            103: LinuxProcessInfo(103, 102, "S", 1_003),
+        }
+        supervisor = object.__new__(LinuxProcessSupervisor)
+        supervisor.root_pid = 100
+        supervisor.root_identity = (100, 1_000)
+        supervisor.owner_pid = 999_999
+        supervisor.baseline_children = set()
+        supervisor._known = {}
+        supervisor._lock = upstream.threading.Lock()
+        original_discovery = upstream.linux_descendant_processes
+
+        def capped_discovery(*args: object, **kwargs: object):
+            kwargs["max_processes"] = 3
+            return original_discovery(*args, **kwargs)
+
+        def record_open(info: LinuxProcessInfo) -> None:
+            supervisor._known[(info.pid, info.start_time)] = info.pid
+
+        with (
+            mock.patch.object(upstream, "linux_process_table", return_value=table),
+            mock.patch.object(
+                upstream, "linux_descendant_processes", capped_discovery
+            ),
+            mock.patch.object(supervisor, "_open_pidfd", record_open),
+            self.assertRaisesRegex(RuntimeError, "containment process limit"),
+        ):
+            supervisor.refresh()
+
+        self.assertEqual(
+            {pid for pid, _start_time in supervisor._known}, {100, 101, 102}
+        )
+
+    def test_process_table_stops_at_first_entry_over_declared_cap(self) -> None:
+        class FakeEntry:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+            def stat(self):
+                class Metadata:
+                    st_uid = os.getuid()
+
+                return Metadata()
+
+        class FakeProcPath:
+            def __init__(self, _value: object) -> None:
+                pass
+
+            def __truediv__(self, _value: object) -> "FakeProcPath":
+                return self
+
+            def read_text(self, **_kwargs: object) -> str:
+                return ""
+
+            def iterdir(self):
+                return iter(FakeEntry(str(pid)) for pid in range(1, 5))
+
+        def process_info(pid: int) -> LinuxProcessInfo:
+            return LinuxProcessInfo(pid, 0, "S", 1_000 + pid)
+
+        with (
+            mock.patch.object(upstream, "Path", FakeProcPath),
+            mock.patch.object(upstream, "linux_process_info", process_info),
+            mock.patch.object(upstream.os, "getpid", return_value=1),
+            self.assertRaisesRegex(RuntimeError, "containment entry limit"),
+        ):
+            upstream.linux_process_table(max_entries=3)
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "Linux containment regression")
     def test_linux_containment_preflight_fails_closed_without_proc(self) -> None:
