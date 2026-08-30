@@ -55,6 +55,7 @@ mod reference_host;
 mod rename_file;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod root_selection;
+mod runtime_status;
 mod semantic_search;
 mod session_inspection;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -303,6 +304,14 @@ pub use rename_file::{
 pub use root_selection::{
     NativeRootSelection, NativeRootSelectionError, NativeRootSelectionErrorKind,
     PreparedNativeRoots, PreparedNativeRootsError, PreparedNativeRootsErrorKind,
+};
+pub use runtime_status::{
+    MAX_NATIVE_RUNTIME_BUILD_REVISION_BYTES, MAX_NATIVE_RUNTIME_WORKSPACE_PATH_BYTES,
+    NATIVE_RUNTIME_BUILD_CHANNEL, NATIVE_RUNTIME_MISSING_AUTH_HELP, NATIVE_RUNTIME_SANDBOX,
+    NATIVE_RUNTIME_UPDATE_CHANNEL, NativeRuntimeCredentialEnvironment,
+    NativeRuntimeCredentialSource, NativeRuntimeStatus, NativeRuntimeStatusError,
+    NativeRuntimeStatusErrorKind, NativeRuntimeStatusInput, inspect_native_runtime_status,
+    inspect_process_runtime_status,
 };
 pub use semantic_search::{
     MAX_SEMANTIC_SEARCH_CONTENT_READ_ATTEMPTS, MAX_SEMANTIC_SEARCH_DEPTH,
