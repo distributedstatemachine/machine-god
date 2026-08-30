@@ -165,7 +165,13 @@ pub enum TerminalTapeReplayErrorKind {
     OpenFailed,
     /// The opened tape could not be read completely.
     ReadFailed,
-    /// The FXTP header, grid dimensions, or terminal stream was invalid.
+    /// The tape ended before the complete fixed FXTP header.
+    TapeTooShort,
+    /// The complete fixed header did not contain the FXTP v1 magic.
+    BadTapeMagic,
+    /// The declared version bytes extended beyond the tape.
+    TruncatedVersion,
+    /// The FXTP grid dimensions or terminal stream was invalid.
     BadTape,
     /// The explicit golden path could not be written.
     WriteFailed,
@@ -185,6 +191,9 @@ impl TerminalTapeReplayErrorKind {
             Self::FileNotFound => "FileNotFound",
             Self::OpenFailed => "OpenFailed",
             Self::ReadFailed => "ReadFailed",
+            Self::TapeTooShort => "TapeTooShort",
+            Self::BadTapeMagic => "BadTapeMagic",
+            Self::TruncatedVersion => "TruncatedVersion",
             Self::BadTape => "BadTape",
             Self::WriteFailed => "WriteFailed",
             Self::FramesDirFailed => "FramesDirFailed",
@@ -198,6 +207,9 @@ impl TerminalTapeReplayErrorKind {
             Self::FileNotFound => "cannot open tape: FileNotFound",
             Self::OpenFailed => "cannot open tape: OpenFailed",
             Self::ReadFailed => "read failed: ReadFailed",
+            Self::TapeTooShort => "bad tape: TapeTooShort",
+            Self::BadTapeMagic => "bad tape: BadTapeMagic",
+            Self::TruncatedVersion => "bad tape: TruncatedVersion",
             Self::BadTape => "bad tape: BadTape",
             Self::WriteFailed => "write failed: WriteFailed",
             Self::FramesDirFailed => "cannot prepare frames directory: FramesDirFailed",
@@ -362,8 +374,11 @@ struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     fn new(bytes: &'a [u8]) -> Result<Self, TerminalTapeReplayError> {
-        if bytes.len() < FIXED_HEADER_BYTES || &bytes[..MAGIC.len()] != MAGIC {
-            return Err(bad_tape());
+        if bytes.len() < FIXED_HEADER_BYTES {
+            return Err(tape_too_short());
+        }
+        if &bytes[..MAGIC.len()] != MAGIC {
+            return Err(bad_tape_magic());
         }
         let mut position = MAGIC.len();
         let cols = read_u16(bytes, position)?;
@@ -374,8 +389,12 @@ impl<'a> Parser<'a> {
         position += 8;
         let version_len = usize::from(bytes[position]);
         position += 1;
-        let version_end = position.checked_add(version_len).ok_or_else(bad_tape)?;
-        let version = bytes.get(position..version_end).ok_or_else(bad_tape)?;
+        let version_end = position
+            .checked_add(version_len)
+            .ok_or_else(truncated_version)?;
+        let version = bytes
+            .get(position..version_end)
+            .ok_or_else(truncated_version)?;
         Ok(Self {
             bytes,
             position: version_end,
@@ -1093,6 +1112,18 @@ fn map_grid_error(error: TerminalGridError) -> TerminalTapeReplayError {
 
 const fn bad_tape() -> TerminalTapeReplayError {
     TerminalTapeReplayError::new(TerminalTapeReplayErrorKind::BadTape)
+}
+
+const fn tape_too_short() -> TerminalTapeReplayError {
+    TerminalTapeReplayError::new(TerminalTapeReplayErrorKind::TapeTooShort)
+}
+
+const fn bad_tape_magic() -> TerminalTapeReplayError {
+    TerminalTapeReplayError::new(TerminalTapeReplayErrorKind::BadTapeMagic)
+}
+
+const fn truncated_version() -> TerminalTapeReplayError {
+    TerminalTapeReplayError::new(TerminalTapeReplayErrorKind::TruncatedVersion)
 }
 
 const fn resource_limit() -> TerminalTapeReplayError {

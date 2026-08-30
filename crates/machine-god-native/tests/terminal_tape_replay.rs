@@ -105,6 +105,20 @@ fn run(request: TerminalTapeReplayRequest) -> TerminalTapeReplayOutput {
     ready(replay_terminal_tape(request, CancellationToken::new())).expect("replay succeeds")
 }
 
+fn replay_error_for_bytes(
+    label: &str,
+    bytes: &[u8],
+) -> machine_god_native::TerminalTapeReplayError {
+    let directory = TemporaryDirectory::new(label);
+    let path = directory.path().join("invalid.fxtape");
+    fs::write(&path, bytes).expect("write invalid tape");
+    ready(replay_terminal_tape(
+        TerminalTapeReplayRequest::new(path, false, false, None, None),
+        CancellationToken::new(),
+    ))
+    .expect_err("invalid tape fails")
+}
+
 #[cfg(unix)]
 fn make_fifo(path: &Path) {
     let status = Command::new("mkfifo")
@@ -193,6 +207,48 @@ fn plain_json_unknown_and_incomplete_outputs_match_fx_contract() {
         json.stderr(),
         b"machine-god replay: ignored incomplete final tape frame\n"
     );
+}
+
+#[test]
+fn malformed_header_errors_preserve_fx_precedence_codes_and_messages() {
+    let short_wrong_magic = [b'x'; 17];
+    let short = replay_error_for_bytes("short-header", &short_wrong_magic);
+    assert_eq!(short.kind(), TerminalTapeReplayErrorKind::TapeTooShort);
+    assert_eq!(short.code(), "TapeTooShort");
+    assert_eq!(short.message(), "bad tape: TapeTooShort");
+    assert_eq!(short.to_string(), "bad tape: TapeTooShort");
+
+    let mut wrong_magic_and_truncated_version = [0_u8; 18];
+    wrong_magic_and_truncated_version[17] = u8::MAX;
+    let bad_magic = replay_error_for_bytes(
+        "bad-magic-before-version",
+        &wrong_magic_and_truncated_version,
+    );
+    assert_eq!(bad_magic.kind(), TerminalTapeReplayErrorKind::BadTapeMagic);
+    assert_eq!(bad_magic.code(), "BadTapeMagic");
+    assert_eq!(bad_magic.message(), "bad tape: BadTapeMagic");
+    assert_eq!(bad_magic.to_string(), "bad tape: BadTapeMagic");
+
+    let mut truncated_version = Vec::new();
+    truncated_version.extend_from_slice(b"FXTP\x01");
+    truncated_version.extend_from_slice(&1_u16.to_le_bytes());
+    truncated_version.extend_from_slice(&1_u16.to_le_bytes());
+    truncated_version.extend_from_slice(&0_i64.to_le_bytes());
+    truncated_version.push(2);
+    truncated_version.push(b'v');
+    let truncated = replay_error_for_bytes("truncated-version", &truncated_version);
+    assert_eq!(
+        truncated.kind(),
+        TerminalTapeReplayErrorKind::TruncatedVersion
+    );
+    assert_eq!(truncated.code(), "TruncatedVersion");
+    assert_eq!(truncated.message(), "bad tape: TruncatedVersion");
+    assert_eq!(truncated.to_string(), "bad tape: TruncatedVersion");
+
+    let invalid_grid = replay_error_for_bytes("invalid-grid", &tape(0, 1, b"v", &[]));
+    assert_eq!(invalid_grid.kind(), TerminalTapeReplayErrorKind::BadTape);
+    assert_eq!(invalid_grid.code(), "BadTape");
+    assert_eq!(invalid_grid.message(), "bad tape: BadTape");
 }
 
 #[test]

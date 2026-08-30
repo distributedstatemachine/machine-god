@@ -57,11 +57,18 @@ version_length   u8
 version          version_length bytes
 ```
 
-Zero dimensions, over-bound dimensions, invalid grid size, bad magic, a short
-fixed header, or a short version field are fatal. The complete tape file must
-be strictly smaller than 64 MiB; a file of exactly 64 MiB is over the limit.
-The version field is arbitrary bytes and is JSON-string encoded for structured
-output.
+A tape shorter than the 18-byte fixed header fails with `TapeTooShort`, even
+when its available magic bytes are wrong. A fixed-or-longer tape with the wrong
+magic fails with `BadTapeMagic`, before inspecting its declared version. A
+valid-magic header whose declared version extends beyond the available bytes
+fails with `TruncatedVersion`. Each stable code has the redacted native message
+`bad tape: <Code>`. Zero dimensions, over-bound dimensions, invalid grid size,
+or an invalid terminal stream remain `BadTape`. The complete tape file must be
+strictly smaller than 64 MiB; a file of exactly 64 MiB is over the limit.
+
+The version field is arbitrary bytes. Structured output encodes it as a JSON
+string when it is valid UTF-8 and otherwise as a numeric array containing each
+byte value.
 
 Every following frame has this shape:
 
@@ -170,7 +177,9 @@ Per-frame JSON fixes key order
 Size contains `cols,rows`; cursor contains one-based `row,col` and `visible`.
 Footer candidates identify a prompt-like row between divider-like rows using
 zero-based visible-row indices. Visible markers retain encounter order and
-include each nonempty marker payload currently present in the plain grid.
+include each nonempty marker payload currently present in the plain grid. Like
+the version field, an emitted marker payload is a JSON string when it is valid
+UTF-8 and otherwise a numeric array containing each byte value.
 `manifest.json` fixes key order
 `cols,rows,epoch_ms,version,frame_count,resize_count,stdout_bytes,frames_dir`,
 where `frames_dir` is the literal string `frames`.
