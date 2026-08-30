@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 from contextlib import contextmanager, redirect_stderr
+import fcntl
 import hashlib
 import io
+import os
 from pathlib import Path
+import shutil
+import signal
 import stat
+import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -87,7 +93,9 @@ class ProvisionZigTests(unittest.TestCase):
             archive = root / "archive.tar.xz"
             archive.write_bytes(b"fixture")
 
-            def fake_extract(_archive: Path, destination: Path) -> None:
+            def fake_extract(
+                _archive: Path, destination: Path, _run: object = None
+            ) -> None:
                 destination.mkdir()
                 executable = destination / "zig"
                 executable.write_text("#!/bin/sh\nprintf '0.16.0\\n'\n", encoding="utf-8")
@@ -116,7 +124,9 @@ class ProvisionZigTests(unittest.TestCase):
             archive = root / "archive.tar.xz"
             archive.write_bytes(b"fixture")
 
-            def fake_extract(_archive: Path, destination: Path) -> None:
+            def fake_extract(
+                _archive: Path, destination: Path, _run: object = None
+            ) -> None:
                 destination.mkdir()
                 executable = destination / "zig"
                 executable.write_text("#!/bin/sh\nprintf '0.14.1\\n'\n", encoding="utf-8")
@@ -151,7 +161,9 @@ class ProvisionZigTests(unittest.TestCase):
                     self.fail("failed extraction was yielded")
             self.assertEqual(list((root / "active").iterdir()), [])
 
-            def fake_extract(_archive: Path, destination: Path) -> None:
+            def fake_extract(
+                _archive: Path, destination: Path, _run: object = None
+            ) -> None:
                 destination.mkdir()
                 executable = destination / "zig"
                 executable.write_text(
@@ -174,6 +186,106 @@ class ProvisionZigTests(unittest.TestCase):
                 with provision_zig.provisioned_zig(root, spec):
                     self.fail("failed marker write was yielded")
             self.assertEqual(list((root / "active").iterdir()), [])
+
+    def test_provisioner_prunes_stale_but_preserves_live_leased_runs(self) -> None:
+        spec = provision_zig.host_spec("Linux", "x86_64")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            active = root / "active"
+            active.mkdir()
+            stale = active / "zig-stale"
+            stale.mkdir()
+            (stale / provision_zig.LEASE_NAME).write_text("stale", encoding="utf-8")
+            live = active / "zig-live"
+            live.mkdir()
+            live_lease = provision_zig.open_private_file(
+                live / provision_zig.LEASE_NAME, exclusive=True
+            )
+            fcntl.flock(live_lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            archive_root = root / "archives"
+            archive_root.mkdir()
+            partial = archive_root / f".{spec.archive_name}.interrupted"
+            partial.write_bytes(b"partial")
+            archive = root / "archive.tar.xz"
+            archive.write_bytes(b"fixture")
+
+            def fake_extract(
+                _archive: Path, destination: Path, _run: object = None
+            ) -> None:
+                destination.mkdir()
+                executable = destination / "zig"
+                executable.write_text(
+                    "#!/bin/sh\nprintf '0.16.0\\n'\n", encoding="utf-8"
+                )
+                executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+
+            try:
+                with (
+                    mock.patch.object(
+                        provision_zig, "ensure_archive", return_value=archive
+                    ),
+                    mock.patch.object(
+                        provision_zig, "extract_archive", side_effect=fake_extract
+                    ),
+                ):
+                    with provision_zig.provisioned_zig(root, spec):
+                        self.assertFalse(stale.exists())
+                        self.assertFalse(partial.exists())
+                        self.assertTrue(live.exists())
+                    self.assertTrue(live.exists())
+                    os.close(live_lease)
+                    live_lease = -1
+                    with provision_zig.provisioned_zig(root, spec):
+                        self.assertFalse(live.exists())
+            finally:
+                if live_lease >= 0:
+                    os.close(live_lease)
+            self.assertEqual(list(active.iterdir()), [])
+
+    def test_wrapper_sigterm_reaps_child_and_unwinds_zig_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            owned = root / "active/owned"
+
+            @contextmanager
+            def fake_provisioned_zig(
+                _cache: Path, _spec: object, *, run: object
+            ):
+                self.assertIsNotNone(run)
+                owned.mkdir(parents=True)
+                try:
+                    yield root / "zig"
+                finally:
+                    shutil.rmtree(owned)
+
+            child = [
+                sys.executable,
+                "-c",
+                (
+                    "import os,signal,time;"
+                    "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+                    "os.kill(os.getppid(),signal.SIGTERM);"
+                    "time.sleep(60)"
+                ),
+            ]
+            started = time.monotonic()
+            with (
+                mock.patch.object(with_zig, "host_spec", return_value=object()),
+                mock.patch.object(
+                    with_zig,
+                    "provisioned_zig",
+                    side_effect=fake_provisioned_zig,
+                ),
+                mock.patch.object(with_zig, "upstream_command", return_value=child),
+                mock.patch.object(with_zig, "SIGNAL_GRACE_SECONDS", 0.1),
+                mock.patch.object(with_zig, "KILL_GRACE_SECONDS", 1.0),
+            ):
+                exit_code = with_zig.main(
+                    ["--cache-root", str(root / "cache"), "--", "--runs", "30"]
+                )
+            self.assertEqual(exit_code, 128 + signal.SIGTERM)
+            self.assertFalse(owned.exists())
+            self.assertLess(time.monotonic() - started, 3.0)
 
     def test_wrapper_binds_ephemeral_zig_and_forwards_arguments(self) -> None:
         zig = Path("/private/toolchain/zig")
@@ -355,7 +467,10 @@ class ProvisionZigTests(unittest.TestCase):
             live = False
 
             @contextmanager
-            def fake_provisioned_zig(_cache: Path, _spec: object):
+            def fake_provisioned_zig(
+                _cache: Path, _spec: object, *, run: object
+            ):
+                self.assertIsNotNone(run)
                 nonlocal live
                 live = True
                 try:
@@ -363,10 +478,16 @@ class ProvisionZigTests(unittest.TestCase):
                 finally:
                     live = False
 
-            def fake_run(_command: list[str], *, check: bool) -> mock.Mock:
-                self.assertTrue(live)
-                self.assertFalse(check)
-                return mock.Mock(returncode=0)
+            class FakeSupervisor:
+                def __init__(self, owner: ProvisionZigTests) -> None:
+                    self.owner = owner
+                    self.calls = 0
+
+                def run(self, _command: list[str], *, check: bool) -> mock.Mock:
+                    self.owner.assertTrue(live)
+                    self.owner.assertFalse(check)
+                    self.calls += 1
+                    return mock.Mock(returncode=0)
 
             arguments = [
                 "--cache-root",
@@ -393,6 +514,8 @@ class ProvisionZigTests(unittest.TestCase):
                 "--upstream-dir",
                 str(upstream),
             ]
+            supervisor = FakeSupervisor(self)
+            options = with_zig.parse_arguments(arguments)
             with (
                 mock.patch.object(with_zig, "host_spec", return_value=object()),
                 mock.patch.object(
@@ -400,11 +523,10 @@ class ProvisionZigTests(unittest.TestCase):
                     "provisioned_zig",
                     side_effect=fake_provisioned_zig,
                 ),
-                mock.patch.object(with_zig.subprocess, "run", side_effect=fake_run) as run,
             ):
-                self.assertEqual(with_zig.main(arguments), 0)
+                self.assertEqual(with_zig.run_benchmark(options, supervisor), 0)
             self.assertFalse(live)
-            self.assertEqual(run.call_count, 2)
+            self.assertEqual(supervisor.calls, 2)
 
 
 if __name__ == "__main__":

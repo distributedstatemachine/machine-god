@@ -7,6 +7,7 @@ extraction only for the lifetime of the ``provisioned_zig`` context.
 from __future__ import annotations
 
 from contextlib import contextmanager
+import fcntl
 import hashlib
 import json
 import os
@@ -15,9 +16,11 @@ import platform
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
+import time
 from dataclasses import dataclass
-from typing import Iterator
+from typing import Callable, Iterator
 
 
 ZIG_VERSION = "0.16.0"
@@ -25,6 +28,12 @@ DOWNLOAD_BASE = f"https://ziglang.org/download/{ZIG_VERSION}"
 MARKER_NAME = ".machine-god-zig.json"
 DOWNLOAD_TIMEOUT_SECONDS = 300
 DOWNLOAD_RETRIES = 3
+CACHE_LOCK_NAME = ".machine-god-zig.lock"
+LEASE_NAME = ".machine-god-zig.lease"
+CACHE_LOCK_TIMEOUT_SECONDS = 30.0
+CACHE_LOCK_RETRY_SECONDS = 0.05
+
+CommandRunner = Callable[..., subprocess.CompletedProcess]
 
 
 @dataclass(frozen=True)
@@ -90,9 +99,11 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def executable_version(executable: Path) -> str | None:
+def executable_version(
+    executable: Path, run: CommandRunner = subprocess.run
+) -> str | None:
     try:
-        completed = subprocess.run(
+        completed = run(
             [str(executable), "version"],
             check=False,
             stdout=subprocess.PIPE,
@@ -131,7 +142,9 @@ def validated_archive(archive: Path, spec: ToolchainSpec) -> Path | None:
     return archive.resolve(strict=True)
 
 
-def download_archive(destination: Path, spec: ToolchainSpec) -> None:
+def download_archive(
+    destination: Path, spec: ToolchainSpec, run: CommandRunner = subprocess.run
+) -> None:
     curl = shutil.which("curl")
     if curl is None:
         raise ProvisionError("curl is required to provision the pinned Zig toolchain")
@@ -168,7 +181,7 @@ def download_archive(destination: Path, spec: ToolchainSpec) -> None:
         spec.url,
     ]
     try:
-        completed = subprocess.run(command, check=False, timeout=930)
+        completed = run(command, check=False, timeout=930)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise ProvisionError(f"could not download {spec.url}: {error}") from error
     if completed.returncode != 0:
@@ -185,7 +198,9 @@ def download_archive(destination: Path, spec: ToolchainSpec) -> None:
         )
 
 
-def extract_archive(archive: Path, destination: Path) -> None:
+def extract_archive(
+    archive: Path, destination: Path, run: CommandRunner = subprocess.run
+) -> None:
     tar = shutil.which("tar")
     if tar is None:
         raise ProvisionError("tar with xz support is required to provision Zig")
@@ -201,7 +216,7 @@ def extract_archive(archive: Path, destination: Path) -> None:
         "--strip-components=1",
     ]
     try:
-        completed = subprocess.run(command, check=False, timeout=120)
+        completed = run(command, check=False, timeout=120)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise ProvisionError(f"could not extract the Zig archive: {error}") from error
     if completed.returncode != 0:
@@ -215,7 +230,9 @@ def write_marker(install_dir: Path, spec: ToolchainSpec) -> None:
     )
 
 
-def ensure_archive(install_root: Path, spec: ToolchainSpec) -> Path:
+def ensure_archive(
+    install_root: Path, spec: ToolchainSpec, run: CommandRunner = subprocess.run
+) -> Path:
     archive_root = install_root / "archives"
     archive_root.mkdir(mode=0o700, parents=True, exist_ok=True)
     archive = archive_root / spec.archive_name
@@ -233,7 +250,7 @@ def ensure_archive(install_root: Path, spec: ToolchainSpec) -> Path:
     os.close(descriptor)
     temporary = Path(temporary_name)
     try:
-        download_archive(temporary, spec)
+        download_archive(temporary, spec, run)
         try:
             os.link(temporary, archive)
         except FileExistsError:
@@ -249,22 +266,117 @@ def ensure_archive(install_root: Path, spec: ToolchainSpec) -> Path:
         temporary.unlink(missing_ok=True)
 
 
+def open_private_file(path: Path, *, exclusive: bool = False) -> int:
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    if exclusive:
+        flags |= os.O_EXCL
+    descriptor = os.open(path, flags, 0o600)
+    os.fchmod(descriptor, 0o600)
+    return descriptor
+
+
 @contextmanager
-def provisioned_zig(cache_root: Path, spec: ToolchainSpec) -> Iterator[Path]:
-    """Yield one fresh extraction and remove it on every exit path."""
+def cache_lock(cache_root: Path) -> Iterator[None]:
+    descriptor = open_private_file(cache_root / CACHE_LOCK_NAME)
+    deadline = time.monotonic() + CACHE_LOCK_TIMEOUT_SECONDS
+    try:
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise ProvisionError("timed out waiting for the Zig cache lock") from None
+                time.sleep(CACHE_LOCK_RETRY_SECONDS)
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+def prune_partial_archives(cache_root: Path, spec: ToolchainSpec) -> None:
+    archive_root = cache_root / "archives"
+    archive_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    prefix = f".{spec.archive_name}."
+    for candidate in archive_root.iterdir():
+        if not candidate.name.startswith(prefix):
+            continue
+        status = candidate.lstat()
+        if stat.S_ISDIR(status.st_mode):
+            raise ProvisionError("unexpected Zig archive temporary directory")
+        candidate.unlink()
+
+
+def prune_stale_active(active_root: Path) -> None:
+    for candidate in sorted(active_root.iterdir()):
+        if not candidate.name.startswith("zig-"):
+            continue
+        status = candidate.lstat()
+        if not stat.S_ISDIR(status.st_mode) or stat.S_ISLNK(status.st_mode):
+            raise ProvisionError("unexpected Zig active-cache entry")
+        lease_path = candidate / LEASE_NAME
+        try:
+            descriptor = open_private_file(lease_path)
+        except FileNotFoundError:
+            shutil.rmtree(candidate)
+            continue
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                continue
+            shutil.rmtree(candidate)
+        finally:
+            os.close(descriptor)
+
+
+def create_active_lease(active_root: Path, spec: ToolchainSpec) -> tuple[Path, int]:
+    run_directory = Path(
+        tempfile.mkdtemp(prefix=f"zig-{ZIG_VERSION}-{spec.target}-", dir=active_root)
+    )
+    try:
+        descriptor = open_private_file(run_directory / LEASE_NAME, exclusive=True)
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return run_directory, descriptor
+    except BaseException:
+        shutil.rmtree(run_directory, ignore_errors=True)
+        raise
+
+
+@contextmanager
+def provisioned_zig(
+    cache_root: Path,
+    spec: ToolchainSpec,
+    run: CommandRunner = subprocess.run,
+) -> Iterator[Path]:
+    """Yield one leased fresh extraction and recover stale owned entries."""
 
     cache_root = cache_root.resolve()
     cache_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    archive = ensure_archive(cache_root, spec)
-    active_root = cache_root / "active"
-    active_root.mkdir(mode=0o700, exist_ok=True)
-    with tempfile.TemporaryDirectory(
-        prefix=f"zig-{ZIG_VERSION}-{spec.target}-", dir=active_root
-    ) as run_directory:
-        install_dir = Path(run_directory) / "toolchain"
-        extract_archive(archive, install_dir)
+    with cache_lock(cache_root):
+        prune_partial_archives(cache_root, spec)
+        archive = ensure_archive(cache_root, spec, run)
+        active_root = cache_root / "active"
+        active_root.mkdir(mode=0o700, exist_ok=True)
+        prune_stale_active(active_root)
+        run_directory, lease_descriptor = create_active_lease(active_root, spec)
+    try:
+        install_dir = run_directory / "toolchain"
+        extract_archive(archive, install_dir, run)
         executable = install_dir / "zig"
-        if executable_version(executable) != ZIG_VERSION:
+        if executable_version(executable, run) != ZIG_VERSION:
             raise ProvisionError(f"extracted executable is not Zig {ZIG_VERSION}")
         write_marker(install_dir, spec)
         yield executable.resolve(strict=True)
+    finally:
+        primary_failure = sys.exc_info()[0] is not None
+        try:
+            shutil.rmtree(run_directory)
+        except OSError as error:
+            if not primary_failure:
+                raise ProvisionError("could not remove the temporary Zig toolchain") from error
+        finally:
+            os.close(lease_descriptor)

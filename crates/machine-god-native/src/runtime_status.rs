@@ -381,7 +381,7 @@ pub fn inspect_native_runtime_status(
 pub fn inspect_process_runtime_status() -> Result<NativeRuntimeStatus, NativeRuntimeStatusError> {
     inspect_process_runtime_status_with(
         load_process_config,
-        NativeRuntimeCredentialEnvironment::from_process(),
+        NativeRuntimeCredentialEnvironment::from_process,
         std::env::current_dir,
         |path| fs::canonicalize(path),
         option_env!("MACHINE_GOD_BUILD_REVISION"),
@@ -390,7 +390,7 @@ pub fn inspect_process_runtime_status() -> Result<NativeRuntimeStatus, NativeRun
 
 fn inspect_process_runtime_status_with(
     load_config: impl FnOnce() -> Result<LoadedNativeConfig, super::NativeConfigError>,
-    credentials: NativeRuntimeCredentialEnvironment,
+    capture_credentials: impl FnOnce() -> NativeRuntimeCredentialEnvironment,
     current_directory: impl FnOnce() -> std::io::Result<PathBuf>,
     canonicalize: impl FnOnce(&Path) -> std::io::Result<PathBuf>,
     build_revision: Option<&str>,
@@ -398,6 +398,7 @@ fn inspect_process_runtime_status_with(
     let loaded = load_config().map_err(|error| {
         NativeRuntimeStatusError::new(NativeRuntimeStatusErrorKind::Configuration(error.kind()))
     })?;
+    let credentials = capture_credentials();
     let current_directory = current_directory().map_err(|_| {
         NativeRuntimeStatusError::new(NativeRuntimeStatusErrorKind::WorkspaceUnavailable)
     })?;
@@ -549,7 +550,7 @@ const fn valid_build_revision(revision: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::ffi::OsString;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -777,17 +778,26 @@ mod tests {
         let environment = NativeEnvironment::new(None, None, None);
         let current_calls = Cell::new(0usize);
         let canonical_calls = Cell::new(0usize);
+        let call_order = RefCell::new(Vec::new());
         let lexical = temporary.path().join("child").join("..");
         let canonical = temporary.path().to_path_buf();
 
         let status = inspect_process_runtime_status_with(
-            || load_native_config(&environment),
-            credentials(None, None),
             || {
+                call_order.borrow_mut().push("config");
+                load_native_config(&environment)
+            },
+            || {
+                call_order.borrow_mut().push("credentials");
+                credentials(None, None)
+            },
+            || {
+                call_order.borrow_mut().push("current_directory");
                 current_calls.set(current_calls.get() + 1);
                 Ok(lexical.clone())
             },
             |observed| {
+                call_order.borrow_mut().push("canonicalize");
                 canonical_calls.set(canonical_calls.get() + 1);
                 assert_eq!(observed, lexical);
                 Ok(canonical.clone())
@@ -798,6 +808,10 @@ mod tests {
 
         assert_eq!(current_calls.get(), 1);
         assert_eq!(canonical_calls.get(), 1);
+        assert_eq!(
+            call_order.into_inner(),
+            ["config", "credentials", "current_directory", "canonicalize"]
+        );
         assert_eq!(status.model(), AI_GATEWAY_DEFAULT_MODEL);
         assert_eq!(status.permission_mode(), PermissionMode::Ask);
         assert_eq!(status.workspace(), temporary.path());
@@ -818,7 +832,7 @@ mod tests {
 
         let status = inspect_process_runtime_status_with(
             || load_native_config(&environment),
-            credentials(None, Some("api-key")),
+            || credentials(None, Some("api-key")),
             || Ok(temporary.path().to_path_buf()),
             |path| Ok(path.to_path_buf()),
             None,
@@ -841,10 +855,18 @@ mod tests {
         )
         .unwrap();
         let environment = NativeEnvironment::new(Some(config_root.into_os_string()), None, None);
+        let credential_calls = Cell::new(0usize);
+        let current_directory_calls = Cell::new(0usize);
         let error = inspect_process_runtime_status_with(
             || load_native_config(&environment),
-            credentials(None, None),
-            || Ok(temporary.path().to_path_buf()),
+            || {
+                credential_calls.set(credential_calls.get() + 1);
+                credentials(None, None)
+            },
+            || {
+                current_directory_calls.set(current_directory_calls.get() + 1);
+                Ok(temporary.path().to_path_buf())
+            },
             |path| Ok(path.to_path_buf()),
             None,
         )
@@ -853,11 +875,13 @@ mod tests {
             error.kind(),
             NativeRuntimeStatusErrorKind::Configuration(NativeConfigErrorKind::InvalidFormat)
         );
+        assert_eq!(credential_calls.get(), 0);
+        assert_eq!(current_directory_calls.get(), 0);
         assert!(!format!("{error:?} {error}").contains("HIDDEN"));
 
         let error = inspect_process_runtime_status_with(
             || load_native_config(&NativeEnvironment::new(None, None, None)),
-            credentials(None, None),
+            || credentials(None, None),
             || Ok(temporary.path().to_path_buf()),
             |_| Err(std::io::Error::other("/secret/workspace")),
             None,

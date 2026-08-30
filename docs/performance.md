@@ -56,6 +56,12 @@ hosts. Keeping the toolchain outside the checkout prevents its large ignored
 library tree from entering repository-cleanliness scans. Each run re-hashes the
 retained official archive, extracts a fresh toolchain, passes that executable
 explicitly to the harness, and removes the extraction on success or failure.
+The wrapper forwards `SIGHUP`, `SIGINT`, and `SIGTERM` to the active child
+process group, bounds graceful reaping before kill escalation, and then unwinds
+the extraction context. A bounded-wait cache coordination lock serializes
+archive publication and stale-state recovery, while a per-run lease lets
+subsequent invocations remove interrupted partial downloads and stale
+extractions without deleting an extraction owned by a concurrent live run.
 When post-collection provenance validation is requested, the wrapper retains
 the toolchain through that check, binds the evidence and binary paths to that
 same collection, and removes it afterward. The wrapper exclusively owns the

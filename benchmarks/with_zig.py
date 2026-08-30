@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -30,6 +32,122 @@ VALIDATED_UPSTREAM_OPTIONS = (
     "--scratch-dir",
     "--upstream-dir",
 )
+FORWARDED_SIGNALS = tuple(
+    candidate
+    for candidate in (
+        getattr(signal, "SIGHUP", None),
+        signal.SIGINT,
+        signal.SIGTERM,
+    )
+    if candidate is not None
+)
+SIGNAL_GRACE_SECONDS = 5.0
+KILL_GRACE_SECONDS = 5.0
+
+
+class CaughtSignal(BaseException):
+    def __init__(self, signum: int) -> None:
+        self.signum = signum
+
+
+class ChildSupervisor:
+    def __init__(self) -> None:
+        self.child: subprocess.Popen | None = None
+        self.caught_signal: int | None = None
+
+    def forward(self, signum: int) -> None:
+        child = self.child
+        if child is None or child.poll() is not None:
+            return
+        try:
+            os.killpg(child.pid, signum)
+        except ProcessLookupError:
+            pass
+
+    def handle_signal(self, signum: int, _frame: object) -> None:
+        self.forward(signum)
+        if self.caught_signal is None:
+            self.caught_signal = signum
+            raise CaughtSignal(signum)
+
+    @contextmanager
+    def signal_handlers(self):
+        previous = {signum: signal.getsignal(signum) for signum in FORWARDED_SIGNALS}
+        try:
+            for signum in FORWARDED_SIGNALS:
+                signal.signal(signum, self.handle_signal)
+            yield
+        finally:
+            for signum, handler in previous.items():
+                signal.signal(signum, handler)
+
+    def terminate_and_reap(self, child: subprocess.Popen, signum: int) -> None:
+        self.forward(signum)
+        try:
+            child.communicate(timeout=SIGNAL_GRACE_SECONDS)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            child.communicate(timeout=KILL_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait(timeout=KILL_GRACE_SECONDS)
+
+    def run(
+        self,
+        command: Sequence[str],
+        *,
+        check: bool = False,
+        timeout: float | None = None,
+        stdout: object = None,
+        stderr: object = None,
+        text: bool = False,
+    ) -> subprocess.CompletedProcess:
+        if self.child is not None:
+            raise RuntimeError("the Zig wrapper attempted overlapping child processes")
+        child: subprocess.Popen | None = None
+        try:
+            previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, FORWARDED_SIGNALS)
+            try:
+                child = subprocess.Popen(
+                    command,
+                    stdout=stdout,
+                    stderr=stderr,
+                    text=text,
+                    start_new_session=True,
+                )
+                self.child = child
+            finally:
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+            try:
+                captured_stdout, captured_stderr = child.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                child.communicate(timeout=KILL_GRACE_SECONDS)
+                raise
+        except CaughtSignal as caught:
+            if child is not None:
+                self.terminate_and_reap(child, caught.signum)
+            raise
+        finally:
+            self.child = None
+        completed = subprocess.CompletedProcess(
+            command,
+            child.returncode,
+            captured_stdout,
+            captured_stderr,
+        )
+        if check:
+            completed.check_returncode()
+        return completed
 
 
 def default_cache_root() -> Path:
@@ -163,19 +281,29 @@ def validation_command(options: argparse.Namespace) -> list[str]:
     ]
 
 
+def run_benchmark(options: argparse.Namespace, supervisor: ChildSupervisor) -> int:
+    with provisioned_zig(
+        options.cache_root, host_spec(), run=supervisor.run
+    ) as zig:
+        completed = supervisor.run(
+            upstream_command(zig, options.upstream_arguments), check=False
+        )
+        if completed.returncode == 0 and options.validate_evidence is not None:
+            completed = supervisor.run(validation_command(options), check=False)
+    return completed.returncode if 0 <= completed.returncode <= 125 else 1
+
+
 def main(arguments: Sequence[str] | None = None) -> int:
     options = parse_arguments(sys.argv[1:] if arguments is None else arguments)
+    supervisor = ChildSupervisor()
     try:
-        with provisioned_zig(options.cache_root, host_spec()) as zig:
-            completed = subprocess.run(
-                upstream_command(zig, options.upstream_arguments), check=False
-            )
-            if completed.returncode == 0 and options.validate_evidence is not None:
-                completed = subprocess.run(validation_command(options), check=False)
+        with supervisor.signal_handlers():
+            return run_benchmark(options, supervisor)
+    except CaughtSignal as caught:
+        return 128 + caught.signum
     except (OSError, ProvisionError) as error:
         print(f"could not run pinned upstream benchmark: {error}", file=sys.stderr)
         return 1
-    return completed.returncode if 0 <= completed.returncode <= 125 else 1
 
 
 if __name__ == "__main__":
