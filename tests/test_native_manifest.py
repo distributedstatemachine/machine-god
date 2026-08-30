@@ -575,6 +575,8 @@ class NativeManifestTests(unittest.TestCase):
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
         unsupported_job = """  unsupported-native-tools:
     name: Unsupported native tools (FreeBSD)
+    needs: change-classification
+    if: ${{ needs.change-classification.outputs.full == 'true' }}
     runs-on: ubuntu-24.04
 """
         install_command = (
