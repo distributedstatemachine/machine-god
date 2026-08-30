@@ -120,7 +120,10 @@ pub(super) fn utf8_sequence_len(first: u8) -> Option<usize> {
         0x00..=0x7f => Some(1),
         0xc2..=0xdf => Some(2),
         0xe0..=0xef => Some(3),
-        0xf0..=0xf4 => Some(4),
+        // Pinned Zig classifies all `11110xxx` prefixes as four-byte
+        // sequences here. Scalar validity is checked separately by the
+        // decoder after the complete sequence has been collected.
+        0xf0..=0xf7 => Some(4),
         _ => None,
     }
 }
@@ -270,5 +273,19 @@ mod tests {
                 codepoint: 0xfffd,
             }
         );
+    }
+
+    #[test]
+    fn non_scalar_four_byte_prefixes_keep_the_pinned_sequence_length() {
+        for prefix in 0xf5..=0xf7 {
+            assert_eq!(utf8_sequence_len(prefix), Some(4));
+            assert_eq!(
+                decode_next_rune(&[prefix, 0x80, 0x80, 0x80], 0),
+                DecodedRune {
+                    len: 1,
+                    codepoint: 0xfffd,
+                }
+            );
+        }
     }
 }

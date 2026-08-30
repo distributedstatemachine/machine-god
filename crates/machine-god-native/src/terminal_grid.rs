@@ -7,6 +7,8 @@
 // projection; their control sequences are still consumed without leaking.
 
 use super::terminal_display_width::{decode_next_rune, display_unit_at, utf8_sequence_len};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 const MAX_DIMENSION: u16 = 4096;
 const MAX_RENDER_BYTES: usize = 8 * 1024 * 1024;
@@ -85,7 +87,6 @@ struct SavedScreen {
     cursor_col: u16,
     autowrap: bool,
     pending_wrap: bool,
-    cursor_visible: bool,
     scroll_top: u16,
     scroll_bottom: u16,
     origin_mode: bool,
@@ -124,7 +125,8 @@ pub(crate) struct TerminalGrid {
     saved_cursor: Option<SavedCursor>,
     saved_normal_screen: Option<SavedScreen>,
     last_printable_idx: Option<usize>,
-    suffix_pool: Vec<Vec<u8>>,
+    suffix_pool: Vec<Arc<[u8]>>,
+    suffix_index: HashMap<Arc<[u8]>, u32>,
     suffix_pool_bytes: usize,
     state: ParserState,
     csi_params: [u16; MAX_CSI_PARAMS],
@@ -168,6 +170,7 @@ impl TerminalGrid {
             saved_normal_screen: None,
             last_printable_idx: None,
             suffix_pool: Vec::new(),
+            suffix_index: HashMap::new(),
             suffix_pool_bytes: 0,
             state: ParserState::Normal,
             csi_params: [0; MAX_CSI_PARAMS],
@@ -552,7 +555,7 @@ impl TerminalGrid {
                 self.move_tabs_forward(1);
                 return Ok(1);
             }
-            0x00..=0x1f | 0x7f => {
+            0x00..=0x1f => {
                 self.last_printable_idx = None;
                 return Ok(1);
             }
@@ -827,7 +830,6 @@ impl TerminalGrid {
             cursor_col: self.cursor_col,
             autowrap: self.autowrap,
             pending_wrap: self.pending_wrap,
-            cursor_visible: self.cursor_visible,
             scroll_top: self.scroll_top,
             scroll_bottom: self.scroll_bottom,
             origin_mode: self.origin_mode,
@@ -859,7 +861,6 @@ impl TerminalGrid {
         self.cursor_col = saved.cursor_col;
         self.autowrap = saved.autowrap;
         self.pending_wrap = saved.pending_wrap;
-        self.cursor_visible = saved.cursor_visible;
         self.scroll_top = saved.scroll_top;
         self.scroll_bottom = saved.scroll_bottom;
         self.origin_mode = saved.origin_mode;
@@ -888,6 +889,7 @@ impl TerminalGrid {
         self.utf8_len = 0;
         self.utf8_expected = 0;
         self.suffix_pool.clear();
+        self.suffix_index.clear();
         self.suffix_pool_bytes = 0;
         initialize_tab_stops(&mut self.tab_stops);
         self.cancel_control_sequence();
@@ -1133,13 +1135,11 @@ impl TerminalGrid {
             .len()
             .checked_add(bytes.len())
             .ok_or(TerminalGridError::CombiningPoolCapacityExceeded)?;
-        if let Some(index) = self.suffix_pool.iter().position(|candidate| {
-            candidate.len() == combined_len
-                && candidate.starts_with(existing)
-                && candidate[existing.len()..] == *bytes
-        }) {
-            self.cells[cell_index].suffix_id = u32::try_from(index + 1)
-                .map_err(|_| TerminalGridError::CombiningPoolCapacityExceeded)?;
+        let mut combined = Vec::with_capacity(combined_len);
+        combined.extend_from_slice(existing);
+        combined.extend_from_slice(bytes);
+        if let Some(&id) = self.suffix_index.get(combined.as_slice()) {
+            self.cells[cell_index].suffix_id = id;
             return Ok(());
         }
         if combined_len > MAX_CELL_TEXT_BYTES
@@ -1148,13 +1148,13 @@ impl TerminalGrid {
         {
             return Err(TerminalGridError::CombiningPoolCapacityExceeded);
         }
-        let mut combined = Vec::with_capacity(combined_len);
-        combined.extend_from_slice(existing);
-        combined.extend_from_slice(bytes);
-        self.suffix_pool_bytes += combined.len();
-        self.suffix_pool.push(combined);
-        self.cells[cell_index].suffix_id = u32::try_from(self.suffix_pool.len())
+        let combined: Arc<[u8]> = combined.into();
+        let id = u32::try_from(self.suffix_pool.len() + 1)
             .map_err(|_| TerminalGridError::CombiningPoolCapacityExceeded)?;
+        self.suffix_pool_bytes += combined.len();
+        self.suffix_pool.push(Arc::clone(&combined));
+        self.suffix_index.insert(combined, id);
+        self.cells[cell_index].suffix_id = id;
         Ok(())
     }
 
@@ -1164,7 +1164,7 @@ impl TerminalGrid {
         } else {
             self.suffix_pool
                 .get(usize::try_from(id - 1).ok()?)
-                .map(Vec::as_slice)
+                .map(AsRef::as_ref)
         }
     }
 
@@ -1329,7 +1329,7 @@ mod tests {
     #[test]
     fn modes_save_restore_alternate_and_cursor_visibility() {
         let mut grid = test_grid(8, 2);
-        grid.feed(b"normal\x1b7\x1b[?25l\x1b[?1049halt").unwrap();
+        grid.feed(b"normal\x1b7\x1b[?1049halt\x1b[?25l").unwrap();
         assert_eq!(snapshot(&grid), "|alt     |\n|        |\n");
         assert!(!grid.cursor_visible());
         grid.feed(b"\x1b[?1049l\x1b8!").unwrap();
@@ -1337,6 +1337,18 @@ mod tests {
         // Pinned fx keeps the active cursor-visibility presentation mode
         // across this normal-screen restore.
         assert!(!grid.cursor_visible());
+    }
+
+    #[test]
+    fn del_is_a_zero_width_suffix_and_reuses_indexed_storage() {
+        let mut grid = test_grid(6, 1);
+        grid.feed(b"a\x7fb\x7f").unwrap();
+
+        assert_eq!(grid.snapshot().unwrap(), b"|a\x7fb\x7f    |\n");
+        assert_eq!(grid.suffix_pool.len(), 1);
+        assert_eq!(grid.suffix_index.len(), 1);
+        assert_eq!(grid.cells[0].suffix_id, 1);
+        assert_eq!(grid.cells[1].suffix_id, 1);
     }
 
     #[test]
@@ -1362,6 +1374,25 @@ mod tests {
         grid.feed(&[0xf0]).unwrap();
         grid.feed(b"(x").unwrap();
         assert_eq!(snapshot(&grid), "|�(x   |\n");
+    }
+
+    #[test]
+    fn non_scalar_four_byte_prefixes_buffer_until_complete() {
+        for prefix in 0xf5..=0xf7 {
+            let mut grid = test_grid(4, 1);
+            grid.feed(&[prefix]).unwrap();
+            assert_eq!(snapshot(&grid), "|    |\n");
+            grid.feed(&[0x80, 0x80]).unwrap();
+            assert_eq!(snapshot(&grid), "|    |\n");
+            grid.feed(&[0x80]).unwrap();
+            assert_eq!(snapshot(&grid), "|�   |\n");
+        }
+    }
+
+    #[test]
+    fn terminal_grid_remains_send_with_indexed_suffix_storage() {
+        fn assert_send<T: Send>() {}
+        assert_send::<TerminalGrid>();
     }
 
     #[test]
