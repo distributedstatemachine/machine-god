@@ -21,6 +21,8 @@ SHAs, workflow IDs, review counts, or slice-by-slice history.
   lifecycle boundaries for ordinary coding-agent operation.
 - [Performance](performance.md) — measurement rules and structural resource
   bounds.
+- [CI change classification](ci-change-classification.md) — exact-SHA
+  documentation exemptions and complete-gate selection.
 - [Compatibility](compatibility.md) — scenario-based comparison policy and the
   pinned upstream input.
 

@@ -63,16 +63,21 @@ repository-policy checker.
    rejects the candidate; fix it, rerun the complete replacement gate, and use
    three fresh reviewers until all tracks report zero findings.
 6. Push the feature branch and require CI and Benchmark evidence to succeed for
-   that exact SHA. Fast-forward `main` without force, then require the exact
-   `main` CI and Benchmark evidence runs to succeed.
+   that exact behavior SHA with both benchmark artifacts retained.
+   Fast-forward `main` without force, then require the exact `main` CI and
+   artifact-producing Benchmark evidence runs to succeed.
 7. Verify every worktree is committed, integrated where required, and clean,
    then safely remove and prune it. Never remove active or uncommitted work.
 
 Documentation-only maintenance, review-result seals, and delivery records that
 change no product behavior are exempt from another adversarial product-review
-cycle. They still require proportionate local checks and exact remote CI before
-being called delivered. A commit cannot record its own future workflow IDs;
-record the last exact green delivery and report a later seal's runs at handoff.
+cycle. They still require proportionate local checks and exact lightweight CI
+and Benchmark aggregate gates before being called complete, but their Rust,
+platform, audit, compatibility, and benchmark-evidence jobs are intentionally
+skipped and they produce no new benchmark artifacts. A commit cannot record
+its own future workflow IDs; retain the last artifact-producing behavior runs
+in the canonical live block and report later documentation-only gates at
+handoff.
 
 ## Milestones
 
@@ -215,8 +220,11 @@ regression/delivery claim unless a milestone explicitly promotes it.
   local gate. All findings, including documentation findings on a behavior
   candidate, must be fixed and all three tracks restarted.
 - Feature CI and Benchmark evidence must report success for the exact pushed
-  SHA. Then fast-forward `main` without force and require exact-main success.
-- Benchmark workflows must retain the expected unexpired exact-SHA artifacts.
+  behavior SHA. Then fast-forward `main` without force and require exact-main
+  success.
+- Behavior and evidence-affecting Benchmark workflows must retain the expected
+  unexpired exact-SHA artifacts. Documentation-only descendants require green
+  lightweight aggregate gates and deliberately produce no new artifacts.
 - Never publish packages or GitHub releases without separate authorization.
 
 ### M07 release thresholds

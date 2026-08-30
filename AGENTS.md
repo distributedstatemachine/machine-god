@@ -17,7 +17,9 @@
 
 Documentation-only maintenance, review-result seals, and delivery records that
 change no product behavior are exempt from a new adversarial product-review
-cycle. They still require proportionate local checks and exact remote CI. Such
+cycle. They still require proportionate local checks and the exact lightweight
+remote CI and Benchmark aggregate gates. They do not require Rust, platform,
+audit, or benchmark-evidence jobs and produce no new benchmark artifacts. Such
 maintenance does not increment the delivered-slice count.
 
 Compact `docs/implementation-plan.md` after every five deliveries or whenever
@@ -59,4 +61,7 @@ not satisfy the pinned-toolchain gate.
 - Use conventional commits.
 - Never force-push `main`.
 - Push feature branches, wait for their exact CI SHA, then fast-forward `main`.
+- Product and evidence-affecting commits require exact CI and Benchmark
+  artifact-producing success. Documentation-only commits use the bounded
+  classification contract in `docs/ci-change-classification.md`.
 - Do not publish packages or GitHub releases without separate authorization.
