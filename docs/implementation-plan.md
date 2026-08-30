@@ -25,9 +25,9 @@ input; it is not a machine-god product language or runtime dependency.
 - Delivered main: `e685dc47fa8a614d0f7d580f3a3622e155b6d42f`
 - Main CI: `33319371520` (`GREEN`)
 - Main Benchmark evidence: `33319371530` (`GREEN`)
-- Active branch: `agent/m03-replay-delivery`
-- Active phase: `selecting the next bounded M03 tool or CLI ownership slice`
-- Next gate: `freeze the next actual-tool or CLI contract and its pinned compatibility evidence before implementation`
+- Active branch: `agent/m03-help-status-cli`
+- Active phase: `freezing the bounded M03 help and status CLI ownership slice`
+- Next gate: `freeze the help/status contract and pinned compatibility evidence before implementation`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
