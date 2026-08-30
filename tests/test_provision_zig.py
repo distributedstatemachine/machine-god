@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from contextlib import contextmanager, redirect_stderr
 import hashlib
+import io
 from pathlib import Path
 import stat
 import tempfile
@@ -187,6 +189,107 @@ class ProvisionZigTests(unittest.TestCase):
                 "30",
             ],
         )
+
+    def test_wrapper_validation_command_binds_live_exact_binaries(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            evidence = root / "evidence.json"
+            fx = root / "fx"
+            machine = root / "machine-god"
+            fx.write_bytes(b"fx")
+            machine.write_bytes(b"machine-god")
+            options = with_zig.parse_arguments(
+                [
+                    "--validate-evidence",
+                    str(evidence),
+                    "--expected-git-sha",
+                    "a" * 40,
+                    "--expected-runner-class",
+                    "runner",
+                    "--fx-binary",
+                    str(fx),
+                    "--machine-god-binary",
+                    str(machine),
+                    "--",
+                    "--runs",
+                    "30",
+                ]
+            )
+            self.assertEqual(
+                with_zig.validation_command(options),
+                [
+                    with_zig.sys.executable,
+                    str(with_zig.ROOT / "benchmarks/check.py"),
+                    str(evidence),
+                    "--expected-git-sha",
+                    "a" * 40,
+                    "--expected-runner-class",
+                    "runner",
+                    "--fx-binary",
+                    str(fx.resolve()),
+                    "--machine-god-binary",
+                    str(machine.resolve()),
+                ],
+            )
+
+    def test_wrapper_rejects_partial_validation_options(self) -> None:
+        diagnostics = io.StringIO()
+        with redirect_stderr(diagnostics), self.assertRaises(SystemExit):
+            with_zig.parse_arguments(["--expected-git-sha", "a" * 40])
+        self.assertIn("requires all five validation options", diagnostics.getvalue())
+
+    def test_wrapper_keeps_zig_live_through_collection_and_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fx = root / "fx"
+            machine = root / "machine-god"
+            fx.write_bytes(b"fx")
+            machine.write_bytes(b"machine-god")
+            live = False
+
+            @contextmanager
+            def fake_provisioned_zig(_cache: Path, _spec: object):
+                nonlocal live
+                live = True
+                try:
+                    yield root / "zig"
+                finally:
+                    live = False
+
+            def fake_run(_command: list[str], *, check: bool) -> mock.Mock:
+                self.assertTrue(live)
+                self.assertFalse(check)
+                return mock.Mock(returncode=0)
+
+            arguments = [
+                "--cache-root",
+                str(root / "cache"),
+                "--validate-evidence",
+                str(root / "evidence.json"),
+                "--expected-git-sha",
+                "a" * 40,
+                "--expected-runner-class",
+                "runner",
+                "--fx-binary",
+                str(fx),
+                "--machine-god-binary",
+                str(machine),
+                "--",
+                "--runs",
+                "30",
+            ]
+            with (
+                mock.patch.object(with_zig, "host_spec", return_value=object()),
+                mock.patch.object(
+                    with_zig,
+                    "provisioned_zig",
+                    side_effect=fake_provisioned_zig,
+                ),
+                mock.patch.object(with_zig.subprocess, "run", side_effect=fake_run) as run,
+            ):
+                self.assertEqual(with_zig.main(arguments), 0)
+            self.assertFalse(live)
+            self.assertEqual(run.call_count, 2)
 
 
 if __name__ == "__main__":

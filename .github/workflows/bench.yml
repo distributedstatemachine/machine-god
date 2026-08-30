@@ -94,6 +94,12 @@ jobs:
         run: >-
           python3 benchmarks/with_zig.py
           --cache-root "${RUNNER_TEMP}/machine-god-toolchains"
+          --validate-evidence benchmarks/results/upstream-bootstrap.json
+          --expected-git-sha "${GITHUB_SHA}"
+          --expected-runner-class github-ubuntu-24.04-x86_64
+          --fx-binary "${RUNNER_TEMP}/fx-${GITHUB_SHA}/zig-out/bin/fx"
+          --machine-god-binary
+          "${RUNNER_TEMP}/benchmark-scratch-${GITHUB_SHA}/machine-target/release/machine-god"
           --
           --upstream-dir "${RUNNER_TEMP}/fx-${GITHUB_SHA}"
           --scratch-dir "${RUNNER_TEMP}/benchmark-scratch-${GITHUB_SHA}"
@@ -102,14 +108,6 @@ jobs:
           --fetch-timeout 300
           --build-timeout 1200
           --sample-timeout 10
-      - name: Validate pinned source, SHA, schema, and binaries
-        run: >-
-          python3 benchmarks/check.py benchmarks/results/upstream-bootstrap.json
-          --expected-git-sha "${GITHUB_SHA}"
-          --expected-runner-class github-ubuntu-24.04-x86_64
-          --fx-binary "${RUNNER_TEMP}/fx-${GITHUB_SHA}/zig-out/bin/fx"
-          --machine-god-binary
-          "${RUNNER_TEMP}/benchmark-scratch-${GITHUB_SHA}/machine-target/release/machine-god"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: upstream-benchmark-${{ github.sha }}-ubuntu-24.04-x86_64

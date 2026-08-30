@@ -56,7 +56,9 @@ hosts. Keeping the toolchain outside the checkout prevents its large ignored
 library tree from entering repository-cleanliness scans. Each run re-hashes the
 retained official archive, extracts a fresh toolchain, passes that executable
 explicitly to the harness, and removes the extraction on success or failure.
-It never replaces or depends on a system Zig installation.
+When post-collection provenance validation is requested, the wrapper retains
+the toolchain through that check and removes it afterward. It never replaces or
+depends on a system Zig installation.
 
 The current inventory includes non-equivalent scenarios plus status workloads
 whose captured outputs pass strict equivalence probes. All remain regression
