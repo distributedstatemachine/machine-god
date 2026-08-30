@@ -1979,6 +1979,21 @@ class UpstreamHarnessTest(unittest.TestCase):
             probe["implementations"][0]["normalized_sha256"],
             probe["implementations"][1]["normalized_sha256"],
         )
+        self.assertEqual(probe["allowed_substitutions"], ["executable-branding"])
+
+        with mock.patch.object(upstream, "run_process", side_effect=results):
+            status_json_probe = run_equivalence_probe(
+                method="status-json-runtime-schema-v1",
+                commands=commands,
+                contexts=contexts,
+                expected_executables=identities,
+                timeout_seconds=1.0,
+                normalizer=lambda _output, _cwd: b"normalized-status\n",
+            )
+        self.assertEqual(
+            status_json_probe["allowed_substitutions"],
+            ["build-provenance", "isolated-workspace-root"],
+        )
 
         mismatch = (
             ProcessResult(0, b"fx status\n", b"", 10, 1, 1, 1),

@@ -3720,7 +3720,7 @@ def run_equivalence_probe(
     substitutions = (
         ["executable-branding"]
         if method == "status-help-executable-brand-v1"
-        else ["executable-branding", "build-provenance", "isolated-workspace-root"]
+        else ["build-provenance", "isolated-workspace-root"]
     )
     return {
         "method": method,
