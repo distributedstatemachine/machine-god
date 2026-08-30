@@ -225,6 +225,105 @@ jobs:
                   env=environment,
               )
 
+          help_results = [
+              run("help", "ignored-tail"),
+              run("--help", "--json", "ignored-tail"),
+              run("-h", "status", "ignored-tail"),
+          ]
+          if any(result.returncode != 0 or result.stderr for result in help_results):
+              raise SystemExit(f"help alias smoke failed: {help_results!r}")
+          if len({result.stdout for result in help_results}) != 1:
+              raise SystemExit("help aliases were not byte-identical")
+          help_text = help_results[0].stdout
+          for fragment in (
+              "machine-god 0.1.0\n",
+              "Commands:\n",
+              "  help         Show this help\n",
+              "  status       Show configuration and runtime information\n",
+              "Options:\n",
+          ):
+              if fragment not in help_text:
+                  raise SystemExit(f"help smoke omitted {fragment!r}")
+          if not help_text.endswith("\n") or "\x1b" in help_text:
+              raise SystemExit("help framing or plain-output contract changed")
+
+          status_help_expected = (
+              "machine-god status\n\n"
+              "Show configuration and runtime information\n\n"
+              "Usage:\n"
+              "  machine-god status [--json]\n\n"
+              "Options:\n"
+              "  --json  Emit machine-readable JSON instead of text\n"
+          )
+          for arguments in (
+              ("status", "--help"),
+              ("status", "unknown", "--json", "-h", "ignored"),
+          ):
+              result = run(*arguments)
+              if result.returncode != 0 or result.stdout != status_help_expected or result.stderr:
+                  raise SystemExit(f"status help smoke failed: {result!r}")
+
+          status_human = run("status")
+          status_machine = run("status", "--json")
+          status_repeated = run("status", "--json", "--json", "--json")
+          if any(result.returncode != 0 or result.stderr for result in (status_human, status_machine, status_repeated)):
+              raise SystemExit(
+                  "status smoke exits: "
+                  f"human={status_human.returncode} json={status_machine.returncode} "
+                  f"repeated={status_repeated.returncode}"
+              )
+          config_path = config_root / "machine-god" / "config.json"
+          state_path = state_root / "machine-god"
+          expected_status_human = (
+              "machine-god 0.1.0 (engine API 1)\n"
+              "permission_mode: ask\n"
+              f"config_file: state=missing path={json.dumps(str(config_path))}\n"
+              f"state_directory: state=missing path={json.dumps(str(state_path))}\n"
+          )
+          if status_human.stdout != expected_status_human:
+              raise SystemExit(f"unexpected human status output: {status_human.stdout!r}")
+          if status_repeated.stdout != status_machine.stdout:
+              raise SystemExit("repeated status --json was not idempotent")
+          status_report = json.loads(status_machine.stdout)
+          if list(status_report) != [
+              "name",
+              "version",
+              "engine_api_version",
+              "permission_mode",
+              "config_file",
+              "state_directory",
+          ]:
+              raise SystemExit("status JSON top-level key order changed")
+          if status_report != {
+              "name": "machine-god",
+              "version": "0.1.0",
+              "engine_api_version": 1,
+              "permission_mode": "ask",
+              "config_file": {"path": str(config_path), "state": "missing"},
+              "state_directory": {"path": str(state_path), "state": "missing"},
+          }:
+              raise SystemExit(f"unexpected status JSON payload: {status_report!r}")
+          if any(len(result.stdout.encode()) > 65_536 for result in (status_human, status_machine, status_repeated)):
+              raise SystemExit("status output bound changed")
+
+          invalid_status_human = run("status", "unknown")
+          if (
+              invalid_status_human.returncode != 1
+              or invalid_status_human.stdout
+              or invalid_status_human.stderr != "usage: machine-god status [--json]\n"
+          ):
+              raise SystemExit(f"unexpected human status parse failure: {invalid_status_human!r}")
+          invalid_status_json = run("status", "unknown", "--json")
+          if (
+              invalid_status_json.returncode != 1
+              or invalid_status_json.stderr
+              or invalid_status_json.stdout
+              != '{"kind":"status","error":"invalid arguments","code":"InvalidLocalSurfaceArgs"}\n'
+          ):
+              raise SystemExit(f"unexpected JSON status parse failure: {invalid_status_json!r}")
+          if any(path.exists() for path in (config_root, state_root, home)):
+              raise SystemExit("help/status created an isolated missing root")
+
           human = run("doctor")
           machine = run("doctor", "--json")
           if human.returncode != 0 or machine.returncode != 0:

@@ -78,6 +78,23 @@ const HELP: &str = concat!(
     "  -h, --help       Show this help\n",
     "  -V, --version    Show version\n",
 );
+const STATUS_HELP: &str = concat!(
+    "machine-god status\n",
+    "\n",
+    "Show configuration and runtime information\n",
+    "\n",
+    "Usage:\n",
+    "  machine-god status [--json]\n",
+    "\n",
+    "Options:\n",
+    "  --json  Emit machine-readable JSON instead of text\n",
+);
+const STATUS_USAGE: &str = "usage: machine-god status [--json]\n";
+const STATUS_JSON_ARGUMENT_FAILURE: &str = concat!(
+    "{\"kind\":\"status\",\"error\":\"invalid arguments\",",
+    "\"code\":\"InvalidLocalSurfaceArgs\"}\n",
+);
+const STATUS_RENDER_FAILURE: &str = "machine-god status: could not render report\n";
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
     "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--json] | status [--json] | workspace [list] [--json]]\n",
@@ -89,6 +106,7 @@ const ASK_FAILURE: &str = "machine-god ask: request failed\n";
 const OUTPUT_FAILURE: &str = "machine-god: failed to write output\n";
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
 const MAX_DOCTOR_OUTPUT_BYTES: usize = 4096;
+const MAX_STATUS_OUTPUT_BYTES: usize = 64 * 1024;
 const MAX_SESSION_OUTPUT_BYTES: usize = 4096;
 const MAX_WORKSPACE_OUTPUT_BYTES: usize = 32 * 1024;
 
@@ -756,6 +774,68 @@ fn help_aliases_are_byte_stable() {
 }
 
 #[test]
+fn first_token_help_preempts_arbitrary_tails_and_process_effects() {
+    let temporary = TestDirectory::new("global-help-preempts-effects");
+    let config_root = temporary.path().join("missing-config");
+    let state_root = temporary.path().join("missing-state");
+    let home = temporary.path().join("missing-home");
+
+    for alias in ["help", "--help", "-h"] {
+        let output = machine_god()
+            .args([alias, "unknown", "--json", "status", "extra"])
+            .env("XDG_CONFIG_HOME", &config_root)
+            .env("XDG_STATE_HOME", &state_root)
+            .env("HOME", &home)
+            .env("VERCEL_OIDC_TOKEN", "CLI_HELP_IGNORED_CREDENTIAL_SECRET")
+            .env("AI_GATEWAY_API_KEY", "CLI_HELP_IGNORED_LOWER_SECRET")
+            .output()
+            .unwrap();
+
+        assert_success(&output, HELP);
+        assert!(!config_root.exists());
+        assert!(!state_root.exists());
+        assert!(!home.exists());
+        assert_output_omits(
+            &output,
+            &[
+                "CLI_HELP_IGNORED_CREDENTIAL_SECRET",
+                "CLI_HELP_IGNORED_LOWER_SECRET",
+            ],
+        );
+    }
+}
+
+#[test]
+fn status_help_aliases_anywhere_preempt_parsing_and_process_effects() {
+    let temporary = TestDirectory::new("status-help-preempts-effects");
+    let config_root = temporary.path().join("missing-config");
+    let state_root = temporary.path().join("missing-state");
+    let home = temporary.path().join("missing-home");
+
+    for arguments in [
+        &["status", "--help"][..],
+        &["status", "-h"][..],
+        &["status", "unknown", "--json", "--help", "extra"][..],
+        &["status", "--json", "extra", "-h"][..],
+    ] {
+        let output = machine_god()
+            .args(arguments)
+            .env("XDG_CONFIG_HOME", &config_root)
+            .env("XDG_STATE_HOME", &state_root)
+            .env("HOME", &home)
+            .env("VERCEL_OIDC_TOKEN", "CLI_STATUS_HELP_IGNORED_SECRET")
+            .output()
+            .unwrap();
+
+        assert_success(&output, STATUS_HELP);
+        assert!(!config_root.exists());
+        assert!(!state_root.exists());
+        assert!(!home.exists());
+        assert_output_omits(&output, &["CLI_STATUS_HELP_IGNORED_SECRET"]);
+    }
+}
+
+#[test]
 fn workspace_aliases_are_exact_read_only_and_ignore_unrelated_process_inputs() {
     let temporary = TestDirectory::new("workspace-read-only");
     let workspace = temporary.path().join("workspace-café");
@@ -882,7 +962,6 @@ fn invalid_workspace_grammar_is_exact_and_does_not_create_roots() {
 fn malformed_arguments_have_one_diagnostic_and_exit_two() {
     for arguments in [
         &["unknown"][..],
-        &["help", "extra"][..],
         &["--json", "status"][..],
         &["--json", "models"][..],
         &["--json", "permissions"][..],
@@ -928,9 +1007,6 @@ fn malformed_arguments_have_one_diagnostic_and_exit_two() {
         &["sessions", "extra"][..],
         &["sessions", "--json", "extra"][..],
         &["sessions", "--json", "--json"][..],
-        &["status", "--json=true"][..],
-        &["status", "--json", "extra"][..],
-        &["status", "--json", "--json"][..],
         &["--json", "workspace"][..],
         &["workspace", "add"][..],
         &["workspace", "remove"][..],
@@ -947,6 +1023,31 @@ fn malformed_arguments_have_one_diagnostic_and_exit_two() {
         assert_eq!(output.status.code(), Some(2));
         assert!(output.stdout.is_empty());
         assert_eq!(output.stderr, INVALID_ARGUMENTS.as_bytes());
+    }
+}
+
+#[test]
+fn invalid_status_arguments_use_command_local_human_or_json_failures() {
+    for arguments in [
+        &["status", "--json=true"][..],
+        &["status", "extra"][..],
+        &["status", "--bad", "extra"][..],
+    ] {
+        let output = run(arguments);
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert_eq!(output.stderr, STATUS_USAGE.as_bytes());
+    }
+
+    for arguments in [
+        &["status", "--json", "extra"][..],
+        &["status", "extra", "--json"][..],
+        &["status", "--bad", "--json", "--bad-again"][..],
+    ] {
+        let output = run(arguments);
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(output.stdout, STATUS_JSON_ARGUMENT_FAILURE.as_bytes());
+        assert!(output.stderr.is_empty());
     }
 }
 
@@ -2755,6 +2856,7 @@ fn missing_paths_are_reported_without_being_created() {
         state_path = state_path.to_str().unwrap(),
     );
     assert_success(&output, &expected);
+    assert!(output.stdout.len() <= MAX_STATUS_OUTPUT_BYTES);
     assert!(!config_root.exists());
     assert!(!state_root.exists());
 }
@@ -2786,6 +2888,34 @@ fn json_status_is_compact_valid_and_has_fixed_shape() {
         state_path = state_path.to_str().unwrap(),
     );
     assert_success(&output, &expected);
+    assert!(output.stdout.len() <= MAX_STATUS_OUTPUT_BYTES);
+}
+
+#[test]
+fn repeated_exact_status_json_options_are_idempotent() {
+    let temporary = TestDirectory::new("status-json-idempotent");
+    let config_root = temporary.path().join("missing-config");
+    let state_root = temporary.path().join("missing-state");
+
+    let once = run_with_roots(
+        &["status", "--json"],
+        config_root.as_os_str(),
+        state_root.as_os_str(),
+    );
+    let repeated = run_with_roots(
+        &["status", "--json", "--json", "--json"],
+        config_root.as_os_str(),
+        state_root.as_os_str(),
+    );
+
+    assert!(once.status.success());
+    assert!(once.stderr.is_empty());
+    assert_eq!(repeated.status, once.status);
+    assert_eq!(repeated.stdout, once.stdout);
+    assert_eq!(repeated.stderr, once.stderr);
+    assert!(repeated.stdout.len() <= MAX_STATUS_OUTPUT_BYTES);
+    assert!(!config_root.exists());
+    assert!(!state_root.exists());
 }
 
 #[test]
@@ -2922,6 +3052,43 @@ fn status_escapes_path_control_characters() {
         assert!(stdout.contains("\\u001b[31m\\nquoted-\\\"-\\u061c-\\u202e"));
         assert!(stdout.contains("state-\\\\slash-\\u200f-\\u2066"));
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn oversized_status_render_fails_before_stdout_with_a_fixed_diagnostic() {
+    let oversized_root = PathBuf::from(format!("/{}", "\u{7f}".repeat(12_000)));
+
+    for arguments in [&["status"][..], &["status", "--json"][..]] {
+        let output = run_with_roots(
+            arguments,
+            oversized_root.as_os_str(),
+            oversized_root.as_os_str(),
+        );
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert_eq!(output.stderr, STATUS_RENDER_FAILURE.as_bytes());
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn status_stdout_failure_uses_the_global_fixed_diagnostic() {
+    use std::fs::OpenOptions;
+    use std::process::Stdio;
+
+    let full = OpenOptions::new().write(true).open("/dev/full").unwrap();
+    let output = machine_god()
+        .args(["status"])
+        .env_remove("HOME")
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("XDG_STATE_HOME")
+        .stdout(Stdio::from(full))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(output.stderr, OUTPUT_FAILURE.as_bytes());
 }
 
 #[cfg(unix)]
@@ -3065,6 +3232,48 @@ fn non_unicode_arguments_are_rejected_by_the_process_boundary() {
         assert_eq!(output.status.code(), Some(2));
         assert!(output.stdout.is_empty());
         assert_eq!(output.stderr, INVALID_ARGUMENTS.as_bytes());
+    }
+
+    let invalid = OsString::from_vec(vec![0xff]);
+    let human = machine_god()
+        .args([OsString::from("status"), invalid.clone()])
+        .output()
+        .unwrap();
+    assert_eq!(human.status.code(), Some(1));
+    assert!(human.stdout.is_empty());
+    assert_eq!(human.stderr, STATUS_USAGE.as_bytes());
+
+    let json = machine_god()
+        .args([
+            OsString::from("status"),
+            invalid.clone(),
+            OsString::from("--json"),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(json.status.code(), Some(1));
+    assert_eq!(json.stdout, STATUS_JSON_ARGUMENT_FAILURE.as_bytes());
+    assert!(json.stderr.is_empty());
+
+    for arguments in [
+        vec![OsString::from("help"), invalid.clone()],
+        vec![OsString::from("--help"), invalid.clone()],
+        vec![OsString::from("-h"), invalid.clone()],
+    ] {
+        assert_success(&machine_god().args(arguments).output().unwrap(), HELP);
+    }
+    for arguments in [
+        vec![
+            OsString::from("status"),
+            invalid.clone(),
+            OsString::from("--help"),
+        ],
+        vec![OsString::from("status"), invalid, OsString::from("-h")],
+    ] {
+        assert_success(
+            &machine_god().args(arguments).output().unwrap(),
+            STATUS_HELP,
+        );
     }
 }
 

@@ -12,10 +12,12 @@ Current delivery state and gate evidence are maintained only in the
 ## Global behavior
 
 - With no arguments, `machine-god` prints its identity line.
-- `help`, `--help`, and `-h` print the same help text.
+- A first argument of `help`, `--help`, or `-h` prints the same help text and
+  preempts every following argument and effect.
 - `--version` and `-V` print the identity line.
-- Invalid arguments are rejected before command-specific effects, write a
-  fixed diagnostic to standard error, and exit `2`.
+- Invalid arguments are rejected before command-specific effects. They write
+  the fixed global diagnostic to standard error and exit `2` unless the
+  command contract below defines a command-local parse failure.
 - Successful commands exit `0`. Operational or output failures exit `1`
   unless a command contract defines a signal exit.
 - `--json` is command-local. It is not a global option and is accepted only by
@@ -44,6 +46,28 @@ The pinned upstream inventory contains a broader command and option surface.
 Unsupported forms remain invalid until their owning milestone freezes a
 contract; command-name presence alone is not an equivalence claim.
 
+## The `help` command
+
+`help`, `--help`, and `-h` are exact first-token aliases. Once one is present
+as the first argument, all remaining arguments are ignored, including unknown,
+non-Unicode, and flag-looking values. Help exits `0`, writes the complete
+machine-god help page with one final LF to standard output, and writes nothing
+to standard error. It does not snapshot the process environment, inspect the
+current directory or filesystem, load configuration or credentials, create a
+runtime or engine, or use persistence or the network.
+
+The help page is machine-god navigation, not a list of every name in the pinned
+fx inventory. It contains only the commands and options whose machine-god
+contracts are implemented. Its rows, summaries, ordering, and usage forms are
+the exact ones in the command table above and the command-specific contracts.
+The three aliases produce byte-identical output.
+
+Pinned fx has a broader command catalog, terminal-sensitive ANSI styling,
+adaptive `COLUMNS` wrapping, interactive bare invocation, additional global
+flags, examples, and resources. Those presentation and product-surface details
+are intentional scenario differences. This slice makes no byte-equivalence or
+complete-fx-help claim.
+
 ## Identity
 
 The identity line is:
@@ -57,7 +81,42 @@ effect.
 
 ## The `status` command
 
-`status` and `status --json` inspect process configuration and state-location
+The status grammar accepts `status` followed by zero or more exact `--json`
+options. Repetition is idempotent: one or many occurrences select the same JSON
+output. An exact `--help` or `-h` anywhere after `status` preempts every other
+status argument and effect, exits `0`, and writes exactly:
+
+```text
+machine-god status
+
+Show configuration and runtime information
+
+Usage:
+  machine-god status [--json]
+
+Options:
+  --json  Emit machine-readable JSON instead of text
+```
+
+The transcript has one final LF. Unknown, additional, or non-Unicode status
+arguments are command-local parse failures with exit `1`. Without a raw exact
+`--json` anywhere in the status tail, failure writes no standard output and
+writes exactly this standard-error diagnostic:
+
+```text
+usage: machine-god status [--json]
+```
+
+If the raw tail contains an exact `--json`, failure writes nothing to standard
+error and writes this compact LF-terminated object to standard output:
+
+```json
+{"kind":"status","error":"invalid arguments","code":"InvalidLocalSurfaceArgs"}
+```
+
+Help and complete status parsing occur before process-environment capture or
+native metadata authority. `status` and its JSON form inspect process
+configuration and state-location
 metadata without loading configuration contents, constructing the engine,
 creating directories, starting a runtime, or contacting a provider. The human
 form is exactly four LF-terminated lines in this field order:
@@ -107,6 +166,29 @@ is `not_file`, and a final state-directory symlink is `not_directory`; neither
 target is followed. The command does not canonicalize paths, read or parse the
 configuration file, create missing paths or ancestors, write state, construct
 an engine, start a runtime, discover credentials, or use the network.
+
+Both successful forms are fully rendered before the first output write. The
+inclusive rendered-output ceiling is 65,536 bytes, including the final LF and
+after worst-case JSON/control escaping. A report of exactly 65,536 bytes is
+accepted. Any checked length overflow or one-byte excess exits `1`, writes no
+standard output, and writes exactly:
+
+```text
+machine-god status: could not render report
+```
+
+Once a bounded report has been rendered, an output write failure exits `1` and
+uses the global fixed `machine-god: failed to write output` standard-error
+diagnostic. No alternate representation, configuration access, or other product
+effect follows either failure.
+
+This status remains machine-god's metadata-only native observation. Pinned fx
+reports a richer runtime snapshot including model, build and update channel,
+authentication, sandbox, workspace, history, grants, and agent-step limit.
+Those fields and fx's configuration semantics are intentional scenario
+differences here. The retained help and status benchmark workloads remain
+non-equivalent, unmeasured, and claim-ineligible; this contract makes no
+comparative performance claim.
 
 ## Output ownership
 
