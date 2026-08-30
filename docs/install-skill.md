@@ -18,10 +18,14 @@ optional `skill` string:
 `source` is a workspace-relative directory path. Repeated separators and exact
 `.` components are removed. Absolute paths, `..`, backslashes, empty normalized
 paths, forbidden control or bidirectional characters, oversized components,
-and paths beginning with an ASCII-case-insensitive spelling of the managed
-`skills` component are rejected. The last normalized component is the
-destination skill name. When `skill` is present it must equal that basename
-byte-for-byte; it cannot rename a source.
+and paths whose first component is a Unicode case-fold alias of the managed
+`skills` component are rejected. The alias check includes ordinary ASCII case
+variants and non-ASCII folds such as `ſkills` (long s) and `sKills` (Kelvin
+sign). This conservative lexical rule prevents managed-source overlap on
+case-insensitive filesystems without consulting the filesystem during
+preparation. The last normalized component is the destination skill name.
+When `skill` is present it must equal that basename byte-for-byte; it cannot
+rename a source.
 
 Preparation is bounded, synchronous, and effect-free. It opens no descriptor,
 does not inspect either source or destination, and cannot reveal whether they
@@ -116,29 +120,58 @@ descriptor confinement, not a general process sandbox.
 The destination must be absent. If `skills` already exists it must be a real
 directory and a private staged skill directory is built inside it. If `skills`
 is absent, a private staged skills tree is built beside it. All admitted bytes
-are copied and staged files are synchronized before one atomic no-replace
-rename publishes either the new child or the new managed root. Concurrent
-creation is reported as a collision and never overwritten. Filesystems without
-the required no-replace primitive are unsupported.
+are copied before publication. The private tree is then recursively rewalked
+no-follow within the same public entry, depth, path, name, file,
+aggregate-byte, and operation bounds. That rewalk freezes a staged snapshot
+containing every relative entry, entry type and identity, and each regular
+file's exact length and content digest. Every staged file and required staged
+directory is synchronized before one atomic no-replace rename publishes either
+the new child or the new managed root. Concurrent creation is reported as a
+collision and never overwritten. Filesystems without the required no-replace
+primitive are unsupported.
 
 Immediately before publication, the tool revalidates both the random stage
-identity and the workspace's current `skills` identity or absence. Immediately
-after publication, it revalidates that the retained stage identity is visible
-at the reported managed destination. Relocation or replacement before commit
-is a retryable changed-destination failure; uncertainty after commit is a
-nonretryable ambiguous result rather than false success. A later rename after
-the successful postcommit observation remains an ordinary external filesystem
-race.
+identity and the workspace's current `skills` identity or absence, reserves
+the complete bounded postcommit validation and durability budget, and then
+checks cancellation again directly before invoking rename. Cancellation that
+arrives during any preceding verification call is therefore observed before
+the irreversible operation. Relocation or replacement before commit is a
+retryable changed-destination failure.
+
+After publication, the tool first revalidates that the retained stage identity
+is visible at the reported managed destination, then recursively rewalks that
+destination no-follow and compares it with the complete staged snapshot. No
+entry may be missing or unexpected; every path, entry type, retained identity,
+regular-file length, and content digest must match. Mutation, replacement,
+extra content, invalid traversal, or validation-budget failure after commit is
+`install_skill_commit_ambiguous`, never success. This postcommit comparison
+does not reinterpret `SKILL.md` or weaken the admitted-content invariant: the
+published manifest must still be the exact regular UTF-8 bytes admitted before
+staging, and every other file remains exact opaque bytes.
+
+The destination-parent durability sync is attempted within its fixed retry
+bound after every committed publication even when identity or recursive
+content validation has already selected `install_skill_commit_ambiguous`.
+Validation failure cannot short-circuit that durability attempt. Success is
+returned only when both validation and synchronization succeed. A later rename
+or mutation after the successful postcommit observation remains an ordinary
+external filesystem race.
 
 Cancellation is honored before source observation, throughout admission and
-staging, and at the final prepublication boundary. A cancelled or failed
-precommit execution attempts identity-checked, entry-, depth-, name-, and
-operation-bounded descriptor-relative cleanup and never reports success.
-Cleanup stops without deleting a changed stage identity; a failed or contended
-cleanup may leave a private random-name residue for host maintenance. Once the
-no-replace rename succeeds, cancellation is ignored
-while bounded postcommit synchronization and result construction complete.
-A publication or postpublication synchronization error whose state cannot be
+staging, after final prepublication verification, and directly before rename.
+A cancelled or failed precommit execution attempts identity-checked, entry-,
+depth-, name-, and operation-bounded descriptor-relative cleanup and never
+reports success. If stage `mkdirat` succeeds but the tool then cannot acquire
+or validate the staged descriptor, it still makes one bounded cleanup attempt:
+it removes only an empty entry whose no-follow identity is proven to be the
+entry just created. A preexisting collision or changed replacement is never
+removed. Cleanup stops without deleting an unproved identity; a failed or
+contended cleanup may leave a private random-name residue for host maintenance.
+
+Once rename succeeds, or its result cannot prove that publication did not
+occur, cancellation is ignored while bounded postcommit identity/content
+validation and the unconditional bounded parent-sync attempt finish. A
+publication, validation, or synchronization error whose final state cannot be
 proved has the fixed nonretryable `install_skill_commit_ambiguous` result;
 blind retry is unsafe because the destination may already exist.
 
@@ -167,26 +200,26 @@ taxonomy is exact:
 
 | Code | Kind | Retryable | Message |
 | --- | --- | --- | --- |
-| `install_skill_invalid_arguments` | invalid input | no | `install_skill arguments are invalid` |
-| `install_skill_invalid_source` | invalid input | no | `install_skill source is invalid` |
-| `install_skill_invalid_skill` | invalid input | no | `install_skill skill name is invalid` |
-| `install_skill_overlap` | invalid input | no | `install_skill source overlaps its managed destination` |
-| `install_skill_resource_limit` | invalid input | no | `install_skill resource limit was exceeded` |
-| `install_skill_invalid_entry` | invalid input | no | `install_skill source contains an invalid entry name` |
-| `install_skill_invalid_manifest` | invalid input | no | `install_skill source requires a regular UTF-8 SKILL.md` |
-| `install_skill_cancelled` | cancelled | no | `install_skill execution was cancelled` |
-| `install_skill_unsupported_platform` | unavailable | no | `native install_skill is unsupported on this platform` |
-| `install_skill_source_not_found` | unavailable | no | `install_skill source is unavailable` |
-| `install_skill_source_unavailable` | unavailable | yes | `install_skill source is unavailable` |
-| `install_skill_source_changed` | execution | yes | `install_skill source changed during installation` |
-| `install_skill_path_rejected` | permission denied | no | `install_skill path is not confined` |
-| `install_skill_permission_denied` | permission denied | no | `install_skill filesystem access was denied` |
-| `install_skill_destination_exists` | execution | no | `install_skill destination already exists` |
-| `install_skill_destination_unavailable` | unavailable | yes | `install_skill destination is unavailable` |
-| `install_skill_destination_changed` | execution | yes | `install_skill destination changed before publication` |
-| `install_skill_write_failed` | execution | yes | `install_skill staged copy failed` |
-| `install_skill_unsupported_filesystem` | unavailable | no | `atomic no-replace skill publication is unavailable` |
-| `install_skill_commit_ambiguous` | execution | no | `install_skill publication status is uncertain` |
+| `install_skill_invalid_arguments` | `InvalidInput` | no | `install_skill arguments are invalid` |
+| `install_skill_invalid_source` | `InvalidInput` | no | `install_skill source is invalid` |
+| `install_skill_invalid_skill` | `InvalidInput` | no | `install_skill skill name is invalid` |
+| `install_skill_overlap` | `InvalidInput` | no | `install_skill source overlaps its managed destination` |
+| `install_skill_resource_limit` | `InvalidInput` | no | `install_skill resource limit was exceeded` |
+| `install_skill_invalid_entry` | `InvalidInput` | no | `install_skill source contains an invalid entry name` |
+| `install_skill_invalid_manifest` | `InvalidInput` | no | `install_skill source requires a regular UTF-8 SKILL.md` |
+| `install_skill_cancelled` | `Cancelled` | no | `install_skill execution was cancelled` |
+| `install_skill_unsupported_platform` | `Unavailable` | no | `native install_skill is unsupported on this platform` |
+| `install_skill_source_not_found` | `Unavailable` | no | `install_skill source is unavailable` |
+| `install_skill_source_unavailable` | `Unavailable` | yes | `install_skill source is unavailable` |
+| `install_skill_source_changed` | `Execution` | yes | `install_skill source changed during installation` |
+| `install_skill_path_rejected` | `PermissionDenied` | no | `install_skill path is not confined` |
+| `install_skill_permission_denied` | `PermissionDenied` | no | `install_skill filesystem access was denied` |
+| `install_skill_destination_exists` | `Execution` | no | `install_skill destination already exists` |
+| `install_skill_destination_unavailable` | `Unavailable` | yes | `install_skill destination is unavailable` |
+| `install_skill_destination_changed` | `Execution` | yes | `install_skill destination changed before publication` |
+| `install_skill_write_failed` | `Execution` | yes | `install_skill staged copy failed` |
+| `install_skill_unsupported_filesystem` | `Unavailable` | no | `atomic no-replace skill publication is unavailable` |
+| `install_skill_commit_ambiguous` | `Execution` | no | `install_skill publication status is uncertain` |
 
 Errors never include model-provided paths, entry names, file content, OS
 diagnostics, temporary names, descriptor values, or host paths. Published
