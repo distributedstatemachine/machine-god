@@ -992,7 +992,42 @@ class ProvisionZigTests(unittest.TestCase):
             self.assertFalse((root / provision_zig.TRASH_CURSOR_NAME).exists())
 
             try:
-                for _attempt in range(3):
+                real_pwrite = os.pwrite
+                for attempt in range(4):
+                    if attempt == 1:
+                        def interrupted_pwrite(
+                            descriptor: int, payload: bytes, offset: int
+                        ) -> int:
+                            real_pwrite(
+                                descriptor, payload[: len(payload) // 2], offset
+                            )
+                            raise OSError("interrupted cursor update")
+
+                        with (
+                            mock.patch.object(
+                                provision_zig.os,
+                                "pwrite",
+                                side_effect=interrupted_pwrite,
+                            ),
+                            self.assertRaisesRegex(OSError, "interrupted"),
+                            provision_zig.cache_lock(
+                                root, provision_zig.ACTIVE_LOCK_NAME
+                            ) as lock_descriptor,
+                        ):
+                            names = sorted(entry.name for entry in root.iterdir())
+                            provision_zig.rotating_descriptor_trash_window(
+                                lock_descriptor,
+                                [
+                                    name
+                                    for name in names
+                                    if name.startswith(provision_zig.TRASH_PREFIX)
+                                ],
+                            )
+                        self.assertEqual(
+                            len(list(root.iterdir())),
+                            provision_zig.CACHE_DIRECTORY_CAPACITY,
+                        )
+                        continue
                     with provision_zig.cache_lock(
                         root, provision_zig.ACTIVE_LOCK_NAME
                     ) as lock_descriptor:
@@ -1027,6 +1062,73 @@ class ProvisionZigTests(unittest.TestCase):
             self.assertFalse(abandoned.exists())
             self.assertFalse(provision_zig.trash_lease_path(abandoned).exists())
             self.assertFalse((root / provision_zig.TRASH_CURSOR_NAME).exists())
+
+    def test_cursor_records_preserve_last_valid_value_across_write_faults(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            standalone_name = "cursor"
+            descriptor_path = root / "descriptor"
+            descriptor = provision_zig.open_private_file(descriptor_path)
+            real_pwrite = os.pwrite
+
+            def standalone_write(value: str) -> None:
+                provision_zig.write_scan_cursor(root, standalone_name, value)
+
+            def standalone_read() -> str:
+                return provision_zig.read_scan_cursor(root, standalone_name)
+
+            def descriptor_write(value: str) -> None:
+                provision_zig.write_descriptor_cursor(descriptor, value)
+
+            def descriptor_read() -> str:
+                return provision_zig.read_descriptor_cursor(descriptor)
+
+            try:
+                for label, write_cursor, read_cursor in (
+                    ("standalone", standalone_write, standalone_read),
+                    ("descriptor", descriptor_write, descriptor_read),
+                ):
+                    with self.subTest(storage=label, fault="post-truncate"):
+                        write_cursor("stable")
+                        with mock.patch.object(
+                            provision_zig.os,
+                            "ftruncate",
+                            side_effect=AssertionError("must not truncate"),
+                        ):
+                            write_cursor("new-stable")
+                        self.assertEqual(read_cursor(), "new-stable")
+
+                    for fault in ("partial", "error", "interrupt", "torn"):
+                        with self.subTest(storage=label, fault=fault):
+                            stable = read_cursor()
+
+                            def faulting_pwrite(
+                                target: int, payload: bytes, offset: int
+                            ) -> int:
+                                if fault == "partial":
+                                    return real_pwrite(
+                                        target, payload[: len(payload) // 2], offset
+                                    )
+                                if fault == "error":
+                                    raise OSError("ENOSPC")
+                                if fault == "interrupt":
+                                    raise KeyboardInterrupt("interrupted")
+                                real_pwrite(target, payload[: len(payload) // 2], offset)
+                                raise OSError("torn update")
+
+                            expected = KeyboardInterrupt if fault == "interrupt" else OSError
+                            with (
+                                mock.patch.object(
+                                    provision_zig.os,
+                                    "pwrite",
+                                    side_effect=faulting_pwrite,
+                                ),
+                                self.assertRaises(expected),
+                            ):
+                                write_cursor(f"failed-{fault}")
+                            self.assertEqual(read_cursor(), stable)
+            finally:
+                os.close(descriptor)
 
     def test_concurrent_admission_uses_current_locked_active_count(self) -> None:
         spec = provision_zig.host_spec("Linux", "x86_64")

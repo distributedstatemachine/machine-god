@@ -40,6 +40,10 @@ TRASH_CLEANUP_BATCH_SIZE = 8
 TRASH_SCAN_LIMIT = 64
 TRASH_CURSOR_NAME = ".machine-god-zig-trash.cursor"
 ACTIVE_CURSOR_NAME = ".machine-god-zig-active.cursor"
+CURSOR_MAGIC = b"MGZCUR01"
+CURSOR_SLOT_SIZE = 1024
+CURSOR_SLOT_COUNT = 2
+CURSOR_PAYLOAD_LIMIT = 511
 STALE_ACTIVE_BATCH_SIZE = 8
 STALE_ACTIVE_SCAN_LIMIT = 64
 ACTIVE_DIRECTORY_CAPACITY = 128
@@ -664,53 +668,97 @@ def remove_private_trash(trash: PrivateTrash) -> None:
 def read_scan_cursor(cache_root: Path, name: str) -> str:
     descriptor = open_private_file(cache_root / name)
     try:
-        os.lseek(descriptor, 0, os.SEEK_SET)
-        payload = os.read(descriptor, 512)
+        return read_descriptor_cursor(descriptor)
     finally:
         os.close(descriptor)
-    try:
-        return payload.decode("utf-8")
-    except UnicodeDecodeError:
-        return ""
 
 
 def write_scan_cursor(cache_root: Path, name: str, cursor: str) -> None:
     descriptor = open_private_file(cache_root / name)
     try:
-        payload = cursor.encode("utf-8")[:511]
-        os.ftruncate(descriptor, 0)
-        os.lseek(descriptor, 0, os.SEEK_SET)
-        while payload:
-            written = os.write(descriptor, payload)
-            if written <= 0:
-                raise OSError("could not update the Zig active-cache cursor")
-            payload = payload[written:]
+        write_descriptor_cursor(descriptor, cursor)
     finally:
         os.close(descriptor)
 
 
-def read_descriptor_cursor(descriptor: int) -> str:
-    """Read a bounded cursor from an already exclusively locked descriptor."""
+def encode_cursor_record(cursor: str, generation: int) -> bytes:
+    payload = cursor.encode("utf-8")[:CURSOR_PAYLOAD_LIMIT]
+    header = (
+        CURSOR_MAGIC
+        + generation.to_bytes(8, "big")
+        + len(payload).to_bytes(2, "big")
+    )
+    checksum = hashlib.sha256(header + payload).digest()
+    body = header + payload
+    return body + bytes(CURSOR_SLOT_SIZE - len(body) - len(checksum)) + checksum
 
-    os.lseek(descriptor, 0, os.SEEK_SET)
-    payload = os.read(descriptor, 512)
+
+def decode_cursor_record(record: bytes) -> tuple[int, str] | None:
+    header_size = len(CURSOR_MAGIC) + 10
+    if (
+        len(record) != CURSOR_SLOT_SIZE
+        or record[: len(CURSOR_MAGIC)] != CURSOR_MAGIC
+    ):
+        return None
+    generation = int.from_bytes(
+        record[len(CURSOR_MAGIC) : len(CURSOR_MAGIC) + 8], "big"
+    )
+    payload_size = int.from_bytes(record[len(CURSOR_MAGIC) + 8 : header_size], "big")
+    if payload_size > CURSOR_PAYLOAD_LIMIT:
+        return None
+    payload_end = header_size + payload_size
+    payload = record[header_size:payload_end]
+    if record[-hashlib.sha256().digest_size :] != hashlib.sha256(
+        record[:header_size] + payload
+    ).digest():
+        return None
     try:
-        return payload.decode("utf-8")
+        return generation, payload.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def cursor_records(descriptor: int) -> list[tuple[int, int, str]]:
+    data = os.pread(descriptor, CURSOR_SLOT_SIZE * CURSOR_SLOT_COUNT, 0)
+    records: list[tuple[int, int, str]] = []
+    for slot in range(CURSOR_SLOT_COUNT):
+        start = slot * CURSOR_SLOT_SIZE
+        decoded = decode_cursor_record(data[start : start + CURSOR_SLOT_SIZE])
+        if decoded is not None:
+            generation, cursor = decoded
+            records.append((generation, slot, cursor))
+    return records
+
+
+def read_descriptor_cursor(descriptor: int) -> str:
+    """Read the newest complete bounded cursor from a locked descriptor."""
+
+    records = cursor_records(descriptor)
+    if records:
+        return max(records)[2]
+    legacy = os.pread(descriptor, CURSOR_PAYLOAD_LIMIT, 0).split(b"\0", 1)[0]
+    try:
+        return legacy.decode("utf-8")
     except UnicodeDecodeError:
         return ""
 
 
 def write_descriptor_cursor(descriptor: int, cursor: str) -> None:
-    """Persist a bounded cursor in an already exclusively locked descriptor."""
+    """Write an inactive checked slot, preserving the last complete cursor."""
 
-    payload = cursor.encode("utf-8")[:511]
-    os.ftruncate(descriptor, 0)
-    os.lseek(descriptor, 0, os.SEEK_SET)
-    while payload:
-        written = os.write(descriptor, payload)
-        if written <= 0:
-            raise OSError("could not update the Zig trash-cache cursor")
-        payload = payload[written:]
+    records = cursor_records(descriptor)
+    if records:
+        generation, newest_slot, _cursor = max(records)
+        slot = 1 - newest_slot
+    else:
+        generation = 0
+        slot = 1
+    if generation >= (1 << 64) - 1:
+        raise ProvisionError("Zig cache cursor generation is exhausted")
+    record = encode_cursor_record(cursor, generation + 1)
+    written = os.pwrite(descriptor, record, slot * CURSOR_SLOT_SIZE)
+    if written != len(record):
+        raise OSError("could not atomically update the Zig cache cursor")
 
 
 def rotating_active_window(
