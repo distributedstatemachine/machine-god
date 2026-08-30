@@ -280,6 +280,26 @@ class CiChangeClassificationTests(unittest.TestCase):
         self.assert_result(output, full=True, docs_only=False)
         self.assertIn("'docs/guide.md'", completed.stdout)
 
+    def test_docs_file_directory_transitions_use_full_gate(self) -> None:
+        self.repository.write("docs/guide.md/child.md", "child\n")
+        tree = self.repository.commit("add docs tree")
+
+        self.repository.git("rm", "-r", "docs/guide.md")
+        self.repository.write("docs/guide.md", "guide\n")
+        blob = self.repository.commit("replace docs tree with file")
+        completed, output = self.run_classifier(before=tree, head=blob)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assert_result(output, full=True, docs_only=False)
+        self.assertIn("file/directory transition at 'docs/guide.md'", completed.stdout)
+
+        self.repository.git("rm", "docs/guide.md")
+        self.repository.write("docs/guide.md/child.md", "child again\n")
+        tree_again = self.repository.commit("replace docs file with tree")
+        completed, output = self.run_classifier(before=blob, head=tree_again)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assert_result(output, full=True, docs_only=False)
+        self.assertIn("file/directory transition at 'docs/guide.md'", completed.stdout)
+
     def test_pull_request_uses_merge_base_not_base_tip(self) -> None:
         self.repository.git("switch", "-c", "feature")
         self.repository.write("docs/pr.md", "pull request\n")

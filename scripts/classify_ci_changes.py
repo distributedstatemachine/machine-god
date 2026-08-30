@@ -208,6 +208,17 @@ def _is_cheap_documentation_change(
     return expected_modes.get(status) == (old_mode, new_mode) and _is_cheap_documentation(path)
 
 
+def _path_prefix_collision(changes: list[tuple[str, str, str, str]]) -> str | None:
+    paths = {path for _status, _old_mode, _new_mode, path in changes}
+    for path in paths:
+        parts = path.split("/")
+        for length in range(1, len(parts)):
+            ancestor = "/".join(parts[:length])
+            if ancestor in paths:
+                return ancestor
+    return None
+
+
 def classify(
     event: str,
     before: str | None,
@@ -230,6 +241,13 @@ def classify(
 
     if not changes:
         return Classification(True, False, f"empty {range_reason}")
+    prefix_collision = _path_prefix_collision(changes)
+    if prefix_collision is not None:
+        return Classification(
+            True,
+            False,
+            f"{range_reason} includes file/directory transition at {prefix_collision!r}",
+        )
     non_docs = [
         path
         for status, old_mode, new_mode, path in changes
