@@ -58,8 +58,11 @@ retained official archive, extracts a fresh toolchain, passes that executable
 explicitly to the harness, and removes the extraction on success or failure.
 The wrapper forwards `SIGHUP`, `SIGINT`, and `SIGTERM` to the active child
 process group, bounds graceful reaping before kill escalation, and then unwinds
-the extraction context. A bounded-wait cache coordination lock serializes
-archive publication and stale-state recovery, while a per-run lease lets
+the extraction context. The upstream harness converts that first forwarded
+signal into structured unwinding so its independently grouped build or sample
+process is terminated and reaped before the harness exits. Separate bounded-wait
+coordination locks serialize archive publication and active-run recovery, while
+a per-run lease lets
 subsequent invocations remove interrupted partial downloads and stale
 extractions without deleting an extraction owned by a concurrent live run.
 When post-collection provenance validation is requested, the wrapper retains

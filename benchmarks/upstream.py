@@ -9,6 +9,7 @@ complete measurement protocol and enforced thresholds.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import ctypes
 import fcntl
 import hashlib
@@ -35,6 +36,15 @@ from typing import Any, BinaryIO, Callable, Mapping, Sequence
 
 EXPECTED_RUST_VERSION = "1.94.1"
 EXPECTED_ZIG_VERSION = "0.16.0"
+TERMINATION_SIGNALS = tuple(
+    candidate
+    for candidate in (
+        getattr(signal, "SIGHUP", None),
+        signal.SIGINT,
+        signal.SIGTERM,
+    )
+    if candidate is not None
+)
 BOOTSTRAP_DESCRIPTION = (
     "Launch each release binary through its current no-network bootstrap path"
 )
@@ -76,6 +86,67 @@ EQUIVALENCE_PROBE_KEYS = {
     "normalized_sha256",
     "implementations",
 }
+
+
+class HarnessSignal(BaseException):
+    def __init__(self, signum: int) -> None:
+        self.signum = signum
+
+
+class HarnessSignalState:
+    def __init__(self) -> None:
+        self.caught_signal: int | None = None
+        self.spawning = False
+
+    def handle(self, signum: int, _frame: object) -> None:
+        if self.caught_signal is not None:
+            return
+        self.caught_signal = signum
+        if not self.spawning:
+            raise HarnessSignal(signum)
+
+    def raise_if_caught(self) -> None:
+        if self.caught_signal is not None:
+            raise HarnessSignal(self.caught_signal)
+
+
+ACTIVE_HARNESS_SIGNAL_STATE: HarnessSignalState | None = None
+
+
+@contextmanager
+def termination_signal_handlers():
+    global ACTIVE_HARNESS_SIGNAL_STATE
+
+    if ACTIVE_HARNESS_SIGNAL_STATE is not None:
+        raise RuntimeError("benchmark termination handlers are already installed")
+    state = HarnessSignalState()
+    previous = {signum: signal.getsignal(signum) for signum in TERMINATION_SIGNALS}
+    ACTIVE_HARNESS_SIGNAL_STATE = state
+    try:
+        for signum in TERMINATION_SIGNALS:
+            signal.signal(signum, state.handle)
+        yield
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+        ACTIVE_HARNESS_SIGNAL_STATE = None
+
+
+@contextmanager
+def defer_harness_signal_while_spawning():
+    state = ACTIVE_HARNESS_SIGNAL_STATE
+    if state is None:
+        yield
+        return
+    state.raise_if_caught()
+    state.spawning = True
+    try:
+        yield
+    finally:
+        state.spawning = False
+        state.raise_if_caught()
+
+
 HEX_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 GIT_VERSION_RE = re.compile(r"^git version [0-9]+(?:\.[0-9]+)*(?: \(Apple Git-[0-9]+\))?$")
 RUSTC_VERSION_RE = re.compile(
@@ -2616,27 +2687,28 @@ def run_process(
         start = time.perf_counter_ns()
         deadline_ns = start + int(timeout_seconds * 1_000_000_000)
     try:
-        if gated_measurement:
-            process = launch_gated_process(
-                command,
-                cwd,
-                process_environment,
-                executable_descriptor,
-            )
-            exit_observer = LinuxExitObserver()
-        else:
-            process = subprocess.Popen(
-                list(command),
-                cwd=cwd,
-                env=process_environment,
-                executable=str(executable_path) if executable_path is not None else None,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL,
-                stderr=subprocess.PIPE if capture_output else subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            if capture_output:
-                output_capture = BoundedProcessCapture(process, max_output_bytes)
+        with defer_harness_signal_while_spawning():
+            if gated_measurement:
+                process = launch_gated_process(
+                    command,
+                    cwd,
+                    process_environment,
+                    executable_descriptor,
+                )
+                exit_observer = LinuxExitObserver()
+            else:
+                process = subprocess.Popen(
+                    list(command),
+                    cwd=cwd,
+                    env=process_environment,
+                    executable=str(executable_path) if executable_path is not None else None,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+                    stderr=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                if capture_output:
+                    output_capture = BoundedProcessCapture(process, max_output_bytes)
         if supervisor is not None:
             supervision_started = time.perf_counter_ns()
             root_descriptor = os.pidfd_open(process.pid, 0)
@@ -4440,7 +4512,10 @@ def main() -> int:
     requested_output = args.output.absolute()
     output = requested_output.parent.resolve() / requested_output.name
     try:
-        collect_and_publish_evidence(output, lambda: collect_evidence(args))
+        with termination_signal_handlers():
+            collect_and_publish_evidence(output, lambda: collect_evidence(args))
+    except HarnessSignal as caught:
+        return 128 + caught.signum
     except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as error:
         parser.exit(1, f"error: {error}\n")
     print(f"wrote validated bootstrap evidence to {output}")

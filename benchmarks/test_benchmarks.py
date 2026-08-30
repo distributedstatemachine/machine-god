@@ -2652,6 +2652,65 @@ runpy.run_path(sys.argv[0], run_name="__main__")
                     timeout_seconds=2.0,
                 )
 
+    def test_forwarded_termination_unwinds_and_reaps_grouped_child(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pid_path = root / "child.pid"
+            child_source = (
+                "import os,time\n"
+                f"open({str(pid_path)!r},'w',encoding='utf-8').write(str(os.getpid()))\n"
+                "time.sleep(60)\n"
+            )
+            helper_source = "\n".join(
+                (
+                    "import os,signal,sys",
+                    f"sys.path.insert(0, {str(ROOT / 'benchmarks')!r})",
+                    "import upstream",
+                    "environment=os.environ.copy()",
+                    f"environment[upstream.CONTAINMENT_ENVIRONMENT_KEY]={'d' * 32!r}",
+                    "try:",
+                    " with upstream.termination_signal_handlers():",
+                    "  upstream.run_process(",
+                    f"   [sys.executable,'-c',{child_source!r}],",
+                    f"   cwd=upstream.Path({str(root)!r}),",
+                    "   environment=environment,",
+                    "   timeout_seconds=60.0,",
+                    "  )",
+                    "except upstream.HarnessSignal as caught:",
+                    " raise SystemExit(128+caught.signum)",
+                )
+            )
+            helper = subprocess.Popen([sys.executable, "-c", helper_source])
+            child_pid: int | None = None
+            try:
+                deadline = time.monotonic() + 5.0
+                while time.monotonic() < deadline and not pid_path.exists():
+                    if helper.poll() is not None:
+                        self.fail(f"signal helper exited early with {helper.returncode}")
+                    time.sleep(0.01)
+                self.assertTrue(pid_path.exists())
+                child_pid = int(pid_path.read_text(encoding="utf-8"))
+                os.kill(helper.pid, signal.SIGTERM)
+                self.assertEqual(helper.wait(timeout=5.0), 128 + signal.SIGTERM)
+                deadline = time.monotonic() + 2.0
+                while time.monotonic() < deadline:
+                    try:
+                        os.kill(child_pid, 0)
+                    except ProcessLookupError:
+                        break
+                    time.sleep(0.01)
+                else:
+                    self.fail("forwarded termination left the grouped child alive")
+            finally:
+                if helper.poll() is None:
+                    helper.kill()
+                    helper.wait(timeout=2.0)
+                if child_pid is not None:
+                    try:
+                        os.kill(child_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
     @unittest.skipUnless(
         sys.platform.startswith("linux"),
         "detached descendant containment is enforced by Linux /proc",

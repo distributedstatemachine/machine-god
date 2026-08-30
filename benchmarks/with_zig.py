@@ -54,6 +54,8 @@ class ChildSupervisor:
     def __init__(self) -> None:
         self.child: subprocess.Popen | None = None
         self.caught_signal: int | None = None
+        self.signal_forwarded = False
+        self.spawning = False
 
     def forward(self, signum: int) -> None:
         child = self.child
@@ -65,9 +67,12 @@ class ChildSupervisor:
             pass
 
     def handle_signal(self, signum: int, _frame: object) -> None:
-        self.forward(signum)
-        if self.caught_signal is None:
-            self.caught_signal = signum
+        if self.caught_signal is not None:
+            return
+        self.caught_signal = signum
+        if self.child is not None:
+            self.forward_once(signum)
+        if not self.spawning:
             raise CaughtSignal(signum)
 
     @contextmanager
@@ -81,8 +86,12 @@ class ChildSupervisor:
             for signum, handler in previous.items():
                 signal.signal(signum, handler)
 
-    def terminate_and_reap(self, child: subprocess.Popen, signum: int) -> None:
-        self.forward(signum)
+    def forward_once(self, signum: int) -> None:
+        if not self.signal_forwarded:
+            self.forward(signum)
+            self.signal_forwarded = True
+
+    def reap_after_signal(self, child: subprocess.Popen) -> None:
         try:
             child.communicate(timeout=SIGNAL_GRACE_SECONDS)
             return
@@ -110,9 +119,11 @@ class ChildSupervisor:
     ) -> subprocess.CompletedProcess:
         if self.child is not None:
             raise RuntimeError("the Zig wrapper attempted overlapping child processes")
+        if self.caught_signal is not None:
+            raise CaughtSignal(self.caught_signal)
         child: subprocess.Popen | None = None
         try:
-            previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, FORWARDED_SIGNALS)
+            self.spawning = True
             try:
                 child = subprocess.Popen(
                     command,
@@ -123,7 +134,10 @@ class ChildSupervisor:
                 )
                 self.child = child
             finally:
-                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+                self.spawning = False
+            if self.caught_signal is not None:
+                self.forward_once(self.caught_signal)
+                raise CaughtSignal(self.caught_signal)
             try:
                 captured_stdout, captured_stderr = child.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
@@ -135,7 +149,8 @@ class ChildSupervisor:
                 raise
         except CaughtSignal as caught:
             if child is not None:
-                self.terminate_and_reap(child, caught.signum)
+                self.forward_once(caught.signum)
+                self.reap_after_signal(child)
             raise
         finally:
             self.child = None

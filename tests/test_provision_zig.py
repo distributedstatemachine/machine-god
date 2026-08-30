@@ -4,6 +4,7 @@ from contextlib import contextmanager, redirect_stderr
 import fcntl
 import hashlib
 import io
+import json
 import os
 from pathlib import Path
 import shutil
@@ -11,6 +12,7 @@ import signal
 import stat
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -242,10 +244,158 @@ class ProvisionZigTests(unittest.TestCase):
                     os.close(live_lease)
             self.assertEqual(list(active.iterdir()), [])
 
+    def test_post_acquisition_signal_cleans_the_owned_lease(self) -> None:
+        spec = provision_zig.host_spec("Linux", "x86_64")
+        supervisor = with_zig.ChildSupervisor()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "archive.tar.xz"
+            archive.write_bytes(b"fixture")
+            real_create = provision_zig.create_active_lease
+
+            def create_then_interrupt(
+                active_root: Path, selected: provision_zig.ToolchainSpec
+            ) -> tuple[Path, int]:
+                lease = real_create(active_root, selected)
+                os.kill(os.getpid(), signal.SIGTERM)
+                return lease
+
+            with (
+                mock.patch.object(provision_zig, "ensure_archive", return_value=archive),
+                mock.patch.object(
+                    provision_zig,
+                    "create_active_lease",
+                    side_effect=create_then_interrupt,
+                ),
+                supervisor.signal_handlers(),
+                self.assertRaises(with_zig.CaughtSignal) as caught,
+            ):
+                with provision_zig.provisioned_zig(root, spec, run=supervisor.run):
+                    self.fail("interrupted acquisition yielded a Zig executable")
+            self.assertEqual(caught.exception.signum, signal.SIGTERM)
+            self.assertEqual(list((root / "active").iterdir()), [])
+
+    def test_partial_lease_acquisition_closes_its_descriptor(self) -> None:
+        spec = provision_zig.host_spec("Linux", "x86_64")
+        with tempfile.TemporaryDirectory() as temporary:
+            active = Path(temporary) / "active"
+            active.mkdir()
+            opened: list[int] = []
+            real_open = provision_zig.open_private_file
+
+            def capture_open(path: Path, *, exclusive: bool = False) -> int:
+                descriptor = real_open(path, exclusive=exclusive)
+                opened.append(descriptor)
+                return descriptor
+
+            with (
+                mock.patch.object(
+                    provision_zig,
+                    "open_private_file",
+                    side_effect=capture_open,
+                ),
+                mock.patch.object(
+                    provision_zig.fcntl,
+                    "flock",
+                    side_effect=OSError("lock failed"),
+                ),
+                mock.patch.object(
+                    provision_zig.os,
+                    "close",
+                    wraps=provision_zig.os.close,
+                ) as close,
+                self.assertRaisesRegex(OSError, "lock failed"),
+            ):
+                provision_zig.create_active_lease(active, spec)
+            self.assertEqual(len(opened), 1)
+            self.assertIn(mock.call(opened[0]), close.call_args_list)
+            self.assertEqual(list(active.iterdir()), [])
+
+    def test_owned_cleanup_serializes_a_concurrent_provisioner(self) -> None:
+        spec = provision_zig.host_spec("Linux", "x86_64")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "archive.tar.xz"
+            archive.write_bytes(b"fixture")
+            first_entered = threading.Event()
+            release_first = threading.Event()
+            cleanup_started = threading.Event()
+            release_cleanup = threading.Event()
+            second_finished = threading.Event()
+            errors: list[BaseException] = []
+            blocked_cleanup = False
+            real_rmtree = provision_zig.shutil.rmtree
+
+            def fake_extract(
+                _archive: Path, destination: Path, _run: object = None
+            ) -> None:
+                destination.mkdir()
+                executable = destination / "zig"
+                executable.write_text(
+                    "#!/bin/sh\nprintf '0.16.0\\n'\n", encoding="utf-8"
+                )
+                executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+
+            def pause_first_active_cleanup(path: Path, *args, **kwargs) -> None:
+                nonlocal blocked_cleanup
+                selected = Path(path)
+                if selected.parent.name == "active" and not blocked_cleanup:
+                    blocked_cleanup = True
+                    cleanup_started.set()
+                    if not release_cleanup.wait(timeout=5.0):
+                        raise AssertionError("cleanup synchronization timed out")
+                real_rmtree(path, *args, **kwargs)
+
+            def first_run() -> None:
+                try:
+                    with provision_zig.provisioned_zig(root, spec):
+                        first_entered.set()
+                        if not release_first.wait(timeout=5.0):
+                            raise AssertionError("first run synchronization timed out")
+                except BaseException as error:
+                    errors.append(error)
+
+            def second_run() -> None:
+                try:
+                    with provision_zig.provisioned_zig(root, spec):
+                        pass
+                except BaseException as error:
+                    errors.append(error)
+                finally:
+                    second_finished.set()
+
+            with (
+                mock.patch.object(provision_zig, "ensure_archive", return_value=archive),
+                mock.patch.object(
+                    provision_zig, "extract_archive", side_effect=fake_extract
+                ),
+                mock.patch.object(
+                    provision_zig.shutil,
+                    "rmtree",
+                    side_effect=pause_first_active_cleanup,
+                ),
+            ):
+                first = threading.Thread(target=first_run)
+                first.start()
+                self.assertTrue(first_entered.wait(timeout=5.0))
+                release_first.set()
+                self.assertTrue(cleanup_started.wait(timeout=5.0))
+                second = threading.Thread(target=second_run)
+                second.start()
+                self.assertFalse(second_finished.wait(timeout=0.1))
+                release_cleanup.set()
+                first.join(timeout=5.0)
+                second.join(timeout=5.0)
+                self.assertFalse(first.is_alive())
+                self.assertFalse(second.is_alive())
+            self.assertEqual(errors, [])
+            self.assertEqual(list((root / "active").iterdir()), [])
+
     def test_wrapper_sigterm_reaps_child_and_unwinds_zig_context(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             owned = root / "active/owned"
+            signal_record = root / "signal.json"
 
             @contextmanager
             def fake_provisioned_zig(
@@ -262,11 +412,27 @@ class ProvisionZigTests(unittest.TestCase):
                 sys.executable,
                 "-c",
                 (
-                    "import os,signal,time;"
-                    "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
-                    "os.kill(os.getppid(),signal.SIGTERM);"
-                    "time.sleep(60)"
+                    "import json,os,signal,sys,time\n"
+                    "record=sys.argv[1]\n"
+                    "blocked=sorted(int(item) for item in "
+                    "signal.pthread_sigmask(signal.SIG_BLOCK, []))\n"
+                    "received=0\n"
+                    "def handle(signum, _frame):\n"
+                    " global received\n"
+                    " received += 1\n"
+                    " if received != 1:\n"
+                    "  return\n"
+                    " deadline=time.monotonic()+0.2\n"
+                    " while time.monotonic() < deadline:\n"
+                    "  time.sleep(0.01)\n"
+                    " with open(record, 'w', encoding='utf-8') as target:\n"
+                    "  json.dump({'blocked':blocked,'received':received},target)\n"
+                    " raise SystemExit(0)\n"
+                    "signal.signal(signal.SIGTERM,handle)\n"
+                    "os.kill(os.getppid(),signal.SIGTERM)\n"
+                    "time.sleep(60)\n"
                 ),
+                str(signal_record),
             ]
             started = time.monotonic()
             with (
@@ -277,7 +443,7 @@ class ProvisionZigTests(unittest.TestCase):
                     side_effect=fake_provisioned_zig,
                 ),
                 mock.patch.object(with_zig, "upstream_command", return_value=child),
-                mock.patch.object(with_zig, "SIGNAL_GRACE_SECONDS", 0.1),
+                mock.patch.object(with_zig, "SIGNAL_GRACE_SECONDS", 1.0),
                 mock.patch.object(with_zig, "KILL_GRACE_SECONDS", 1.0),
             ):
                 exit_code = with_zig.main(
@@ -286,6 +452,86 @@ class ProvisionZigTests(unittest.TestCase):
             self.assertEqual(exit_code, 128 + signal.SIGTERM)
             self.assertFalse(owned.exists())
             self.assertLess(time.monotonic() - started, 3.0)
+            observed = json.loads(signal_record.read_text(encoding="utf-8"))
+            self.assertEqual(observed["received"], 1)
+            for forwarded in with_zig.FORWARDED_SIGNALS:
+                self.assertNotIn(int(forwarded), observed["blocked"])
+
+    def test_wrapper_signal_lets_upstream_reap_its_grouped_child(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            owned = root / "active/owned"
+            child_pid_path = root / "grouped-child.pid"
+            wrapper_pid = os.getpid()
+            child_source = (
+                "import os,time\n"
+                f"open({str(child_pid_path)!r},'w',encoding='utf-8').write(str(os.getpid()))\n"
+                f"os.kill({wrapper_pid},15)\n"
+                "time.sleep(60)\n"
+            )
+            helper_source = "\n".join(
+                (
+                    "import os,sys",
+                    f"sys.path.insert(0,{str(with_zig.ROOT / 'benchmarks')!r})",
+                    "import upstream",
+                    "environment=os.environ.copy()",
+                    f"environment[upstream.CONTAINMENT_ENVIRONMENT_KEY]={'e' * 32!r}",
+                    "try:",
+                    " with upstream.termination_signal_handlers():",
+                    "  upstream.run_process(",
+                    f"   [sys.executable,'-c',{child_source!r}],",
+                    f"   cwd=upstream.Path({str(root)!r}),",
+                    "   environment=environment,",
+                    "   timeout_seconds=60.0,",
+                    "  )",
+                    "except upstream.HarnessSignal as caught:",
+                    " raise SystemExit(128+caught.signum)",
+                )
+            )
+
+            @contextmanager
+            def fake_provisioned_zig(
+                _cache: Path, _spec: object, *, run: object
+            ):
+                self.assertIsNotNone(run)
+                owned.mkdir(parents=True)
+                try:
+                    yield root / "zig"
+                finally:
+                    shutil.rmtree(owned)
+
+            with (
+                mock.patch.object(with_zig, "host_spec", return_value=object()),
+                mock.patch.object(
+                    with_zig,
+                    "provisioned_zig",
+                    side_effect=fake_provisioned_zig,
+                ),
+                mock.patch.object(
+                    with_zig,
+                    "upstream_command",
+                    return_value=[sys.executable, "-c", helper_source],
+                ),
+                mock.patch.object(with_zig, "SIGNAL_GRACE_SECONDS", 3.0),
+                mock.patch.object(with_zig, "KILL_GRACE_SECONDS", 1.0),
+            ):
+                exit_code = with_zig.main(["--cache-root", str(root / "cache")])
+            self.assertEqual(exit_code, 128 + signal.SIGTERM)
+            self.assertFalse(owned.exists())
+            child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(child_pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.01)
+            else:
+                try:
+                    os.kill(child_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                self.fail("wrapper interruption left the grouped child alive")
 
     def test_wrapper_binds_ephemeral_zig_and_forwards_arguments(self) -> None:
         zig = Path("/private/toolchain/zig")

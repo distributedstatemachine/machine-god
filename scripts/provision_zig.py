@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import platform
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -29,9 +30,19 @@ MARKER_NAME = ".machine-god-zig.json"
 DOWNLOAD_TIMEOUT_SECONDS = 300
 DOWNLOAD_RETRIES = 3
 CACHE_LOCK_NAME = ".machine-god-zig.lock"
+ACTIVE_LOCK_NAME = ".machine-god-zig-active.lock"
 LEASE_NAME = ".machine-god-zig.lease"
 CACHE_LOCK_TIMEOUT_SECONDS = 30.0
 CACHE_LOCK_RETRY_SECONDS = 0.05
+DEFERRED_SIGNALS = tuple(
+    candidate
+    for candidate in (
+        getattr(signal, "SIGHUP", None),
+        signal.SIGINT,
+        signal.SIGTERM,
+    )
+    if candidate is not None
+)
 
 CommandRunner = Callable[..., subprocess.CompletedProcess]
 
@@ -277,8 +288,19 @@ def open_private_file(path: Path, *, exclusive: bool = False) -> int:
 
 
 @contextmanager
-def cache_lock(cache_root: Path) -> Iterator[None]:
-    descriptor = open_private_file(cache_root / CACHE_LOCK_NAME)
+def defer_termination_signals() -> Iterator[None]:
+    """Defer wrapper termination until an owned resource has a cleanup guard."""
+
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, DEFERRED_SIGNALS)
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+
+
+@contextmanager
+def cache_lock(cache_root: Path, name: str = CACHE_LOCK_NAME) -> Iterator[None]:
+    descriptor = open_private_file(cache_root / name)
     deadline = time.monotonic() + CACHE_LOCK_TIMEOUT_SECONDS
     try:
         while True:
@@ -321,7 +343,6 @@ def prune_stale_active(active_root: Path) -> None:
         try:
             descriptor = open_private_file(lease_path)
         except FileNotFoundError:
-            shutil.rmtree(candidate)
             continue
         try:
             try:
@@ -337,11 +358,14 @@ def create_active_lease(active_root: Path, spec: ToolchainSpec) -> tuple[Path, i
     run_directory = Path(
         tempfile.mkdtemp(prefix=f"zig-{ZIG_VERSION}-{spec.target}-", dir=active_root)
     )
+    descriptor: int | None = None
     try:
         descriptor = open_private_file(run_directory / LEASE_NAME, exclusive=True)
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         return run_directory, descriptor
     except BaseException:
+        if descriptor is not None:
+            os.close(descriptor)
         shutil.rmtree(run_directory, ignore_errors=True)
         raise
 
@@ -356,14 +380,18 @@ def provisioned_zig(
 
     cache_root = cache_root.resolve()
     cache_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with cache_lock(cache_root):
-        prune_partial_archives(cache_root, spec)
-        archive = ensure_archive(cache_root, spec, run)
-        active_root = cache_root / "active"
-        active_root.mkdir(mode=0o700, exist_ok=True)
-        prune_stale_active(active_root)
-        run_directory, lease_descriptor = create_active_lease(active_root, spec)
+    run_directory: Path | None = None
+    lease_descriptor: int | None = None
     try:
+        with cache_lock(cache_root):
+            prune_partial_archives(cache_root, spec)
+            archive = ensure_archive(cache_root, spec, run)
+        with cache_lock(cache_root, ACTIVE_LOCK_NAME):
+            active_root = cache_root / "active"
+            active_root.mkdir(mode=0o700, exist_ok=True)
+            prune_stale_active(active_root)
+            with defer_termination_signals():
+                run_directory, lease_descriptor = create_active_lease(active_root, spec)
         install_dir = run_directory / "toolchain"
         extract_archive(archive, install_dir, run)
         executable = install_dir / "zig"
@@ -374,9 +402,14 @@ def provisioned_zig(
     finally:
         primary_failure = sys.exc_info()[0] is not None
         try:
-            shutil.rmtree(run_directory)
-        except OSError as error:
+            if run_directory is not None:
+                with defer_termination_signals(), cache_lock(
+                    cache_root, ACTIVE_LOCK_NAME
+                ):
+                    shutil.rmtree(run_directory)
+        except (OSError, ProvisionError) as error:
             if not primary_failure:
                 raise ProvisionError("could not remove the temporary Zig toolchain") from error
         finally:
-            os.close(lease_descriptor)
+            if lease_descriptor is not None:
+                os.close(lease_descriptor)
