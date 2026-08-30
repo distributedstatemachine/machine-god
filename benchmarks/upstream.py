@@ -4415,7 +4415,7 @@ def collect_and_publish_evidence(
 
 def main() -> int:
     default_root = Path(__file__).resolve().parents[1]
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--root", type=Path, default=default_root)
     parser.add_argument("--lock", type=Path, default=default_root / "benchmarks/upstream.lock")
     parser.add_argument("--upstream-dir", type=Path, default=default_root / ".bench/fx")

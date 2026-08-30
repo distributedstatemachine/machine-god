@@ -154,7 +154,9 @@ fn render_status(status: &NativeRuntimeStatus, json: bool) -> Result<String, std
 
 fn human_status(status: &NativeRuntimeStatus) -> Result<String, std::fmt::Error> {
     let mut output = BoundedStatusOutput::new();
-    writeln!(output, "[status] model={}", status.model())?;
+    output.write_str("[status] model=")?;
+    write_json_string_content(&mut output, status.model())?;
+    output.write_char('\n')?;
     writeln!(
         output,
         "[status] update_channel={}",
@@ -434,6 +436,33 @@ mod tests {
             .as_bytes()
         );
         assert!(stderr.is_empty());
+    }
+
+    #[test]
+    fn human_status_escapes_valid_model_metacharacters() {
+        let host = FakeStatusHost {
+            calls: Cell::new(0),
+            status: inspect_native_runtime_status(NativeRuntimeStatusInput::new(
+                "provider/\"model\\variant",
+                PermissionMode::Ask,
+                NativeRuntimeCredentialEnvironment::new(None, None),
+                "/workspace",
+                None,
+            )),
+        };
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        assert_eq!(
+            run_status(&host, &[], &mut stdout, &mut stderr, OUTPUT_FAILURE),
+            0
+        );
+        assert!(
+            stdout.starts_with(b"[status] model=provider/\\\"model\\\\variant\n"),
+            "unexpected human status output: {}",
+            String::from_utf8_lossy(&stdout)
+        );
+        assert!(stderr.is_empty());
+        assert_eq!(host.calls.get(), 1);
     }
 
     #[test]

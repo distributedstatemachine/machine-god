@@ -183,10 +183,10 @@ class ProvisionZigTests(unittest.TestCase):
             [
                 with_zig.sys.executable,
                 str(with_zig.ROOT / "benchmarks/upstream.py"),
-                "--zig",
-                str(zig),
                 "--runs",
                 "30",
+                "--zig",
+                str(zig),
             ],
         )
 
@@ -194,8 +194,12 @@ class ProvisionZigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             evidence = root / "evidence.json"
-            fx = root / "fx"
-            machine = root / "machine-god"
+            upstream = root / "upstream"
+            scratch = root / "scratch"
+            fx = upstream / "zig-out/bin/fx"
+            machine = scratch / "machine-target/release/machine-god"
+            fx.parent.mkdir(parents=True)
+            machine.parent.mkdir(parents=True)
             fx.write_bytes(b"fx")
             machine.write_bytes(b"machine-god")
             options = with_zig.parse_arguments(
@@ -213,6 +217,14 @@ class ProvisionZigTests(unittest.TestCase):
                     "--",
                     "--runs",
                     "30",
+                    "--output",
+                    str(evidence),
+                    "--runner-class",
+                    "runner",
+                    "--scratch-dir",
+                    str(scratch),
+                    "--upstream-dir",
+                    str(upstream),
                 ]
             )
             self.assertEqual(
@@ -220,7 +232,7 @@ class ProvisionZigTests(unittest.TestCase):
                 [
                     with_zig.sys.executable,
                     str(with_zig.ROOT / "benchmarks/check.py"),
-                    str(evidence),
+                    str(with_zig.canonical_output_path(evidence)),
                     "--expected-git-sha",
                     "a" * 40,
                     "--expected-runner-class",
@@ -238,11 +250,106 @@ class ProvisionZigTests(unittest.TestCase):
             with_zig.parse_arguments(["--expected-git-sha", "a" * 40])
         self.assertIn("requires all five validation options", diagnostics.getvalue())
 
+    def test_wrapper_rejects_forwarded_zig_override_forms(self) -> None:
+        for override in (
+            ["--zig", "/other/zig"],
+            ["--zig=/other/zig"],
+            ["--zi", "/other/zig"],
+            ["--z=/other/zig"],
+        ):
+            diagnostics = io.StringIO()
+            with (
+                self.subTest(override=override),
+                redirect_stderr(diagnostics),
+                self.assertRaises(SystemExit),
+            ):
+                with_zig.parse_arguments(["--", *override])
+            self.assertIn("exclusively owns", diagnostics.getvalue())
+
+    def test_wrapper_rejects_validation_collection_path_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            diagnostics = io.StringIO()
+            with redirect_stderr(diagnostics), self.assertRaises(SystemExit):
+                with_zig.parse_arguments(
+                    [
+                        "--validate-evidence",
+                        str(root / "old.json"),
+                        "--expected-git-sha",
+                        "a" * 40,
+                        "--expected-runner-class",
+                        "runner",
+                        "--fx-binary",
+                        str(root / "upstream/zig-out/bin/fx"),
+                        "--machine-god-binary",
+                        str(root / "scratch/machine-target/release/machine-god"),
+                        "--",
+                        "--output",
+                        str(root / "new.json"),
+                        "--runner-class",
+                        "runner",
+                        "--scratch-dir",
+                        str(root / "scratch"),
+                        "--upstream-dir",
+                        str(root / "upstream"),
+                    ]
+                )
+            self.assertIn("must be the forwarded collection output", diagnostics.getvalue())
+
+    def test_wrapper_binds_every_validation_target_to_the_collection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            canonical = [
+                "--validate-evidence",
+                str(root / "evidence.json"),
+                "--expected-git-sha",
+                "a" * 40,
+                "--expected-runner-class",
+                "runner",
+                "--fx-binary",
+                str(root / "upstream/zig-out/bin/fx"),
+                "--machine-god-binary",
+                str(root / "scratch/machine-target/release/machine-god"),
+                "--",
+                "--output",
+                str(root / "evidence.json"),
+                "--runner-class",
+                "runner",
+                "--scratch-dir",
+                str(root / "scratch"),
+                "--upstream-dir",
+                str(root / "upstream"),
+            ]
+            mutations = (
+                ("runner", 5, "other-runner"),
+                ("fx", 7, str(root / "other-fx")),
+                ("machine-god", 9, str(root / "other-machine-god")),
+                ("duplicate", None, None),
+            )
+            for label, index, replacement in mutations:
+                arguments = canonical.copy()
+                if index is None:
+                    arguments.extend(["--output", str(root / "evidence.json")])
+                else:
+                    arguments[index] = replacement
+                diagnostics = io.StringIO()
+                with (
+                    self.subTest(label=label),
+                    redirect_stderr(diagnostics),
+                    self.assertRaises(SystemExit),
+                ):
+                    with_zig.parse_arguments(arguments)
+                self.assertTrue(diagnostics.getvalue())
+
     def test_wrapper_keeps_zig_live_through_collection_and_validation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            fx = root / "fx"
-            machine = root / "machine-god"
+            upstream = root / "upstream"
+            scratch = root / "scratch"
+            fx = upstream / "zig-out/bin/fx"
+            machine = scratch / "machine-target/release/machine-god"
+            fx.parent.mkdir(parents=True)
+            machine.parent.mkdir(parents=True)
             fx.write_bytes(b"fx")
             machine.write_bytes(b"machine-god")
             live = False
@@ -277,6 +384,14 @@ class ProvisionZigTests(unittest.TestCase):
                 "--",
                 "--runs",
                 "30",
+                "--output",
+                str(root / "evidence.json"),
+                "--runner-class",
+                "runner",
+                "--scratch-dir",
+                str(scratch),
+                "--upstream-dir",
+                str(upstream),
             ]
             with (
                 mock.patch.object(with_zig, "host_spec", return_value=object()),
