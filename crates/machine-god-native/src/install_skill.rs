@@ -673,6 +673,7 @@ fn populate_stage(
                         .map_err(|_| write_failed())?;
                 budget.charge_io()?;
                 let metadata = rustix::fs::fstat(&directory).map_err(|_| write_failed())?;
+                sync_precommit(&directory, budget, cancellation)?;
                 staged.push(StagedEntry {
                     path: entry.path.clone(),
                     kind: StagedEntryKind::Directory {
@@ -913,8 +914,19 @@ impl Stage {
             &self.destination,
             RenameFlags::NOREPLACE,
         );
-        match outcome {
-            Ok(()) => self.published = true,
+        self.finish_rename(outcome, expected)
+    }
+
+    fn finish_rename(
+        &mut self,
+        outcome: Result<(), rustix::io::Errno>,
+        expected: &[StagedEntry],
+    ) -> Result<(), ToolError> {
+        let committed = match outcome {
+            Ok(()) => {
+                self.published = true;
+                true
+            }
             Err(error) if error == rustix::io::Errno::EXIST => return Err(destination_exists()),
             Err(error)
                 if error == rustix::io::Errno::NOTSUP
@@ -923,16 +935,27 @@ impl Stage {
             {
                 return Err(unsupported_filesystem());
             }
-            Err(_) => return Err(commit_ambiguous()),
-        }
-        let identity_result = self.verify_postpublication();
-        let inventory_result = self.verify_staged_inventory(expected);
-        let synchronization_result = sync_postcommit(self.parent.as_fd());
-        if identity_result.is_ok() && inventory_result.is_ok() && synchronization_result.is_ok() {
+            Err(_) => {
+                // The kernel result cannot prove that publication did not
+                // occur. Preserve all possibly published state and complete
+                // the bounded postcommit recovery before reporting ambiguity.
+                self.published = true;
+                false
+            }
+        };
+        let recovered = self.complete_postcommit(expected);
+        if committed && recovered {
             Ok(())
         } else {
             Err(commit_ambiguous())
         }
+    }
+
+    fn complete_postcommit(&self, expected: &[StagedEntry]) -> bool {
+        let identity_result = self.verify_postpublication();
+        let inventory_result = self.verify_staged_inventory(expected);
+        let synchronization_result = sync_postcommit(self.parent.as_fd());
+        identity_result.is_ok() && inventory_result.is_ok() && synchronization_result.is_ok()
     }
 
     fn verify_prepublication(&self, budget: &mut Budget) -> Result<(), ToolError> {
@@ -1996,6 +2019,31 @@ mod tests {
         assert_eq!(error.code, "install_skill_commit_ambiguous");
         assert!(!workspace.path().join("skills/rust").exists());
         assert!(workspace.path().join("displaced/rust").exists());
+    }
+
+    #[test]
+    fn ambiguous_rename_outcome_completes_recovery_and_preserves_publication() {
+        let workspace = TemporaryDirectory::new();
+        fs::create_dir(workspace.path().join("skills")).unwrap();
+        let tool = InstallSkillTool::open(workspace.path()).unwrap();
+        let mut budget = Budget::new();
+        let mut stage =
+            create_stage(&tool.root, "rust", &mut budget, &CancellationToken::new()).unwrap();
+        rustix::fs::renameat_with(
+            stage.parent.as_fd(),
+            &stage.name,
+            stage.parent.as_fd(),
+            &stage.destination,
+            RenameFlags::NOREPLACE,
+        )
+        .unwrap();
+
+        let error = stage
+            .finish_rename(Err(rustix::io::Errno::IO), &[])
+            .unwrap_err();
+        assert_eq!(error.code, "install_skill_commit_ambiguous");
+        assert!(stage.published);
+        assert!(workspace.path().join("skills/rust").exists());
     }
 
     #[test]
