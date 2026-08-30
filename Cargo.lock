@@ -854,6 +854,7 @@ dependencies = [
  "machine-god-core",
  "machine-god-reentrant-waker-test",
  "machine-god-testkit",
+ "memchr",
  "reqwest",
  "rustix",
  "rustls",

@@ -3,9 +3,15 @@ use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+#[cfg(unix)]
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(unix)]
+use std::sync::mpsc;
 use std::task::{Context, Poll, Wake, Waker};
+#[cfg(unix)]
+use std::time::Duration;
 
 use machine_god_core::CancellationToken;
 use machine_god_native::{
@@ -97,6 +103,39 @@ fn tape(cols: u16, rows: u16, version: &[u8], frames: &[Frame<'_>]) -> Vec<u8> {
 
 fn run(request: TerminalTapeReplayRequest) -> TerminalTapeReplayOutput {
     ready(replay_terminal_tape(request, CancellationToken::new())).expect("replay succeeds")
+}
+
+#[cfg(unix)]
+fn make_fifo(path: &Path) {
+    let status = Command::new("mkfifo")
+        .arg(path)
+        .status()
+        .expect("invoke the POSIX mkfifo utility");
+    assert!(status.success(), "mkfifo failed with {status}");
+}
+
+#[cfg(unix)]
+fn hold_fifo_reader(path: &Path) -> std::os::fd::OwnedFd {
+    rustix::fs::open(
+        path,
+        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC | rustix::fs::OFlags::NONBLOCK,
+        rustix::fs::Mode::empty(),
+    )
+    .expect("open FIFO reader without blocking")
+}
+
+#[cfg(unix)]
+fn run_with_timeout(
+    request: TerminalTapeReplayRequest,
+) -> Result<TerminalTapeReplayOutput, machine_god_native::TerminalTapeReplayError> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let result = ready(replay_terminal_tape(request, CancellationToken::new()));
+        let _ = sender.send(result);
+    });
+    receiver
+        .recv_timeout(Duration::from_secs(2))
+        .expect("replay must reject a FIFO without blocking")
 }
 
 #[test]
@@ -310,4 +349,206 @@ fn exclusive_input_cap_is_checked() {
     ))
     .expect_err("exclusive cap rejects exact bound");
     assert_eq!(error.kind(), TerminalTapeReplayErrorKind::ResourceLimit);
+}
+
+#[test]
+fn invalid_utf8_bytes_use_fx_numeric_arrays_in_json_outputs() {
+    let directory = TemporaryDirectory::new("json-bytes");
+    let tape_path = directory.path().join("bytes.fxtape");
+    let frames_dir = directory.path().join("rendered");
+    fs::write(
+        &tape_path,
+        tape(
+            8,
+            1,
+            b"v\xff",
+            &[
+                Frame {
+                    delta_ms: 0,
+                    kind: 1,
+                    payload: "界".as_bytes(),
+                },
+                Frame {
+                    delta_ms: 1,
+                    kind: 5,
+                    payload: "界".as_bytes(),
+                },
+                Frame {
+                    delta_ms: 1,
+                    kind: 5,
+                    payload: b"\xff",
+                },
+            ],
+        ),
+    )
+    .expect("write tape");
+
+    let output = run(TerminalTapeReplayRequest::new(
+        tape_path,
+        false,
+        true,
+        None,
+        Some(frames_dir.clone()),
+    ));
+    let summary: serde_json::Value = serde_json::from_slice(output.stdout()).expect("valid JSON");
+    assert_eq!(summary["version"], serde_json::json!([118, 255]));
+
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(frames_dir.join("manifest.json")).expect("read manifest"))
+            .expect("valid manifest JSON");
+    assert_eq!(manifest["version"], serde_json::json!([118, 255]));
+
+    let visible: serde_json::Value = serde_json::from_slice(
+        &fs::read(frames_dir.join("frames/0003.json")).expect("read marker metadata"),
+    )
+    .expect("valid metadata JSON");
+    assert_eq!(visible["visible_markers"], serde_json::json!(["界"]));
+}
+
+#[test]
+fn visible_marker_cache_preserves_order_duplicates_and_many_invisible_markers() {
+    let directory = TemporaryDirectory::new("marker-cache");
+    let tape_path = directory.path().join("markers.fxtape");
+    let frames_dir = directory.path().join("rendered");
+    let invisible: Vec<Vec<u8>> = (0..128)
+        .map(|index| format!("not-visible-{index}").into_bytes())
+        .collect();
+    let mut frames = Vec::with_capacity(invisible.len() + 3);
+    frames.push(Frame {
+        delta_ms: 0,
+        kind: 1,
+        payload: b"hit",
+    });
+    frames.extend(invisible.iter().map(|payload| Frame {
+        delta_ms: 0,
+        kind: 5,
+        payload,
+    }));
+    frames.push(Frame {
+        delta_ms: 0,
+        kind: 5,
+        payload: b"hit",
+    });
+    frames.push(Frame {
+        delta_ms: 0,
+        kind: 5,
+        payload: b"hit",
+    });
+    fs::write(&tape_path, tape(8, 1, b"vtest", &frames)).expect("write tape");
+
+    run(TerminalTapeReplayRequest::new(
+        tape_path,
+        false,
+        false,
+        None,
+        Some(frames_dir.clone()),
+    ));
+    let final_index = frames.len();
+    let metadata: serde_json::Value = serde_json::from_slice(
+        &fs::read(
+            frames_dir
+                .join("frames")
+                .join(format!("{final_index:04}.json")),
+        )
+        .expect("read final metadata"),
+    )
+    .expect("valid metadata JSON");
+    assert_eq!(
+        metadata["visible_markers"],
+        serde_json::json!(["hit", "hit"])
+    );
+}
+
+fn boundary_snapshot(ascii_prefix_bytes: usize, display_unit: &[u8]) -> Vec<u8> {
+    let directory = TemporaryDirectory::new("display-boundary");
+    let tape_path = directory.path().join("boundary.fxtape");
+    let mut payload = vec![b'a'; ascii_prefix_bytes];
+    payload.extend_from_slice(display_unit);
+    fs::write(
+        &tape_path,
+        tape(
+            4096,
+            5,
+            b"vtest",
+            &[Frame {
+                delta_ms: 0,
+                kind: 1,
+                payload: &payload,
+            }],
+        ),
+    )
+    .expect("write boundary tape");
+    run(TerminalTapeReplayRequest::new(
+        tape_path, false, false, None, None,
+    ))
+    .stdout()
+    .to_vec()
+}
+
+#[test]
+fn complete_stdout_frames_do_not_split_display_units_at_io_chunk_boundary() {
+    let zwj_snapshot = boundary_snapshot(16_380, "👩‍💻".as_bytes());
+    assert!(
+        zwj_snapshot
+            .windows("👩‍💻".len())
+            .any(|window| window == "👩‍💻".as_bytes()),
+        "ZWJ sequence remains one rendered display unit"
+    );
+
+    let variation_snapshot = boundary_snapshot(16_381, "❤️".as_bytes());
+    assert!(
+        variation_snapshot
+            .windows("❤️".len())
+            .any(|window| window == "❤️".as_bytes()),
+        "variation selector remains attached to its base"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn fifo_tape_and_output_targets_are_rejected_without_blocking() {
+    let directory = TemporaryDirectory::new("fifo");
+
+    let tape_fifo = directory.path().join("tape.fifo");
+    make_fifo(&tape_fifo);
+    let tape_error = run_with_timeout(TerminalTapeReplayRequest::new(
+        tape_fifo, false, false, None, None,
+    ))
+    .expect_err("FIFO tape fails");
+    assert_eq!(tape_error.kind(), TerminalTapeReplayErrorKind::OpenFailed);
+
+    let tape_path = directory.path().join("valid.fxtape");
+    fs::write(&tape_path, tape(2, 1, b"vtest", &[])).expect("write valid tape");
+    let golden_fifo = directory.path().join("golden.fifo");
+    make_fifo(&golden_fifo);
+    let _golden_reader = hold_fifo_reader(&golden_fifo);
+    let golden_error = run_with_timeout(TerminalTapeReplayRequest::new(
+        tape_path.clone(),
+        false,
+        false,
+        Some(golden_fifo),
+        None,
+    ))
+    .expect_err("FIFO golden target fails");
+    assert_eq!(
+        golden_error.kind(),
+        TerminalTapeReplayErrorKind::WriteFailed
+    );
+
+    let frames_dir = directory.path().join("frames-output");
+    fs::create_dir_all(frames_dir.join("frames")).expect("create frames directory");
+    make_fifo(&frames_dir.join("manifest.json"));
+    let _manifest_reader = hold_fifo_reader(&frames_dir.join("manifest.json"));
+    let artifact_error = run_with_timeout(TerminalTapeReplayRequest::new(
+        tape_path,
+        false,
+        false,
+        None,
+        Some(frames_dir),
+    ))
+    .expect_err("FIFO artifact target fails");
+    assert_eq!(
+        artifact_error.kind(),
+        TerminalTapeReplayErrorKind::FramesDirFailed
+    );
 }

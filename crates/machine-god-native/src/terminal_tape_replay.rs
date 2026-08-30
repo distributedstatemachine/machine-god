@@ -7,6 +7,10 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use machine_god_core::{BoxFuture, CancellationToken};
+use memchr::memmem;
+
+#[cfg(unix)]
+use rustix::fs::{Mode, OFlags};
 
 use crate::terminal_grid::{TerminalGrid, TerminalGridError};
 
@@ -284,6 +288,51 @@ struct CapturedOutput {
     stderr: Vec<u8>,
 }
 
+struct VisibleMarkersCache {
+    encoded: Vec<u8>,
+    evaluated: usize,
+    has_visible: bool,
+}
+
+impl VisibleMarkersCache {
+    fn new() -> Self {
+        Self {
+            encoded: Vec::new(),
+            evaluated: 0,
+            has_visible: false,
+        }
+    }
+
+    fn update(
+        &mut self,
+        snapshot: &[u8],
+        markers: &[&[u8]],
+        grid_changed: bool,
+    ) -> Result<(), TerminalTapeReplayError> {
+        if grid_changed {
+            self.encoded.clear();
+            self.evaluated = 0;
+            self.has_visible = false;
+        }
+        for marker in &markers[self.evaluated..] {
+            if marker.is_empty() || !contains_bytes(snapshot, marker) {
+                continue;
+            }
+            if self.has_visible {
+                push_internal(&mut self.encoded, b",")?;
+            }
+            push_json_bytes(&mut self.encoded, marker)?;
+            self.has_visible = true;
+        }
+        self.evaluated = markers.len();
+        Ok(())
+    }
+
+    fn encoded(&self) -> &[u8] {
+        &self.encoded
+    }
+}
+
 impl CapturedOutput {
     fn new() -> Self {
         Self {
@@ -414,6 +463,7 @@ fn replay_polled(
     let mut stdout_bytes = 0usize;
     let mut elapsed_ms = 0i64;
     let mut markers: Vec<&[u8]> = Vec::new();
+    let mut visible_markers = VisibleMarkersCache::new();
     let mut first_json_frame = true;
     let mut ignored_incomplete_tail = false;
 
@@ -435,21 +485,23 @@ fn replay_polled(
             .checked_add(i64::from(frame.delta_ms))
             .ok_or_else(resource_limit)?;
 
+        let mut grid_changed = false;
         match frame.kind {
             1 => {
                 stdout_bytes = stdout_bytes
                     .checked_add(frame.payload.len())
                     .ok_or_else(resource_limit)?;
-                for chunk in frame.payload.chunks(IO_CHUNK_BYTES) {
-                    check_cancelled(cancellation)?;
-                    grid.feed(chunk).map_err(map_grid_error)?;
-                }
+                check_cancelled(cancellation)?;
+                grid.feed(frame.payload).map_err(map_grid_error)?;
+                check_cancelled(cancellation)?;
+                grid_changed = true;
             }
             3 if frame.payload.len() >= 4 => {
                 let cols = u16::from_le_bytes([frame.payload[0], frame.payload[1]]);
                 let rows = u16::from_le_bytes([frame.payload[2], frame.payload[3]]);
                 grid.resize(cols, rows).map_err(map_grid_error)?;
                 resize_count = resize_count.checked_add(1).ok_or_else(resource_limit)?;
+                grid_changed = true;
             }
             5 if request.frames_dir.is_some() => markers.push(frame.payload),
             _ => {}
@@ -469,6 +521,12 @@ fn replay_polled(
             push_internal(&mut summary, b"}")?;
         }
 
+        let snapshot = if request.frames || request.frames_dir.is_some() {
+            Some(grid.snapshot().map_err(map_grid_error)?)
+        } else {
+            None
+        };
+
         if request.frames && frame.kind != 5 {
             let heading = format!(
                 "\n--- frame {frame_count} ({}, +{}ms) ---\n",
@@ -476,14 +534,22 @@ fn replay_polled(
                 frame.delta_ms
             );
             output.write_stdout(heading.as_bytes())?;
-            let snapshot = grid.snapshot().map_err(map_grid_error)?;
-            output.write_stdout(&snapshot)?;
+            output.write_stdout(snapshot.as_deref().expect("snapshot requested for frames"))?;
         }
 
         if let Some(root) = request.frames_dir.as_deref() {
-            let snapshot = grid.snapshot().map_err(map_grid_error)?;
-            let metadata =
-                frame_metadata(frame_count, frame, elapsed_ms, &grid, &snapshot, &markers)?;
+            let snapshot = snapshot
+                .as_deref()
+                .expect("snapshot requested for frames directory");
+            visible_markers.update(snapshot, &markers, grid_changed)?;
+            let metadata = frame_metadata(
+                frame_count,
+                frame,
+                elapsed_ms,
+                &grid,
+                snapshot,
+                visible_markers.encoded(),
+            )?;
             write_artifact(
                 &root.join("frames").join(format!("{frame_count:04}.json")),
                 &metadata,
@@ -494,7 +560,7 @@ fn replay_polled(
                 &root
                     .join("frames")
                     .join(format!("{frame_count:04}.grid.txt")),
-                &snapshot,
+                snapshot,
                 &mut artifact_bytes,
                 cancellation,
             )?;
@@ -532,7 +598,7 @@ fn replay_polled(
     }
     if let Some(path) = request.golden.as_deref() {
         write_file(path, &final_snapshot, cancellation)
-            .map_err(|error| map_golden_write_error(&error))?;
+            .map_err(|error| map_golden_write_error(&error, cancellation))?;
         return output.finish();
     }
     if !request.frames && !request.json {
@@ -546,12 +612,16 @@ fn read_tape(
     cancellation: &CancellationToken,
 ) -> Result<Vec<u8>, TerminalTapeReplayError> {
     check_cancelled(cancellation)?;
-    let mut file = File::open(path).map_err(|error| map_open_error(&error))?;
+    let mut file = open_regular_tape(path, cancellation)?;
     let mut bytes = Vec::new();
     let mut buffer = [0u8; IO_CHUNK_BYTES];
     loop {
         check_cancelled(cancellation)?;
-        let read = file.read(&mut buffer).map_err(|_| read_failed())?;
+        let Ok(read) = file.read(&mut buffer) else {
+            check_cancelled(cancellation)?;
+            return Err(read_failed());
+        };
+        check_cancelled(cancellation)?;
         if read == 0 {
             break;
         }
@@ -594,14 +664,139 @@ fn write_file(path: &Path, bytes: &[u8], cancellation: &CancellationToken) -> io
     if cancellation.is_cancelled() {
         return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
     }
-    let mut file = File::create(path)?;
+    let mut file = open_regular_output(path, cancellation)?;
     for chunk in bytes.chunks(IO_CHUNK_BYTES) {
         if cancellation.is_cancelled() {
             return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
         }
         file.write_all(chunk)?;
+        if cancellation.is_cancelled() {
+            return Err(cancelled_io_error());
+        }
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn open_regular_tape(
+    path: &Path,
+    cancellation: &CancellationToken,
+) -> Result<File, TerminalTapeReplayError> {
+    let descriptor = match rustix::fs::open(
+        path,
+        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NONBLOCK,
+        Mode::empty(),
+    ) {
+        Ok(descriptor) => descriptor,
+        Err(error) => {
+            check_cancelled(cancellation)?;
+            return Err(if error == rustix::io::Errno::NOENT {
+                TerminalTapeReplayError::new(TerminalTapeReplayErrorKind::FileNotFound)
+            } else {
+                TerminalTapeReplayError::new(TerminalTapeReplayErrorKind::OpenFailed)
+            });
+        }
+    };
+    check_cancelled(cancellation)?;
+    let file = File::from(descriptor);
+    let metadata = file
+        .metadata()
+        .map_err(|_| TerminalTapeReplayError::new(TerminalTapeReplayErrorKind::OpenFailed))?;
+    if !metadata.is_file() {
+        return Err(TerminalTapeReplayError::new(
+            TerminalTapeReplayErrorKind::OpenFailed,
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(not(unix))]
+fn open_regular_tape(
+    path: &Path,
+    cancellation: &CancellationToken,
+) -> Result<File, TerminalTapeReplayError> {
+    match fs::metadata(path) {
+        Ok(metadata) if !metadata.is_file() => {
+            return Err(TerminalTapeReplayError::new(
+                TerminalTapeReplayErrorKind::OpenFailed,
+            ));
+        }
+        Ok(_) => {}
+        Err(error) => {
+            check_cancelled(cancellation)?;
+            return Err(map_open_error(&error));
+        }
+    }
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) => {
+            check_cancelled(cancellation)?;
+            return Err(map_open_error(&error));
+        }
+    };
+    check_cancelled(cancellation)?;
+    if !file
+        .metadata()
+        .map_err(|_| TerminalTapeReplayError::new(TerminalTapeReplayErrorKind::OpenFailed))?
+        .is_file()
+    {
+        return Err(TerminalTapeReplayError::new(
+            TerminalTapeReplayErrorKind::OpenFailed,
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(unix)]
+fn open_regular_output(path: &Path, cancellation: &CancellationToken) -> io::Result<File> {
+    let descriptor = match rustix::fs::open(
+        path,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::TRUNC | OFlags::CLOEXEC | OFlags::NONBLOCK,
+        Mode::from_raw_mode(0o666),
+    ) {
+        Ok(descriptor) => descriptor,
+        Err(error) => {
+            if cancellation.is_cancelled() {
+                return Err(cancelled_io_error());
+            }
+            return Err(error.into());
+        }
+    };
+    if cancellation.is_cancelled() {
+        return Err(cancelled_io_error());
+    }
+    let file = File::from(descriptor);
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::other("output target is not a regular file"));
+    }
+    Ok(file)
+}
+
+#[cfg(not(unix))]
+fn open_regular_output(path: &Path, cancellation: &CancellationToken) -> io::Result<File> {
+    match fs::metadata(path) {
+        Ok(metadata) if !metadata.is_file() => {
+            return Err(io::Error::other("output target is not a regular file"));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    if cancellation.is_cancelled() {
+        return Err(cancelled_io_error());
+    }
+    let file = File::create(path)?;
+    if cancellation.is_cancelled() {
+        return Err(cancelled_io_error());
+    }
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::other("output target is not a regular file"));
+    }
+    Ok(file)
+}
+
+fn cancelled_io_error() -> io::Error {
+    io::Error::new(io::ErrorKind::Interrupted, "cancelled")
 }
 
 fn frame_metadata(
@@ -610,7 +805,7 @@ fn frame_metadata(
     elapsed_ms: i64,
     grid: &TerminalGrid,
     snapshot: &[u8],
-    markers: &[&[u8]],
+    visible_markers: &[u8],
 ) -> Result<Vec<u8>, TerminalTapeReplayError> {
     let mut out = Vec::new();
     push_internal(&mut out, b"{\"index\":")?;
@@ -643,7 +838,9 @@ fn frame_metadata(
     push_internal(&mut out, b"},\"footer_candidates\":")?;
     push_footer_candidates(&mut out, snapshot)?;
     push_internal(&mut out, b",\"visible_markers\":")?;
-    push_visible_markers(&mut out, snapshot, markers)?;
+    push_internal(&mut out, b"[")?;
+    push_internal(&mut out, visible_markers)?;
+    push_internal(&mut out, b"]")?;
     push_internal(&mut out, b"}\n")?;
     Ok(out)
 }
@@ -707,26 +904,6 @@ fn push_footer_candidates(
     push_internal(out, b"]")
 }
 
-fn push_visible_markers(
-    out: &mut Vec<u8>,
-    snapshot: &[u8],
-    markers: &[&[u8]],
-) -> Result<(), TerminalTapeReplayError> {
-    push_internal(out, b"[")?;
-    let mut first = true;
-    for marker in markers {
-        if marker.is_empty() || !contains_bytes(snapshot, marker) {
-            continue;
-        }
-        if !first {
-            push_internal(out, b",")?;
-        }
-        first = false;
-        push_json_bytes(out, marker)?;
-    }
-    push_internal(out, b"]")
-}
-
 fn is_input_snapshot_row(line: &[u8]) -> bool {
     let text = trim_snapshot_frame(line);
     text.starts_with("❯".as_bytes())
@@ -753,10 +930,7 @@ fn trim_snapshot_frame(mut line: &[u8]) -> &[u8] {
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
-    !needle.is_empty()
-        && haystack
-            .windows(needle.len())
-            .any(|window| window == needle)
+    !needle.is_empty() && memmem::find(haystack, needle).is_some()
 }
 
 fn frame_kind_name(kind: u8) -> &'static str {
@@ -771,6 +945,16 @@ fn frame_kind_name(kind: u8) -> &'static str {
 }
 
 fn push_json_bytes(out: &mut Vec<u8>, bytes: &[u8]) -> Result<(), TerminalTapeReplayError> {
+    if std::str::from_utf8(bytes).is_err() {
+        push_internal(out, b"[")?;
+        for (index, byte) in bytes.iter().enumerate() {
+            if index != 0 {
+                push_internal(out, b",")?;
+            }
+            push_number(out, u64::from(*byte))?;
+        }
+        return push_internal(out, b"]");
+    }
     push_internal(out, b"\"")?;
     for byte in bytes {
         match *byte {
@@ -854,6 +1038,7 @@ fn check_cancelled(cancellation: &CancellationToken) -> Result<(), TerminalTapeR
     }
 }
 
+#[cfg(not(unix))]
 fn map_open_error(error: &io::Error) -> TerminalTapeReplayError {
     if error.kind() == io::ErrorKind::NotFound {
         TerminalTapeReplayError::new(TerminalTapeReplayErrorKind::FileNotFound)
@@ -862,8 +1047,11 @@ fn map_open_error(error: &io::Error) -> TerminalTapeReplayError {
     }
 }
 
-fn map_golden_write_error(error: &io::Error) -> TerminalTapeReplayError {
-    if error.kind() == io::ErrorKind::Interrupted {
+fn map_golden_write_error(
+    error: &io::Error,
+    cancellation: &CancellationToken,
+) -> TerminalTapeReplayError {
+    if error.kind() == io::ErrorKind::Interrupted && cancellation.is_cancelled() {
         cancelled()
     } else {
         TerminalTapeReplayError::new(TerminalTapeReplayErrorKind::WriteFailed)
