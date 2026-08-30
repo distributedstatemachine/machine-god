@@ -63,6 +63,10 @@ extraction context. The upstream harness converts the first forwarded signal
 into structured unwinding. On Linux it defers delivery from process creation
 through containment attachment, so independently grouped build or sample
 processes and their descendants are owned and reaped before the harness exits.
+Linux process-table discovery stops after 65,536 numeric entries, builds one
+parent-to-children index, and traverses at most 4,096 contained identities per
+refresh; overflow is retained as owned cleanup work and fails closed instead of
+turning cleanup into an unbounded ancestry rescan.
 The gated measurement launch owns both pipes and the forked child as one
 transaction; any setup exception closes the descriptors and boundedly kills and
 reaps the child. Cleanup isolates failures in individual kill, pipe, wait, and
@@ -70,9 +74,15 @@ supervisor operations, and surfaces a latched termination only after containment
 cleanup finishes.
 Separate bounded-wait coordination locks serialize archive publication and
 active-run recovery, while a per-run lease prevents a live extraction from
-being reclaimed. Archive, active-run, and trash namespaces have hard entry
+being reclaimed. Archive validation opens one no-follow descriptor, verifies
+its type, identity, and exact pinned size, hashes only those declared bytes plus
+one EOF witness, and revalidates the descriptor and path afterward. Archive,
+active-run, and trash namespaces have hard entry
 capacities and stop scanning at a single overflow witness; partial-archive and
-stale-tree recovery each process only a fixed batch. Recovery acquires the
+stale-tree recovery each process only a fixed batch. Fixed cache infrastructure
+uses the same root-capacity admission rule, and cursorless recovery processes a
+bounded first window so it can free capacity for a persistent fairness cursor.
+Recovery acquires the
 active-run lock before briefly deferring termination for ownership mutations,
 so lock contention remains interruptible. Trash leases are opened without
 creation and inode-revalidated before reclamation. Stale and normally completed
