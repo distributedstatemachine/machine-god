@@ -21,22 +21,21 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `44`
-- Delivered main: `0d6de4de13c9770cc5e1d1f1e7a1f08eef2c0936`
-- Main CI: `33312631865` (`GREEN`)
-- Main Benchmark evidence: `33312631875` (`GREEN`)
-- Active branch: `agent/m03-replay-cli`
-- Active phase: `validating the integrated pinned-fx-compatible FXTP replay candidate and retained differential evidence`
-- Next gate: `pass the complete exact-1.94.1 local gate, freeze one behavior SHA, and open three fresh adversarial review tracks`
+- Delivered slices: `45`
+- Delivered main: `e685dc47fa8a614d0f7d580f3a3622e155b6d42f`
+- Main CI: `33319371520` (`GREEN`)
+- Main Benchmark evidence: `33319371530` (`GREEN`)
+- Active branch: `agent/m03-replay-delivery`
+- Active phase: `selecting the next bounded M03 tool or CLI ownership slice`
+- Next gate: `freeze the next actual-tool or CLI contract and its pinned compatibility evidence before implementation`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
 and the Benchmark evidence run retained the required exact-SHA artifacts. The
-bounded read-only top-level [`workspace`](workspace-cli.md) command is delivered
-as slice 44. The current product candidate is pinned-fx-compatible offline
-terminal-tape `replay`. Documentation parser maintenance remains a separate
-non-product task; product iterations use the existing bounded
-repository-policy checker.
+pinned-fx-compatible offline terminal-tape [`replay`](replay-cli.md) command is
+delivered as slice 45. Documentation parser maintenance remains a separate
+non-product task; product iterations use the existing bounded repository-policy
+checker.
 
 ## Architecture ownership
 
@@ -144,8 +143,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 42 | Bounded workspace-local `skill` | [contract](skill.md) | [review](reviews/m05-skill-review-01.md) | `ef5ab40` |
 | 43 | Bounded local-only `install_skill` | [contract](install-skill.md) | [review](reviews/m05-install-skill-review-01.md) | `25b62a0` |
 | 44 | Bounded read-only top-level `workspace` CLI | [contract](workspace-cli.md) | [review](reviews/m03-workspace-cli-review-01.md) | `f36a834` |
+| 45 | Pinned-fx-compatible offline FXTP `replay` CLI | [contract](replay-cli.md) | [review](reviews/m03-replay-cli-review-01.md) | `e685dc4` |
 
-The exact delivered-main record after slice 44 is in the canonical live-status
+The exact delivered-main record after slice 45 is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.
@@ -166,12 +166,12 @@ requires an explicit reviewed plan change.
   `terminal`, `ask_user_question`, `read_tool_result`, `vision`, `memory`,
   `skill`, and `install_skill`.
 - Delivered CLI slices for `ask`, `resume`, `permissions`, `models`, `doctor`,
-  `sessions`, `workspace`, and strict summary-only `session <id>`.
+  `sessions`, `workspace`, `replay`, and strict summary-only `session <id>`.
 
 ### Remaining
 
 - Complete top-level CLI ownership for `help`, `status`, `permissions`,
-  `models`, `doctor`, `session`, `sessions`, `resume`, and `replay`.
+  `models`, `doctor`, `session`, `sessions`, and `resume`.
   Existing partial/delivered commands do not close the combined boundary.
 - Complete the pinned slash-command categories `general`, `session`, `model`,
   `security`, and `workspace`. Compatibility is scenario-based; documented
