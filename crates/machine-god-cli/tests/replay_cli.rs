@@ -278,8 +278,8 @@ fn invalid_two_byte_prefixes_match_pinned_fx_flush_and_completion() {
     for (name, payload, expected) in [
         ("lone-c0", &[0xc0][..], "|     |\n"),
         ("lone-c1", &[0xc1][..], "|     |\n"),
-        ("complete-c0", &[0xc0, 0x80][..], "|�    |\n"),
-        ("complete-c1", &[0xc1, 0xbf][..], "|�    |\n"),
+        ("complete-c0", &[0xc0, 0x80][..], "|��   |\n"),
+        ("complete-c1", &[0xc1, 0xbf][..], "|��   |\n"),
     ] {
         let tape = root.path().join(format!("{name}.fxtape"));
         fs::write(&tape, minimal_tape(5, 1, payload)).unwrap();
