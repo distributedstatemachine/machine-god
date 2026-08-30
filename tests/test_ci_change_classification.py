@@ -110,6 +110,7 @@ class CiChangeClassificationTests(unittest.TestCase):
             "docs/core-api.md",
             "docs/testkit.md",
             "docs/compatibility.md",
+            "docs/vision.md",
         ):
             with self.subTest(relative=relative):
                 self.repository.git("reset", "--hard", self.initial)

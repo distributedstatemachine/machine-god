@@ -15,14 +15,17 @@ required-check state that can result when an entire workflow is skipped.
 A change is documentation-only only when every changed path is one of:
 
 - `README.md`; or
-- a Markdown file below `docs/`, except the three exclusions below.
+- a Markdown file below `docs/`, except the four exclusions below.
 
 The following Markdown files require the complete product gate:
 
 - `docs/core-api.md` and `docs/testkit.md`, because Rust source includes them
   as crate documentation and their examples are compiled as doctests; and
 - `docs/compatibility.md`, because it is generated evidence whose source
-  agreement is checked by the pinned-upstream compatibility gate.
+  agreement is checked by the pinned-upstream compatibility gate; and
+- `docs/vision.md`, because the complete repository Python suite checks its
+  feature, platform, and CI statements against manifests, source, and workflow
+  configuration.
 
 `AGENTS.md`, workflow files, scripts, manifests, tests, benchmark inputs,
 compatibility inputs, non-Markdown documentation assets, mixed changes, and

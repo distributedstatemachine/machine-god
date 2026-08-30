@@ -20,6 +20,7 @@ DOC_EXCEPTIONS = {
     "docs/compatibility.md",
     "docs/core-api.md",
     "docs/testkit.md",
+    "docs/vision.md",
 }
 KNOWN_STATUSES = {"A", "B", "D", "M", "T", "U", "X"}
 REGULAR_BLOB_MODE = "100644"
