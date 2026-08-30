@@ -3488,9 +3488,26 @@ runpy.run_path(sys.argv[0], run_name="__main__")
             subprocess.run(["git", "-C", str(root), "commit", "-qm", "ignore"], check=True)
             (root / "target").mkdir()
             (root / "target/output").write_text("ok", encoding="utf-8")
+            (root / ".bench").mkdir()
+            for index in range(2_000):
+                (root / ".bench" / f"ignored-{index:04}.txt").write_text(
+                    "output", encoding="utf-8"
+                )
             environment = os.environ.copy()
             environment[CONTAINMENT_ENVIRONMENT_KEY] = "c" * 32
-            check_machine_cleanliness(root, "git", environment, 2.0)
+            commands: list[list[str]] = []
+            original_run_process = upstream.run_process
+
+            def record_run_process(command, *args, **kwargs):
+                commands.append(list(command))
+                return original_run_process(command, *args, **kwargs)
+
+            with mock.patch.object(
+                upstream, "run_process", side_effect=record_run_process
+            ):
+                check_machine_cleanliness(root, "git", environment, 2.0)
+            self.assertEqual(len(commands), 1)
+            self.assertIn("--ignored=matching", commands[0])
             (root / ".cargo").mkdir()
             (root / ".cargo/config.toml").write_text(
                 "[build]\nrustflags=['-Ctarget-cpu=native']\n", encoding="utf-8"

@@ -2889,7 +2889,7 @@ def check_machine_cleanliness(
             "--porcelain=v1",
             "-z",
             "--untracked-files=all",
-            "--ignored",
+            "--ignored=matching",
         ],
         cwd=root,
         environment=environment,
