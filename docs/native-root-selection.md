@@ -293,9 +293,15 @@ Configuration remains strict schema v3 with the exact same built-in and file
 bytes. Root selection is not a configuration field and neither the loader nor
 core gains environment, filesystem, or creation authority.
 
-Native status remains a metadata-only observation of the same resolved state
-path. It does not call `NativeRootSelection`, prepare roots, open directory
-descriptors, or create a missing directory.
+The retained legacy `NativeStatus` metadata API can still observe the resolved
+state path. It does not call `NativeRootSelection`, prepare roots, open
+directory descriptors, or create a missing directory. The CLI status command
+instead uses `NativeRuntimeStatus`: after valid status parsing, native
+inspection loads strict configuration exactly once, classifies the selected
+environment credential without retaining or reporting secret bytes, and
+canonicalizes the current directory. It does not inspect a state root, call
+this selection boundary, prepare or create roots, write product state, or use
+the network.
 
 The one-shot `machine-god ask` host captures one `NativeEnvironment` snapshot,
 passes it to `NativeRootSelection::from_current_process`, prepares the result,

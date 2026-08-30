@@ -2,10 +2,11 @@
 
 The native configuration loader is a bounded, synchronous, read-only
 `machine-god-native` authority. Core remains independent of the process
-environment and filesystem. `machine-god status` remains metadata-only and
-does not invoke the loader. The implemented
-`machine-god permissions [--json]` path invokes it exactly once after complete
-argument validation and observes only permission mode.
+environment and filesystem. After complete command-local argument validation,
+the implemented `machine-god status [--json]` path invokes the loader exactly
+once as part of native runtime-status inspection. The implemented
+`machine-god permissions [--json]` path also invokes it exactly once after
+complete argument validation and observes only permission mode.
 
 The [`models [--json]` implementation](models-cli.md) invokes this loader exactly
 once after complete argument validation. It validates the closed provider,
@@ -33,12 +34,14 @@ snapshot:
 - a selected nonempty relative or non-Unicode value is invalid. Selection fails
   without trying a different environment value.
 
-Native status still snapshots `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and `HOME`
-because it reports both config and state metadata. The config-loading and
-permissions snapshot requests `XDG_CONFIG_HOME` first and requests `HOME` only
-when XDG is missing or empty; it never requests `XDG_STATE_HOME`. A nonempty XDG
-value decides selection whether it is valid, relative, or non-Unicode, so that
-path neither reads nor falls back to `HOME`.
+The retained legacy `NativeStatus` metadata API snapshots `XDG_CONFIG_HOME`,
+`XDG_STATE_HOME`, and `HOME` because it reports both config and state location
+metadata. It is not the snapshot used by the CLI status command. The
+configuration loader used by `NativeRuntimeStatus` and by permissions requests
+`XDG_CONFIG_HOME` first and requests `HOME` only when XDG is missing or empty;
+it never requests `XDG_STATE_HOME`. A nonempty XDG value decides selection
+whether it is valid, relative, or non-Unicode, so that path neither reads nor
+falls back to `HOME`.
 
 An unavailable location, including a missing or empty needed `HOME`, produces
 the explicit built-in schema-v3 configuration. A resolved file that is missing
@@ -184,13 +187,19 @@ system error text. All listed failures fail closed.
 
 ## Relationship to status and deferred work
 
-Native status remains a separate metadata-only observation. It still uses
-final-path metadata to report config-file and state-directory states, does not
-read or parse `config.json`, and reports permission mode `ask`. Existing CLI
-version, status, and bare-invocation bytes remain unchanged. The original
-configuration contract adds no CLI command; the separate permissions command
-intentionally changes help and invalid-usage bytes and loads configuration once
-after valid permissions parsing.
+The retained `NativeStatus` API remains a separate metadata-only observation.
+It uses final-path metadata to report config-file and state-directory states,
+does not read or parse `config.json`, and reports permission mode `ask`. The CLI
+does not use that legacy snapshot for `status`.
+
+After successful status parsing, the CLI delegates to `NativeRuntimeStatus`.
+That native inspection loads the strict configuration exactly once, classifies
+the selected environment credential without retaining or reporting its secret
+bytes, and canonicalizes the current directory as the bounded workspace. It
+does not inspect a state root, invoke `NativeRootSelection`, prepare any root,
+create or modify a file or directory, construct a runtime, or use the network.
+The separate permissions command continues to load configuration once after
+valid permissions parsing.
 
 Provider, transport, model, and credential-source fields are declarative data
 only. `environment` tells the production reference-host constructor which
@@ -218,8 +227,7 @@ the loader. Its preparation authority remains independent of this read-only
 surface; schema-v3 built-in and file bytes are unchanged.
 
 Configuration mutation, a migration or rewrite command, a terminal permission
-prompter and modes beyond `ask`, runtime composition, CLI composition beyond
-the read-only permissions projection, session lifecycle, the remaining native
-tools, remaining CLI and session expansion, release-binary end-to-end host
-evidence, and compatibility or performance claims remain outside this
-configuration contract.
+prompter and modes beyond `ask`, runtime composition, session lifecycle, the
+remaining native tools, remaining CLI and session expansion, release-binary
+end-to-end host evidence, and compatibility or performance claims remain
+outside this configuration contract.
