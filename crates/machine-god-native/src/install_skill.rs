@@ -17,6 +17,8 @@ use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, RenameFlags, SeekFrom};
 pub const INSTALL_SKILL_TOOL_NAME: &str = "install_skill";
 /// Maximum UTF-8 bytes accepted in the source path.
 pub const MAX_INSTALL_SKILL_SOURCE_BYTES: usize = 4 * 1024;
+/// Maximum UTF-8 bytes in one admitted descendant path.
+pub const MAX_INSTALL_SKILL_PATH_BYTES: usize = 4 * 1024;
 /// Maximum UTF-8 bytes accepted in the derived skill name.
 pub const MAX_INSTALL_SKILL_NAME_BYTES: usize = 128;
 /// Maximum bytes in one path component.
@@ -45,6 +47,8 @@ pub const MAX_INSTALL_SKILL_SERIALIZED_RESULT_BYTES: usize = 16 * 1024;
 const DESCRIPTION: &str = "Install one bounded workspace-local skill directory into skills/<name> without interpreting its contents";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const STAGE_PREFIX: &str = ".machine-god-install-skill-";
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const MAX_POSTCOMMIT_SYNC_ATTEMPTS: usize = 16;
 
 /// Stable category for failure to acquire an install-capable workspace root.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -282,7 +286,11 @@ fn decode_arguments(value: Value, canonical: bool) -> Result<Arguments, ToolErro
     {
         return Err(invalid_skill());
     }
-    if source.split('/').next() == Some("skills") {
+    if source
+        .split('/')
+        .next()
+        .is_some_and(|component| component.eq_ignore_ascii_case("skills"))
+    {
         return Err(overlap());
     }
     Ok(Arguments { source, skill })
@@ -475,8 +483,9 @@ impl InstallSkillTool {
             return Err(error);
         }
         check_cancellation(cancellation).inspect_err(|_| stage.cleanup())?;
-        budget.charge_io()?;
-        rustix::fs::fsync(stage.skill_root.as_fd()).map_err(|_| write_failed())?;
+        sync_precommit(&stage.skill_root, &mut budget, cancellation)?;
+        check_cancellation(cancellation).inspect_err(|_| stage.cleanup())?;
+        sync_precommit(&stage.retained_root, &mut budget, cancellation)?;
         check_cancellation(cancellation).inspect_err(|_| stage.cleanup())?;
         stage.publish(&mut budget)?;
         Ok(output)
@@ -492,7 +501,7 @@ fn scan_directory(
     budget: &mut Budget,
     cancellation: &CancellationToken,
 ) -> Result<(), ToolError> {
-    if depth >= MAX_INSTALL_SKILL_PATH_COMPONENTS {
+    if depth > MAX_INSTALL_SKILL_PATH_COMPONENTS {
         return Err(resource_limit());
     }
     budget.charge_io()?;
@@ -507,6 +516,9 @@ fn scan_directory(
         if bytes == b"." || bytes == b".." {
             continue;
         }
+        if depth == MAX_INSTALL_SKILL_PATH_COMPONENTS {
+            return Err(resource_limit());
+        }
         let name = std::str::from_utf8(bytes).map_err(|_| invalid_entry())?;
         if name.is_empty()
             || name.len() > MAX_INSTALL_SKILL_COMPONENT_BYTES
@@ -514,17 +526,20 @@ fn scan_directory(
         {
             return Err(invalid_entry());
         }
+        budget.admit_entry(name.len())?;
         names.push(name.to_owned());
     }
     names.sort_unstable();
     for name in names {
         check_cancellation(cancellation)?;
-        budget.admit_entry(name.len())?;
         let path = if prefix.is_empty() {
             name.clone()
         } else {
             format!("{prefix}/{name}")
         };
+        if path.len() > MAX_INSTALL_SKILL_PATH_BYTES {
+            return Err(resource_limit());
+        }
         budget.charge_io()?;
         let descriptor = rustix::fs::openat(
             directory,
@@ -632,12 +647,10 @@ fn populate_stage(
                 } else {
                     copy_exact(descriptor, &output, *bytes, budget, cancellation)?;
                 }
-                budget.charge_io()?;
-                rustix::fs::fsync(&output).map_err(|_| write_failed())?;
+                sync_precommit(&output, budget, cancellation)?;
             }
         }
-        budget.charge_io()?;
-        rustix::fs::fsync(parent.as_fd()).map_err(|_| write_failed())?;
+        sync_precommit(&parent, budget, cancellation)?;
     }
     Ok(())
 }
@@ -729,23 +742,73 @@ fn read_with_budget(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+fn sync_precommit(
+    descriptor: &OwnedFd,
+    budget: &mut Budget,
+    cancellation: &CancellationToken,
+) -> Result<(), ToolError> {
+    loop {
+        check_cancellation(cancellation)?;
+        budget.charge_io()?;
+        match rustix::fs::fsync(descriptor) {
+            Ok(()) => return Ok(()),
+            Err(error) if error == rustix::io::Errno::INTR => {}
+            Err(_) => return Err(write_failed()),
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn sync_postcommit(descriptor: BorrowedFd<'_>) -> Result<(), ToolError> {
+    for _ in 0..MAX_POSTCOMMIT_SYNC_ATTEMPTS {
+        match rustix::fs::fsync(descriptor) {
+            Ok(()) => return Ok(()),
+            Err(error) if error == rustix::io::Errno::INTR => {}
+            Err(_) => return Err(commit_ambiguous()),
+        }
+    }
+    Err(commit_ambiguous())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct Stage {
+    workspace: OwnedFd,
     parent: OwnedFd,
+    parent_identity: FileIdentity,
     name: String,
     retained_root: OwnedFd,
+    retained_identity: FileIdentity,
     skill_root: OwnedFd,
     destination: String,
+    layout: DestinationLayout,
     published: bool,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FileIdentity {
+    device: i128,
+    inode: i128,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DestinationLayout {
+    ExistingSkills,
+    MissingSkills,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl Stage {
     fn publish(&mut self, budget: &mut Budget) -> Result<(), ToolError> {
-        // Reserve both post-check operations while failure is still safely
-        // precommit. After rename succeeds, no resource-limit result may
-        // misclassify a published destination as an inert failure.
-        budget.charge_io()?;
-        budget.charge_io()?;
+        self.verify_prepublication(budget)?;
+        let reserved_operations = match self.layout {
+            DestinationLayout::ExistingSkills => 3 + MAX_POSTCOMMIT_SYNC_ATTEMPTS,
+            DestinationLayout::MissingSkills => 2 + MAX_POSTCOMMIT_SYNC_ATTEMPTS,
+        };
+        for _ in 0..reserved_operations {
+            budget.charge_io()?;
+        }
         let outcome = rustix::fs::renameat_with(
             self.parent.as_fd(),
             &self.name,
@@ -765,7 +828,70 @@ impl Stage {
             }
             Err(_) => return Err(commit_ambiguous()),
         }
-        rustix::fs::fsync(self.parent.as_fd()).map_err(|_| commit_ambiguous())?;
+        self.verify_postpublication()?;
+        sync_postcommit(self.parent.as_fd())?;
+        Ok(())
+    }
+
+    fn verify_prepublication(&self, budget: &mut Budget) -> Result<(), ToolError> {
+        budget.charge_io()?;
+        let staged = rustix::fs::statat(self.parent.as_fd(), &self.name, AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(|_| destination_changed())?;
+        if file_identity(&staged) != self.retained_identity {
+            return Err(destination_changed());
+        }
+
+        match self.layout {
+            DestinationLayout::ExistingSkills => {
+                budget.charge_io()?;
+                let current =
+                    rustix::fs::statat(self.workspace.as_fd(), "skills", AtFlags::SYMLINK_NOFOLLOW)
+                        .map_err(|_| destination_changed())?;
+                if file_identity(&current) != self.parent_identity {
+                    return Err(destination_changed());
+                }
+                ensure_absent(self.parent.as_fd(), &self.destination, budget)
+            }
+            DestinationLayout::MissingSkills => {
+                budget.charge_io()?;
+                match rustix::fs::statat(
+                    self.workspace.as_fd(),
+                    "skills",
+                    AtFlags::SYMLINK_NOFOLLOW,
+                ) {
+                    Err(error) if error == rustix::io::Errno::NOENT => Ok(()),
+                    Ok(_) => Err(destination_exists()),
+                    Err(_) => Err(destination_unavailable()),
+                }
+            }
+        }
+    }
+
+    fn verify_postpublication(&self) -> Result<(), ToolError> {
+        let current_skills =
+            rustix::fs::statat(self.workspace.as_fd(), "skills", AtFlags::SYMLINK_NOFOLLOW)
+                .map_err(|_| commit_ambiguous())?;
+        match self.layout {
+            DestinationLayout::ExistingSkills => {
+                if file_identity(&current_skills) != self.parent_identity {
+                    return Err(commit_ambiguous());
+                }
+                let published = rustix::fs::statat(
+                    self.parent.as_fd(),
+                    &self.destination,
+                    AtFlags::SYMLINK_NOFOLLOW,
+                )
+                .map_err(|_| commit_ambiguous())?;
+                if file_identity(&published) != self.retained_identity {
+                    return Err(commit_ambiguous());
+                }
+            }
+            DestinationLayout::MissingSkills => {
+                if file_identity(&current_skills) != self.retained_identity {
+                    return Err(commit_ambiguous());
+                }
+            }
+        }
         Ok(())
     }
 
@@ -798,29 +924,41 @@ fn create_stage(
     };
     if let Some(skills) = skills {
         ensure_absent(skills.as_fd(), skill, budget)?;
-        let (name, stage_root) = create_stage_directory(skills.as_fd(), budget, cancellation)?;
+        let parent_identity = descriptor_identity(skills.as_fd(), budget)?;
+        let workspace = clone_descriptor(root, budget)?;
+        budget.charge_io()?;
+        let (name, stage_root, retained_identity) =
+            create_stage_directory(skills.as_fd(), budget, cancellation)?;
         let Ok(skill_root) = stage_root.try_clone() else {
             let _ = remove_owned_tree(skills.as_fd(), &name, stage_root.as_fd());
             return Err(destination_unavailable());
         };
         Ok(Stage {
+            workspace,
             parent: skills,
+            parent_identity,
             name,
             retained_root: stage_root,
+            retained_identity,
             skill_root,
             destination: skill.to_owned(),
+            layout: DestinationLayout::ExistingSkills,
             published: false,
         })
     } else {
-        let (name, stage_root) = create_stage_directory(root.as_fd(), budget, cancellation)?;
+        let parent_identity = descriptor_identity(root.as_fd(), budget)?;
+        let workspace = clone_descriptor(root, budget)?;
+        let parent = clone_descriptor(root, budget)?;
         budget.charge_io()?;
+        budget.charge_io()?;
+        let (name, stage_root, retained_identity) =
+            create_stage_directory(root.as_fd(), budget, cancellation)?;
         if let Err(error) =
             rustix::fs::mkdirat(stage_root.as_fd(), skill, Mode::from_raw_mode(0o700))
         {
             let _ = remove_owned_tree(root.as_fd(), &name, stage_root.as_fd());
             return Err(map_destination_write_error(error));
         }
-        budget.charge_io()?;
         let skill_root =
             match rustix::fs::openat(stage_root.as_fd(), skill, directory_flags(), Mode::empty()) {
                 Ok(descriptor) => descriptor,
@@ -829,16 +967,16 @@ fn create_stage(
                     return Err(map_destination_write_error(error));
                 }
             };
-        let Ok(parent) = root.try_clone() else {
-            let _ = remove_owned_tree(root.as_fd(), &name, stage_root.as_fd());
-            return Err(destination_unavailable());
-        };
         Ok(Stage {
+            workspace,
             parent,
+            parent_identity,
             name,
             retained_root: stage_root,
+            retained_identity,
             skill_root,
             destination: "skills".to_owned(),
+            layout: DestinationLayout::MissingSkills,
             published: false,
         })
     }
@@ -849,18 +987,29 @@ fn create_stage_directory(
     parent: BorrowedFd<'_>,
     budget: &mut Budget,
     cancellation: &CancellationToken,
-) -> Result<(String, OwnedFd), ToolError> {
+) -> Result<(String, OwnedFd, FileIdentity), ToolError> {
     for _ in 0..MAX_INSTALL_SKILL_STAGE_ATTEMPTS {
         check_cancellation(cancellation)?;
         let name = random_stage_name(budget)?;
-        budget.charge_io()?;
+        for _ in 0..4 {
+            budget.charge_io()?;
+        }
         match rustix::fs::mkdirat(parent, &name, Mode::from_raw_mode(0o700)) {
             Ok(()) => {
-                budget.charge_io()?;
+                let observed = rustix::fs::statat(parent, &name, AtFlags::SYMLINK_NOFOLLOW)
+                    .map_err(map_destination_write_error)?;
+                let identity = file_identity(&observed);
                 let descriptor =
                     rustix::fs::openat(parent, &name, directory_flags(), Mode::empty())
                         .map_err(map_destination_write_error)?;
-                return Ok((name, descriptor));
+                let retained =
+                    rustix::fs::fstat(&descriptor).map_err(|_| destination_unavailable())?;
+                if file_identity(&retained) != identity
+                    || !FileType::from_raw_mode(retained.st_mode).is_dir()
+                {
+                    return Err(destination_changed());
+                }
+                return Ok((name, descriptor, identity));
             }
             Err(error) if error == rustix::io::Errno::EXIST => {}
             Err(error) => return Err(map_destination_write_error(error)),
@@ -875,7 +1024,11 @@ fn random_stage_name(budget: &mut Budget) -> Result<String, ToolError> {
     let mut filled = 0_usize;
     while filled < bytes.len() {
         budget.charge_io()?;
-        let count = entropy_read(&mut bytes[filled..]).map_err(|_| destination_unavailable())?;
+        let count = match entropy_read(&mut bytes[filled..]) {
+            Ok(count) => count,
+            Err(error) if error == rustix::io::Errno::INTR => continue,
+            Err(_) => return Err(destination_unavailable()),
+        };
         if count == 0 {
             return Err(destination_unavailable());
         }
@@ -915,6 +1068,7 @@ fn open_relative_directory(
     budget: &mut Budget,
     cancellation: &CancellationToken,
 ) -> Result<OwnedFd, ToolError> {
+    budget.charge_io()?;
     let mut current = root
         .try_clone_to_owned()
         .map_err(|_| source_unavailable())?;
@@ -928,6 +1082,14 @@ fn open_relative_directory(
             .map_err(map_source_open_error)?;
     }
     Ok(current)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn clone_descriptor(descriptor: &OwnedFd, budget: &mut Budget) -> Result<OwnedFd, ToolError> {
+    budget.charge_io()?;
+    descriptor
+        .try_clone()
+        .map_err(|_| destination_unavailable())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -947,31 +1109,100 @@ fn ensure_absent(parent: BorrowedFd<'_>, name: &str, budget: &mut Budget) -> Res
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn remove_tree(parent: BorrowedFd<'_>, name: &str, depth: usize) -> Result<(), ()> {
-    if depth > MAX_INSTALL_SKILL_PATH_COMPONENTS {
+fn descriptor_identity(
+    descriptor: BorrowedFd<'_>,
+    budget: &mut Budget,
+) -> Result<FileIdentity, ToolError> {
+    budget.charge_io()?;
+    rustix::fs::fstat(descriptor)
+        .map(|metadata| file_identity(&metadata))
+        .map_err(|_| destination_unavailable())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn file_identity(metadata: &rustix::fs::Stat) -> FileIdentity {
+    FileIdentity {
+        device: i128::from(metadata.st_dev),
+        inode: i128::from(metadata.st_ino),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct CleanupBudget {
+    operations: usize,
+    entries: usize,
+    name_bytes: usize,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl CleanupBudget {
+    const fn new() -> Self {
+        Self {
+            operations: 0,
+            entries: 0,
+            name_bytes: 0,
+        }
+    }
+
+    fn charge_operation(&mut self) -> Result<(), ()> {
+        self.operations = self.operations.checked_add(1).ok_or(())?;
+        if self.operations > MAX_INSTALL_SKILL_IO_ATTEMPTS {
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn admit_entry(&mut self, bytes: usize) -> Result<(), ()> {
+        self.entries = self.entries.checked_add(1).ok_or(())?;
+        self.name_bytes = self.name_bytes.checked_add(bytes).ok_or(())?;
+        if self.entries > MAX_INSTALL_SKILL_ENTRIES + 1
+            || self.name_bytes > MAX_INSTALL_SKILL_ENTRY_NAME_BYTES + MAX_INSTALL_SKILL_NAME_BYTES
+        {
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn remove_tree(
+    parent: BorrowedFd<'_>,
+    name: &str,
+    depth: usize,
+    budget: &mut CleanupBudget,
+) -> Result<(), ()> {
+    if depth > MAX_INSTALL_SKILL_PATH_COMPONENTS + 1 {
         return Err(());
     }
+    budget.charge_operation()?;
     let directory =
         rustix::fs::openat(parent, name, directory_flags(), Mode::empty()).map_err(|_| ())?;
+    budget.charge_operation()?;
     let mut stream = Dir::read_from(directory.as_fd()).map_err(|_| ())?;
     let mut names = Vec::new();
     for entry in stream.by_ref() {
+        budget.charge_operation()?;
         let entry = entry.map_err(|_| ())?;
         let bytes = entry.file_name().to_bytes();
         if bytes == b"." || bytes == b".." {
             continue;
         }
+        budget.admit_entry(bytes.len())?;
         let child = std::str::from_utf8(bytes).map_err(|_| ())?.to_owned();
         names.push((child, entry.file_type().is_dir()));
     }
     drop(stream);
     for (child, directory_entry) in names {
         if directory_entry {
-            remove_tree(directory.as_fd(), &child, depth + 1)?;
+            remove_tree(directory.as_fd(), &child, depth + 1, budget)?;
         } else {
+            budget.charge_operation()?;
             rustix::fs::unlinkat(directory.as_fd(), &child, AtFlags::empty()).map_err(|_| ())?;
         }
     }
+    budget.charge_operation()?;
     rustix::fs::unlinkat(parent, name, AtFlags::REMOVEDIR).map_err(|_| ())
 }
 
@@ -981,12 +1212,15 @@ fn remove_owned_tree(
     name: &str,
     retained: BorrowedFd<'_>,
 ) -> Result<(), ()> {
+    let mut budget = CleanupBudget::new();
+    budget.charge_operation()?;
     let expected = rustix::fs::fstat(retained).map_err(|_| ())?;
+    budget.charge_operation()?;
     let observed = rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW).map_err(|_| ())?;
     if expected.st_dev != observed.st_dev || expected.st_ino != observed.st_ino {
         return Err(());
     }
-    remove_tree(parent, name, 0)
+    remove_tree(parent, name, 0, &mut budget)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1191,7 +1425,7 @@ fn permission_denied() -> ToolError {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn destination_exists() -> ToolError {
     ToolError::new(
-        ToolErrorKind::InvalidInput,
+        ToolErrorKind::Execution,
         "install_skill_destination_exists",
         "install_skill destination already exists",
         false,
@@ -1203,6 +1437,15 @@ fn destination_unavailable() -> ToolError {
         ToolErrorKind::Unavailable,
         "install_skill_destination_unavailable",
         "install_skill destination is unavailable",
+        true,
+    )
+}
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn destination_changed() -> ToolError {
+    ToolError::new(
+        ToolErrorKind::Execution,
+        "install_skill_destination_changed",
+        "install_skill destination changed before publication",
         true,
     )
 }
@@ -1232,4 +1475,146 @@ fn commit_ambiguous() -> ToolError {
         "install_skill publication status is uncertain",
         false,
     )
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod tests {
+    use std::fs;
+    use std::io;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use machine_god_core::CancellationToken;
+
+    use super::{Budget, InstallSkillTool, create_stage, destination_changed, directory_flags};
+    use rustix::fd::AsFd;
+    use rustix::fs::{Mode, RenameFlags};
+
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
+    struct TemporaryDirectory(PathBuf);
+
+    impl TemporaryDirectory {
+        fn new() -> Self {
+            for _ in 0..1_000 {
+                let id = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+                let path = std::env::temp_dir().join(format!(
+                    "mg-install-skill-private-{}-{id}",
+                    std::process::id()
+                ));
+                match fs::create_dir(&path) {
+                    Ok(()) => return Self(path),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                    Err(error) => panic!("create temporary directory: {error}"),
+                }
+            }
+            panic!("allocate temporary directory")
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TemporaryDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn relocated_existing_skills_is_rejected_before_publication() {
+        let workspace = TemporaryDirectory::new();
+        fs::create_dir(workspace.path().join("skills")).unwrap();
+        let tool = InstallSkillTool::open(workspace.path()).unwrap();
+        let mut budget = Budget::new();
+        let mut stage =
+            create_stage(&tool.root, "rust", &mut budget, &CancellationToken::new()).unwrap();
+
+        fs::rename(
+            workspace.path().join("skills"),
+            workspace.path().join("displaced"),
+        )
+        .unwrap();
+        fs::create_dir(workspace.path().join("skills")).unwrap();
+
+        let error = stage.publish(&mut budget).unwrap_err();
+        assert_eq!(error.code, destination_changed().code);
+        assert!(!workspace.path().join("skills/rust").exists());
+    }
+
+    #[test]
+    fn relocation_in_the_publish_window_is_postcommit_ambiguity_not_success() {
+        let workspace = TemporaryDirectory::new();
+        fs::create_dir(workspace.path().join("skills")).unwrap();
+        let tool = InstallSkillTool::open(workspace.path()).unwrap();
+        let mut budget = Budget::new();
+        let mut stage =
+            create_stage(&tool.root, "rust", &mut budget, &CancellationToken::new()).unwrap();
+        stage.verify_prepublication(&mut budget).unwrap();
+
+        fs::rename(
+            workspace.path().join("skills"),
+            workspace.path().join("displaced"),
+        )
+        .unwrap();
+        fs::create_dir(workspace.path().join("skills")).unwrap();
+        rustix::fs::renameat_with(
+            stage.parent.as_fd(),
+            &stage.name,
+            stage.parent.as_fd(),
+            &stage.destination,
+            RenameFlags::NOREPLACE,
+        )
+        .unwrap();
+        stage.published = true;
+
+        let error = stage.verify_postpublication().unwrap_err();
+        assert_eq!(error.code, "install_skill_commit_ambiguous");
+        assert!(!workspace.path().join("skills/rust").exists());
+        assert!(workspace.path().join("displaced/rust").exists());
+    }
+
+    #[test]
+    fn cleanup_preserves_a_replacement_stage_name() {
+        let workspace = TemporaryDirectory::new();
+        fs::create_dir(workspace.path().join("skills")).unwrap();
+        let tool = InstallSkillTool::open(workspace.path()).unwrap();
+        let mut budget = Budget::new();
+        let mut stage =
+            create_stage(&tool.root, "rust", &mut budget, &CancellationToken::new()).unwrap();
+        let original = workspace.path().join("skills").join(&stage.name);
+        let displaced = workspace.path().join("skills/displaced-stage");
+        fs::rename(&original, &displaced).unwrap();
+        fs::create_dir(&original).unwrap();
+        fs::write(original.join("sentinel"), b"replacement").unwrap();
+
+        stage.cleanup();
+        assert_eq!(fs::read(original.join("sentinel")).unwrap(), b"replacement");
+        assert!(displaced.exists());
+    }
+
+    #[test]
+    fn cleanup_stops_at_its_entry_bound() {
+        let workspace = TemporaryDirectory::new();
+        fs::create_dir(workspace.path().join("skills")).unwrap();
+        let tool = InstallSkillTool::open(workspace.path()).unwrap();
+        let mut budget = Budget::new();
+        let mut stage =
+            create_stage(&tool.root, "rust", &mut budget, &CancellationToken::new()).unwrap();
+        let stage_path = workspace.path().join("skills").join(&stage.name);
+        for index in 0..300 {
+            fs::write(stage_path.join(format!("injected-{index:03}")), b"").unwrap();
+        }
+        stage.cleanup();
+        assert!(stage_path.exists());
+
+        let descriptor = rustix::fs::open(
+            workspace.path().join("skills"),
+            directory_flags(),
+            Mode::empty(),
+        )
+        .unwrap();
+        assert!(rustix::fs::fstat(descriptor).is_ok());
+    }
 }

@@ -86,7 +86,7 @@ reports no discovered credential source.
 
 ## Tool catalog
 
-The engine registers exactly twenty-one tools in deterministic alphabetical
+The engine registers exactly twenty-two tools in deterministic alphabetical
 order:
 
 1. `ask_user_question`

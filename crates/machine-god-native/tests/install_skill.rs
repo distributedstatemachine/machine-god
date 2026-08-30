@@ -18,10 +18,10 @@ use machine_god_native::{
     INSTALL_SKILL_TOOL_NAME, InstallSkillTool, InstallSkillToolOpenErrorKind,
     MAX_INSTALL_SKILL_CHUNK_BYTES, MAX_INSTALL_SKILL_COMPONENT_BYTES, MAX_INSTALL_SKILL_ENTRIES,
     MAX_INSTALL_SKILL_ENTRY_NAME_BYTES, MAX_INSTALL_SKILL_FILE_BYTES,
-    MAX_INSTALL_SKILL_IO_ATTEMPTS, MAX_INSTALL_SKILL_NAME_BYTES, MAX_INSTALL_SKILL_PATH_COMPONENTS,
-    MAX_INSTALL_SKILL_SERIALIZED_ARGUMENT_BYTES, MAX_INSTALL_SKILL_SERIALIZED_RESULT_BYTES,
-    MAX_INSTALL_SKILL_SOURCE_BYTES, MAX_INSTALL_SKILL_STAGE_ATTEMPTS,
-    MAX_INSTALL_SKILL_TOTAL_BYTES, SkillTool,
+    MAX_INSTALL_SKILL_IO_ATTEMPTS, MAX_INSTALL_SKILL_NAME_BYTES, MAX_INSTALL_SKILL_PATH_BYTES,
+    MAX_INSTALL_SKILL_PATH_COMPONENTS, MAX_INSTALL_SKILL_SERIALIZED_ARGUMENT_BYTES,
+    MAX_INSTALL_SKILL_SERIALIZED_RESULT_BYTES, MAX_INSTALL_SKILL_SOURCE_BYTES,
+    MAX_INSTALL_SKILL_STAGE_ATTEMPTS, MAX_INSTALL_SKILL_TOTAL_BYTES, SkillTool,
 };
 use serde_json::{Value, json};
 
@@ -115,6 +115,7 @@ fn exported_contract_and_spec_are_bounded() {
     assert_eq!(INSTALL_SKILL_TOOL_NAME, "install_skill");
     assert_eq!(MAX_INSTALL_SKILL_SOURCE_BYTES, 4_096);
     assert_eq!(MAX_INSTALL_SKILL_NAME_BYTES, 128);
+    assert_eq!(MAX_INSTALL_SKILL_PATH_BYTES, 4_096);
     assert_eq!(MAX_INSTALL_SKILL_COMPONENT_BYTES, 255);
     assert_eq!(MAX_INSTALL_SKILL_PATH_COMPONENTS, 32);
     assert_eq!(MAX_INSTALL_SKILL_ENTRIES, 256);
@@ -166,6 +167,7 @@ fn strict_input_and_canonical_direct_execution_are_enforced() {
         json!({"source":"../rust"}),
         json!({"source":"/rust"}),
         json!({"source":"skills/rust"}),
+        json!({"source":"Skills/rust"}),
         json!({"source":"incoming/rust","skill":"other"}),
     ] {
         assert!(tool.prepare(call(invalid)).is_err());
@@ -372,6 +374,44 @@ fn entry_and_file_limits_fail_before_publication() {
         "install_skill_resource_limit"
     );
     assert!(!workspace.path().join("skills").exists());
+}
+
+#[test]
+fn exact_descendant_depth_is_inclusive_and_the_next_child_is_rejected() {
+    let accepted_workspace = TemporaryDirectory::new();
+    let accepted = source(accepted_workspace.path(), "depth", b"ok\n");
+    let mut deepest = accepted;
+    for index in 0..MAX_INSTALL_SKILL_PATH_COMPONENTS {
+        deepest = deepest.join(format!("d{index:02}"));
+        fs::create_dir(&deepest).unwrap();
+    }
+    execute(
+        &tool(accepted_workspace.path()),
+        json!({"source":"incoming/depth","skill":"depth"}),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    assert!(accepted_workspace.path().join("skills/depth").exists());
+
+    let rejected_workspace = TemporaryDirectory::new();
+    let rejected = source(rejected_workspace.path(), "depth", b"ok\n");
+    let mut deepest = rejected;
+    for index in 0..=MAX_INSTALL_SKILL_PATH_COMPONENTS {
+        deepest = deepest.join(format!("d{index:02}"));
+        fs::create_dir(&deepest).unwrap();
+    }
+    assert_eq!(
+        code(
+            execute(
+                &tool(rejected_workspace.path()),
+                json!({"source":"incoming/depth","skill":"depth"}),
+                CancellationToken::new(),
+            )
+            .unwrap_err()
+        ),
+        "install_skill_resource_limit"
+    );
+    assert!(!rejected_workspace.path().join("skills").exists());
 }
 
 #[test]

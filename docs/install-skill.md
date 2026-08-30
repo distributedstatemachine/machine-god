@@ -18,9 +18,10 @@ optional `skill` string:
 `source` is a workspace-relative directory path. Repeated separators and exact
 `.` components are removed. Absolute paths, `..`, backslashes, empty normalized
 paths, forbidden control or bidirectional characters, oversized components,
-and paths beginning with the managed `skills` component are rejected. The
-last normalized component is the destination skill name. When `skill` is
-present it must equal that basename byte-for-byte; it cannot rename a source.
+and paths beginning with an ASCII-case-insensitive spelling of the managed
+`skills` component are rejected. The last normalized component is the
+destination skill name. When `skill` is present it must equal that basename
+byte-for-byte; it cannot rename a source.
 
 Preparation is bounded, synchronous, and effect-free. It opens no descriptor,
 does not inspect either source or destination, and cannot reveal whether they
@@ -66,6 +67,7 @@ files use private requested modes `0700` and `0600`, subject to host policy.
 | Limit | Value |
 | --- | ---: |
 | `MAX_INSTALL_SKILL_SOURCE_BYTES` | 4,096 |
+| `MAX_INSTALL_SKILL_PATH_BYTES` | 4,096 |
 | `MAX_INSTALL_SKILL_NAME_BYTES` | 128 |
 | `MAX_INSTALL_SKILL_COMPONENT_BYTES` | 255 |
 | `MAX_INSTALL_SKILL_PATH_COMPONENTS` | 32 |
@@ -85,6 +87,15 @@ enumeration and opening, metadata queries, entropy acquisition, staging,
 reads, writes, synchronization, and publication. Limit exhaustion fails
 without beginning an unbounded retry loop; individual filesystem calls may
 still block for a kernel-dependent duration.
+
+Construction failures expose only these stable kinds and messages:
+
+| Kind | Message |
+| --- | --- |
+| `UnsupportedPlatform` | `native install_skill is unsupported on this platform` |
+| `InvalidRoot` | `native install_skill workspace root is invalid` |
+| `InvalidFileType` | `native install_skill workspace root is not a directory` |
+| `Unavailable` | `native install_skill workspace root is unavailable` |
 
 ## Confinement and publication
 
@@ -110,10 +121,22 @@ rename publishes either the new child or the new managed root. Concurrent
 creation is reported as a collision and never overwritten. Filesystems without
 the required no-replace primitive are unsupported.
 
+Immediately before publication, the tool revalidates both the random stage
+identity and the workspace's current `skills` identity or absence. Immediately
+after publication, it revalidates that the retained stage identity is visible
+at the reported managed destination. Relocation or replacement before commit
+is a retryable changed-destination failure; uncertainty after commit is a
+nonretryable ambiguous result rather than false success. A later rename after
+the successful postcommit observation remains an ordinary external filesystem
+race.
+
 Cancellation is honored before source observation, throughout admission and
 staging, and at the final prepublication boundary. A cancelled or failed
-precommit execution attempts bounded descriptor-relative cleanup and never
-reports success. Once the no-replace rename succeeds, cancellation is ignored
+precommit execution attempts identity-checked, entry-, depth-, name-, and
+operation-bounded descriptor-relative cleanup and never reports success.
+Cleanup stops without deleting a changed stage identity; a failed or contended
+cleanup may leave a private random-name residue for host maintenance. Once the
+no-replace rename succeeds, cancellation is ignored
 while bounded postcommit synchronization and result construction complete.
 A publication or postpublication synchronization error whose state cannot be
 proved has the fixed nonretryable `install_skill_commit_ambiguous` result;
@@ -139,12 +162,34 @@ count, and aggregate copied file bytes:
 }
 ```
 
-The complete `ToolOutput` must fit its serialized bound. Errors use fixed
-codes and messages and never include model-provided paths, entry names, file
-content, OS diagnostics, temporary names, descriptor values, or host paths.
-Invalid arguments, paths, manifests, overlaps, limits, and existing
-destinations are nonretryable. Ordinary precommit availability, source-change,
-and staged-write failures may be retryable. Permission and confinement errors
-are nonretryable. Published content remains untrusted model-visible workspace
-data; installation grants no execution, process, network, MCP, subagent,
-persistence, or additional filesystem authority.
+The complete `ToolOutput` must fit its serialized bound. The execution error
+taxonomy is exact:
+
+| Code | Kind | Retryable | Message |
+| --- | --- | --- | --- |
+| `install_skill_invalid_arguments` | invalid input | no | `install_skill arguments are invalid` |
+| `install_skill_invalid_source` | invalid input | no | `install_skill source is invalid` |
+| `install_skill_invalid_skill` | invalid input | no | `install_skill skill name is invalid` |
+| `install_skill_overlap` | invalid input | no | `install_skill source overlaps its managed destination` |
+| `install_skill_resource_limit` | invalid input | no | `install_skill resource limit was exceeded` |
+| `install_skill_invalid_entry` | invalid input | no | `install_skill source contains an invalid entry name` |
+| `install_skill_invalid_manifest` | invalid input | no | `install_skill source requires a regular UTF-8 SKILL.md` |
+| `install_skill_cancelled` | cancelled | no | `install_skill execution was cancelled` |
+| `install_skill_unsupported_platform` | unavailable | no | `native install_skill is unsupported on this platform` |
+| `install_skill_source_not_found` | unavailable | no | `install_skill source is unavailable` |
+| `install_skill_source_unavailable` | unavailable | yes | `install_skill source is unavailable` |
+| `install_skill_source_changed` | execution | yes | `install_skill source changed during installation` |
+| `install_skill_path_rejected` | permission denied | no | `install_skill path is not confined` |
+| `install_skill_permission_denied` | permission denied | no | `install_skill filesystem access was denied` |
+| `install_skill_destination_exists` | execution | no | `install_skill destination already exists` |
+| `install_skill_destination_unavailable` | unavailable | yes | `install_skill destination is unavailable` |
+| `install_skill_destination_changed` | execution | yes | `install_skill destination changed before publication` |
+| `install_skill_write_failed` | execution | yes | `install_skill staged copy failed` |
+| `install_skill_unsupported_filesystem` | unavailable | no | `atomic no-replace skill publication is unavailable` |
+| `install_skill_commit_ambiguous` | execution | no | `install_skill publication status is uncertain` |
+
+Errors never include model-provided paths, entry names, file content, OS
+diagnostics, temporary names, descriptor values, or host paths. Published
+content remains untrusted model-visible workspace data; installation grants no
+execution, process, network, MCP, subagent, persistence, or additional
+filesystem authority.

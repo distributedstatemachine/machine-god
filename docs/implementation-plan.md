@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33257985954` (`GREEN`)
 - Main Benchmark evidence: `33257985878` (`GREEN`)
 - Active branch: `agent/m05-install-skill`
-- Active phase: `bounded local-only single-skill install_skill candidate passed the complete exact local gate`
-- Next gate: `freeze one behavior SHA and run three fresh adversarial product-review tracks`
+- Active phase: `replacement install_skill candidate passed the complete exact local gate`
+- Next gate: `freeze one replacement behavior SHA and restart all three adversarial product-review tracks`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
