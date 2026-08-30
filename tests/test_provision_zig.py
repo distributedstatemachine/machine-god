@@ -718,6 +718,62 @@ class ProvisionZigTests(unittest.TestCase):
                 len(list(root.iterdir())), provision_zig.CACHE_DIRECTORY_CAPACITY
             )
 
+    def test_exact_root_capacity_creates_no_missing_infrastructure(self) -> None:
+        spec = provision_zig.host_spec("Linux", "x86_64")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for index in range(provision_zig.CACHE_DIRECTORY_CAPACITY):
+                (root / f"legacy-{index:03d}").write_bytes(b"")
+            before = {entry.name for entry in root.iterdir()}
+
+            with self.assertRaisesRegex(provision_zig.ProvisionError, "capacity"):
+                with provision_zig.provisioned_zig(root, spec):
+                    self.fail("an at-capacity root admitted fixed infrastructure")
+
+            self.assertEqual({entry.name for entry in root.iterdir()}, before)
+            self.assertFalse((root / provision_zig.CACHE_LOCK_NAME).exists())
+            self.assertFalse((root / "archives").exists())
+            self.assertFalse((root / "active").exists())
+
+    def test_cursorless_trash_recovery_makes_bounded_progress_before_retry(self) -> None:
+        spec = provision_zig.host_spec("Linux", "x86_64")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "archives").mkdir()
+            (root / "active").mkdir()
+            archive = root / "fixture.tar.xz"
+            archive.write_bytes(b"fixture")
+            with provision_zig.cache_lock(root):
+                pass
+            with provision_zig.cache_lock(root, provision_zig.ACTIVE_LOCK_NAME):
+                pass
+            for _index in range(33):
+                trash = provision_zig.create_private_trash(root)
+                os.close(trash.descriptor)
+            filler = 0
+            while len(list(root.iterdir())) < provision_zig.CACHE_DIRECTORY_CAPACITY - 1:
+                (root / f"filler-{filler:03d}").write_bytes(b"")
+                filler += 1
+            before = len(list(root.iterdir()))
+            self.assertFalse((root / provision_zig.TRASH_CURSOR_NAME).exists())
+
+            with (
+                mock.patch.object(provision_zig, "ensure_archive", return_value=archive),
+                self.assertRaisesRegex(provision_zig.ProvisionError, "retry"),
+            ):
+                with provision_zig.provisioned_zig(root, spec):
+                    self.fail("bounded recovery unexpectedly admitted a run")
+
+            self.assertLess(len(list(root.iterdir())), before)
+            self.assertTrue((root / provision_zig.TRASH_CURSOR_NAME).is_file())
+            self.assertLess(
+                sum(
+                    entry.name.startswith(provision_zig.TRASH_PREFIX)
+                    for entry in root.iterdir()
+                ),
+                66,
+            )
+
     def test_concurrent_admission_uses_current_locked_active_count(self) -> None:
         spec = provision_zig.host_spec("Linux", "x86_64")
         with tempfile.TemporaryDirectory() as temporary:

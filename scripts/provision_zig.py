@@ -277,7 +277,9 @@ def ensure_archive(
     known_archive_entries: int | None = None,
 ) -> Path:
     archive_root = install_root / "archives"
-    archive_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    ensure_capacity_bounded_directory(
+        install_root, archive_root, "Zig archive-cache directory"
+    )
     archive = archive_root / spec.archive_name
     cached = validated_archive(archive, spec)
     if cached is not None:
@@ -358,6 +360,29 @@ def bounded_directory_names(root: Path, scan_cap: int, label: str) -> list[str]:
     return names
 
 
+def ensure_capacity_bounded_directory(cache_root: Path, path: Path, label: str) -> None:
+    """Create one fixed root directory without crossing the root hard cap."""
+
+    try:
+        status = path.lstat()
+    except FileNotFoundError:
+        root_count = len(
+            bounded_directory_names(
+                cache_root, CACHE_DIRECTORY_SCAN_CAP, "Zig cache root"
+            )
+        )
+        if root_count >= CACHE_DIRECTORY_CAPACITY:
+            raise ProvisionError(f"Zig cache root has no capacity for {label}")
+        try:
+            path.mkdir(mode=0o700)
+        except FileExistsError:
+            status = path.lstat()
+        else:
+            status = path.lstat()
+    if not stat.S_ISDIR(status.st_mode) or stat.S_ISLNK(status.st_mode):
+        raise ProvisionError(f"unexpected {label} entry")
+
+
 @contextmanager
 def defer_termination_signals() -> Iterator[None]:
     """Defer wrapper termination until an owned resource has a cleanup guard."""
@@ -371,7 +396,18 @@ def defer_termination_signals() -> Iterator[None]:
 
 @contextmanager
 def cache_lock(cache_root: Path, name: str = CACHE_LOCK_NAME) -> Iterator[None]:
-    descriptor = open_private_file(cache_root / name)
+    lock_path = cache_root / name
+    try:
+        lock_path.lstat()
+    except FileNotFoundError:
+        root_count = len(
+            bounded_directory_names(
+                cache_root, CACHE_DIRECTORY_SCAN_CAP, "Zig cache root"
+            )
+        )
+        if root_count >= CACHE_DIRECTORY_CAPACITY:
+            raise ProvisionError("Zig cache root has no capacity for coordination")
+    descriptor = open_private_file(lock_path)
     deadline = time.monotonic() + CACHE_LOCK_TIMEOUT_SECONDS
     try:
         while True:
@@ -392,7 +428,9 @@ def cache_lock(cache_root: Path, name: str = CACHE_LOCK_NAME) -> Iterator[None]:
 
 def prune_partial_archives(cache_root: Path, spec: ToolchainSpec) -> int:
     archive_root = cache_root / "archives"
-    archive_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    ensure_capacity_bounded_directory(
+        cache_root, archive_root, "Zig archive-cache directory"
+    )
     prefix = f".{spec.archive_name}."
     names = bounded_directory_names(
         archive_root, ARCHIVE_DIRECTORY_SCAN_CAP, "Zig archive cache"
@@ -771,10 +809,12 @@ def provisioned_zig(
                 known_archive_entries=archive_entries,
             )
         active_root = cache_root / "active"
-        active_root.mkdir(mode=0o700, exist_ok=True)
         for attempt in range(RECOVERY_ADMISSION_ATTEMPTS):
             claimed_existing = False
             with cache_lock(cache_root, ACTIVE_LOCK_NAME):
+                ensure_capacity_bounded_directory(
+                    cache_root, active_root, "Zig active-cache directory"
+                )
                 active_names = sorted(
                     bounded_directory_names(
                         active_root,
@@ -807,10 +847,6 @@ def provisioned_zig(
                 if TRASH_CURSOR_NAME in cache_names or can_create_missing_cursors:
                     trash_window = rotating_trash_window(cache_root, trash_names)
                 else:
-                    if len(trash_names) > TRASH_SCAN_LIMIT:
-                        raise ProvisionError(
-                            "Zig cache root has no capacity for fair trash recovery"
-                        )
                     trash_window = trash_names[:TRASH_SCAN_LIMIT]
                 if ACTIVE_CURSOR_NAME in cache_names or can_create_missing_cursors:
                     active_window = rotating_active_window(cache_root, active_names)
