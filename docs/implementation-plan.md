@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33306328776` (`GREEN`)
 - Main Benchmark evidence: `33306328774` (`GREEN`)
 - Active branch: `agent/m03-workspace`
-- Active phase: `bounded read-only workspace CLI candidate integrated; focused checks are green`
-- Next gate: `run the complete exact-toolchain local gate, freeze one behavior SHA, and start three fresh adversarial product reviews`
+- Active phase: `workspace behavior candidate dc2fdb7 passed the complete exact-toolchain local gate`
+- Next gate: `run three fresh adversarial product-review tracks against exact behavior candidate dc2fdb7; any finding rejects it and restarts all tracks`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
