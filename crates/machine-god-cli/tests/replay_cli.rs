@@ -273,6 +273,25 @@ fn invalid_utf8_version_uses_a_valid_json_numeric_byte_array() {
 }
 
 #[test]
+fn invalid_two_byte_prefixes_match_pinned_fx_flush_and_completion() {
+    let root = TestDirectory::new("invalid-two-byte-prefixes");
+    for (name, payload, expected) in [
+        ("lone-c0", &[0xc0][..], "|     |\n"),
+        ("lone-c1", &[0xc1][..], "|     |\n"),
+        ("complete-c0", &[0xc0, 0x80][..], "|�    |\n"),
+        ("complete-c1", &[0xc1, 0xbf][..], "|�    |\n"),
+    ] {
+        let tape = root.path().join(format!("{name}.fxtape"));
+        fs::write(&tape, minimal_tape(5, 1, payload)).unwrap();
+
+        let output = run(root.path(), [OsStr::new("replay"), tape.as_os_str()]);
+        assert_eq!(output.status.code(), Some(0), "{name}");
+        assert_eq!(output.stdout, expected.as_bytes(), "{name}");
+        assert!(output.stderr.is_empty(), "{name}");
+    }
+}
+
+#[test]
 fn zwj_emoji_crossing_the_feed_chunk_boundary_matches_fx() {
     let root = TestDirectory::new("zwj-chunk-boundary");
     let tape = root.path().join("zwj.fxtape");
