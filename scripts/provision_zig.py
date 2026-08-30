@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import secrets
 import shutil
 import signal
 import stat
@@ -41,6 +42,17 @@ TRASH_CURSOR_NAME = ".machine-god-zig-trash.cursor"
 ACTIVE_CURSOR_NAME = ".machine-god-zig-active.cursor"
 STALE_ACTIVE_BATCH_SIZE = 8
 STALE_ACTIVE_SCAN_LIMIT = 64
+ACTIVE_DIRECTORY_CAPACITY = 128
+CACHE_FIXED_ENTRY_RESERVE = 32
+CACHE_DIRECTORY_CAPACITY = (
+    CACHE_FIXED_ENTRY_RESERVE + 2 * ACTIVE_DIRECTORY_CAPACITY
+)
+ARCHIVE_DIRECTORY_CAPACITY = 128
+ACTIVE_DIRECTORY_SCAN_CAP = ACTIVE_DIRECTORY_CAPACITY + 1
+CACHE_DIRECTORY_SCAN_CAP = CACHE_DIRECTORY_CAPACITY + 1
+ARCHIVE_DIRECTORY_SCAN_CAP = ARCHIVE_DIRECTORY_CAPACITY + 1
+PARTIAL_ARCHIVE_PRUNE_BATCH_SIZE = 16
+RECOVERY_ADMISSION_ATTEMPTS = 2
 CACHE_LOCK_TIMEOUT_SECONDS = 30.0
 CACHE_LOCK_RETRY_SECONDS = 0.05
 DEFERRED_SIGNALS = tuple(
@@ -258,7 +270,11 @@ def write_marker(install_dir: Path, spec: ToolchainSpec) -> None:
 
 
 def ensure_archive(
-    install_root: Path, spec: ToolchainSpec, run: CommandRunner = subprocess.run
+    install_root: Path,
+    spec: ToolchainSpec,
+    run: CommandRunner = subprocess.run,
+    *,
+    known_archive_entries: int | None = None,
 ) -> Path:
     archive_root = install_root / "archives"
     archive_root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -269,6 +285,18 @@ def ensure_archive(
     if archive.exists() or archive.is_symlink():
         raise ProvisionError(
             f"cached Zig archive is invalid; move it aside before retrying: {archive}"
+        )
+    if known_archive_entries is None:
+        known_archive_entries = len(
+            bounded_directory_names(
+                archive_root,
+                ARCHIVE_DIRECTORY_SCAN_CAP,
+                "Zig archive cache",
+            )
+        )
+    if known_archive_entries + 2 > ARCHIVE_DIRECTORY_CAPACITY:
+        raise ProvisionError(
+            "Zig archive cache has no capacity for temporary publication"
         )
 
     descriptor, temporary_name = tempfile.mkstemp(
@@ -310,6 +338,26 @@ def open_private_file(path: Path, *, exclusive: bool = False) -> int:
     return descriptor
 
 
+def open_existing_private_file(path: Path) -> int:
+    flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    return os.open(path, flags)
+
+
+def bounded_directory_names(root: Path, scan_cap: int, label: str) -> list[str]:
+    """Materialize fewer than ``scan_cap`` names or fail on the cap witness."""
+
+    names: list[str] = []
+    with os.scandir(root) as entries:
+        for entry in entries:
+            if len(names) + 1 >= scan_cap:
+                raise ProvisionError(
+                    f"{label} exceeds the bounded {scan_cap - 1}-entry limit"
+                )
+            names.append(entry.name)
+    return names
+
+
 @contextmanager
 def defer_termination_signals() -> Iterator[None]:
     """Defer wrapper termination until an owned resource has a cleanup guard."""
@@ -342,17 +390,29 @@ def cache_lock(cache_root: Path, name: str = CACHE_LOCK_NAME) -> Iterator[None]:
             os.close(descriptor)
 
 
-def prune_partial_archives(cache_root: Path, spec: ToolchainSpec) -> None:
+def prune_partial_archives(cache_root: Path, spec: ToolchainSpec) -> int:
     archive_root = cache_root / "archives"
     archive_root.mkdir(mode=0o700, parents=True, exist_ok=True)
     prefix = f".{spec.archive_name}."
-    for candidate in archive_root.iterdir():
+    names = bounded_directory_names(
+        archive_root, ARCHIVE_DIRECTORY_SCAN_CAP, "Zig archive cache"
+    )
+    pruned = 0
+    for name in names:
+        if pruned >= PARTIAL_ARCHIVE_PRUNE_BATCH_SIZE:
+            break
+        candidate = archive_root / name
         if not candidate.name.startswith(prefix):
             continue
-        status = candidate.lstat()
+        try:
+            status = candidate.lstat()
+        except FileNotFoundError:
+            continue
         if stat.S_ISDIR(status.st_mode):
             raise ProvisionError("unexpected Zig archive temporary directory")
         candidate.unlink()
+        pruned += 1
+    return len(names) - pruned
 
 
 def trash_lease_path(trash_path: Path) -> Path:
@@ -362,19 +422,27 @@ def trash_lease_path(trash_path: Path) -> Path:
 def create_private_trash(cache_root: Path) -> PrivateTrash:
     """Create and exclusively lease an unguessable same-filesystem trash root."""
 
-    path = Path(tempfile.mkdtemp(prefix=TRASH_PREFIX, dir=cache_root))
-    lease_path = trash_lease_path(path)
-    descriptor: int | None = None
-    try:
-        descriptor = open_private_file(lease_path, exclusive=True)
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return PrivateTrash(path, lease_path, descriptor)
-    except BaseException:
-        if descriptor is not None:
+    for _attempt in range(16):
+        path = cache_root / f"{TRASH_PREFIX}{secrets.token_hex(16)}"
+        lease_path = trash_lease_path(path)
+        try:
+            descriptor = open_private_file(lease_path, exclusive=True)
+        except FileExistsError:
+            continue
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            path.mkdir(mode=0o700)
+            return PrivateTrash(path, lease_path, descriptor)
+        except FileExistsError:
             os.close(descriptor)
-        lease_path.unlink(missing_ok=True)
-        shutil.rmtree(path, ignore_errors=True)
-        raise
+            lease_path.unlink(missing_ok=True)
+            continue
+        except BaseException:
+            os.close(descriptor)
+            lease_path.unlink(missing_ok=True)
+            shutil.rmtree(path, ignore_errors=True)
+            raise
+    raise ProvisionError("could not allocate unique Zig trash ownership")
 
 
 def claim_abandoned_trash(
@@ -403,9 +471,11 @@ def claim_abandoned_trash(
                 raise ProvisionError("unexpected Zig trash-cache entry")
             lease_path = trash_lease_path(path)
             try:
-                descriptor = open_private_file(lease_path)
+                descriptor = open_existing_private_file(lease_path)
             except FileNotFoundError:
-                continue
+                if not path.exists() and not path.is_symlink():
+                    continue
+                raise ProvisionError("Zig trash-cache entry is missing its lease")
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
@@ -414,12 +484,85 @@ def claim_abandoned_trash(
             except BaseException:
                 os.close(descriptor)
                 raise
+            try:
+                lease_status = lease_path.lstat()
+            except FileNotFoundError:
+                os.close(descriptor)
+                continue
+            descriptor_status = os.fstat(descriptor)
+            if (
+                lease_status.st_dev != descriptor_status.st_dev
+                or lease_status.st_ino != descriptor_status.st_ino
+            ):
+                os.close(descriptor)
+                raise ProvisionError("Zig trash lease changed during claim")
+            try:
+                current = path.lstat()
+            except FileNotFoundError:
+                os.close(descriptor)
+                continue
+            if (
+                current.st_dev != status.st_dev
+                or current.st_ino != status.st_ino
+                or not stat.S_ISDIR(current.st_mode)
+                or stat.S_ISLNK(current.st_mode)
+            ):
+                os.close(descriptor)
+                raise ProvisionError("Zig trash-cache entry changed during claim")
             claimed.append(PrivateTrash(path, lease_path, descriptor))
     except BaseException:
         for trash in claimed:
             os.close(trash.descriptor)
         raise
     return claimed
+
+
+def retire_orphan_trash_leases(
+    cache_root: Path,
+    candidate_names: list[str],
+    *,
+    batch_size: int = TRASH_CLEANUP_BATCH_SIZE,
+) -> int:
+    """Boundedly remove unlocked trash leases whose corresponding tree is absent."""
+
+    retired = 0
+    for name in candidate_names:
+        if retired >= batch_size:
+            break
+        if not name.startswith(TRASH_PREFIX) or not name.endswith(
+            TRASH_LEASE_SUFFIX
+        ):
+            continue
+        lease_path = cache_root / name
+        trash_path = cache_root / name[: -len(TRASH_LEASE_SUFFIX)]
+        if trash_path.exists() or trash_path.is_symlink():
+            continue
+        try:
+            descriptor = open_existing_private_file(lease_path)
+        except FileNotFoundError:
+            continue
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                continue
+            if trash_path.exists() or trash_path.is_symlink():
+                continue
+            try:
+                lease_status = lease_path.lstat()
+            except FileNotFoundError:
+                continue
+            descriptor_status = os.fstat(descriptor)
+            if (
+                lease_status.st_dev != descriptor_status.st_dev
+                or lease_status.st_ino != descriptor_status.st_ino
+            ):
+                raise ProvisionError("Zig trash lease changed during retirement")
+            lease_path.unlink()
+            retired += 1
+        finally:
+            os.close(descriptor)
+    return retired
 
 
 def remove_private_trash(trash: PrivateTrash) -> None:
@@ -432,7 +575,18 @@ def remove_private_trash(trash: PrivateTrash) -> None:
     finally:
         try:
             if removed:
-                trash.lease_path.unlink(missing_ok=True)
+                with cache_lock(trash.path.parent, ACTIVE_LOCK_NAME):
+                    with defer_termination_signals():
+                        lease_status = trash.lease_path.lstat()
+                        descriptor_status = os.fstat(trash.descriptor)
+                        if (
+                            lease_status.st_dev != descriptor_status.st_dev
+                            or lease_status.st_ino != descriptor_status.st_ino
+                        ):
+                            raise ProvisionError(
+                                "Zig trash lease changed before retirement"
+                            )
+                        trash.lease_path.unlink()
         finally:
             os.close(trash.descriptor)
 
@@ -520,8 +674,9 @@ def move_stale_active_to_trash(
     moved: list[Path] = []
     scanned = 0
     if candidate_names is None:
-        with os.scandir(active_root) as entries:
-            names = [entry.name for entry in entries]
+        names = bounded_directory_names(
+            active_root, ACTIVE_DIRECTORY_SCAN_CAP, "Zig active cache"
+        )
     else:
         names = candidate_names
     for name in names:
@@ -547,6 +702,17 @@ def move_stale_active_to_trash(
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 continue
+            try:
+                current = candidate.lstat()
+            except FileNotFoundError:
+                continue
+            if (
+                current.st_dev != status.st_dev
+                or current.st_ino != status.st_ino
+                or not stat.S_ISDIR(current.st_mode)
+                or stat.S_ISLNK(current.st_mode)
+            ):
+                raise ProvisionError("Zig active-cache entry changed during claim")
             destination = trash_root / candidate.name
             try:
                 candidate.rename(destination)
@@ -597,34 +763,112 @@ def provisioned_zig(
     pending_trashes: list[PrivateTrash] = []
     try:
         with cache_lock(cache_root):
-            prune_partial_archives(cache_root, spec)
-            archive = ensure_archive(cache_root, spec, run)
+            archive_entries = prune_partial_archives(cache_root, spec)
+            archive = ensure_archive(
+                cache_root,
+                spec,
+                run,
+                known_archive_entries=archive_entries,
+            )
         active_root = cache_root / "active"
         active_root.mkdir(mode=0o700, exist_ok=True)
-        with os.scandir(active_root) as entries:
-            active_names = sorted(entry.name for entry in entries)
-        with os.scandir(cache_root) as entries:
-            trash_names = sorted(
-                entry.name
-                for entry in entries
-                if entry.name.startswith(TRASH_PREFIX)
-                and not entry.name.endswith(TRASH_LEASE_SUFFIX)
-            )
-        with defer_termination_signals():
+        for attempt in range(RECOVERY_ADMISSION_ATTEMPTS):
+            claimed_existing = False
             with cache_lock(cache_root, ACTIVE_LOCK_NAME):
-                trash_window = rotating_trash_window(cache_root, trash_names)
-                pending_trashes.extend(
-                    claim_abandoned_trash(cache_root, trash_window)
+                active_names = sorted(
+                    bounded_directory_names(
+                        active_root,
+                        ACTIVE_DIRECTORY_SCAN_CAP,
+                        "Zig active cache",
+                    )
                 )
-                stale_trash = create_private_trash(cache_root)
-                pending_trashes.append(stale_trash)
-                active_window = rotating_active_window(cache_root, active_names)
-                move_stale_active_to_trash(
-                    active_root,
-                    stale_trash.path,
-                    candidate_names=active_window,
+                cache_names = sorted(
+                    bounded_directory_names(
+                        cache_root,
+                        CACHE_DIRECTORY_SCAN_CAP,
+                        "Zig cache root",
+                    )
                 )
-                run_directory, lease_descriptor = create_active_lease(active_root, spec)
+                trash_names = [
+                    name for name in cache_names if name.startswith(TRASH_PREFIX)
+                ]
+                missing_cursors = sum(
+                    1
+                    for cursor_name, candidates in (
+                        (TRASH_CURSOR_NAME, trash_names),
+                        (ACTIVE_CURSOR_NAME, active_names),
+                    )
+                    if candidates and cursor_name not in cache_names
+                )
+                can_create_missing_cursors = (
+                    len(cache_names) + missing_cursors + 2
+                    <= CACHE_DIRECTORY_CAPACITY
+                )
+                if TRASH_CURSOR_NAME in cache_names or can_create_missing_cursors:
+                    trash_window = rotating_trash_window(cache_root, trash_names)
+                else:
+                    if len(trash_names) > TRASH_SCAN_LIMIT:
+                        raise ProvisionError(
+                            "Zig cache root has no capacity for fair trash recovery"
+                        )
+                    trash_window = trash_names[:TRASH_SCAN_LIMIT]
+                if ACTIVE_CURSOR_NAME in cache_names or can_create_missing_cursors:
+                    active_window = rotating_active_window(cache_root, active_names)
+                else:
+                    if len(active_names) > STALE_ACTIVE_SCAN_LIMIT:
+                        raise ProvisionError(
+                            "Zig cache root has no capacity for fair active recovery"
+                        )
+                    active_window = active_names[:STALE_ACTIVE_SCAN_LIMIT]
+                with defer_termination_signals():
+                    retire_orphan_trash_leases(cache_root, trash_window)
+                    claimed = claim_abandoned_trash(cache_root, trash_window)
+                    pending_trashes.extend(claimed)
+                    claimed_existing = bool(claimed)
+                if not claimed_existing:
+                    current_root_count = len(
+                        bounded_directory_names(
+                            cache_root,
+                            CACHE_DIRECTORY_SCAN_CAP,
+                            "Zig cache root",
+                        )
+                    )
+                    if current_root_count + 2 > CACHE_DIRECTORY_CAPACITY:
+                        raise ProvisionError(
+                            "Zig cache root has no capacity for trash ownership"
+                        )
+                    with defer_termination_signals():
+                        stale_trash = create_private_trash(cache_root)
+                        pending_trashes.append(stale_trash)
+                        moved = move_stale_active_to_trash(
+                            active_root,
+                            stale_trash.path,
+                            candidate_names=active_window,
+                        )
+                        prospective_active = len(active_names) - len(moved) + 1
+                        if prospective_active > ACTIVE_DIRECTORY_CAPACITY:
+                            raise ProvisionError(
+                                "Zig active cache has no capacity for another run"
+                            )
+                        root_with_trash = current_root_count + 2
+                        if (
+                            root_with_trash + 2 * prospective_active
+                            > CACHE_DIRECTORY_CAPACITY
+                        ):
+                            raise ProvisionError(
+                                "Zig cache root cannot reserve cleanup capacity"
+                            )
+                        run_directory, lease_descriptor = create_active_lease(
+                            active_root, spec
+                        )
+            if not claimed_existing:
+                break
+            while pending_trashes:
+                remove_private_trash(pending_trashes.pop())
+            if attempt + 1 == RECOVERY_ADMISSION_ATTEMPTS:
+                raise ProvisionError(
+                    "bounded Zig trash recovery requires another retry"
+                )
         while pending_trashes:
             remove_private_trash(pending_trashes.pop())
         install_dir = run_directory / "toolchain"
@@ -641,8 +885,19 @@ def provisioned_zig(
         try:
             if run_directory is not None:
                 try:
-                    with defer_termination_signals():
-                        with cache_lock(cache_root, ACTIVE_LOCK_NAME):
+                    with cache_lock(cache_root, ACTIVE_LOCK_NAME):
+                        cleanup_root_count = len(
+                            bounded_directory_names(
+                                cache_root,
+                                CACHE_DIRECTORY_SCAN_CAP,
+                                "Zig cache root",
+                            )
+                        )
+                        if cleanup_root_count + 2 > CACHE_DIRECTORY_CAPACITY:
+                            raise ProvisionError(
+                                "Zig cache root exhausted reserved cleanup capacity"
+                            )
+                        with defer_termination_signals():
                             owned_trash = create_private_trash(cache_root)
                             move_owned_active_to_trash(
                                 run_directory, owned_trash.path

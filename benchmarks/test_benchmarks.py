@@ -3238,6 +3238,420 @@ runpy.run_path(sys.argv[0], run_name="__main__")
             50_000_000,
         )
 
+    @unittest.skipUnless(
+        os.name == "posix" and hasattr(os, "pipe2") and hasattr(os, "fork"),
+        "gated launch requires POSIX pipe2 and fork",
+    )
+    def test_gated_launch_closes_first_pipe_when_second_pipe_creation_fails(self) -> None:
+        class InjectedFailure(BaseException):
+            pass
+
+        failure = InjectedFailure("second pipe failed")
+        original_pipe2 = upstream.os.pipe2
+        descriptors: list[int] = []
+        calls = 0
+
+        def failing_pipe2(flags: int) -> tuple[int, int]:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise failure
+            pair = original_pipe2(flags)
+            descriptors.extend(pair)
+            return pair
+
+        with (
+            mock.patch.object(upstream.os, "pipe2", failing_pipe2),
+            self.assertRaises(InjectedFailure) as raised,
+        ):
+            upstream.launch_gated_process(
+                [sys.executable, "-c", "pass"],
+                Path.cwd(),
+                os.environ,
+                None,
+            )
+
+        self.assertIs(raised.exception, failure)
+        self.assertEqual(len(descriptors), 2)
+        for descriptor in descriptors:
+            with self.assertRaises(OSError):
+                os.fstat(descriptor)
+
+    @unittest.skipUnless(
+        os.name == "posix" and hasattr(os, "pipe2") and hasattr(os, "fork"),
+        "gated launch requires POSIX pipe2 and fork",
+    )
+    def test_gated_launch_closes_both_pipes_when_fork_fails(self) -> None:
+        class InjectedFailure(BaseException):
+            pass
+
+        failure = InjectedFailure("fork failed")
+        original_pipe2 = upstream.os.pipe2
+        descriptors: list[int] = []
+
+        def recording_pipe2(flags: int) -> tuple[int, int]:
+            pair = original_pipe2(flags)
+            descriptors.extend(pair)
+            return pair
+
+        with (
+            mock.patch.object(upstream.os, "pipe2", recording_pipe2),
+            mock.patch.object(upstream.os, "fork", side_effect=failure),
+            self.assertRaises(InjectedFailure) as raised,
+        ):
+            upstream.launch_gated_process(
+                [sys.executable, "-c", "pass"],
+                Path.cwd(),
+                os.environ,
+                None,
+            )
+
+        self.assertIs(raised.exception, failure)
+        self.assertEqual(len(descriptors), 4)
+        for descriptor in descriptors:
+            with self.assertRaises(OSError):
+                os.fstat(descriptor)
+
+    @unittest.skipUnless(
+        os.name == "posix" and hasattr(os, "pipe2") and hasattr(os, "fork"),
+        "gated launch requires POSIX pipe2 and fork",
+    )
+    def test_gated_launch_post_fork_failures_close_fds_and_reap_child(self) -> None:
+        class InjectedFailure(BaseException):
+            pass
+
+        original_pipe2 = upstream.os.pipe2
+        original_fork = upstream.os.fork
+        original_read = upstream.os.read
+        original_close = upstream.os.close
+        original_gated_process = upstream.GatedProcess
+        parent_pid = os.getpid()
+
+        for operation in (
+            "close-gate-read",
+            "close-ready-write",
+            "poll-constructor",
+            "register",
+            "poll",
+            "read",
+            "close-ready-read",
+            "process-constructor",
+        ):
+            with self.subTest(operation=operation):
+                failure = InjectedFailure(operation)
+                descriptors: list[int] = []
+                child_pids: list[int] = []
+                parent_close_calls = 0
+                close_failure_injected = False
+
+                def recording_pipe2(flags: int) -> tuple[int, int]:
+                    pair = original_pipe2(flags)
+                    descriptors.extend(pair)
+                    return pair
+
+                def recording_fork() -> int:
+                    pid = original_fork()
+                    if pid > 0:
+                        child_pids.append(pid)
+                    return pid
+
+                class FaultingPoller:
+                    def register(self, _descriptor: int, _events: int) -> None:
+                        if operation == "register":
+                            raise failure
+
+                    def poll(self, _timeout: int) -> list[tuple[int, int]]:
+                        if operation == "poll":
+                            raise failure
+                        return [(1, 1)]
+
+                def faulting_poller() -> FaultingPoller:
+                    if operation == "poll-constructor":
+                        raise failure
+                    return FaultingPoller()
+
+                def faulting_read(descriptor: int, count: int) -> bytes:
+                    if operation == "read" and os.getpid() == parent_pid:
+                        raise failure
+                    return original_read(descriptor, count)
+
+                def faulting_close(descriptor: int) -> None:
+                    nonlocal parent_close_calls, close_failure_injected
+                    if os.getpid() == parent_pid:
+                        parent_close_calls += 1
+                        target = {
+                            "close-gate-read": 1,
+                            "close-ready-write": 2,
+                            "close-ready-read": 3,
+                        }.get(operation)
+                        if target == parent_close_calls and not close_failure_injected:
+                            close_failure_injected = True
+                            raise failure
+                    original_close(descriptor)
+
+                def faulting_process_constructor(
+                    pid: int, gate_descriptor: int, command: object
+                ) -> upstream.GatedProcess:
+                    if operation == "process-constructor":
+                        raise failure
+                    return original_gated_process(pid, gate_descriptor, command)
+
+                with (
+                    mock.patch.object(upstream.os, "pipe2", recording_pipe2),
+                    mock.patch.object(upstream.os, "fork", recording_fork),
+                    mock.patch.object(upstream.os, "close", faulting_close),
+                    mock.patch.object(upstream.select, "poll", faulting_poller),
+                    mock.patch.object(upstream.os, "read", faulting_read),
+                    mock.patch.object(
+                        upstream, "GatedProcess", faulting_process_constructor
+                    ),
+                    self.assertRaises(InjectedFailure) as raised,
+                ):
+                    upstream.launch_gated_process(
+                        [sys.executable, "-c", "pass"],
+                        Path.cwd(),
+                        os.environ,
+                        None,
+                    )
+
+                self.assertIs(raised.exception, failure)
+                self.assertEqual(len(child_pids), 1)
+                for descriptor in descriptors:
+                    with self.assertRaises(OSError):
+                        os.fstat(descriptor)
+                with self.assertRaises(ChildProcessError):
+                    os.waitpid(child_pids[0], os.WNOHANG)
+
+    def test_termination_cleanup_continues_through_hostile_baseexceptions(self) -> None:
+        class HostileFailure(BaseException):
+            pass
+
+        calls: list[str] = []
+
+        class HostileStream:
+            @property
+            def closed(self) -> bool:
+                calls.append("stream-closed")
+                raise HostileFailure()
+
+        class HostileProcess:
+            pid = 424242
+            stdout = HostileStream()
+            stderr = HostileStream()
+
+            def poll(self) -> int | None:
+                calls.append("poll")
+                raise HostileFailure()
+
+            def kill(self) -> None:
+                calls.append("kill")
+                raise HostileFailure()
+
+            def wait(self, timeout: float | None = None) -> int:
+                del timeout
+                calls.append("wait")
+                raise HostileFailure()
+
+        class HostileSupervisor:
+            def refresh(self) -> None:
+                calls.append("refresh")
+                raise HostileFailure()
+
+            def signal_known(self, _signum: int) -> None:
+                calls.append("signal-known")
+                raise HostileFailure()
+
+            def reap_adopted(self) -> None:
+                calls.append("reap")
+                raise HostileFailure()
+
+            def known_present_pids(self) -> set[int]:
+                calls.append("known")
+                raise HostileFailure()
+
+            def stop(self) -> None:
+                calls.append("stop")
+                raise HostileFailure()
+
+        def hostile_group_kill(_pid: int, _signum: int) -> None:
+            calls.append("group-kill")
+            raise HostileFailure()
+
+        with mock.patch.object(
+            upstream, "kill_process_group", hostile_group_kill
+        ):
+            remaining = upstream.terminate_contained_process(
+                HostileProcess(),
+                HostileSupervisor(),
+                cleanup_seconds=0.01,
+            )
+
+        self.assertEqual(remaining, {424242})
+        for expected in (
+            "group-kill",
+            "stream-closed",
+            "poll",
+            "kill",
+            "refresh",
+            "signal-known",
+            "reap",
+            "known",
+            "wait",
+            "stop",
+        ):
+            self.assertIn(expected, calls)
+
+    @unittest.skipUnless(os.name == "posix", "termination signals require POSIX")
+    def test_termination_during_cleanup_surfaces_after_real_child_is_reaped(self) -> None:
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        reveal_poll_at = time.monotonic() + 0.15
+        cleanup_completed = False
+        cleanup_started = threading.Event()
+
+        class DelayedPollProcess:
+            pid = process.pid
+            stdout = None
+            stderr = None
+
+            def poll(self) -> int | None:
+                result = process.poll()
+                if time.monotonic() < reveal_poll_at:
+                    return None
+                return result
+
+            def kill(self) -> None:
+                process.kill()
+
+            def wait(self, timeout: float | None = None) -> int:
+                return process.wait(timeout=timeout)
+
+        def send_termination() -> None:
+            cleanup_started.wait()
+            time.sleep(0.03)
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        sender = threading.Thread(target=send_termination)
+        sender.start()
+        try:
+            with self.assertRaises(upstream.HarnessSignal) as raised:
+                with upstream.termination_signal_handlers():
+                    cleanup_started.set()
+                    remaining = upstream.terminate_contained_process(
+                        DelayedPollProcess(),
+                        None,
+                        cleanup_seconds=0.3,
+                    )
+                    cleanup_completed = True
+                    self.assertEqual(remaining, set())
+            self.assertEqual(raised.exception.signum, signal.SIGTERM)
+            self.assertTrue(cleanup_completed)
+            self.assertIsNotNone(process.poll())
+            with self.assertRaises(ChildProcessError):
+                os.waitpid(process.pid, os.WNOHANG)
+        finally:
+            sender.join(timeout=1.0)
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=1.0)
+
+    @unittest.skipUnless(os.name == "posix", "termination signals require POSIX")
+    def test_run_process_surfaces_cleanup_signal_before_identity_verification(self) -> None:
+        if sys.platform.startswith("linux"):
+            linux_containment_preflight()
+        with tempfile.TemporaryDirectory() as directory:
+            pid_marker = Path(directory) / "child.pid"
+            command = (
+                "import os,pathlib,time; "
+                f"pathlib.Path({str(pid_marker)!r}).write_text(str(os.getpid())); "
+                "time.sleep(30)"
+            )
+            environment = os.environ.copy()
+            environment[CONTAINMENT_ENVIRONMENT_KEY] = "f" * 32
+            original_group_kill = upstream.kill_process_group
+            injected = False
+            cleanup_returns = 0
+            original_terminate = upstream.terminate_contained_process
+
+            def signal_during_cleanup(pid: int, signum: int) -> None:
+                nonlocal injected
+                original_group_kill(pid, signum)
+                if signum == signal.SIGTERM and not injected:
+                    injected = True
+                    os.kill(os.getpid(), signal.SIGTERM)
+
+            def observed_terminate(*args: object, **kwargs: object) -> set[int]:
+                nonlocal cleanup_returns
+                remaining = original_terminate(*args, **kwargs)
+                cleanup_returns += 1
+                return remaining
+
+            with (
+                mock.patch.object(
+                    upstream, "kill_process_group", signal_during_cleanup
+                ),
+                mock.patch.object(
+                    upstream, "terminate_contained_process", observed_terminate
+                ),
+                mock.patch.object(
+                    upstream, "verify_executable_identity"
+                ) as verify_identity,
+                self.assertRaises(upstream.HarnessSignal) as raised,
+                upstream.termination_signal_handlers(),
+            ):
+                run_process(
+                    [sys.executable, "-c", command],
+                    cwd=Path(directory),
+                    environment=environment,
+                    timeout_seconds=0.1,
+                    expected_executable={},
+                )
+
+            self.assertEqual(raised.exception.signum, signal.SIGTERM)
+            self.assertTrue(injected)
+            self.assertGreaterEqual(cleanup_returns, 1)
+            verify_identity.assert_called_once_with({})
+            if pid_marker.exists():
+                child_pid = int(pid_marker.read_text(encoding="utf-8"))
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(child_pid, 0)
+
+    def test_run_process_cleanup_preserves_unrelated_baseexception_identity(self) -> None:
+        class CallerFailure(BaseException):
+            pass
+
+        class CleanupFailure(BaseException):
+            pass
+
+        failure = CallerFailure("caller failure")
+        environment = os.environ.copy()
+        environment[CONTAINMENT_ENVIRONMENT_KEY] = "0" * 32
+
+        def fail_wait(*_args: object, **_kwargs: object) -> object:
+            raise failure
+
+        def fail_group_kill(_pid: int, _signum: int) -> None:
+            raise CleanupFailure("hostile cleanup")
+
+        with (
+            mock.patch.object(upstream.BoundedProcessCapture, "wait", fail_wait),
+            mock.patch.object(upstream, "kill_process_group", fail_group_kill),
+            self.assertRaises(CallerFailure) as raised,
+        ):
+            run_process(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                cwd=Path.cwd(),
+                environment=environment,
+                timeout_seconds=1.0,
+            )
+
+        self.assertIs(raised.exception, failure)
+
     @unittest.skipUnless(os.name == "posix", "pinned executable regression requires POSIX")
     def test_replacement_during_sample_cannot_change_executed_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

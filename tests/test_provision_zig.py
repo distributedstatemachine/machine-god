@@ -89,6 +89,84 @@ class ProvisionZigTests(unittest.TestCase):
             with self.assertRaisesRegex(provision_zig.ProvisionError, "move it aside"):
                 provision_zig.ensure_archive(root, spec)
 
+    def test_missing_archive_at_exact_capacity_never_starts_publication(self) -> None:
+        payload = b"pinned archive"
+        spec = provision_zig.ToolchainSpec(
+            "test-host", hashlib.sha256(payload).hexdigest(), len(payload)
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archives = root / "archives"
+            archives.mkdir()
+            for index in range(provision_zig.ARCHIVE_DIRECTORY_CAPACITY):
+                (archives / f"unrelated-{index:03d}").write_bytes(b"")
+
+            with (
+                mock.patch.object(provision_zig.tempfile, "mkstemp") as mkstemp,
+                mock.patch.object(provision_zig, "download_archive") as download,
+                self.assertRaisesRegex(provision_zig.ProvisionError, "capacity"),
+            ):
+                provision_zig.ensure_archive(root, spec)
+
+            mkstemp.assert_not_called()
+            download.assert_not_called()
+            self.assertEqual(
+                len(list(archives.iterdir())),
+                provision_zig.ARCHIVE_DIRECTORY_CAPACITY,
+            )
+
+    def test_bounded_partial_prune_admits_exact_two_entry_publication(self) -> None:
+        payload = b"pinned archive"
+        spec = provision_zig.ToolchainSpec(
+            "test-host", hashlib.sha256(payload).hexdigest(), len(payload)
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archives = root / "archives"
+            archives.mkdir()
+            for index in range(provision_zig.ARCHIVE_DIRECTORY_CAPACITY - 2):
+                (archives / f"unrelated-{index:03d}").write_bytes(b"")
+            for index in range(2):
+                (archives / f".{spec.archive_name}.stale-{index}").write_bytes(
+                    b"partial"
+                )
+            remaining = provision_zig.prune_partial_archives(root, spec)
+            observed_counts: list[int] = []
+            real_link = provision_zig.os.link
+
+            def fake_download(destination: Path, _spec: object, _run: object) -> None:
+                destination.write_bytes(payload)
+
+            def observe_link(source: Path, destination: Path) -> None:
+                observed_counts.append(len(list(archives.iterdir())))
+                real_link(source, destination)
+                observed_counts.append(len(list(archives.iterdir())))
+
+            with (
+                mock.patch.object(
+                    provision_zig, "download_archive", side_effect=fake_download
+                ),
+                mock.patch.object(provision_zig.os, "link", side_effect=observe_link),
+            ):
+                archive = provision_zig.ensure_archive(
+                    root,
+                    spec,
+                    known_archive_entries=remaining,
+                )
+
+            self.assertEqual(archive, (archives / spec.archive_name).resolve())
+            self.assertEqual(
+                observed_counts,
+                [
+                    provision_zig.ARCHIVE_DIRECTORY_CAPACITY - 1,
+                    provision_zig.ARCHIVE_DIRECTORY_CAPACITY,
+                ],
+            )
+            self.assertLessEqual(
+                len(list(archives.iterdir())),
+                provision_zig.ARCHIVE_DIRECTORY_CAPACITY,
+            )
+
     def test_provisioned_context_cleans_each_successful_install(self) -> None:
         spec = provision_zig.host_spec("Linux", "x86_64")
         with tempfile.TemporaryDirectory() as temporary:
@@ -276,6 +354,78 @@ class ProvisionZigTests(unittest.TestCase):
             self.assertEqual(caught.exception.signum, signal.SIGTERM)
             self.assertEqual(list((root / "active").iterdir()), [])
 
+    def test_active_lock_contention_wait_keeps_termination_signals_unblocked(
+        self,
+    ) -> None:
+        spec = provision_zig.host_spec("Linux", "x86_64")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "archive.tar.xz"
+            archive.write_bytes(b"fixture")
+            real_cache_lock = provision_zig.cache_lock
+            real_create_trash = provision_zig.create_private_trash
+            wait_masks: list[set[signal.Signals]] = []
+            mutation_masks: list[set[signal.Signals]] = []
+
+            @contextmanager
+            def observed_cache_lock(
+                selected_root: Path,
+                name: str = provision_zig.CACHE_LOCK_NAME,
+            ):
+                if name == provision_zig.ACTIVE_LOCK_NAME:
+                    wait_masks.append(
+                        set(signal.pthread_sigmask(signal.SIG_BLOCK, []))
+                    )
+                    time.sleep(0.02)
+                with real_cache_lock(selected_root, name):
+                    yield
+
+            def observed_create_trash(selected_root: Path):
+                mutation_masks.append(
+                    set(signal.pthread_sigmask(signal.SIG_BLOCK, []))
+                )
+                return real_create_trash(selected_root)
+
+            def fake_extract(
+                _archive: Path, destination: Path, _run: object = None
+            ) -> None:
+                destination.mkdir()
+                executable = destination / "zig"
+                executable.write_text(
+                    "#!/bin/sh\nprintf '0.16.0\\n'\n", encoding="utf-8"
+                )
+                executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+
+            with (
+                mock.patch.object(provision_zig, "ensure_archive", return_value=archive),
+                mock.patch.object(
+                    provision_zig, "extract_archive", side_effect=fake_extract
+                ),
+                mock.patch.object(
+                    provision_zig,
+                    "cache_lock",
+                    side_effect=observed_cache_lock,
+                ),
+                mock.patch.object(
+                    provision_zig,
+                    "create_private_trash",
+                    side_effect=observed_create_trash,
+                ),
+            ):
+                with provision_zig.provisioned_zig(root, spec):
+                    pass
+
+            self.assertTrue(wait_masks)
+            self.assertTrue(mutation_masks)
+            for observed in wait_masks:
+                self.assertTrue(
+                    all(item not in observed for item in provision_zig.DEFERRED_SIGNALS)
+                )
+            for observed in mutation_masks:
+                self.assertTrue(
+                    all(item in observed for item in provision_zig.DEFERRED_SIGNALS)
+                )
+
     def test_partial_lease_acquisition_closes_its_descriptor(self) -> None:
         spec = provision_zig.host_spec("Linux", "x86_64")
         with tempfile.TemporaryDirectory() as temporary:
@@ -404,6 +554,294 @@ class ProvisionZigTests(unittest.TestCase):
             provision_zig.remove_private_trash(claimed[0])
             self.assertFalse(trash.path.exists())
             self.assertFalse(trash.lease_path.exists())
+
+    def test_trash_claim_does_not_recreate_lease_after_owner_delete(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trash = provision_zig.create_private_trash(root)
+            os.close(trash.descriptor)
+            real_open = provision_zig.open_existing_private_file
+            interleaved = False
+
+            def owner_delete_then_open(path: Path) -> int:
+                nonlocal interleaved
+                if not interleaved and path == trash.lease_path:
+                    interleaved = True
+                    shutil.rmtree(trash.path)
+                    trash.lease_path.unlink()
+                return real_open(path)
+
+            with (
+                provision_zig.cache_lock(root, provision_zig.ACTIVE_LOCK_NAME),
+                mock.patch.object(
+                    provision_zig,
+                    "open_existing_private_file",
+                    side_effect=owner_delete_then_open,
+                ),
+            ):
+                claimed = provision_zig.claim_abandoned_trash(
+                    root, [trash.path.name]
+                )
+
+            self.assertTrue(interleaved)
+            self.assertEqual(claimed, [])
+            self.assertFalse(trash.path.exists())
+            self.assertFalse(trash.lease_path.exists())
+
+    def test_trash_claim_rejects_directory_inode_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trash = provision_zig.create_private_trash(root)
+            os.close(trash.descriptor)
+            displaced = root / "displaced"
+            real_flock = provision_zig.fcntl.flock
+            replaced = False
+
+            def replace_after_lock(descriptor: int, operation: int) -> None:
+                nonlocal replaced
+                real_flock(descriptor, operation)
+                if not replaced and operation & fcntl.LOCK_NB:
+                    replaced = True
+                    trash.path.rename(displaced)
+                    trash.path.mkdir()
+
+            with (
+                provision_zig.cache_lock(root, provision_zig.ACTIVE_LOCK_NAME),
+                mock.patch.object(
+                    provision_zig.fcntl,
+                    "flock",
+                    side_effect=replace_after_lock,
+                ),
+                self.assertRaisesRegex(provision_zig.ProvisionError, "changed"),
+            ):
+                provision_zig.claim_abandoned_trash(root, [trash.path.name])
+
+            self.assertTrue(replaced)
+            shutil.rmtree(trash.path)
+            shutil.rmtree(displaced)
+            trash.lease_path.unlink()
+
+    def test_orphan_trash_lease_is_retired_boundedly(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trash = provision_zig.create_private_trash(root)
+            shutil.rmtree(trash.path)
+            os.close(trash.descriptor)
+
+            with provision_zig.cache_lock(root, provision_zig.ACTIVE_LOCK_NAME):
+                retired = provision_zig.retire_orphan_trash_leases(
+                    root, [trash.lease_path.name]
+                )
+
+            self.assertEqual(retired, 1)
+            self.assertFalse(trash.lease_path.exists())
+
+    def test_bounded_directory_scan_stops_at_declared_witness(self) -> None:
+        class FakeEntry:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+        class CountingEntries:
+            def __init__(self) -> None:
+                self.inspected = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args) -> None:
+                return None
+
+            def __iter__(self):
+                return self
+
+            def __next__(self) -> FakeEntry:
+                self.inspected += 1
+                return FakeEntry(f"entry-{self.inspected}")
+
+        entries = CountingEntries()
+        with (
+            mock.patch.object(provision_zig.os, "scandir", return_value=entries),
+            self.assertRaisesRegex(provision_zig.ProvisionError, "bounded"),
+        ):
+            provision_zig.bounded_directory_names(
+                Path("ignored"),
+                provision_zig.ACTIVE_DIRECTORY_SCAN_CAP,
+                "fixture",
+            )
+        self.assertEqual(
+            entries.inspected, provision_zig.ACTIVE_DIRECTORY_SCAN_CAP
+        )
+
+    def test_partial_archive_pruning_is_batched_within_hard_cap(self) -> None:
+        spec = provision_zig.host_spec("Linux", "x86_64")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archives = root / "archives"
+            archives.mkdir()
+            count = provision_zig.PARTIAL_ARCHIVE_PRUNE_BATCH_SIZE + 2
+            for index in range(count):
+                (archives / f".{spec.archive_name}.{index:03d}").write_bytes(b"partial")
+
+            provision_zig.prune_partial_archives(root, spec)
+            self.assertEqual(
+                len(list(archives.iterdir())),
+                count - provision_zig.PARTIAL_ARCHIVE_PRUNE_BATCH_SIZE,
+            )
+            provision_zig.prune_partial_archives(root, spec)
+            self.assertEqual(list(archives.iterdir()), [])
+
+    def test_exact_root_capacity_refuses_trash_pair_without_exceeding_cap(self) -> None:
+        spec = provision_zig.host_spec("Linux", "x86_64")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "archives").mkdir()
+            (root / "active").mkdir()
+            archive = root / "fixture.tar.xz"
+            archive.write_bytes(b"fixture")
+            with provision_zig.cache_lock(root):
+                pass
+            with provision_zig.cache_lock(root, provision_zig.ACTIVE_LOCK_NAME):
+                pass
+            for index in range(
+                provision_zig.CACHE_DIRECTORY_CAPACITY - len(list(root.iterdir()))
+            ):
+                (root / f"filler-{index:03d}").write_bytes(b"")
+
+            with (
+                mock.patch.object(provision_zig, "ensure_archive", return_value=archive),
+                self.assertRaisesRegex(provision_zig.ProvisionError, "capacity"),
+            ):
+                with provision_zig.provisioned_zig(root, spec):
+                    self.fail("an exact-capacity cache admitted another trash pair")
+
+            self.assertEqual(
+                len(list(root.iterdir())), provision_zig.CACHE_DIRECTORY_CAPACITY
+            )
+
+    def test_concurrent_admission_uses_current_locked_active_count(self) -> None:
+        spec = provision_zig.host_spec("Linux", "x86_64")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            active = root / "active"
+            active.mkdir()
+            existing = active / "zig-existing"
+            existing.mkdir()
+            existing_lease = provision_zig.open_private_file(
+                existing / provision_zig.LEASE_NAME, exclusive=True
+            )
+            fcntl.flock(existing_lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            archive = root / "fixture.tar.xz"
+            archive.write_bytes(b"fixture")
+            first_entered = threading.Event()
+            release_first = threading.Event()
+            errors: list[BaseException] = []
+            observed_active_counts: list[int] = []
+            real_create_active = provision_zig.create_active_lease
+
+            def fake_extract(
+                _archive: Path, destination: Path, _run: object = None
+            ) -> None:
+                destination.mkdir()
+                executable = destination / "zig"
+                executable.write_text(
+                    "#!/bin/sh\nprintf '0.16.0\\n'\n", encoding="utf-8"
+                )
+                executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+
+            def observe_create_active(
+                selected_active: Path, selected_spec: provision_zig.ToolchainSpec
+            ) -> tuple[Path, int]:
+                result = real_create_active(selected_active, selected_spec)
+                observed_active_counts.append(len(list(selected_active.iterdir())))
+                return result
+
+            def first_run() -> None:
+                try:
+                    with provision_zig.provisioned_zig(root, spec):
+                        first_entered.set()
+                        if not release_first.wait(timeout=5.0):
+                            raise AssertionError("first run synchronization timed out")
+                except BaseException as error:
+                    errors.append(error)
+
+            with (
+                mock.patch.object(provision_zig, "ensure_archive", return_value=archive),
+                mock.patch.object(
+                    provision_zig, "extract_archive", side_effect=fake_extract
+                ),
+                mock.patch.object(
+                    provision_zig,
+                    "create_active_lease",
+                    side_effect=observe_create_active,
+                ),
+                mock.patch.object(provision_zig, "ACTIVE_DIRECTORY_CAPACITY", 2),
+                mock.patch.object(provision_zig, "CACHE_DIRECTORY_CAPACITY", 64),
+            ):
+                first = threading.Thread(target=first_run)
+                first.start()
+                self.assertTrue(first_entered.wait(timeout=5.0))
+                with self.assertRaisesRegex(provision_zig.ProvisionError, "capacity"):
+                    with provision_zig.provisioned_zig(root, spec):
+                        self.fail("stale pre-lock admission snapshot exceeded capacity")
+                observed_active_counts.append(len(list(active.iterdir())))
+                release_first.set()
+                first.join(timeout=5.0)
+                self.assertFalse(first.is_alive())
+
+            os.close(existing_lease)
+            shutil.rmtree(existing)
+            self.assertEqual(errors, [])
+            self.assertTrue(observed_active_counts)
+            self.assertLessEqual(max(observed_active_counts), 2)
+
+    def test_owned_cleanup_uses_but_never_exceeds_exact_root_reserve(self) -> None:
+        spec = provision_zig.host_spec("Linux", "x86_64")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "fixture.tar.xz"
+            archive.write_bytes(b"fixture")
+            observed_root_counts: list[int] = []
+            real_create_trash = provision_zig.create_private_trash
+
+            def fake_extract(
+                _archive: Path, destination: Path, _run: object = None
+            ) -> None:
+                destination.mkdir()
+                executable = destination / "zig"
+                executable.write_text(
+                    "#!/bin/sh\nprintf '0.16.0\\n'\n", encoding="utf-8"
+                )
+                executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+
+            context = provision_zig.provisioned_zig(root, spec)
+            with (
+                mock.patch.object(provision_zig, "ensure_archive", return_value=archive),
+                mock.patch.object(
+                    provision_zig, "extract_archive", side_effect=fake_extract
+                ),
+            ):
+                context.__enter__()
+            exact_capacity = len(list(root.iterdir())) + 2
+
+            def observe_cleanup_trash(selected_root: Path):
+                trash = real_create_trash(selected_root)
+                observed_root_counts.append(len(list(selected_root.iterdir())))
+                return trash
+
+            with (
+                mock.patch.object(
+                    provision_zig, "CACHE_DIRECTORY_CAPACITY", exact_capacity
+                ),
+                mock.patch.object(
+                    provision_zig,
+                    "create_private_trash",
+                    side_effect=observe_cleanup_trash,
+                ),
+            ):
+                context.__exit__(None, None, None)
+
+            self.assertEqual(observed_root_counts, [exact_capacity])
+            self.assertLessEqual(len(list(root.iterdir())), exact_capacity)
 
     def test_stale_recursive_deletion_runs_after_active_lock_release(self) -> None:
         spec = provision_zig.host_spec("Linux", "x86_64")

@@ -63,12 +63,24 @@ extraction context. The upstream harness converts the first forwarded signal
 into structured unwinding. On Linux it defers delivery from process creation
 through containment attachment, so independently grouped build or sample
 processes and their descendants are owned and reaped before the harness exits.
+The gated measurement launch owns both pipes and the forked child as one
+transaction; any setup exception closes the descriptors and boundedly kills and
+reaps the child. Cleanup isolates failures in individual kill, pipe, wait, and
+supervisor operations, and surfaces a latched termination only after containment
+cleanup finishes.
 Separate bounded-wait coordination locks serialize archive publication and
 active-run recovery, while a per-run lease prevents a live extraction from
-being reclaimed. Recovery scans and detaches only a bounded stale batch under
-the active-run lock; both stale and normally completed trees are atomically
-moved to private same-filesystem trash and recursively deleted after releasing
-that lock. Subsequent invocations can therefore proceed while deletion runs.
+being reclaimed. Archive, active-run, and trash namespaces have hard entry
+capacities and stop scanning at a single overflow witness; partial-archive and
+stale-tree recovery each process only a fixed batch. Recovery acquires the
+active-run lock before briefly deferring termination for ownership mutations,
+so lock contention remains interruptible. Trash leases are opened without
+creation and inode-revalidated before reclamation. Stale and normally completed
+trees are atomically moved to private same-filesystem trash, recursively deleted
+after releasing the lock, and have their lease retired under the lock. Capacity
+admission reserves the two root entries needed for every live run's cleanup, so
+subsequent invocations can proceed while deletion runs without unbounded cache
+growth.
 When post-collection provenance validation is requested, the wrapper retains
 the toolchain through that check, binds the evidence and binary paths to that
 same collection, and removes it afterward. The wrapper exclusively owns the

@@ -97,16 +97,19 @@ class HarnessSignalState:
     def __init__(self) -> None:
         self.caught_signal: int | None = None
         self.spawning = False
+        self.raised_signal = False
 
     def handle(self, signum: int, _frame: object) -> None:
         if self.caught_signal is not None:
             return
         self.caught_signal = signum
         if not self.spawning:
+            self.raised_signal = True
             raise HarnessSignal(signum)
 
     def raise_if_caught(self) -> None:
         if self.caught_signal is not None:
+            self.raised_signal = True
             raise HarnessSignal(self.caught_signal)
 
 
@@ -130,6 +133,9 @@ def termination_signal_handlers():
         for signum, handler in previous.items():
             signal.signal(signum, handler)
         ACTIVE_HARNESS_SIGNAL_STATE = None
+        if state.caught_signal is not None and not state.raised_signal:
+            state.raised_signal = True
+            raise HarnessSignal(state.caught_signal)
 
 
 @contextmanager
@@ -144,6 +150,34 @@ def defer_harness_signal_while_spawning():
         yield
     finally:
         state.spawning = False
+        state.raise_if_caught()
+
+
+@contextmanager
+def defer_harness_signal_while_cleaning():
+    """Latch handled termination until non-throwing cleanup reaches its boundary."""
+
+    state = ACTIVE_HARNESS_SIGNAL_STATE
+    if state is None:
+        yield
+        return
+    was_spawning = state.spawning
+    state.spawning = True
+    try:
+        yield
+    finally:
+        state.spawning = was_spawning
+
+
+def surface_deferred_harness_signal() -> None:
+    """Raise a signal latched by cleanup at its explicit caller boundary."""
+
+    state = ACTIVE_HARNESS_SIGNAL_STATE
+    if (
+        state is not None
+        and state.caught_signal is not None
+        and not state.raised_signal
+    ):
         state.raise_if_caught()
 
 
@@ -2303,6 +2337,50 @@ class GatedProcess:
             pass
 
 
+def close_descriptor_nonthrowing(descriptor: int | None) -> None:
+    if descriptor is None:
+        return
+    try:
+        os.close(descriptor)
+    except BaseException:
+        pass
+
+
+def kill_and_reap_child_nonthrowing(pid: int, timeout_seconds: float = 1.0) -> None:
+    """Best-effort bounded kill and reap used while preserving a launch exception."""
+
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except BaseException:
+        pass
+    try:
+        deadline = time.monotonic() + timeout_seconds
+    except BaseException:
+        deadline = 0.0
+    for _ in range(max(1, math.ceil(timeout_seconds / 0.005))):
+        try:
+            waited_pid, _ = os.waitpid(pid, os.WNOHANG)
+            if waited_pid == pid:
+                return
+        except ChildProcessError:
+            return
+        except BaseException:
+            pass
+        try:
+            if time.monotonic() >= deadline:
+                break
+        except BaseException:
+            pass
+        try:
+            time.sleep(0.005)
+        except BaseException:
+            pass
+    try:
+        os.waitpid(pid, os.WNOHANG)
+    except BaseException:
+        pass
+
+
 def launch_gated_process(
     command: Sequence[str],
     cwd: Path,
@@ -2314,57 +2392,63 @@ def launch_gated_process(
     if executable_descriptor is not None and os.execve not in os.supports_fd:
         raise RuntimeError("Linux measurement requires descriptor-based execve")
     pipe_flags = getattr(os, "O_CLOEXEC", 0)
-    gate_read, gate_write = os.pipe2(pipe_flags)
-    ready_read, ready_write = os.pipe2(pipe_flags)
+    gate_read: int | None = None
+    gate_write: int | None = None
+    ready_read: int | None = None
+    ready_write: int | None = None
+    pid: int | None = None
     try:
+        gate_read, gate_write = os.pipe2(pipe_flags)
+        ready_read, ready_write = os.pipe2(pipe_flags)
         pid = os.fork()
-    except BaseException:
-        os.close(gate_read)
-        os.close(gate_write)
-        os.close(ready_read)
-        os.close(ready_write)
-        raise
-    if pid == 0:
-        try:
-            os.close(gate_write)
-            os.close(ready_read)
-            os.setsid()
-            os.chdir(cwd)
-            devnull = os.open(os.devnull, os.O_RDWR)
+        if pid == 0:
             try:
-                for descriptor in (0, 1, 2):
-                    os.dup2(devnull, descriptor)
-            finally:
-                if devnull > 2:
-                    os.close(devnull)
-            os.write(ready_write, b"\x01")
-            os.close(ready_write)
-            released = os.read(gate_read, 1)
-            os.close(gate_read)
-            if released != b"\x01":
-                os._exit(126)
-            arguments = list(command)
-            child_environment = dict(environment)
-            if executable_descriptor is None:
-                os.execve(arguments[0], arguments, child_environment)
-            os.execve(executable_descriptor, arguments, child_environment)
-        except BaseException:
-            os._exit(127)
-    os.close(gate_read)
-    os.close(ready_write)
-    poller = select.poll()
-    poller.register(ready_read, select.POLLIN | select.POLLHUP)
-    ready = bool(poller.poll(1000)) and os.read(ready_read, 1) == b"\x01"
-    os.close(ready_read)
-    if not ready:
-        os.close(gate_write)
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        os.waitpid(pid, 0)
-        raise RuntimeError("gated measurement child did not reach the exec barrier")
-    return GatedProcess(pid, gate_write, command)
+                os.close(gate_write)
+                os.close(ready_read)
+                os.setsid()
+                os.chdir(cwd)
+                devnull = os.open(os.devnull, os.O_RDWR)
+                try:
+                    for descriptor in (0, 1, 2):
+                        os.dup2(devnull, descriptor)
+                finally:
+                    if devnull > 2:
+                        os.close(devnull)
+                os.write(ready_write, b"\x01")
+                os.close(ready_write)
+                released = os.read(gate_read, 1)
+                os.close(gate_read)
+                if released != b"\x01":
+                    os._exit(126)
+                arguments = list(command)
+                child_environment = dict(environment)
+                if executable_descriptor is None:
+                    os.execve(arguments[0], arguments, child_environment)
+                os.execve(executable_descriptor, arguments, child_environment)
+            except BaseException:
+                os._exit(127)
+        os.close(gate_read)
+        gate_read = None
+        os.close(ready_write)
+        ready_write = None
+        poller = select.poll()
+        poller.register(ready_read, select.POLLIN | select.POLLHUP)
+        ready = bool(poller.poll(1000)) and os.read(ready_read, 1) == b"\x01"
+        os.close(ready_read)
+        ready_read = None
+        if not ready:
+            raise RuntimeError("gated measurement child did not reach the exec barrier")
+        process = GatedProcess(pid, gate_write, command)
+        gate_write = None
+        return process
+    except BaseException:
+        close_descriptor_nonthrowing(gate_read)
+        close_descriptor_nonthrowing(gate_write)
+        close_descriptor_nonthrowing(ready_read)
+        close_descriptor_nonthrowing(ready_write)
+        if pid is not None and pid > 0:
+            kill_and_reap_child_nonthrowing(pid)
+        raise
 
 
 def kill_process_group(pid: int, signal_number: int) -> None:
@@ -2435,6 +2519,7 @@ def linux_containment_preflight() -> None:
                 if hostile_pid not in supervisor.live_pids():
                     raise RuntimeError("Linux containment did not discover a hostile grandchild")
                 remaining = terminate_contained_process(process, supervisor)
+                surface_deferred_harness_signal()
                 if remaining:
                     raise RuntimeError(
                         f"Linux containment could not kill hostile PIDs {sorted(remaining)}"
@@ -2442,6 +2527,7 @@ def linux_containment_preflight() -> None:
             finally:
                 if process is not None:
                     terminate_contained_process(process, supervisor)
+                    surface_deferred_harness_signal()
                 else:
                     supervisor.stop()
         _LINUX_PREFLIGHT_COMPLETE = True
@@ -2554,9 +2640,13 @@ class BoundedProcessCapture:
 
 
 def close_process_pipes(process: subprocess.Popen[bytes] | GatedProcess) -> None:
-    for stream in (process.stdout, process.stderr):
-        if stream is not None and not stream.closed:
-            stream.close()
+    for name in ("stdout", "stderr"):
+        try:
+            stream = getattr(process, name)
+            if stream is not None and not stream.closed:
+                stream.close()
+        except BaseException:
+            pass
 
 
 def terminate_contained_process(
@@ -2566,18 +2656,46 @@ def terminate_contained_process(
 ) -> set[int]:
     """Non-throwing bounded cleanup for every path after a process launches."""
 
-    deadline = time.monotonic() + cleanup_seconds
     remaining: set[int] = set()
-    try:
-        kill_process_group(process.pid, signal.SIGTERM)
-        close_process_pipes(process)
-        while time.monotonic() < deadline:
-            kill_process_group(process.pid, signal.SIGKILL)
+    process_pid: int | None = None
+    with defer_harness_signal_while_cleaning():
+        try:
+            process_pid = process.pid
+        except BaseException:
+            pass
+        try:
+            cleanup_iterations = max(1, math.ceil(cleanup_seconds / 0.01))
+        except BaseException:
+            cleanup_iterations = 1
+        try:
+            deadline = time.monotonic() + cleanup_seconds
+        except BaseException:
+            deadline = 0.0
+        if process_pid is not None:
             try:
-                if process.poll() is None:
-                    process.kill()
-            except (OSError, subprocess.SubprocessError):
+                kill_process_group(process_pid, signal.SIGTERM)
+            except BaseException:
                 pass
+        try:
+            close_process_pipes(process)
+        except BaseException:
+            pass
+        for _ in range(cleanup_iterations):
+            if process_pid is not None:
+                try:
+                    kill_process_group(process_pid, signal.SIGKILL)
+                except BaseException:
+                    pass
+            root_running = True
+            try:
+                root_running = process.poll() is None
+            except BaseException:
+                pass
+            if root_running:
+                try:
+                    process.kill()
+                except BaseException:
+                    pass
             if supervisor is not None:
                 try:
                     supervisor.refresh()
@@ -2592,37 +2710,52 @@ def terminate_contained_process(
                 except BaseException:
                     pass
                 try:
-                    remaining = supervisor.known_present_pids()
+                    remaining = set(supervisor.known_present_pids())
                 except BaseException:
-                    remaining = set()
+                    pass
             try:
                 root_finished = process.poll() is not None
             except BaseException:
                 root_finished = False
             if root_finished and not remaining:
                 break
-            time.sleep(0.01)
+            try:
+                if time.monotonic() >= deadline:
+                    break
+            except BaseException:
+                pass
+            try:
+                time.sleep(0.01)
+            except BaseException:
+                pass
         try:
-            process.wait(timeout=max(0.01, deadline - time.monotonic()))
-        except (OSError, subprocess.SubprocessError):
+            remaining_seconds = max(0.01, deadline - time.monotonic())
+        except BaseException:
+            remaining_seconds = 0.01
+        try:
+            process.wait(timeout=remaining_seconds)
+        except BaseException:
             pass
         if supervisor is not None:
             try:
                 supervisor.reap_adopted()
-                remaining = supervisor.known_present_pids()
             except BaseException:
                 pass
-    finally:
-        if supervisor is not None:
+            try:
+                remaining = set(supervisor.known_present_pids())
+            except BaseException:
+                pass
             try:
                 supervisor.stop()
             except BaseException:
                 pass
-    try:
-        if process.poll() is None:
-            remaining.add(process.pid)
-    except BaseException:
-        remaining.add(process.pid)
+        root_present = True
+        try:
+            root_present = process.poll() is None
+        except BaseException:
+            pass
+        if root_present and process_pid is not None:
+            remaining.add(process_pid)
     return remaining
 
 
@@ -2638,9 +2771,11 @@ def finalize_successful_process(
         leaked = supervisor.settle_and_reap_adopted()
     except BaseException:
         terminate_contained_process(process, supervisor)
+        surface_deferred_harness_signal()
         raise
     if leaked:
         remaining = terminate_contained_process(process, supervisor)
+        surface_deferred_harness_signal()
         raise RuntimeError(
             "command left detached descendants"
             + (f" and containment is incomplete for PIDs {sorted(remaining)}" if remaining else "")
@@ -2752,6 +2887,7 @@ def run_process(
                 end = time.perf_counter_ns()
         except subprocess.TimeoutExpired as error:
             remaining = terminate_contained_process(process, supervisor)
+            surface_deferred_harness_signal()
             if exit_observer is not None:
                 exit_observer.stop()
             if expected_executable is not None:
@@ -2766,6 +2902,7 @@ def run_process(
             ) from error
         except ProcessOutputLimit as error:
             remaining = terminate_contained_process(process, supervisor)
+            surface_deferred_harness_signal()
             if expected_executable is not None:
                 verify_executable_identity(expected_executable)
             if remaining:
@@ -2796,6 +2933,7 @@ def run_process(
             supervisor.stop()
         if exit_observer is not None:
             exit_observer.stop()
+        surface_deferred_harness_signal()
         raise
     finally:
         if output_capture is not None:
