@@ -12,7 +12,7 @@ use memchr::memmem;
 #[cfg(unix)]
 use rustix::fs::{Mode, OFlags};
 
-use crate::terminal_grid::{TerminalGrid, TerminalGridError};
+use crate::terminal_grid::{TerminalGrid, TerminalGridError, TerminalGridFeedError};
 
 /// Exclusive upper bound for an input FXTP v1 tape.
 pub const MAX_TERMINAL_TAPE_BYTES: usize = 64 * 1024 * 1024;
@@ -433,6 +433,15 @@ fn replay_polled(
     request: &TerminalTapeReplayRequest,
     cancellation: &CancellationToken,
 ) -> Result<TerminalTapeReplayOutput, TerminalTapeReplayError> {
+    replay_polled_with_grid_checkpoint(request, cancellation, || {})
+}
+
+#[allow(clippy::too_many_lines)] // Preserve the pinned FX replay side-effect order in one audit scope.
+fn replay_polled_with_grid_checkpoint(
+    request: &TerminalTapeReplayRequest,
+    cancellation: &CancellationToken,
+    mut before_grid_checkpoint: impl FnMut(),
+) -> Result<TerminalTapeReplayOutput, TerminalTapeReplayError> {
     check_cancelled(cancellation)?;
     let tape = read_tape(&request.tape, cancellation)?;
     let mut parser = Parser::new(&tape)?;
@@ -492,7 +501,11 @@ fn replay_polled(
                     .checked_add(frame.payload.len())
                     .ok_or_else(resource_limit)?;
                 check_cancelled(cancellation)?;
-                grid.feed(frame.payload).map_err(map_grid_error)?;
+                grid.feed_with_cancel_check(frame.payload, || {
+                    before_grid_checkpoint();
+                    cancellation.is_cancelled()
+                })
+                .map_err(map_grid_feed_error)?;
                 check_cancelled(cancellation)?;
                 grid_changed = true;
             }
@@ -605,6 +618,13 @@ fn replay_polled(
         output.write_stdout(&final_snapshot)?;
     }
     output.finish()
+}
+
+fn map_grid_feed_error(error: TerminalGridFeedError) -> TerminalTapeReplayError {
+    match error {
+        TerminalGridFeedError::Grid(error) => map_grid_error(error),
+        TerminalGridFeedError::Cancelled => cancelled(),
+    }
 }
 
 fn read_tape(
@@ -1089,4 +1109,72 @@ const fn read_failed() -> TerminalTapeReplayError {
 
 const fn frames_dir_failed() -> TerminalTapeReplayError {
     TerminalTapeReplayError::new(TerminalTapeReplayErrorKind::FramesDirFailed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEST_PATH: AtomicU64 = AtomicU64::new(0);
+
+    struct TestTape(PathBuf);
+
+    impl TestTape {
+        fn with_stdout_payload(payload: &[u8]) -> Self {
+            let identifier = NEXT_TEST_PATH.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "machine-god-replay-mid-frame-cancel-{}-{identifier}.fxtape",
+                std::process::id()
+            ));
+            let mut tape = Vec::new();
+            tape.extend_from_slice(MAGIC);
+            tape.extend_from_slice(&80_u16.to_le_bytes());
+            tape.extend_from_slice(&24_u16.to_le_bytes());
+            tape.extend_from_slice(&0_i64.to_le_bytes());
+            tape.push(0);
+            tape.extend_from_slice(&0_i32.to_le_bytes());
+            tape.push(1);
+            tape.extend_from_slice(
+                &u32::try_from(payload.len())
+                    .expect("test payload fits the FXTP frame length")
+                    .to_le_bytes(),
+            );
+            tape.extend_from_slice(payload);
+            fs::write(&path, tape).expect("write test tape");
+            Self(path)
+        }
+    }
+
+    impl Drop for TestTape {
+        fn drop(&mut self) {
+            match fs::remove_file(&self.0) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) if std::thread::panicking() => {
+                    eprintln!("failed to remove test tape: {error}");
+                }
+                Err(error) => panic!("failed to remove test tape: {error}"),
+            }
+        }
+    }
+
+    #[test]
+    fn cancellation_during_one_complete_stdout_frame_is_distinct() {
+        let tape = TestTape::with_stdout_payload(&vec![b'x'; IO_CHUNK_BYTES * 2]);
+        let request = TerminalTapeReplayRequest::new(tape.0.clone(), false, false, None, None);
+        let cancellation = CancellationToken::new();
+        let mut checkpoint_count = 0;
+
+        let error = replay_polled_with_grid_checkpoint(&request, &cancellation, || {
+            checkpoint_count += 1;
+            if checkpoint_count == 1 {
+                assert!(cancellation.cancel());
+            }
+        })
+        .expect_err("mid-frame cancellation fails replay");
+
+        assert_eq!(checkpoint_count, 1);
+        assert_eq!(error.kind(), TerminalTapeReplayErrorKind::Cancelled);
+    }
 }

@@ -21,6 +21,7 @@ const MAX_SYNC_BYTES: usize = 1024 * 1024;
 const MAX_SUFFIX_POOL_BYTES: usize = 4 * 1024 * 1024;
 const MAX_SUFFIX_ENTRIES: usize = 65_535;
 const MAX_CELL_TEXT_BYTES: usize = 64;
+const FEED_CANCELLATION_CHECKPOINT_BYTES: usize = 16 * 1024;
 const SYNC_RESET: &[u8] = b"\x1b[?2026l";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -51,6 +52,41 @@ impl std::fmt::Display for TerminalGridError {
 }
 
 impl std::error::Error for TerminalGridError {}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TerminalGridFeedError {
+    Grid(TerminalGridError),
+    Cancelled,
+}
+
+impl From<TerminalGridError> for TerminalGridFeedError {
+    fn from(error: TerminalGridError) -> Self {
+        Self::Grid(error)
+    }
+}
+
+#[derive(Default)]
+struct FeedCheckpoint {
+    bytes_since_check: usize,
+}
+
+impl FeedCheckpoint {
+    fn consume(
+        &mut self,
+        byte_count: usize,
+        is_cancelled: &mut impl FnMut() -> bool,
+    ) -> Result<(), TerminalGridFeedError> {
+        self.bytes_since_check += byte_count;
+        if self.bytes_since_check < FEED_CANCELLATION_CHECKPOINT_BYTES {
+            return Ok(());
+        }
+        self.bytes_since_check %= FEED_CANCELLATION_CHECKPOINT_BYTES;
+        if is_cancelled() {
+            return Err(TerminalGridFeedError::Cancelled);
+        }
+        Ok(())
+    }
+}
 
 #[derive(Clone, Copy)]
 struct Cell {
@@ -266,12 +302,30 @@ impl TerminalGrid {
         Ok(())
     }
 
+    // Retained for parser callers and focused parity tests that do not need a
+    // cooperative cancellation source.
+    #[allow(dead_code)]
     pub(crate) fn feed(&mut self, bytes: &[u8]) -> Result<(), TerminalGridError> {
+        match self.feed_with_cancel_check(bytes, || false) {
+            Ok(()) => Ok(()),
+            Err(TerminalGridFeedError::Grid(error)) => Err(error),
+            Err(TerminalGridFeedError::Cancelled) => {
+                unreachable!("an inert cancellation check cannot cancel")
+            }
+        }
+    }
+
+    pub(crate) fn feed_with_cancel_check(
+        &mut self,
+        bytes: &[u8],
+        mut is_cancelled: impl FnMut() -> bool,
+    ) -> Result<(), TerminalGridFeedError> {
         let mut index = 0;
+        let mut checkpoint = FeedCheckpoint::default();
         while index < bytes.len() {
             if self.sync_active {
                 if self.sync_buffer.len() >= MAX_SYNC_BYTES {
-                    return Err(TerminalGridError::SynchronizedUpdateTooLarge);
+                    return Err(TerminalGridError::SynchronizedUpdateTooLarge.into());
                 }
                 self.sync_buffer.push(bytes[index]);
                 index += 1;
@@ -280,11 +334,13 @@ impl TerminalGrid {
                         .truncate(self.sync_buffer.len() - SYNC_RESET.len());
                     let buffered = std::mem::take(&mut self.sync_buffer);
                     self.sync_active = false;
-                    self.feed_direct(&buffered, false)?;
+                    self.feed_direct(&buffered, false, &mut checkpoint, &mut is_cancelled)?;
                 }
+                checkpoint.consume(1, &mut is_cancelled)?;
                 continue;
             }
-            let consumed = self.feed_direct(&bytes[index..], true)?;
+            let consumed =
+                self.feed_direct(&bytes[index..], true, &mut checkpoint, &mut is_cancelled)?;
             index += consumed;
         }
         Ok(())
@@ -326,25 +382,31 @@ impl TerminalGrid {
         &mut self,
         bytes: &[u8],
         stop_on_sync_start: bool,
-    ) -> Result<usize, TerminalGridError> {
+        checkpoint: &mut FeedCheckpoint,
+        is_cancelled: &mut impl FnMut() -> bool,
+    ) -> Result<usize, TerminalGridFeedError> {
         let mut index = 0;
         while index < bytes.len() {
             let byte = bytes[index];
             if byte == 0x18 || byte == 0x1a {
                 self.cancel_control_sequence();
                 index += 1;
+                checkpoint.consume(1, is_cancelled)?;
                 continue;
             }
             match self.state {
                 ParserState::Normal => {
                     if self.utf8_len != 0 {
-                        index += self.complete_pending_utf8(&bytes[index..])?;
+                        let consumed = self.complete_pending_utf8(&bytes[index..])?;
+                        index += consumed;
+                        checkpoint.consume(consumed, is_cancelled)?;
                         continue;
                     }
                     if byte == 0x1b {
                         self.last_printable_idx = None;
                         self.state = ParserState::Escape;
                         index += 1;
+                        checkpoint.consume(1, is_cancelled)?;
                         continue;
                     }
                     let expected = utf8_sequence_len(byte).unwrap_or(1);
@@ -353,13 +415,17 @@ impl TerminalGrid {
                         self.utf8_buffer[..tail.len()].copy_from_slice(tail);
                         self.utf8_len = tail.len();
                         self.utf8_expected = expected;
+                        checkpoint.consume(tail.len(), is_cancelled)?;
                         return Ok(bytes.len());
                     }
-                    index += self.write_unit(bytes, index)?;
+                    let consumed = self.write_unit(bytes, index)?;
+                    index += consumed;
+                    checkpoint.consume(consumed, is_cancelled)?;
                 }
                 ParserState::Escape => {
                     self.dispatch_escape(byte);
                     index += 1;
+                    checkpoint.consume(1, is_cancelled)?;
                 }
                 ParserState::Csi => {
                     if matches!(byte, b'?' | b'>' | b'<' | b'=')
@@ -371,6 +437,7 @@ impl TerminalGrid {
                             self.csi_private = byte;
                         }
                         index += 1;
+                        checkpoint.consume(1, is_cancelled)?;
                         continue;
                     }
                     if byte.is_ascii_digit() {
@@ -380,29 +447,33 @@ impl TerminalGrid {
                             .saturating_add(u16::from(byte - b'0'));
                         self.csi_has_digit = true;
                         index += 1;
+                        checkpoint.consume(1, is_cancelled)?;
                         continue;
                     }
                     if byte == b';' || byte == b':' {
                         if self.csi_param_count + 1 >= MAX_CSI_PARAMS {
-                            return Err(TerminalGridError::TooManyCsiParameters);
+                            return Err(TerminalGridError::TooManyCsiParameters.into());
                         }
                         self.csi_param_count += 1;
                         self.csi_has_digit = false;
                         index += 1;
+                        checkpoint.consume(1, is_cancelled)?;
                         continue;
                     }
                     if (0x20..=0x2f).contains(&byte) {
                         if self.csi_intermediate_count >= MAX_CSI_INTERMEDIATES {
-                            return Err(TerminalGridError::TooManyCsiIntermediates);
+                            return Err(TerminalGridError::TooManyCsiIntermediates.into());
                         }
                         self.csi_intermediates[self.csi_intermediate_count] = byte;
                         self.csi_intermediate_count += 1;
                         index += 1;
+                        checkpoint.consume(1, is_cancelled)?;
                         continue;
                     }
                     if !(0x40..=0x7e).contains(&byte) {
                         self.cancel_control_sequence();
                         index += 1;
+                        checkpoint.consume(1, is_cancelled)?;
                         continue;
                     }
                     if self.csi_has_digit || self.csi_param_count > 0 {
@@ -411,6 +482,7 @@ impl TerminalGrid {
                     self.dispatch_csi(byte);
                     self.state = ParserState::Normal;
                     index += 1;
+                    checkpoint.consume(1, is_cancelled)?;
                     if stop_on_sync_start && self.sync_active {
                         return Ok(index);
                     }
@@ -430,6 +502,7 @@ impl TerminalGrid {
                         append_control_byte(&mut self.osc_buffer, byte)?;
                     }
                     index += 1;
+                    checkpoint.consume(1, is_cancelled)?;
                 }
                 ParserState::Dcs => {
                     if byte == 0x1b {
@@ -444,6 +517,7 @@ impl TerminalGrid {
                         append_control_byte(&mut self.dcs_buffer, byte)?;
                     }
                     index += 1;
+                    checkpoint.consume(1, is_cancelled)?;
                 }
             }
         }
@@ -1387,6 +1461,59 @@ mod tests {
             grid.feed(&[0x80]).unwrap();
             assert_eq!(snapshot(&grid), "|�   |\n");
         }
+    }
+
+    #[test]
+    fn c0_and_c1_prefixes_match_pinned_fragmentation_behavior() {
+        for prefix in 0xc0..=0xc1 {
+            let mut pending = test_grid(4, 1);
+            pending.feed(&[prefix]).unwrap();
+            assert_eq!(snapshot(&pending), "|    |\n", "lone prefix {prefix:#x}");
+
+            for continuation in 0x80..=0xbf {
+                let mut complete = test_grid(4, 1);
+                complete.feed(&[prefix, continuation]).unwrap();
+                assert_eq!(
+                    snapshot(&complete),
+                    "|��  |\n",
+                    "complete pair {prefix:#x} {continuation:#x}"
+                );
+
+                let mut fragmented = test_grid(4, 1);
+                fragmented.feed(&[prefix]).unwrap();
+                fragmented.feed(&[continuation]).unwrap();
+                assert_eq!(
+                    snapshot(&fragmented),
+                    "|�   |\n",
+                    "fragmented pair {prefix:#x} {continuation:#x}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cancellation_checkpoint_follows_the_complete_display_unit() {
+        let mut grid = test_grid(4096, 5);
+        let mut payload = vec![b'a'; FEED_CANCELLATION_CHECKPOINT_BYTES - 4];
+        payload.extend_from_slice("👩‍💻".as_bytes());
+        let mut checks = 0;
+
+        let error = grid
+            .feed_with_cancel_check(&payload, || {
+                checks += 1;
+                true
+            })
+            .expect_err("the first bounded checkpoint cancels");
+
+        assert_eq!(error, TerminalGridFeedError::Cancelled);
+        assert_eq!(checks, 1);
+        assert!(
+            grid.snapshot()
+                .unwrap()
+                .windows("👩‍💻".len())
+                .any(|window| window == "👩‍💻".as_bytes()),
+            "the checkpoint does not split the ZWJ display unit"
+        );
     }
 
     #[test]

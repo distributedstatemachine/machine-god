@@ -118,7 +118,10 @@ pub(super) fn decode_next_rune(text: &[u8], index: usize) -> DecodedRune {
 pub(super) fn utf8_sequence_len(first: u8) -> Option<usize> {
     match first {
         0x00..=0x7f => Some(1),
-        0xc2..=0xdf => Some(2),
+        // Zig classifies every `110xxxxx` prefix as a two-byte sequence.
+        // Scalar validity is checked only after the complete sequence is
+        // available, so lone C0/C1 prefixes remain pending too.
+        0xc0..=0xdf => Some(2),
         0xe0..=0xef => Some(3),
         // Pinned Zig classifies all `11110xxx` prefixes as four-byte
         // sequences here. Scalar validity is checked separately by the
