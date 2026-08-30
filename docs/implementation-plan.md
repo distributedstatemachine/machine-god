@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33306328776` (`GREEN`)
 - Main Benchmark evidence: `33306328774` (`GREEN`)
 - Active branch: `agent/m03-workspace`
-- Active phase: `workspace behavior candidate 1c72f947a55b1cb753dd398f3a5f25dac81f19cd passed the complete exact-toolchain replacement gate`
-- Next gate: `run three fresh adversarial product-review tracks against exact behavior candidate 1c72f947a55b1cb753dd398f3a5f25dac81f19cd; any finding rejects it and restarts all tracks`
+- Active phase: `workspace behavior candidate 1c72f947a55b1cb753dd398f3a5f25dac81f19cd passed the complete replacement gate and three fresh review tracks with zero findings`
+- Next gate: `commit the documentation-only review seal, push the feature branch, and require exact-SHA feature CI and Benchmark success`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,

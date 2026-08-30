@@ -98,6 +98,7 @@ product behavior; they are not penetration tests.
 - [sessions](m03-sessions-cli-review-01.md)
 - [session](m03-session-cli-review-01.md)
 - [resume](m03-resume-cli-review-01.md)
+- [workspace](m03-workspace-cli-review-01.md)
 
 ## Milestone 05: extensibility tools
 
