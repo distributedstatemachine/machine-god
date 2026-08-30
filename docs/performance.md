@@ -68,13 +68,15 @@ parent-to-children index, and traverses at most 4,096 contained identities per
 refresh; overflow is retained as owned cleanup work and fails closed instead of
 turning cleanup into an unbounded ancestry rescan. An overflow also retains an
 explicit first-unowned identity witness until a later complete refresh clears
-it; cleanup that reaches its deadline returns that witness as incomplete rather
-than reporting a clean process tree.
+it. The independent process-table cap likewise retains the first unscanned PID
+as a conservative witness. Cleanup that reaches its deadline returns the
+applicable witness as incomplete rather than reporting a clean process tree.
 The gated measurement launch owns both pipes and the forked child as one
 transaction; any setup exception closes the descriptors and boundedly kills and
 reaps the child. Cleanup isolates failures in individual kill, pipe, wait, and
-supervisor operations, and surfaces a latched termination only after containment
-cleanup finishes.
+supervisor operations, defers handled termination through descriptor detachment
+and closure, and surfaces the latched signal only after containment cleanup
+finishes.
 Separate bounded-wait coordination locks serialize archive publication and
 active-run recovery, while a per-run lease prevents a live extraction from
 being reclaimed. Archive validation opens one no-follow descriptor, verifies
@@ -87,7 +89,9 @@ uses the same root-capacity admission rule, and cursorless recovery processes a
 bounded first window so it can free capacity for a persistent fairness cursor.
 When the root cannot admit that cursor, recovery stores the bounded rotation
 cursor in the already-locked active coordination file, so live entries in an
-early window cannot starve reclaimable later entries.
+early window cannot starve reclaimable later entries. Both standalone and
+coordination-file cursors use two fixed-size generation/checksum slots, so a
+partial, failed, or interrupted update preserves the last complete position.
 Recovery acquires the
 active-run lock before briefly deferring termination for ownership mutations,
 so lock contention remains interruptible. Trash leases are opened without

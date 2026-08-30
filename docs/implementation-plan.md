@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33319371520` (`GREEN`)
 - Main Benchmark evidence: `33319371530` (`GREEN`)
 - Active branch: `agent/m03-help-status-cli`
-- Active phase: `remediating the eighth M03 help/status adversarial-review cycle`
-- Next gate: `run the complete replacement local gate, then review cycle nine on one exact SHA`
+- Active phase: `remediating the ninth M03 help/status adversarial-review cycle`
+- Next gate: `run the complete replacement local gate, then review cycle ten on one exact SHA`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
