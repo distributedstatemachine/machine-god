@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Build and measure machine-god beside the exact pinned fx revision.
 
-Schema 2 is deliberately bootstrap infrastructure evidence.  It cannot be
-promoted into a product performance claim by changing a label in the JSON.
+Schema 2 contains mixed evidence: the bootstrap path remains non-equivalent,
+while a workload is claim-eligible only after its captured output passes the
+canonical equivalence probe defined in this module.
 """
 
 from __future__ import annotations
@@ -41,6 +42,40 @@ BOOTSTRAP_REASON = (
     "fx uses its FX_BENCH no-argument fast path while machine-god prints its "
     "bootstrap identity; these samples validate the harness and are not product-equivalent"
 )
+STATUS_HELP_DESCRIPTION = (
+    "Equivalent command-specific status help after executable-brand normalization"
+)
+STATUS_HELP_REASON = (
+    "captured outputs passed the executable-brand-only equivalence probe before measurement"
+)
+STATUS_JSON_DESCRIPTION = (
+    "Equivalent isolated status JSON runtime snapshot with a fixed dummy API key"
+)
+STATUS_JSON_REASON = (
+    "captured authenticated outputs passed the pinned runtime-schema equivalence probe "
+    "before measurement; missing-auth help is outside this workload"
+)
+STATUS_JSON_KEYS = (
+    "kind",
+    "model",
+    "update_channel",
+    "build_channel",
+    "build_revision",
+    "auth",
+    "auth_refreshable",
+    "permission_mode",
+    "sandbox",
+    "workspace",
+    "history_turns",
+    "session_permission_grants",
+    "agent_step_limit",
+)
+EQUIVALENCE_PROBE_KEYS = {
+    "method",
+    "allowed_substitutions",
+    "normalized_sha256",
+    "implementations",
+}
 HEX_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 GIT_VERSION_RE = re.compile(r"^git version [0-9]+(?:\.[0-9]+)*(?: \(Apple Git-[0-9]+\))?$")
 RUSTC_VERSION_RE = re.compile(
@@ -62,6 +97,17 @@ BASE_ENVIRONMENT_KEYS = {
     "PATH",
     "TMPDIR",
 }
+STATUS_JSON_ENVIRONMENT_KEYS = BASE_ENVIRONMENT_KEYS | {
+    "AI_GATEWAY_API_KEY",
+    "XDG_CONFIG_HOME",
+}
+STATUS_JSON_DUMMY_API_KEY = "machine-god-benchmark-placeholder-key"
+FX_STATUS_CONFIG = b'{"permission_mode":"ask","max_agent_steps":8}\n'
+MACHINE_STATUS_CONFIG = (
+    b'{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway",'
+    b'"transport":"ai_gateway_http","model":"zai/glm-5.2",'
+    b'"credential_source":"environment"}\n'
+)
 GIT_ENVIRONMENT_KEYS = BASE_ENVIRONMENT_KEYS | {
     "GIT_CONFIG_GLOBAL",
     "GIT_CONFIG_NOSYSTEM",
@@ -310,6 +356,92 @@ def command_plan(
 
 def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def normalize_executable_branding(value: str) -> str:
+    """Normalize only standalone fx/machine-god executable branding."""
+
+    return re.sub(
+        r"(?<![A-Za-z0-9_])(?:machine-god|fx)(?![A-Za-z0-9_])",
+        "<executable>",
+        value,
+        flags=re.IGNORECASE,
+    )
+
+
+def reject_duplicate_json_members(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate status JSON member: {key}")
+        result[key] = value
+    return result
+
+
+def normalize_status_json(output: bytes, workspace: Path) -> bytes:
+    """Validate and normalize the pinned fx status runtime schema."""
+
+    if not output.endswith(b"\n") or output[:-1].endswith(b"\n"):
+        raise RuntimeError("status JSON probe must emit exactly one newline-terminated value")
+    try:
+        parsed = json.loads(
+            output[:-1].decode("utf-8", errors="strict"),
+            object_pairs_hook=reject_duplicate_json_members,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(f"non-finite status JSON number: {value}")
+            ),
+        )
+    except (UnicodeError, ValueError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"status JSON probe emitted invalid JSON: {error}") from None
+    if not isinstance(parsed, dict) or tuple(parsed) != STATUS_JSON_KEYS:
+        raise RuntimeError(
+            "status JSON probe did not emit the exact pinned runtime schema and key order"
+        )
+    if parsed["kind"] != "status":
+        raise RuntimeError("status JSON probe kind is not status")
+    for key in (
+        "model",
+        "update_channel",
+        "build_channel",
+        "build_revision",
+        "auth",
+        "permission_mode",
+        "sandbox",
+        "workspace",
+    ):
+        if not isinstance(parsed[key], str):
+            raise RuntimeError(f"status JSON probe {key} must be a string")
+    if not isinstance(parsed["auth_refreshable"], bool):
+        raise RuntimeError("status JSON probe auth_refreshable must be a boolean")
+    if parsed["auth"] != "AI_GATEWAY_API_KEY" or parsed["auth_refreshable"] is not False:
+        raise RuntimeError("status JSON probe did not use the fixed non-refreshable API-key auth")
+    for key in ("history_turns", "session_permission_grants", "agent_step_limit"):
+        if (
+            not isinstance(parsed[key], int)
+            or isinstance(parsed[key], bool)
+            or parsed[key] < 0
+        ):
+            raise RuntimeError(f"status JSON probe {key} must be a nonnegative integer")
+    try:
+        reported_workspace = Path(parsed["workspace"]).resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        raise RuntimeError("status JSON probe workspace is not a valid path") from None
+    if reported_workspace != workspace.resolve():
+        raise RuntimeError("status JSON probe workspace does not match its isolated root")
+
+    parsed["build_revision"] = "<build-provenance>"
+    parsed["workspace"] = "<workspace>"
+    return json.dumps(parsed, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def normalize_status_help(output: bytes) -> bytes:
+    try:
+        text = output.decode("utf-8", errors="strict")
+    except UnicodeError:
+        raise RuntimeError("status help probe emitted non-UTF-8 output") from None
+    if not text.endswith("\n") or not text.strip():
+        raise RuntimeError("status help probe must emit nonempty newline-terminated help")
+    return normalize_executable_branding(text).encode("utf-8")
 
 
 def stat_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int, int]:
@@ -850,7 +982,7 @@ def validate_upstream_evidence(
     expected_machine_manifest_sha256: str | None = None,
     expected_binaries: Mapping[str, Path] | None = None,
 ) -> None:
-    """Validate provenance and forbid bootstrap evidence from claiming equivalence."""
+    """Validate provenance, probes, and the bounded claim-eligible workloads."""
 
     expected_root_keys = {
         "schema_version",
@@ -871,10 +1003,10 @@ def validate_upstream_evidence(
         raise ValueError("upstream benchmark evidence fields are not canonical")
     if data.get("schema_version") != 2 or not is_integer(data.get("schema_version")):
         raise ValueError("unsupported upstream benchmark schema")
-    if data.get("classification") != "bootstrap-infrastructure-only":
-        raise ValueError("upstream harness evidence must be bootstrap-only")
+    if data.get("classification") != "mixed-pinned-comparison-evidence":
+        raise ValueError("upstream harness evidence classification is not canonical")
     if data.get("claim_eligible") is not False:
-        raise ValueError("bootstrap evidence must not be claim eligible")
+        raise ValueError("the mixed evidence document itself must not be claim eligible")
     validate_generated_at_utc(data.get("generated_at_utc"))
     runner_class = require_text(data.get("runner_class"), "runner_class")
     if expected_runner_class is not None and runner_class != expected_runner_class:
@@ -1293,8 +1425,8 @@ def validate_upstream_evidence(
         raise ValueError("source preparation commands must run from machine-god repository root")
 
     workloads = data.get("workloads")
-    if not isinstance(workloads, list) or len(workloads) != 6:
-        raise ValueError("the canonical bootstrap workload inventory is incomplete")
+    if not isinstance(workloads, list) or len(workloads) != 7:
+        raise ValueError("the canonical workload inventory is incomplete")
     expected_workload_keys = {
         "id",
         "description",
@@ -1303,14 +1435,12 @@ def validate_upstream_evidence(
         "reason",
         "implementations",
     }
-    if any(
-        not isinstance(workload, dict) or set(workload) != expected_workload_keys
-        for workload in workloads
-    ):
+    if any(not isinstance(workload, dict) for workload in workloads):
         raise ValueError("workload fields are not canonical")
     expected_ids = [
         "bootstrap-exit",
         "help",
+        "status-help",
         "status-json",
         "doctor-json",
         "sessions-json",
@@ -1319,6 +1449,8 @@ def validate_upstream_evidence(
     if [workload.get("id") for workload in workloads if isinstance(workload, dict)] != expected_ids:
         raise ValueError("workload identifiers or order are not canonical")
     bootstrap = workloads[0]
+    if set(bootstrap) != expected_workload_keys:
+        raise ValueError("bootstrap-exit fields are not canonical")
     if (
         bootstrap.get("description") != BOOTSTRAP_DESCRIPTION
         or bootstrap.get("reason") != BOOTSTRAP_REASON
@@ -1394,10 +1526,6 @@ def validate_upstream_evidence(
             [fx_binary["path"], "help"],
             [machine_binary["path"], "help"],
         ),
-        "status-json": (
-            [fx_binary["path"], "status", "--json"],
-            [machine_binary["path"], "status", "--json"],
-        ),
         "doctor-json": (
             [fx_binary["path"], "doctor", "--json"],
             [machine_binary["path"], "doctor", "--json"],
@@ -1407,13 +1535,16 @@ def validate_upstream_evidence(
             [machine_binary["path"], "sessions", "--json"],
         ),
     }
-    expected_local_workloads = unavailable_workloads(
+    unavailable = unavailable_workloads(
         Path(fx_binary["path"]), Path(machine_binary["path"])
     )
-    if workloads[1:] != expected_local_workloads:
-        raise ValueError("local workload inventory and narratives are not canonical")
-    for index, workload in enumerate(workloads[1:5], 1):
+    if workloads[1] != unavailable[0] or workloads[4:] != unavailable[1:]:
+        raise ValueError("non-equivalent workload inventory and narratives are not canonical")
+    for index in (1, 4, 5):
+        workload = workloads[index]
         field = f"workloads[{index}]"
+        if set(workload) != expected_workload_keys:
+            raise ValueError(f"{field} fields are not canonical")
         if (
             workload.get("equivalence") != "non-equivalent"
             or workload.get("claim_eligible") is not False
@@ -1456,8 +1587,10 @@ def validate_upstream_evidence(
     unimplemented_commands = {
         "background-json": [fx_binary["path"], "background", "--json"],
     }
-    for index, workload in enumerate(workloads[5:], 5):
+    for index, workload in enumerate(workloads[6:], 6):
         field = f"workloads[{index}]"
+        if set(workload) != expected_workload_keys:
+            raise ValueError(f"{field} fields are not canonical")
         if (
             workload.get("equivalence") != "unimplemented"
             or workload.get("claim_eligible") is not False
@@ -1488,6 +1621,148 @@ def validate_upstream_evidence(
         require_text(fx_item.get("reason"), f"{field}.fx.reason")
         require_text(machine_item.get("reason"), f"{field}.machine_god.reason")
 
+    comparison_root = source_dir.parent / "comparison"
+    equivalent_specs = (
+        (
+            2,
+            "status-help",
+            STATUS_HELP_DESCRIPTION,
+            STATUS_HELP_REASON,
+            "status-help-executable-brand-v1",
+            ["executable-branding"],
+            [fx_binary["path"], "status", "--help"],
+            [machine_binary["path"], "status", "--help"],
+        ),
+        (
+            3,
+            "status-json",
+            STATUS_JSON_DESCRIPTION,
+            STATUS_JSON_REASON,
+            "status-json-runtime-schema-v1",
+            ["build-provenance", "isolated-workspace-root"],
+            [fx_binary["path"], "status", "--json"],
+            [machine_binary["path"], "status", "--json"],
+        ),
+    )
+    for (
+        index,
+        identifier,
+        description,
+        reason,
+        method,
+        substitutions,
+        fx_command,
+        machine_command,
+    ) in equivalent_specs:
+        workload = workloads[index]
+        field = f"workloads[{index}]"
+        if set(workload) != expected_workload_keys | {"equivalence_probe"}:
+            raise ValueError(f"{field} fields are not canonical")
+        if (
+            workload.get("id") != identifier
+            or workload.get("description") != description
+            or workload.get("reason") != reason
+            or workload.get("equivalence") != "equivalent"
+            or workload.get("claim_eligible") is not True
+        ):
+            raise ValueError(f"{field} equivalence declaration is not canonical")
+        probe = workload.get("equivalence_probe")
+        expected_probe_keys = EQUIVALENCE_PROBE_KEYS | (
+            {"fixture_sha256"} if identifier == "status-json" else set()
+        )
+        if not isinstance(probe, dict) or set(probe) != expected_probe_keys:
+            raise ValueError(f"{field}.equivalence_probe fields are not canonical")
+        if (
+            probe.get("method") != method
+            or probe.get("allowed_substitutions") != substitutions
+        ):
+            raise ValueError(f"{field}.equivalence_probe normalization is not canonical")
+        normalized_sha = probe.get("normalized_sha256")
+        if (
+            not isinstance(normalized_sha, str)
+            or len(normalized_sha) != 64
+            or any(character not in "0123456789abcdef" for character in normalized_sha)
+        ):
+            raise ValueError(f"{field}.equivalence_probe normalized output is invalid")
+        probe_items = probe.get("implementations")
+        measurements = workload.get("implementations")
+        if not isinstance(probe_items, list) or len(probe_items) != 2:
+            raise ValueError(f"{field}.equivalence_probe must contain both implementations")
+        if not isinstance(measurements, list) or len(measurements) != 2:
+            raise ValueError(f"{field} must contain both measurements")
+        if identifier == "status-json":
+            if probe.get("fixture_sha256") != {
+                "fx_settings": sha256_bytes(FX_STATUS_CONFIG),
+                "machine_god_config": sha256_bytes(MACHINE_STATUS_CONFIG),
+            }:
+                raise ValueError(f"{field}.equivalence_probe fixtures are not canonical")
+        for project_index, (project, command, binary) in enumerate(
+            (
+                ("fx", fx_command, fx_binary),
+                ("machine-god", machine_command, machine_binary),
+            )
+        ):
+            expected_root = comparison_root / identifier / project
+            expected_cwd = expected_root / "workspace"
+            environment_keys = (
+                STATUS_JSON_ENVIRONMENT_KEYS
+                if identifier == "status-json"
+                else BASE_ENVIRONMENT_KEYS
+            )
+            expected_environment = {
+                **{key: tool_environment[key] for key in BASE_ENVIRONMENT_KEYS},
+                "HOME": str(
+                    expected_cwd / "home"
+                    if identifier == "status-json"
+                    else expected_root / "home"
+                ),
+                "TMPDIR": str(
+                    expected_cwd / "tmp"
+                    if identifier == "status-json"
+                    else expected_root / "tmp"
+                ),
+            }
+            if identifier == "status-json":
+                expected_environment.update(
+                    {
+                        "AI_GATEWAY_API_KEY": STATUS_JSON_DUMMY_API_KEY,
+                        "XDG_CONFIG_HOME": str(expected_cwd / "xdg-config"),
+                    }
+                )
+            probe_item = probe_items[project_index]
+            if (
+                not isinstance(probe_item, dict)
+                or set(probe_item)
+                != {"project", "stdout_sha256", "normalized_sha256"}
+                or probe_item.get("project") != project
+                or probe_item.get("normalized_sha256") != normalized_sha
+                or not isinstance(probe_item.get("stdout_sha256"), str)
+                or len(probe_item["stdout_sha256"]) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in probe_item["stdout_sha256"]
+                )
+            ):
+                raise ValueError(f"{field} equivalence probe result is not canonical")
+            measurement = measurements[project_index]
+            if not isinstance(measurement, dict) or set(measurement) != expected_measurement_keys:
+                raise ValueError(f"{field} measurement fields are not canonical")
+            if measurement.get("project") != project or measurement.get("status") != "measured":
+                raise ValueError(f"{field} both equivalent implementations must be measured")
+            validate_measurement(
+                measurement,
+                f"{field}.implementations[{project_index}]",
+                expected_command=command,
+                expected_binary=binary,
+                expected_environment_keys=environment_keys,
+                expected_timeout=timeouts["sample"],
+            )
+            if (
+                Path(measurement["cwd"]).resolve() != expected_cwd
+                or measurement["environment"] != expected_environment
+            ):
+                raise ValueError(f"{field} measurement does not reuse its isolated probe context")
+
     if expected_binaries is not None:
         if set(expected_binaries) != {"fx", "machine-god"}:
             raise ValueError("both actual binaries are required")
@@ -1497,18 +1772,31 @@ def validate_upstream_evidence(
             expected_binaries["machine-god"],
             "builds[1].binary",
         )
-        for name, measurement, actual_path in (
-            ("fx", fx_measurement, expected_binaries["fx"]),
-            ("machine-god", machine_measurement, expected_binaries["machine-god"]),
+        for name, project_index, actual_path in (
+            ("fx", 0, expected_binaries["fx"]),
+            ("machine-god", 1, expected_binaries["machine-god"]),
         ):
             try:
                 actual_identity = executable_identity(actual_path)
             except (OSError, RuntimeError):
                 raise ValueError(f"{name} executable identity is unreadable") from None
-            if measurement["executable_identity"] != actual_identity:
-                raise ValueError(
-                    f"{name} measured executable identity does not match the supplied binary"
-                )
+            for workload_index in (0, 2, 3):
+                measurement = workloads[workload_index]["implementations"][project_index]
+                if measurement["executable_identity"] != actual_identity:
+                    raise ValueError(
+                        f"{name} measured executable identity does not match the supplied binary"
+                    )
+        status_fixture_files: dict[Path, bytes] = {}
+        for project in ("fx", "machine-god"):
+            workspace = comparison_root / "status-json" / project / "workspace"
+            status_fixture_files[workspace / "home" / ".fx" / "settings.json"] = FX_STATUS_CONFIG
+            status_fixture_files[
+                workspace / "xdg-config" / "machine-god" / "config.json"
+            ] = MACHINE_STATUS_CONFIG
+        try:
+            verify_status_json_fixtures(status_fixture_files)
+        except RuntimeError as error:
+            raise ValueError(str(error)) from error
         for tool in tools.values():
             try:
                 verify_executable_identity(tool)
@@ -3320,6 +3608,146 @@ def run_measurement(
     return result
 
 
+def isolated_workload_context(
+    scratch_dir: Path,
+    workload: str,
+    project: str,
+    base: Mapping[str, str],
+) -> tuple[Path, dict[str, str]]:
+    root = scratch_dir / "comparison" / workload / project
+    workspace = root / "workspace"
+    home = workspace / "home" if workload == "status-json" else root / "home"
+    temporary = workspace / "tmp" if workload == "status-json" else root / "tmp"
+    root.mkdir(parents=True, mode=0o700)
+    workspace.mkdir(mode=0o700)
+    for directory in (home, temporary):
+        directory.mkdir(mode=0o700)
+    environment = {**base, "HOME": str(home), "TMPDIR": str(temporary)}
+    if workload == "status-json":
+        xdg_config = workspace / "xdg-config"
+        xdg_config.mkdir(mode=0o700)
+        environment.update(
+            {
+                "AI_GATEWAY_API_KEY": STATUS_JSON_DUMMY_API_KEY,
+                "XDG_CONFIG_HOME": str(xdg_config),
+            }
+        )
+    return workspace, environment
+
+
+def create_status_json_fixtures(
+    contexts: Sequence[tuple[Path, Mapping[str, str]]],
+) -> dict[Path, bytes]:
+    fixtures: dict[Path, bytes] = {}
+    for workspace, environment in contexts:
+        for path, contents in (
+            (Path(environment["HOME"]) / ".fx" / "settings.json", FX_STATUS_CONFIG),
+            (
+                Path(environment["XDG_CONFIG_HOME"]) / "machine-god" / "config.json",
+                MACHINE_STATUS_CONFIG,
+            ),
+        ):
+            if path.exists():
+                raise RuntimeError(f"status benchmark fixture already exists: {path}")
+            path.parent.mkdir(mode=0o700)
+            path.write_bytes(contents)
+            path.chmod(0o600)
+            if workspace.resolve() not in path.resolve().parents:
+                raise RuntimeError("status benchmark fixture escaped its isolated workspace")
+            fixtures[path] = contents
+    return fixtures
+
+
+def verify_status_json_fixtures(fixtures: Mapping[Path, bytes]) -> None:
+    for path, expected in fixtures.items():
+        try:
+            metadata = path.stat()
+            contents = path.read_bytes()
+        except OSError as error:
+            raise RuntimeError(f"status benchmark fixture became unreadable: {path}") from error
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_mode & 0o777 != 0o600
+            or contents != expected
+        ):
+            raise RuntimeError(f"status benchmark fixture changed: {path}")
+
+
+def run_equivalence_probe(
+    *,
+    method: str,
+    commands: Sequence[list[str]],
+    contexts: Sequence[tuple[Path, Mapping[str, str]]],
+    expected_executables: Sequence[Mapping[str, object]],
+    timeout_seconds: float,
+    normalizer: Callable[[bytes, Path], bytes],
+) -> dict[str, object]:
+    if len(commands) != 2 or len(contexts) != 2 or len(expected_executables) != 2:
+        raise ValueError("equivalence probes require exactly two implementations")
+    records: list[dict[str, object]] = []
+    normalized_outputs: list[bytes] = []
+    for project, command, (cwd, environment), executable in zip(
+        ("fx", "machine-god"),
+        commands,
+        contexts,
+        expected_executables,
+        strict=True,
+    ):
+        completed = run_process(
+            command,
+            cwd=cwd,
+            environment=environment,
+            timeout_seconds=timeout_seconds,
+            capture_output=True,
+            expected_executable=executable,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(f"{project} equivalence probe exited {completed.returncode}")
+        if completed.stderr:
+            raise RuntimeError(f"{project} equivalence probe emitted stderr")
+        normalized = normalizer(completed.stdout, cwd)
+        normalized_outputs.append(normalized)
+        records.append(
+            {
+                "project": project,
+                "stdout_sha256": sha256_bytes(completed.stdout),
+                "normalized_sha256": sha256_bytes(normalized),
+            }
+        )
+    if normalized_outputs[0] != normalized_outputs[1]:
+        raise RuntimeError(f"{method} equivalence probe outputs differ after normalization")
+    normalized = normalized_outputs[0]
+    substitutions = (
+        ["executable-branding"]
+        if method == "status-help-executable-brand-v1"
+        else ["executable-branding", "build-provenance", "isolated-workspace-root"]
+    )
+    return {
+        "method": method,
+        "allowed_substitutions": substitutions,
+        "normalized_sha256": sha256_bytes(normalized),
+        "implementations": records,
+    }
+
+
+def equivalent_workload(
+    identifier: str,
+    description: str,
+    reason: str,
+    probe: Mapping[str, object],
+    implementations: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    return {
+        "id": identifier,
+        "description": description,
+        "equivalence": "equivalent",
+        "claim_eligible": True,
+        "reason": reason,
+        "equivalence_probe": dict(probe),
+        "implementations": [dict(item) for item in implementations],
+    }
+
+
 def unavailable_workloads(
     fx_binary: Path, machine_binary: Path
 ) -> list[dict[str, object]]:
@@ -3329,15 +3757,6 @@ def unavailable_workloads(
             [str(fx_binary), "help"],
             [str(machine_binary), "help"],
             "both help commands exist, but their output contracts are not equivalent",
-        ),
-        (
-            "status-json",
-            [str(fx_binary), "status", "--json"],
-            [str(machine_binary), "status", "--json"],
-            (
-                "machine-god reports only read-only native configuration status; "
-                "semantic equivalence with fx is not established"
-            ),
         ),
         (
             "doctor-json",
@@ -3644,6 +4063,101 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
             ),
         ],
     }
+    status_help_contexts = [
+        isolated_workload_context(scratch_dir, "status-help", project, base_env)
+        for project in ("fx", "machine-god")
+    ]
+    status_help_commands = (
+        [str(fx_binary), "status", "--help"],
+        [str(machine_binary), "status", "--help"],
+    )
+    status_help_probe = run_equivalence_probe(
+        method="status-help-executable-brand-v1",
+        commands=status_help_commands,
+        contexts=status_help_contexts,
+        expected_executables=(
+            fx_executable_identity,
+            machine_executable_identity,
+        ),
+        timeout_seconds=args.sample_timeout,
+        normalizer=lambda output, _workspace: normalize_status_help(output),
+    )
+    status_help = equivalent_workload(
+        "status-help",
+        STATUS_HELP_DESCRIPTION,
+        STATUS_HELP_REASON,
+        status_help_probe,
+        [
+            run_measurement(
+                project,
+                command,
+                context[0],
+                context[1],
+                args.warmup,
+                args.runs,
+                args.sample_timeout,
+                identity,
+            )
+            for project, command, context, identity in zip(
+                ("fx", "machine-god"),
+                status_help_commands,
+                status_help_contexts,
+                (fx_executable_identity, machine_executable_identity),
+                strict=True,
+            )
+        ],
+    )
+    status_json_contexts = [
+        isolated_workload_context(scratch_dir, "status-json", project, base_env)
+        for project in ("fx", "machine-god")
+    ]
+    status_json_fixtures = create_status_json_fixtures(status_json_contexts)
+    status_json_commands = (
+        [str(fx_binary), "status", "--json"],
+        [str(machine_binary), "status", "--json"],
+    )
+    status_json_probe = run_equivalence_probe(
+        method="status-json-runtime-schema-v1",
+        commands=status_json_commands,
+        contexts=status_json_contexts,
+        expected_executables=(
+            fx_executable_identity,
+            machine_executable_identity,
+        ),
+        timeout_seconds=args.sample_timeout,
+        normalizer=normalize_status_json,
+    )
+    status_json_probe["fixture_sha256"] = {
+        "fx_settings": sha256_bytes(FX_STATUS_CONFIG),
+        "machine_god_config": sha256_bytes(MACHINE_STATUS_CONFIG),
+    }
+    status_json = equivalent_workload(
+        "status-json",
+        STATUS_JSON_DESCRIPTION,
+        STATUS_JSON_REASON,
+        status_json_probe,
+        [
+            run_measurement(
+                project,
+                command,
+                context[0],
+                context[1],
+                args.warmup,
+                args.runs,
+                args.sample_timeout,
+                identity,
+            )
+            for project, command, context, identity in zip(
+                ("fx", "machine-god"),
+                status_json_commands,
+                status_json_contexts,
+                (fx_executable_identity, machine_executable_identity),
+                strict=True,
+            )
+        ],
+    )
+    verify_status_json_fixtures(status_json_fixtures)
+    unavailable = unavailable_workloads(fx_binary, machine_binary)
     if (
         verify_materialized_source(
             machine_source_dir, machine_materialization["entries"]
@@ -3654,7 +4168,7 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
 
     evidence = {
         "schema_version": 2,
-        "classification": "bootstrap-infrastructure-only",
+        "classification": "mixed-pinned-comparison-evidence",
         "claim_eligible": False,
         "generated_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "runner_class": args.runner_class,
@@ -3698,7 +4212,13 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
             "inherits_parent_environment": False,
             "allowlisted_environment_only": True,
         },
-        "workloads": [bootstrap, *unavailable_workloads(fx_binary, machine_binary)],
+        "workloads": [
+            bootstrap,
+            unavailable[0],
+            status_help,
+            status_json,
+            *unavailable[1:],
+        ],
     }
     validate_upstream_evidence(
         evidence,

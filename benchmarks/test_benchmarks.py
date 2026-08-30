@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import io
 import json
@@ -24,9 +25,15 @@ from upstream import (  # noqa: E402
     CONTAINMENT_ENVIRONMENT_KEY,
     EXPECTED_RUST_VERSION,
     EXPECTED_ZIG_VERSION,
+    STATUS_HELP_DESCRIPTION,
+    STATUS_HELP_REASON,
+    STATUS_JSON_DESCRIPTION,
+    STATUS_JSON_KEYS,
+    STATUS_JSON_REASON,
     LinuxProcessInfo,
     LinuxProcessSupervisor,
     MachineStatusEntry,
+    ProcessResult,
     ProcessOutputLimit,
     ProcessTimeout,
     UpstreamLock,
@@ -43,10 +50,14 @@ from upstream import (  # noqa: E402
     linux_containment_preflight,
     machine_tree_command,
     materialize_machine_source,
+    normalize_executable_branding,
+    normalize_status_help,
+    normalize_status_json,
     parse_upstream_lock,
     parse_porcelain_v1_z,
     prepare_upstream,
     run_measurement,
+    run_equivalence_probe,
     run_process,
     sha256_file,
     source_tree_sha256,
@@ -1336,9 +1347,112 @@ class UpstreamHarnessTest(unittest.TestCase):
                     "p95_ns": 10,
                 }
             )
+        def comparison_workload(
+            identifier: str,
+            description: str,
+            reason: str,
+            method: str,
+            substitutions: list[str],
+            arguments: list[str],
+            normalized: bytes,
+        ) -> dict[str, object]:
+            probe_records = []
+            measurements = []
+            for index, (project, binary) in enumerate(
+                (("fx", fx_binary), ("machine-god", machine_binary))
+            ):
+                isolated_root = scratch / "comparison" / identifier / project
+                cwd = isolated_root / "workspace"
+                home = cwd / "home" if identifier == "status-json" else isolated_root / "home"
+                temporary = cwd / "tmp" if identifier == "status-json" else isolated_root / "tmp"
+                environment = {
+                    **base,
+                    "HOME": str(home),
+                    "TMPDIR": str(temporary),
+                }
+                if identifier == "status-json":
+                    environment.update(
+                        {
+                            "AI_GATEWAY_API_KEY": upstream.STATUS_JSON_DUMMY_API_KEY,
+                            "XDG_CONFIG_HOME": str(cwd / "xdg-config"),
+                        }
+                    )
+                command = [str(binary), *arguments]
+                probe_records.append(
+                    {
+                        "project": project,
+                        "stdout_sha256": hashlib.sha256(project.encode()).hexdigest(),
+                        "normalized_sha256": hashlib.sha256(normalized).hexdigest(),
+                    }
+                )
+                measurement = copy.deepcopy(implementations[index])
+                measurement.update(
+                    {"command": command, "cwd": str(cwd), "environment": environment}
+                )
+                measurements.append(measurement)
+            probe: dict[str, object] = {
+                "method": method,
+                "allowed_substitutions": substitutions,
+                "normalized_sha256": hashlib.sha256(normalized).hexdigest(),
+                "implementations": probe_records,
+            }
+            if identifier == "status-json":
+                probe["fixture_sha256"] = {
+                    "fx_settings": hashlib.sha256(
+                        upstream.FX_STATUS_CONFIG
+                    ).hexdigest(),
+                    "machine_god_config": hashlib.sha256(
+                        upstream.MACHINE_STATUS_CONFIG
+                    ).hexdigest(),
+                }
+            return {
+                "id": identifier,
+                "description": description,
+                "equivalence": "equivalent",
+                "claim_eligible": True,
+                "reason": reason,
+                "equivalence_probe": probe,
+                "implementations": measurements,
+            }
+
+        status_help = comparison_workload(
+            "status-help",
+            STATUS_HELP_DESCRIPTION,
+            STATUS_HELP_REASON,
+            "status-help-executable-brand-v1",
+            ["executable-branding"],
+            ["status", "--help"],
+            b"<executable> status\n",
+        )
+        normalized_status = {
+            "kind": "status",
+            "model": "test-model",
+            "update_channel": "stable",
+            "build_channel": "stable",
+            "build_revision": "<build-provenance>",
+            "auth": "AI_GATEWAY_API_KEY",
+            "auth_refreshable": False,
+            "permission_mode": "ask",
+            "sandbox": "none",
+            "workspace": "<workspace>",
+            "history_turns": 0,
+            "session_permission_grants": 0,
+            "agent_step_limit": 64,
+        }
+        self.assertEqual(tuple(normalized_status), STATUS_JSON_KEYS)
+        status_json = comparison_workload(
+            "status-json",
+            STATUS_JSON_DESCRIPTION,
+            STATUS_JSON_REASON,
+            "status-json-runtime-schema-v1",
+            ["build-provenance", "isolated-workspace-root"],
+            ["status", "--json"],
+            json.dumps(normalized_status, separators=(",", ":")).encode(),
+        )
+        unavailable = unavailable_workloads(fx_binary, machine_binary)
         return {
             "schema_version": 2,
-            "classification": "bootstrap-infrastructure-only",
+            "classification": "mixed-pinned-comparison-evidence",
             "claim_eligible": False,
             "generated_at_utc": "2026-08-20T00:00:00Z",
             "runner_class": "test-runner-x86_64",
@@ -1394,7 +1508,10 @@ class UpstreamHarnessTest(unittest.TestCase):
                     "reason": BOOTSTRAP_REASON,
                     "implementations": implementations,
                 },
-                *unavailable_workloads(fx_binary, machine_binary),
+                unavailable[0],
+                status_help,
+                status_json,
+                *unavailable[1:],
             ],
         }
 
@@ -1784,15 +1901,11 @@ class UpstreamHarnessTest(unittest.TestCase):
         for workload, command in (
             (evidence["workloads"][1], [machine_binary, "help"]),
             (
-                evidence["workloads"][2],
-                [machine_binary, "status", "--json"],
-            ),
-            (
-                evidence["workloads"][3],
+                evidence["workloads"][4],
                 [machine_binary, "doctor", "--json"],
             ),
             (
-                evidence["workloads"][4],
+                evidence["workloads"][5],
                 [machine_binary, "sessions", "--json"],
             ),
         ):
@@ -1805,6 +1918,170 @@ class UpstreamHarnessTest(unittest.TestCase):
             self.assertEqual(workload["implementations"][1]["command"], command)
             self.assertNotIn("samples", workload["implementations"][0])
             self.assertNotIn("samples", workload["implementations"][1])
+
+    def test_records_only_probed_status_workloads_as_claim_eligible(self) -> None:
+        evidence = self.valid_upstream_evidence()
+        for identifier, workload in zip(
+            ("status-help", "status-json"), evidence["workloads"][2:4], strict=True
+        ):
+            self.assertEqual(workload["id"], identifier)
+            self.assertEqual(workload["equivalence"], "equivalent")
+            self.assertIs(workload["claim_eligible"], True)
+            self.assertEqual(
+                [item["status"] for item in workload["implementations"]],
+                ["measured", "measured"],
+            )
+            probe = workload["equivalence_probe"]
+            self.assertEqual(
+                [item["normalized_sha256"] for item in probe["implementations"]],
+                [probe["normalized_sha256"], probe["normalized_sha256"]],
+            )
+
+    def test_status_help_normalization_changes_only_standalone_branding(self) -> None:
+        fx = normalize_status_help(
+            b"fx status\n\nUsage:\n  fx status [--json]\n\nprefix stays\n"
+        )
+        machine = normalize_status_help(
+            b"machine-god status\n\nUsage:\n  machine-god status [--json]\n\nprefix stays\n"
+        )
+        self.assertEqual(fx, machine)
+        self.assertEqual(
+            normalize_executable_branding("prefix fx suffix machine-god"),
+            "prefix <executable> suffix <executable>",
+        )
+
+    def test_equivalence_probe_binds_binaries_and_rejects_normalized_mismatch(self) -> None:
+        contexts = (
+            (Path("/tmp/fx/workspace"), {"HOME": "/tmp/fx/home"}),
+            (Path("/tmp/machine/workspace"), {"HOME": "/tmp/machine/home"}),
+        )
+        commands = (["/bin/fx", "status", "--help"], ["/bin/mg", "status", "--help"])
+        identities = ({"sha256": "1" * 64}, {"sha256": "2" * 64})
+        results = (
+            ProcessResult(0, b"fx status\n", b"", 10, 1, 1, 1),
+            ProcessResult(0, b"machine-god status\n", b"", 10, 1, 1, 1),
+        )
+        with mock.patch.object(upstream, "run_process", side_effect=results) as run:
+            probe = run_equivalence_probe(
+                method="status-help-executable-brand-v1",
+                commands=commands,
+                contexts=contexts,
+                expected_executables=identities,
+                timeout_seconds=1.0,
+                normalizer=lambda output, _cwd: normalize_status_help(output),
+            )
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(
+            [call.kwargs["expected_executable"] for call in run.call_args_list],
+            list(identities),
+        )
+        self.assertEqual(
+            probe["implementations"][0]["normalized_sha256"],
+            probe["implementations"][1]["normalized_sha256"],
+        )
+
+        mismatch = (
+            ProcessResult(0, b"fx status\n", b"", 10, 1, 1, 1),
+            ProcessResult(0, b"machine-god status changed\n", b"", 10, 1, 1, 1),
+        )
+        with (
+            mock.patch.object(upstream, "run_process", side_effect=mismatch),
+            self.assertRaisesRegex(RuntimeError, "outputs differ"),
+        ):
+            run_equivalence_probe(
+                method="status-help-executable-brand-v1",
+                commands=commands,
+                contexts=contexts,
+                expected_executables=identities,
+                timeout_seconds=1.0,
+                normalizer=lambda output, _cwd: normalize_status_help(output),
+            )
+
+    def test_status_json_normalization_allows_only_declared_substitutions(self) -> None:
+        fx_workspace = Path("/tmp/comparison/status-json/fx/workspace")
+        machine_workspace = Path("/tmp/comparison/status-json/machine-god/workspace")
+
+        def output(workspace: Path, revision: str) -> bytes:
+            value = {
+                "kind": "status",
+                "model": "vercel/openai/gpt-5",
+                "update_channel": "stable",
+                "build_channel": "stable",
+                "build_revision": revision,
+                "auth": "AI_GATEWAY_API_KEY",
+                "auth_refreshable": False,
+                "permission_mode": "ask",
+                "sandbox": "none",
+                "workspace": str(workspace),
+                "history_turns": 0,
+                "session_permission_grants": 0,
+                "agent_step_limit": 64,
+            }
+            return json.dumps(value, separators=(",", ":")).encode() + b"\n"
+
+        self.assertEqual(
+            normalize_status_json(output(fx_workspace, "abc"), fx_workspace),
+            normalize_status_json(
+                output(machine_workspace, "1.2.3"),
+                machine_workspace,
+            ),
+        )
+
+    def test_status_json_normalization_rejects_old_reordered_and_changed_runtime_schema(self) -> None:
+        workspace = Path("/tmp/comparison/status-json/fx/workspace")
+        canonical = {
+            "kind": "status",
+            "model": "model",
+            "update_channel": "stable",
+            "build_channel": "stable",
+            "build_revision": "revision",
+            "auth": "AI_GATEWAY_API_KEY",
+            "auth_refreshable": False,
+            "permission_mode": "ask",
+            "sandbox": "none",
+            "workspace": str(workspace),
+            "history_turns": 0,
+            "session_permission_grants": 0,
+            "agent_step_limit": 64,
+        }
+        cases = (
+            {"kind": "status", "config": {"state": "missing"}},
+            {key: canonical[key] for key in reversed(canonical)},
+            {**canonical, "workspace": "/different/workspace"},
+            {**canonical, "permission_mode": 1},
+            {**canonical, "history_turns": True},
+        )
+        for value in cases:
+            with self.subTest(keys=tuple(value)):
+                encoded = json.dumps(value, separators=(",", ":")).encode() + b"\n"
+                with self.assertRaises(RuntimeError):
+                    normalize_status_json(encoded, workspace)
+        duplicate = (
+            b'{"kind":"status","kind":"status","model":"model"}\n'
+        )
+        with self.assertRaises(RuntimeError):
+            normalize_status_json(duplicate, workspace)
+
+    def test_validator_rejects_probe_or_measurement_context_drift(self) -> None:
+        mutations = (
+            lambda data: data["workloads"][2]["equivalence_probe"].__setitem__(
+                "allowed_substitutions", ["executable-branding", "workspace"]
+            ),
+            lambda data: data["workloads"][3]["equivalence_probe"][
+                "implementations"
+            ][0].__setitem__("normalized_sha256", "0" * 64),
+            lambda data: data["workloads"][3]["implementations"][1][
+                "environment"
+            ].__setitem__("HOME", "/shared/home"),
+            lambda data: data["workloads"][2]["implementations"][0].__setitem__(
+                "cwd", "/shared/workspace"
+            ),
+        )
+        for mutate in mutations:
+            evidence = self.valid_upstream_evidence()
+            mutate(evidence)
+            with self.assertRaises(ValueError):
+                validate_upstream_evidence(evidence)
 
     def test_rejects_implemented_workload_schema_drift(self) -> None:
         mutations = (
@@ -1819,7 +2096,7 @@ class UpstreamHarnessTest(unittest.TestCase):
                 "command", ["machine-god", "--help"]
             ),
             lambda data: data["workloads"][2]["implementations"][0].__setitem__(
-                "samples", []
+                "status", "not-measured"
             ),
             lambda data: data["workloads"][2]["implementations"][1].__setitem__(
                 "median_ns", 1
@@ -1827,9 +2104,9 @@ class UpstreamHarnessTest(unittest.TestCase):
             lambda data: data["workloads"][3].__setitem__(
                 "equivalence", "unimplemented"
             ),
-            lambda data: data["workloads"][3].__setitem__("claim_eligible", True),
+            lambda data: data["workloads"][3].__setitem__("claim_eligible", False),
             lambda data: data["workloads"][3]["implementations"][0].__setitem__(
-                "status", "measured"
+                "status", "not-measured"
             ),
             lambda data: data["workloads"][3]["implementations"][1].__setitem__(
                 "command", ["machine-god", "doctor"]
@@ -1863,17 +2140,17 @@ class UpstreamHarnessTest(unittest.TestCase):
 
     def test_rejects_unimplemented_workload_schema_drift(self) -> None:
         mutations = (
-            lambda data: data["workloads"][5].__setitem__(
+            lambda data: data["workloads"][6].__setitem__(
                 "equivalence", "non-equivalent"
             ),
-            lambda data: data["workloads"][5].__setitem__("claim_eligible", True),
-            lambda data: data["workloads"][5]["implementations"][1].__setitem__(
+            lambda data: data["workloads"][6].__setitem__("claim_eligible", True),
+            lambda data: data["workloads"][6]["implementations"][1].__setitem__(
                 "command", ["machine-god", "background", "--json"]
             ),
-            lambda data: data["workloads"][5]["implementations"][1].__setitem__(
+            lambda data: data["workloads"][6]["implementations"][1].__setitem__(
                 "status", "not-measured"
             ),
-            lambda data: data["workloads"][5]["implementations"][0].__setitem__(
+            lambda data: data["workloads"][6]["implementations"][0].__setitem__(
                 "samples", []
             ),
         )
@@ -2055,14 +2332,17 @@ class UpstreamHarnessTest(unittest.TestCase):
                     "sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
                 }
                 identity = executable_identity(binary)
-                measurement = evidence["workloads"][0]["implementations"][index]
-                measurement["executable_identity"] = identity
-                measurement["pinned_executable"].update(
-                    {
-                        "sha256": identity["sha256"],
-                        "bytes": identity["bytes"],
-                    }
-                )
+                for workload_index in (0, 2, 3):
+                    measurement = evidence["workloads"][workload_index][
+                        "implementations"
+                    ][index]
+                    measurement["executable_identity"] = identity
+                    measurement["pinned_executable"].update(
+                        {
+                            "sha256": identity["sha256"],
+                            "bytes": identity["bytes"],
+                        }
+                    )
             machine_source = scratch / "machine-source"
             materialization = materialize_machine_source(
                 ROOT,
@@ -2075,6 +2355,18 @@ class UpstreamHarnessTest(unittest.TestCase):
                 expected_executable=identities["git"],
             )
             evidence["source"]["machine_god"]["materialization"] = materialization
+            for project in ("fx", "machine-god"):
+                workspace = scratch / "comparison/status-json" / project / "workspace"
+                for path, contents in (
+                    (workspace / "home/.fx/settings.json", upstream.FX_STATUS_CONFIG),
+                    (
+                        workspace / "xdg-config/machine-god/config.json",
+                        upstream.MACHINE_STATUS_CONFIG,
+                    ),
+                ):
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(contents)
+                    path.chmod(0o600)
             evidence_path = temporary / "upstream.json"
             evidence_path.write_text(
                 json.dumps(evidence), encoding="utf-8"
