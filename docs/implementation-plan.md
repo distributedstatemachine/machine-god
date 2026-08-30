@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33306328776` (`GREEN`)
 - Main Benchmark evidence: `33306328774` (`GREEN`)
 - Active branch: `agent/m03-workspace`
-- Active phase: `workspace candidate dc2fdb7 rejected by one performance-review coverage finding; worst-case escaping regression coverage is now locked`
-- Next gate: `commit the remediation, rerun the complete replacement gate, and restart all three reviews on the new exact behavior SHA`
+- Active phase: `workspace behavior candidate 1c72f947a55b1cb753dd398f3a5f25dac81f19cd passed the complete exact-toolchain replacement gate`
+- Next gate: `run three fresh adversarial product-review tracks against exact behavior candidate 1c72f947a55b1cb753dd398f3a5f25dac81f19cd; any finding rejects it and restarts all tracks`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
