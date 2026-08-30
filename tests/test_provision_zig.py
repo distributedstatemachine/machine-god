@@ -1509,32 +1509,25 @@ class ProvisionZigTests(unittest.TestCase):
                     "time.sleep(60)",
                 )
             )
-            leader_source = "\n".join(
-                (
-                    "import subprocess,sys,time",
-                    "subprocess.Popen([sys.executable,'-c',sys.argv[2],sys.argv[1]])",
-                    "while not __import__('os').path.exists(sys.argv[1]):",
-                    " time.sleep(0.01)",
-                    "time.sleep(60)",
-                )
-            )
+            # Keep both group members as direct test children so their exit
+            # status can be reaped. On Linux, kill(pid, 0) also succeeds for
+            # a terminated orphan that container PID 1 has left as a zombie.
             leader = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-c",
-                    leader_source,
-                    str(worker_pid_path),
-                    worker_source,
-                ],
-                start_new_session=True,
+                [sys.executable, "-c", "import time; time.sleep(60)"],
+                process_group=0,
             )
-            worker_pid: int | None = None
+            worker = subprocess.Popen(
+                [sys.executable, "-c", worker_source, str(worker_pid_path)],
+                process_group=leader.pid,
+            )
             try:
                 deadline = time.monotonic() + 5.0
                 while time.monotonic() < deadline and not worker_pid_path.exists():
                     time.sleep(0.01)
                 self.assertTrue(worker_pid_path.exists())
-                worker_pid = int(worker_pid_path.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    int(worker_pid_path.read_text(encoding="utf-8")), worker.pid
+                )
 
                 supervisor = with_zig.ChildSupervisor()
                 started = time.monotonic()
@@ -1546,16 +1539,8 @@ class ProvisionZigTests(unittest.TestCase):
                     )
                 self.assertLess(time.monotonic() - started, 2.0)
                 self.assertIsNotNone(leader.returncode)
-
-                deadline = time.monotonic() + 2.0
-                while time.monotonic() < deadline:
-                    try:
-                        os.kill(worker_pid, 0)
-                    except ProcessLookupError:
-                        break
-                    time.sleep(0.01)
-                else:
-                    self.fail("SIGTERM-ignoring process-group survivor remained alive")
+                worker.wait(timeout=2.0)
+                self.assertEqual(worker.returncode, -signal.SIGKILL)
             finally:
                 try:
                     os.killpg(leader.pid, signal.SIGKILL)
@@ -1566,11 +1551,11 @@ class ProvisionZigTests(unittest.TestCase):
                 except subprocess.TimeoutExpired:
                     leader.kill()
                     leader.wait(timeout=1.0)
-                if worker_pid is not None:
-                    try:
-                        os.kill(worker_pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
+                try:
+                    worker.kill()
+                except ProcessLookupError:
+                    pass
+                worker.wait(timeout=1.0)
 
     def test_wrapper_signal_lets_upstream_reap_its_grouped_child(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
