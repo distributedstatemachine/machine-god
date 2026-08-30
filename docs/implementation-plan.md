@@ -21,13 +21,13 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `43`
-- Delivered main: `25b62a02b133c7fa3e01ad9f769416647005e0c8`
-- Main CI: `33306328776` (`GREEN`)
-- Main Benchmark evidence: `33306328774` (`GREEN`)
-- Active branch: `agent/m03-workspace`
-- Active phase: `workspace behavior candidate 1c72f947a55b1cb753dd398f3a5f25dac81f19cd passed the complete replacement gate and three fresh review tracks with zero findings`
-- Next gate: `commit the documentation-only review seal, push the feature branch, and require exact-SHA feature CI and Benchmark success`
+- Delivered slices: `44`
+- Delivered main: `f36a83461e070931071246532f9f10d5626884aa`
+- Main CI: `33309141632` (`GREEN`)
+- Main Benchmark evidence: `33309141612` (`GREEN`)
+- Active branch: `agent/m01-ci-path-filters`
+- Active phase: `designing conservative first-party CI path classification so documentation-only commits avoid Rust, platform, audit, and benchmark jobs`
+- Next gate: `implement and test fail-closed change classification, always-run aggregate gates, and documentation-only exemptions without weakening product exact-SHA evidence`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
@@ -138,8 +138,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 41 | Bounded native `memory` | [contract](memory.md) | [review](reviews/m05-memory-review-01.md) | `33bdd76` |
 | 42 | Bounded workspace-local `skill` | [contract](skill.md) | [review](reviews/m05-skill-review-01.md) | `ef5ab40` |
 | 43 | Bounded local-only `install_skill` | [contract](install-skill.md) | [review](reviews/m05-install-skill-review-01.md) | `25b62a0` |
+| 44 | Bounded read-only top-level `workspace` CLI | [contract](workspace-cli.md) | [review](reviews/m03-workspace-cli-review-01.md) | `f36a834` |
 
-The exact delivered-main record after slice 43 is in the canonical live-status
+The exact delivered-main record after slice 44 is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.
@@ -160,12 +161,12 @@ requires an explicit reviewed plan change.
   `terminal`, `ask_user_question`, `read_tool_result`, `vision`, `memory`,
   `skill`, and `install_skill`.
 - Delivered CLI slices for `ask`, `resume`, `permissions`, `models`, `doctor`,
-  `sessions`, and strict summary-only `session <id>`.
+  `sessions`, `workspace`, and strict summary-only `session <id>`.
 
 ### Remaining
 
 - Complete top-level CLI ownership for `help`, `status`, `permissions`,
-  `models`, `doctor`, `session`, `sessions`, `resume`, `replay`, and `workspace`.
+  `models`, `doctor`, `session`, `sessions`, `resume`, and `replay`.
   Existing partial/delivered commands do not close the combined boundary.
 - Complete the pinned slash-command categories `general`, `session`, `model`,
   `security`, and `workspace`. Compatibility is scenario-based; documented
