@@ -13,6 +13,7 @@ use std::task::{Context, Poll, Waker};
 use std::thread::JoinHandle;
 
 mod ask;
+mod replay;
 
 #[cfg(not(target_family = "wasm"))]
 use std::sync::Arc;
@@ -37,10 +38,11 @@ use machine_god_native::{
     PermissionMode, inspect_process_doctor, inspect_process_session, inspect_process_status,
     inspect_process_workspace, list_process_sessions, load_process_config,
 };
+use replay::{ProductionReplayCommandHost, ReplayCommandHost, is_replay_command, run_replay};
 
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | doctor [--json] | models [--json] | permissions [--json] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--json] | status [--json] | workspace [list] [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--json] | status [--json] | workspace [list] [--json]]\n",
 );
 const CONFIGURATION_FAILURE: &str = "machine-god: failed to load configuration\n";
 const DOCTOR_RENDER_FAILURE: &str = "machine-god doctor: could not render report\n";
@@ -1189,6 +1191,7 @@ fn run(
             &ProductionSessionCommandHost,
             &ProductionSessionsCommandHost,
             &ProductionWorkspaceCommandHost,
+            &ProductionReplayCommandHost,
             &ProductionAskCommandHost,
         ),
     )
@@ -1211,6 +1214,7 @@ fn run_with_models_host(
             &ProductionSessionCommandHost,
             &ProductionSessionsCommandHost,
             &ProductionWorkspaceCommandHost,
+            &ProductionReplayCommandHost,
             &ProductionAskCommandHost,
         ),
     )
@@ -1233,6 +1237,7 @@ fn run_with_doctor_host(
             &ProductionSessionCommandHost,
             &ProductionSessionsCommandHost,
             &ProductionWorkspaceCommandHost,
+            &ProductionReplayCommandHost,
             &ProductionAskCommandHost,
         ),
     )
@@ -1255,6 +1260,7 @@ fn run_with_session_host(
             session_host,
             &ProductionSessionsCommandHost,
             &ProductionWorkspaceCommandHost,
+            &ProductionReplayCommandHost,
             &ProductionAskCommandHost,
         ),
     )
@@ -1277,6 +1283,7 @@ fn run_with_sessions_host(
             &ProductionSessionCommandHost,
             sessions_host,
             &ProductionWorkspaceCommandHost,
+            &ProductionReplayCommandHost,
             &ProductionAskCommandHost,
         ),
     )
@@ -1299,6 +1306,7 @@ fn run_with_ask_host(
             &ProductionSessionCommandHost,
             &ProductionSessionsCommandHost,
             &ProductionWorkspaceCommandHost,
+            &ProductionReplayCommandHost,
             ask_host,
         ),
     )
@@ -1321,6 +1329,7 @@ fn run_with_workspace_host(
             &ProductionSessionCommandHost,
             &ProductionSessionsCommandHost,
             workspace_host,
+            &ProductionReplayCommandHost,
             &ProductionAskCommandHost,
         ),
     )
@@ -1336,11 +1345,32 @@ fn run_with_hosts(
         &impl SessionCommandHost,
         &impl SessionsCommandHost,
         &impl WorkspaceCommandHost,
+        &impl ReplayCommandHost,
         &impl AskCommandHost,
     ),
 ) -> u8 {
-    let (models_host, doctor_host, inspection_host, listing_host, workspace_host, ask_host) = hosts;
-    let Ok(command) = parse_arguments(arguments) else {
+    let (
+        models_host,
+        doctor_host,
+        inspection_host,
+        listing_host,
+        workspace_host,
+        replay_host,
+        ask_host,
+    ) = hosts;
+    let mut arguments = arguments.into_iter();
+    let first = arguments.next();
+    if first.as_deref().is_some_and(is_replay_command) {
+        let replay_arguments = arguments.collect::<Vec<_>>();
+        return run_replay(
+            replay_host,
+            &replay_arguments,
+            stdout,
+            stderr,
+            OUTPUT_FAILURE,
+        );
+    }
+    let Ok(command) = parse_arguments(first.into_iter().chain(arguments)) else {
         let _ = stderr.write_all(INVALID_ARGUMENTS.as_bytes());
         return 2;
     };
@@ -1519,6 +1549,7 @@ fn help() -> String {
             "  machine-god doctor [--json]\n",
             "  machine-god models [--json]\n",
             "  machine-god permissions [--json]\n",
+            "  machine-god replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>]\n",
             "  machine-god resume <id> [--] <prompt...>\n",
             "  machine-god session <id> [--json]\n",
             "  machine-god sessions [--json]\n",
@@ -1531,6 +1562,7 @@ fn help() -> String {
             "  doctor       Run local health and preflight checks\n",
             "  models       List available models\n",
             "  permissions  Show the permission mode and rules\n",
+            "  replay       Replay a recorded terminal session\n",
             "  resume       Resume a saved session with one prompt\n",
             "  session      Inspect a saved session\n",
             "  sessions     List saved sessions\n",
