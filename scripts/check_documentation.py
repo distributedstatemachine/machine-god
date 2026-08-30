@@ -23,6 +23,7 @@ GOVERNED_OVERVIEWS = (
     Path("docs/architecture.md"),
     Path("docs/security.md"),
     Path("docs/performance.md"),
+    Path("docs/ci-change-classification.md"),
     Path("docs/native-reference-host.md"),
     Path("docs/cli.md"),
     Path("docs/ask-cli.md"),

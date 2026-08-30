@@ -24,7 +24,7 @@ class DocumentationPolicyTests(unittest.TestCase):
             errors, stats = check_documentation.validate_repository(root)
 
             self.assertEqual([], errors)
-            self.assertEqual(15, stats.markdown_files)
+            self.assertEqual(16, stats.markdown_files)
             self.assertEqual(2, stats.fence_lines)
             self.assertEqual(1, stats.relative_links)
             self.assertNotIn("markdown=", (root / "docs/implementation-plan.md").read_text())
@@ -62,6 +62,32 @@ class DocumentationPolicyTests(unittest.TestCase):
                 Path("docs/session-store.md"),
             }.issubset(governed)
         )
+
+    def test_ci_change_policy_rejects_mutable_delivery_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            relative = Path("docs/ci-change-classification.md")
+            (root / relative).write_text(
+                "# Durable policy\n\n"
+                "Status: current delivery is complete.\n"
+                "Workflow ID 12345678901.\n"
+                "Delivered slices: 999\n",
+                encoding="utf-8",
+            )
+
+            errors, _ = check_documentation.validate_repository(root)
+
+            self.assertIn(
+                f"{relative}: must not contain mutable top-level Status prose",
+                errors,
+            )
+            self.assertIn(
+                f"{relative}: must not contain GitHub Actions run IDs", errors
+            )
+            self.assertIn(
+                f"{relative}: must not contain a delivered-count phrase", errors
+            )
 
     def test_each_session_contract_rejects_mutable_status_prose(self) -> None:
         session_contracts = (
