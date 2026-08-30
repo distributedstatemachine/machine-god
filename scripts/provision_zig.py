@@ -130,14 +130,6 @@ def host_spec(system: str | None = None, machine: str | None = None) -> Toolchai
         ) from error
 
 
-def file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        while chunk := source.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def executable_version(
     executable: Path, run: CommandRunner = subprocess.run
 ) -> str | None:
@@ -169,16 +161,60 @@ def marker_payload(spec: ToolchainSpec) -> dict[str, object]:
 
 def validated_archive(archive: Path, spec: ToolchainSpec) -> Path | None:
     try:
-        archive_status = archive.stat(follow_symlinks=False)
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        descriptor = os.open(archive, flags)
     except OSError:
         return None
-    if not stat.S_ISREG(archive_status.st_mode):
-        return None
-    if archive_status.st_size != spec.size:
-        return None
-    if file_sha256(archive) != spec.sha256:
-        return None
-    return archive.resolve(strict=True)
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_size != spec.size:
+            return None
+        digest = hashlib.sha256()
+        remaining = spec.size
+        while remaining:
+            chunk = os.read(descriptor, min(1024 * 1024, remaining))
+            if not chunk:
+                return None
+            digest.update(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1):
+            return None
+        after = os.fstat(descriptor)
+        try:
+            path_status = archive.stat(follow_symlinks=False)
+        except OSError:
+            return None
+        if not stat.S_ISREG(path_status.st_mode):
+            return None
+        identity_before = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        identity_after = (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        path_identity = (
+            path_status.st_dev,
+            path_status.st_ino,
+            path_status.st_size,
+            path_status.st_mtime_ns,
+            path_status.st_ctime_ns,
+        )
+        if identity_before != identity_after or identity_after != path_identity:
+            return None
+        if digest.hexdigest() != spec.sha256:
+            return None
+        return archive.resolve(strict=True)
+    finally:
+        os.close(descriptor)
 
 
 def download_archive(
@@ -225,16 +261,8 @@ def download_archive(
         raise ProvisionError(f"could not download {spec.url}: {error}") from error
     if completed.returncode != 0:
         raise ProvisionError(f"could not download {spec.url}")
-    actual_size = destination.stat().st_size
-    if actual_size != spec.size:
-        raise ProvisionError(
-            f"downloaded Zig archive size is {actual_size}, expected {spec.size}"
-        )
-    actual_sha256 = file_sha256(destination)
-    if actual_sha256 != spec.sha256:
-        raise ProvisionError(
-            f"downloaded Zig archive SHA-256 is {actual_sha256}, expected {spec.sha256}"
-        )
+    if validated_archive(destination, spec) is None:
+        raise ProvisionError("downloaded Zig archive failed bounded validation")
 
 
 def extract_archive(
@@ -483,6 +511,12 @@ def create_private_trash(cache_root: Path) -> PrivateTrash:
     raise ProvisionError("could not allocate unique Zig trash ownership")
 
 
+def append_claimed_trash(claimed: list[PrivateTrash], trash: PrivateTrash) -> None:
+    """Transfer one validated descriptor into the returned ownership list."""
+
+    claimed.append(trash)
+
+
 def claim_abandoned_trash(
     cache_root: Path,
     candidate_names: list[str],
@@ -515,39 +549,37 @@ def claim_abandoned_trash(
                     continue
                 raise ProvisionError("Zig trash-cache entry is missing its lease")
             try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                os.close(descriptor)
-                continue
-            except BaseException:
-                os.close(descriptor)
-                raise
-            try:
-                lease_status = lease_path.lstat()
-            except FileNotFoundError:
-                os.close(descriptor)
-                continue
-            descriptor_status = os.fstat(descriptor)
-            if (
-                lease_status.st_dev != descriptor_status.st_dev
-                or lease_status.st_ino != descriptor_status.st_ino
-            ):
-                os.close(descriptor)
-                raise ProvisionError("Zig trash lease changed during claim")
-            try:
-                current = path.lstat()
-            except FileNotFoundError:
-                os.close(descriptor)
-                continue
-            if (
-                current.st_dev != status.st_dev
-                or current.st_ino != status.st_ino
-                or not stat.S_ISDIR(current.st_mode)
-                or stat.S_ISLNK(current.st_mode)
-            ):
-                os.close(descriptor)
-                raise ProvisionError("Zig trash-cache entry changed during claim")
-            claimed.append(PrivateTrash(path, lease_path, descriptor))
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    continue
+                try:
+                    lease_status = lease_path.lstat()
+                except FileNotFoundError:
+                    continue
+                descriptor_status = os.fstat(descriptor)
+                if (
+                    lease_status.st_dev != descriptor_status.st_dev
+                    or lease_status.st_ino != descriptor_status.st_ino
+                ):
+                    raise ProvisionError("Zig trash lease changed during claim")
+                try:
+                    current = path.lstat()
+                except FileNotFoundError:
+                    continue
+                if (
+                    current.st_dev != status.st_dev
+                    or current.st_ino != status.st_ino
+                    or not stat.S_ISDIR(current.st_mode)
+                    or stat.S_ISLNK(current.st_mode)
+                ):
+                    raise ProvisionError("Zig trash-cache entry changed during claim")
+                trash = PrivateTrash(path, lease_path, descriptor)
+                append_claimed_trash(claimed, trash)
+                descriptor = -1
+            finally:
+                if descriptor >= 0:
+                    os.close(descriptor)
     except BaseException:
         for trash in claimed:
             os.close(trash.descriptor)

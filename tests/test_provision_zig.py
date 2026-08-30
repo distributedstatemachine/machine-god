@@ -60,6 +60,66 @@ class ProvisionZigTests(unittest.TestCase):
             archive.write_bytes(payload + b"tampered")
             self.assertIsNone(provision_zig.validated_archive(archive, spec))
 
+    def test_archive_validation_is_bounded_for_growth_endless_and_replacement(
+        self,
+    ) -> None:
+        payload = b"pinned archive"
+        spec = provision_zig.ToolchainSpec(
+            "test-host", hashlib.sha256(payload).hexdigest(), len(payload)
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "archive.tar.xz"
+            archive.write_bytes(payload)
+            real_read = provision_zig.os.read
+            grew = False
+
+            def grow_during_read(descriptor: int, requested: int) -> bytes:
+                nonlocal grew
+                chunk = real_read(descriptor, requested)
+                if not grew:
+                    grew = True
+                    with archive.open("ab") as destination:
+                        destination.write(b"growth")
+                return chunk
+
+            with mock.patch.object(
+                provision_zig.os, "read", side_effect=grow_during_read
+            ):
+                self.assertIsNone(provision_zig.validated_archive(archive, spec))
+
+            archive.write_bytes(payload)
+            endless_reads = 0
+
+            def endless_read(_descriptor: int, requested: int) -> bytes:
+                nonlocal endless_reads
+                endless_reads += 1
+                return b"x" * requested
+
+            with mock.patch.object(
+                provision_zig.os, "read", side_effect=endless_read
+            ):
+                self.assertIsNone(provision_zig.validated_archive(archive, spec))
+            self.assertEqual(endless_reads, 2)
+
+            archive.write_bytes(payload)
+            displaced = root / "displaced.tar.xz"
+            replaced = False
+
+            def replace_during_read(descriptor: int, requested: int) -> bytes:
+                nonlocal replaced
+                chunk = real_read(descriptor, requested)
+                if not replaced:
+                    replaced = True
+                    archive.rename(displaced)
+                    archive.write_bytes(payload)
+                return chunk
+
+            with mock.patch.object(
+                provision_zig.os, "read", side_effect=replace_during_read
+            ):
+                self.assertIsNone(provision_zig.validated_archive(archive, spec))
+
     def test_ensure_archive_rehashes_valid_cache_without_download(self) -> None:
         payload = b"pinned archive"
         spec = provision_zig.ToolchainSpec(
@@ -620,6 +680,132 @@ class ProvisionZigTests(unittest.TestCase):
             shutil.rmtree(trash.path)
             shutil.rmtree(displaced)
             trash.lease_path.unlink()
+
+    def test_trash_claim_closes_descriptor_at_every_post_open_fault(self) -> None:
+        real_open = provision_zig.open_existing_private_file
+        real_lstat = Path.lstat
+        real_fstat = provision_zig.os.fstat
+
+        for fault in (
+            "flock",
+            "lease_lstat",
+            "fstat",
+            "inode_mismatch",
+            "directory_lstat",
+            "append",
+        ):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                trash = provision_zig.create_private_trash(root)
+                os.close(trash.descriptor)
+                opened: list[int] = []
+
+                def capture_open(path: Path) -> int:
+                    descriptor = real_open(path)
+                    opened.append(descriptor)
+                    return descriptor
+
+                path_lstat_calls = 0
+
+                def faulting_lstat(path: Path):
+                    nonlocal path_lstat_calls
+                    if fault == "lease_lstat" and path == trash.lease_path:
+                        raise OSError("lease lstat failed")
+                    if path == trash.path:
+                        path_lstat_calls += 1
+                        if fault == "directory_lstat" and path_lstat_calls == 2:
+                            raise OSError("directory lstat failed")
+                    return real_lstat(path)
+
+                def faulting_fstat(descriptor: int):
+                    if fault == "fstat":
+                        raise OSError("fstat failed")
+                    status = real_fstat(descriptor)
+                    if fault == "inode_mismatch":
+                        return mock.Mock(st_dev=status.st_dev, st_ino=status.st_ino + 1)
+                    return status
+
+                with provision_zig.cache_lock(
+                    root, provision_zig.ACTIVE_LOCK_NAME
+                ):
+                    patches = [
+                        mock.patch.object(
+                            provision_zig,
+                            "open_existing_private_file",
+                            side_effect=capture_open,
+                        ),
+                        mock.patch.object(
+                            Path,
+                            "lstat",
+                            autospec=True,
+                            side_effect=faulting_lstat,
+                        ),
+                        mock.patch.object(
+                            provision_zig.os, "fstat", side_effect=faulting_fstat
+                        ),
+                    ]
+                    if fault == "flock":
+                        patches.append(
+                            mock.patch.object(
+                                provision_zig.fcntl,
+                                "flock",
+                                side_effect=OSError("flock failed"),
+                            )
+                        )
+                    if fault == "append":
+                        patches.append(
+                            mock.patch.object(
+                                provision_zig,
+                                "append_claimed_trash",
+                                side_effect=MemoryError("append failed"),
+                            )
+                        )
+                    for patch in patches:
+                        patch.start()
+                    try:
+                        with self.assertRaises(BaseException):
+                            provision_zig.claim_abandoned_trash(
+                                root, [trash.path.name]
+                            )
+                    finally:
+                        for patch in reversed(patches):
+                            patch.stop()
+
+                self.assertEqual(len(opened), 1)
+                with self.assertRaises(OSError):
+                    os.fstat(opened[0])
+
+    def test_stale_active_rename_failure_closes_claim_descriptor(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            active = root / "active"
+            active.mkdir()
+            stale = active / "zig-stale"
+            stale.mkdir()
+            (stale / provision_zig.LEASE_NAME).write_text("stale", encoding="utf-8")
+            trash = provision_zig.create_private_trash(root)
+            opened: list[int] = []
+            real_open = provision_zig.open_private_file
+
+            def capture_open(path: Path, *, exclusive: bool = False) -> int:
+                descriptor = real_open(path, exclusive=exclusive)
+                if path == stale / provision_zig.LEASE_NAME:
+                    opened.append(descriptor)
+                return descriptor
+
+            with (
+                mock.patch.object(
+                    provision_zig, "open_private_file", side_effect=capture_open
+                ),
+                mock.patch.object(Path, "rename", side_effect=OSError("rename failed")),
+                self.assertRaisesRegex(OSError, "rename failed"),
+            ):
+                provision_zig.move_stale_active_to_trash(active, trash.path)
+
+            self.assertEqual(len(opened), 1)
+            with self.assertRaises(OSError):
+                os.fstat(opened[0])
+            provision_zig.remove_private_trash(trash)
 
     def test_orphan_trash_lease_is_retired_boundedly(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
