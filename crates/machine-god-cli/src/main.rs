@@ -5529,6 +5529,26 @@ mod tests {
             assert!(output.ends_with('\n'));
         }
 
+        #[cfg(target_os = "windows")]
+        let absolute_prefix = "C:\\";
+        #[cfg(not(target_os = "windows"))]
+        let absolute_prefix = "/";
+        let maximum_escaped = format!(
+            "{absolute_prefix}{}",
+            "\u{7f}".repeat(MAX_WORKSPACE_PATH_BYTES - absolute_prefix.len())
+        );
+        assert_eq!(maximum_escaped.len(), MAX_WORKSPACE_PATH_BYTES);
+        let snapshot = workspace_snapshot(&maximum_escaped);
+        for json in [false, true] {
+            let output = render_workspace(&snapshot, json)
+                .expect("maximal escaping expansion remains within the output limit");
+            assert!(!output.contains('\u{7f}'));
+            assert!(output.contains("\\u007f"));
+            assert_eq!(output.matches('\n').count(), if json { 1 } else { 2 });
+            assert!(output.len() <= MAX_WORKSPACE_OUTPUT_BYTES);
+            assert!(output.ends_with('\n'));
+        }
+
         for invalid in [
             format!("/{maximum}"),
             "relative".to_owned(),
