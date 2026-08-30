@@ -65,6 +65,10 @@ mod skill;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod state_environment;
 mod terminal;
+mod terminal_display_width;
+mod terminal_grid;
+mod terminal_tape_replay;
+mod terminal_unicode_data;
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
 mod tokio_web_search_deadline;
 mod tool_output_serializer;
@@ -350,6 +354,11 @@ pub use terminal::{
     TerminalCapturedOutput, TerminalConfigError, TerminalConfigErrorKind, TerminalExecution,
     TerminalExecutionOutcome, TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor,
     TerminalExecutorError, TerminalExecutorErrorKind, TerminalLimits, TerminalTool,
+};
+pub use terminal_tape_replay::{
+    MAX_TERMINAL_TAPE_ARTIFACT_BYTES, MAX_TERMINAL_TAPE_BYTES, MAX_TERMINAL_TAPE_FRAMES_DIR_FRAMES,
+    MAX_TERMINAL_TAPE_RENDERED_OUTPUT_BYTES, TerminalTapeReplayError, TerminalTapeReplayErrorKind,
+    TerminalTapeReplayOutput, TerminalTapeReplayRequest, replay_terminal_tape,
 };
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
 pub use tokio_web_search_deadline::TokioWebSearchDeadline;
