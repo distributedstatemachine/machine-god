@@ -66,7 +66,10 @@ processes and their descendants are owned and reaped before the harness exits.
 Linux process-table discovery stops after 65,536 numeric entries, builds one
 parent-to-children index, and traverses at most 4,096 contained identities per
 refresh; overflow is retained as owned cleanup work and fails closed instead of
-turning cleanup into an unbounded ancestry rescan.
+turning cleanup into an unbounded ancestry rescan. An overflow also retains an
+explicit first-unowned identity witness until a later complete refresh clears
+it; cleanup that reaches its deadline returns that witness as incomplete rather
+than reporting a clean process tree.
 The gated measurement launch owns both pipes and the forked child as one
 transaction; any setup exception closes the descriptors and boundedly kills and
 reaps the child. Cleanup isolates failures in individual kill, pipe, wait, and
@@ -82,6 +85,9 @@ capacities and stop scanning at a single overflow witness; partial-archive and
 stale-tree recovery each process only a fixed batch. Fixed cache infrastructure
 uses the same root-capacity admission rule, and cursorless recovery processes a
 bounded first window so it can free capacity for a persistent fairness cursor.
+When the root cannot admit that cursor, recovery stores the bounded rotation
+cursor in the already-locked active coordination file, so live entries in an
+early window cannot starve reclaimable later entries.
 Recovery acquires the
 active-run lock before briefly deferring termination for ownership mutations,
 so lock contention remains interruptible. Trash leases are opened without
