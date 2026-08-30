@@ -71,10 +71,10 @@ under `docs/reviews/` are historical evidence, not a second live status system.
 
 The upstream comparison is pinned by `benchmarks/upstream.lock`. Zig is used
 only to build that upstream fx input; machine-god itself is written and shipped
-as Rust. The benchmark helper re-hashes a cached official archive and extracts
-a fresh exact Zig toolchain without changing the system toolchain:
+as Rust. The benchmark wrapper re-hashes a cached official archive, extracts a
+fresh exact Zig toolchain for one run, and removes that extraction afterward
+without changing the system toolchain:
 
 ```sh
-zig_path="$(python3 scripts/provision_zig.py)"
-python3 benchmarks/upstream.py --zig "$zig_path"
+python3 benchmarks/with_zig.py -- --runs 30
 ```

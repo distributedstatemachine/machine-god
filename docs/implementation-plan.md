@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33319371520` (`GREEN`)
 - Main Benchmark evidence: `33319371530` (`GREEN`)
 - Active branch: `agent/m03-help-status-cli`
-- Active phase: `freezing the bounded M03 help and status CLI ownership slice`
-- Next gate: `freeze the help/status contract and pinned compatibility evidence before implementation`
+- Active phase: `remediating the first M03 help/status adversarial-review cycle`
+- Next gate: `run the complete replacement local gate, then three fresh reviews on one exact SHA`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,

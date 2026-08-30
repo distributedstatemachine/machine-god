@@ -88,19 +88,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Provision checksum-pinned Zig
-        shell: bash
-        run: |
-          set -euo pipefail
-          zig_path="$(python3 scripts/provision_zig.py \
-            --install-root "${RUNNER_TEMP}/machine-god-toolchains")"
-          [[ "$("${zig_path}" version)" == "0.16.0" ]]
-          printf '%s\n' "$(dirname "${zig_path}")" >> "${GITHUB_PATH}"
       - name: Install exact Rust toolchain
         run: rustup toolchain install 1.94.1 --profile minimal
       - name: Collect pinned upstream evidence
         run: >-
-          python3 benchmarks/upstream.py
+          python3 benchmarks/with_zig.py
+          --cache-root "${RUNNER_TEMP}/machine-god-toolchains"
+          --
           --upstream-dir "${RUNNER_TEMP}/fx-${GITHUB_SHA}"
           --scratch-dir "${RUNNER_TEMP}/benchmark-scratch-${GITHUB_SHA}"
           --output benchmarks/results/upstream-bootstrap.json

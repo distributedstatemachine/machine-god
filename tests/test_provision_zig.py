@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from benchmarks import with_zig
 from scripts import provision_zig
 
 
@@ -26,9 +27,9 @@ class ProvisionZigTests(unittest.TestCase):
             provision_zig.host_spec("Plan9", "mips")
 
     def test_default_install_root_is_outside_the_checkout(self) -> None:
-        options = provision_zig.parse_arguments([])
+        options = with_zig.parse_arguments([])
         checkout = Path(__file__).resolve().parents[1]
-        self.assertFalse(options.install_root.resolve().is_relative_to(checkout))
+        self.assertFalse(options.cache_root.resolve().is_relative_to(checkout))
 
     def test_validated_archive_requires_exact_bytes_and_regular_file(self) -> None:
         payload = b"pinned archive"
@@ -73,7 +74,7 @@ class ProvisionZigTests(unittest.TestCase):
             with self.assertRaisesRegex(provision_zig.ProvisionError, "move it aside"):
                 provision_zig.ensure_archive(root, spec)
 
-    def test_provision_extracts_fresh_install_every_time(self) -> None:
+    def test_provisioned_context_cleans_each_successful_install(self) -> None:
         spec = provision_zig.host_spec("Linux", "x86_64")
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -88,17 +89,21 @@ class ProvisionZigTests(unittest.TestCase):
 
             with (
                 mock.patch.object(provision_zig, "ensure_archive", return_value=archive),
-                mock.patch.object(provision_zig, "extract_archive", side_effect=fake_extract),
+                mock.patch.object(
+                    provision_zig, "extract_archive", side_effect=fake_extract
+                ),
             ):
-                first = provision_zig.provision(root, spec)
-                second = provision_zig.provision(root, spec)
-            self.assertNotEqual(first.parent, second.parent)
-            self.assertEqual(
-                first.read_text(encoding="utf-8"),
-                second.read_text(encoding="utf-8"),
-            )
+                with provision_zig.provisioned_zig(root, spec) as first:
+                    first_parent = first.parents[1]
+                    self.assertTrue(first.is_file())
+                self.assertFalse(first_parent.exists())
+                with provision_zig.provisioned_zig(root, spec) as second:
+                    second_parent = second.parents[1]
+                    self.assertTrue(second.is_file())
+                self.assertFalse(second_parent.exists())
+            self.assertEqual(list((root / "active").iterdir()), [])
 
-    def test_provision_rejects_wrong_extracted_version(self) -> None:
+    def test_provisioned_context_cleans_wrong_version_failure(self) -> None:
         spec = provision_zig.host_spec("Linux", "x86_64")
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -116,7 +121,68 @@ class ProvisionZigTests(unittest.TestCase):
                 mock.patch.object(provision_zig, "extract_archive", side_effect=fake_extract),
             ):
                 with self.assertRaisesRegex(provision_zig.ProvisionError, "not Zig 0.16.0"):
-                    provision_zig.provision(root, spec)
+                    with provision_zig.provisioned_zig(root, spec):
+                        self.fail("wrong Zig version was yielded")
+            self.assertEqual(list((root / "active").iterdir()), [])
+
+    def test_provisioned_context_cleans_extraction_and_marker_failures(self) -> None:
+        spec = provision_zig.host_spec("Linux", "x86_64")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "archive.tar.xz"
+            archive.write_bytes(b"fixture")
+
+            with (
+                mock.patch.object(provision_zig, "ensure_archive", return_value=archive),
+                mock.patch.object(
+                    provision_zig,
+                    "extract_archive",
+                    side_effect=provision_zig.ProvisionError("extract failed"),
+                ),
+                self.assertRaisesRegex(provision_zig.ProvisionError, "extract failed"),
+            ):
+                with provision_zig.provisioned_zig(root, spec):
+                    self.fail("failed extraction was yielded")
+            self.assertEqual(list((root / "active").iterdir()), [])
+
+            def fake_extract(_archive: Path, destination: Path) -> None:
+                destination.mkdir()
+                executable = destination / "zig"
+                executable.write_text(
+                    "#!/bin/sh\nprintf '0.16.0\\n'\n", encoding="utf-8"
+                )
+                executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+
+            with (
+                mock.patch.object(provision_zig, "ensure_archive", return_value=archive),
+                mock.patch.object(
+                    provision_zig, "extract_archive", side_effect=fake_extract
+                ),
+                mock.patch.object(
+                    provision_zig,
+                    "write_marker",
+                    side_effect=OSError("marker failed"),
+                ),
+                self.assertRaisesRegex(OSError, "marker failed"),
+            ):
+                with provision_zig.provisioned_zig(root, spec):
+                    self.fail("failed marker write was yielded")
+            self.assertEqual(list((root / "active").iterdir()), [])
+
+    def test_wrapper_binds_ephemeral_zig_and_forwards_arguments(self) -> None:
+        zig = Path("/private/toolchain/zig")
+        command = with_zig.upstream_command(zig, ["--runs", "30"])
+        self.assertEqual(
+            command,
+            [
+                with_zig.sys.executable,
+                str(with_zig.ROOT / "benchmarks/upstream.py"),
+                "--zig",
+                str(zig),
+                "--runs",
+                "30",
+            ],
+        )
 
 
 if __name__ == "__main__":

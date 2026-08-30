@@ -50,18 +50,19 @@ provenance-complete evidence object. `benchmarks/run.py` collects the local
 bootstrap record; `benchmarks/check.py` validates its schema and classification.
 CI uploads the resulting JSON as short-lived evidence.
 
-`scripts/provision_zig.py` provides the exact checksum-pinned upstream build
-tool in a private operating-system temporary directory on supported Linux and
-macOS hosts. Keeping the toolchain outside the checkout prevents its large
-ignored library tree from entering repository-cleanliness scans. Each use
-re-hashes the retained official archive and extracts a fresh toolchain so the
-harness never trusts an old installation. The harness receives that executable
-explicitly and never replaces or depends on a system Zig installation.
+`benchmarks/with_zig.py` provides the exact checksum-pinned upstream build tool
+in a private operating-system temporary directory on supported Linux and macOS
+hosts. Keeping the toolchain outside the checkout prevents its large ignored
+library tree from entering repository-cleanliness scans. Each run re-hashes the
+retained official archive, extracts a fresh toolchain, passes that executable
+explicitly to the harness, and removes the extraction on success or failure.
+It never replaces or depends on a system Zig installation.
 
-The current bootstrap inventory deliberately includes non-equivalent scenarios.
-Its classifier forbids promotion to a product claim. Zig participates only as
-the upstream fx build tool; it is not a machine-god implementation or runtime
-dependency.
+The current inventory includes non-equivalent scenarios plus status workloads
+whose captured outputs pass strict equivalence probes. All remain regression
+evidence and claim-ineligible until M07 implements the complete measurement
+protocol and thresholds. Zig participates only as the upstream fx build tool;
+it is not a machine-god implementation or runtime dependency.
 
 Compatibility is scenario-based. Source layout, language, runtime, command
 names, or a shared label are not enough to establish equivalence. See

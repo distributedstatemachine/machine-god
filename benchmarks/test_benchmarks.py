@@ -1409,7 +1409,7 @@ class UpstreamHarnessTest(unittest.TestCase):
                 "id": identifier,
                 "description": description,
                 "equivalence": "equivalent",
-                "claim_eligible": True,
+                "claim_eligible": False,
                 "reason": reason,
                 "equivalence_probe": probe,
                 "implementations": measurements,
@@ -1919,14 +1919,14 @@ class UpstreamHarnessTest(unittest.TestCase):
             self.assertNotIn("samples", workload["implementations"][0])
             self.assertNotIn("samples", workload["implementations"][1])
 
-    def test_records_only_probed_status_workloads_as_claim_eligible(self) -> None:
+    def test_records_equivalent_status_as_claim_ineligible_regression_evidence(self) -> None:
         evidence = self.valid_upstream_evidence()
         for identifier, workload in zip(
             ("status-help", "status-json"), evidence["workloads"][2:4], strict=True
         ):
             self.assertEqual(workload["id"], identifier)
             self.assertEqual(workload["equivalence"], "equivalent")
-            self.assertIs(workload["claim_eligible"], True)
+            self.assertIs(workload["claim_eligible"], False)
             self.assertEqual(
                 [item["status"] for item in workload["implementations"]],
                 ["measured", "measured"],
@@ -1968,7 +1968,10 @@ class UpstreamHarnessTest(unittest.TestCase):
                 contexts=contexts,
                 expected_executables=identities,
                 timeout_seconds=1.0,
-                normalizer=lambda output, _cwd: normalize_status_help(output),
+                normalizers=(
+                    lambda output, _cwd: normalize_status_help(output),
+                    lambda output, _cwd: normalize_status_help(output),
+                ),
             )
         self.assertEqual(run.call_count, 2)
         self.assertEqual(
@@ -1988,7 +1991,10 @@ class UpstreamHarnessTest(unittest.TestCase):
                 contexts=contexts,
                 expected_executables=identities,
                 timeout_seconds=1.0,
-                normalizer=lambda _output, _cwd: b"normalized-status\n",
+                normalizers=(
+                    lambda _output, _cwd: b"normalized-status\n",
+                    lambda _output, _cwd: b"normalized-status\n",
+                ),
             )
         self.assertEqual(
             status_json_probe["allowed_substitutions"],
@@ -2009,20 +2015,75 @@ class UpstreamHarnessTest(unittest.TestCase):
                 contexts=contexts,
                 expected_executables=identities,
                 timeout_seconds=1.0,
-                normalizer=lambda output, _cwd: normalize_status_help(output),
+                normalizers=(
+                    lambda output, _cwd: normalize_status_help(output),
+                    lambda output, _cwd: normalize_status_help(output),
+                ),
             )
 
     def test_status_json_normalization_allows_only_declared_substitutions(self) -> None:
-        fx_workspace = Path("/tmp/comparison/status-json/fx/workspace")
-        machine_workspace = Path("/tmp/comparison/status-json/machine-god/workspace")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fx_workspace = root / "fx/workspace"
+            machine_workspace = root / "machine-god/workspace"
+            fx_workspace.mkdir(parents=True)
+            machine_workspace.mkdir(parents=True)
 
-        def output(workspace: Path, revision: str) -> bytes:
-            value = {
+            def output(workspace: Path, revision: str) -> bytes:
+                value = {
+                    "kind": "status",
+                    "model": "vercel/openai/gpt-5",
+                    "update_channel": "stable",
+                    "build_channel": "stable",
+                    "build_revision": revision,
+                    "auth": "AI_GATEWAY_API_KEY",
+                    "auth_refreshable": False,
+                    "permission_mode": "ask",
+                    "sandbox": "none",
+                    "workspace": str(workspace.resolve()),
+                    "history_turns": 0,
+                    "session_permission_grants": 0,
+                    "agent_step_limit": 64,
+                }
+                return (
+                    json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode()
+                    + b"\n"
+                )
+
+            self.assertEqual(
+                normalize_status_json(
+                    output(fx_workspace, "a" * 12), fx_workspace, "a" * 12
+                ),
+                normalize_status_json(output(machine_workspace, ""), machine_workspace, ""),
+            )
+
+            formatting_drift = output(fx_workspace, "a" * 12).replace(
+                b'{"kind"', b'{ "kind"', 1
+            )
+            with self.assertRaisesRegex(RuntimeError, "compact canonical"):
+                normalize_status_json(formatting_drift, fx_workspace, "a" * 12)
+            noncanonical_value = json.loads(output(fx_workspace, "a" * 12))
+            noncanonical_value["workspace"] = f"{fx_workspace}/child/.."
+            noncanonical_workspace = (
+                json.dumps(noncanonical_value, separators=(",", ":")).encode() + b"\n"
+            )
+            with self.assertRaisesRegex(RuntimeError, "exact canonical root"):
+                normalize_status_json(noncanonical_workspace, fx_workspace, "a" * 12)
+            with self.assertRaisesRegex(RuntimeError, "not bound"):
+                normalize_status_json(
+                    output(machine_workspace, "1.2.3"), machine_workspace, ""
+                )
+
+    def test_status_json_normalization_rejects_old_reordered_and_changed_runtime_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary) / "workspace"
+            workspace.mkdir()
+            canonical = {
                 "kind": "status",
-                "model": "vercel/openai/gpt-5",
+                "model": "model",
                 "update_channel": "stable",
                 "build_channel": "stable",
-                "build_revision": revision,
+                "build_revision": "a" * 12,
                 "auth": "AI_GATEWAY_API_KEY",
                 "auth_refreshable": False,
                 "permission_mode": "ask",
@@ -2032,50 +2093,21 @@ class UpstreamHarnessTest(unittest.TestCase):
                 "session_permission_grants": 0,
                 "agent_step_limit": 64,
             }
-            return json.dumps(value, separators=(",", ":")).encode() + b"\n"
-
-        self.assertEqual(
-            normalize_status_json(output(fx_workspace, "abc"), fx_workspace),
-            normalize_status_json(
-                output(machine_workspace, "1.2.3"),
-                machine_workspace,
-            ),
-        )
-
-    def test_status_json_normalization_rejects_old_reordered_and_changed_runtime_schema(self) -> None:
-        workspace = Path("/tmp/comparison/status-json/fx/workspace")
-        canonical = {
-            "kind": "status",
-            "model": "model",
-            "update_channel": "stable",
-            "build_channel": "stable",
-            "build_revision": "revision",
-            "auth": "AI_GATEWAY_API_KEY",
-            "auth_refreshable": False,
-            "permission_mode": "ask",
-            "sandbox": "none",
-            "workspace": str(workspace),
-            "history_turns": 0,
-            "session_permission_grants": 0,
-            "agent_step_limit": 64,
-        }
-        cases = (
-            {"kind": "status", "config": {"state": "missing"}},
-            {key: canonical[key] for key in reversed(canonical)},
-            {**canonical, "workspace": "/different/workspace"},
-            {**canonical, "permission_mode": 1},
-            {**canonical, "history_turns": True},
-        )
-        for value in cases:
-            with self.subTest(keys=tuple(value)):
-                encoded = json.dumps(value, separators=(",", ":")).encode() + b"\n"
-                with self.assertRaises(RuntimeError):
-                    normalize_status_json(encoded, workspace)
-        duplicate = (
-            b'{"kind":"status","kind":"status","model":"model"}\n'
-        )
-        with self.assertRaises(RuntimeError):
-            normalize_status_json(duplicate, workspace)
+            cases = (
+                {"kind": "status", "config": {"state": "missing"}},
+                {key: canonical[key] for key in reversed(canonical)},
+                {**canonical, "workspace": "/different/workspace"},
+                {**canonical, "permission_mode": 1},
+                {**canonical, "history_turns": True},
+            )
+            for value in cases:
+                with self.subTest(keys=tuple(value)):
+                    encoded = json.dumps(value, separators=(",", ":")).encode() + b"\n"
+                    with self.assertRaises(RuntimeError):
+                        normalize_status_json(encoded, workspace, "a" * 12)
+            duplicate = b'{"kind":"status","kind":"status","model":"model"}\n'
+            with self.assertRaises(RuntimeError):
+                normalize_status_json(duplicate, workspace, "a" * 12)
 
     def test_validator_rejects_probe_or_measurement_context_drift(self) -> None:
         mutations = (
@@ -2119,7 +2151,7 @@ class UpstreamHarnessTest(unittest.TestCase):
             lambda data: data["workloads"][3].__setitem__(
                 "equivalence", "unimplemented"
             ),
-            lambda data: data["workloads"][3].__setitem__("claim_eligible", False),
+            lambda data: data["workloads"][3].__setitem__("claim_eligible", True),
             lambda data: data["workloads"][3]["implementations"][0].__setitem__(
                 "status", "not-measured"
             ),

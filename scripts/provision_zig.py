@@ -1,13 +1,12 @@
-#!/usr/bin/env python3
 """Provision the exact Zig toolchain used to build the pinned fx benchmark.
 
-The Rust product does not use Zig. This helper installs Zig only beneath an
-explicit benchmark-tool directory and prints the resulting executable path.
+The Rust product does not use Zig. Callers receive a fresh checksum-verified
+extraction only for the lifetime of the ``provisioned_zig`` context.
 """
 
 from __future__ import annotations
 
-import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -16,10 +15,9 @@ import platform
 import shutil
 import stat
 import subprocess
-import sys
 import tempfile
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Iterator
 
 
 ZIG_VERSION = "0.16.0"
@@ -210,6 +208,13 @@ def extract_archive(archive: Path, destination: Path) -> None:
         raise ProvisionError("could not extract the Zig archive")
 
 
+def write_marker(install_dir: Path, spec: ToolchainSpec) -> None:
+    (install_dir / MARKER_NAME).write_text(
+        json.dumps(marker_payload(spec), sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+
 def ensure_archive(install_root: Path, spec: ToolchainSpec) -> Path:
     archive_root = install_root / "archives"
     archive_root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -244,48 +249,22 @@ def ensure_archive(install_root: Path, spec: ToolchainSpec) -> Path:
         temporary.unlink(missing_ok=True)
 
 
-def provision(install_root: Path, spec: ToolchainSpec) -> Path:
-    install_root = install_root.resolve()
-    install_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    archive = ensure_archive(install_root, spec)
-    install_parent = install_root / "installs"
-    install_parent.mkdir(mode=0o700, exist_ok=True)
-    run_dir = Path(
-        tempfile.mkdtemp(prefix=f"zig-{ZIG_VERSION}-{spec.target}-", dir=install_parent)
-    )
-    install_dir = run_dir / "toolchain"
-    extract_archive(archive, install_dir)
-    executable = install_dir / "zig"
-    if executable_version(executable) != ZIG_VERSION:
-        raise ProvisionError(f"extracted executable is not Zig {ZIG_VERSION}")
-    (install_dir / MARKER_NAME).write_text(
-        json.dumps(marker_payload(spec), sort_keys=True, separators=(",", ":")) + "\n",
-        encoding="utf-8",
-    )
-    return executable.resolve(strict=True)
+@contextmanager
+def provisioned_zig(cache_root: Path, spec: ToolchainSpec) -> Iterator[Path]:
+    """Yield one fresh extraction and remove it on every exit path."""
 
-
-def parse_arguments(arguments: Sequence[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--install-root",
-        type=Path,
-        default=Path(tempfile.gettempdir()) / f"machine-god-zig-{os.getuid()}",
-        help="private toolchain directory (default: an OS temporary directory)",
-    )
-    return parser.parse_args(arguments)
-
-
-def main(arguments: Sequence[str] | None = None) -> int:
-    options = parse_arguments(sys.argv[1:] if arguments is None else arguments)
-    try:
-        executable = provision(options.install_root, host_spec())
-    except (OSError, ProvisionError) as error:
-        print(f"could not provision Zig: {error}", file=sys.stderr)
-        return 1
-    print(executable)
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    cache_root = cache_root.resolve()
+    cache_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    archive = ensure_archive(cache_root, spec)
+    active_root = cache_root / "active"
+    active_root.mkdir(mode=0o700, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f"zig-{ZIG_VERSION}-{spec.target}-", dir=active_root
+    ) as run_directory:
+        install_dir = Path(run_directory) / "toolchain"
+        extract_archive(archive, install_dir)
+        executable = install_dir / "zig"
+        if executable_version(executable) != ZIG_VERSION:
+            raise ProvisionError(f"extracted executable is not Zig {ZIG_VERSION}")
+        write_marker(install_dir, spec)
+        yield executable.resolve(strict=True)

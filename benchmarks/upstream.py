@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Build and measure machine-god beside the exact pinned fx revision.
 
-Schema 2 contains mixed evidence: the bootstrap path remains non-equivalent,
-while a workload is claim-eligible only after its captured output passes the
-canonical equivalence probe defined in this module.
+Schema 2 contains mixed regression evidence. A workload may pass a canonical
+equivalence probe here, but remains claim-ineligible until M07 implements the
+complete measurement protocol and enforced thresholds.
 """
 
 from __future__ import annotations
@@ -378,7 +378,9 @@ def reject_duplicate_json_members(pairs: list[tuple[str, object]]) -> dict[str, 
     return result
 
 
-def normalize_status_json(output: bytes, workspace: Path) -> bytes:
+def normalize_status_json(
+    output: bytes, workspace: Path, expected_build_revision: str
+) -> bytes:
     """Validate and normalize the pinned fx status runtime schema."""
 
     if not output.endswith(b"\n") or output[:-1].endswith(b"\n"):
@@ -422,12 +424,25 @@ def normalize_status_json(output: bytes, workspace: Path) -> bytes:
             or parsed[key] < 0
         ):
             raise RuntimeError(f"status JSON probe {key} must be a nonnegative integer")
+    canonical = (
+        json.dumps(parsed, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        + b"\n"
+    )
+    if output != canonical:
+        raise RuntimeError("status JSON probe output is not compact canonical JSON")
     try:
-        reported_workspace = Path(parsed["workspace"]).resolve(strict=False)
+        canonical_workspace = str(workspace.resolve(strict=True))
     except (OSError, RuntimeError, ValueError):
-        raise RuntimeError("status JSON probe workspace is not a valid path") from None
-    if reported_workspace != workspace.resolve():
-        raise RuntimeError("status JSON probe workspace does not match its isolated root")
+        raise RuntimeError("status JSON probe workspace root is unavailable") from None
+    if parsed["workspace"] != canonical_workspace:
+        raise RuntimeError("status JSON probe workspace is not the exact canonical root")
+    if not (
+        expected_build_revision == ""
+        or re.fullmatch(r"[0-9a-f]{12}", expected_build_revision)
+    ):
+        raise RuntimeError("status JSON probe expected build revision is invalid")
+    if parsed["build_revision"] != expected_build_revision:
+        raise RuntimeError("status JSON probe build revision is not bound to its build")
 
     parsed["build_revision"] = "<build-provenance>"
     parsed["workspace"] = "<workspace>"
@@ -982,7 +997,7 @@ def validate_upstream_evidence(
     expected_machine_manifest_sha256: str | None = None,
     expected_binaries: Mapping[str, Path] | None = None,
 ) -> None:
-    """Validate provenance, probes, and the bounded claim-eligible workloads."""
+    """Validate provenance, probes, and bounded regression workloads."""
 
     expected_root_keys = {
         "schema_version",
@@ -1663,7 +1678,7 @@ def validate_upstream_evidence(
             or workload.get("description") != description
             or workload.get("reason") != reason
             or workload.get("equivalence") != "equivalent"
-            or workload.get("claim_eligible") is not True
+            or workload.get("claim_eligible") is not False
         ):
             raise ValueError(f"{field} equivalence declaration is not canonical")
         probe = workload.get("equivalence_probe")
@@ -3680,17 +3695,23 @@ def run_equivalence_probe(
     contexts: Sequence[tuple[Path, Mapping[str, str]]],
     expected_executables: Sequence[Mapping[str, object]],
     timeout_seconds: float,
-    normalizer: Callable[[bytes, Path], bytes],
+    normalizers: Sequence[Callable[[bytes, Path], bytes]],
 ) -> dict[str, object]:
-    if len(commands) != 2 or len(contexts) != 2 or len(expected_executables) != 2:
+    if (
+        len(commands) != 2
+        or len(contexts) != 2
+        or len(expected_executables) != 2
+        or len(normalizers) != 2
+    ):
         raise ValueError("equivalence probes require exactly two implementations")
     records: list[dict[str, object]] = []
     normalized_outputs: list[bytes] = []
-    for project, command, (cwd, environment), executable in zip(
+    for project, command, (cwd, environment), executable, normalizer in zip(
         ("fx", "machine-god"),
         commands,
         contexts,
         expected_executables,
+        normalizers,
         strict=True,
     ):
         completed = run_process(
@@ -3741,7 +3762,7 @@ def equivalent_workload(
         "id": identifier,
         "description": description,
         "equivalence": "equivalent",
-        "claim_eligible": True,
+        "claim_eligible": False,
         "reason": reason,
         "equivalence_probe": dict(probe),
         "implementations": [dict(item) for item in implementations],
@@ -4080,7 +4101,10 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
             machine_executable_identity,
         ),
         timeout_seconds=args.sample_timeout,
-        normalizer=lambda output, _workspace: normalize_status_help(output),
+        normalizers=(
+            lambda output, _workspace: normalize_status_help(output),
+            lambda output, _workspace: normalize_status_help(output),
+        ),
     )
     status_help = equivalent_workload(
         "status-help",
@@ -4125,7 +4149,12 @@ def collect_evidence(args: argparse.Namespace) -> dict[str, object]:
             machine_executable_identity,
         ),
         timeout_seconds=args.sample_timeout,
-        normalizer=normalize_status_json,
+        normalizers=(
+            lambda output, workspace: normalize_status_json(
+                output, workspace, lock.commit[:12]
+            ),
+            lambda output, workspace: normalize_status_json(output, workspace, ""),
+        ),
     )
     status_json_probe["fixture_sha256"] = {
         "fx_settings": sha256_bytes(FX_STATUS_CONFIG),
