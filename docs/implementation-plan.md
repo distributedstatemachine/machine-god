@@ -22,12 +22,12 @@ input; it is not a machine-god product language or runtime dependency.
 
 <!-- canonical-live-status:start -->
 - Delivered slices: `44`
-- Delivered main: `f36a83461e070931071246532f9f10d5626884aa`
-- Main CI: `33309141632` (`GREEN`)
-- Main Benchmark evidence: `33309141612` (`GREEN`)
-- Active branch: `agent/m01-ci-path-filters`
-- Active phase: `designing conservative first-party CI path classification so documentation-only commits avoid Rust, platform, audit, and benchmark jobs`
-- Next gate: `implement and test fail-closed change classification, always-run aggregate gates, and documentation-only exemptions without weakening product exact-SHA evidence`
+- Delivered main: `0d6de4de13c9770cc5e1d1f1e7a1f08eef2c0936`
+- Main CI: `33312631865` (`GREEN`)
+- Main Benchmark evidence: `33312631875` (`GREEN`)
+- Active branch: `agent/m03-replay-cli`
+- Active phase: `returning to bounded top-level replay CLI product work after delivering conservative CI change classification`
+- Next gate: `define the replay CLI contract and freeze its parser, authority, output, and composed-host boundaries before implementation`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
