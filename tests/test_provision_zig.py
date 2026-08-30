@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import signal
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
@@ -311,7 +312,150 @@ class ProvisionZigTests(unittest.TestCase):
             self.assertIn(mock.call(opened[0]), close.call_args_list)
             self.assertEqual(list(active.iterdir()), [])
 
-    def test_owned_cleanup_serializes_a_concurrent_provisioner(self) -> None:
+    def test_private_file_closes_its_descriptor_when_fchmod_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "private"
+            opened: list[int] = []
+            real_open = provision_zig.os.open
+
+            def capture_open(*args, **kwargs) -> int:
+                descriptor = real_open(*args, **kwargs)
+                opened.append(descriptor)
+                return descriptor
+
+            with (
+                mock.patch.object(
+                    provision_zig.os,
+                    "open",
+                    side_effect=capture_open,
+                ),
+                mock.patch.object(
+                    provision_zig.os,
+                    "fchmod",
+                    side_effect=OSError("chmod failed"),
+                ),
+                self.assertRaisesRegex(OSError, "chmod failed"),
+            ):
+                provision_zig.open_private_file(path)
+
+            self.assertEqual(len(opened), 1)
+            with self.assertRaises(OSError):
+                os.fstat(opened[0])
+
+    def test_stale_cleanup_moves_only_one_bounded_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            active = root / "active"
+            active.mkdir()
+            count = provision_zig.STALE_ACTIVE_BATCH_SIZE + 3
+            for index in range(count):
+                candidate = active / f"zig-stale-{index:03d}"
+                candidate.mkdir()
+                (candidate / provision_zig.LEASE_NAME).write_text(
+                    "stale", encoding="utf-8"
+                )
+            trash = provision_zig.create_private_trash(root)
+
+            with provision_zig.cache_lock(root, provision_zig.ACTIVE_LOCK_NAME):
+                moved = provision_zig.move_stale_active_to_trash(active, trash.path)
+
+            self.assertEqual(len(moved), provision_zig.STALE_ACTIVE_BATCH_SIZE)
+            self.assertEqual(
+                len(list(active.iterdir())),
+                count - provision_zig.STALE_ACTIVE_BATCH_SIZE,
+            )
+            self.assertEqual(set(moved), set(trash.path.iterdir()))
+            provision_zig.remove_private_trash(trash)
+
+    def test_rotating_active_window_cannot_starve_later_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            names = [
+                f"zig-active-{index:03d}"
+                for index in range(provision_zig.STALE_ACTIVE_SCAN_LIMIT + 3)
+            ]
+
+            with provision_zig.cache_lock(root, provision_zig.ACTIVE_LOCK_NAME):
+                first = provision_zig.rotating_active_window(root, names)
+            with provision_zig.cache_lock(root, provision_zig.ACTIVE_LOCK_NAME):
+                second = provision_zig.rotating_active_window(root, names)
+
+            self.assertEqual(len(first), provision_zig.STALE_ACTIVE_SCAN_LIMIT)
+            self.assertIn(names[-1], second)
+            self.assertNotEqual(first, second)
+
+    def test_abandoned_trash_is_reclaimed_without_racing_live_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trash = provision_zig.create_private_trash(root)
+            (trash.path / "payload").write_text("stale", encoding="utf-8")
+            names = [trash.path.name]
+
+            with provision_zig.cache_lock(root, provision_zig.ACTIVE_LOCK_NAME):
+                self.assertEqual(
+                    provision_zig.claim_abandoned_trash(root, names), []
+                )
+
+            os.close(trash.descriptor)
+            with provision_zig.cache_lock(root, provision_zig.ACTIVE_LOCK_NAME):
+                claimed = provision_zig.claim_abandoned_trash(root, names)
+
+            self.assertEqual(len(claimed), 1)
+            provision_zig.remove_private_trash(claimed[0])
+            self.assertFalse(trash.path.exists())
+            self.assertFalse(trash.lease_path.exists())
+
+    def test_stale_recursive_deletion_runs_after_active_lock_release(self) -> None:
+        spec = provision_zig.host_spec("Linux", "x86_64")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            active = root / "active"
+            active.mkdir()
+            stale = active / "zig-stale"
+            stale.mkdir()
+            (stale / provision_zig.LEASE_NAME).write_text("stale", encoding="utf-8")
+            archive = root / "archive.tar.xz"
+            archive.write_bytes(b"fixture")
+            observed_unlocked_delete = False
+            real_rmtree = provision_zig.shutil.rmtree
+
+            def fake_extract(
+                _archive: Path, destination: Path, _run: object = None
+            ) -> None:
+                destination.mkdir()
+                executable = destination / "zig"
+                executable.write_text(
+                    "#!/bin/sh\nprintf '0.16.0\\n'\n", encoding="utf-8"
+                )
+                executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+
+            def verify_stale_delete_is_unlocked(path: Path, *args, **kwargs) -> None:
+                nonlocal observed_unlocked_delete
+                selected = Path(path)
+                if selected.exists() and (selected / "zig-stale").exists():
+                    with provision_zig.cache_lock(
+                        root, provision_zig.ACTIVE_LOCK_NAME
+                    ):
+                        observed_unlocked_delete = True
+                real_rmtree(path, *args, **kwargs)
+
+            with (
+                mock.patch.object(provision_zig, "ensure_archive", return_value=archive),
+                mock.patch.object(
+                    provision_zig, "extract_archive", side_effect=fake_extract
+                ),
+                mock.patch.object(
+                    provision_zig.shutil,
+                    "rmtree",
+                    side_effect=verify_stale_delete_is_unlocked,
+                ),
+            ):
+                with provision_zig.provisioned_zig(root, spec):
+                    pass
+
+            self.assertTrue(observed_unlocked_delete)
+
+    def test_owned_cleanup_does_not_serialize_recursive_deletion(self) -> None:
         spec = provision_zig.host_spec("Linux", "x86_64")
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -339,7 +483,14 @@ class ProvisionZigTests(unittest.TestCase):
             def pause_first_active_cleanup(path: Path, *args, **kwargs) -> None:
                 nonlocal blocked_cleanup
                 selected = Path(path)
-                if selected.parent.name == "active" and not blocked_cleanup:
+                is_owned_trash = (
+                    selected.name.startswith(provision_zig.TRASH_PREFIX)
+                    and selected.exists()
+                    and any(
+                        child.name.startswith("zig-") for child in selected.iterdir()
+                    )
+                )
+                if is_owned_trash and not blocked_cleanup:
                     blocked_cleanup = True
                     cleanup_started.set()
                     if not release_cleanup.wait(timeout=5.0):
@@ -382,7 +533,7 @@ class ProvisionZigTests(unittest.TestCase):
                 self.assertTrue(cleanup_started.wait(timeout=5.0))
                 second = threading.Thread(target=second_run)
                 second.start()
-                self.assertFalse(second_finished.wait(timeout=0.1))
+                self.assertTrue(second_finished.wait(timeout=2.0))
                 release_cleanup.set()
                 first.join(timeout=5.0)
                 second.join(timeout=5.0)
@@ -456,6 +607,120 @@ class ProvisionZigTests(unittest.TestCase):
             self.assertEqual(observed["received"], 1)
             for forwarded in with_zig.FORWARDED_SIGNALS:
                 self.assertNotIn(int(forwarded), observed["blocked"])
+
+    def test_wrapper_preserves_arbitrary_launch_exception_during_cleanup(self) -> None:
+        failure = OSError("sentinel communicate failure")
+
+        class BrokenChild:
+            pid = 424_242
+            returncode = None
+
+            def __init__(self) -> None:
+                self.communicate_calls = 0
+
+            def communicate(self, *, timeout=None):
+                del timeout
+                self.communicate_calls += 1
+                if self.communicate_calls == 1:
+                    raise failure
+                raise RuntimeError("cleanup communicate failed")
+
+            def kill(self) -> None:
+                raise RuntimeError("cleanup kill failed")
+
+            def wait(self, *, timeout=None) -> None:
+                del timeout
+                raise RuntimeError("cleanup wait failed")
+
+        child = BrokenChild()
+        supervisor = with_zig.ChildSupervisor()
+        with (
+            mock.patch.object(with_zig.subprocess, "Popen", return_value=child),
+            mock.patch.object(with_zig.os, "killpg", return_value=None) as killpg,
+            mock.patch.object(with_zig, "SIGNAL_GRACE_SECONDS", 0.0),
+            mock.patch.object(with_zig, "KILL_GRACE_SECONDS", 0.0),
+            self.assertRaises(OSError) as caught,
+        ):
+            supervisor.run(["ignored"])
+
+        self.assertIs(caught.exception, failure)
+        self.assertIsNone(supervisor.child)
+        self.assertIn(mock.call(child.pid, signal.SIGTERM), killpg.call_args_list)
+        self.assertIn(mock.call(child.pid, signal.SIGKILL), killpg.call_args_list)
+
+    def test_wrapper_kills_survivor_after_group_leader_exits(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            worker_pid_path = Path(temporary) / "worker.pid"
+            worker_source = "\n".join(
+                (
+                    "import os,signal,sys,time",
+                    "signal.signal(signal.SIGTERM, signal.SIG_IGN)",
+                    "open(sys.argv[1],'w',encoding='utf-8').write(str(os.getpid()))",
+                    "time.sleep(60)",
+                )
+            )
+            leader_source = "\n".join(
+                (
+                    "import subprocess,sys,time",
+                    "subprocess.Popen([sys.executable,'-c',sys.argv[2],sys.argv[1]])",
+                    "while not __import__('os').path.exists(sys.argv[1]):",
+                    " time.sleep(0.01)",
+                    "time.sleep(60)",
+                )
+            )
+            leader = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    leader_source,
+                    str(worker_pid_path),
+                    worker_source,
+                ],
+                start_new_session=True,
+            )
+            worker_pid: int | None = None
+            try:
+                deadline = time.monotonic() + 5.0
+                while time.monotonic() < deadline and not worker_pid_path.exists():
+                    time.sleep(0.01)
+                self.assertTrue(worker_pid_path.exists())
+                worker_pid = int(worker_pid_path.read_text(encoding="utf-8"))
+
+                supervisor = with_zig.ChildSupervisor()
+                started = time.monotonic()
+                with mock.patch.object(with_zig, "KILL_GRACE_SECONDS", 1.0):
+                    supervisor.terminate_and_reap(
+                        leader,
+                        initial_signal=signal.SIGTERM,
+                        grace_seconds=0.1,
+                    )
+                self.assertLess(time.monotonic() - started, 2.0)
+                self.assertIsNotNone(leader.returncode)
+
+                deadline = time.monotonic() + 2.0
+                while time.monotonic() < deadline:
+                    try:
+                        os.kill(worker_pid, 0)
+                    except ProcessLookupError:
+                        break
+                    time.sleep(0.01)
+                else:
+                    self.fail("SIGTERM-ignoring process-group survivor remained alive")
+            finally:
+                try:
+                    os.killpg(leader.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    leader.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    leader.kill()
+                    leader.wait(timeout=1.0)
+                if worker_pid is not None:
+                    try:
+                        os.kill(worker_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
 
     def test_wrapper_signal_lets_upstream_reap_its_grouped_child(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

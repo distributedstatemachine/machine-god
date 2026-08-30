@@ -57,14 +57,18 @@ library tree from entering repository-cleanliness scans. Each run re-hashes the
 retained official archive, extracts a fresh toolchain, passes that executable
 explicitly to the harness, and removes the extraction on success or failure.
 The wrapper forwards `SIGHUP`, `SIGINT`, and `SIGTERM` to the active child
-process group, bounds graceful reaping before kill escalation, and then unwinds
-the extraction context. The upstream harness converts that first forwarded
-signal into structured unwinding so its independently grouped build or sample
-process is terminated and reaped before the harness exits. Separate bounded-wait
-coordination locks serialize archive publication and active-run recovery, while
-a per-run lease lets
-subsequent invocations remove interrupted partial downloads and stale
-extractions without deleting an extraction owned by a concurrent live run.
+process group, cleans the group after every post-launch exception, and bounds
+graceful reaping before killing any surviving group members and unwinding the
+extraction context. The upstream harness converts the first forwarded signal
+into structured unwinding. On Linux it defers delivery from process creation
+through containment attachment, so independently grouped build or sample
+processes and their descendants are owned and reaped before the harness exits.
+Separate bounded-wait coordination locks serialize archive publication and
+active-run recovery, while a per-run lease prevents a live extraction from
+being reclaimed. Recovery scans and detaches only a bounded stale batch under
+the active-run lock; both stale and normally completed trees are atomically
+moved to private same-filesystem trash and recursively deleted after releasing
+that lock. Subsequent invocations can therefore proceed while deletion runs.
 When post-collection provenance validation is requested, the wrapper retains
 the toolchain through that check, binds the evidence and binary paths to that
 same collection, and removes it afterward. The wrapper exclusively owns the

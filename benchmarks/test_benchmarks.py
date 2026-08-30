@@ -2711,6 +2711,137 @@ runpy.run_path(sys.argv[0], run_name="__main__")
                     except ProcessLookupError:
                         pass
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux containment regression")
+    def test_preflight_defers_popen_return_signal_until_root_is_attached(self) -> None:
+        linux_containment_preflight()
+        original_popen = upstream.subprocess.Popen
+        original_attach = LinuxProcessSupervisor.attach_root
+        original_terminate = upstream.terminate_contained_process
+        attached_after_signal = False
+        cleanup_results: list[set[int]] = []
+
+        def signal_after_popen(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
+            process = original_popen(*args, **kwargs)
+            os.kill(os.getpid(), signal.SIGTERM)
+            return process
+
+        def observed_attach(
+            supervisor: LinuxProcessSupervisor,
+            root_pid: int,
+            descriptor: int | None = None,
+        ) -> None:
+            nonlocal attached_after_signal
+            state = upstream.ACTIVE_HARNESS_SIGNAL_STATE
+            attached_after_signal = (
+                state is not None and state.caught_signal == signal.SIGTERM
+            )
+            original_attach(supervisor, root_pid, descriptor)
+
+        def observed_terminate(
+            process: subprocess.Popen[bytes],
+            supervisor: LinuxProcessSupervisor | None,
+            cleanup_seconds: float = 2.0,
+        ) -> set[int]:
+            remaining = original_terminate(process, supervisor, cleanup_seconds)
+            cleanup_results.append(remaining)
+            return remaining
+
+        with (
+            mock.patch.object(upstream, "_LINUX_PREFLIGHT_COMPLETE", False),
+            mock.patch.object(upstream.subprocess, "Popen", signal_after_popen),
+            mock.patch.object(LinuxProcessSupervisor, "attach_root", observed_attach),
+            mock.patch.object(
+                upstream, "terminate_contained_process", observed_terminate
+            ),
+            self.assertRaises(upstream.HarnessSignal) as raised,
+            upstream.termination_signal_handlers(),
+        ):
+            linux_containment_preflight()
+
+        self.assertEqual(raised.exception.signum, signal.SIGTERM)
+        self.assertTrue(attached_after_signal)
+        self.assertTrue(cleanup_results)
+        self.assertTrue(all(not remaining for remaining in cleanup_results))
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux containment regression")
+    def test_popen_return_signal_waits_for_hostile_descendant_containment(self) -> None:
+        linux_containment_preflight()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pid_marker = root / "detached.pid"
+            leak_marker = root / "detached-survived"
+            command = "\n".join(
+                (
+                    "import os, pathlib, time",
+                    "first = os.fork()",
+                    "if first == 0:",
+                    "    os.setsid()",
+                    "    second = os.fork()",
+                    "    if second == 0:",
+                    "        os.environ.clear()",
+                    f"        pathlib.Path({str(pid_marker)!r}).write_text(str(os.getpid()))",
+                    "        time.sleep(0.4)",
+                    f"        pathlib.Path({str(leak_marker)!r}).write_text('bad')",
+                    "        time.sleep(30)",
+                    "    os._exit(0)",
+                    f"while not pathlib.Path({str(pid_marker)!r}).exists(): time.sleep(0.001)",
+                    "time.sleep(30)",
+                )
+            )
+            environment = os.environ.copy()
+            environment[CONTAINMENT_ENVIRONMENT_KEY] = "e" * 32
+            original_popen = upstream.subprocess.Popen
+            original_attach = LinuxProcessSupervisor.attach_root
+            attached_after_signal = False
+
+            def signal_after_hostile_spawn(
+                *args: object, **kwargs: object
+            ) -> subprocess.Popen[bytes]:
+                process = original_popen(*args, **kwargs)
+                deadline = time.monotonic() + 2.0
+                while not pid_marker.exists() and time.monotonic() < deadline:
+                    if process.poll() is not None:
+                        self.fail("injected process exited before creating its descendant")
+                    time.sleep(0.001)
+                self.assertTrue(pid_marker.exists())
+                os.kill(os.getpid(), signal.SIGTERM)
+                return process
+
+            def observed_attach(
+                supervisor: LinuxProcessSupervisor,
+                root_pid: int,
+                descriptor: int | None = None,
+            ) -> None:
+                nonlocal attached_after_signal
+                state = upstream.ACTIVE_HARNESS_SIGNAL_STATE
+                attached_after_signal = (
+                    state is not None and state.caught_signal == signal.SIGTERM
+                )
+                original_attach(supervisor, root_pid, descriptor)
+
+            with (
+                mock.patch.object(upstream.subprocess, "Popen", signal_after_hostile_spawn),
+                mock.patch.object(LinuxProcessSupervisor, "attach_root", observed_attach),
+                self.assertRaises(upstream.HarnessSignal) as raised,
+                upstream.termination_signal_handlers(),
+            ):
+                run_process(
+                    [sys.executable, "-c", command],
+                    cwd=root,
+                    environment=environment,
+                    timeout_seconds=5.0,
+                )
+
+            self.assertEqual(raised.exception.signum, signal.SIGTERM)
+            self.assertTrue(attached_after_signal)
+            detached_pid = int(pid_marker.read_text(encoding="utf-8"))
+            deadline = time.monotonic() + 2.0
+            while Path(f"/proc/{detached_pid}").exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertFalse(Path(f"/proc/{detached_pid}").exists())
+            time.sleep(0.5)
+            self.assertFalse(leak_marker.exists())
+
     @unittest.skipUnless(
         sys.platform.startswith("linux"),
         "detached descendant containment is enforced by Linux /proc",

@@ -2413,14 +2413,19 @@ def linux_containment_preflight() -> None:
             supervisor = LinuxProcessSupervisor(baseline)
             process: subprocess.Popen[bytes] | None = None
             try:
-                process = subprocess.Popen(
-                    [sys.executable, "-c", script],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,
-                )
-                supervisor.attach_root(process.pid)
+                # A termination arriving after Popen has returned but before the
+                # root pidfd belongs to the supervisor must not unwind through
+                # an untracked child.  Deferral uses a Python handler rather
+                # than a blocked signal mask, so the child inherits no mask.
+                with defer_harness_signal_while_spawning():
+                    process = subprocess.Popen(
+                        [sys.executable, "-c", script],
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=True,
+                    )
+                    supervisor.attach_root(process.pid)
                 deadline = time.monotonic() + 2.0
                 while not marker.exists() and time.monotonic() < deadline:
                     time.sleep(0.01)
@@ -2709,14 +2714,14 @@ def run_process(
                 )
                 if capture_output:
                     output_capture = BoundedProcessCapture(process, max_output_bytes)
-        if supervisor is not None:
-            supervision_started = time.perf_counter_ns()
-            root_descriptor = os.pidfd_open(process.pid, 0)
-            if exit_observer is not None:
-                exit_observer.arm(root_descriptor)
-            supervisor.attach_root(process.pid, root_descriptor)
-            root_descriptor = None
-            supervision_ns = time.perf_counter_ns() - supervision_started
+            if supervisor is not None:
+                supervision_started = time.perf_counter_ns()
+                root_descriptor = os.pidfd_open(process.pid, 0)
+                if exit_observer is not None:
+                    exit_observer.arm(root_descriptor)
+                supervisor.attach_root(process.pid, root_descriptor)
+                root_descriptor = None
+                supervision_ns = time.perf_counter_ns() - supervision_started
         if isinstance(process, GatedProcess):
             setup_ns = time.perf_counter_ns() - setup_started
             start = time.perf_counter_ns()

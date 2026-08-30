@@ -6,6 +6,7 @@ extraction only for the lifetime of the ``provisioned_zig`` context.
 
 from __future__ import annotations
 
+import bisect
 from contextlib import contextmanager
 import fcntl
 import hashlib
@@ -32,6 +33,14 @@ DOWNLOAD_RETRIES = 3
 CACHE_LOCK_NAME = ".machine-god-zig.lock"
 ACTIVE_LOCK_NAME = ".machine-god-zig-active.lock"
 LEASE_NAME = ".machine-god-zig.lease"
+TRASH_PREFIX = ".machine-god-zig-trash-"
+TRASH_LEASE_SUFFIX = ".lease"
+TRASH_CLEANUP_BATCH_SIZE = 8
+TRASH_SCAN_LIMIT = 64
+TRASH_CURSOR_NAME = ".machine-god-zig-trash.cursor"
+ACTIVE_CURSOR_NAME = ".machine-god-zig-active.cursor"
+STALE_ACTIVE_BATCH_SIZE = 8
+STALE_ACTIVE_SCAN_LIMIT = 64
 CACHE_LOCK_TIMEOUT_SECONDS = 30.0
 CACHE_LOCK_RETRY_SECONDS = 0.05
 DEFERRED_SIGNALS = tuple(
@@ -60,6 +69,13 @@ class ToolchainSpec:
     @property
     def url(self) -> str:
         return f"{DOWNLOAD_BASE}/{self.archive_name}"
+
+
+@dataclass(frozen=True)
+class PrivateTrash:
+    path: Path
+    lease_path: Path
+    descriptor: int
 
 
 TOOLCHAINS = {
@@ -283,7 +299,14 @@ def open_private_file(path: Path, *, exclusive: bool = False) -> int:
     if exclusive:
         flags |= os.O_EXCL
     descriptor = os.open(path, flags, 0o600)
-    os.fchmod(descriptor, 0o600)
+    try:
+        os.fchmod(descriptor, 0o600)
+    except BaseException:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        raise
     return descriptor
 
 
@@ -332,11 +355,186 @@ def prune_partial_archives(cache_root: Path, spec: ToolchainSpec) -> None:
         candidate.unlink()
 
 
-def prune_stale_active(active_root: Path) -> None:
-    for candidate in sorted(active_root.iterdir()):
+def trash_lease_path(trash_path: Path) -> Path:
+    return trash_path.with_name(f"{trash_path.name}{TRASH_LEASE_SUFFIX}")
+
+
+def create_private_trash(cache_root: Path) -> PrivateTrash:
+    """Create and exclusively lease an unguessable same-filesystem trash root."""
+
+    path = Path(tempfile.mkdtemp(prefix=TRASH_PREFIX, dir=cache_root))
+    lease_path = trash_lease_path(path)
+    descriptor: int | None = None
+    try:
+        descriptor = open_private_file(lease_path, exclusive=True)
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return PrivateTrash(path, lease_path, descriptor)
+    except BaseException:
+        if descriptor is not None:
+            os.close(descriptor)
+        lease_path.unlink(missing_ok=True)
+        shutil.rmtree(path, ignore_errors=True)
+        raise
+
+
+def claim_abandoned_trash(
+    cache_root: Path,
+    candidate_names: list[str],
+    *,
+    batch_size: int = TRASH_CLEANUP_BATCH_SIZE,
+) -> list[PrivateTrash]:
+    """Exclusively claim bounded abandoned trash while the active lock is held."""
+
+    claimed: list[PrivateTrash] = []
+    try:
+        for name in candidate_names:
+            if len(claimed) >= batch_size:
+                break
+            if not name.startswith(TRASH_PREFIX) or name.endswith(
+                TRASH_LEASE_SUFFIX
+            ):
+                continue
+            path = cache_root / name
+            try:
+                status = path.lstat()
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISDIR(status.st_mode) or stat.S_ISLNK(status.st_mode):
+                raise ProvisionError("unexpected Zig trash-cache entry")
+            lease_path = trash_lease_path(path)
+            try:
+                descriptor = open_private_file(lease_path)
+            except FileNotFoundError:
+                continue
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                os.close(descriptor)
+                continue
+            except BaseException:
+                os.close(descriptor)
+                raise
+            claimed.append(PrivateTrash(path, lease_path, descriptor))
+    except BaseException:
+        for trash in claimed:
+            os.close(trash.descriptor)
+        raise
+    return claimed
+
+
+def remove_private_trash(trash: PrivateTrash) -> None:
+    """Delete one exclusively leased trash tree and retire its sibling lease."""
+
+    removed = False
+    try:
+        shutil.rmtree(trash.path)
+        removed = True
+    finally:
+        try:
+            if removed:
+                trash.lease_path.unlink(missing_ok=True)
+        finally:
+            os.close(trash.descriptor)
+
+
+def read_scan_cursor(cache_root: Path, name: str) -> str:
+    descriptor = open_private_file(cache_root / name)
+    try:
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        payload = os.read(descriptor, 512)
+    finally:
+        os.close(descriptor)
+    try:
+        return payload.decode("utf-8")
+    except UnicodeDecodeError:
+        return ""
+
+
+def write_scan_cursor(cache_root: Path, name: str, cursor: str) -> None:
+    descriptor = open_private_file(cache_root / name)
+    try:
+        payload = cursor.encode("utf-8")[:511]
+        os.ftruncate(descriptor, 0)
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        while payload:
+            written = os.write(descriptor, payload)
+            if written <= 0:
+                raise OSError("could not update the Zig active-cache cursor")
+            payload = payload[written:]
+    finally:
+        os.close(descriptor)
+
+
+def rotating_active_window(
+    cache_root: Path,
+    candidate_names: list[str],
+    *,
+    scan_limit: int = STALE_ACTIVE_SCAN_LIMIT,
+) -> list[str]:
+    """Return a persistent round-robin window while the active lock is held."""
+
+    names = candidate_names
+    if not names or scan_limit <= 0:
+        return []
+    cursor = read_scan_cursor(cache_root, ACTIVE_CURSOR_NAME)
+    start = bisect.bisect_right(names, cursor)
+    rotated = names[start:] + names[:start]
+    selected = rotated[:scan_limit]
+    write_scan_cursor(cache_root, ACTIVE_CURSOR_NAME, selected[-1])
+    return selected
+
+
+def rotating_trash_window(
+    cache_root: Path,
+    candidate_names: list[str],
+    *,
+    scan_limit: int = TRASH_SCAN_LIMIT,
+) -> list[str]:
+    """Return a persistent round-robin abandoned-trash inspection window."""
+
+    names = candidate_names
+    if not names or scan_limit <= 0:
+        return []
+    cursor = read_scan_cursor(cache_root, TRASH_CURSOR_NAME)
+    start = bisect.bisect_right(names, cursor)
+    rotated = names[start:] + names[:start]
+    selected = rotated[:scan_limit]
+    write_scan_cursor(cache_root, TRASH_CURSOR_NAME, selected[-1])
+    return selected
+
+
+def move_stale_active_to_trash(
+    active_root: Path,
+    trash_root: Path,
+    *,
+    candidate_names: list[str] | None = None,
+    batch_size: int = STALE_ACTIVE_BATCH_SIZE,
+    scan_limit: int = STALE_ACTIVE_SCAN_LIMIT,
+) -> list[Path]:
+    """Detach a bounded number of exclusively leased stale extractions.
+
+    The caller holds ``ACTIVE_LOCK_NAME``. Recursive deletion is deliberately
+    left to the caller after that coordination lock has been released.
+    """
+
+    moved: list[Path] = []
+    scanned = 0
+    if candidate_names is None:
+        with os.scandir(active_root) as entries:
+            names = [entry.name for entry in entries]
+    else:
+        names = candidate_names
+    for name in names:
+        if scanned >= scan_limit or len(moved) >= batch_size:
+            break
+        scanned += 1
+        candidate = active_root / name
         if not candidate.name.startswith("zig-"):
             continue
-        status = candidate.lstat()
+        try:
+            status = candidate.lstat()
+        except FileNotFoundError:
+            continue
         if not stat.S_ISDIR(status.st_mode) or stat.S_ISLNK(status.st_mode):
             raise ProvisionError("unexpected Zig active-cache entry")
         lease_path = candidate / LEASE_NAME
@@ -349,9 +547,23 @@ def prune_stale_active(active_root: Path) -> None:
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 continue
-            shutil.rmtree(candidate)
+            destination = trash_root / candidate.name
+            try:
+                candidate.rename(destination)
+            except FileNotFoundError:
+                continue
+            moved.append(destination)
         finally:
             os.close(descriptor)
+    return moved
+
+
+def move_owned_active_to_trash(run_directory: Path, trash_root: Path) -> Path:
+    """Atomically detach the caller's leased extraction while coordinated."""
+
+    destination = trash_root / run_directory.name
+    run_directory.rename(destination)
+    return destination
 
 
 def create_active_lease(active_root: Path, spec: ToolchainSpec) -> tuple[Path, int]:
@@ -382,16 +594,39 @@ def provisioned_zig(
     cache_root.mkdir(mode=0o700, parents=True, exist_ok=True)
     run_directory: Path | None = None
     lease_descriptor: int | None = None
+    pending_trashes: list[PrivateTrash] = []
     try:
         with cache_lock(cache_root):
             prune_partial_archives(cache_root, spec)
             archive = ensure_archive(cache_root, spec, run)
-        with cache_lock(cache_root, ACTIVE_LOCK_NAME):
-            active_root = cache_root / "active"
-            active_root.mkdir(mode=0o700, exist_ok=True)
-            prune_stale_active(active_root)
-            with defer_termination_signals():
+        active_root = cache_root / "active"
+        active_root.mkdir(mode=0o700, exist_ok=True)
+        with os.scandir(active_root) as entries:
+            active_names = sorted(entry.name for entry in entries)
+        with os.scandir(cache_root) as entries:
+            trash_names = sorted(
+                entry.name
+                for entry in entries
+                if entry.name.startswith(TRASH_PREFIX)
+                and not entry.name.endswith(TRASH_LEASE_SUFFIX)
+            )
+        with defer_termination_signals():
+            with cache_lock(cache_root, ACTIVE_LOCK_NAME):
+                trash_window = rotating_trash_window(cache_root, trash_names)
+                pending_trashes.extend(
+                    claim_abandoned_trash(cache_root, trash_window)
+                )
+                stale_trash = create_private_trash(cache_root)
+                pending_trashes.append(stale_trash)
+                active_window = rotating_active_window(cache_root, active_names)
+                move_stale_active_to_trash(
+                    active_root,
+                    stale_trash.path,
+                    candidate_names=active_window,
+                )
                 run_directory, lease_descriptor = create_active_lease(active_root, spec)
+        while pending_trashes:
+            remove_private_trash(pending_trashes.pop())
         install_dir = run_directory / "toolchain"
         extract_archive(archive, install_dir, run)
         executable = install_dir / "zig"
@@ -400,16 +635,47 @@ def provisioned_zig(
         write_marker(install_dir, spec)
         yield executable.resolve(strict=True)
     finally:
-        primary_failure = sys.exc_info()[0] is not None
+        primary_failure = sys.exc_info()[1]
+        cleanup_failure: BaseException | None = None
+        owned_trash: PrivateTrash | None = None
         try:
             if run_directory is not None:
-                with defer_termination_signals(), cache_lock(
-                    cache_root, ACTIVE_LOCK_NAME
-                ):
-                    shutil.rmtree(run_directory)
-        except (OSError, ProvisionError) as error:
-            if not primary_failure:
-                raise ProvisionError("could not remove the temporary Zig toolchain") from error
+                try:
+                    with defer_termination_signals():
+                        with cache_lock(cache_root, ACTIVE_LOCK_NAME):
+                            owned_trash = create_private_trash(cache_root)
+                            move_owned_active_to_trash(
+                                run_directory, owned_trash.path
+                            )
+                    trash_to_remove = owned_trash
+                    owned_trash = None
+                    remove_private_trash(trash_to_remove)
+                except BaseException as error:
+                    cleanup_failure = error
         finally:
+            if owned_trash is not None:
+                try:
+                    remove_private_trash(owned_trash)
+                except BaseException as error:
+                    if cleanup_failure is None:
+                        cleanup_failure = error
+            while pending_trashes:
+                trash = pending_trashes.pop()
+                try:
+                    remove_private_trash(trash)
+                except BaseException as error:
+                    if cleanup_failure is None:
+                        cleanup_failure = error
             if lease_descriptor is not None:
-                os.close(lease_descriptor)
+                try:
+                    os.close(lease_descriptor)
+                except BaseException as error:
+                    if cleanup_failure is None:
+                        cleanup_failure = error
+
+        if primary_failure is None and cleanup_failure is not None:
+            if isinstance(cleanup_failure, (OSError, ProvisionError)):
+                raise ProvisionError(
+                    "could not remove the temporary Zig toolchain"
+                ) from cleanup_failure
+            raise cleanup_failure
