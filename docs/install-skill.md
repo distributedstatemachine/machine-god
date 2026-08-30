@@ -162,11 +162,20 @@ staging, after final prepublication verification, and directly before rename.
 A cancelled or failed precommit execution attempts identity-checked, entry-,
 depth-, name-, and operation-bounded descriptor-relative cleanup and never
 reports success. If stage `mkdirat` succeeds but the tool then cannot acquire
-or validate the staged descriptor, it still makes one bounded cleanup attempt:
-it removes only an empty entry whose no-follow identity is proven to be the
-entry just created. A preexisting collision or changed replacement is never
-removed. Cleanup stops without deleting an unproved identity; a failed or
-contended cleanup may leave a private random-name residue for host maintenance.
+the staged descriptor, it still makes one bounded no-follow removal attempt;
+before descriptor identity exists this can remove only the current empty
+directory and never recursively traverses it. After descriptor acquisition,
+recursive cleanup first proves that the pathname still names the retained
+identity. A changed or nonempty replacement is not recursively removed.
+Cleanup stops without deleting an unproved identity; a failed or contended
+cleanup may leave a private random-name residue for host maintenance.
+
+As with the other native workspace tools, an uncoordinated process holding the
+same operating-system identity and direct write authority to the workspace is
+a trusted external mutator during the platform's non-atomic `mkdirat`-to-open
+directory-acquisition interval. After the descriptor is acquired, staged entry
+identity and content validation detects pathname replacement or injection both
+before and after publication; it cannot produce success for a changed tree.
 
 Once rename succeeds, or its result cannot prove that publication did not
 occur, cancellation is ignored while bounded postcommit identity/content

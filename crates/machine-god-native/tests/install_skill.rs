@@ -186,7 +186,7 @@ fn unicode_case_fold_aliases_of_the_managed_root_are_rejected_as_overlap() {
     let workspace = TemporaryDirectory::new();
     let tool = tool(workspace.path());
 
-    for source in ["ſkills/rust", "sKills/rust"] {
+    for source in ["ſkills/rust", "s\u{212a}ills/rust"] {
         let error = tool.prepare(call(json!({"source": source}))).unwrap_err();
         assert_eq!(code(error), "install_skill_overlap", "source: {source}");
     }

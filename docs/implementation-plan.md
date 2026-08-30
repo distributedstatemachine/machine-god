@@ -26,7 +26,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33257985954` (`GREEN`)
 - Main Benchmark evidence: `33257985878` (`GREEN`)
 - Active branch: `agent/m05-install-skill`
-- Active phase: `replacement install_skill candidate passed the complete exact local gate`
+- Active phase: `third install_skill candidate passed the complete exact local gate`
 - Next gate: `freeze one replacement behavior SHA and restart all three adversarial product-review tracks`
 <!-- canonical-live-status:end -->
 
