@@ -229,6 +229,57 @@ class CiChangeClassificationTests(unittest.TestCase):
         self.assert_result(output, full=True, docs_only=False)
         self.assertIn("'module'", completed.stdout)
 
+    def test_docs_suffixed_gitlink_change_uses_full_gate(self) -> None:
+        submodule_path = Path(self.temporary_directory.name) / "docs-submodule"
+        submodule_path.mkdir()
+        submodule = GitRepository(submodule_path)
+        submodule.write("payload", "one\n")
+        first = submodule.commit("first")
+        submodule.write("payload", "two\n")
+        second = submodule.commit("second")
+
+        self.repository.git(
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            str(submodule_path),
+            "docs/manual.md",
+        )
+        self.repository.git("-C", "docs/manual.md", "checkout", first)
+        self.repository.git(
+            "config", "-f", ".gitmodules", "submodule.docs/manual.md.ignore", "all"
+        )
+        before = self.repository.commit("add docs-suffixed submodule")
+
+        self.repository.git("-C", "docs/manual.md", "checkout", second)
+        self.repository.git("add", "-f", "docs/manual.md")
+        head = self.repository.commit("update docs-suffixed submodule")
+        completed, output = self.run_classifier(before=before, head=head)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assert_result(output, full=True, docs_only=False)
+        self.assertIn("'docs/manual.md'", completed.stdout)
+
+    def test_docs_symlink_and_executable_mode_changes_use_full_gate(self) -> None:
+        self.repository.write("docs/guide.md", "guide\n")
+        regular = self.repository.commit("add regular guide")
+
+        (self.repository_path / "docs/guide.md").unlink()
+        os.symlink("../README.md", self.repository_path / "docs/guide.md")
+        symlink = self.repository.commit("replace guide with symlink")
+        completed, output = self.run_classifier(before=regular, head=symlink)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assert_result(output, full=True, docs_only=False)
+        self.assertIn("'docs/guide.md'", completed.stdout)
+
+        self.repository.git("reset", "--hard", regular)
+        os.chmod(self.repository_path / "docs/guide.md", 0o755)
+        executable = self.repository.commit("make guide executable")
+        completed, output = self.run_classifier(before=regular, head=executable)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assert_result(output, full=True, docs_only=False)
+        self.assertIn("'docs/guide.md'", completed.stdout)
+
     def test_pull_request_uses_merge_base_not_base_tip(self) -> None:
         self.repository.git("switch", "-c", "feature")
         self.repository.write("docs/pr.md", "pull request\n")

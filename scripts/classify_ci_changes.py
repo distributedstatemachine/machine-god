@@ -22,6 +22,8 @@ DOC_EXCEPTIONS = {
     "docs/testkit.md",
 }
 KNOWN_STATUSES = {"A", "B", "D", "M", "T", "U", "X"}
+REGULAR_BLOB_MODE = "100644"
+MISSING_MODE = "000000"
 
 
 class ClassificationError(RuntimeError):
@@ -132,11 +134,11 @@ def _pull_request_range(base: str | None, head: str | None) -> tuple[str, str, s
     return merge_base, resolved_head, "pull-request merge-base range"
 
 
-def _changed_paths(base: str, head: str) -> list[tuple[str, str]]:
+def _changed_paths(base: str, head: str) -> list[tuple[str, str, str, str]]:
     raw = _run_git(
         [
             "diff",
-            "--name-status",
+            "--raw",
             "-z",
             "--no-renames",
             "--ignore-submodules=none",
@@ -151,20 +153,36 @@ def _changed_paths(base: str, head: str) -> list[tuple[str, str]]:
         raise ClassificationError("git diff produced an unterminated record")
     fields.pop()
     if len(fields) % 2:
-        raise ClassificationError("git diff produced a malformed name-status record")
+        raise ClassificationError("git diff produced a malformed raw record")
 
-    changes: list[tuple[str, str]] = []
+    changes: list[tuple[str, str, str, str]] = []
     for index in range(0, len(fields), 2):
         try:
-            status = fields[index].decode("ascii")
+            metadata = fields[index].decode("ascii")
             path = fields[index + 1].decode("utf-8")
         except UnicodeDecodeError as error:
             raise ClassificationError("git diff contained a non-UTF-8 record") from error
+        metadata_fields = metadata.split()
+        if len(metadata_fields) != 5 or not metadata_fields[0].startswith(":"):
+            raise ClassificationError("git diff produced malformed raw metadata")
+        old_mode = metadata_fields[0][1:]
+        new_mode = metadata_fields[1]
+        old_object = metadata_fields[2]
+        new_object = metadata_fields[3]
+        status = metadata_fields[4]
         if status not in KNOWN_STATUSES:
             raise ClassificationError(f"git diff contained unexpected status {status!r}")
+        for mode in (old_mode, new_mode):
+            if len(mode) != 6 or any(character not in "01234567" for character in mode):
+                raise ClassificationError("git diff contained an invalid object mode")
+        for object_id in (old_object, new_object):
+            if not object_id or any(
+                character not in "0123456789abcdefABCDEF" for character in object_id
+            ):
+                raise ClassificationError("git diff contained an invalid object ID")
         if not path or "\n" in path or "\r" in path or "\x00" in path:
             raise ClassificationError("git diff contained an invalid path")
-        changes.append((status, path))
+        changes.append((status, old_mode, new_mode, path))
     return changes
 
 
@@ -177,6 +195,17 @@ def _is_cheap_documentation(path: str) -> bool:
         return False
     parts = PurePosixPath(path).parts
     return len(parts) >= 2 and parts[0] == "docs" and all(part not in {"", ".", ".."} for part in parts)
+
+
+def _is_cheap_documentation_change(
+    status: str, old_mode: str, new_mode: str, path: str
+) -> bool:
+    expected_modes = {
+        "A": (MISSING_MODE, REGULAR_BLOB_MODE),
+        "D": (REGULAR_BLOB_MODE, MISSING_MODE),
+        "M": (REGULAR_BLOB_MODE, REGULAR_BLOB_MODE),
+    }
+    return expected_modes.get(status) == (old_mode, new_mode) and _is_cheap_documentation(path)
 
 
 def classify(
@@ -201,7 +230,11 @@ def classify(
 
     if not changes:
         return Classification(True, False, f"empty {range_reason}")
-    non_docs = [path for _status, path in changes if not _is_cheap_documentation(path)]
+    non_docs = [
+        path
+        for status, old_mode, new_mode, path in changes
+        if not _is_cheap_documentation_change(status, old_mode, new_mode, path)
+    ]
     if non_docs:
         return Classification(
             True,

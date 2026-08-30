@@ -40,12 +40,16 @@ complete gate. Pull requests use the unique merge base of the event's base and
 head commits. Manual dispatch and unknown event types always select the
 complete gate.
 
-Git diff is invoked without rename detection and with NUL-delimited output so
-both sides of a rename remain visible and unusual path bytes cannot alter the
-classification. Repository submodule-ignore configuration is overridden so a
-changed gitlink cannot disappear from the classified path set. CI runs are not
-cancelled by a later commit: a documentation follow-up cannot erase the
-separate exact-SHA result for the preceding product candidate.
+Git's raw diff is invoked without rename detection and with NUL-delimited
+output so both sides of a rename remain visible and unusual path bytes cannot
+alter the classification. A cheap documentation addition, modification, or
+deletion must have ordinary non-executable blob modes on every present side;
+symlinks, executable blobs, gitlinks, type changes, and unknown modes or
+statuses select the complete gate. Repository submodule-ignore configuration
+is overridden so a changed gitlink cannot disappear from the classified path
+set. CI runs are not cancelled by a later commit: a documentation follow-up
+cannot erase the separate exact-SHA result for the preceding product
+candidate.
 
 ## Trust and delivery boundary
 
