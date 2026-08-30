@@ -1535,7 +1535,7 @@ fn help() -> String {
             "  session      Inspect a saved session\n",
             "  sessions     List saved sessions\n",
             "  status       Show configuration and runtime information\n",
-            "  workspace    List configured workspace directories\n",
+            "  workspace    Show the current workspace\n",
             "\n",
             "Options:\n",
             "  -h, --help       Show this help\n",

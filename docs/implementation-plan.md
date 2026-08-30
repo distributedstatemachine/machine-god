@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33306328776` (`GREEN`)
 - Main Benchmark evidence: `33306328774` (`GREEN`)
 - Active branch: `agent/m03-workspace`
-- Active phase: `install_skill delivered; bounded top-level workspace CLI next`
-- Next gate: `define and implement the bounded read-only workspace CLI candidate, then run focused and complete local gates`
+- Active phase: `bounded read-only workspace CLI candidate integrated; focused checks are green`
+- Next gate: `run the complete exact-toolchain local gate, freeze one behavior SHA, and start three fresh adversarial product reviews`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
