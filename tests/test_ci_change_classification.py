@@ -231,7 +231,7 @@ class CiChangeClassificationTests(unittest.TestCase):
             '"XDG_STATE_HOME": str(background_state_root)',
             '"HOME": str(background_home)',
             'background_machine = run_background("background", "--json")',
-            "'{\"kind\":\"background_list\",\"count\":0,'",
+            "'{\"kind\":\"background\",\"count\":0,'",
             "path.exists()",
             "background_state_root",
         ):

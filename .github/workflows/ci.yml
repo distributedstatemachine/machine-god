@@ -718,7 +718,7 @@ jobs:
                   f"unexpected human background output: {background_human.stdout!r}"
               )
           expected_background_json = (
-              '{"kind":"background_list","count":0,'
+              '{"kind":"background","count":0,'
               '"truncated":false,"records":[]}\n'
           )
           if background_machine.stdout != expected_background_json:
