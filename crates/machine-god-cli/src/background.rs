@@ -3,7 +3,6 @@ use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::io;
-use std::path::{Component, Path};
 use std::task::{Context, Poll, Waker};
 
 use machine_god_core::BoxFuture;
@@ -356,11 +355,15 @@ fn validate_bounded_string(
 
 fn validate_path(value: &str) -> Result<(), BackgroundOperationalFailure> {
     validate_bounded_string(value, MAX_BACKGROUND_PATH_BYTES, true)?;
-    let path = Path::new(value);
-    if !path.is_absolute()
-        || path
-            .components()
-            .any(|component| component == Component::ParentDir)
+    if value == "/" {
+        return Ok(());
+    }
+    let Some(components) = value.strip_prefix('/') else {
+        return Err(BackgroundOperationalFailure::ResourceLimit);
+    };
+    if components
+        .split('/')
+        .any(|component| component.is_empty() || matches!(component, "." | ".."))
     {
         return Err(BackgroundOperationalFailure::ResourceLimit);
     }
@@ -1069,6 +1072,55 @@ mod tests {
                 b"machine-god background: could not inspect background history: ResourceLimit\n"
             );
         }
+    }
+
+    #[test]
+    fn lexically_noncanonical_native_paths_fail_closed_before_success_output() {
+        for cwd in [
+            "/workspace/.",
+            "/workspace/../child",
+            "/workspace//child",
+            "/workspace/",
+            "//workspace",
+        ] {
+            let BackgroundSnapshot::Detail(mut snapshot) = detail() else {
+                unreachable!()
+            };
+            snapshot.cwd = cwd.to_owned();
+
+            let host = FakeHost::ready(Ok(BackgroundSnapshot::Detail(snapshot.clone())));
+            let (exit, stdout, stderr) = invoke(&host, &["last"]);
+            assert_eq!(exit, 1, "accepted malformed cwd {cwd:?}");
+            assert!(stdout.is_empty(), "rendered malformed cwd {cwd:?}");
+            assert_eq!(
+                stderr,
+                b"machine-god background: could not inspect background history: ResourceLimit\n"
+            );
+
+            let host = FakeHost::ready(Ok(BackgroundSnapshot::Detail(snapshot)));
+            let (exit, stdout, stderr) = invoke(&host, &["last", "--json"]);
+            assert_eq!(exit, 1, "accepted malformed cwd {cwd:?}");
+            assert_eq!(
+                stdout,
+                b"{\"kind\":\"background\",\"error\":\"could not inspect background history: ResourceLimit\",\"code\":\"ResourceLimit\"}\n"
+            );
+            assert!(stderr.is_empty());
+        }
+    }
+
+    #[test]
+    fn filesystem_root_is_a_valid_canonical_native_path() {
+        let BackgroundSnapshot::Detail(mut snapshot) = detail() else {
+            unreachable!()
+        };
+        snapshot.cwd = "/".to_owned();
+        let host = FakeHost::ready(Ok(BackgroundSnapshot::Detail(snapshot)));
+
+        let (exit, stdout, stderr) = invoke(&host, &["last", "--json"]);
+
+        assert_eq!(exit, 0);
+        assert!(String::from_utf8(stdout).unwrap().contains("\"cwd\":\"/\""));
+        assert!(stderr.is_empty());
     }
 
     #[test]
