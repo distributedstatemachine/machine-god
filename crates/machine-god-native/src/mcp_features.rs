@@ -7,6 +7,7 @@ use std::io;
 use std::sync::Arc;
 use std::task::Poll;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use machine_god_core::{
     BoxFuture, CancellationToken, PreparedToolCall, Tool, ToolCall, ToolContext, ToolError,
     ToolErrorKind, ToolName, ToolOutput, ToolSpec,
@@ -34,12 +35,20 @@ pub const MAX_MCP_FEATURE_ARGUMENTS_BYTES: usize = 64 * 1024;
 pub const MAX_MCP_FEATURE_CONTEXT_PAIRS: usize = 128;
 /// Maximum aggregate key and value bytes in a completion context object.
 pub const MAX_MCP_FEATURE_CONTEXT_BYTES: usize = 128 * 1024;
+/// Maximum prompt arguments in a request or advertised prompt.
+pub const MAX_MCP_FEATURE_PROMPT_ARGUMENTS: usize = 128;
 /// Maximum resources, templates, or prompts in one catalog result.
 pub const MAX_MCP_FEATURE_CATALOG_ITEMS: usize = 4_096;
 /// Maximum resource contents or prompt messages in one result.
 pub const MAX_MCP_FEATURE_CONTENT_ITEMS: usize = 256;
 /// Maximum values in one completion result.
 pub const MAX_MCP_FEATURE_COMPLETION_VALUES: usize = 100;
+/// Maximum UTF-8 bytes in one text, blob, image, or audio content field.
+pub const MAX_MCP_FEATURE_CONTENT_FIELD_BYTES: usize = 1024 * 1024;
+/// Maximum icons in a resource-link content item.
+pub const MAX_MCP_FEATURE_ICONS: usize = 16;
+/// Maximum advertised sizes in one resource-link icon.
+pub const MAX_MCP_FEATURE_ICON_SIZES: usize = 16;
 /// Maximum compact serialized canonical prepared arguments.
 pub const MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES: usize = 64 * 1024;
 /// Maximum compact serialized bytes in an authority payload before its envelope.
@@ -236,7 +245,7 @@ impl fmt::Debug for McpFeatureRequest {
 /// The body cannot contain `trust`, `authority`, `action`, or `server`; the
 /// tool stamps those fields from its trusted request after final validation.
 pub struct McpFeaturePayload {
-    value: Value,
+    value: IterativeJsonValue,
 }
 
 impl McpFeaturePayload {
@@ -247,8 +256,9 @@ impl McpFeaturePayload {
     /// Returns a fixed resource-limit error for a non-object, reserved
     /// envelope field, over-depth/over-node value, or oversized compact JSON.
     pub fn new(value: Value) -> Result<Self, McpFeatureError> {
-        if validate_payload_bounds(&value).is_err()
-            || value.as_object().is_none_or(|object| {
+        let value = IterativeJsonValue::new(value);
+        if validate_payload_bounds(value.get()).is_err()
+            || value.get().as_object().is_none_or(|object| {
                 RESERVED_PAYLOAD_FIELDS
                     .iter()
                     .any(|key| object.contains_key(*key))
@@ -259,8 +269,8 @@ impl McpFeaturePayload {
         Ok(Self { value })
     }
 
-    fn into_value(mut self) -> Value {
-        std::mem::take(&mut self.value)
+    fn into_value(self) -> Value {
+        self.value.into_value()
     }
 }
 
@@ -272,7 +282,25 @@ impl fmt::Debug for McpFeaturePayload {
     }
 }
 
-impl Drop for McpFeaturePayload {
+struct IterativeJsonValue {
+    value: Value,
+}
+
+impl IterativeJsonValue {
+    fn new(value: Value) -> Self {
+        Self { value }
+    }
+
+    fn get(&self) -> &Value {
+        &self.value
+    }
+
+    fn into_value(mut self) -> Value {
+        std::mem::take(&mut self.value)
+    }
+}
+
+impl Drop for IterativeJsonValue {
     fn drop(&mut self) {
         drop_json_iterative(std::mem::take(&mut self.value));
     }
@@ -331,6 +359,9 @@ impl std::error::Error for McpFeatureError {}
 /// Before exercising an underlying external effect, implementations must
 /// establish that the exact server and, where present, exact stable identity
 /// and completion argument are admitted for the caller's current identity.
+/// For prompt get, implementations must reject unknown argument keys and
+/// missing required arguments against that same admitted prompt snapshot
+/// before any provider effect.
 /// They must perform only the requested read-only action. Immediately before
 /// returning, they must live-revalidate that same admission and identity so a
 /// stale, replaced, hidden, or deauthorized resource/prompt is never
@@ -384,10 +415,15 @@ impl Tool for McpFeaturesTool {
     }
 
     fn prepare(&self, call: ToolCall) -> Result<PreparedToolCall, ToolError> {
-        if call.name != tool_name() {
+        let ToolCall {
+            name, arguments, ..
+        } = call;
+        let arguments = IterativeJsonValue::new(arguments);
+        if name != tool_name() {
             return Err(invalid_arguments());
         }
-        let request = decode_request(&call.arguments)?;
+        validate_json_structure(arguments.get()).map_err(|()| resource_limit())?;
+        let request = decode_request(arguments.get())?;
         let canonical = request.as_json();
         ensure_serialized(&canonical, MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES)?;
         Ok(PreparedToolCall::without_authority(canonical))
@@ -399,15 +435,18 @@ impl Tool for McpFeaturesTool {
         arguments: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        let arguments = IterativeJsonValue::new(arguments);
         Box::pin(async move {
             check_cancellation(&cancellation)?;
-            let request = decode_request(&arguments)?;
+            validate_json_structure(arguments.get()).map_err(|()| resource_limit())?;
+            let request = decode_request(arguments.get())?;
             let canonical = request.as_json();
             ensure_serialized(&canonical, MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES)?;
-            if canonical != arguments {
+            if canonical != *arguments.get() {
                 return Err(invalid_arguments());
             }
 
+            check_cancellation(&cancellation)?;
             let result =
                 call_authority(self.authority.as_ref(), request.clone(), &cancellation).await;
             check_cancellation(&cancellation)?;
@@ -509,9 +548,14 @@ fn decode_request(arguments: &Value) -> Result<McpFeatureRequest, ToolError> {
                 "prompt",
                 MAX_MCP_FEATURE_NAME_BYTES,
             )?);
-            request.arguments = decode_string_map(object.get("arguments"), usize::MAX, usize::MAX)?;
-            let arguments_json = string_map_json(&request.arguments);
-            ensure_serialized(&arguments_json, MAX_MCP_FEATURE_ARGUMENTS_BYTES)?;
+            if let Some(arguments) = object.get("arguments") {
+                ensure_serialized(arguments, MAX_MCP_FEATURE_ARGUMENTS_BYTES)?;
+            }
+            request.arguments = decode_string_map(
+                object.get("arguments"),
+                MAX_MCP_FEATURE_PROMPT_ARGUMENTS,
+                usize::MAX,
+            )?;
         }
         McpFeatureAction::PromptComplete | McpFeatureAction::ResourceComplete => {
             reject_special_maps(object, false, true)?;
@@ -630,6 +674,9 @@ async fn call_authority(
     request: McpFeatureRequest,
     cancellation: &CancellationToken,
 ) -> Result<McpFeaturePayload, McpFeatureError> {
+    if cancellation.is_cancelled() {
+        return Err(McpFeatureError::new(McpFeatureErrorKind::Cancelled));
+    }
     let mut operation = authority.call(request, cancellation.clone());
     let mut cancellation_wait = Box::pin(cancellation.cancelled());
     let result = poll_fn(|context| {
@@ -654,7 +701,7 @@ fn publish_payload(
     cancellation: &CancellationToken,
 ) -> Result<ToolOutput, ToolError> {
     check_cancellation(cancellation)?;
-    validate_payload_for_request(request, &payload.value)?;
+    validate_payload_for_request(request, payload.value.get())?;
     check_cancellation(cancellation)?;
     let Value::Object(payload) = payload.into_value() else {
         unreachable!("payload constructor guarantees an object")
@@ -684,7 +731,6 @@ fn validate_payload_for_request(
     request: &McpFeatureRequest,
     payload: &Value,
 ) -> Result<(), ToolError> {
-    validate_payload_bounds(payload).map_err(|()| resource_limit())?;
     let object = payload.as_object().ok_or_else(resource_limit)?;
     if RESERVED_PAYLOAD_FIELDS
         .iter()
@@ -762,7 +808,6 @@ fn validate_list_payload(
     if items.len() > MAX_MCP_FEATURE_CATALOG_ITEMS {
         return Err(resource_limit());
     }
-    let mut identities = BTreeSet::new();
     let mut previous: Option<&str> = None;
     for item in items {
         let Some(item) = item.as_object() else {
@@ -796,7 +841,7 @@ fn validate_list_payload(
         if server != request.server() || identity.len() > identity_limit(request.action) {
             return Err(resource_limit());
         }
-        if previous.is_some_and(|value| value >= identity) || !identities.insert(identity) {
+        if previous.is_some_and(|value| value >= identity) {
             return Err(resource_limit());
         }
         previous = Some(identity);
@@ -824,11 +869,19 @@ fn validate_list_payload(
             let Some(arguments) = item.get("arguments").and_then(Value::as_array) else {
                 return Err(resource_limit());
             };
-            if arguments.len() > MAX_MCP_FEATURE_CONTEXT_PAIRS {
+            if arguments.len() > MAX_MCP_FEATURE_PROMPT_ARGUMENTS {
                 return Err(resource_limit());
             }
+            let mut argument_names = BTreeSet::new();
             for argument in arguments {
                 validate_prompt_argument(argument)?;
+                let name = argument
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .expect("validated prompt argument has a name");
+                if !argument_names.insert(name) {
+                    return Err(resource_limit());
+                }
             }
             for (key, limit) in [
                 ("title", MAX_MCP_FEATURE_TITLE_BYTES),
@@ -881,23 +934,34 @@ fn validate_resource_content(value: &Map<String, Value>) -> Result<(), ToolError
     if let Some(mime) = value.get("mimeType") {
         validate_string(mime, MAX_MCP_FEATURE_TITLE_BYTES, false)?;
     }
-    let kind = value
-        .get("type")
-        .and_then(Value::as_str)
-        .ok_or_else(resource_limit)?;
-    match kind {
-        "text" if value.contains_key("text") && !value.contains_key("blob") => validate_string(
-            value.get("text").expect("checked"),
-            MAX_MCP_FEATURE_PAYLOAD_BYTES,
-            false,
-        ),
-        "blob" if value.contains_key("blob") && !value.contains_key("text") => validate_string(
-            value.get("blob").expect("checked"),
-            MAX_MCP_FEATURE_PAYLOAD_BYTES,
-            false,
-        ),
-        _ => Err(resource_limit()),
+    validate_annotations_and_metadata(value)?;
+    validate_resource_data(value, true)
+}
+
+fn validate_resource_data(
+    value: &Map<String, Value>,
+    require_projected_type: bool,
+) -> Result<(), ToolError> {
+    let text = value.get("text");
+    let blob = value.get("blob");
+    if text.is_some() == blob.is_some() {
+        return Err(resource_limit());
     }
+    if let Some(text) = text {
+        validate_string(text, MAX_MCP_FEATURE_CONTENT_FIELD_BYTES, false)?;
+        if require_projected_type && value.get("type").and_then(Value::as_str) != Some("text") {
+            return Err(resource_limit());
+        }
+    } else {
+        let blob = blob.expect("exactly one resource data field is present");
+        validate_string(blob, MAX_MCP_FEATURE_CONTENT_FIELD_BYTES, false)?;
+        if !valid_standard_base64(blob.as_str().expect("validated string"))
+            || (require_projected_type && value.get("type").and_then(Value::as_str) != Some("blob"))
+        {
+            return Err(resource_limit());
+        }
+    }
+    Ok(())
 }
 
 fn validate_prompt_message(value: &Map<String, Value>) -> Result<(), ToolError> {
@@ -919,17 +983,171 @@ fn validate_prompt_message(value: &Map<String, Value>) -> Result<(), ToolError> 
     ) {
         return Err(resource_limit());
     }
-    let content_type = value
+    let content = value
         .get("content")
         .and_then(Value::as_object)
-        .and_then(|content| content.get("type"))
+        .ok_or_else(resource_limit)?;
+    let content_type = content
+        .get("type")
         .and_then(Value::as_str)
         .ok_or_else(resource_limit)?;
-    if content_type == content_kind {
-        Ok(())
-    } else {
-        Err(resource_limit())
+    if content_type != content_kind {
+        return Err(resource_limit());
     }
+    validate_prompt_content(content, content_kind)
+}
+
+fn validate_prompt_content(
+    content: &Map<String, Value>,
+    content_kind: &str,
+) -> Result<(), ToolError> {
+    validate_annotations_and_metadata(content)?;
+    match content_kind {
+        "text" => validate_string(
+            content.get("text").ok_or_else(resource_limit)?,
+            MAX_MCP_FEATURE_CONTENT_FIELD_BYTES,
+            false,
+        ),
+        "image" | "audio" => {
+            let data = content.get("data").ok_or_else(resource_limit)?;
+            validate_string(data, MAX_MCP_FEATURE_CONTENT_FIELD_BYTES, false)?;
+            validate_string(
+                content.get("mimeType").ok_or_else(resource_limit)?,
+                MAX_MCP_FEATURE_TITLE_BYTES,
+                true,
+            )?;
+            if valid_standard_base64(data.as_str().expect("validated string")) {
+                Ok(())
+            } else {
+                Err(resource_limit())
+            }
+        }
+        "resource_link" => validate_resource_link(content),
+        "resource" => {
+            let resource = content
+                .get("resource")
+                .and_then(Value::as_object)
+                .ok_or_else(resource_limit)?;
+            validate_string(
+                resource.get("uri").ok_or_else(resource_limit)?,
+                MAX_MCP_FEATURE_URI_BYTES,
+                true,
+            )?;
+            if let Some(mime) = resource.get("mimeType") {
+                validate_string(mime, MAX_MCP_FEATURE_TITLE_BYTES, false)?;
+            }
+            validate_annotations_and_metadata(resource)?;
+            validate_resource_data(resource, false)
+        }
+        _ => Err(resource_limit()),
+    }
+}
+
+fn validate_resource_link(content: &Map<String, Value>) -> Result<(), ToolError> {
+    validate_string(
+        content.get("uri").ok_or_else(resource_limit)?,
+        MAX_MCP_FEATURE_URI_BYTES,
+        true,
+    )?;
+    validate_string(
+        content.get("name").ok_or_else(resource_limit)?,
+        MAX_MCP_FEATURE_TITLE_BYTES,
+        true,
+    )?;
+    for (key, limit) in [
+        ("title", MAX_MCP_FEATURE_TITLE_BYTES),
+        ("description", MAX_MCP_FEATURE_DESCRIPTION_BYTES),
+        ("mimeType", MAX_MCP_FEATURE_TITLE_BYTES),
+    ] {
+        if let Some(value) = content.get(key) {
+            validate_string(value, limit, false)?;
+        }
+    }
+    if let Some(icons) = content.get("icons") {
+        validate_icons(icons)?;
+    }
+    if content
+        .get("size")
+        .is_some_and(|size| size.as_u64().is_none())
+    {
+        return Err(resource_limit());
+    }
+    Ok(())
+}
+
+fn validate_annotations_and_metadata(value: &Map<String, Value>) -> Result<(), ToolError> {
+    if let Some(annotations) = value.get("annotations") {
+        validate_annotations(annotations)?;
+    }
+    if value
+        .get("_meta")
+        .is_some_and(|metadata| !metadata.is_object())
+    {
+        return Err(resource_limit());
+    }
+    Ok(())
+}
+
+fn validate_annotations(value: &Value) -> Result<(), ToolError> {
+    let annotations = value.as_object().ok_or_else(resource_limit)?;
+    if let Some(audience) = annotations.get("audience") {
+        let audience = audience.as_array().ok_or_else(resource_limit)?;
+        if audience.len() > 2
+            || audience
+                .iter()
+                .any(|role| !matches!(role.as_str(), Some("user" | "assistant")))
+        {
+            return Err(resource_limit());
+        }
+    }
+    if let Some(priority) = annotations.get("priority") {
+        let priority = priority.as_f64().ok_or_else(resource_limit)?;
+        if !(0.0..=1.0).contains(&priority) {
+            return Err(resource_limit());
+        }
+    }
+    if let Some(last_modified) = annotations.get("lastModified") {
+        validate_string(last_modified, MAX_MCP_FEATURE_TITLE_BYTES, false)?;
+    }
+    Ok(())
+}
+
+fn validate_icons(value: &Value) -> Result<(), ToolError> {
+    let icons = value.as_array().ok_or_else(resource_limit)?;
+    if icons.len() > MAX_MCP_FEATURE_ICONS {
+        return Err(resource_limit());
+    }
+    for icon in icons {
+        let icon = icon.as_object().ok_or_else(resource_limit)?;
+        validate_string(
+            icon.get("src").ok_or_else(resource_limit)?,
+            MAX_MCP_FEATURE_URI_BYTES,
+            true,
+        )?;
+        if let Some(mime) = icon.get("mimeType") {
+            validate_string(mime, MAX_MCP_FEATURE_TITLE_BYTES, false)?;
+        }
+        if let Some(sizes) = icon.get("sizes") {
+            let sizes = sizes.as_array().ok_or_else(resource_limit)?;
+            if sizes.len() > MAX_MCP_FEATURE_ICON_SIZES {
+                return Err(resource_limit());
+            }
+            for size in sizes {
+                validate_string(size, MAX_MCP_FEATURE_TITLE_BYTES, false)?;
+            }
+        }
+        if icon
+            .get("theme")
+            .is_some_and(|theme| !matches!(theme.as_str(), Some("light" | "dark")))
+        {
+            return Err(resource_limit());
+        }
+    }
+    Ok(())
+}
+
+fn valid_standard_base64(value: &str) -> bool {
+    BASE64_STANDARD.decode(value).is_ok()
 }
 
 fn validate_object_array(
@@ -994,6 +1212,17 @@ fn validate_string(value: &Value, limit: usize, nonempty: bool) -> Result<(), To
 }
 
 fn validate_payload_bounds(value: &Value) -> Result<(), ()> {
+    if !value.is_object() {
+        return Err(());
+    }
+    validate_json_structure(value)?;
+    if !serialized_value_fits(value, MAX_MCP_FEATURE_PAYLOAD_BYTES) {
+        return Err(());
+    }
+    Ok(())
+}
+
+fn validate_json_structure(value: &Value) -> Result<(), ()> {
     enum Children<'a> {
         Array(std::slice::Iter<'a, Value>),
         Object(serde_json::map::Values<'a>),
@@ -1012,9 +1241,6 @@ fn validate_payload_bounds(value: &Value) -> Result<(), ()> {
         children: Children<'a>,
     }
 
-    if !value.is_object() || !serialized_value_fits(value, MAX_MCP_FEATURE_PAYLOAD_BYTES) {
-        return Err(());
-    }
     let mut frames = Vec::new();
     let mut current = Some((value, 0usize));
     let mut nodes = 0usize;

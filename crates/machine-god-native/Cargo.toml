@@ -32,10 +32,10 @@ web-fetch-http = [
     "dep:tokio",
     "dep:webpki-root-certs",
 ]
-vision = ["dep:base64", "dep:tokio"]
+vision = ["dep:tokio"]
 
 [dependencies]
-base64 = { workspace = true, optional = true, features = ["alloc"] }
+base64 = { workspace = true, features = ["alloc"] }
 futures-core.workspace = true
 machine-god-core.workspace = true
 memchr.workspace = true

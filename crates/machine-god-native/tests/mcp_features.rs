@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
@@ -11,10 +12,11 @@ use machine_god_native::{
     MAX_MCP_FEATURE_ARGUMENTS_BYTES, MAX_MCP_FEATURE_COMPLETION_VALUE_BYTES,
     MAX_MCP_FEATURE_COMPLETION_VALUES, MAX_MCP_FEATURE_CONTENT_ITEMS,
     MAX_MCP_FEATURE_CONTEXT_PAIRS, MAX_MCP_FEATURE_JSON_DEPTH, MAX_MCP_FEATURE_JSON_NODES,
-    MAX_MCP_FEATURE_NAME_BYTES, MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES,
-    MAX_MCP_FEATURE_SERIALIZED_RESULT_BYTES, MAX_MCP_FEATURE_SERVER_BYTES,
-    MAX_MCP_FEATURE_URI_BYTES, MCP_FEATURES_TOOL_NAME, McpFeatureAction, McpFeatureAuthority,
-    McpFeatureError, McpFeatureErrorKind, McpFeaturePayload, McpFeatureRequest, McpFeaturesTool,
+    MAX_MCP_FEATURE_NAME_BYTES, MAX_MCP_FEATURE_PROMPT_ARGUMENTS,
+    MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES, MAX_MCP_FEATURE_SERIALIZED_RESULT_BYTES,
+    MAX_MCP_FEATURE_SERVER_BYTES, MAX_MCP_FEATURE_URI_BYTES, MCP_FEATURES_TOOL_NAME,
+    McpFeatureAction, McpFeatureAuthority, McpFeatureError, McpFeatureErrorKind, McpFeaturePayload,
+    McpFeatureRequest, McpFeaturesTool,
 };
 use serde_json::{Value, json};
 
@@ -301,6 +303,15 @@ fn exact_input_bounds_accept_max_and_reject_max_plus_one() {
         .collect();
     assert_eq!(tool.prepare(call(json!({"action":"prompt_complete","server":"s","prompt":"p","argument":"a","context":Value::Object(context)}))).unwrap_err().code, "mcp_features_resource_limit");
 
+    let prompt_arguments = (0..MAX_MCP_FEATURE_PROMPT_ARGUMENTS)
+        .map(|index| (format!("a{index:03}"), Value::String(String::new())))
+        .collect();
+    assert!(tool.prepare(call(json!({"action":"prompt_get","server":"s","prompt":"p","arguments":Value::Object(prompt_arguments)}))).is_ok());
+    let prompt_arguments = (0..=MAX_MCP_FEATURE_PROMPT_ARGUMENTS)
+        .map(|index| (format!("a{index:03}"), Value::String(String::new())))
+        .collect();
+    assert_eq!(tool.prepare(call(json!({"action":"prompt_get","server":"s","prompt":"p","arguments":Value::Object(prompt_arguments)}))).unwrap_err().code, "mcp_features_resource_limit");
+
     let request_with_argument_bytes = |bytes| {
         json!({
             "action":"prompt_get",
@@ -396,6 +407,7 @@ fn payload_builder_and_publication_reject_envelope_and_request_mismatches() {
             "mcp_features_resource_limit",
         );
     }
+
     assert_error(
         execute(
             &McpFeaturesTool::new(FixedAuthority::payload(
@@ -416,21 +428,6 @@ fn payload_builder_and_publication_reject_envelope_and_request_mismatches() {
         ToolErrorKind::InvalidInput,
         "mcp_features_resource_limit",
     );
-
-    for invalid in [
-        json!({"identity":"review","messages":[{"role":"system","contentKind":"text","content":{"type":"text","text":"x"}}]}),
-        json!({"identity":"review","messages":[{"role":"user","contentKind":"video","content":{"type":"video","data":"x"}}]}),
-        json!({"identity":"review","messages":[{"role":"user","contentKind":"text","content":{"type":"image","data":"","mimeType":"image/png"}}]}),
-    ] {
-        assert_error(
-            execute(
-                &McpFeaturesTool::new(FixedAuthority::payload(invalid)),
-                json!({"action":"prompt_get","server":"fixture","prompt":"review"}),
-            ),
-            ToolErrorKind::InvalidInput,
-            "mcp_features_resource_limit",
-        );
-    }
 
     assert_error(
         execute(
@@ -456,6 +453,152 @@ fn payload_builder_and_publication_reject_envelope_and_request_mismatches() {
         ToolErrorKind::InvalidInput,
         "mcp_features_resource_limit",
     );
+}
+
+#[test]
+fn nested_payload_shapes_reject_duplicates_and_malformed_content() {
+    assert_error(
+        execute(
+            &McpFeaturesTool::new(FixedAuthority::payload(json!({
+                "items":[{"server":"fixture","identity":"review","arguments":[
+                    {"name":"focus","required":false},
+                    {"name":"focus","required":true}
+                ]}]
+            }))),
+            json!({"action":"prompt_list","server":"fixture"}),
+        ),
+        ToolErrorKind::InvalidInput,
+        "mcp_features_resource_limit",
+    );
+
+    for invalid in [
+        json!({"identity":"review","messages":[{"role":"system","contentKind":"text","content":{"type":"text","text":"x"}}]}),
+        json!({"identity":"review","messages":[{"role":"user","contentKind":"video","content":{"type":"video","data":"x"}}]}),
+        json!({"identity":"review","messages":[{"role":"user","contentKind":"text","content":{"type":"image","data":"","mimeType":"image/png"}}]}),
+        json!({"identity":"review","messages":[{"role":"user","contentKind":"text","content":{"type":"text"}}]}),
+        json!({"identity":"review","messages":[{"role":"user","contentKind":"image","content":{"type":"image","data":"not base64","mimeType":"image/png"}}]}),
+        json!({"identity":"review","messages":[{"role":"user","contentKind":"audio","content":{"type":"audio","data":"eA=="}}]}),
+        json!({"identity":"review","messages":[{"role":"user","contentKind":"resource_link","content":{"type":"resource_link","uri":"custom://item"}}]}),
+        json!({"identity":"review","messages":[{"role":"user","contentKind":"resource_link","content":{"type":"resource_link","uri":"custom://item","name":"item","icons":[{"src":"custom://icon","theme":"system"}]}}]}),
+        json!({"identity":"review","messages":[{"role":"user","contentKind":"resource","content":{"type":"resource","resource":{"uri":"custom://item","blob":"not base64"}}}]}),
+        json!({"identity":"review","messages":[{"role":"user","contentKind":"text","content":{"type":"text","text":"x","annotations":{"audience":["system"]}}}]}),
+        json!({"identity":"review","messages":[{"role":"user","contentKind":"text","content":{"type":"text","text":"x","_meta":[]}}]}),
+    ] {
+        assert_error(
+            execute(
+                &McpFeaturesTool::new(FixedAuthority::payload(invalid)),
+                json!({"action":"prompt_get","server":"fixture","prompt":"review"}),
+            ),
+            ToolErrorKind::InvalidInput,
+            "mcp_features_resource_limit",
+        );
+    }
+
+    for invalid in [
+        json!({"identity":"custom://item","contents":[{"uri":"custom://item","type":"blob","blob":"not base64"}]}),
+        json!({"identity":"custom://item","contents":[{"uri":"custom://item","type":"text","text":"x","annotations":[]}]}),
+        json!({"identity":"custom://item","contents":[{"uri":"custom://item","type":"text","text":"x","_meta":"bad"}]}),
+    ] {
+        assert_error(
+            execute(
+                &McpFeaturesTool::new(FixedAuthority::payload(invalid)),
+                json!({"action":"resource_read","server":"fixture","uri":"custom://item"}),
+            ),
+            ToolErrorKind::InvalidInput,
+            "mcp_features_resource_limit",
+        );
+    }
+}
+
+#[test]
+fn all_pinned_prompt_content_kinds_and_resource_blob_are_admitted() {
+    let output = execute(
+        &McpFeaturesTool::new(FixedAuthority::payload(json!({
+            "identity":"review",
+            "messages":[
+                {"role":"user","contentKind":"text","content":{"type":"text","text":"hello"}},
+                {"role":"assistant","contentKind":"image","content":{"type":"image","data":"eA==","mimeType":"image/png"}},
+                {"role":"assistant","contentKind":"audio","content":{"type":"audio","data":"","mimeType":"audio/wav"}},
+                {"role":"user","contentKind":"resource_link","content":{"type":"resource_link","uri":"custom://item","name":"item","icons":[{"src":"custom://icon","sizes":["16x16"],"theme":"dark"}],"size":1}},
+                {"role":"user","contentKind":"resource","content":{"type":"resource","resource":{"uri":"custom://item","text":"body","annotations":{"audience":["user"],"priority":0.5},"_meta":{}}}}
+            ]
+        }))),
+        json!({"action":"prompt_get","server":"fixture","prompt":"review"}),
+    )
+    .unwrap();
+    assert_eq!(output.content["messages"].as_array().unwrap().len(), 5);
+
+    let output = execute(
+        &McpFeaturesTool::new(FixedAuthority::payload(json!({
+            "identity":"custom://item",
+            "contents":[{"uri":"custom://item","mimeType":"application/octet-stream","annotations":{"audience":["assistant"],"priority":1},"_meta":{},"type":"blob","blob":"eA=="}]
+        }))),
+        json!({"action":"resource_read","server":"fixture","uri":"custom://item"}),
+    )
+    .unwrap();
+    assert_eq!(output.content["contents"][0]["type"], "blob");
+}
+
+#[test]
+fn extreme_depth_rejection_and_drop_are_stack_safe_in_a_subprocess() {
+    const CHILD_ENV: &str = "MACHINE_GOD_MCP_DEEP_REJECTION_CHILD";
+    if std::env::var_os(CHILD_ENV).is_some() {
+        let deep_value = || {
+            let mut value = Value::Null;
+            for _ in 0..50_000 {
+                value = Value::Array(vec![value]);
+            }
+            value
+        };
+        let payload_with_deep_value = || {
+            let mut object = serde_json::Map::new();
+            object.insert("items".to_owned(), deep_value());
+            Value::Object(object)
+        };
+        let arguments_with_deep_value = || {
+            let mut object = serde_json::Map::new();
+            object.insert(
+                "action".to_owned(),
+                Value::String("resource_list".to_owned()),
+            );
+            object.insert("server".to_owned(), Value::String("fixture".to_owned()));
+            object.insert("prompt".to_owned(), deep_value());
+            Value::Object(object)
+        };
+
+        assert_eq!(
+            McpFeaturePayload::new(payload_with_deep_value())
+                .unwrap_err()
+                .kind(),
+            McpFeatureErrorKind::ResourceLimit
+        );
+
+        let tool = McpFeaturesTool::new(EchoAuthority::default());
+        let error = tool.prepare(call(arguments_with_deep_value())).unwrap_err();
+        assert_eq!(error.code, "mcp_features_resource_limit");
+
+        let mut wrong_name = call(arguments_with_deep_value());
+        wrong_name.name = ToolName::new("different_tool").unwrap();
+        let error = tool.prepare(wrong_name).unwrap_err();
+        assert_eq!(error.code, "mcp_features_invalid_arguments");
+
+        let future = tool.execute(
+            context(),
+            arguments_with_deep_value(),
+            CancellationToken::new(),
+        );
+        drop(future);
+        return;
+    }
+
+    let status = Command::new(std::env::current_exe().unwrap())
+        .env(CHILD_ENV, "1")
+        .arg("--exact")
+        .arg("extreme_depth_rejection_and_drop_are_stack_safe_in_a_subprocess")
+        .arg("--nocapture")
+        .status()
+        .unwrap();
+    assert!(status.success());
 }
 
 #[test]

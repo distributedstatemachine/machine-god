@@ -54,7 +54,8 @@ The fixed input limits are:
 - resource URI or URI template: 1-65,536 UTF-8 bytes;
 - prompt identity and completion argument: 1-256 UTF-8 bytes each;
 - completion value: at most 4,096 UTF-8 bytes;
-- prompt arguments: string values and at most 64 KiB when compactly encoded;
+- prompt arguments: at most 128 string-valued entries and at most 64 KiB when
+  compactly encoded;
 - completion context: at most 128 string-valued entries and 128 KiB of
   aggregate key-plus-value bytes; and
 - complete compact canonical arguments: at most 64 KiB, which is the effective
@@ -79,6 +80,11 @@ the server, action, and identity are admitted by one immutable live view. It
 must revalidate the same authority and catalog generation immediately before
 returning a result. A changed or revoked view fails closed rather than
 publishing stale data.
+
+For `prompt_get`, the authority validates the supplied argument keys against
+that same admitted prompt snapshot before transport: unknown keys and missing
+required arguments fail closed. This check is repeated against the live
+catalog generation before returning.
 
 For list results, the authority rejects duplicate identities and returns items
 in byte-lexicographic identity order. Exact read/get/completion operations fail
@@ -135,7 +141,12 @@ prompt names are limited to 256 bytes, titles and MIME types to 4,096 bytes,
 descriptions to 64 KiB, and each completion value to 4,096 bytes. Prompt roles
 are exactly `user` or `assistant`; content kinds are exactly `text`, `image`,
 `audio`, `resource_link`, or `resource`, and must match the content object's
-`type` field.
+`type` field. Prompt argument names within one advertised prompt are unique.
+Text, image, audio, resource-link, and embedded-resource records must contain
+their pinned kind-specific fields; blobs and image/audio data use valid
+standard base64. Annotations have only admitted audience/priority forms,
+metadata is object-valued, and resource-link icons, sizes, themes, and numeric
+sizes retain their pinned bounds.
 
 All resource, prompt, annotation, metadata, message, and completion content is
 untrusted external data. It remains data inside the result envelope and cannot
@@ -147,6 +158,10 @@ Authority payloads have an object root, at most 32 container levels, at most
 complete serialized `ToolOutput`, including the common envelope, is also capped
 at 64 KiB. Bounds are checked with a counting serializer; the tool does not
 serialize an unbounded intermediate merely to learn its size.
+Structure limits are checked iteratively before serialization, and every raw
+input or authority payload is held by an iterative-drop owner. Even rejected
+programmatically constructed JSON tens of thousands of levels deep cannot
+recurse through serialization, equality, or destruction.
 
 An input-required authority result preserves the pinned terminal error payload:
 
@@ -163,7 +178,10 @@ Execution checks cancellation before authority acquisition, races the injected
 future against cancellation, and checks cancellation again before validating
 and publishing its result. Cancellation independently wakes a non-cooperative
 authority future, wins over a ready success or error observed in the same poll,
-and drops the losing future. Dropping execution releases all call-local request,
+and drops the losing future. It is rechecked after canonical decoding and again
+immediately before the authority future is constructed, so cancellation that
+becomes visible during preparation does not enter the authority. Dropping
+execution releases all call-local request,
 payload, and authority-future state without a task, thread, timer, cache,
 watcher, or durable MCP record.
 
