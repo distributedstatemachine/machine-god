@@ -521,7 +521,7 @@ jobs:
           workspace_smoke_root = Path(
               tempfile.mkdtemp(prefix="machine-god-workspace-", dir=os.environ["RUNNER_TEMP"])
           )
-          workspace_root = workspace_smoke_root / "primary workspace"
+          workspace_root = (workspace_smoke_root / "primary workspace").resolve()
           workspace_root.mkdir()
           workspace_config_root = workspace_smoke_root / "missing-config"
           workspace_state_root = workspace_smoke_root / "missing-state"

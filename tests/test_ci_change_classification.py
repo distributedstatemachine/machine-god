@@ -217,6 +217,13 @@ class CiChangeClassificationTests(unittest.TestCase):
         self.assertIn('expected="skipped"', gate)
         self.assertIn('expected="success"', gate)
 
+    def test_release_smoke_canonicalizes_its_temporary_workspace(self) -> None:
+        release_smoke = step_script(self.ci, "Release smoke test")
+        self.assertIn(
+            'workspace_root = (workspace_smoke_root / "primary workspace").resolve()',
+            release_smoke,
+        )
+
     def test_benchmark_keeps_a_stable_non_artifact_docs_gate(self) -> None:
         for evidence_job in ("bootstrap-evidence", "pinned-upstream-evidence"):
             self.assertIn(

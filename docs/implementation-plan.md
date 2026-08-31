@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33426575748` (`GREEN`)
 - Main Benchmark evidence: `33426575586` (`GREEN`)
 - Active branch: `agent/m05-subagent`
-- Active phase: `implementing the bounded foreground one-off subagent tool`
-- Next gate: `focused core, testkit, host, cancellation, and resource checks`
+- Active phase: `validating the bounded foreground one-off subagent release candidate`
+- Next gate: `three fresh zero-finding adversarial product-review tracks`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
