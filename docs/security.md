@@ -65,6 +65,16 @@ prompt content is marked untrusted with `authority: "none"`; it cannot grant a
 permission, authorize a later tool, or override user instructions. Production
 MCP transports and authentication remain deferred.
 
+The provider-neutral `subagent` tool similarly uses no ambient child provider,
+executor, filesystem, process, network, permission, clock, task, or persistence
+authority. Its sole child-computation seam is an explicitly injected
+`SubagentAuthority`. The authority receives only a bounded name and prompt plus
+a cancellation token. It does not receive the parent transcript, grants,
+prepared capabilities, dynamic tools, tool catalog, recursive `subagent`
+visibility, or model/effort/permission/notification overrides. Completed text
+is stamped `trust: "untrusted_child"` and `authority: "none"`; it cannot grant
+permission or authority to a later call.
+
 Authority-bearing capabilities pass through the injected permission handler.
 An error is never approval. The native ask adapter maps prompt failure to a
 fixed denial-class error and does not cache grants.
@@ -191,6 +201,12 @@ implementation, or kernel performs no additional bounded or blocking work.
 The [performance overview](performance.md) distinguishes structural bounds from
 measured claims.
 
+Foreground subagent execution adds independent fail-fast limits of four active
+children globally and two for one parent turn. Exhaustion performs no authority
+call and creates no waiter or queue. The tool creates no task, thread, timer,
+watcher, persistent child, or detached cleanup tail; an injected implementation
+that does so is outside the core contract and remains trusted host code.
+
 ## Cancellation, drop, and panic
 
 Futures own their in-flight work unless a contract explicitly documents a
@@ -200,6 +216,11 @@ intervals during bounded work. Once an irreversible effect succeeds or becomes
 ambiguous, cancellation cannot truthfully report rollback; the tool completes
 its durability/cleanup boundary and returns success or a fixed commit-ambiguity
 error.
+
+For `subagent`, cancellation also races the injected authority future and wins
+over a ready success or failure observed in the same poll. The losing future is
+dropped before active-child capacity is released, and no partial child text is
+published.
 
 Waker callbacks are arbitrary foreign code. Native adapters do not invoke them
 while holding internal locks, serialize callback delivery where required, and
@@ -236,8 +257,8 @@ The following remain explicit future work rather than implied guarantees:
 - a true process sandbox or stronger descendant containment;
 - private/authenticated web destinations and redirect authorization; and
 - remote or packaged skill discovery/installation, production MCP transport
-  and authentication, extension/ACP/subagent authority, and SDK authority
-  models.
+  and authentication, extension/ACP authority, persistent/background subagent
+  management, and SDK authority models.
 
 Each subsystem contract is normative for its exact platform, effect, limits,
 and race semantics.

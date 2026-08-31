@@ -59,6 +59,7 @@ SHAs, workflow IDs, review counts, or slice-by-slice history.
   [mcp_search_tools](mcp-search-tools.md),
   [mcp_select_tool](mcp-select-tool.md), and
   [mcp_features](mcp-features.md).
+- Foreground one-off delegation: [subagent](subagent.md).
 - Network tools: [web_fetch](web-fetch.md) and
   [web_search](web-search.md).
 - Local image inspection: [vision](vision.md).

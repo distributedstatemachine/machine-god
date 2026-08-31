@@ -39,7 +39,7 @@ schema origin/version.
 
 ## Constructors
 
-There are six composition paths:
+The root, transport, and MCP composition paths are:
 
 | Roots | Transport | Constructor behavior |
 | --- | --- | --- |
@@ -49,6 +49,11 @@ There are six composition paths:
 | `PreparedNativeRoots` | Injected transport | Consumes retained roots, skips credential discovery, and uses the supplied canonical target |
 | Existing explicit roots | Injected transport and `Arc<dyn McpToolCatalog>` | Uses the custom transport path and advertises search plus exact next-round selection over the injected admitted MCP metadata and attached executable source; feature access remains an inert empty authority |
 | Existing explicit roots | Injected transport, `Arc<dyn McpToolCatalog>`, and `Arc<dyn McpFeatureAuthority>` | Adds bounded exact server-qualified resource, prompt, and completion access through the separately injected read-only authority |
+
+Every ordinary path injects an inert unavailable `SubagentAuthority`. A
+separate explicit subagent injection seam accepts the same root/transport
+composition plus one trusted authority allocation. Neither path probes or polls
+the authority during construction.
 
 The explicit-path constructors require the trusted host to choose disjoint
 workspace and session roots; those constructors do not prove identity or
@@ -78,6 +83,9 @@ Every successful host contains:
 - one `McpFeaturesTool` over an inert, explicitly injected read-only feature
   authority; ordinary and catalog-only constructors share an empty authority,
   while the complete MCP seam retains the caller's exact allocation;
+- one provider-neutral `SubagentTool` over an explicitly injected authority;
+  ordinary constructors share an inert unavailable authority, while the
+  subagent-aware seam retains the caller's exact allocation;
 - default provider-neutral `EngineLimits` and the default no-op event sink;
 - one explicit `Arc<dyn WebSearchDeadline>` for bounded web-search timing,
   reused through a fixed category-only adapter for vision's capacity wait,
@@ -95,7 +103,7 @@ reports no discovered credential source.
 
 ## Tool catalog
 
-The engine registers exactly twenty-five tools in deterministic alphabetical
+The engine registers exactly twenty-six tools in deterministic alphabetical
 order:
 
 1. `ask_user_question`
@@ -118,11 +126,12 @@ order:
 18. `rename_file`
 19. `semantic_search`
 20. `skill`
-21. `terminal`
-22. `vision`
-23. `web_fetch`
-24. `web_search`
-25. `write_file`
+21. `subagent`
+22. `terminal`
+23. `vision`
+24. `web_fetch`
+25. `web_search`
+26. `write_file`
 
 Seventeen tools use one retained workspace identity. `glob_files` consumes the
 original descriptor. The other sixteen workspace tools receive
@@ -130,8 +139,8 @@ identity-preserving clones: `copy_file`, `create_folder`, `delete_file`,
 `edit_file`, `file_info`, `grep_files`, `install_skill`, `list_files`,
 `open_file`, `read_file`, `rename_file`, `semantic_search`, `skill`, `terminal`, `vision`, and
 `write_file`.
-`ask_user_question`, `mcp_features`, `mcp_search_tools`, `mcp_select_tool`, and
-`web_fetch` are rootless.
+`ask_user_question`, `mcp_features`, `mcp_search_tools`, `mcp_select_tool`,
+`subagent`, and `web_fetch` are rootless.
 `mcp_features` uses only its explicitly injected read-only authority. It stamps
 all returned resource and prompt data as untrusted and grants no permission or
 execution authority; its complete boundary is defined by the
@@ -144,6 +153,10 @@ catalog allocation and exact-selects one attached executable registration for
 advertisement on the next model round. The overlay remains turn-local as
 defined by the [MCP selection contract](mcp-select-tool.md). `read_tool_result` uses the
 engine's exact session-store allocation and has no workspace authority.
+`subagent` performs only bounded foreground one-off delegation through its
+injected authority. It receives no parent transcript, grants, dynamic tools, or
+recursive subagent visibility; its complete boundary is defined by the
+[subagent contract](subagent.md).
 `memory` uses a clone of the retained state-root identity but has no workspace
 or session-record authority; its fixed files and permission boundary are
 defined by the [memory contract](memory.md).
@@ -187,7 +200,7 @@ later authority:
 - construct `web_fetch`, including its bounded native resolver/entropy setup.
 
 Composition does not poll or snapshot the MCP catalog and does not call the MCP
-feature authority.
+feature or subagent authority.
 
 Later provider, web-fetch, web-search, and vision polling requires a compatible
 host-owned Tokio runtime with the capabilities stated by their contracts. The
@@ -235,8 +248,8 @@ The reference host does not itself supply a full interactive CLI/TUI,
 persistent grant policy, alternate provider or credential selections, remote
 or packaged skill discovery and installation, production MCP transport,
 authentication, protocol-driven catalog discovery, caching, subscriptions,
-ACP or subagent
-infrastructure, encrypted storage, non-Unix root hardening, durable image
+ACP or persistent/background subagent management, encrypted storage, non-Unix
+root hardening, durable image
 attachments, prompt images, or CLI image flags. Those additions must preserve
 the crate ownership and authority boundaries in
 [architecture.md](architecture.md) and [security.md](security.md).

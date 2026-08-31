@@ -151,6 +151,38 @@ serialization, clone, retained-value destruction, and downstream extension
 paths that follow iterative validation. Builder-owned Schemas are still drained
 iteratively if this configuration check fails.
 
+## Foreground child-agent boundary
+
+The provider-neutral [`subagent` tool](subagent.md) exposes one bounded
+`one_off` create operation through `SubagentTool` and an explicitly injected
+`SubagentAuthority`. Core owns its closed input schema, admission, cancellation,
+result projection, durable tool-result lifecycle, and next model round. It
+receives no child provider, executor, filesystem, process, network, permission,
+clock, task, thread, queue, or persistence authority implicitly.
+
+The authority receives only an owned validated name and prompt plus a
+cancellation token. The child context is fresh. Core does not pass the parent
+transcript, grants, dynamic tools, executable registrations, tool catalog,
+`subagent` capability, or model/effort/permission/notification overrides.
+Preparation uses the explicit no-authority disposition because all child work
+is behind the separately injected seam; it does not call the permission
+handler or turn the child's returned text into authority.
+
+The execution future is inert until first poll and remains foreground. Four
+global and two per-parent-turn active executions are admitted fail-fast with no
+wait queue. A successful admission owns both counters until every call-local
+authority future and value is dropped. Cancellation wins over authority success
+or failure observed in the same poll. The implementation starts no detached
+task, thread, timer, watcher, queue, or child session.
+
+Only a completed final-text authority result is accepted. Core stamps the
+model-visible projection with `status: "completed"`,
+`trust: "untrusted_child"`, and `authority: "none"`. Names are bounded to 128
+bytes; prompts and final text to 32 KiB each; complete compact input and output
+to 48 KiB each; and tool-local JSON to 8 container levels and 64 nodes. See the
+complete [subagent contract](subagent.md) for failure, drop, reference-host, and
+intentional pinned-manager divergence semantics.
+
 ## Available-model catalog boundary
 
 The available-model catalog adds provider-neutral
