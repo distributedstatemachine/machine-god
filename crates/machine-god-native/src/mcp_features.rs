@@ -7,7 +7,6 @@ use std::io;
 use std::sync::Arc;
 use std::task::Poll;
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use machine_god_core::{
     BoxFuture, CancellationToken, PreparedToolCall, Tool, ToolCall, ToolContext, ToolError,
     ToolErrorKind, ToolName, ToolOutput, ToolSpec,
@@ -1147,7 +1146,52 @@ fn validate_icons(value: &Value) -> Result<(), ToolError> {
 }
 
 fn valid_standard_base64(value: &str) -> bool {
-    BASE64_STANDARD.decode(value).is_ok()
+    let bytes = value.as_bytes();
+    if !bytes.len().is_multiple_of(4) {
+        return false;
+    }
+    let padding = if bytes.ends_with(b"==") {
+        2
+    } else {
+        usize::from(bytes.ends_with(b"="))
+    };
+    let data_length = bytes.len() - padding;
+    if bytes[..data_length]
+        .iter()
+        .any(|byte| base64_sextet(*byte).is_none())
+        || bytes[data_length..].iter().any(|byte| *byte != b'=')
+    {
+        return false;
+    }
+    match padding {
+        0 => true,
+        1 => {
+            data_length >= 3
+                && base64_sextet(bytes[data_length - 1])
+                    .unwrap()
+                    .trailing_zeros()
+                    >= 2
+        }
+        2 => {
+            data_length >= 2
+                && base64_sextet(bytes[data_length - 1])
+                    .unwrap()
+                    .trailing_zeros()
+                    >= 4
+        }
+        _ => unreachable!("padding count is bounded by construction"),
+    }
+}
+
+fn base64_sextet(byte: u8) -> Option<u8> {
+    match byte {
+        b'A'..=b'Z' => Some(byte - b'A'),
+        b'a'..=b'z' => Some(byte - b'a' + 26),
+        b'0'..=b'9' => Some(byte - b'0' + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    }
 }
 
 fn validate_object_array(
