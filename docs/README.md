@@ -55,6 +55,7 @@ SHAs, workflow IDs, review counts, or slice-by-slice history.
   [ask_user_question](ask-user-question.md).
 - Session-result paging: [read_tool_result](read-tool-result.md).
 - Durable user preferences: [memory](memory.md).
+- Injected extension metadata: [mcp_search_tools](mcp-search-tools.md).
 - Network tools: [web_fetch](web-fetch.md) and
   [web_search](web-search.md).
 - Local image inspection: [vision](vision.md).
