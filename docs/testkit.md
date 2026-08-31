@@ -5,10 +5,14 @@ core boundary. The doubles are cloneable and thread-safe, require no async
 runtime, use no sleeps or global state, and expose consistent snapshots for
 assertions.
 
-Scripts are consumed in call order. A strict script that runs out returns a
-component-appropriate error with code `testkit_script_exhausted`. Recorded-call
-logs default to 1,024 entries and fail with
+Scripts are consumed in call order. Where the component error contract exposes
+a string code, a strict script that runs out returns
+`testkit_script_exhausted`, and a full recorded-call log returns
 `testkit_record_capacity_exhausted` instead of silently discarding evidence.
+`ScriptedSubagentAuthority` is constrained by the provider-neutral
+`SubagentAuthorityError` kind-only contract: script exhaustion maps to `Failed`
+and recording-capacity exhaustion maps to `ResourceLimit`.
+Recorded-call logs default to 1,024 entries.
 Constructors ending in `with_record_capacity` let tests choose a smaller or
 larger explicit bound. The immutable scripts themselves are bounded by the
 finite collection supplied at construction.

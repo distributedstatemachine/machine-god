@@ -31,9 +31,9 @@ The only accepted shape is:
 `command`, `create`, `name`, `mode`, and `prompt` are required. `mode` is the
 exact case-sensitive string `one_off`. Every object is closed: unknown fields,
 extra command branches, alternate modes, and non-string scalar fields fail
-before the authority is acquired. Name and prompt are nonempty valid UTF-8 and
-are preserved exactly; the tool does not trim, case-fold, normalize, expand, or
-interpret either value.
+before the authority is acquired. Name and prompt are nonempty valid UTF-8,
+must not contain NUL, and are preserved exactly; the tool does not trim,
+case-fold, normalize, expand, or interpret either value.
 
 The fixed input limits are:
 
