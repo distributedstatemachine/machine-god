@@ -97,9 +97,11 @@ Core validates before persistence, replaces the selector's durable placeholder,
 and only then inserts the already-validated registration without another await
 or cancellation point. The following provider request merges its exact schema
 into `ModelRequest.tools`; subsequent call admission and dispatch resolve the
-same captured implementation. Dynamic execution uses the ordinary preparation,
-permission, cancellation, event, result-bound, and persistence pipeline. The
-selection itself grants no execution permission.
+same captured implementation. Distinct registrations remain appended in their
+successful selection order; exact idempotent reselection does not move an
+existing entry. Dynamic execution uses the ordinary preparation, permission,
+cancellation, event, result-bound, and persistence pipeline. The selection
+itself grants no execution permission.
 
 The overlay lives only inside `run_turn_inner`. Completion, failure, or
 cancellation drops it. Another prompt on the same session and every other

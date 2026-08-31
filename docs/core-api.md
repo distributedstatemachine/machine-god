@@ -494,12 +494,13 @@ registration allocation; another capture under the same name fails closed even
 when its visible specification is equal. Core activates a registration only
 after durable placeholder replacement succeeds. It is therefore absent from
 the provider response that selected it, present in later provider requests of
-the same turn, and resolved through the same captured executable for call
-admission and dispatch. Error outputs cannot register tools. Completion,
-failure, and cancellation drop the registry; it is never stored in `Engine`,
-`SessionState`, or `SessionRecord`, so later turns and other sessions cannot
-inherit it. Registration is not an authorization grant: the dynamic tool
-follows the ordinary preparation and permission pipeline.
+the same turn, appended in successful activation order, and resolved through
+the same captured executable for call admission and dispatch. Exact idempotent
+reselection does not change that order. Error outputs cannot register tools.
+Completion, failure, and cancellation drop the registry; it is never stored in
+`Engine`, `SessionState`, or `SessionRecord`, so later turns and other sessions
+cannot inherit it. Registration is not an authorization grant: the dynamic
+tool follows the ordinary preparation and permission pipeline.
 
 Prepared arguments may drive only effects contained by the exact prepared
 capability that policy allowed. This is a normative obligation of the trusted

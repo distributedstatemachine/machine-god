@@ -453,6 +453,70 @@ fn exact_turn_tool_registration_reselection_is_idempotent() {
 }
 
 #[test]
+fn distinct_turn_tools_are_advertised_in_selection_order() {
+    let selector_z = RegisteringTool::new("selector-z", ScriptedTool::new(spec("mcp_z"), []));
+    let selector_a = RegisteringTool::new("selector-a", ScriptedTool::new(spec("mcp_a"), []));
+    let provider = ScriptedModelProvider::new(
+        "overlay-selection-order",
+        [
+            events([
+                ModelEvent::ToolCall {
+                    call: call("select-z", "selector-z", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([
+                ModelEvent::ToolCall {
+                    call: call("select-a", "selector-a", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    );
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .tool(selector_z.clone())
+        .tool(selector_a.clone())
+        .build()
+        .unwrap();
+
+    let observed =
+        collect(&engine.create_test_session(SessionId::new("overlay-selection-order").unwrap()));
+    assert!(matches!(
+        observed.last().map(|event| &event.payload),
+        Some(TurnEvent::Completed { .. })
+    ));
+    let requests = provider.requests();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(
+        requests[1].request.tools.last().unwrap().name.as_str(),
+        "mcp_z"
+    );
+    assert_eq!(
+        requests[2]
+            .request
+            .tools
+            .iter()
+            .rev()
+            .take(2)
+            .map(|spec| spec.name.as_str())
+            .collect::<Vec<_>>(),
+        ["mcp_a", "mcp_z"]
+    );
+    assert_eq!(selector_z.executions.load(Ordering::SeqCst), 1);
+    assert_eq!(selector_a.executions.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn turn_tool_is_not_activated_while_its_visible_result_is_pending_persistence() {
     let selector = RegisteringTool::new("selector", ScriptedTool::new(spec("dynamic"), []));
     let provider = ScriptedModelProvider::new(

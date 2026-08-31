@@ -223,9 +223,9 @@ component detail.
 
 The reference host does not itself supply a full interactive CLI/TUI,
 persistent grant policy, alternate provider or credential selections, remote
-or packaged skill discovery and installation, MCP protocol discovery,
-selection and execution, ACP or subagent infrastructure, encrypted storage,
-non-Unix root hardening, durable image attachments, prompt images, or CLI
-image flags. Those additions must preserve the crate ownership and
-authority boundaries in
+or packaged skill discovery and installation, production MCP transport,
+authentication, and protocol-driven catalog discovery, ACP or subagent
+infrastructure, encrypted storage, non-Unix root hardening, durable image
+attachments, prompt images, or CLI image flags. Those additions must preserve
+the crate ownership and authority boundaries in
 [architecture.md](architecture.md) and [security.md](security.md).

@@ -883,7 +883,8 @@ struct CompletedTurn {
 
 #[derive(Default)]
 struct TurnToolCatalog {
-    tools: BTreeMap<ToolName, Arc<TurnToolRegistration>>,
+    tools: Vec<Arc<TurnToolRegistration>>,
+    indexes: BTreeMap<ToolName, usize>,
 }
 
 impl TurnToolCatalog {
@@ -897,16 +898,18 @@ impl TurnToolCatalog {
         specs.extend(engine.tool_specs_ref().iter().cloned());
         specs.extend(
             self.tools
-                .values()
+                .iter()
                 .map(|registration| registration.spec().clone()),
         );
         specs
     }
 
     fn tool(&self, engine: &EngineInner, name: &ToolName) -> Option<Arc<dyn crate::Tool>> {
-        engine
-            .tool(name)
-            .or_else(|| self.tools.get(name).map(|registration| registration.tool()))
+        engine.tool(name).or_else(|| {
+            self.indexes
+                .get(name)
+                .map(|index| self.tools[*index].tool())
+        })
     }
 
     fn validate_registration(
@@ -922,7 +925,8 @@ impl TurnToolCatalog {
                 "turn-local tool duplicated a statically registered tool name",
             ));
         }
-        if let Some(existing) = self.tools.get(&spec.name) {
+        if let Some(index) = self.indexes.get(&spec.name) {
+            let existing = &self.tools[*index];
             if Arc::ptr_eq(existing, registration) {
                 return Ok(false);
             }
@@ -939,7 +943,7 @@ impl TurnToolCatalog {
                 .map(|spec| &spec.input_schema)
                 .chain(
                     self.tools
-                        .values()
+                        .iter()
                         .map(|registration| &registration.spec().input_schema),
                 )
                 .chain(std::iter::once(&spec.input_schema)),
@@ -950,7 +954,7 @@ impl TurnToolCatalog {
         let specs = engine
             .tool_specs_ref()
             .iter()
-            .chain(self.tools.values().map(|registration| registration.spec()))
+            .chain(self.tools.iter().map(|registration| registration.spec()))
             .chain(std::iter::once(spec))
             .collect::<Vec<_>>();
         let serialized = serialized_json_size_bounded(&specs, limits.max_tool_catalog_bytes.get())
@@ -971,11 +975,13 @@ impl TurnToolCatalog {
 
     fn insert(&mut self, registration: Arc<TurnToolRegistration>) {
         let name = registration.spec().name.clone();
-        let previous = self.tools.insert(name, registration);
+        let index = self.tools.len();
+        let previous = self.indexes.insert(name, index);
         assert!(
             previous.is_none(),
             "validated turn tool insertion is unique"
         );
+        self.tools.push(registration);
     }
 }
 
