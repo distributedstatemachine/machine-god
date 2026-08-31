@@ -41,8 +41,9 @@ Examples:
 
 Preparation is synchronous, bounded, nonblocking, and effect-free. It rejects
 unknown field names, validates the fields used by the selected action, inserts
-the empty `arguments`, `value`, or `context` defaults where applicable, and
-passes only the canonical object to execution. For pinned malformed-input
+empty `arguments`, `value`, or `context` defaults into the owned typed request
+where applicable, omits those empty optional fields from canonical JSON, and
+passes only that canonical object to execution. For pinned malformed-input
 compatibility, known scalar fields belonging to another action are ignored and
 removed; `arguments` remains legal only for `prompt_get`, and `context` remains
 legal only for completion actions.
@@ -127,12 +128,21 @@ The action-specific payloads match the pinned shapes:
 - completions carry exact `identity`, exact `argument`, bounded `values`, and
   optional `total` and `hasMore` metadata.
 
+The pinned per-result cardinalities are enforced before publication: at most
+4,096 resource, template, or prompt catalog items; 256 resource contents or
+prompt messages; 128 prompt arguments; and 100 completion values. Resource and
+prompt names are limited to 256 bytes, titles and MIME types to 4,096 bytes,
+descriptions to 64 KiB, and each completion value to 4,096 bytes. Prompt roles
+are exactly `user` or `assistant`; content kinds are exactly `text`, `image`,
+`audio`, `resource_link`, or `resource`, and must match the content object's
+`type` field.
+
 All resource, prompt, annotation, metadata, message, and completion content is
 untrusted external data. It remains data inside the result envelope and cannot
 override user instructions, authorize an action, install a tool, or mutate
 engine state.
 
-Authority payloads have an object root, at most 64 container levels, at most
+Authority payloads have an object root, at most 32 container levels, at most
 4,096 JSON nodes, and no more than 64 KiB when compactly serialized. The
 complete serialized `ToolOutput`, including the common envelope, is also capped
 at 64 KiB. Bounds are checked with a counting serializer; the tool does not
@@ -162,10 +172,19 @@ event, cancellable execution, result-size validation, durable replacement,
 finished event, and model visibility on the following round. A persistence
 failure never causes automatic replay of a completed authority operation.
 
-Fixed redacted failures distinguish invalid arguments, invalid authority
-payload, not-found/admission failure, unavailable authority, resource limits,
-and cancellation. No failure contains a server, URI, prompt, argument, value,
-content, provider diagnostic, credential, or generation witness.
+Fixed redacted failures are:
+
+| Condition | Core kind | Stable code | Retryable |
+| --- | --- | --- | --- |
+| malformed or noncanonical input | `InvalidInput` | `mcp_features_invalid_arguments` | no |
+| exact server, resource, template, or prompt absent | `InvalidInput` | `mcp_features_not_found` | no |
+| invalid authority payload or any bounded-resource overflow | `InvalidInput` | `mcp_features_resource_limit` | no |
+| authority unavailable or admission cannot be established | `Unavailable` | `mcp_features_unavailable` | yes |
+| cancellation | `Cancelled` | `mcp_features_cancelled` | no |
+
+`InputRequired` is the separate pinned terminal error payload shown above. No
+failure contains a server, URI, prompt, argument, value, content, provider
+diagnostic, credential, or generation witness.
 
 ## Reference host and remaining boundary
 

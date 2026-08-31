@@ -22,6 +22,10 @@ pub const MAX_MCP_FEATURE_SERVER_BYTES: usize = 128;
 pub const MAX_MCP_FEATURE_URI_BYTES: usize = 64 * 1024;
 /// Maximum UTF-8 bytes in a prompt or argument name.
 pub const MAX_MCP_FEATURE_NAME_BYTES: usize = 256;
+/// Maximum UTF-8 bytes in a resource or prompt title and MIME type.
+pub const MAX_MCP_FEATURE_TITLE_BYTES: usize = 4 * 1024;
+/// Maximum UTF-8 bytes in a resource or prompt description.
+pub const MAX_MCP_FEATURE_DESCRIPTION_BYTES: usize = 64 * 1024;
 /// Maximum UTF-8 bytes in the partial value of a completion request.
 pub const MAX_MCP_FEATURE_COMPLETION_VALUE_BYTES: usize = 4 * 1024;
 /// Maximum compact serialized bytes in a prompt argument object.
@@ -30,6 +34,12 @@ pub const MAX_MCP_FEATURE_ARGUMENTS_BYTES: usize = 64 * 1024;
 pub const MAX_MCP_FEATURE_CONTEXT_PAIRS: usize = 128;
 /// Maximum aggregate key and value bytes in a completion context object.
 pub const MAX_MCP_FEATURE_CONTEXT_BYTES: usize = 128 * 1024;
+/// Maximum resources, templates, or prompts in one catalog result.
+pub const MAX_MCP_FEATURE_CATALOG_ITEMS: usize = 4_096;
+/// Maximum resource contents or prompt messages in one result.
+pub const MAX_MCP_FEATURE_CONTENT_ITEMS: usize = 256;
+/// Maximum values in one completion result.
+pub const MAX_MCP_FEATURE_COMPLETION_VALUES: usize = 100;
 /// Maximum compact serialized canonical prepared arguments.
 pub const MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES: usize = 64 * 1024;
 /// Maximum compact serialized bytes in an authority payload before its envelope.
@@ -37,7 +47,7 @@ pub const MAX_MCP_FEATURE_PAYLOAD_BYTES: usize = 64 * 1024;
 /// Maximum compact serialized bytes in a complete [`ToolOutput`].
 pub const MAX_MCP_FEATURE_SERIALIZED_RESULT_BYTES: usize = 64 * 1024;
 /// Maximum admitted JSON container depth in an authority payload.
-pub const MAX_MCP_FEATURE_JSON_DEPTH: usize = 64;
+pub const MAX_MCP_FEATURE_JSON_DEPTH: usize = 32;
 /// Maximum admitted JSON nodes in an authority payload.
 pub const MAX_MCP_FEATURE_JSON_NODES: usize = 4_096;
 
@@ -272,6 +282,7 @@ impl Drop for McpFeaturePayload {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum McpFeatureErrorKind {
+    NotFound,
     Unavailable,
     ResourceLimit,
     Cancelled,
@@ -422,13 +433,13 @@ fn input_schema() -> Value {
                 "description": "Exact MCP feature operation"
             },
             "server": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact configured MCP server name"},
-            "uri": {"type": "string", "description": "Exact discovered resource URI for resource_read"},
-            "uri_template": {"type": "string", "description": "Exact discovered resource template for resource_complete"},
-            "prompt": {"type": "string", "description": "Exact discovered prompt name for prompt_get or prompt_complete"},
-            "argument": {"type": "string", "description": "Exact prompt argument or resource-template variable name for completion"},
-            "value": {"type": "string", "description": "Current partial value for completion"},
+            "uri": {"type": "string", "minLength": 1, "maxLength": 65536, "description": "Exact discovered resource URI for resource_read"},
+            "uri_template": {"type": "string", "minLength": 1, "maxLength": 65536, "description": "Exact discovered resource template for resource_complete"},
+            "prompt": {"type": "string", "minLength": 1, "maxLength": 256, "description": "Exact discovered prompt name for prompt_get or prompt_complete"},
+            "argument": {"type": "string", "minLength": 1, "maxLength": 256, "description": "Exact prompt argument or resource-template variable name for completion"},
+            "value": {"type": "string", "maxLength": 4096, "description": "Current partial value for completion"},
             "arguments": {"type": "object", "additionalProperties": {"type": "string"}, "description": "String-valued prompt arguments for prompt_get"},
-            "context": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Optional string-valued sibling arguments for completion context"}
+            "context": {"type": "object", "maxProperties": 128, "additionalProperties": {"type": "string"}, "description": "Optional string-valued sibling arguments for completion context"}
         },
         "required": ["action", "server"],
         "additionalProperties": false
@@ -697,7 +708,7 @@ fn validate_payload_for_request(
             }
             validate_exact_identity(request, object)?;
             if let Some(description) = object.get("description") {
-                validate_string(description, MAX_MCP_FEATURE_PAYLOAD_BYTES, false)?;
+                validate_string(description, MAX_MCP_FEATURE_DESCRIPTION_BYTES, false)?;
             }
             validate_object_array(object.get("messages"), validate_prompt_message)
         }
@@ -719,6 +730,9 @@ fn validate_payload_for_request(
             let Some(values) = object.get("values").and_then(Value::as_array) else {
                 return Err(resource_limit());
             };
+            if values.len() > MAX_MCP_FEATURE_COMPLETION_VALUES {
+                return Err(resource_limit());
+            }
             for value in values {
                 validate_string(value, MAX_MCP_FEATURE_COMPLETION_VALUE_BYTES, true)?;
             }
@@ -745,6 +759,9 @@ fn validate_list_payload(
     let Some(items) = object.get("items").and_then(Value::as_array) else {
         return Err(resource_limit());
     };
+    if items.len() > MAX_MCP_FEATURE_CATALOG_ITEMS {
+        return Err(resource_limit());
+    }
     let mut identities = BTreeSet::new();
     let mut previous: Option<&str> = None;
     for item in items {
@@ -791,12 +808,16 @@ fn validate_list_payload(
             }
             validate_string(
                 item.get("name").expect("checked"),
-                MAX_MCP_FEATURE_PAYLOAD_BYTES,
+                MAX_MCP_FEATURE_NAME_BYTES,
                 true,
             )?;
-            for key in ["title", "description", "mimeType"] {
+            for (key, limit) in [
+                ("title", MAX_MCP_FEATURE_TITLE_BYTES),
+                ("description", MAX_MCP_FEATURE_DESCRIPTION_BYTES),
+                ("mimeType", MAX_MCP_FEATURE_TITLE_BYTES),
+            ] {
                 if let Some(value) = item.get(key) {
-                    validate_string(value, MAX_MCP_FEATURE_PAYLOAD_BYTES, false)?;
+                    validate_string(value, limit, false)?;
                 }
             }
         } else {
@@ -809,9 +830,12 @@ fn validate_list_payload(
             for argument in arguments {
                 validate_prompt_argument(argument)?;
             }
-            for key in ["title", "description"] {
+            for (key, limit) in [
+                ("title", MAX_MCP_FEATURE_TITLE_BYTES),
+                ("description", MAX_MCP_FEATURE_DESCRIPTION_BYTES),
+            ] {
                 if let Some(value) = item.get(key) {
-                    validate_string(value, MAX_MCP_FEATURE_PAYLOAD_BYTES, false)?;
+                    validate_string(value, limit, false)?;
                 }
             }
         }
@@ -831,7 +855,7 @@ fn validate_prompt_argument(value: &Value) -> Result<(), ToolError> {
         return Err(resource_limit());
     }
     if let Some(description) = object.get("description") {
-        validate_string(description, MAX_MCP_FEATURE_PAYLOAD_BYTES, false)?;
+        validate_string(description, MAX_MCP_FEATURE_DESCRIPTION_BYTES, false)?;
     }
     Ok(())
 }
@@ -855,7 +879,7 @@ fn validate_resource_content(value: &Map<String, Value>) -> Result<(), ToolError
         true,
     )?;
     if let Some(mime) = value.get("mimeType") {
-        validate_string(mime, MAX_MCP_FEATURE_PAYLOAD_BYTES, false)?;
+        validate_string(mime, MAX_MCP_FEATURE_TITLE_BYTES, false)?;
     }
     let kind = value
         .get("type")
@@ -878,9 +902,34 @@ fn validate_resource_content(value: &Map<String, Value>) -> Result<(), ToolError
 
 fn validate_prompt_message(value: &Map<String, Value>) -> Result<(), ToolError> {
     require_exact_keys(value, &["role", "contentKind", "content"])?;
-    validate_string(value.get("role").expect("exact keys"), 32, true)?;
-    validate_string(value.get("contentKind").expect("exact keys"), 32, true)?;
-    Ok(())
+    let role = value
+        .get("role")
+        .and_then(Value::as_str)
+        .ok_or_else(resource_limit)?;
+    if !matches!(role, "user" | "assistant") {
+        return Err(resource_limit());
+    }
+    let content_kind = value
+        .get("contentKind")
+        .and_then(Value::as_str)
+        .ok_or_else(resource_limit)?;
+    if !matches!(
+        content_kind,
+        "text" | "image" | "audio" | "resource_link" | "resource"
+    ) {
+        return Err(resource_limit());
+    }
+    let content_type = value
+        .get("content")
+        .and_then(Value::as_object)
+        .and_then(|content| content.get("type"))
+        .and_then(Value::as_str)
+        .ok_or_else(resource_limit)?;
+    if content_type == content_kind {
+        Ok(())
+    } else {
+        Err(resource_limit())
+    }
 }
 
 fn validate_object_array(
@@ -890,6 +939,9 @@ fn validate_object_array(
     let Some(items) = value.and_then(Value::as_array) else {
         return Err(resource_limit());
     };
+    if items.len() > MAX_MCP_FEATURE_CONTENT_ITEMS {
+        return Err(resource_limit());
+    }
     for item in items {
         validate(item.as_object().ok_or_else(resource_limit)?)?;
     }
@@ -1034,6 +1086,7 @@ impl io::Write for JsonByteCounter {
 
 fn map_authority_error(error: McpFeatureError) -> Result<ToolOutput, ToolError> {
     match error.kind() {
+        McpFeatureErrorKind::NotFound => Err(not_found()),
         McpFeatureErrorKind::Unavailable => Err(unavailable()),
         McpFeatureErrorKind::ResourceLimit => Err(resource_limit()),
         McpFeatureErrorKind::Cancelled => Err(cancelled()),
@@ -1076,6 +1129,15 @@ fn unavailable() -> ToolError {
         "mcp_features_unavailable",
         "MCP feature authority is unavailable",
         true,
+    )
+}
+
+fn not_found() -> ToolError {
+    ToolError::new(
+        ToolErrorKind::InvalidInput,
+        "mcp_features_not_found",
+        "MCP feature was not found",
+        false,
     )
 }
 

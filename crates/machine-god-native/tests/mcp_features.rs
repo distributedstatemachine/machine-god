@@ -9,6 +9,7 @@ use machine_god_core::{
 };
 use machine_god_native::{
     MAX_MCP_FEATURE_ARGUMENTS_BYTES, MAX_MCP_FEATURE_COMPLETION_VALUE_BYTES,
+    MAX_MCP_FEATURE_COMPLETION_VALUES, MAX_MCP_FEATURE_CONTENT_ITEMS,
     MAX_MCP_FEATURE_CONTEXT_PAIRS, MAX_MCP_FEATURE_JSON_DEPTH, MAX_MCP_FEATURE_JSON_NODES,
     MAX_MCP_FEATURE_NAME_BYTES, MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES,
     MAX_MCP_FEATURE_SERIALIZED_RESULT_BYTES, MAX_MCP_FEATURE_SERVER_BYTES,
@@ -171,6 +172,13 @@ fn schema_and_preparation_freeze_the_pinned_boundary() {
         7
     );
     assert!(spec.description.contains("untrusted external data"));
+    assert_eq!(spec.input_schema["properties"]["uri"]["maxLength"], 65_536);
+    assert_eq!(spec.input_schema["properties"]["prompt"]["maxLength"], 256);
+    assert_eq!(spec.input_schema["properties"]["value"]["maxLength"], 4_096);
+    assert_eq!(
+        spec.input_schema["properties"]["context"]["maxProperties"],
+        128
+    );
 
     let prepared = tool
         .prepare(call(json!({
@@ -248,14 +256,14 @@ fn all_seven_actions_canonicalize_and_stamp_an_exact_envelope() {
         requests[4]
             .arguments()
             .get("tone")
-            .map(|value| value.as_ref()),
+            .map(std::convert::AsRef::as_ref),
         Some("brief")
     );
     assert_eq!(
         requests[5]
             .context()
             .get("language")
-            .map(|value| value.as_ref()),
+            .map(std::convert::AsRef::as_ref),
         Some("en")
     );
     assert_eq!(requests[5].value(), "br");
@@ -408,6 +416,46 @@ fn payload_builder_and_publication_reject_envelope_and_request_mismatches() {
         ToolErrorKind::InvalidInput,
         "mcp_features_resource_limit",
     );
+
+    for invalid in [
+        json!({"identity":"review","messages":[{"role":"system","contentKind":"text","content":{"type":"text","text":"x"}}]}),
+        json!({"identity":"review","messages":[{"role":"user","contentKind":"video","content":{"type":"video","data":"x"}}]}),
+        json!({"identity":"review","messages":[{"role":"user","contentKind":"text","content":{"type":"image","data":"","mimeType":"image/png"}}]}),
+    ] {
+        assert_error(
+            execute(
+                &McpFeaturesTool::new(FixedAuthority::payload(invalid)),
+                json!({"action":"prompt_get","server":"fixture","prompt":"review"}),
+            ),
+            ToolErrorKind::InvalidInput,
+            "mcp_features_resource_limit",
+        );
+    }
+
+    assert_error(
+        execute(
+            &McpFeaturesTool::new(FixedAuthority::payload(json!({
+                "identity":"review",
+                "argument":"tone",
+                "values": vec!["x"; MAX_MCP_FEATURE_COMPLETION_VALUES + 1]
+            }))),
+            json!({"action":"prompt_complete","server":"fixture","prompt":"review","argument":"tone"}),
+        ),
+        ToolErrorKind::InvalidInput,
+        "mcp_features_resource_limit",
+    );
+
+    assert_error(
+        execute(
+            &McpFeaturesTool::new(FixedAuthority::payload(json!({
+                "identity":"custom://item",
+                "contents": vec![json!({"uri":"custom://item","type":"text","text":""}); MAX_MCP_FEATURE_CONTENT_ITEMS + 1]
+            }))),
+            json!({"action":"resource_read","server":"fixture","uri":"custom://item"}),
+        ),
+        ToolErrorKind::InvalidInput,
+        "mcp_features_resource_limit",
+    );
 }
 
 #[test]
@@ -434,7 +482,7 @@ fn payload_depth_nodes_and_complete_output_are_bounded() {
     let payload_with_content = |bytes| {
         json!({
             "identity":"review",
-            "messages":[{"role":"user","contentKind":"text","content":"x".repeat(bytes)}]
+            "messages":[{"role":"user","contentKind":"text","content":{"type":"text","text":"x".repeat(bytes)}}]
         })
     };
     let mut accepted = 0usize;
@@ -545,17 +593,20 @@ fn pending_authority_is_independently_woken_and_cancelled() {
         cancellation.clone(),
     );
     let mut future = std::pin::pin!(future);
-    let wakes = Arc::new(AtomicUsize::new(0));
-    let waker = Waker::from(Arc::new(CountingWake(Arc::clone(&wakes))));
+    let wake_count = Arc::new(AtomicUsize::new(0));
+    let execution_waker = Waker::from(Arc::new(CountingWake(Arc::clone(&wake_count))));
     assert!(
         future
             .as_mut()
-            .poll(&mut Context::from_waker(&waker))
+            .poll(&mut Context::from_waker(&execution_waker))
             .is_pending()
     );
     cancellation.cancel();
-    assert!(wakes.load(Ordering::SeqCst) > 0);
-    let error = match future.as_mut().poll(&mut Context::from_waker(&waker)) {
+    assert!(wake_count.load(Ordering::SeqCst) > 0);
+    let error = match future
+        .as_mut()
+        .poll(&mut Context::from_waker(&execution_waker))
+    {
         Poll::Ready(result) => result.unwrap_err(),
         Poll::Pending => panic!("cancelled mcp_features remained pending"),
     };
@@ -627,6 +678,12 @@ fn precancellation_and_same_poll_cancellation_win_ready_and_error_results() {
 fn authority_errors_map_to_fixed_redacted_results() {
     let requested = json!({"action":"resource_list","server":"SECRET_SERVER"});
     for (kind, tool_kind, code, retryable) in [
+        (
+            McpFeatureErrorKind::NotFound,
+            ToolErrorKind::InvalidInput,
+            "mcp_features_not_found",
+            false,
+        ),
         (
             McpFeatureErrorKind::Unavailable,
             ToolErrorKind::Unavailable,
