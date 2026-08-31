@@ -106,3 +106,4 @@ product behavior; they are not penetration tests.
 - [memory](m05-memory-review-01.md)
 - [skill](m05-skill-review-01.md)
 - [install_skill](m05-install-skill-review-01.md)
+- [mcp_search_tools](m05-mcp-search-tools-review-01.md)

@@ -21,18 +21,18 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `46`
-- Delivered main: `90197707dd75bee2010d9bbab8223821166a48a8`
-- Main CI: `33347258058` (`GREEN`)
-- Main Benchmark evidence: `33347258029` (`GREEN`)
-- Active branch: `agent/m05-mcp-search-tools`
-- Active phase: `reviewing and delivering bounded injected-catalog mcp_search_tools behavior`
-- Next gate: `rerun the exact local feature gate, then pass three fresh exact-SHA product reviews`
+- Delivered slices: `47`
+- Delivered main: `a8a94f9595c297e6c1342ef6ad8c6a05ad07a347`
+- Main CI: `33388482737` (`GREEN`)
+- Main Benchmark evidence: `33388482724` (`GREEN`)
+- Active branch: `agent/m05-mcp-select-tool`
+- Active phase: `defining bounded mcp_select_tool behavior over the admitted MCP catalog`
+- Next gate: `write the durable contract, then implement focused native tests and behavior`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
 and the Benchmark evidence run retained both required exact-SHA artifacts.
-Bounded top-level help and runtime status ownership is delivered as slice 46.
+Bounded injected-catalog `mcp_search_tools` is delivered as slice 47.
 Documentation parser maintenance remains a separate non-product task; product
 iterations use the existing bounded repository-policy checker.
 
@@ -42,12 +42,12 @@ established, commit-pinned path filter over the exact checked-out Git objects,
 fails closed when submodule changes could be hidden, and retains stable CI and
 Benchmark aggregate gates while skipping unrelated heavy jobs. It does not
 increment the delivered-slice count or replace the last product benchmark
-evidence. Work has returned to the active `mcp_search_tools` product slice.
+evidence.
 
-Bounded `mcp_search_tools` is the active slice. It establishes the read-only,
-metadata-only catalog-search seam needed by later MCP selection and execution;
-transport discovery, dynamic schema advertisement, and MCP tool execution stay
-outside this slice.
+Bounded `mcp_select_tool` is the next slice. It will select one admitted dynamic
+tool without executing it, establishing the explicit handoff from metadata
+search to later next-round schema advertisement and MCP execution. Transport
+discovery, dynamic calls, resources, and prompts stay outside this slice.
 
 ## Architecture ownership
 
@@ -157,8 +157,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 44 | Bounded read-only top-level `workspace` CLI | [contract](workspace-cli.md) | [review](reviews/m03-workspace-cli-review-01.md) | `f36a834` |
 | 45 | Pinned-fx-compatible offline FXTP `replay` CLI | [contract](replay-cli.md) | [review](reviews/m03-replay-cli-review-01.md) | `e685dc4` |
 | 46 | Bounded top-level help and runtime status ownership | [CLI](cli.md), [configuration](configuration.md), [performance](performance.md) | [review](reviews/m03-help-status-cli-review-01.md) | `9019770` |
+| 47 | Bounded injected-catalog `mcp_search_tools` | [contract](mcp-search-tools.md) | [review](reviews/m05-mcp-search-tools-review-01.md) | `a8a94f9` |
 
-The exact delivered-main record after slice 46 is in the canonical live-status
+The exact delivered-main record after slice 47 is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.
