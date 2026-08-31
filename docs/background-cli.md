@@ -28,7 +28,8 @@ machine-god background --json <unsigned-decimal-u64>
 
 At most one target and one `--json` flag are accepted. IDs use nonempty ASCII
 decimal digits and must fit `u64`; leading zeroes are accepted and have numeric
-meaning. `last` is exact and case-sensitive. Empty, signed, whitespace-padded,
+meaning, but the complete ID token is limited to 20 bytes. `last` is exact and
+case-sensitive. Empty, signed, whitespace-padded,
 non-Unicode, duplicate-flag, duplicate-target, option-assignment, and unknown
 arguments are invalid. Parsing completes before environment, current-directory,
 or filesystem access. Invalid syntax uses the fixed global diagnostic, empty
@@ -107,10 +108,11 @@ invalid value, or filename/content/workspace mismatch is `Corrupt`.
 ## Bounds, effects, and concurrency
 
 One list processes at most 1,024 non-dot directory entries plus one name-only
-overflow witness, accepts at most 100 records, reads at most 64 KiB per record,
-and accepts at most 8 MiB aggregate canonical record bytes plus one transient
-overflow byte. JSON is limited to four container levels and 64 nodes before
-typed decoding. A complete
+overflow witness, accepts at most 100 records, and retains at most 64 KiB per
+record plus one transient overflow byte used only to reject an oversized or
+concurrently growing file. It accepts at most 8 MiB aggregate canonical record
+bytes plus one transient overflow byte. JSON is limited to four container
+levels and 64 nodes before typed decoding. A complete
 list proves that every observed canonical candidate within the hierarchy and
 budgets validated; truncation is bounded incomplete observation, not a cursor
 or pagination promise. Exact lookup retains the same per-record bounds.
