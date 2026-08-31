@@ -40,14 +40,24 @@ class CiChangeClassificationTests(unittest.TestCase):
                     1,
                 )
                 self.assertIn("id: paths", classifier)
-                self.assertIn("base: ${{ github.ref }}", classifier)
+                self.assertIn("token: ''", classifier)
+                self.assertEqual(classifier.count("ref: ${{ github.sha }}"), 2)
                 self.assertIn("predicate-quantifier: some-with-excludes", classifier)
                 self.assertIn("fetch-depth: 0", classifier)
                 self.assertIn("timeout-minutes: 5", classifier)
                 self.assertNotIn("classify_ci_changes.py", classifier)
                 self.assertNotIn("list-files:", classifier)
 
-        self.assertIn("pull-requests: read", self.ci)
+        self.assertNotIn("pull-requests:", self.ci)
+        self.assertIn(
+            "base: ${{ github.event_name == 'pull_request' && "
+            "github.event.pull_request.base.sha || github.event.before || github.sha }}",
+            job(self.ci, "change-classification"),
+        )
+        self.assertIn(
+            "base: ${{ github.event.before || github.sha }}",
+            job(self.benchmark, "change-classification"),
+        )
         self.assertFalse((REPOSITORY_ROOT / "scripts/classify_ci_changes.py").exists())
         self.assertFalse((REPOSITORY_ROOT / "scripts/bounded_subprocess.py").exists())
 
@@ -101,25 +111,6 @@ class CiChangeClassificationTests(unittest.TestCase):
                 f"{output}: ${{{{ steps.route.outputs.{output} }}}}",
                 job(self.ci, "change-classification"),
             )
-
-    def test_oversized_or_malformed_pull_request_fails_closed(self) -> None:
-        classifier = job(self.ci, "change-classification")
-        self.assertIn("EVENT_NAME: ${{ github.event_name }}", classifier)
-        self.assertIn(
-            "PULL_REQUEST_CHANGED_FILES: "
-            "${{ github.event.pull_request.changed_files }}",
-            classifier,
-        )
-        self.assertIn('if [[ "${EVENT_NAME}" == "pull_request" ]]', classifier)
-        self.assertIn(
-            '[[ "${PULL_REQUEST_CHANGED_FILES}" =~ ^[0-9]{1,4}$ ]]',
-            classifier,
-        )
-        self.assertIn("10#${PULL_REQUEST_CHANGED_FILES} <= 3000", classifier)
-        self.assertIn(
-            '[[ "${valid}" == "true" && "${complete_file_list}" == "true" ]]',
-            classifier,
-        )
 
     def test_ci_keeps_focused_docs_light_and_mixed_changes_full(self) -> None:
         documentation = job(self.ci, "documentation-policy")

@@ -32,21 +32,21 @@ pinned upstream checkout. Every input to that agreement—lock, policy,
 inventory, generator, and workflow—remains a full-gate path, so the focused
 offline check does not weaken upstream evidence.
 
-The action receives no changed-file list output and no path derived from a
-pull request is interpolated into a shell command. Its filters are declared
-inline in each workflow. The action is pinned by full commit rather than a
-mutable version tag.
+The action runs in local Git mode with an empty API token, receives no
+changed-file list output, and interpolates no changed path into a shell
+command. Its filters are declared inline in each workflow. The action is
+pinned by full commit rather than a mutable version tag.
 
 ## Change range
 
-On a push, the action compares the pushed commit with the previous commit on
-the same ref by using `base: ${{ github.ref }}`. A push containing several
-commits therefore covers the entire pushed range. On a pull request, the
-action uses GitHub's changed-files API against the pull-request base and the
-workflow grants only the required read permissions. Because that API returns
-at most 3,000 paths, pull requests reporting more than 3,000 changed files—or
-missing or malformed file-count metadata—fail closed to the complete product
-gate. Manual Benchmark dispatch always selects the complete evidence path.
+Both checkout and classification bind the head to the event's exact
+`github.sha`. On a push, the base is the event's exact `before` SHA, so a push
+containing several commits covers the entire pushed range. On a pull request,
+the base is the event-local pull-request base SHA and the exact checked-out
+merge commit is the head. Classification therefore does not depend on a live
+pull-request file-list API or its file-count ceiling. An initial branch push
+uses the action's merge-base behavior for the all-zero `before` SHA. Manual
+Benchmark dispatch always selects the complete evidence path.
 
 Each workflow result belongs to its own `github.sha`; a later documentation
 commit cannot replace the exact-SHA result required for an earlier product

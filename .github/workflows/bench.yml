@@ -25,11 +25,14 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          ref: ${{ github.sha }}
       - name: Classify changed paths
         id: paths
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
-          base: ${{ github.ref }}
+          token: ''
+          base: ${{ github.event.before || github.sha }}
+          ref: ${{ github.sha }}
           predicate-quantifier: some-with-excludes
           filters: |
             documentation:
