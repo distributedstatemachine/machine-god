@@ -38,24 +38,35 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! -f .gitmodules ]]; then
-            exit 0
-          fi
 
-          status=0
-          git config --file .gitmodules \
-            --get-regexp '^submodule\..*\.ignore$' >/dev/null || status=$?
-          case "${status}" in
-            0)
-              echo "::error::.gitmodules must not configure submodule ignore policies"
+          reject_hidden_gitlinks() {
+            local label="${1}"
+            shift
+            local status=0
+            git config "${@}" \
+              --get-regexp '^(diff\.ignoresubmodules|submodule\..*\.ignore)$' \
+              >/dev/null || status=$?
+            case "${status}" in
+              0)
+                echo "::error::${label} must not hide submodule changes"
+                exit 1
+                ;;
+              1) ;;
+              *)
+                echo "::error::${label} must be valid Git config"
+                exit 1
+                ;;
+            esac
+          }
+
+          reject_hidden_gitlinks "effective Git config"
+          if [[ -e .gitmodules || -L .gitmodules ]]; then
+            if [[ ! -f .gitmodules ]]; then
+              echo "::error::.gitmodules must be a regular file"
               exit 1
-              ;;
-            1) ;;
-            *)
-              echo "::error::.gitmodules must be valid Git config"
-              exit 1
-              ;;
-          esac
+            fi
+            reject_hidden_gitlinks ".gitmodules" --file .gitmodules
+          fi
       - name: Classify changed paths
         id: paths
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
@@ -150,7 +161,7 @@ jobs:
       - name: Test documentation policy
         run: python3 -m unittest --verbose tests/test_documentation_policy.py
       - name: Install exact Rust toolchain for focused contract checks
-        if: ${{ needs.change-classification.outputs.core_api_docs == 'true' || needs.change-classification.outputs.testkit_docs == 'true' || needs.change-classification.outputs.vision_docs == 'true' }}
+        if: ${{ needs.change-classification.outputs.core_api_docs == 'true' || needs.change-classification.outputs.testkit_docs == 'true' }}
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
       - name: Test core API documentation
         if: ${{ needs.change-classification.outputs.core_api_docs == 'true' }}

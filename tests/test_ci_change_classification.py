@@ -44,13 +44,16 @@ class CiChangeClassificationTests(unittest.TestCase):
                 self.assertEqual(classifier.count("ref: ${{ github.sha }}"), 2)
                 self.assertIn("Require visible submodule changes", classifier)
                 self.assertIn(
-                    "--get-regexp '^submodule\\..*\\.ignore$'", classifier
-                )
-                self.assertIn(
-                    ".gitmodules must not configure submodule ignore policies",
+                    "--get-regexp "
+                    "'^(diff\\.ignoresubmodules|submodule\\..*\\.ignore)$'",
                     classifier,
                 )
-                self.assertIn(".gitmodules must be valid Git config", classifier)
+                self.assertIn('reject_hidden_gitlinks "effective Git config"', classifier)
+                self.assertIn(
+                    'reject_hidden_gitlinks ".gitmodules" --file .gitmodules',
+                    classifier,
+                )
+                self.assertIn(".gitmodules must be a regular file", classifier)
                 self.assertIn("predicate-quantifier: some-with-excludes", classifier)
                 self.assertIn("fetch-depth: 0", classifier)
                 self.assertIn("timeout-minutes: 5", classifier)
@@ -135,6 +138,17 @@ class CiChangeClassificationTests(unittest.TestCase):
                     f"{output} == 'true'",
                     documentation,
                 )
+
+        rust_install = re.search(
+            r"(?ms)- name: Install exact Rust toolchain for focused contract checks"
+            r"(?P<body>.*?)(?=      - name:)",
+            documentation,
+        )
+        self.assertIsNotNone(rust_install)
+        assert rust_install is not None
+        self.assertIn("core_api_docs", rust_install.group("body"))
+        self.assertIn("testkit_docs", rust_install.group("body"))
+        self.assertNotIn("vision_docs", rust_install.group("body"))
 
         for heavy_job in (
             "quality",

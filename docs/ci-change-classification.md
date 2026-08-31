@@ -37,11 +37,12 @@ changed-file list output, and interpolates no changed path into a shell
 command. Its filters are declared inline in each workflow. The action is
 pinned by full commit rather than a mutable version tag.
 
-Git can hide changed gitlinks when `.gitmodules` configures a submodule
-`ignore` policy. Both workflows reject any such override, and reject malformed
-`.gitmodules` configuration, before classification. The repository therefore
-keeps Git's default visibility for tracked submodule changes; policy failure
-cannot grant a documentation exemption because the aggregate gate fails.
+Git can hide changed gitlinks when effective configuration or `.gitmodules`
+configures `diff.ignoreSubmodules` or a submodule `ignore` policy. Both
+workflows reject those overrides, malformed configuration, and non-regular
+`.gitmodules` paths before classification. The repository therefore keeps
+Git's default visibility for tracked submodule changes; policy failure cannot
+grant a documentation exemption because the aggregate gate fails.
 
 ## Change range
 
