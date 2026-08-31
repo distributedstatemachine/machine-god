@@ -42,6 +42,7 @@ mod glob_files;
 mod grep_files;
 mod install_skill;
 mod list_files;
+mod mcp_search_tools;
 mod memory;
 mod open_file;
 mod read_file;
@@ -261,6 +262,17 @@ pub use install_skill::{
 pub use list_files::{
     LIST_FILES_TOOL_NAME, ListFilesTool, ListFilesToolOpenError, ListFilesToolOpenErrorKind,
     MAX_LIST_FILES_ENTRIES, MAX_LIST_FILES_PATH_BYTES, MAX_LIST_FILES_TOTAL_NAME_BYTES,
+};
+pub use mcp_search_tools::{
+    MAX_MCP_SEARCH_DESCRIPTION_BYTES, MAX_MCP_SEARCH_MATCH_STEPS, MAX_MCP_SEARCH_QUERY_BYTES,
+    MAX_MCP_SEARCH_QUERY_TOKENS, MAX_MCP_SEARCH_SERIALIZED_ARGUMENT_BYTES,
+    MAX_MCP_SEARCH_SERIALIZED_RESULT_BYTES, MAX_MCP_TOOL_CATALOG_BYTES,
+    MAX_MCP_TOOL_CATALOG_ENTRIES, MAX_MCP_TOOL_DESCRIPTION_BYTES, MAX_MCP_TOOL_SEARCH_TEXT_BYTES,
+    MAX_MCP_TOOL_SERVER_BYTES, MAX_MCP_TOOL_TAG_BYTES, MAX_MCP_TOOL_TAGS,
+    MCP_SEARCH_TOOLS_DEFAULT_LIMIT, MCP_SEARCH_TOOLS_MAX_LIMIT, MCP_SEARCH_TOOLS_TOOL_NAME,
+    McpSearchToolsTool, McpToolCatalog, McpToolCatalogBuildError, McpToolCatalogBuildErrorKind,
+    McpToolCatalogError, McpToolCatalogErrorKind, McpToolCatalogSnapshot, McpToolCatalogState,
+    McpToolMetadata,
 };
 pub use memory::{
     MAX_MEMORY_FACT_BYTES, MAX_MEMORY_FACTS, MAX_MEMORY_FILE_BYTES, MAX_MEMORY_IO_ATTEMPTS,
