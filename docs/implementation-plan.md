@@ -25,9 +25,9 @@ input; it is not a machine-god product language or runtime dependency.
 - Delivered main: `90197707dd75bee2010d9bbab8223821166a48a8`
 - Main CI: `33347258058` (`GREEN`)
 - Main Benchmark evidence: `33347258029` (`GREEN`)
-- Active branch: `agent/m03-help-status-cli`
-- Active phase: `selecting the next bounded M03 tool or CLI slice`
-- Next gate: `open one bounded feature branch and implement product behavior with focused tests`
+- Active branch: `agent/m07-focused-doc-ci-v2`
+- Active phase: `replacing the custom change scanner with bounded path-filter routing`
+- Next gate: `pass focused local checks and three fresh exact-SHA CI-maintenance reviews`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
@@ -35,6 +35,13 @@ and the Benchmark evidence run retained both required exact-SHA artifacts.
 Bounded top-level help and runtime status ownership is delivered as slice 46.
 Documentation parser maintenance remains a separate non-product task; product
 iterations use the existing bounded repository-policy checker.
+
+Focused documentation CI routing is a bounded non-product maintenance slice.
+It does not increment the delivered-slice count or replace the last
+artifact-producing benchmark evidence. The routing must use an established,
+commit-pinned path filter rather than expand the repository's custom Markdown
+or process tooling. After its exact remote gates pass, work returns to the
+active `mcp_search_tools` product slice.
 
 ## Architecture ownership
 

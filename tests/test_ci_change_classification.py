@@ -65,12 +65,11 @@ class CiChangeClassificationTests(unittest.TestCase):
             classifier = job(workflow, "change-classification")
             self.assertIn(expected, classifier)
 
-        for workflow in (self.ci, self.benchmark):
-            classifier = job(workflow, "change-classification")
-            for output, path in FOCUSED_FILTERS.items():
-                with self.subTest(workflow=workflow.splitlines()[0], output=output):
-                    self.assertIn(f"            {output}:\n", classifier)
-                    self.assertIn(f"              - '{path}'\n", classifier)
+        classifier = job(self.ci, "change-classification")
+        for output, path in FOCUSED_FILTERS.items():
+            with self.subTest(output=output):
+                self.assertIn(f"            {output}:\n", classifier)
+                self.assertIn(f"              - '{path}'\n", classifier)
 
     def test_route_defaults_every_non_docs_only_case_to_full(self) -> None:
         for workflow in (self.ci, self.benchmark):
@@ -99,7 +98,7 @@ class CiChangeClassificationTests(unittest.TestCase):
 
         for output in FOCUSED_FILTERS:
             self.assertIn(
-                f"{output}: ${{{{ steps.paths.outputs.{output} }}}}",
+                f"{output}: ${{{{ steps.route.outputs.{output} }}}}",
                 job(self.ci, "change-classification"),
             )
 

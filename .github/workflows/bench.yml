@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
 
 concurrency:
   group: benchmark-${{ github.sha }}
@@ -21,10 +20,6 @@ jobs:
     outputs:
       full: ${{ steps.route.outputs.full }}
       docs_only: ${{ steps.route.outputs.docs_only }}
-      core_api_docs: ${{ steps.route.outputs.core_api_docs }}
-      testkit_docs: ${{ steps.route.outputs.testkit_docs }}
-      compatibility_docs: ${{ steps.route.outputs.compatibility_docs }}
-      vision_docs: ${{ steps.route.outputs.vision_docs }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,43 +39,21 @@ jobs:
               - '**'
               - '!README.md'
               - '!docs/**/*.md'
-            core_api_docs:
-              - 'docs/core-api.md'
-            testkit_docs:
-              - 'docs/testkit.md'
-            compatibility_docs:
-              - 'docs/compatibility.md'
-            vision_docs:
-              - 'docs/vision.md'
       - name: Select the applicable gate
         id: route
         env:
           EVENT_NAME: ${{ github.event_name }}
           DOCUMENTATION: ${{ steps.paths.outputs.documentation }}
           NON_DOCUMENTATION: ${{ steps.paths.outputs.non_documentation }}
-          CORE_API_DOCS: ${{ steps.paths.outputs.core_api_docs }}
-          TESTKIT_DOCS: ${{ steps.paths.outputs.testkit_docs }}
-          COMPATIBILITY_DOCS: ${{ steps.paths.outputs.compatibility_docs }}
-          VISION_DOCS: ${{ steps.paths.outputs.vision_docs }}
         shell: bash
         run: |
           set -euo pipefail
 
           full=true
           docs_only=false
-          core_api_docs=false
-          testkit_docs=false
-          compatibility_docs=false
-          vision_docs=false
 
           valid=true
-          for value in \
-            "${DOCUMENTATION}" \
-            "${NON_DOCUMENTATION}" \
-            "${CORE_API_DOCS}" \
-            "${TESTKIT_DOCS}" \
-            "${COMPATIBILITY_DOCS}" \
-            "${VISION_DOCS}"
+          for value in "${DOCUMENTATION}" "${NON_DOCUMENTATION}"
           do
             if [[ "${value}" != "true" && "${value}" != "false" ]]; then
               valid=false
@@ -92,10 +65,6 @@ jobs:
               true:false)
                 full=false
                 docs_only=true
-                core_api_docs="${CORE_API_DOCS}"
-                testkit_docs="${TESTKIT_DOCS}"
-                compatibility_docs="${COMPATIBILITY_DOCS}"
-                vision_docs="${VISION_DOCS}"
                 ;;
             esac
           fi
@@ -103,10 +72,6 @@ jobs:
           # shellcheck disable=SC2129
           echo "full=${full}" >> "${GITHUB_OUTPUT}"
           echo "docs_only=${docs_only}" >> "${GITHUB_OUTPUT}"
-          echo "core_api_docs=${core_api_docs}" >> "${GITHUB_OUTPUT}"
-          echo "testkit_docs=${testkit_docs}" >> "${GITHUB_OUTPUT}"
-          echo "compatibility_docs=${compatibility_docs}" >> "${GITHUB_OUTPUT}"
-          echo "vision_docs=${vision_docs}" >> "${GITHUB_OUTPUT}"
 
   bootstrap-evidence:
     name: Bootstrap benchmark evidence

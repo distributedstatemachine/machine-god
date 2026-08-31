@@ -11,14 +11,14 @@ contexts for branch protection.
 
 ## Classification boundary
 
-A change is documentation-only when every changed regular file is either
-`README.md` or Markdown below `docs/`. The four code-coupled documents remain
+A change is documentation-only when every changed path is either `README.md`
+or Markdown below `docs/`. The four code-coupled documents remain
 documentation-only but request focused checks:
 
 - `docs/core-api.md` runs `machine-god-core` doctests;
 - `docs/testkit.md` runs `machine-god-testkit` doctests;
-- `docs/compatibility.md` runs the pinned-upstream compatibility agreement
-  check; and
+- `docs/compatibility.md` verifies offline that the checked-in compatibility
+  inventory renders the checked-in Markdown exactly; and
 - `docs/vision.md` runs its focused manifest, source, and workflow agreement
   test.
 
@@ -26,6 +26,11 @@ Other Markdown uses only the bounded repository documentation checker and its
 policy tests. A change to any other path, including a mixed documentation and
 code change, selects the complete product gate. Classifier failure does not
 grant a documentation exemption: the aggregate gates fail.
+
+The complete product gate separately validates the inventory against the
+pinned upstream checkout. Every input to that agreement—lock, policy,
+inventory, generator, and workflow—remains a full-gate path, so the focused
+offline check does not weaken upstream evidence.
 
 The action receives no changed-file list output and no path derived from a
 pull request is interpolated into a shell command. Its filters are declared
