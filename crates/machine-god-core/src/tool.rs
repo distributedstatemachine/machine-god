@@ -361,6 +361,16 @@ pub trait Tool: Send + Sync + 'static {
     /// resulting catalog and activates the registration only after the
     /// visible output is durably stored. Registrations never become visible in
     /// the same provider response, survive the turn, or grant authority.
+    ///
+    /// Core passes the arguments validated and normalized by [`Tool::prepare`]
+    /// and applies the same authorization boundary as [`Tool::execute`]. For
+    /// permission-required calls, overrides must remain within the exact
+    /// capability approved by host policy. No-authority calls must require no
+    /// policy-governed authority and may use a separately injected host-
+    /// interaction interface only when the tool's public contract documents
+    /// that interface and boundary. Direct callers must establish those same
+    /// preparation and authorization preconditions before invoking an
+    /// override.
     fn execute_for_turn(
         &self,
         context: ToolContext,
