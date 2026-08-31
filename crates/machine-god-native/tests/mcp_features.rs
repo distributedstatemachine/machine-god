@@ -12,7 +12,7 @@ use machine_god_native::{
     MAX_MCP_FEATURE_ARGUMENTS_BYTES, MAX_MCP_FEATURE_COMPLETION_VALUE_BYTES,
     MAX_MCP_FEATURE_COMPLETION_VALUES, MAX_MCP_FEATURE_CONTENT_ITEMS,
     MAX_MCP_FEATURE_CONTEXT_PAIRS, MAX_MCP_FEATURE_JSON_DEPTH, MAX_MCP_FEATURE_JSON_NODES,
-    MAX_MCP_FEATURE_NAME_BYTES, MAX_MCP_FEATURE_PROMPT_ARGUMENTS,
+    MAX_MCP_FEATURE_NAME_BYTES, MAX_MCP_FEATURE_PAYLOAD_BYTES, MAX_MCP_FEATURE_PROMPT_ARGUMENTS,
     MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES, MAX_MCP_FEATURE_SERIALIZED_RESULT_BYTES,
     MAX_MCP_FEATURE_SERVER_BYTES, MAX_MCP_FEATURE_URI_BYTES, MCP_FEATURES_TOOL_NAME,
     McpFeatureAction, McpFeatureAuthority, McpFeatureError, McpFeatureErrorKind, McpFeaturePayload,
@@ -181,6 +181,18 @@ fn schema_and_preparation_freeze_the_pinned_boundary() {
         spec.input_schema["properties"]["context"]["maxProperties"],
         128
     );
+    assert_eq!(
+        spec.input_schema["properties"]["arguments"]["maxProperties"],
+        128
+    );
+    assert_eq!(
+        spec.input_schema["properties"]["context"]["propertyNames"],
+        json!({"minLength": 1, "maxLength": 256})
+    );
+    assert_eq!(
+        spec.input_schema["properties"]["context"]["additionalProperties"]["maxLength"],
+        4_096
+    );
 
     let prepared = tool
         .prepare(call(json!({
@@ -273,7 +285,8 @@ fn all_seven_actions_canonicalize_and_stamp_an_exact_envelope() {
 
 #[test]
 fn exact_input_bounds_accept_max_and_reject_max_plus_one() {
-    let tool = McpFeaturesTool::new(EchoAuthority::default());
+    let authority = EchoAuthority::default();
+    let tool = McpFeaturesTool::new(authority.clone());
     assert!(
         tool.prepare(call(
             json!({"action":"resource_list","server":"s".repeat(MAX_MCP_FEATURE_SERVER_BYTES)})
@@ -294,14 +307,45 @@ fn exact_input_bounds_accept_max_and_reject_max_plus_one() {
     assert!(tool.prepare(call(json!({"action":"prompt_complete","server":"s","prompt":"p","argument":"a","value":"v".repeat(MAX_MCP_FEATURE_COMPLETION_VALUE_BYTES)}))).is_ok());
     assert_eq!(tool.prepare(call(json!({"action":"prompt_complete","server":"s","prompt":"p","argument":"a","value":"v".repeat(MAX_MCP_FEATURE_COMPLETION_VALUE_BYTES + 1)}))).unwrap_err().code, "mcp_features_invalid_arguments");
 
-    let context = (0..MAX_MCP_FEATURE_CONTEXT_PAIRS)
+    let completion_context = (0..MAX_MCP_FEATURE_CONTEXT_PAIRS)
         .map(|index| (format!("k{index:03}"), Value::String(String::new())))
         .collect();
-    assert!(tool.prepare(call(json!({"action":"prompt_complete","server":"s","prompt":"p","argument":"a","context":Value::Object(context)}))).is_ok());
-    let context = (0..=MAX_MCP_FEATURE_CONTEXT_PAIRS)
+    assert!(tool.prepare(call(json!({"action":"prompt_complete","server":"s","prompt":"p","argument":"a","context":Value::Object(completion_context)}))).is_ok());
+    let completion_context = (0..=MAX_MCP_FEATURE_CONTEXT_PAIRS)
         .map(|index| (format!("k{index:03}"), Value::String(String::new())))
         .collect();
-    assert_eq!(tool.prepare(call(json!({"action":"prompt_complete","server":"s","prompt":"p","argument":"a","context":Value::Object(context)}))).unwrap_err().code, "mcp_features_resource_limit");
+    assert_eq!(tool.prepare(call(json!({"action":"prompt_complete","server":"s","prompt":"p","argument":"a","context":Value::Object(completion_context)}))).unwrap_err().code, "mcp_features_resource_limit");
+
+    let oversized_context_name = Value::Object(
+        [(
+            "k".repeat(MAX_MCP_FEATURE_NAME_BYTES + 1),
+            Value::String(String::new()),
+        )]
+        .into_iter()
+        .collect(),
+    );
+    for invalid_context in [
+        json!({"": ""}),
+        oversized_context_name,
+        json!({"k": "v".repeat(MAX_MCP_FEATURE_COMPLETION_VALUE_BYTES + 1)}),
+    ] {
+        assert_error(
+            poll_ready(tool.execute(
+                context(),
+                json!({
+                    "action":"prompt_complete",
+                    "server":"s",
+                    "prompt":"p",
+                    "argument":"a",
+                    "context": invalid_context
+                }),
+                CancellationToken::new(),
+            )),
+            ToolErrorKind::InvalidInput,
+            "mcp_features_invalid_arguments",
+        );
+    }
+    assert_eq!(authority.call_count(), 0);
 
     let prompt_arguments = (0..MAX_MCP_FEATURE_PROMPT_ARGUMENTS)
         .map(|index| (format!("a{index:03}"), Value::String(String::new())))
@@ -345,6 +389,46 @@ fn exact_input_bounds_accept_max_and_reject_max_plus_one() {
     );
     let arguments_json = json!({"a":"x".repeat(accepted)});
     assert!(serde_json::to_vec(&arguments_json).unwrap().len() <= MAX_MCP_FEATURE_ARGUMENTS_BYTES);
+}
+
+#[test]
+fn raw_input_and_payload_bytes_are_bounded_before_exact_serialization() {
+    let authority = EchoAuthority::default();
+    let tool = McpFeaturesTool::new(authority.clone());
+    let oversized = "x".repeat(MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES + 1);
+
+    for arguments in [
+        json!({"action":"resource_list","server":"s","unknown": oversized}),
+        Value::Object(
+            [(
+                "k".repeat(MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES + 1),
+                Value::Null,
+            )]
+            .into_iter()
+            .collect(),
+        ),
+    ] {
+        assert_error(
+            poll_ready(tool.execute(context(), arguments, CancellationToken::new())),
+            ToolErrorKind::InvalidInput,
+            "mcp_features_resource_limit",
+        );
+    }
+    assert_eq!(authority.call_count(), 0);
+
+    for payload in [
+        json!({"items": "x".repeat(MAX_MCP_FEATURE_PAYLOAD_BYTES + 1)}),
+        Value::Object(
+            [("k".repeat(MAX_MCP_FEATURE_PAYLOAD_BYTES + 1), Value::Null)]
+                .into_iter()
+                .collect(),
+        ),
+    ] {
+        assert_eq!(
+            McpFeaturePayload::new(payload).unwrap_err().kind(),
+            McpFeatureErrorKind::ResourceLimit
+        );
+    }
 }
 
 #[derive(Clone)]

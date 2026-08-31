@@ -57,7 +57,8 @@ The fixed input limits are:
 - prompt arguments: at most 128 string-valued entries and at most 64 KiB when
   compactly encoded;
 - completion context: at most 128 string-valued entries and 128 KiB of
-  aggregate key-plus-value bytes; and
+  aggregate key-plus-value bytes; every name is 1-256 UTF-8 bytes and every
+  value is at most 4,096 UTF-8 bytes; and
 - complete compact canonical arguments: at most 64 KiB, which is the effective
   upper bound when the individual limits could otherwise combine to more.
 
@@ -154,7 +155,9 @@ override user instructions, authorize an action, install a tool, or mutate
 engine state.
 
 Authority payloads have an object root, at most 32 container levels, at most
-4,096 JSON nodes, and no more than 64 KiB when compactly serialized. The
+4,096 JSON nodes, and no more than 64 KiB when compactly serialized. An
+iterative raw key-and-string byte preflight rejects an oversized value before
+the exact counting serializer can scan it. The
 complete serialized `ToolOutput`, including the common envelope, is also capped
 at 64 KiB. Bounds are checked with a counting serializer; the tool does not
 serialize an unbounded intermediate merely to learn its size.

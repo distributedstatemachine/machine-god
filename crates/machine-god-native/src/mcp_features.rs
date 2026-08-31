@@ -239,6 +239,38 @@ impl fmt::Debug for McpFeatureRequest {
     }
 }
 
+struct McpFeaturePublication {
+    action: McpFeatureAction,
+    server: Box<str>,
+    identity: Option<Box<str>>,
+    argument: Option<Box<str>>,
+}
+
+impl From<&McpFeatureRequest> for McpFeaturePublication {
+    fn from(request: &McpFeatureRequest) -> Self {
+        Self {
+            action: request.action,
+            server: request.server.clone(),
+            identity: request.identity.clone(),
+            argument: request.argument.clone(),
+        }
+    }
+}
+
+impl McpFeaturePublication {
+    fn server(&self) -> &str {
+        &self.server
+    }
+
+    fn identity(&self) -> Option<&str> {
+        self.identity.as_deref()
+    }
+
+    fn argument(&self) -> Option<&str> {
+        self.argument.as_deref()
+    }
+}
+
 /// Bounded body returned by an injected MCP authority.
 ///
 /// The body cannot contain `trust`, `authority`, `action`, or `server`; the
@@ -421,7 +453,11 @@ impl Tool for McpFeaturesTool {
         if name != tool_name() {
             return Err(invalid_arguments());
         }
-        validate_json_structure(arguments.get()).map_err(|()| resource_limit())?;
+        validate_json_structure_and_raw_bytes(
+            arguments.get(),
+            MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES,
+        )
+        .map_err(|()| resource_limit())?;
         let request = decode_request(arguments.get())?;
         let canonical = request.as_json();
         ensure_serialized(&canonical, MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES)?;
@@ -437,7 +473,11 @@ impl Tool for McpFeaturesTool {
         let arguments = IterativeJsonValue::new(arguments);
         Box::pin(async move {
             check_cancellation(&cancellation)?;
-            validate_json_structure(arguments.get()).map_err(|()| resource_limit())?;
+            validate_json_structure_and_raw_bytes(
+                arguments.get(),
+                MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES,
+            )
+            .map_err(|()| resource_limit())?;
             let request = decode_request(arguments.get())?;
             let canonical = request.as_json();
             ensure_serialized(&canonical, MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES)?;
@@ -445,12 +485,14 @@ impl Tool for McpFeaturesTool {
                 return Err(invalid_arguments());
             }
 
+            drop(canonical);
+            drop(arguments);
+            let publication = McpFeaturePublication::from(&request);
             check_cancellation(&cancellation)?;
-            let result =
-                call_authority(self.authority.as_ref(), request.clone(), &cancellation).await;
+            let result = call_authority(self.authority.as_ref(), request, &cancellation).await;
             check_cancellation(&cancellation)?;
             match result {
-                Ok(payload) => publish_payload(&request, payload, &cancellation),
+                Ok(payload) => publish_payload(&publication, payload, &cancellation),
                 Err(error) => map_authority_error(error),
             }
         })
@@ -476,8 +518,8 @@ fn input_schema() -> Value {
             "prompt": {"type": "string", "minLength": 1, "maxLength": 256, "description": "Exact discovered prompt name for prompt_get or prompt_complete"},
             "argument": {"type": "string", "minLength": 1, "maxLength": 256, "description": "Exact prompt argument or resource-template variable name for completion"},
             "value": {"type": "string", "maxLength": 4096, "description": "Current partial value for completion"},
-            "arguments": {"type": "object", "additionalProperties": {"type": "string"}, "description": "String-valued prompt arguments for prompt_get"},
-            "context": {"type": "object", "maxProperties": 128, "additionalProperties": {"type": "string"}, "description": "Optional string-valued sibling arguments for completion context"}
+            "arguments": {"type": "object", "maxProperties": 128, "additionalProperties": {"type": "string"}, "description": "String-valued prompt arguments for prompt_get"},
+            "context": {"type": "object", "maxProperties": 128, "propertyNames": {"minLength": 1, "maxLength": 256}, "additionalProperties": {"type": "string", "maxLength": 4096}, "description": "Optional string-valued sibling arguments for completion context"}
         },
         "required": ["action", "server"],
         "additionalProperties": false
@@ -547,13 +589,11 @@ fn decode_request(arguments: &Value) -> Result<McpFeatureRequest, ToolError> {
                 "prompt",
                 MAX_MCP_FEATURE_NAME_BYTES,
             )?);
-            if let Some(arguments) = object.get("arguments") {
-                ensure_serialized(arguments, MAX_MCP_FEATURE_ARGUMENTS_BYTES)?;
-            }
             request.arguments = decode_string_map(
                 object.get("arguments"),
                 MAX_MCP_FEATURE_PROMPT_ARGUMENTS,
                 usize::MAX,
+                None,
             )?;
         }
         McpFeatureAction::PromptComplete | McpFeatureAction::ResourceComplete => {
@@ -577,13 +617,13 @@ fn decode_request(arguments: &Value) -> Result<McpFeatureRequest, ToolError> {
                 object.get("context"),
                 MAX_MCP_FEATURE_CONTEXT_PAIRS,
                 MAX_MCP_FEATURE_CONTEXT_BYTES,
+                Some((
+                    MAX_MCP_FEATURE_NAME_BYTES,
+                    MAX_MCP_FEATURE_COMPLETION_VALUE_BYTES,
+                )),
             )?;
         }
     }
-    ensure_serialized(
-        &request.as_json(),
-        MAX_MCP_FEATURE_SERIALIZED_ARGUMENT_BYTES,
-    )?;
     Ok(request)
 }
 
@@ -628,6 +668,7 @@ fn decode_string_map(
     value: Option<&Value>,
     pair_limit: usize,
     aggregate_limit: usize,
+    entry_limits: Option<(usize, usize)>,
 ) -> Result<BTreeMap<Box<str>, Box<str>>, ToolError> {
     let Some(value) = value else {
         return Ok(BTreeMap::new());
@@ -644,6 +685,11 @@ fn decode_string_map(
         let Value::String(value) = value else {
             return Err(invalid_arguments());
         };
+        if entry_limits.is_some_and(|(name_limit, value_limit)| {
+            name.is_empty() || name.len() > name_limit || value.len() > value_limit
+        }) {
+            return Err(invalid_arguments());
+        }
         aggregate = aggregate
             .checked_add(name.len())
             .and_then(|total| total.checked_add(value.len()))
@@ -695,7 +741,7 @@ async fn call_authority(
 }
 
 fn publish_payload(
-    request: &McpFeatureRequest,
+    request: &McpFeaturePublication,
     payload: McpFeaturePayload,
     cancellation: &CancellationToken,
 ) -> Result<ToolOutput, ToolError> {
@@ -727,7 +773,7 @@ fn publish_payload(
 }
 
 fn validate_payload_for_request(
-    request: &McpFeatureRequest,
+    request: &McpFeaturePublication,
     payload: &Value,
 ) -> Result<(), ToolError> {
     let object = payload.as_object().ok_or_else(resource_limit)?;
@@ -796,7 +842,7 @@ fn validate_payload_for_request(
 }
 
 fn validate_list_payload(
-    request: &McpFeatureRequest,
+    request: &McpFeaturePublication,
     object: &Map<String, Value>,
     expected_template: Option<bool>,
 ) -> Result<(), ToolError> {
@@ -1211,7 +1257,7 @@ fn validate_object_array(
 }
 
 fn validate_exact_identity(
-    request: &McpFeatureRequest,
+    request: &McpFeaturePublication,
     object: &Map<String, Value>,
 ) -> Result<(), ToolError> {
     if object.get("identity").and_then(Value::as_str) == request.identity() {
@@ -1259,24 +1305,25 @@ fn validate_payload_bounds(value: &Value) -> Result<(), ()> {
     if !value.is_object() {
         return Err(());
     }
-    validate_json_structure(value)?;
+    validate_json_structure_and_raw_bytes(value, MAX_MCP_FEATURE_PAYLOAD_BYTES)?;
     if !serialized_value_fits(value, MAX_MCP_FEATURE_PAYLOAD_BYTES) {
         return Err(());
     }
     Ok(())
 }
 
-fn validate_json_structure(value: &Value) -> Result<(), ()> {
+fn validate_json_structure_and_raw_bytes(value: &Value, raw_byte_limit: usize) -> Result<(), ()> {
     enum Children<'a> {
         Array(std::slice::Iter<'a, Value>),
-        Object(serde_json::map::Values<'a>),
+        Object(serde_json::map::Iter<'a>),
     }
-    impl<'a> Iterator for Children<'a> {
-        type Item = &'a Value;
-        fn next(&mut self) -> Option<Self::Item> {
+    impl<'a> Children<'a> {
+        fn next(&mut self) -> Option<(Option<&'a str>, &'a Value)> {
             match self {
-                Self::Array(values) => values.next(),
-                Self::Object(values) => values.next(),
+                Self::Array(values) => values.next().map(|value| (None, value)),
+                Self::Object(values) => values
+                    .next()
+                    .map(|(key, value)| (Some(key.as_str()), value)),
             }
         }
     }
@@ -1288,15 +1335,22 @@ fn validate_json_structure(value: &Value) -> Result<(), ()> {
     let mut frames = Vec::new();
     let mut current = Some((value, 0usize));
     let mut nodes = 0usize;
+    let mut raw_bytes = 0usize;
     loop {
         if let Some((value, parent_depth)) = current.take() {
             nodes = nodes.checked_add(1).ok_or(())?;
             if nodes > MAX_MCP_FEATURE_JSON_NODES {
                 return Err(());
             }
+            if let Value::String(value) = value {
+                raw_bytes = raw_bytes.checked_add(value.len()).ok_or(())?;
+                if raw_bytes > raw_byte_limit {
+                    return Err(());
+                }
+            }
             let children = match value {
                 Value::Array(values) => Some(Children::Array(values.iter())),
-                Value::Object(values) => Some(Children::Object(values.values())),
+                Value::Object(values) => Some(Children::Object(values.iter())),
                 _ => None,
             };
             if let Some(children) = children {
@@ -1311,7 +1365,13 @@ fn validate_json_structure(value: &Value) -> Result<(), ()> {
             let Some(frame) = frames.last_mut() else {
                 return Ok(());
             };
-            if let Some(child) = frame.children.next() {
+            if let Some((key, child)) = frame.children.next() {
+                if let Some(key) = key {
+                    raw_bytes = raw_bytes.checked_add(key.len()).ok_or(())?;
+                    if raw_bytes > raw_byte_limit {
+                        return Err(());
+                    }
+                }
                 current = Some((child, frame.depth));
                 break;
             }
