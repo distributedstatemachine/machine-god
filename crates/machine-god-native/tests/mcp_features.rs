@@ -293,14 +293,39 @@ fn exact_input_bounds_accept_max_and_reject_max_plus_one() {
         .collect();
     assert_eq!(tool.prepare(call(json!({"action":"prompt_complete","server":"s","prompt":"p","argument":"a","context":Value::Object(context)}))).unwrap_err().code, "mcp_features_resource_limit");
 
-    let overhead = serde_json::to_vec(&json!({})).unwrap().len();
-    let nearly_max = "x".repeat(MAX_MCP_FEATURE_ARGUMENTS_BYTES - overhead - 8);
+    let request_with_argument_bytes = |bytes| {
+        json!({
+            "action":"prompt_get",
+            "server":"s",
+            "prompt":"p",
+            "arguments":{"a":"x".repeat(bytes)}
+        })
+    };
+    let mut accepted = 0usize;
+    let mut rejected = MAX_MCP_FEATURE_ARGUMENTS_BYTES + 1;
+    while accepted + 1 < rejected {
+        let candidate = accepted + (rejected - accepted) / 2;
+        if tool
+            .prepare(call(request_with_argument_bytes(candidate)))
+            .is_ok()
+        {
+            accepted = candidate;
+        } else {
+            rejected = candidate;
+        }
+    }
     assert!(
-        tool.prepare(call(
-            json!({"action":"prompt_get","server":"s","prompt":"p","arguments":{"a":nearly_max}})
-        ))
-        .is_ok()
+        tool.prepare(call(request_with_argument_bytes(accepted)))
+            .is_ok()
     );
+    assert_eq!(
+        tool.prepare(call(request_with_argument_bytes(accepted + 1)))
+            .unwrap_err()
+            .code,
+        "mcp_features_resource_limit"
+    );
+    let arguments_json = json!({"a":"x".repeat(accepted)});
+    assert!(serde_json::to_vec(&arguments_json).unwrap().len() <= MAX_MCP_FEATURE_ARGUMENTS_BYTES);
 }
 
 #[derive(Clone)]
@@ -406,10 +431,25 @@ fn payload_depth_nodes_and_complete_output_are_bounded() {
             .is_err()
     );
 
-    let oversized_for_envelope = "x".repeat(MAX_MCP_FEATURE_SERIALIZED_RESULT_BYTES - 80);
-    let tool = McpFeaturesTool::new(FixedAuthority::payload(json!({
-        "identity":"review", "messages":[{"role":"user","contentKind":"text","content":oversized_for_envelope}]
-    })));
+    let payload_with_content = |bytes| {
+        json!({
+            "identity":"review",
+            "messages":[{"role":"user","contentKind":"text","content":"x".repeat(bytes)}]
+        })
+    };
+    let mut accepted = 0usize;
+    let mut rejected = MAX_MCP_FEATURE_SERIALIZED_RESULT_BYTES + 1;
+    while accepted + 1 < rejected {
+        let candidate = accepted + (rejected - accepted) / 2;
+        if McpFeaturePayload::new(payload_with_content(candidate)).is_ok() {
+            accepted = candidate;
+        } else {
+            rejected = candidate;
+        }
+    }
+    assert!(McpFeaturePayload::new(payload_with_content(accepted)).is_ok());
+    assert!(McpFeaturePayload::new(payload_with_content(accepted + 1)).is_err());
+    let tool = McpFeaturesTool::new(FixedAuthority::payload(payload_with_content(accepted)));
     assert_error(
         execute(
             &tool,
@@ -469,17 +509,18 @@ fn constructor_prepare_and_execution_future_are_inert_until_poll_and_drop_cleans
         .prepare(call(json!({"action":"resource_list","server":"fixture"})))
         .unwrap();
     assert_eq!(authority.calls.load(Ordering::SeqCst), 0);
-    let future = tool.execute(
-        context(),
-        prepared.arguments().clone(),
-        CancellationToken::new(),
-    );
-    assert_eq!(authority.calls.load(Ordering::SeqCst), 0);
-    let mut future = std::pin::pin!(future);
-    assert!(poll_once(future.as_mut()).is_pending());
-    assert_eq!(authority.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(authority.polls.load(Ordering::SeqCst), 1);
-    drop(future);
+    {
+        let future = tool.execute(
+            context(),
+            prepared.arguments().clone(),
+            CancellationToken::new(),
+        );
+        assert_eq!(authority.calls.load(Ordering::SeqCst), 0);
+        let mut future = Box::pin(future);
+        assert!(poll_once(future.as_mut()).is_pending());
+        assert_eq!(authority.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(authority.polls.load(Ordering::SeqCst), 1);
+    }
     assert_eq!(authority.drops.load(Ordering::SeqCst), 1);
 }
 

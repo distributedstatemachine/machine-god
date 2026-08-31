@@ -401,7 +401,7 @@ impl Tool for McpFeaturesTool {
                 call_authority(self.authority.as_ref(), request.clone(), &cancellation).await;
             check_cancellation(&cancellation)?;
             match result {
-                Ok(payload) => publish_payload(request, payload, &cancellation),
+                Ok(payload) => publish_payload(&request, payload, &cancellation),
                 Err(error) => map_authority_error(error),
             }
         })
@@ -638,12 +638,12 @@ async fn call_authority(
 }
 
 fn publish_payload(
-    request: McpFeatureRequest,
+    request: &McpFeatureRequest,
     payload: McpFeaturePayload,
     cancellation: &CancellationToken,
 ) -> Result<ToolOutput, ToolError> {
     check_cancellation(cancellation)?;
-    validate_payload_for_request(&request, &payload.value)?;
+    validate_payload_for_request(request, &payload.value)?;
     check_cancellation(cancellation)?;
     let Value::Object(payload) = payload.into_value() else {
         unreachable!("payload constructor guarantees an object")
