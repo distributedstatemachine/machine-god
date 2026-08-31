@@ -9,10 +9,12 @@ Current delivery state and workflow IDs remain exclusively in
 - Behavior SHA: `42e2885ea01a6d1813297ae241f628043920aade`
 - Feature CI: `33346735499` (`GREEN`)
 - Feature Benchmark evidence: `33346735516` (`GREEN`)
+- Delivered seal SHA: `90197707dd75bee2010d9bbab8223821166a48a8`
+- Delivered-main CI: `33347258058` (`GREEN`)
+- Delivered-main Benchmark evidence: `33347258029` (`GREEN`)
 - Retained artifacts:
-  `bootstrap-benchmark-42e2885ea01a6d1813297ae241f628043920aade`
-  and
-  `upstream-benchmark-42e2885ea01a6d1813297ae241f628043920aade-ubuntu-24.04-x86_64`
+  behavior-candidate and delivered-main bootstrap plus pinned-upstream JSON for
+  their respective exact SHAs.
 
 ## Delivered behavior
 

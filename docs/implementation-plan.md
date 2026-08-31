@@ -21,21 +21,20 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `45`
-- Delivered main: `e685dc47fa8a614d0f7d580f3a3622e155b6d42f`
-- Main CI: `33319371520` (`GREEN`)
-- Main Benchmark evidence: `33319371530` (`GREEN`)
+- Delivered slices: `46`
+- Delivered main: `90197707dd75bee2010d9bbab8223821166a48a8`
+- Main CI: `33347258058` (`GREEN`)
+- Main Benchmark evidence: `33347258029` (`GREEN`)
 - Active branch: `agent/m03-help-status-cli`
-- Active phase: `sealing the accepted M03 help/status behavior candidate`
-- Next gate: `push the documentation-only seal, pass lightweight feature gates, then fast-forward main`
+- Active phase: `selecting the next bounded M03 tool or CLI slice`
+- Next gate: `open one bounded feature branch and implement product behavior with focused tests`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
-and the Benchmark evidence run retained the required exact-SHA artifacts. The
-pinned-fx-compatible offline terminal-tape [`replay`](replay-cli.md) command is
-delivered as slice 45. Documentation parser maintenance remains a separate
-non-product task; product iterations use the existing bounded repository-policy
-checker.
+and the Benchmark evidence run retained both required exact-SHA artifacts.
+Bounded top-level help and runtime status ownership is delivered as slice 46.
+Documentation parser maintenance remains a separate non-product task; product
+iterations use the existing bounded repository-policy checker.
 
 ## Architecture ownership
 
@@ -144,8 +143,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 43 | Bounded local-only `install_skill` | [contract](install-skill.md) | [review](reviews/m05-install-skill-review-01.md) | `25b62a0` |
 | 44 | Bounded read-only top-level `workspace` CLI | [contract](workspace-cli.md) | [review](reviews/m03-workspace-cli-review-01.md) | `f36a834` |
 | 45 | Pinned-fx-compatible offline FXTP `replay` CLI | [contract](replay-cli.md) | [review](reviews/m03-replay-cli-review-01.md) | `e685dc4` |
+| 46 | Bounded top-level help and runtime status ownership | [CLI](cli.md), [configuration](configuration.md), [performance](performance.md) | [review](reviews/m03-help-status-cli-review-01.md) | `9019770` |
 
-The exact delivered-main record after slice 45 is in the canonical live-status
+The exact delivered-main record after slice 46 is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.
@@ -165,13 +165,14 @@ requires an explicit reviewed plan change.
   `create_folder`, `file_info`, `open_file`, `web_fetch`, `web_search`,
   `terminal`, `ask_user_question`, `read_tool_result`, `vision`, `memory`,
   `skill`, and `install_skill`.
-- Delivered CLI slices for `ask`, `resume`, `permissions`, `models`, `doctor`,
-  `sessions`, `workspace`, `replay`, and strict summary-only `session <id>`.
+- Delivered CLI slices for `help`, `status`, `ask`, `resume`, `permissions`,
+  `models`, `doctor`, `sessions`, `workspace`, `replay`, and strict
+  summary-only `session <id>`.
 
 ### Remaining
 
-- Complete top-level CLI ownership for `help`, `status`, `permissions`,
-  `models`, `doctor`, `session`, `sessions`, and `resume`.
+- Complete combined top-level CLI ownership for `permissions`, `models`,
+  `doctor`, `session`, `sessions`, and `resume`.
   Existing partial/delivered commands do not close the combined boundary.
 - Complete the pinned slash-command categories `general`, `session`, `model`,
   `security`, and `workspace`. Compatibility is scenario-based; documented
