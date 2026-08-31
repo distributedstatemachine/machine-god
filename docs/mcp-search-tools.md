@@ -49,6 +49,10 @@ matching never calls an MCP transport or mutates the snapshot. The host that
 owns discovery must perform readiness, visibility, and policy admission before
 placing entries in the snapshot.
 
+Ready snapshots share immutable catalog storage, so returning the same
+point-in-time snapshot for repeated searches is constant-time and does not
+recopy its metadata.
+
 Each `McpToolMetadata` entry owns:
 
 - one unique valid dynamic-tool `name` using the core `ToolName` grammar;
@@ -58,8 +62,10 @@ Each `McpToolMetadata` entry owns:
 - at most 65,536 UTF-8 bytes of private schema-derived or instruction-derived
   search text.
 
-Tags are ASCII-lowercased and stable-deduplicated. The private search text is
-included in matching but has no public accessor and is never projected. A
+Tags are ASCII-lowercased and stable-deduplicated. Input string and collection
+capacity is normalized before retention, so caller-reserved excess capacity
+cannot escape the catalog bound. The private search text is included in
+matching but has no public accessor and is never projected. A
 snapshot rejects duplicate names, more than 1,024 entries, checked-arithmetic
 failure, or more than 8 MiB of retained owned string bytes, including its
 private lowercased search haystacks. Construction is atomic and does not skip,
@@ -82,8 +88,9 @@ Entries are examined and returned in immutable snapshot order, preserving the
 pinned ready-server/tool catalog behavior. The requested limit is applied to
 that order. Matching charges the complete private haystack length for every
 token comparison, uses checked arithmetic, and fails without partial output
-above 64 MiB of charged work. Cancellation is checked before and after catalog
-acquisition and between entries.
+above 64 MiB of charged work. Cancellation is raced with catalog acquisition,
+wins over a catalog result observed in the same poll, and is checked between
+entries.
 
 Every returned entry has exactly this metadata shape:
 

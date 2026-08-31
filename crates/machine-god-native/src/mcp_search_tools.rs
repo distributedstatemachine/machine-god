@@ -2,8 +2,10 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
+use std::future::{Future, poll_fn};
 use std::io;
 use std::sync::Arc;
+use std::task::Poll;
 
 use machine_god_core::{
     BoxFuture, CancellationToken, PreparedToolCall, Tool, ToolCall, ToolContext, ToolError,
@@ -147,11 +149,11 @@ impl std::error::Error for McpToolCatalogBuildError {}
 /// and is never projected into tool output.
 #[derive(Clone)]
 pub struct McpToolMetadata {
-    name: String,
-    server: String,
-    description: String,
-    tags: Vec<String>,
-    search_haystack: String,
+    name: Box<str>,
+    server: Box<str>,
+    description: Box<str>,
+    tags: Box<[Box<str>]>,
+    search_haystack: Box<str>,
     retained_bytes: usize,
 }
 
@@ -180,7 +182,7 @@ impl McpToolMetadata {
         for mut tag in tags {
             tag.make_ascii_lowercase();
             if seen_tags.insert(tag.clone()) {
-                normalized_tags.push(tag);
+                normalized_tags.push(tag.into_boxed_str());
             }
         }
 
@@ -203,11 +205,11 @@ impl McpToolMetadata {
             })?;
 
         Ok(Self {
-            name,
-            server,
-            description,
-            tags: normalized_tags,
-            search_haystack,
+            name: name.into_boxed_str(),
+            server: server.into_boxed_str(),
+            description: description.into_boxed_str(),
+            tags: normalized_tags.into_boxed_slice(),
+            search_haystack: search_haystack.into_boxed_str(),
             retained_bytes,
         })
     }
@@ -232,7 +234,7 @@ impl McpToolMetadata {
 
     /// Returns normalized, stable-deduplicated metadata tags.
     #[must_use]
-    pub fn tags(&self) -> &[String] {
+    pub fn tags(&self) -> &[Box<str>] {
         &self.tags
     }
 }
@@ -241,10 +243,6 @@ impl fmt::Debug for McpToolMetadata {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("McpToolMetadata")
-            .field("name", &self.name)
-            .field("server", &self.server)
-            .field("description_bytes", &self.description.len())
-            .field("tag_count", &self.tags.len())
             .finish_non_exhaustive()
     }
 }
@@ -263,7 +261,7 @@ pub enum McpToolCatalogState {
 #[derive(Clone)]
 pub struct McpToolCatalogSnapshot {
     state: McpToolCatalogState,
-    tools: Vec<McpToolMetadata>,
+    tools: Arc<[McpToolMetadata]>,
 }
 
 impl McpToolCatalogSnapshot {
@@ -276,16 +274,16 @@ impl McpToolCatalogSnapshot {
         validate_snapshot(&tools)?;
         Ok(Self {
             state: McpToolCatalogState::Ready,
-            tools,
+            tools: tools.into(),
         })
     }
 
     /// Returns an empty snapshot whose discovery is still in progress.
     #[must_use]
-    pub const fn discovering() -> Self {
+    pub fn discovering() -> Self {
         Self {
             state: McpToolCatalogState::Discovering,
-            tools: Vec::new(),
+            tools: Arc::from([]),
         }
     }
 
@@ -306,9 +304,7 @@ impl fmt::Debug for McpToolCatalogSnapshot {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("McpToolCatalogSnapshot")
-            .field("state", &self.state)
-            .field("tool_count", &self.tools.len())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -401,11 +397,7 @@ impl Tool for McpSearchToolsTool {
                 return Err(invalid_arguments());
             }
 
-            let snapshot = self
-                .catalog
-                .snapshot(cancellation.clone())
-                .await
-                .map_err(map_catalog_error)?;
+            let snapshot = acquire_snapshot(self.catalog.as_ref(), &cancellation).await?;
             check_cancellation(&cancellation)?;
             search_snapshot(&snapshot, &decoded, &cancellation)
         })
@@ -428,8 +420,7 @@ fn input_schema() -> Value {
             "limit": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": MCP_SEARCH_TOOLS_MAX_LIMIT,
-                "description": "Optional maximum results; defaults to 8"
+                "description": "Optional result count capped at 20; defaults to 8"
             }
         },
         "required": ["query"],
@@ -500,9 +491,7 @@ fn validate_metadata_fields(
     if ToolName::validate(name).is_err()
         || server.is_empty()
         || server.len() > MAX_MCP_TOOL_SERVER_BYTES
-        || server.bytes().any(|byte| {
-            !(byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
-        })
+        || !server.is_ascii()
         || description.len() > MAX_MCP_TOOL_DESCRIPTION_BYTES
         || search_text.len() > MAX_MCP_TOOL_SEARCH_TEXT_BYTES
         || tags.len() > MAX_MCP_TOOL_TAGS
@@ -522,7 +511,7 @@ fn metadata_retained_bytes(
     server: &str,
     description: &str,
     search_text: &str,
-    tags: &[String],
+    tags: &[Box<str>],
 ) -> Result<usize, McpToolCatalogBuildError> {
     [
         name.len(),
@@ -531,7 +520,7 @@ fn metadata_retained_bytes(
         search_text.len(),
     ]
     .into_iter()
-    .chain(tags.iter().map(String::len))
+    .chain(tags.iter().map(|tag| tag.len()))
     .try_fold(0usize, usize::checked_add)
     .ok_or_else(|| McpToolCatalogBuildError::new(McpToolCatalogBuildErrorKind::ResourceLimit))
 }
@@ -545,7 +534,7 @@ fn validate_snapshot(tools: &[McpToolMetadata]) -> Result<(), McpToolCatalogBuil
     let mut names = BTreeSet::new();
     let mut bytes = 0usize;
     for tool in tools {
-        if !names.insert(tool.name.as_str()) {
+        if !names.insert(&*tool.name) {
             return Err(McpToolCatalogBuildError::new(
                 McpToolCatalogBuildErrorKind::InvalidMetadata,
             ));
@@ -560,6 +549,28 @@ fn validate_snapshot(tools: &[McpToolMetadata]) -> Result<(), McpToolCatalogBuil
         }
     }
     Ok(())
+}
+
+async fn acquire_snapshot(
+    catalog: &dyn McpToolCatalog,
+    cancellation: &CancellationToken,
+) -> Result<McpToolCatalogSnapshot, ToolError> {
+    let mut snapshot = catalog.snapshot(cancellation.clone());
+    let mut cancellation_wait = Box::pin(cancellation.cancelled());
+    let result = poll_fn(|poll_context| {
+        if cancellation_wait.as_mut().poll(poll_context).is_ready() {
+            return Poll::Ready(Err(cancelled()));
+        }
+        let snapshot_result = snapshot.as_mut().poll(poll_context);
+        if cancellation.is_cancelled() {
+            return Poll::Ready(Err(cancelled()));
+        }
+        snapshot_result.map(|result| result.map_err(map_catalog_error))
+    })
+    .await;
+    drop(cancellation_wait);
+    drop(snapshot);
+    result
 }
 
 fn search_snapshot(
@@ -579,7 +590,7 @@ fn search_snapshot(
     let tokens = query_tokens(&arguments.query);
     let mut matches = Vec::new();
     let mut work = 0usize;
-    for tool in &snapshot.tools {
+    for tool in snapshot.tools.iter() {
         check_cancellation(cancellation)?;
         if metadata_matches(tool, &tokens, arguments.query.is_empty(), &mut work)? {
             matches.push(tool);
@@ -868,8 +879,40 @@ mod tests {
             "Lookup documentation",
             "private-schema-sentinel",
         );
-        assert_eq!(metadata.tags(), &["mcp", "read"]);
-        assert!(!format!("{metadata:?}").contains("private-schema-sentinel"));
+        assert_eq!(
+            metadata
+                .tags()
+                .iter()
+                .map(<Box<str> as AsRef<str>>::as_ref)
+                .collect::<Vec<_>>(),
+            ["mcp", "read"]
+        );
+        assert_eq!(format!("{metadata:?}"), "McpToolMetadata { .. }");
+    }
+
+    #[test]
+    fn catalog_normalizes_excess_capacity_and_snapshot_clones_share_storage() {
+        fn reserved(value: &str) -> String {
+            let mut result = String::with_capacity(MAX_MCP_TOOL_SEARCH_TEXT_BYTES * 4);
+            result.push_str(value);
+            result
+        }
+
+        let metadata = McpToolMetadata::new(
+            reserved("mcp_docs_lookup"),
+            reserved("stdio/path alias"),
+            reserved("Lookup documentation"),
+            reserved("private schema"),
+            vec![reserved("MCP"), reserved("docs")],
+        )
+        .unwrap();
+        let mut tools = Vec::with_capacity(MAX_MCP_TOOL_CATALOG_ENTRIES * 2);
+        tools.push(metadata);
+        let snapshot = McpToolCatalogSnapshot::new(tools).unwrap();
+        let clone = snapshot.clone();
+        assert_eq!(snapshot.tools.len(), 1);
+        assert_eq!(snapshot.tools.as_ptr(), clone.tools.as_ptr());
+        assert_eq!(format!("{snapshot:?}"), "McpToolCatalogSnapshot { .. }");
     }
 
     #[test]

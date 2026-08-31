@@ -34,7 +34,7 @@ fn poll_ready<F: Future>(future: F) -> F::Output {
 
 #[derive(Clone)]
 struct FakeCatalog {
-    entries: Vec<McpToolMetadata>,
+    snapshot: McpToolCatalogSnapshot,
     snapshots: Arc<AtomicUsize>,
     polls: Arc<AtomicUsize>,
 }
@@ -42,7 +42,8 @@ struct FakeCatalog {
 impl FakeCatalog {
     fn new(entries: Vec<McpToolMetadata>) -> Self {
         Self {
-            entries,
+            snapshot: McpToolCatalogSnapshot::new(entries)
+                .expect("the fake catalog contains valid bounded metadata"),
             snapshots: Arc::new(AtomicUsize::new(0)),
             polls: Arc::new(AtomicUsize::new(0)),
         }
@@ -68,26 +69,73 @@ impl McpToolCatalog for FakeCatalog {
             if cancellation.is_cancelled() {
                 return Err(McpToolCatalogError::new(McpToolCatalogErrorKind::Cancelled));
             }
-            Ok(McpToolCatalogSnapshot::new(self.entries.clone())
-                .expect("the fake catalog contains valid bounded metadata"))
+            Ok(self.snapshot.clone())
         })
     }
 }
 
-#[derive(Default)]
-struct CancellationCatalog {
-    polls: AtomicUsize,
+#[derive(Clone, Default)]
+struct PendingCatalog {
+    polls: Arc<AtomicUsize>,
+    drops: Arc<AtomicUsize>,
 }
 
-impl McpToolCatalog for CancellationCatalog {
+struct PendingSnapshot {
+    polls: Arc<AtomicUsize>,
+    drops: Arc<AtomicUsize>,
+}
+
+impl Future for PendingSnapshot {
+    type Output = Result<McpToolCatalogSnapshot, McpToolCatalogError>;
+
+    fn poll(self: std::pin::Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+        self.polls.fetch_add(1, Ordering::SeqCst);
+        Poll::Pending
+    }
+}
+
+impl Drop for PendingSnapshot {
+    fn drop(&mut self) {
+        self.drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl McpToolCatalog for PendingCatalog {
+    fn snapshot(
+        &self,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>> {
+        Box::pin(PendingSnapshot {
+            polls: Arc::clone(&self.polls),
+            drops: Arc::clone(&self.drops),
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum SamePollOutcome {
+    Ready,
+    Unavailable,
+}
+
+struct SamePollCancellationCatalog(SamePollOutcome);
+
+impl McpToolCatalog for SamePollCancellationCatalog {
     fn snapshot(
         &self,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>> {
+        let outcome = self.0;
         Box::pin(async move {
-            self.polls.fetch_add(1, Ordering::SeqCst);
-            cancellation.cancelled().await;
-            Err(McpToolCatalogError::new(McpToolCatalogErrorKind::Cancelled))
+            cancellation.cancel();
+            match outcome {
+                SamePollOutcome::Ready => {
+                    Ok(McpToolCatalogSnapshot::new(Vec::new()).expect("empty snapshot is valid"))
+                }
+                SamePollOutcome::Unavailable => Err(McpToolCatalogError::new(
+                    McpToolCatalogErrorKind::Unavailable,
+                )),
+            }
         })
     }
 }
@@ -304,9 +352,10 @@ fn public_contract_schema_and_no_authority_preflight_are_frozen() {
     );
     assert_eq!(spec.input_schema["properties"]["limit"]["type"], "integer");
     assert_eq!(spec.input_schema["properties"]["limit"]["minimum"], 1);
-    assert_eq!(
-        spec.input_schema["properties"]["limit"]["maximum"],
-        MCP_SEARCH_TOOLS_MAX_LIMIT
+    assert!(
+        spec.input_schema["properties"]["limit"]
+            .get("maximum")
+            .is_none()
     );
 
     let arguments = json!({"query": "github issue", "limit": 3});
@@ -518,25 +567,35 @@ fn execute_is_inert_before_poll_and_pre_cancelled_snapshot_fails_closed() {
 
 #[test]
 fn cancellation_wakes_a_pending_catalog_snapshot_and_discovery_is_explicit() {
-    let catalog = Arc::new(CancellationCatalog::default());
+    let catalog = Arc::new(PendingCatalog::default());
     let tool = McpSearchToolsTool::shared_catalog(catalog.clone());
     let cancellation = CancellationToken::new();
     let arguments = prepare(&tool, json!({"query": "github"}));
     let mut execution = tool.execute(context(), arguments, cancellation.clone());
     let wake_count = Arc::new(AtomicUsize::new(0));
     let waker = Waker::from(Arc::new(CountingWake(Arc::clone(&wake_count))));
-    let mut context = Context::from_waker(&waker);
+    let mut poll_context = Context::from_waker(&waker);
     assert!(matches!(
-        execution.as_mut().poll(&mut context),
+        execution.as_mut().poll(&mut poll_context),
         Poll::Pending
     ));
     assert_eq!(catalog.polls.load(Ordering::SeqCst), 1);
+    assert_eq!(catalog.drops.load(Ordering::SeqCst), 0);
     assert!(cancellation.cancel());
     assert!(wake_count.load(Ordering::SeqCst) > 0);
-    let Poll::Ready(result) = execution.as_mut().poll(&mut context) else {
+    let Poll::Ready(result) = execution.as_mut().poll(&mut poll_context) else {
         panic!("catalog cancellation should finish the search")
     };
     assert_cancelled(result.unwrap_err());
+    assert_eq!(catalog.drops.load(Ordering::SeqCst), 1);
+
+    for outcome in [SamePollOutcome::Ready, SamePollOutcome::Unavailable] {
+        let tool = McpSearchToolsTool::new(SamePollCancellationCatalog(outcome));
+        let arguments = prepare(&tool, json!({"query": ""}));
+        assert_cancelled(
+            poll_ready(tool.execute(context(), arguments, CancellationToken::new())).unwrap_err(),
+        );
+    }
 
     let tool = McpSearchToolsTool::new(DiscoveringCatalog);
     let output = search(&tool, json!({"query": "anything"}));
@@ -549,6 +608,19 @@ fn cancellation_wakes_a_pending_catalog_snapshot_and_discovery_is_explicit() {
             "retryable": true,
         })
     );
+}
+
+#[test]
+fn server_aliases_preserve_bounded_ascii_identity_and_debug_is_fixed_shape() {
+    let metadata = metadata(
+        "mcp_docs_lookup",
+        "stdio/path alias",
+        "Lookup documentation",
+        &["mcp", "docs"],
+        "docs lookup",
+    );
+    assert_eq!(metadata.server(), "stdio/path alias");
+    assert_eq!(format!("{metadata:?}"), "McpToolMetadata { .. }");
 }
 
 #[test]
