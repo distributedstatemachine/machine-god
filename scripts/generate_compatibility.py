@@ -1583,10 +1583,13 @@ def render_docs(inventory: dict[str, Any]) -> str:
             f"git -C /tmp/fx-compatibility checkout --detach {commit}",
             "python3 scripts/generate_compatibility.py --upstream /tmp/fx-compatibility",
             "python3 scripts/generate_compatibility.py --upstream /tmp/fx-compatibility --check",
+            "python3 scripts/generate_compatibility.py --check-rendered-docs",
             "```",
             "",
             "`--check` exits nonzero when either generated artifact differs. Fixture-based Python",
             "tests exercise the same parsers and drift path without cloning or network access.",
+            "`--check-rendered-docs` verifies only that the checked-in inventory renders the",
+            "checked-in Markdown exactly; it does not replace the pinned-upstream check.",
             "",
         ]
     )
@@ -1608,17 +1611,47 @@ def check_artifact(path: Path, expected: str) -> bool:
     return False
 
 
+def render_inventory_artifact(path: Path) -> str:
+    """Render the canonical checked-in inventory without consulting upstream."""
+
+    try:
+        inventory = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise InventoryError(
+            f"cannot read compatibility inventory {path}: {error}"
+        ) from error
+    if not isinstance(inventory, dict) or inventory.get("schema_version") != 1:
+        raise InventoryError("compatibility inventory must use schema_version 1")
+    try:
+        return render_docs(inventory)
+    except (KeyError, TypeError) as error:
+        raise InventoryError("compatibility inventory has an invalid shape") from error
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--upstream", type=Path, required=True, help="local checkout of pinned fx")
+    parser.add_argument("--upstream", type=Path, help="local checkout of pinned fx")
     parser.add_argument("--lock", type=Path, default=DEFAULT_LOCK)
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY)
     parser.add_argument("--inventory", type=Path, default=DEFAULT_INVENTORY)
     parser.add_argument("--docs", type=Path, default=DEFAULT_DOCS)
-    parser.add_argument("--check", action="store_true", help="fail if generated files differ")
+    checks = parser.add_mutually_exclusive_group()
+    checks.add_argument(
+        "--check", action="store_true", help="fail if generated files differ"
+    )
+    checks.add_argument(
+        "--check-rendered-docs",
+        action="store_true",
+        help="verify docs rendered from the checked-in inventory",
+    )
     args = parser.parse_args(argv)
 
     try:
+        if args.check_rendered_docs:
+            docs_text = render_inventory_artifact(args.inventory)
+            return 0 if check_artifact(args.docs, docs_text) else 1
+        if args.upstream is None:
+            parser.error("--upstream is required unless --check-rendered-docs is used")
         lock = parse_lock(args.lock)
         policy = load_policy(args.policy)
         upstream = args.upstream.resolve()
@@ -1630,7 +1663,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         inventory = build_inventory(source, lock, policy, lock_path=lock_display)
         inventory_text = json_document(inventory)
-        docs_text = render_docs(inventory)
+        docs_text = render_docs(json.loads(inventory_text))
         if args.check:
             valid = check_artifact(args.inventory, inventory_text)
             valid = check_artifact(args.docs, docs_text) and valid

@@ -717,6 +717,19 @@ class CompatibilityGeneratorTest(unittest.TestCase):
 
         generated = subprocess.run(base_command, check=False, capture_output=True, text=True)
         self.assertEqual(generated.returncode, 0, generated.stderr)
+        rendered_docs_command = [
+            sys.executable,
+            str(SCRIPT),
+            "--inventory",
+            str(inventory),
+            "--docs",
+            str(docs),
+            "--check-rendered-docs",
+        ]
+        rendered_clean = subprocess.run(
+            rendered_docs_command, check=False, capture_output=True, text=True
+        )
+        self.assertEqual(rendered_clean.returncode, 0, rendered_clean.stderr)
         clean = subprocess.run(
             [*base_command, "--check"], check=False, capture_output=True, text=True
         )
@@ -728,6 +741,11 @@ class CompatibilityGeneratorTest(unittest.TestCase):
         )
         self.assertEqual(drifted.returncode, 1)
         self.assertIn("stale", drifted.stderr)
+        rendered_drifted = subprocess.run(
+            rendered_docs_command, check=False, capture_output=True, text=True
+        )
+        self.assertEqual(rendered_drifted.returncode, 1)
+        self.assertIn("stale", rendered_drifted.stderr)
 
         commands = self.upstream / "src/builtins/commands.zig"
         commands.write_bytes(commands.read_bytes().replace(b"\n", b"\r\n"))

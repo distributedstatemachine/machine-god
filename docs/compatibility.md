@@ -117,7 +117,7 @@ Package: `libfx`. Source: `sdk/package.json` and the mapped modules.
 
 | Package entrypoint | Conditions and modules |
 | --- | --- |
-| `.` | `node` → `./node.js`, `browser` → `./browser.js`, `default` → `./browser.js` |
+| `.` | `browser` → `./browser.js`, `default` → `./browser.js`, `node` → `./node.js` |
 | `./node` | `default` → `./node.js` |
 | `./browser` | `default` → `./browser.js` |
 | `./wasm` | `default` → `./fx-sdk.js` |
@@ -215,7 +215,10 @@ git clone https://github.com/vercel-labs/fx.git /tmp/fx-compatibility
 git -C /tmp/fx-compatibility checkout --detach b1774fbf6c7602b503026f96f6e960e946c692ef
 python3 scripts/generate_compatibility.py --upstream /tmp/fx-compatibility
 python3 scripts/generate_compatibility.py --upstream /tmp/fx-compatibility --check
+python3 scripts/generate_compatibility.py --check-rendered-docs
 ```
 
 `--check` exits nonzero when either generated artifact differs. Fixture-based Python
 tests exercise the same parsers and drift path without cloning or network access.
+`--check-rendered-docs` verifies only that the checked-in inventory renders the
+checked-in Markdown exactly; it does not replace the pinned-upstream check.
