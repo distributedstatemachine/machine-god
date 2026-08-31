@@ -1,92 +1,67 @@
 # CI change classification
 
-The CI and Benchmark workflows always start for every pushed commit. A
-first-party, standard-library-only classifier decides whether the commit needs
-the complete product gate or the documentation-only gate. Heavy jobs are
-conditioned inside the workflow; the workflow itself is never suppressed by a
-GitHub path filter.
+CI and Benchmark use
+[`dorny/paths-filter`](https://github.com/dorny/paths-filter) v4.0.3,
+pinned to immutable reference `ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d`,
+to classify changed paths inside workflows that still start for every
+applicable event.
+Heavy jobs are conditional; the workflows themselves are not suppressed by
+top-level path filters. This leaves stable `CI gate` and `Benchmark gate`
+contexts for branch protection.
 
-This preserves an exact-SHA result and a stable aggregate gate for branch
-protection. It also avoids GitHub path-filter file-count limits and the pending
-required-check state that can result when an entire workflow is skipped.
+## Classification boundary
 
-## Documentation-only boundary
+A change is documentation-only when every changed regular file is either
+`README.md` or Markdown below `docs/`. The four code-coupled documents remain
+documentation-only but request focused checks:
 
-A change is documentation-only only when every changed path is one of:
+- `docs/core-api.md` runs `machine-god-core` doctests;
+- `docs/testkit.md` runs `machine-god-testkit` doctests;
+- `docs/compatibility.md` runs the pinned-upstream compatibility agreement
+  check; and
+- `docs/vision.md` runs its focused manifest, source, and workflow agreement
+  test.
 
-- `README.md`; or
-- a Markdown file below `docs/`, except the four exclusions below.
+Other Markdown uses only the bounded repository documentation checker and its
+policy tests. A change to any other path, including a mixed documentation and
+code change, selects the complete product gate. Classifier failure does not
+grant a documentation exemption: the aggregate gates fail.
 
-The following Markdown files require the complete product gate:
+The action receives no changed-file list output and no path derived from a
+pull request is interpolated into a shell command. Its filters are declared
+inline in each workflow. The action is pinned by full commit rather than a
+mutable version tag.
 
-- `docs/core-api.md` and `docs/testkit.md`, because Rust source includes them
-  as crate documentation and their examples are compiled as doctests; and
-- `docs/compatibility.md`, because it is generated evidence whose source
-  agreement is checked by the pinned-upstream compatibility gate; and
-- `docs/vision.md`, because the complete repository Python suite checks its
-  feature, platform, and CI statements against manifests, source, and workflow
-  configuration.
+## Change range
 
-`AGENTS.md`, workflow files, scripts, manifests, tests, benchmark inputs,
-compatibility inputs, non-Markdown documentation assets, mixed changes, and
-every unknown path require the complete gate. Empty or ambiguous diffs also
-fail closed to the complete gate.
+On a push, the action compares the pushed commit with the previous commit on
+the same ref by using `base: ${{ github.ref }}`. A push containing several
+commits therefore covers the entire pushed range. On a pull request, the
+action uses GitHub's changed-files API against the pull-request base and the
+workflow grants only the required read permissions. Manual Benchmark dispatch
+always selects the complete evidence path.
 
-## Diff selection
-
-For an ordinary push whose nonzero `before` commit exists and is an ancestor
-of the new commit, classification uses that exact push range. A new branch uses
-the unique merge base with the repository default branch. A malformed
-new-branch sentinel, missing objects, multiple or missing merge bases,
-non-ancestor updates, and every other uncertain push history select the
-complete gate. Pull requests use the unique merge base of the event's base and
-head commits. Manual dispatch and unknown event types always select the
-complete gate.
-
-Git's raw diff is invoked without rename detection and with NUL-delimited
-output so both sides of a rename remain visible and unusual path bytes cannot
-alter the classification. A cheap documentation addition, modification, or
-deletion must have ordinary non-executable blob modes on every present side;
-symlinks, executable blobs, gitlinks, type changes, and unknown modes or
-statuses select the complete gate. Repository submodule-ignore configuration
-is overridden so a changed gitlink cannot disappear from the classified path
-set. CI runs are not cancelled by a later commit: a documentation follow-up
-cannot erase the separate exact-SHA result for the preceding product
+Each workflow result belongs to its own `github.sha`; a later documentation
+commit cannot replace the exact-SHA result required for an earlier product
 candidate.
-
-## Trust and delivery boundary
-
-Change classification is a cost optimization for this repository's trusted
-delivery workflow, not an authorization or hostile-contributor boundary. A
-writer who may replace a workflow can also replace its inline conditions and
-aggregate gate. Repositories that accept untrusted workflow changes need
-separate branch protection, required reviews for CI-policy files, and required
-`CI gate` and `Benchmark gate` contexts.
-
-A lightweight documentation result is never benchmark evidence for an
-ancestor. The delivery workflow must wait for the exact product commit's full
-CI and artifact-producing Benchmark run before pushing a documentation-only
-child. Later lightweight children preserve those completed runs; they do not
-replace their SHA or artifacts in the implementation plan.
 
 ## Workflow gates
 
-The CI workflow always runs change classification, the bounded documentation
-checker, its focused policy tests, and a final aggregate `CI gate`. Complete
-changes additionally run formatting, Clippy, Rust and Python tests, pinned
-compatibility drift, release smoke, dependency policy and vulnerability audit,
-native target matrices, and unsupported-platform compilation. The aggregate
-gate rejects a classifier or documentation failure, a skipped required heavy
-job, or a heavy job that ran for a documentation-only change.
+The CI workflow always runs change classification, documentation policy, and
+the final `CI gate`. Documentation-only changes skip formatting, Clippy, Rust
+workspace tests, release smoke, dependency audit, native target matrices, and
+unsupported-platform compilation. The four focused documents add only their
+named checks. Complete and mixed changes run the full product jobs. The final
+gate verifies that classification and documentation succeeded and that heavy
+jobs either all succeeded or all skipped as required.
 
-The Benchmark workflow always runs classification and a final aggregate
-`Benchmark gate`. Complete changes and manual dispatches produce both retained
-exact-SHA benchmark artifacts. Documentation-only commits deliberately skip
-both expensive evidence jobs and produce no new performance artifact; their
-green aggregate result records only that the exemption was correctly applied.
-The implementation plan therefore keeps its canonical Benchmark evidence ID
-bound to the last delivered behavior commit that produced the artifacts.
+The Benchmark workflow always runs classification and the final `Benchmark
+gate`. Complete changes and manual dispatches run both artifact-producing
+benchmark jobs. Documentation-only changes skip both and create no benchmark
+artifact; the aggregate gate verifies those skips.
 
-Crate-level or tool-level selective Rust testing is deferred. A binary
-documentation-versus-complete decision is easier to audit and fails closed as
-the repository grows.
+A lightweight result is not benchmark evidence for an ancestor. The
+implementation plan remains the sole live ledger and retains the last
+artifact-producing product evidence until a later product change passes the
+full evidence gate. Documentation-only descendants leave that canonical
+record unchanged.

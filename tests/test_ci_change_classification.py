@@ -1,379 +1,161 @@
-import os
 from pathlib import Path
-import subprocess
-import sys
-import tempfile
+import re
 import unittest
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-CLASSIFIER = REPOSITORY_ROOT / "scripts" / "classify_ci_changes.py"
-ZERO_SHA = "0" * 40
+CI_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml"
+BENCHMARK_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "bench.yml"
+PATHS_FILTER_PIN = "ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d"
+FOCUSED_FILTERS = {
+    "core_api_docs": "docs/core-api.md",
+    "testkit_docs": "docs/testkit.md",
+    "compatibility_docs": "docs/compatibility.md",
+    "vision_docs": "docs/vision.md",
+}
 
 
-class GitRepository:
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self.git("init", "-b", "main")
-        self.git("config", "user.name", "CI Classifier Test")
-        self.git("config", "user.email", "ci-classifier@example.invalid")
-
-    def git(self, *arguments: str) -> str:
-        return subprocess.run(
-            ["git", *arguments],
-            cwd=self.path,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        ).stdout.strip()
-
-    def write(self, relative: str, contents: str) -> None:
-        destination = self.path / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(contents, encoding="utf-8")
-
-    def commit(self, message: str) -> str:
-        self.git("add", "-A")
-        self.git("commit", "-m", message)
-        return self.git("rev-parse", "HEAD")
+def job(workflow: str, name: str) -> str:
+    match = re.search(
+        rf"(?ms)^  {re.escape(name)}:\n(?P<body>.*?)(?=^  [a-z0-9_-]+:\n|\Z)",
+        workflow,
+    )
+    if match is None:
+        raise AssertionError(f"workflow has no {name!r} job")
+    return match.group(0)
 
 
 class CiChangeClassificationTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.temporary_directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temporary_directory.cleanup)
-        self.repository_path = Path(self.temporary_directory.name) / "repository"
-        self.repository_path.mkdir()
-        self.repository = GitRepository(self.repository_path)
-        self.repository.write("src/lib.rs", "pub fn baseline() {}\n")
-        self.repository.write("README.md", "# Project\n")
-        self.initial = self.repository.commit("initial")
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.ci = CI_WORKFLOW.read_text(encoding="utf-8")
+        cls.benchmark = BENCHMARK_WORKFLOW.read_text(encoding="utf-8")
 
-    def run_classifier(
-        self,
-        event: str = "push",
-        before: str | None = None,
-        head: str | None = None,
-        base: str | None = None,
-        default_ref: str | None = None,
-        cwd: Path | None = None,
-    ) -> tuple[subprocess.CompletedProcess[str], str]:
-        output_file = Path(self.temporary_directory.name) / "github-output"
-        if output_file.exists():
-            output_file.unlink()
-        arguments = [
-            sys.executable,
-            str(CLASSIFIER),
-            "--event",
-            event,
-            "--output",
-            str(output_file),
-        ]
-        for flag, value in (
-            ("--before", before),
-            ("--head", head),
-            ("--base", base),
-            ("--default-ref", default_ref),
-        ):
-            if value is not None:
-                arguments.extend((flag, value))
-        completed = subprocess.run(
-            arguments,
-            cwd=cwd or self.repository_path,
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        output = output_file.read_text(encoding="utf-8") if output_file.exists() else ""
-        return completed, output
-
-    def assert_result(self, output: str, *, full: bool, docs_only: bool) -> None:
-        self.assertEqual(
-            output,
-            f"full={'true' if full else 'false'}\n"
-            f"docs_only={'true' if docs_only else 'false'}\n",
-        )
-
-    def test_docs_only_push_uses_cheap_gate(self) -> None:
-        self.repository.write("README.md", "# Updated\n")
-        self.repository.write("docs/guide/setup.md", "# Setup\n")
-        head = self.repository.commit("docs")
-        completed, output = self.run_classifier(before=self.initial, head=head)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assert_result(output, full=False, docs_only=True)
-        self.assertIn("only cheap documentation (2 path(s))", completed.stdout)
-
-    def test_contract_document_exceptions_use_full_gate(self) -> None:
-        for relative in (
-            "docs/core-api.md",
-            "docs/testkit.md",
-            "docs/compatibility.md",
-            "docs/vision.md",
-        ):
-            with self.subTest(relative=relative):
-                self.repository.git("reset", "--hard", self.initial)
-                self.repository.write(relative, "changed\n")
-                head = self.repository.commit(f"change {relative}")
-                completed, output = self.run_classifier(before=self.initial, head=head)
-                self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assert_result(output, full=True, docs_only=False)
-
-    def test_mixed_and_unknown_paths_use_full_gate(self) -> None:
-        cases = (
-            ("mixed", ("docs/guide.md", "crates/core/src/lib.rs")),
-            ("unknown markdown", ("CONTRIBUTING.md",)),
-            ("non-markdown docs", ("docs/schema.json",)),
-        )
-        for name, paths in cases:
-            with self.subTest(name=name):
-                self.repository.git("reset", "--hard", self.initial)
-                for relative in paths:
-                    self.repository.write(relative, "changed\n")
-                head = self.repository.commit(name)
-                completed, output = self.run_classifier(before=self.initial, head=head)
-                self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assert_result(output, full=True, docs_only=False)
-                self.assertIn("full-gate path", completed.stdout)
-
-    def test_normal_push_requires_before_to_be_an_ancestor(self) -> None:
-        self.repository.write("docs/normal.md", "normal\n")
-        head = self.repository.commit("normal push")
-        completed, output = self.run_classifier(before=self.initial, head=head)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assert_result(output, full=False, docs_only=True)
-        self.assertIn("normal push range", completed.stdout)
-
-    def test_new_branch_uses_default_ref_merge_base(self) -> None:
-        self.repository.git("update-ref", "refs/remotes/origin/main", self.initial)
-        self.repository.git("switch", "-c", "feature")
-        self.repository.write("docs/new-branch.md", "new branch\n")
-        head = self.repository.commit("new branch docs")
-        completed, output = self.run_classifier(
-            before=ZERO_SHA,
-            head=head,
-            default_ref="refs/remotes/origin/main",
-        )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assert_result(output, full=False, docs_only=True)
-        self.assertIn("new branch from default-ref merge base", completed.stdout)
-
-    def test_malformed_new_branch_sentinels_fail_closed(self) -> None:
-        self.repository.git("update-ref", "refs/remotes/origin/main", self.initial)
-        self.repository.write("docs/new-branch.md", "new branch\n")
-        head = self.repository.commit("new branch docs")
-        for before in ("0", "00", "0" * 39, "0" * 41):
-            with self.subTest(before=before):
-                completed, output = self.run_classifier(
-                    before=before,
-                    head=head,
-                    default_ref="refs/remotes/origin/main",
+    def test_both_workflows_use_the_pinned_established_filter(self) -> None:
+        for workflow in (self.ci, self.benchmark):
+            with self.subTest(workflow=workflow.splitlines()[0]):
+                classifier = job(workflow, "change-classification")
+                self.assertEqual(
+                    classifier.count(f"uses: dorny/paths-filter@{PATHS_FILTER_PIN}"),
+                    1,
                 )
-                self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assert_result(output, full=True, docs_only=False)
-                self.assertIn("invalid length", completed.stdout)
+                self.assertIn("id: paths", classifier)
+                self.assertIn("base: ${{ github.ref }}", classifier)
+                self.assertIn("predicate-quantifier: some-with-excludes", classifier)
+                self.assertIn("fetch-depth: 0", classifier)
+                self.assertIn("timeout-minutes: 5", classifier)
+                self.assertNotIn("classify_ci_changes.py", classifier)
+                self.assertNotIn("list-files:", classifier)
 
-    def test_multiple_merge_bases_fail_closed(self) -> None:
-        self.repository.git("switch", "-c", "left")
-        self.repository.write("docs/left.md", "left\n")
-        left = self.repository.commit("left")
+        self.assertIn("pull-requests: read", self.ci)
+        self.assertFalse((REPOSITORY_ROOT / "scripts/classify_ci_changes.py").exists())
+        self.assertFalse((REPOSITORY_ROOT / "scripts/bounded_subprocess.py").exists())
 
-        self.repository.git("switch", "-c", "right", self.initial)
-        self.repository.write("src/lib.rs", "pub fn changed() {}\n")
-        right = self.repository.commit("right")
-
-        self.repository.git("switch", "left")
-        self.repository.git("merge", "--no-ff", "--no-edit", right)
-        left_merge = self.repository.git("rev-parse", "HEAD")
-        self.repository.git("switch", "right")
-        self.repository.git("merge", "--no-ff", "--no-edit", left)
-        right_merge = self.repository.git("rev-parse", "HEAD")
-
-        bases = self.repository.git("merge-base", "--all", left_merge, right_merge)
-        self.assertEqual(len(bases.splitlines()), 2)
-        completed, output = self.run_classifier(
-            event="pull_request", base=right_merge, head=left_merge
+    def test_filters_declare_one_documentation_boundary(self) -> None:
+        expected = (
+            "documentation:\n"
+            "              - 'README.md'\n"
+            "              - 'docs/**/*.md'\n"
+            "            non_documentation:\n"
+            "              - '**'\n"
+            "              - '!README.md'\n"
+            "              - '!docs/**/*.md'"
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assert_result(output, full=True, docs_only=False)
-        self.assertIn("no unique merge base", completed.stdout)
+        for workflow in (self.ci, self.benchmark):
+            classifier = job(workflow, "change-classification")
+            self.assertIn(expected, classifier)
 
-    def test_ignored_submodule_pointer_change_uses_full_gate(self) -> None:
-        self.repository.write(
-            ".gitmodules",
-            '[submodule "module"]\n\tpath = module\n\turl = ../module\n\tignore = all\n',
-        )
-        self.repository.git("add", ".gitmodules")
-        self.repository.git(
-            "update-index", "--add", "--cacheinfo", f"160000,{'1' * 40},module"
-        )
-        self.repository.git("commit", "-m", "add ignored submodule")
-        before = self.repository.git("rev-parse", "HEAD")
+        for workflow in (self.ci, self.benchmark):
+            classifier = job(workflow, "change-classification")
+            for output, path in FOCUSED_FILTERS.items():
+                with self.subTest(workflow=workflow.splitlines()[0], output=output):
+                    self.assertIn(f"            {output}:\n", classifier)
+                    self.assertIn(f"              - '{path}'\n", classifier)
 
-        self.repository.write("docs/submodule.md", "docs\n")
-        self.repository.git("add", "docs/submodule.md")
-        self.repository.git(
-            "update-index", "--cacheinfo", f"160000,{'2' * 40},module"
-        )
-        self.repository.git("commit", "-m", "update ignored submodule")
-        head = self.repository.git("rev-parse", "HEAD")
-        completed, output = self.run_classifier(before=before, head=head)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assert_result(output, full=True, docs_only=False)
-        self.assertIn("'module'", completed.stdout)
+    def test_route_defaults_every_non_docs_only_case_to_full(self) -> None:
+        for workflow in (self.ci, self.benchmark):
+            classifier = job(workflow, "change-classification")
+            self.assertIn("id: route", classifier)
+            self.assertIn(
+                "DOCUMENTATION: ${{ steps.paths.outputs.documentation }}",
+                classifier,
+            )
+            self.assertIn(
+                "NON_DOCUMENTATION: ${{ steps.paths.outputs.non_documentation }}",
+                classifier,
+            )
+            self.assertIn("full=true", classifier)
+            self.assertIn("docs_only=false", classifier)
+            self.assertIn("true:false", classifier)
+            self.assertIn('echo "full=${full}" >> "${GITHUB_OUTPUT}"', classifier)
+            self.assertIn(
+                'echo "docs_only=${docs_only}" >> "${GITHUB_OUTPUT}"',
+                classifier,
+            )
+            self.assertIn("full: ${{ steps.route.outputs.full }}", classifier)
+            self.assertIn(
+                "docs_only: ${{ steps.route.outputs.docs_only }}", classifier
+            )
 
-    def test_docs_suffixed_gitlink_change_uses_full_gate(self) -> None:
-        self.repository.git(
-            "update-index",
-            "--add",
-            "--cacheinfo",
-            f"160000,{'3' * 40},docs/manual.md",
-        )
-        self.repository.git("commit", "-m", "add docs-suffixed gitlink")
-        before = self.repository.git("rev-parse", "HEAD")
+        for output in FOCUSED_FILTERS:
+            self.assertIn(
+                f"{output}: ${{{{ steps.paths.outputs.{output} }}}}",
+                job(self.ci, "change-classification"),
+            )
 
-        self.repository.git(
-            "update-index", "--cacheinfo", f"160000,{'4' * 40},docs/manual.md"
-        )
-        self.repository.git("commit", "-m", "update docs-suffixed gitlink")
-        head = self.repository.git("rev-parse", "HEAD")
-        completed, output = self.run_classifier(before=before, head=head)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assert_result(output, full=True, docs_only=False)
-        self.assertIn("'docs/manual.md'", completed.stdout)
+    def test_ci_keeps_focused_docs_light_and_mixed_changes_full(self) -> None:
+        documentation = job(self.ci, "documentation-policy")
+        self.assertIn("needs: change-classification", documentation)
+        self.assertIn("if: ${{ always() }}", documentation)
+        self.assertIn("python3 scripts/check_documentation.py", documentation)
+        self.assertIn("tests/test_documentation_policy.py", documentation)
 
-    def test_docs_symlink_and_executable_mode_changes_use_full_gate(self) -> None:
-        self.repository.write("docs/guide.md", "guide\n")
-        regular = self.repository.commit("add regular guide")
+        for output in FOCUSED_FILTERS:
+            with self.subTest(output=output):
+                self.assertIn(
+                    "needs.change-classification.outputs."
+                    f"{output} == 'true'",
+                    documentation,
+                )
 
-        (self.repository_path / "docs/guide.md").unlink()
-        os.symlink("../README.md", self.repository_path / "docs/guide.md")
-        symlink = self.repository.commit("replace guide with symlink")
-        completed, output = self.run_classifier(before=regular, head=symlink)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assert_result(output, full=True, docs_only=False)
-        self.assertIn("'docs/guide.md'", completed.stdout)
-
-        self.repository.git("reset", "--hard", regular)
-        os.chmod(self.repository_path / "docs/guide.md", 0o755)
-        executable = self.repository.commit("make guide executable")
-        completed, output = self.run_classifier(before=regular, head=executable)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assert_result(output, full=True, docs_only=False)
-        self.assertIn("'docs/guide.md'", completed.stdout)
-
-    def test_docs_file_directory_transitions_use_full_gate(self) -> None:
-        self.repository.write("docs/guide.md/child.md", "child\n")
-        tree = self.repository.commit("add docs tree")
-
-        self.repository.git("rm", "-r", "docs/guide.md")
-        self.repository.write("docs/guide.md", "guide\n")
-        blob = self.repository.commit("replace docs tree with file")
-        completed, output = self.run_classifier(before=tree, head=blob)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assert_result(output, full=True, docs_only=False)
-        self.assertIn("file/directory transition at 'docs/guide.md'", completed.stdout)
-
-        self.repository.git("rm", "docs/guide.md")
-        self.repository.write("docs/guide.md/child.md", "child again\n")
-        tree_again = self.repository.commit("replace docs file with tree")
-        completed, output = self.run_classifier(before=blob, head=tree_again)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assert_result(output, full=True, docs_only=False)
-        self.assertIn("file/directory transition at 'docs/guide.md'", completed.stdout)
-
-    def test_pull_request_uses_merge_base_not_base_tip(self) -> None:
-        self.repository.git("switch", "-c", "feature")
-        self.repository.write("docs/pr.md", "pull request\n")
-        head = self.repository.commit("feature docs")
-        self.repository.git("switch", "main")
-        self.repository.write("src/main.rs", "fn main() {}\n")
-        base = self.repository.commit("main advances")
-        completed, output = self.run_classifier(
-            event="pull_request", base=base, head=head
-        )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assert_result(output, full=False, docs_only=True)
-        self.assertIn("pull-request merge-base range", completed.stdout)
-
-    def test_force_unreachable_and_git_failure_fail_closed(self) -> None:
-        self.repository.git("switch", "-c", "other", self.initial)
-        self.repository.write("docs/other.md", "other\n")
-        unrelated = self.repository.commit("unrelated")
-        self.repository.git("switch", "main")
-        self.repository.write("docs/head.md", "head\n")
-        head = self.repository.commit("head")
-
-        cases = (
-            ("force", unrelated, self.repository_path),
-            ("unreachable", "f" * 40, self.repository_path),
-            ("git failure", self.initial, Path(self.temporary_directory.name)),
-        )
-        for name, before, cwd in cases:
-            with self.subTest(name=name):
-                completed, output = self.run_classifier(before=before, head=head, cwd=cwd)
-                self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assert_result(output, full=True, docs_only=False)
-                self.assertIn("uncertain change set", completed.stdout)
-
-    def test_rename_from_code_to_docs_cannot_hide_code_change(self) -> None:
-        (self.repository_path / "docs").mkdir()
-        self.repository.git("mv", "src/lib.rs", "docs/moved.md")
-        head = self.repository.commit("move code into docs")
-        completed, output = self.run_classifier(before=self.initial, head=head)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assert_result(output, full=True, docs_only=False)
-        self.assertIn("'src/lib.rs'", completed.stdout)
-
-    def test_empty_diff_fails_closed(self) -> None:
-        completed, output = self.run_classifier(before=self.initial, head=self.initial)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assert_result(output, full=True, docs_only=False)
-        self.assertIn("empty normal push range", completed.stdout)
-
-    def test_dispatch_unknown_event_and_missing_inputs_run_full_gate(self) -> None:
-        for event, before, head in (
-            ("workflow_dispatch", None, None),
-            ("schedule", None, None),
-            ("push", None, self.initial),
+        for heavy_job in (
+            "quality",
+            "security",
+            "native-target-tests",
+            "unsupported-native-tools",
         ):
-            with self.subTest(event=event):
-                completed, output = self.run_classifier(event=event, before=before, head=head)
-                self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assert_result(output, full=True, docs_only=False)
+            self.assertIn(
+                "if: ${{ needs.change-classification.outputs.full == 'true' }}",
+                job(self.ci, heavy_job),
+            )
 
-    def test_output_format_is_exact_and_environment_output_is_supported(self) -> None:
-        self.repository.write("docs/output.md", "output\n")
-        head = self.repository.commit("output")
-        output_file = Path(self.temporary_directory.name) / "environment-output"
-        environment = os.environ.copy()
-        environment["GITHUB_OUTPUT"] = str(output_file)
-        completed = subprocess.run(
-            [
-                sys.executable,
-                str(CLASSIFIER),
-                "--event",
-                "push",
-                "--before",
-                self.initial,
-                "--head",
-                head,
-            ],
-            cwd=self.repository_path,
-            env=environment,
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(
-            completed.stdout,
-            "CI change classification: full=false docs_only=true; "
-            "normal push range contains only cheap documentation (1 path(s))\n",
-        )
-        self.assertEqual(output_file.read_text(encoding="utf-8"), "full=false\ndocs_only=true\n")
+        gate = job(self.ci, "ci-gate")
+        self.assertIn("name: CI gate", gate)
+        self.assertIn("if: ${{ always() }}", gate)
+        self.assertIn("CLASSIFICATION_RESULT", gate)
+        self.assertIn("DOCUMENTATION_RESULT", gate)
+        self.assertIn("DOCS_ONLY", gate)
+        self.assertIn('expected="skipped"', gate)
+        self.assertIn('expected="success"', gate)
+
+    def test_benchmark_keeps_a_stable_non_artifact_docs_gate(self) -> None:
+        for evidence_job in ("bootstrap-evidence", "pinned-upstream-evidence"):
+            self.assertIn(
+                "if: ${{ needs.change-classification.outputs.full == 'true' }}",
+                job(self.benchmark, evidence_job),
+            )
+
+        classifier = job(self.benchmark, "change-classification")
+        self.assertIn("github.event_name", classifier)
+        self.assertIn("workflow_dispatch", classifier)
+
+        gate = job(self.benchmark, "benchmark-gate")
+        self.assertIn("name: Benchmark gate", gate)
+        self.assertIn("if: ${{ always() }}", gate)
+        self.assertIn("DOCS_ONLY", gate)
+        self.assertIn('expected="skipped"', gate)
+        self.assertIn('expected="success"', gate)
+        self.assertIn("no artifacts were produced", gate)
 
 
 if __name__ == "__main__":
