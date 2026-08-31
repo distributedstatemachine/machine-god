@@ -557,13 +557,10 @@ mod supported {
 
     fn validate_state_base(value: &OsStr) -> Result<PathBuf, NativeBackgroundInspectionError> {
         let path = Path::new(value);
-        let Some(value) = value.to_str() else {
-            return Err(unavailable());
-        };
-        if !is_canonical_absolute_path(value) {
+        if value.to_str().is_none() || !path.is_absolute() {
             return Err(unavailable());
         }
-        Ok(path.to_owned())
+        Ok(path.components().collect())
     }
 
     fn open_workspace_hierarchy(

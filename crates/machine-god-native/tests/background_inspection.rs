@@ -535,6 +535,40 @@ fn xdg_and_home_state_bases_reject_symlinks_in_ancestors() {
     }
 }
 
+#[test]
+fn xdg_and_home_state_bases_accept_normalized_absolute_spellings() {
+    let temporary = TempDirectory::new();
+    let workspace = temporary.path().join("workspace");
+    fs::create_dir(&workspace).unwrap();
+    private_directory(&workspace);
+
+    let state = temporary.path().join("state");
+    let home = temporary.path().join("home");
+    fs::create_dir(&state).unwrap();
+    fs::create_dir(&home).unwrap();
+    private_directory(&state);
+    private_directory(&home);
+
+    let state_spelling = OsString::from(format!("{}//./", state.display()));
+    let home_spelling = OsString::from(format!("{}//./", home.display()));
+    let environments = [
+        NativeEnvironment::new(None, Some(state_spelling), None),
+        NativeEnvironment::new(None, None, Some(home_spelling)),
+    ];
+    for environment in environments {
+        let NativeBackgroundInspection::List(list) = block_on(inspect_native_background(
+            environment,
+            workspace.clone(),
+            NativeBackgroundQuery::List,
+        ))
+        .unwrap() else {
+            panic!("expected list");
+        };
+        assert!(list.records().is_empty());
+        assert!(!list.truncated());
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn successful_listing_does_not_advance_record_or_directory_access_times() {
