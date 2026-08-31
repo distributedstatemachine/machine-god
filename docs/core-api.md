@@ -97,14 +97,14 @@ only bounded, nonblocking work. An allowed execution receives the exact
 arguments returned by preflight.
 
 Preparation has an explicit provider-neutral authorization disposition.
-[`PreparedToolCall::new`](crate::PreparedToolCall::new), the default
-[`Tool::prepare`](crate::Tool::prepare), and every existing tool require policy
-authorization for their exact capability. A narrowly trusted tool may instead
-use
+[`PreparedToolCall::new`](crate::PreparedToolCall::new) and the default
+[`Tool::prepare`](crate::Tool::prepare) mark an invocation as permission-required
+and require policy authorization for its exact capability. A narrowly trusted
+tool whose durable contract requires no policy-governed authority may instead use
 [`PreparedToolCall::without_authority`](crate::PreparedToolCall::without_authority)
-only when its prepared execution requires no policy-governed authority. That
-explicit form skips `PermissionRequested`, `PermissionResolved`, permission-ID
-construction, and [`PermissionHandler::authorize`](crate::PermissionHandler::authorize);
+for that invocation. That explicit form skips `PermissionRequested`,
+`PermissionResolved`, permission-ID construction, and
+[`PermissionHandler::authorize`](crate::PermissionHandler::authorize);
 it does not skip prepared-argument validation, cancellation, `ToolStarted` and
 `ToolFinished`, bounded output validation, durable result replacement, or the
 next provider round. Core never derives the disposition from model-controlled
@@ -457,24 +457,24 @@ native path deterministically reports unavailable attachments without reading
 the filesystem or contacting a provider. The exact behavior is defined by the
 [`vision` contract](vision.md).
 
-Every successfully prepared invocation receives a fresh critical-risk
-authorization request for its prepared capability. Its fixed reason remains
-`model requested this registered tool`, and its deterministic ID remains a
-domain-separated SHA-256 v2 digest of length-delimited session ID, session
-incarnation ID, turn ID, and ordinal. Both
+Every successfully prepared permission-required invocation receives a fresh
+critical-risk authorization request for its prepared capability. Its fixed
+reason remains `model requested this registered tool`, and its deterministic ID
+remains a domain-separated SHA-256 v2 digest of length-delimited session ID,
+session incarnation ID, turn ID, and ordinal. Both
 [`ModelRequest`](crate::ModelRequest) and
 [`PermissionRequest`](crate::PermissionRequest) carry the incarnation as audit
 input. The fixed lowercase hex encoding is portable ASCII and remains below the
 128-byte public ID limit. Core does not cache positive grant scopes. A host
 policy may implement its own identity-safe caching without reusing an allow
-across sessions, turns, or reset session lifetimes. Denial becomes a fixed
-generic error `ToolResult` without starting the tool. The detailed policy
-reason remains available only in the host-facing `PermissionResolved` event and
-is truncated on a UTF-8 boundary to its configured limit before it is cloned or
-staged. A tool implementation error likewise becomes a fixed generic
-model-visible result, allowing the next model round to recover without copying
-tool-specific diagnostics into the transcript. A policy infrastructure error
-fails the turn.
+across sessions, turns, or reset session lifetimes. For permission-required
+calls, denial becomes a fixed generic error `ToolResult` without starting the
+tool. The detailed policy reason remains available only in the host-facing
+`PermissionResolved` event and is truncated on a UTF-8 boundary to its
+configured limit before it is cloned or staged. A tool implementation error
+likewise becomes a fixed generic model-visible result, allowing the next model
+round to recover without copying tool-specific diagnostics into the
+transcript. A policy infrastructure error fails the turn.
 
 An allowed tool receives a [`ToolContext`](crate::ToolContext) containing the
 session ID, session incarnation ID, turn ID, and call ID, plus exactly the JSON
