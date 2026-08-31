@@ -843,8 +843,9 @@ mod supported {
         if depth > MAX_BACKGROUND_JSON_DEPTH || nodes > MAX_BACKGROUND_JSON_NODES {
             return Err(corrupt());
         }
+        drop(value);
         let record: StoredBackgroundRecord =
-            serde_json::from_value(value).map_err(|_| corrupt())?;
+            serde_json::from_slice(bytes).map_err(|_| corrupt())?;
         validate_record(record, workspace, name)
     }
 

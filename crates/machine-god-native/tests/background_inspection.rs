@@ -116,8 +116,12 @@ impl Fixture {
     }
 
     fn write_value(&self, id: u64, value: &Value) -> PathBuf {
+        self.write_bytes(id, &serde_json::to_vec(value).unwrap())
+    }
+
+    fn write_bytes(&self, id: u64, value: &[u8]) -> PathBuf {
         let path = self.record_root.join(record_name(id));
-        fs::write(&path, serde_json::to_vec(value).unwrap()).unwrap();
+        fs::write(&path, value).unwrap();
         private_file(&path);
         path
     }
@@ -354,4 +358,20 @@ fn every_nullable_schema_field_is_required_even_when_null() {
         .unwrap_err();
         assert_eq!(error.kind(), NativeBackgroundInspectionErrorKind::Corrupt);
     }
+}
+
+#[test]
+fn duplicate_schema_fields_are_rejected_before_projection() {
+    let fixture = Fixture::new();
+    let encoded = serde_json::to_string(&fixture.record_value(13, 20, "command")).unwrap();
+    let duplicated = encoded.replacen("\"pid\":null", "\"pid\":null,\"pid\":null", 1);
+    fixture.write_bytes(13, duplicated.as_bytes());
+
+    let error = block_on(inspect_native_background(
+        fixture.environment(),
+        fixture.workspace.clone(),
+        NativeBackgroundQuery::Id(13),
+    ))
+    .unwrap_err();
+    assert_eq!(error.kind(), NativeBackgroundInspectionErrorKind::Corrupt);
 }

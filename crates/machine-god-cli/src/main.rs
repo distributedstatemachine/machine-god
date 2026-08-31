@@ -1437,10 +1437,9 @@ fn run_with_hosts_and_status(
         return 0;
     }
     if first.as_deref().is_some_and(is_background_command) {
-        let background_arguments = arguments.collect::<Vec<_>>();
         return run_background(
             background_host,
-            &background_arguments,
+            arguments,
             stdout,
             stderr,
             INVALID_ARGUMENTS,

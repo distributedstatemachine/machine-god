@@ -1,4 +1,6 @@
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
+#[cfg(test)]
+use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::io;
 use std::path::{Component, Path};
@@ -167,14 +169,18 @@ pub(super) fn is_background_command(argument: &OsStr) -> bool {
     argument == "background"
 }
 
-pub(super) fn run_background(
+pub(super) fn run_background<I, S>(
     host: &impl BackgroundCommandHost,
-    arguments: &[OsString],
+    arguments: I,
     stdout: &mut impl io::Write,
     stderr: &mut impl io::Write,
     invalid_arguments: &str,
     output_failure: &str,
-) -> u8 {
+) -> u8
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
     let Ok(arguments) = parse_arguments(arguments) else {
         let _ = stderr.write_all(invalid_arguments.as_bytes());
         return 2;
@@ -234,11 +240,15 @@ fn validate_target_snapshot(
     }
 }
 
-fn parse_arguments(arguments: &[OsString]) -> Result<BackgroundArguments, ()> {
+fn parse_arguments<I, S>(arguments: I) -> Result<BackgroundArguments, ()>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
     let mut json = false;
     let mut target = None;
     for argument in arguments {
-        let argument = argument.to_str().ok_or(())?;
+        let argument = argument.as_ref().to_str().ok_or(())?;
         if argument == "--json" {
             if json {
                 return Err(());
@@ -1095,7 +1105,14 @@ mod tests {
         let mut stdout = BrokenWriter;
         let mut stderr = Vec::new();
         assert_eq!(
-            run_background(&host, &[], &mut stdout, &mut stderr, INVALID, OUTPUT),
+            run_background(
+                &host,
+                std::iter::empty::<OsString>(),
+                &mut stdout,
+                &mut stderr,
+                INVALID,
+                OUTPUT,
+            ),
             1
         );
         assert_eq!(stderr, OUTPUT.as_bytes());
