@@ -1110,9 +1110,7 @@ mod production {
         use std::task::{Context, Poll};
         use std::time::{Duration, Instant};
 
-        use super::super::{
-            AskCommandExecution, AskCommandFinalizer, AskCommandHost, SessionSelection, run_ask,
-        };
+        use super::super::{AskCommandExecution, AskCommandHost, SessionSelection, run_ask};
         use super::{
             AskCommandOutcome, AskSignal, AskSignalControl, AskSignalControlSender,
             AskSignalController, AskSignalGuardianResult, AskSignalGuardianState,
@@ -2423,7 +2421,9 @@ mod production {
                     assert!(drained.load(Ordering::Acquire));
                     fs::write(drained_path, b"terminal-drained")
                         .expect("drained marker should be writable");
-                    Box::new(controller).finish(result.outcome.exit_code());
+                    runtime
+                        .block_on(control.finish(result.outcome.exit_code()))
+                        .expect("child guardian should finish");
                 });
 
                 let mut output = PermanentlyBlockedOutput {
@@ -2434,6 +2434,14 @@ mod production {
                 serve_output(work_receiver, &acknowledgement_sender, &mut output);
                 worker.join().expect("child worker should join");
             });
+            let guardian = controller
+                .worker
+                .take()
+                .expect("child signal guardian should still be owned");
+            guardian
+                .join()
+                .expect("child signal guardian should exit the process");
+            panic!("child signal guardian returned without exiting the process");
         }
 
         impl From<AskSignal> for AskCommandOutcome {
