@@ -414,8 +414,7 @@ fn input_schema() -> Value {
         "properties": {
             "query": {
                 "type": "string",
-                "maxLength": MAX_MCP_SEARCH_QUERY_BYTES,
-                "description": "Keyword query over configured dynamic tool metadata"
+                "description": "Keyword query over configured dynamic tool metadata; at most 4096 UTF-8 bytes"
             },
             "limit": {
                 "type": "integer",
@@ -588,12 +587,16 @@ fn search_snapshot(
     }
 
     let tokens = query_tokens(&arguments.query);
-    let mut matches = Vec::new();
+    let match_target = arguments.limit + 1;
+    let mut matches = Vec::with_capacity(match_target);
     let mut work = 0usize;
     for tool in snapshot.tools.iter() {
         check_cancellation(cancellation)?;
         if metadata_matches(tool, &tokens, arguments.query.is_empty(), &mut work)? {
             matches.push(tool);
+            if matches.len() == match_target {
+                break;
+            }
         }
     }
     let match_count = matches.len();
@@ -669,13 +672,21 @@ fn render_search_result(
     let projected = tools
         .iter()
         .map(|tool| {
-            let description = utf8_prefix(&tool.description, MAX_MCP_SEARCH_DESCRIPTION_BYTES);
+            let name = encode_model_scalar(&tool.name);
+            let server = encode_model_scalar(&tool.server);
+            let description =
+                bounded_encoded_scalar(&tool.description, MAX_MCP_SEARCH_DESCRIPTION_BYTES);
+            let usage = tool
+                .tags
+                .iter()
+                .map(|tag| encode_model_scalar(tag))
+                .collect::<Vec<_>>();
             json!({
-                "name": tool.name,
-                "server": tool.server,
+                "name": name,
+                "server": server,
                 "description": description,
                 "purpose": description,
-                "usage": tool.tags,
+                "usage": usage,
             })
         })
         .collect::<Vec<_>>();
@@ -712,6 +723,44 @@ fn utf8_prefix(value: &str, max_bytes: usize) -> &str {
         end -= 1;
     }
     &value[..end]
+}
+
+fn bounded_encoded_scalar(value: &str, max_bytes: usize) -> String {
+    let mut encoded = encode_model_scalar(value);
+    if encoded.len() <= max_bytes {
+        return encoded;
+    }
+    let prefix = utf8_prefix(&encoded, max_bytes);
+    let mut prefix_bytes = prefix.len();
+    if let Some(ampersand) = prefix.rfind('&')
+        && !prefix[ampersand..].contains(';')
+    {
+        prefix_bytes = ampersand;
+    }
+    encoded.truncate(prefix_bytes);
+    encoded
+}
+
+fn encode_model_scalar(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '&' => encoded.push_str("&amp;"),
+            '<' => encoded.push_str("&lt;"),
+            '>' => encoded.push_str("&gt;"),
+            '"' => encoded.push_str("&quot;"),
+            '\u{0085}' => encoded.push_str("&#x85;"),
+            '\u{2028}' => encoded.push_str("&#x2028;"),
+            '\u{2029}' => encoded.push_str("&#x2029;"),
+            '\0'..='\u{001f}' | '\u{007f}' => {
+                use std::fmt::Write as _;
+                write!(encoded, "&#x{:02x};", u32::from(character))
+                    .expect("writing to a string is infallible");
+            }
+            _ => encoded.push(character),
+        }
+    }
+    encoded
 }
 
 fn bounded_output(content: Value) -> Result<ToolOutput, ToolError> {

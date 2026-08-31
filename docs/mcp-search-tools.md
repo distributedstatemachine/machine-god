@@ -6,8 +6,8 @@ source. This slice does not discover, connect to, authenticate with, select, or
 invoke MCP servers.
 
 The query grammar, default and maximum count, conjunctive ASCII matching,
-catalog ordering, and metadata projection follow the pinned fx scenario. This
-is not a complete MCP or full-fx equivalence claim.
+catalog ordering, and model-context scalar encoding follow the pinned fx
+scenario. This is not a complete MCP or full-fx equivalence claim.
 
 ## Input and preparation
 
@@ -86,11 +86,13 @@ semantic expansion.
 
 Entries are examined and returned in immutable snapshot order, preserving the
 pinned ready-server/tool catalog behavior. The requested limit is applied to
-that order. Matching charges the complete private haystack length for every
-token comparison, uses checked arithmetic, and fails without partial output
-above 64 MiB of charged work. Cancellation is raced with catalog acquisition,
-wins over a catalog result observed in the same poll, and is checked between
-entries.
+that order. Scanning stops after the requested prefix plus one matching entry,
+which is sufficient to establish `more_available`; later catalog entries
+cannot consume work once the complete observable result is known. Matching
+charges the complete private haystack length for every token comparison, uses
+checked arithmetic, and fails without partial output above 64 MiB of charged
+work. Cancellation is raced with catalog acquisition, wins over a catalog
+result observed in the same poll, and is checked between entries.
 
 Every returned entry has exactly this metadata shape:
 
@@ -104,9 +106,13 @@ Every returned entry has exactly this metadata shape:
 }
 ```
 
-The description and identical purpose are each a UTF-8-safe prefix of at most
-1,024 bytes. Search text, schemas, callbacks, credentials, and transport state
-are never included. Success wraps `tools` and the exact returned `count` in an
+Before projection, every name, server alias, description, and usage tag is
+encoded as one model-context scalar: `&`, `<`, `>`, double quote, C0 controls,
+DEL, NEL, and the Unicode line and paragraph separators become fixed ASCII
+entities. The description limit applies after encoding; the identical
+description and purpose are each an entity-safe UTF-8 prefix of at most 1,024
+bytes. Search text, schemas, callbacks, credentials, and transport state are
+never included. Success wraps `tools` and the exact returned `count` in an
 ordinary successful `ToolOutput`. `more_available: true` is present only when
 the requested count omitted another matching entry.
 
