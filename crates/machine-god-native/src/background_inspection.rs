@@ -859,7 +859,7 @@ mod supported {
         let mut deserializer = serde_json::Deserializer::from_slice(bytes);
         JsonShapeSeed {
             context: &context,
-            depth: 1,
+            container_depth: 0,
         }
         .deserialize(&mut deserializer)
         .map_err(|_| corrupt())?;
@@ -871,14 +871,21 @@ mod supported {
     }
 
     impl JsonShapeContext {
-        fn consume_node<E: serde::de::Error>(&self, depth: usize) -> Result<(), E> {
+        fn consume_node<E: serde::de::Error>(&self) -> Result<(), E> {
             let Some(nodes) = self.nodes.get().checked_add(1) else {
                 return Err(E::custom("background JSON node limit exceeded"));
             };
-            if nodes > MAX_BACKGROUND_JSON_NODES || depth > MAX_BACKGROUND_JSON_DEPTH {
-                return Err(E::custom("background JSON shape limit exceeded"));
+            if nodes > MAX_BACKGROUND_JSON_NODES {
+                return Err(E::custom("background JSON node limit exceeded"));
             }
             self.nodes.set(nodes);
+            Ok(())
+        }
+
+        fn enter_container<E: serde::de::Error>(depth: usize) -> Result<(), E> {
+            if depth > MAX_BACKGROUND_JSON_DEPTH {
+                return Err(E::custom("background JSON depth limit exceeded"));
+            }
             Ok(())
         }
     }
@@ -886,7 +893,7 @@ mod supported {
     #[derive(Clone, Copy)]
     struct JsonShapeSeed<'a> {
         context: &'a JsonShapeContext,
-        depth: usize,
+        container_depth: usize,
     }
 
     impl<'de> DeserializeSeed<'de> for JsonShapeSeed<'_> {
@@ -896,7 +903,7 @@ mod supported {
         where
             D: serde::Deserializer<'de>,
         {
-            self.context.consume_node(self.depth)?;
+            self.context.consume_node()?;
             deserializer.deserialize_any(JsonShapeVisitor { seed: self })
         }
     }
@@ -959,9 +966,11 @@ mod supported {
         where
             A: SeqAccess<'de>,
         {
+            let container_depth = self.seed.container_depth + 1;
+            JsonShapeContext::enter_container(container_depth)?;
             let child = JsonShapeSeed {
                 context: self.seed.context,
-                depth: self.seed.depth + 1,
+                container_depth,
             };
             while values.next_element_seed(child)?.is_some() {}
             Ok(())
@@ -971,9 +980,11 @@ mod supported {
         where
             A: MapAccess<'de>,
         {
+            let container_depth = self.seed.container_depth + 1;
+            JsonShapeContext::enter_container(container_depth)?;
             let child = JsonShapeSeed {
                 context: self.seed.context,
-                depth: self.seed.depth + 1,
+                container_depth,
             };
             while values.next_key::<IgnoredAny>()?.is_some() {
                 values.next_value_seed(child)?;
@@ -1117,8 +1128,8 @@ mod supported {
 
         #[test]
         fn streaming_shape_validation_accepts_exact_depth_and_rejects_one_excess() {
-            assert!(validate_json_shape(br"[[[0]]]").is_ok());
-            assert!(validate_json_shape(br"[[[[0]]]]").is_err());
+            assert!(validate_json_shape(br"[[[[0]]]]").is_ok());
+            assert!(validate_json_shape(br"[[[[[0]]]]]").is_err());
         }
 
         #[test]

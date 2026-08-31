@@ -261,6 +261,7 @@ fn status_command(workspace: &Path, config: &OsStr, state: &OsStr) -> Command {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn background_command(workspace: &Path, state: &OsStr) -> Command {
+    let state = fs::canonicalize(Path::new(state)).unwrap();
     let mut command = machine_god();
     command
         .current_dir(workspace)
