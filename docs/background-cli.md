@@ -27,8 +27,8 @@ machine-god background --json <unsigned-decimal-u64>
 ```
 
 At most one target and one `--json` flag are accepted. IDs use nonempty ASCII
-decimal digits and must fit `u64`; leading zeroes are accepted and have numeric
-meaning, but the complete ID token is limited to 20 bytes. `last` is exact and
+decimal digits and must fit `u64`; leading zeroes are accepted within the
+20-byte token cap and do not change numeric identity. `last` is exact and
 case-sensitive. Empty, signed, whitespace-padded,
 non-Unicode, duplicate-flag, duplicate-target, option-assignment, and unknown
 arguments are invalid. Parsing completes before environment, current-directory,
@@ -104,6 +104,11 @@ wrong-width, nested, and unrelated entries consume scan budget but are not
 records. A selected canonical symlink, directory, special file, oversized or
 malformed document, unsupported version, unknown/duplicate/missing field,
 invalid value, or filename/content/workspace mismatch is `Corrupt`.
+
+On macOS, each selected canonical record's opened descriptor must have zero
+ACL-level flags and either no extended ACL entries or only zero-flag `DENY`
+entries whose sole permission is `DELETE`. An ACL outside that closed policy is
+`Corrupt`; failure to read the descriptor-bound ACL is `Unavailable`.
 
 ## Bounds, effects, and concurrency
 
