@@ -1908,6 +1908,10 @@ class UpstreamHarnessTest(unittest.TestCase):
                 evidence["workloads"][5],
                 [machine_binary, "sessions", "--json"],
             ),
+            (
+                evidence["workloads"][6],
+                [machine_binary, "background", "--json"],
+            ),
         ):
             self.assertEqual(workload["equivalence"], "non-equivalent")
             self.assertIs(workload["claim_eligible"], False)
@@ -2185,17 +2189,17 @@ class UpstreamHarnessTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     validate_upstream_evidence(evidence)
 
-    def test_rejects_unimplemented_workload_schema_drift(self) -> None:
+    def test_rejects_background_workload_schema_drift(self) -> None:
         mutations = (
             lambda data: data["workloads"][6].__setitem__(
-                "equivalence", "non-equivalent"
+                "equivalence", "unimplemented"
             ),
             lambda data: data["workloads"][6].__setitem__("claim_eligible", True),
             lambda data: data["workloads"][6]["implementations"][1].__setitem__(
-                "command", ["machine-god", "background", "--json"]
+                "command", ["machine-god", "background"]
             ),
             lambda data: data["workloads"][6]["implementations"][1].__setitem__(
-                "status", "not-measured"
+                "status", "unimplemented"
             ),
             lambda data: data["workloads"][6]["implementations"][0].__setitem__(
                 "samples", []

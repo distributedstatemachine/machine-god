@@ -1654,13 +1654,17 @@ def validate_upstream_evidence(
             [fx_binary["path"], "sessions", "--json"],
             [machine_binary["path"], "sessions", "--json"],
         ),
+        "background-json": (
+            [fx_binary["path"], "background", "--json"],
+            [machine_binary["path"], "background", "--json"],
+        ),
     }
     unavailable = unavailable_workloads(
         Path(fx_binary["path"]), Path(machine_binary["path"])
     )
     if workloads[1] != unavailable[0] or workloads[4:] != unavailable[1:]:
         raise ValueError("non-equivalent workload inventory and narratives are not canonical")
-    for index in (1, 4, 5):
+    for index in (1, 4, 5, 6):
         workload = workloads[index]
         field = f"workloads[{index}]"
         if set(workload) != expected_workload_keys:
@@ -1701,43 +1705,6 @@ def validate_upstream_evidence(
             or set(machine_item) != expected_item_keys
         ):
             raise ValueError(f"{field} must contain commands but no measurement results")
-        require_text(fx_item.get("reason"), f"{field}.fx.reason")
-        require_text(machine_item.get("reason"), f"{field}.machine_god.reason")
-
-    unimplemented_commands = {
-        "background-json": [fx_binary["path"], "background", "--json"],
-    }
-    for index, workload in enumerate(workloads[6:], 6):
-        field = f"workloads[{index}]"
-        if set(workload) != expected_workload_keys:
-            raise ValueError(f"{field} fields are not canonical")
-        if (
-            workload.get("equivalence") != "unimplemented"
-            or workload.get("claim_eligible") is not False
-        ):
-            raise ValueError(f"{field} must remain unimplemented and claim-ineligible")
-        require_text(workload.get("description"), f"{field}.description")
-        require_text(workload.get("reason"), f"{field}.reason")
-        items = workload.get("implementations")
-        if not isinstance(items, list) or len(items) != 2:
-            raise ValueError(f"{field} must describe fx and machine-god")
-        fx_item, machine_item = items
-        if not isinstance(fx_item, dict) or not isinstance(machine_item, dict):
-            raise ValueError(f"{field} implementations must be objects")
-        if (
-            fx_item.get("project") != "fx"
-            or fx_item.get("status") != "not-measured"
-            or require_command(fx_item.get("command"), f"{field}.fx.command")
-            != unimplemented_commands[workload["id"]]
-            or set(fx_item) != {"project", "status", "command", "reason"}
-        ):
-            raise ValueError(f"{field} fx command is not canonical")
-        if (
-            machine_item.get("project") != "machine-god"
-            or machine_item.get("status") != "unimplemented"
-            or set(machine_item) != {"project", "status", "reason"}
-        ):
-            raise ValueError(f"{field} machine-god gap is not explicit")
         require_text(fx_item.get("reason"), f"{field}.fx.reason")
         require_text(machine_item.get("reason"), f"{field}.machine_god.reason")
 
@@ -4116,12 +4083,14 @@ def unavailable_workloads(
                 "intentional schema, metadata, and truncation differences from fx"
             ),
         ),
-    )
-    unimplemented = (
         (
             "background-json",
             [str(fx_binary), "background", "--json"],
-            "machine-god has no background-task list command",
+            [str(machine_binary), "background", "--json"],
+            (
+                "machine-god reports only bounded read-only persisted background "
+                "history with intentional schema and lifecycle differences from fx"
+            ),
         ),
     )
     implemented_records = [
@@ -4151,30 +4120,7 @@ def unavailable_workloads(
         }
         for identifier, fx_command, machine_command, reason in implemented
     ]
-    unimplemented_records = [
-        {
-            "id": identifier,
-            "description": f"Pinned fx local command: {' '.join(command[1:])}",
-            "equivalence": "unimplemented",
-            "claim_eligible": False,
-            "reason": reason,
-            "implementations": [
-                {
-                    "project": "fx",
-                    "status": "not-measured",
-                    "command": command,
-                    "reason": "an unpaired result would not be a comparison",
-                },
-                {
-                    "project": "machine-god",
-                    "status": "unimplemented",
-                    "reason": reason,
-                },
-            ],
-        }
-        for identifier, command, reason in unimplemented
-    ]
-    return [*implemented_records, *unimplemented_records]
+    return implemented_records
 
 
 def base_environment(home: Path, temporary: Path, containment_token: str) -> dict[str, str]:

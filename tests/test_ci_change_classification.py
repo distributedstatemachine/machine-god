@@ -224,6 +224,20 @@ class CiChangeClassificationTests(unittest.TestCase):
             release_smoke,
         )
 
+    def test_release_smoke_covers_empty_background_list_in_isolated_state(self) -> None:
+        release_smoke = step_script(self.ci, "Release smoke test")
+        for fragment in (
+            'background_workspace = (background_root / "workspace").resolve()',
+            '"XDG_STATE_HOME": str(background_state_root)',
+            '"HOME": str(background_home)',
+            'background_machine = run_background("background", "--json")',
+            "'{\"kind\":\"background_list\",\"count\":0,'",
+            "path.exists()",
+            "background_state_root",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, release_smoke)
+
     def test_benchmark_keeps_a_stable_non_artifact_docs_gate(self) -> None:
         for evidence_job in ("bootstrap-evidence", "pinned-upstream-evidence"):
             self.assertIn(

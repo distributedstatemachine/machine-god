@@ -675,6 +675,73 @@ jobs:
           ):
               raise SystemExit("sessions created an isolated missing root")
 
+          background_root = Path(
+              tempfile.mkdtemp(prefix="machine-god-background-", dir=os.environ["RUNNER_TEMP"])
+          )
+          background_workspace = (background_root / "workspace").resolve()
+          background_workspace.mkdir(mode=0o700)
+          background_config_root = background_root / "missing-config"
+          background_state_root = background_root / "missing-state"
+          background_home = background_root / "missing-home"
+          background_environment = os.environ.copy()
+          background_environment.update(
+              {
+                  "XDG_CONFIG_HOME": str(background_config_root),
+                  "XDG_STATE_HOME": str(background_state_root),
+                  "HOME": str(background_home),
+              }
+          )
+          background_environment.pop("VERCEL_OIDC_TOKEN", None)
+          background_environment.pop("AI_GATEWAY_API_KEY", None)
+
+          def run_background(*arguments: str) -> subprocess.CompletedProcess[str]:
+              return subprocess.run(
+                  [str(binary), *arguments],
+                  check=False,
+                  capture_output=True,
+                  text=True,
+                  cwd=background_workspace,
+                  env=background_environment,
+              )
+
+          background_human = run_background("background")
+          background_machine = run_background("background", "--json")
+          if background_human.returncode != 0 or background_machine.returncode != 0:
+              raise SystemExit(
+                  "background smoke exits: "
+                  f"human={background_human.returncode} json={background_machine.returncode}"
+              )
+          if background_human.stderr or background_machine.stderr:
+              raise SystemExit("background smoke wrote unexpected stderr")
+          if background_human.stdout != "[background] no persisted background records\n":
+              raise SystemExit(
+                  f"unexpected human background output: {background_human.stdout!r}"
+              )
+          expected_background_json = (
+              '{"kind":"background_list","count":0,'
+              '"truncated":false,"records":[]}\n'
+          )
+          if background_machine.stdout != expected_background_json:
+              raise SystemExit(
+                  f"unexpected JSON background output: {background_machine.stdout!r}"
+              )
+          background_report = json.loads(background_machine.stdout)
+          if list(background_report) != ["kind", "count", "truncated", "records"]:
+              raise SystemExit("background JSON top-level key order changed")
+          if len(background_machine.stdout.encode()) > 65_536:
+              raise SystemExit("background JSON output bound changed")
+          if list(background_workspace.iterdir()):
+              raise SystemExit("background inspection changed its dedicated current directory")
+          if any(
+              path.exists()
+              for path in (
+                  background_config_root,
+                  background_state_root,
+                  background_home,
+              )
+          ):
+              raise SystemExit("background inspection created an isolated missing root")
+
           session_root = Path(
               tempfile.mkdtemp(prefix="machine-god-session-", dir=os.environ["RUNNER_TEMP"])
           )
