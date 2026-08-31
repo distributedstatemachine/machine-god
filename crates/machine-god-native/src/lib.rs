@@ -31,6 +31,7 @@ mod ai_gateway_vision;
 mod ai_gateway_web_search;
 mod ask_permission;
 mod ask_user_question;
+mod background_inspection;
 mod config;
 mod copy_file;
 mod create_folder;
@@ -175,6 +176,16 @@ pub use ask_user_question::{
     MAX_ASK_USER_QUESTION_TOTAL_RAW_ANSWER_BYTES, QuestionPrompt, QuestionPromptAnswers,
     QuestionPromptError, QuestionPromptOption, QuestionPromptOutcome, QuestionPromptRequest,
     QuestionPrompter,
+};
+pub use background_inspection::{
+    MAX_BACKGROUND_COMMAND_BYTES, MAX_BACKGROUND_COMMAND_PREVIEW_BYTES,
+    MAX_BACKGROUND_DIAGNOSTIC_BYTES, MAX_BACKGROUND_DIRECTORY_ENTRIES, MAX_BACKGROUND_JSON_DEPTH,
+    MAX_BACKGROUND_JSON_NODES, MAX_BACKGROUND_PATH_BYTES, MAX_BACKGROUND_RECORD_BYTES,
+    MAX_BACKGROUND_RECORDS, MAX_BACKGROUND_SERVER_URL_BYTES, MAX_BACKGROUND_TOTAL_RECORD_BYTES,
+    NativeBackgroundDetail, NativeBackgroundInspection, NativeBackgroundInspectionError,
+    NativeBackgroundInspectionErrorKind, NativeBackgroundList, NativeBackgroundQuery,
+    NativeBackgroundRecordSummary, NativeBackgroundState, inspect_native_background,
+    inspect_process_background,
 };
 #[cfg(all(feature = "vision", not(target_family = "wasm")))]
 pub use vision::{
