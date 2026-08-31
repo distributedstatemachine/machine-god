@@ -910,7 +910,7 @@ jobs:
         run: cargo +"${RUST_TOOLCHAIN}" test --locked --workspace --all-targets --all-features --target "${{ matrix.target }}"
 
   unsupported-native-tools:
-    name: Unsupported native tools (FreeBSD)
+    name: Unsupported native tools (FreeBSD/WASI)
     needs: change-classification
     if: ${{ needs.change-classification.outputs.full == 'true' }}
     runs-on: ubuntu-24.04
@@ -919,9 +919,11 @@ jobs:
         with:
           persist-credentials: false
       - name: Install exact Rust target and Clippy
-        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy --target x86_64-unknown-freebsd
-      - name: Compile unsupported-platform native surfaces
-        run: cargo +"${RUST_TOOLCHAIN}" clippy --locked -p machine-god-native --lib --test install_skill_unsupported --test memory_unsupported --test semantic_search_unsupported --test vision_unsupported --no-default-features --features vision --target x86_64-unknown-freebsd -- -D warnings
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy --target x86_64-unknown-freebsd --target wasm32-wasip1
+      - name: Compile unsupported-platform native surfaces for FreeBSD
+        run: cargo +"${RUST_TOOLCHAIN}" clippy --locked -p machine-god-native --lib --test background_inspection_unsupported --test install_skill_unsupported --test memory_unsupported --test semantic_search_unsupported --test terminal_unsupported --test vision_unsupported --no-default-features --features vision --target x86_64-unknown-freebsd -- -D warnings
+      - name: Compile unsupported-platform native surfaces for WASI
+        run: cargo +"${RUST_TOOLCHAIN}" clippy --locked -p machine-god-native --lib --test background_inspection_unsupported --test terminal_unsupported --no-default-features --target wasm32-wasip1 -- -D warnings
 
   ci-gate:
     name: CI gate

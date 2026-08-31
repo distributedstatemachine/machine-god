@@ -574,27 +574,37 @@ class NativeManifestTests(unittest.TestCase):
 
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
         unsupported_job = """  unsupported-native-tools:
-    name: Unsupported native tools (FreeBSD)
+    name: Unsupported native tools (FreeBSD/WASI)
     needs: change-classification
     if: ${{ needs.change-classification.outputs.full == 'true' }}
     runs-on: ubuntu-24.04
 """
         install_command = (
             'rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal '
-            "--component clippy --target x86_64-unknown-freebsd"
+            "--component clippy --target x86_64-unknown-freebsd "
+            "--target wasm32-wasip1"
         )
-        clippy_command = (
+        freebsd_clippy_command = (
             'cargo +"${RUST_TOOLCHAIN}" clippy --locked '
-            "-p machine-god-native --lib --test install_skill_unsupported "
+            "-p machine-god-native --lib --test background_inspection_unsupported "
+            "--test install_skill_unsupported "
             "--test memory_unsupported "
             "--test semantic_search_unsupported "
+            "--test terminal_unsupported "
             "--test vision_unsupported "
             "--no-default-features "
             "--features vision --target x86_64-unknown-freebsd -- -D warnings"
         )
+        wasi_clippy_command = (
+            'cargo +"${RUST_TOOLCHAIN}" clippy --locked '
+            "-p machine-god-native --lib --test background_inspection_unsupported "
+            "--test terminal_unsupported --no-default-features "
+            "--target wasm32-wasip1 -- -D warnings"
+        )
         self.assertEqual(workflow.count(unsupported_job), 1)
         self.assertEqual(workflow.count(install_command), 1)
-        self.assertEqual(workflow.count(clippy_command), 1)
+        self.assertEqual(workflow.count(freebsd_clippy_command), 1)
+        self.assertEqual(workflow.count(wasi_clippy_command), 1)
         self.assertIn(
             "CI cross-compiles and runs warnings-denied Clippy over the narrow\n"
             "feature's library plus the relevant native-tool unsupported-platform\n"

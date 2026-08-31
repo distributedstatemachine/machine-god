@@ -857,6 +857,7 @@ impl TerminalTool {
         _activity: Arc<ExecutionActivity>,
         _cancellation: &CancellationToken,
     ) -> Result<TerminalExecutionRequest, ToolError> {
+        debug_assert!(self.system_unsupported);
         Err(unsupported_platform())
     }
 }
