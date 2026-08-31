@@ -21,18 +21,18 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `47`
-- Delivered main: `a8a94f9595c297e6c1342ef6ad8c6a05ad07a347`
-- Main CI: `33388482737` (`GREEN`)
-- Main Benchmark evidence: `33388482724` (`GREEN`)
-- Active branch: `agent/m05-mcp-select-tool`
-- Active phase: `implementing executable mcp_select_tool with a turn-local core overlay`
-- Next gate: `prove next-round advertisement, dispatch, isolation, and persistence ordering`
+- Delivered slices: `48`
+- Delivered main: `c5d86c91f2a39f808ebd63039884344d6c130eac`
+- Main CI: `33407513449` (`GREEN`)
+- Main Benchmark evidence: `33407513315` (`GREEN`)
+- Active branch: `agent/m05-mcp-features`
+- Active phase: `designing bounded injected-catalog mcp_features resource and prompt access`
+- Next gate: `freeze action, stable-identity, authority, lifecycle, and output bounds`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
 and the Benchmark evidence run retained both required exact-SHA artifacts.
-Bounded injected-catalog `mcp_search_tools` is delivered as slice 47.
+Turn-local executable `mcp_select_tool` is delivered as slice 48.
 Documentation parser maintenance remains a separate non-product task; product
 iterations use the existing bounded repository-policy checker.
 
@@ -44,12 +44,12 @@ Benchmark aggregate gates while skipping unrelated heavy jobs. It does not
 increment the delivered-slice count or replace the last product benchmark
 evidence.
 
-Bounded `mcp_select_tool` is the next slice. It exact-selects one admitted
-executable dynamic tool, durably records the selector result, advertises the
-captured schema on the next model round, and dispatches subsequent calls
-through the captured implementation. The overlay is limited to one turn.
-Production MCP transport discovery, authentication, resources, and prompts
-stay outside this slice.
+Bounded injected-catalog `mcp_features` is the next slice. It will expose
+resource and prompt discovery and exact stable-identity access through explicit
+native authority while keeping transport discovery, authentication, and
+production connection management outside the slice. Its action-specific input,
+output, work, cancellation, and untrusted-content boundaries must be frozen
+before implementation.
 
 ## Architecture ownership
 
@@ -160,8 +160,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 45 | Pinned-fx-compatible offline FXTP `replay` CLI | [contract](replay-cli.md) | [review](reviews/m03-replay-cli-review-01.md) | `e685dc4` |
 | 46 | Bounded top-level help and runtime status ownership | [CLI](cli.md), [configuration](configuration.md), [performance](performance.md) | [review](reviews/m03-help-status-cli-review-01.md) | `9019770` |
 | 47 | Bounded injected-catalog `mcp_search_tools` | [contract](mcp-search-tools.md) | [review](reviews/m05-mcp-search-tools-review-01.md) | `a8a94f9` |
+| 48 | Turn-local executable `mcp_select_tool` | [contract](mcp-select-tool.md) | [review](reviews/m05-mcp-select-tool-review-01.md) | `c5d86c9` |
 
-The exact delivered-main record after slice 47 is in the canonical live-status
+The exact delivered-main record after slice 48 is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.
