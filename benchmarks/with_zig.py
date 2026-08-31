@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+import errno
 import os
 from pathlib import Path
 import select
@@ -65,6 +66,7 @@ class ChildSupervisor:
         self.cleaning = False
         self.anchor_ready = False
         self.command_joined = False
+        self.signal_mask_valid = True
 
     def forward(self, signum: int) -> None:
         group_leader = self.group_leader
@@ -179,6 +181,30 @@ class ChildSupervisor:
                 pass
             except BaseException:
                 pass
+        return False
+
+    @staticmethod
+    def close_descriptor(descriptor: int) -> bool:
+        """Boundedly close an owned descriptor without displacing an exception."""
+        for _attempt in range(REAP_ATTEMPTS):
+            try:
+                os.close(descriptor)
+                return True
+            except OSError as error:
+                if error.errno == errno.EBADF:
+                    return True
+            except BaseException:
+                pass
+        return False
+
+    def restore_signal_mask(self, previous_mask: object) -> bool:
+        for _attempt in range(REAP_ATTEMPTS):
+            try:
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+                return True
+            except BaseException:
+                pass
+        self.signal_mask_valid = False
         return False
 
     @staticmethod
@@ -322,6 +348,8 @@ class ChildSupervisor:
     ) -> subprocess.CompletedProcess:
         if self.child is not None or self.group_leader is not None:
             raise RuntimeError("the Zig wrapper attempted overlapping child processes")
+        if not self.signal_mask_valid:
+            raise RuntimeError("the Zig wrapper signal mask state is invalid")
         if self.caught_signal is not None:
             raise CaughtSignal(self.caught_signal)
         child: subprocess.Popen | None = None
@@ -335,6 +363,7 @@ class ChildSupervisor:
                 previous_mask = signal.pthread_sigmask(
                     signal.SIG_BLOCK, FORWARDED_SIGNALS
                 )
+                launch_error: BaseException | None = None
                 try:
                     group_leader = subprocess.Popen(
                         self.anchor_command(ready_write_descriptor),
@@ -345,15 +374,29 @@ class ChildSupervisor:
                         pass_fds=(ready_write_descriptor,),
                     )
                     self.group_leader = group_leader
-                finally:
-                    try:
-                        os.close(ready_write_descriptor)
-                        ready_write_descriptor = None
-                    finally:
-                        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+                except BaseException as error:
+                    launch_error = error
+                write_closed = self.close_descriptor(ready_write_descriptor)
+                if write_closed:
+                    ready_write_descriptor = None
+                mask_restored = self.restore_signal_mask(previous_mask)
+                if launch_error is not None:
+                    raise launch_error
+                if not mask_restored:
+                    raise RuntimeError(
+                        "the Zig wrapper signal mask state is invalid"
+                    )
+                if not write_closed:
+                    raise RuntimeError(
+                        "benchmark process-group readiness descriptor did not close"
+                    )
                 self.wait_anchor_ready(ready_descriptor)
-                os.close(ready_descriptor)
-                ready_descriptor = None
+                if self.close_descriptor(ready_descriptor):
+                    ready_descriptor = None
+                else:
+                    raise RuntimeError(
+                        "benchmark process-group readiness descriptor did not close"
+                    )
                 self.anchor_ready = True
                 child = subprocess.Popen(
                     command,
@@ -422,15 +465,11 @@ class ChildSupervisor:
             raise
         finally:
             if ready_write_descriptor is not None:
-                try:
-                    os.close(ready_write_descriptor)
-                except BaseException:
-                    pass
+                self.close_descriptor(ready_write_descriptor)
+                ready_write_descriptor = None
             if ready_descriptor is not None:
-                try:
-                    os.close(ready_descriptor)
-                except BaseException:
-                    pass
+                self.close_descriptor(ready_descriptor)
+                ready_descriptor = None
             self.child = None
             self.group_leader = None
             self.anchor_ready = False

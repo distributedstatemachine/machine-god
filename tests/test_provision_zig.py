@@ -1508,6 +1508,119 @@ class ProvisionZigTests(unittest.TestCase):
         self.assertIn(mock.call(anchor.pid, signal.SIGTERM), killpg.call_args_list)
         self.assertIn(mock.call(anchor.pid, signal.SIGKILL), killpg.call_args_list)
 
+    def test_wrapper_launch_error_survives_descriptor_and_mask_cleanup_faults(
+        self,
+    ) -> None:
+        real_pipe = os.pipe
+        real_close = os.close
+        previous_mask = frozenset({signal.SIGUSR1})
+
+        for fault in ("close", "restore"):
+            with self.subTest(fault=fault):
+                failure = OSError(f"sentinel {fault} launch failure")
+                descriptors: list[int] = []
+                close_failed = False
+                restore_calls = 0
+
+                def capture_pipe() -> tuple[int, int]:
+                    pair = real_pipe()
+                    descriptors.extend(pair)
+                    return pair
+
+                def flaky_close(descriptor: int) -> None:
+                    nonlocal close_failed
+                    if fault == "close" and not close_failed:
+                        close_failed = True
+                        raise OSError("injected close failure")
+                    real_close(descriptor)
+
+                def flaky_mask(operation: int, mask: object):
+                    nonlocal restore_calls
+                    if operation == signal.SIG_BLOCK:
+                        return previous_mask
+                    self.assertEqual(operation, signal.SIG_SETMASK)
+                    self.assertIs(mask, previous_mask)
+                    restore_calls += 1
+                    if fault == "restore" and restore_calls == 1:
+                        raise OSError("injected restore failure")
+                    return previous_mask
+
+                supervisor = with_zig.ChildSupervisor()
+                with (
+                    mock.patch.object(with_zig.os, "pipe", side_effect=capture_pipe),
+                    mock.patch.object(with_zig.os, "close", side_effect=flaky_close),
+                    mock.patch.object(
+                        with_zig.signal,
+                        "pthread_sigmask",
+                        side_effect=flaky_mask,
+                    ),
+                    mock.patch.object(
+                        with_zig.subprocess, "Popen", side_effect=failure
+                    ),
+                    self.assertRaises(OSError) as caught,
+                ):
+                    supervisor.run(["ignored"])
+
+                self.assertIs(caught.exception, failure)
+                self.assertEqual(len(descriptors), 2)
+                for descriptor in descriptors:
+                    with self.assertRaises(OSError):
+                        os.fstat(descriptor)
+                self.assertTrue(supervisor.signal_mask_valid)
+                self.assertGreaterEqual(restore_calls, 1)
+
+    def test_wrapper_persistent_mask_restore_failure_poison_fails_closed(
+        self,
+    ) -> None:
+        real_pipe = os.pipe
+        descriptors: list[int] = []
+
+        class Anchor:
+            pid = 424_241
+            reaped = False
+
+            def wait(self, *, timeout=None) -> None:
+                del timeout
+                self.reaped = True
+
+        anchor = Anchor()
+
+        def capture_pipe() -> tuple[int, int]:
+            pair = real_pipe()
+            descriptors.extend(pair)
+            return pair
+
+        def failing_restore(operation: int, _mask: object):
+            if operation == signal.SIG_BLOCK:
+                return frozenset()
+            raise OSError("persistent restore failure")
+
+        supervisor = with_zig.ChildSupervisor()
+        with (
+            mock.patch.object(with_zig.os, "pipe", side_effect=capture_pipe),
+            mock.patch.object(
+                with_zig.signal,
+                "pthread_sigmask",
+                side_effect=failing_restore,
+            ) as pthread_sigmask,
+            mock.patch.object(with_zig.subprocess, "Popen", return_value=anchor),
+            mock.patch.object(with_zig.os, "killpg", return_value=None),
+            self.assertRaisesRegex(RuntimeError, "signal mask state is invalid"),
+        ):
+            supervisor.run(["ignored"])
+
+        self.assertEqual(
+            pthread_sigmask.call_count,
+            1 + with_zig.REAP_ATTEMPTS,
+        )
+        self.assertTrue(anchor.reaped)
+        self.assertFalse(supervisor.signal_mask_valid)
+        for descriptor in descriptors:
+            with self.assertRaises(OSError):
+                os.fstat(descriptor)
+        with self.assertRaisesRegex(RuntimeError, "signal mask state is invalid"):
+            supervisor.run(["must-not-launch"])
+
     def test_wrapper_anchor_owns_group_through_command_reap(self) -> None:
         events: list[tuple[str, int | None]] = []
 
