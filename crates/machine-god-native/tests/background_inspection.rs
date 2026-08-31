@@ -8,14 +8,16 @@ use std::fs::{File, FileTimes};
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(target_os = "linux")]
 use std::time::SystemTime;
 
 use futures_executor::block_on;
 use machine_god_native::{
-    NativeBackgroundInspection, NativeBackgroundInspectionErrorKind, NativeBackgroundQuery,
-    NativeBackgroundRecordSummary, NativeBackgroundState, NativeEnvironment,
+    MAX_BACKGROUND_RECORD_BYTES, NativeBackgroundInspection, NativeBackgroundInspectionErrorKind,
+    NativeBackgroundQuery, NativeBackgroundRecordSummary, NativeBackgroundState, NativeEnvironment,
     inspect_native_background,
 };
 use serde_json::{Value, json};
@@ -27,6 +29,16 @@ const RECORD_DIGEST_DOMAIN: &[u8] = b"machine-god:background-record:v1:";
 static NEXT_TEMPORARY_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 struct TempDirectory(PathBuf);
+
+#[cfg(target_os = "macos")]
+struct MacAclCleanup(PathBuf);
+
+#[cfg(target_os = "macos")]
+impl Drop for MacAclCleanup {
+    fn drop(&mut self) {
+        let _ = Command::new("/bin/chmod").arg("-N").arg(&self.0).status();
+    }
+}
 
 impl TempDirectory {
     fn new() -> Self {
@@ -377,6 +389,57 @@ fn duplicate_schema_fields_are_rejected_before_projection() {
         fixture.environment(),
         fixture.workspace.clone(),
         NativeBackgroundQuery::Id(13),
+    ))
+    .unwrap_err();
+    assert_eq!(error.kind(), NativeBackgroundInspectionErrorKind::Corrupt);
+}
+
+#[test]
+fn record_size_limit_accepts_exact_and_rejects_one_byte_overflow_witness() {
+    let exact = Fixture::new();
+    let mut exact_bytes = serde_json::to_vec(&exact.record_value(14, 20, "command")).unwrap();
+    exact_bytes.resize(MAX_BACKGROUND_RECORD_BYTES, b' ');
+    exact.write_bytes(14, &exact_bytes);
+    let result = block_on(inspect_native_background(
+        exact.environment(),
+        exact.workspace.clone(),
+        NativeBackgroundQuery::Id(14),
+    ));
+    assert!(result.is_ok());
+
+    let overflow = Fixture::new();
+    let mut overflow_bytes = serde_json::to_vec(&overflow.record_value(15, 20, "command")).unwrap();
+    overflow_bytes.resize(MAX_BACKGROUND_RECORD_BYTES + 1, b' ');
+    overflow.write_bytes(15, &overflow_bytes);
+    let error = block_on(inspect_native_background(
+        overflow.environment(),
+        overflow.workspace.clone(),
+        NativeBackgroundQuery::Id(15),
+    ))
+    .unwrap_err();
+    assert_eq!(error.kind(), NativeBackgroundInspectionErrorKind::Corrupt);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn selected_record_with_access_granting_acl_is_corrupt() {
+    let fixture = Fixture::new();
+    let record = fixture.write_record(16, 20, "command");
+    let status = Command::new("/bin/chmod")
+        .args(["+a", "everyone allow read"])
+        .arg(&record)
+        .status()
+        .expect("macOS chmod executable is available");
+    assert!(
+        status.success(),
+        "failed to install record ACL fixture: {status}"
+    );
+    let _acl_cleanup = MacAclCleanup(record);
+
+    let error = block_on(inspect_native_background(
+        fixture.environment(),
+        fixture.workspace.clone(),
+        NativeBackgroundQuery::Id(16),
     ))
     .unwrap_err();
     assert_eq!(error.kind(), NativeBackgroundInspectionErrorKind::Corrupt);

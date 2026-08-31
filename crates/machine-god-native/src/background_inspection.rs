@@ -827,6 +827,8 @@ mod supported {
         {
             return Err(corrupt());
         }
+        #[cfg(target_os = "macos")]
+        validate_record_acl(&descriptor)?;
 
         let mut bytes = Vec::with_capacity(MAX_BACKGROUND_RECORD_BYTES + 1);
         let mut file = std::fs::File::from(descriptor);
@@ -839,6 +841,21 @@ mod supported {
         }
         let detail = decode_record(&bytes, workspace, name)?;
         Ok(Some((detail, bytes.len())))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn validate_record_acl(descriptor: &OwnedFd) -> Result<(), NativeBackgroundInspectionError> {
+        let acl = calcifer_macos_acl::read_acl(descriptor.as_fd()).map_err(|_| unavailable())?;
+        if acl.flags != 0
+            || acl.entries.iter().any(|entry| {
+                entry.tag != calcifer_macos_acl::TAG_DENY
+                    || entry.flags != 0
+                    || entry.permissions != calcifer_macos_acl::PERMISSION_DELETE
+            })
+        {
+            return Err(corrupt());
+        }
+        Ok(())
     }
 
     fn decode_record(
