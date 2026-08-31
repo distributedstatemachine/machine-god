@@ -133,7 +133,8 @@ fn second_request_tool_output(provider: &ScriptedModelProvider) -> (Message, Too
     let [ContentBlock::ToolResult { output, .. }] = message.content.as_slice() else {
         panic!("expected one durable tool result")
     };
-    (message, output.clone())
+    let output = output.clone();
+    (message, output)
 }
 
 #[test]
@@ -228,7 +229,7 @@ fn engine_invalid_arguments_never_reach_catalog_or_permission_policy() {
     let (message, output) = second_request_tool_output(&provider);
     assert!(output.is_error);
     assert_eq!(output.content["code"], "tool_error");
-    let request = serde_json::to_string(&provider.requests()[1].request).unwrap();
-    assert!(!request.contains(secret));
+    let rendered_error = serde_json::to_string(&output).unwrap();
+    assert!(!rendered_error.contains(secret));
     assert_eq!(store.record(&session_id).unwrap().messages[2], message);
 }

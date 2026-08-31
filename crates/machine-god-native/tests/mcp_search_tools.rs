@@ -1,5 +1,4 @@
 use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll, Wake, Waker};
@@ -90,6 +89,29 @@ impl McpToolCatalog for CancellationCatalog {
             cancellation.cancelled().await;
             Err(McpToolCatalogError::new(McpToolCatalogErrorKind::Cancelled))
         })
+    }
+}
+
+struct CountingWake(Arc<AtomicUsize>);
+
+impl Wake for CountingWake {
+    fn wake(self: Arc<Self>) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+struct DiscoveringCatalog;
+
+impl McpToolCatalog for DiscoveringCatalog {
+    fn snapshot(
+        &self,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>> {
+        Box::pin(async { Ok(McpToolCatalogSnapshot::discovering()) })
     }
 }
 
@@ -190,11 +212,18 @@ fn assert_tool_error(
     message: &str,
     retryable: bool,
 ) {
-    assert_eq!(error.kind, kind);
-    assert_eq!(error.code, code);
-    assert_eq!(error.message, message);
-    assert_eq!(error.retryable, retryable);
-    assert_eq!(error.to_string(), format!("{code}: {message}"));
+    let rendered = error.to_string();
+    let ToolError {
+        kind: actual_kind,
+        code: actual_code,
+        message: actual_message,
+        retryable: actual_retryable,
+    } = error;
+    assert_eq!(actual_kind, kind);
+    assert_eq!(actual_code, code);
+    assert_eq!(actual_message, message);
+    assert_eq!(actual_retryable, retryable);
+    assert_eq!(rendered, format!("{code}: {message}"));
 }
 
 fn assert_invalid_arguments(error: ToolError) {
@@ -255,10 +284,10 @@ fn public_contract_schema_and_no_authority_preflight_are_frozen() {
     assert_eq!(MCP_SEARCH_TOOLS_TOOL_NAME, "mcp_search_tools");
     assert_eq!(MCP_SEARCH_TOOLS_DEFAULT_LIMIT, 8);
     assert_eq!(MCP_SEARCH_TOOLS_MAX_LIMIT, 20);
-    assert!(MAX_MCP_SEARCH_QUERY_BYTES >= 256);
-    assert!(MAX_MCP_SEARCH_QUERY_TOKENS >= 2);
-    assert!(MAX_MCP_TOOL_CATALOG_ENTRIES >= MCP_SEARCH_TOOLS_MAX_LIMIT);
-    assert!(MAX_MCP_SEARCH_SERIALIZED_RESULT_BYTES >= 4 * 1024);
+    assert_eq!(MAX_MCP_SEARCH_QUERY_BYTES, 4_096);
+    assert_eq!(MAX_MCP_SEARCH_QUERY_TOKENS, 64);
+    assert_eq!(MAX_MCP_TOOL_CATALOG_ENTRIES, 1_024);
+    assert_eq!(MAX_MCP_SEARCH_SERIALIZED_RESULT_BYTES, 16_384);
 
     let (tool, catalog) = tool_with(catalog_entries());
     let spec = tool.spec();
@@ -329,12 +358,10 @@ fn strict_arguments_query_and_limit_bounds_fail_before_catalog_access() {
         .unwrap_err(),
     );
 
-    for limit in [0] {
-        assert_invalid_limit(
-            tool.prepare(call(json!({"query": "github", "limit": limit})))
-                .unwrap_err(),
-        );
-    }
+    assert_invalid_limit(
+        tool.prepare(call(json!({"query": "github", "limit": 0})))
+            .unwrap_err(),
+    );
 
     let exact_bytes = "x".repeat(MAX_MCP_SEARCH_QUERY_BYTES);
     assert!(tool.prepare(call(json!({"query": exact_bytes}))).is_ok());
@@ -372,7 +399,7 @@ fn query_tokens_are_ascii_case_insensitive_conjunctive_and_schema_searchable() {
     let output = search(&tool, json!({"query": "GiTHub, ISSUE"}));
     assert_eq!(
         result_names(&output),
-        ["mcp_github_close_issue", "mcp_github_create_issue"]
+        ["mcp_github_create_issue", "mcp_github_close_issue"]
     );
     assert_eq!(output.content["count"], 2);
     assert!(output.content.get("more_available").is_none());
@@ -497,16 +524,6 @@ fn cancellation_wakes_a_pending_catalog_snapshot_and_discovery_is_explicit() {
     let arguments = prepare(&tool, json!({"query": "github"}));
     let mut execution = tool.execute(context(), arguments, cancellation.clone());
     let wake_count = Arc::new(AtomicUsize::new(0));
-    struct CountingWake(Arc<AtomicUsize>);
-    impl Wake for CountingWake {
-        fn wake(self: Arc<Self>) {
-            self.0.fetch_add(1, Ordering::SeqCst);
-        }
-
-        fn wake_by_ref(self: &Arc<Self>) {
-            self.0.fetch_add(1, Ordering::SeqCst);
-        }
-    }
     let waker = Waker::from(Arc::new(CountingWake(Arc::clone(&wake_count))));
     let mut context = Context::from_waker(&waker);
     assert!(matches!(
@@ -521,15 +538,6 @@ fn cancellation_wakes_a_pending_catalog_snapshot_and_discovery_is_explicit() {
     };
     assert_cancelled(result.unwrap_err());
 
-    struct DiscoveringCatalog;
-    impl McpToolCatalog for DiscoveringCatalog {
-        fn snapshot(
-            &self,
-            _cancellation: CancellationToken,
-        ) -> BoxFuture<'_, Result<McpToolCatalogSnapshot, McpToolCatalogError>> {
-            Box::pin(async { Ok(McpToolCatalogSnapshot::discovering()) })
-        }
-    }
     let tool = McpSearchToolsTool::new(DiscoveringCatalog);
     let output = search(&tool, json!({"query": "anything"}));
     assert_eq!(

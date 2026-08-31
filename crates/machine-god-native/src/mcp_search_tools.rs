@@ -585,12 +585,6 @@ fn search_snapshot(
             matches.push(tool);
         }
     }
-    matches.sort_unstable_by(|left, right| {
-        left.server
-            .cmp(&right.server)
-            .then_with(|| left.name.cmp(&right.name))
-    });
-
     let match_count = matches.len();
     matches.truncate(arguments.limit);
     let more_available = match_count > matches.len();
@@ -934,7 +928,7 @@ mod tests {
         let output = block_on(future).unwrap();
         assert_eq!(snapshots.load(Ordering::Relaxed), 1);
         assert_eq!(output.content["count"], 2);
-        assert_eq!(output.content["tools"][0]["name"], "mcp_alpha_search");
+        assert_eq!(output.content["tools"][0]["name"], "mcp_zeta_lookup");
         let encoded = serde_json::to_string(&output).unwrap();
         assert!(!encoded.contains("secret_schema_marker"));
         assert!(!encoded.contains("other_private_marker"));

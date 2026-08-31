@@ -39,7 +39,7 @@ schema origin/version.
 
 ## Constructors
 
-There are four composition paths:
+There are five composition paths:
 
 | Roots | Transport | Constructor behavior |
 | --- | --- | --- |
@@ -47,6 +47,7 @@ There are four composition paths:
 | `PreparedNativeRoots` | Production AI Gateway HTTP | Consumes the already retained identity-checked roots without reopening their selected paths, then discovers credentials and constructs the transport |
 | Existing explicit workspace and session paths | Injected `Arc<dyn AiGatewayTransport>` | Opens and retains both roots, skips credential discovery, and uses the supplied canonical `NetworkTarget` |
 | `PreparedNativeRoots` | Injected transport | Consumes retained roots, skips credential discovery, and uses the supplied canonical target |
+| Existing explicit roots | Injected transport and `Arc<dyn McpToolCatalog>` | Uses the custom transport path and advertises search over the injected admitted MCP metadata source |
 
 The explicit-path constructors require the trusted host to choose disjoint
 workspace and session roots; those constructors do not prove identity or
@@ -69,6 +70,9 @@ Every successful host contains:
   `NativeSessionLifecycle`;
 - one `MemoryTool` over an identity-preserving clone of that store's retained
   state-root descriptor, without access to session-record APIs;
+- one `McpSearchToolsTool` over an inert explicitly injected catalog source;
+  ordinary constructors use an empty ready catalog, while the MCP-aware
+  constructor accepts host-admitted metadata;
 - default provider-neutral `EngineLimits` and the default no-op event sink;
 - one explicit `Arc<dyn WebSearchDeadline>` for bounded web-search timing,
   reused through a fixed category-only adapter for vision's capacity wait,
@@ -86,7 +90,7 @@ reports no discovered credential source.
 
 ## Tool catalog
 
-The engine registers exactly twenty-two tools in deterministic alphabetical
+The engine registers exactly twenty-three tools in deterministic alphabetical
 order:
 
 1. `ask_user_question`
@@ -99,18 +103,19 @@ order:
 8. `grep_files`
 9. `install_skill`
 10. `list_files`
-11. `memory`
-12. `open_file`
-13. `read_file`
-14. `read_tool_result`
-15. `rename_file`
-16. `semantic_search`
-17. `skill`
-18. `terminal`
-19. `vision`
-20. `web_fetch`
-21. `web_search`
-22. `write_file`
+11. `mcp_search_tools`
+12. `memory`
+13. `open_file`
+14. `read_file`
+15. `read_tool_result`
+16. `rename_file`
+17. `semantic_search`
+18. `skill`
+19. `terminal`
+20. `vision`
+21. `web_fetch`
+22. `web_search`
+23. `write_file`
 
 Seventeen tools use one retained workspace identity. `glob_files` consumes the
 original descriptor. The other sixteen workspace tools receive
@@ -118,7 +123,11 @@ identity-preserving clones: `copy_file`, `create_folder`, `delete_file`,
 `edit_file`, `file_info`, `grep_files`, `install_skill`, `list_files`,
 `open_file`, `read_file`, `rename_file`, `semantic_search`, `skill`, `terminal`, `vision`, and
 `write_file`.
-`ask_user_question` and `web_fetch` are rootless. `read_tool_result` uses the
+`ask_user_question`, `mcp_search_tools`, and `web_fetch` are rootless.
+`mcp_search_tools` acquires only one bounded point-in-time metadata snapshot
+when executed, never during composition; its injected boundary and intentional
+protocol/selection deferrals are defined by the
+[MCP search contract](mcp-search-tools.md). `read_tool_result` uses the
 engine's exact session-store allocation and has no workspace authority.
 `memory` uses a clone of the retained state-root identity but has no workspace
 or session-record authority; its fixed files and permission boundary are
@@ -161,6 +170,8 @@ later authority:
 - construct provider, web-search, and private vision adapters over the shared
   transport;
 - construct `web_fetch`, including its bounded native resolver/entropy setup.
+
+Composition does not poll or snapshot the MCP catalog.
 
 Later provider, web-fetch, web-search, and vision polling requires a compatible
 host-owned Tokio runtime with the capabilities stated by their contracts. The
@@ -206,8 +217,9 @@ component detail.
 
 The reference host does not itself supply a full interactive CLI/TUI,
 persistent grant policy, alternate provider or credential selections, remote
-or packaged skill discovery and installation, MCP/ACP or subagent infrastructure, encrypted
-storage, non-Unix root hardening, durable image attachments, prompt images, or
-CLI image flags. Those additions must preserve the crate ownership and
+or packaged skill discovery and installation, MCP protocol discovery,
+selection and execution, ACP or subagent infrastructure, encrypted storage,
+non-Unix root hardening, durable image attachments, prompt images, or CLI
+image flags. Those additions must preserve the crate ownership and
 authority boundaries in
 [architecture.md](architecture.md) and [security.md](security.md).

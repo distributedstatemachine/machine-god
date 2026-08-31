@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33347258029` (`GREEN`)
 - Active branch: `agent/m05-mcp-search-tools`
 - Active phase: `reviewing and delivering bounded injected-catalog mcp_search_tools behavior`
-- Next gate: `rebase onto delivered CI maintenance, rerun the exact local gate, then open three fresh product reviews`
+- Next gate: `rerun the exact local feature gate, then pass three fresh exact-SHA product reviews`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
@@ -43,6 +43,11 @@ fails closed when submodule changes could be hidden, and retains stable CI and
 Benchmark aggregate gates while skipping unrelated heavy jobs. It does not
 increment the delivered-slice count or replace the last product benchmark
 evidence. Work has returned to the active `mcp_search_tools` product slice.
+
+Bounded `mcp_search_tools` is the active slice. It establishes the read-only,
+metadata-only catalog-search seam needed by later MCP selection and execution;
+transport discovery, dynamic schema advertisement, and MCP tool execution stay
+outside this slice.
 
 ## Architecture ownership
 
