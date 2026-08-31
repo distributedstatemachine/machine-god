@@ -63,13 +63,14 @@ is latched until the command has joined that group, so anchor startup cannot
 consume the command's one graceful delivery. Cleanup after every post-launch
 exception defers handled signals, skips unused grace time once the command exits,
 retries final group termination, and retains identity-safe direct-child kill and
-reap fallbacks before unwinding the extraction context. If group-wide termination
-cannot be established, an otherwise successful collection fails closed instead
-of emitting clean evidence. The upstream harness converts the first forwarded
-signal into structured unwinding. On Linux it defers delivery from process
-creation through containment attachment, so independently grouped build or
-sample processes and their descendants are owned and reaped before the harness
-exits.
+reap fallbacks before unwinding the extraction context. Readiness failure is
+observed through the pipe without reaping the anchor before its final group
+signal. Unless group-wide termination and both direct-child reaps are confirmed,
+an otherwise successful collection fails closed instead of emitting clean
+evidence. The upstream harness converts the first forwarded signal into
+structured unwinding. On Linux it defers delivery from process creation through
+containment attachment, so independently grouped build or sample processes and
+their descendants are owned and reaped before the harness exits.
 Linux process-table discovery stops after 65,536 numeric entries, builds one
 parent-to-children index, and traverses at most 4,096 contained identities per
 refresh; overflow is retained as owned cleanup work and fails closed instead of

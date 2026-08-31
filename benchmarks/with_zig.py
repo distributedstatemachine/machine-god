@@ -156,30 +156,33 @@ class ChildSupervisor:
             self.group_leader = None
 
     def communicate_until(self, child: subprocess.Popen, deadline: float) -> bool:
-        remaining = self.remaining(deadline)
-        if remaining <= 0.0:
-            return False
-        try:
-            child.communicate(timeout=remaining)
-            return True
-        except BaseException:
-            return False
+        for _attempt in range(REAP_ATTEMPTS):
+            remaining = self.remaining(deadline)
+            if remaining <= 0.0:
+                return False
+            try:
+                child.communicate(timeout=remaining)
+                return True
+            except subprocess.TimeoutExpired:
+                continue
+            except BaseException:
+                pass
+        return False
 
-    def reap_until(self, process: subprocess.Popen, deadline: float) -> None:
+    def reap_until(self, process: subprocess.Popen, deadline: float) -> bool:
         """Boundedly retry wait so one interruption cannot abandon a child."""
         for _attempt in range(REAP_ATTEMPTS):
             try:
                 process.wait(timeout=self.remaining(deadline))
-                return
+                return True
             except subprocess.TimeoutExpired:
-                return
+                pass
             except BaseException:
                 pass
+        return False
 
     @staticmethod
-    def wait_anchor_ready(
-        group_leader: subprocess.Popen, ready_descriptor: int
-    ) -> None:
+    def wait_anchor_ready(ready_descriptor: int) -> None:
         try:
             deadline = time.monotonic() + ANCHOR_READY_SECONDS
         except BaseException as error:
@@ -188,10 +191,6 @@ class ChildSupervisor:
             ) from error
         while True:
             try:
-                if group_leader.poll() is not None:
-                    raise RuntimeError(
-                        "benchmark process-group anchor failed to become ready"
-                    )
                 remaining = max(0.0, deadline - time.monotonic())
                 if remaining <= 0.0:
                     raise RuntimeError(
@@ -254,10 +253,12 @@ class ChildSupervisor:
                     )
                 except BaseException:
                     kill_deadline = 0.0
-                self.reap_until(group_leader, kill_deadline)
-                self.communicate_until(child, kill_deadline)
-                self.reap_until(child, kill_deadline)
-            return group_terminated
+                anchor_reaped = self.reap_until(group_leader, kill_deadline)
+                child_communicated = self.communicate_until(child, kill_deadline)
+                child_reaped = child_communicated or self.reap_until(
+                    child, kill_deadline
+                )
+            return group_terminated and anchor_reaped and child_reaped
         finally:
             self.cleaning = previous_cleaning
 
@@ -350,7 +351,7 @@ class ChildSupervisor:
                         ready_write_descriptor = None
                     finally:
                         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
-                self.wait_anchor_ready(group_leader, ready_descriptor)
+                self.wait_anchor_ready(ready_descriptor)
                 os.close(ready_descriptor)
                 ready_descriptor = None
                 self.anchor_ready = True
