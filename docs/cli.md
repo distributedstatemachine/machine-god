@@ -32,6 +32,7 @@ Current delivery state and gate evidence are maintained only in the
 | --- | --- | --- |
 | `help` | Show command help | This page |
 | `ask [--] <prompt...>` | Run one noninteractive request | [ask](ask-cli.md) |
+| `background [last\|<id>] [--json]` | Inspect bounded persisted background history | [background](background-cli.md) |
 | `doctor [--json]` | Run bounded local health checks | [doctor](doctor-cli.md) |
 | `models [--json]` | List the bounded AI Gateway model catalog | [models](models-cli.md) |
 | `permissions [--json]` | Report configured permission mode | [permissions](permissions-cli.md) |

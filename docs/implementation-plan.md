@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33440894118` (`GREEN`)
 - Main Benchmark evidence: `33440894154` (`GREEN`)
 - Active branch: `agent/m05-background-cli`
-- Active phase: `freezing a bounded top-level background CLI contract`
-- Next gate: `pinned behavior inventory and provider-neutral lifecycle boundary`
+- Active phase: `implementing bounded read-only persisted background history`
+- Next gate: `focused native store, CLI, and compatibility tests`
 <!-- canonical-live-status:end -->
 
 The recorded Actions runs succeeded for the exact delivered-main commit, and

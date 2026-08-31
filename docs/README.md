@@ -79,6 +79,7 @@ contract together when exact numeric limits matter.
 - [replay](replay-cli.md)
 - [resume](resume-cli.md)
 - [workspace](workspace-cli.md)
+- [background](background-cli.md)
 
 ## Decisions and historical evidence
 
