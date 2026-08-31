@@ -489,14 +489,17 @@ a captured `ToolSpec` and the exact executable `Tool`. Core keeps registrations
 in a registry local to the current `run_turn` invocation. A candidate is
 checked for static/dynamic name collisions and against the complete catalog's
 configured JSON depth, node, and serialized-byte limits before its visible
-result is stored. Core activates it only after durable placeholder replacement
-succeeds. It is therefore absent from the provider response that selected it,
-present in later provider requests of the same turn, and resolved through the
-same captured executable for call admission and dispatch. Error outputs cannot
-register tools. Completion, failure, and cancellation drop the registry; it is
-never stored in `Engine`, `SessionState`, or `SessionRecord`, so later turns and
-other sessions cannot inherit it. Registration is not an authorization grant:
-the dynamic tool follows the ordinary preparation and permission pipeline.
+result is stored. Reselection is idempotent only for the exact same captured
+registration allocation; another capture under the same name fails closed even
+when its visible specification is equal. Core activates a registration only
+after durable placeholder replacement succeeds. It is therefore absent from
+the provider response that selected it, present in later provider requests of
+the same turn, and resolved through the same captured executable for call
+admission and dispatch. Error outputs cannot register tools. Completion,
+failure, and cancellation drop the registry; it is never stored in `Engine`,
+`SessionState`, or `SessionRecord`, so later turns and other sessions cannot
+inherit it. Registration is not an authorization grant: the dynamic tool
+follows the ordinary preparation and permission pipeline.
 
 Prepared arguments may drive only effects contained by the exact prepared
 capability that policy allowed. This is a normative obligation of the trusted

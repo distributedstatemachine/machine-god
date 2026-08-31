@@ -86,8 +86,9 @@ through `Tool::execute_for_turn`. Core validates the candidate against the
 complete static-plus-turn-local catalog:
 
 - it cannot collide with a static tool;
-- exact reselection with the same captured specification is idempotent, while
-  a same-name/different-schema registration fails closed;
+- exact reselection of the same captured registration allocation is
+  idempotent, while a same-name registration from any different capture fails
+  closed even when its visible specification is equal;
 - aggregate schema depth, JSON nodes, and serialized catalog bytes remain
   within `EngineLimits`; and
 - an error output cannot install a registration.

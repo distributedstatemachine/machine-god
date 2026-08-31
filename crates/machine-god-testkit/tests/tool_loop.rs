@@ -346,6 +346,113 @@ fn turn_tool_collision_and_aggregate_catalog_overflow_fail_closed() {
 }
 
 #[test]
+fn turn_tool_reselection_requires_the_same_captured_registration() {
+    let dynamic_a = ScriptedTool::new(spec("dynamic"), []);
+    let dynamic_b = ScriptedTool::new(spec("dynamic"), []);
+    let selector_a = RegisteringTool::new("selector-a", dynamic_a.clone());
+    let selector_b = RegisteringTool::new("selector-b", dynamic_b.clone());
+    let provider = ScriptedModelProvider::new(
+        "overlay-capture-collision",
+        [
+            events([
+                ModelEvent::ToolCall {
+                    call: call("select-a", "selector-a", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([
+                ModelEvent::ToolCall {
+                    call: call("select-b", "selector-b", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+        ],
+    );
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .tool(selector_a.clone())
+        .tool(selector_b.clone())
+        .build()
+        .unwrap();
+
+    let observed =
+        collect(&engine.create_test_session(SessionId::new("overlay-capture-collision").unwrap()));
+    assert!(matches!(
+        observed.last().map(|event| &event.payload),
+        Some(TurnEvent::Failed { code, .. }) if code == "turn_tool_name_collision"
+    ));
+    assert_eq!(provider.requests().len(), 2);
+    assert_eq!(selector_a.executions.load(Ordering::SeqCst), 1);
+    assert_eq!(selector_b.executions.load(Ordering::SeqCst), 1);
+    assert!(dynamic_a.invocations().is_empty());
+    assert!(dynamic_b.invocations().is_empty());
+}
+
+#[test]
+fn exact_turn_tool_registration_reselection_is_idempotent() {
+    let dynamic = ScriptedTool::new(
+        spec("dynamic"),
+        [ToolStep::Output(ToolOutput::success("executed"))],
+    );
+    let selector = RegisteringTool::new("selector", dynamic.clone());
+    let provider = ScriptedModelProvider::new(
+        "overlay-exact-reselection",
+        [
+            events([
+                ModelEvent::ToolCall {
+                    call: call("select-1", "selector", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([
+                ModelEvent::ToolCall {
+                    call: call("select-2", "selector", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([
+                ModelEvent::ToolCall {
+                    call: call("dynamic", "dynamic", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    );
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(ScriptedPermissionHandler::new([allow()]))
+        .tool(selector.clone())
+        .build()
+        .unwrap();
+
+    let observed =
+        collect(&engine.create_test_session(SessionId::new("overlay-exact-reselection").unwrap()));
+    assert!(matches!(
+        observed.last().map(|event| &event.payload),
+        Some(TurnEvent::Completed { .. })
+    ));
+    assert_eq!(provider.requests().len(), 4);
+    assert_eq!(selector.executions.load(Ordering::SeqCst), 2);
+    assert_eq!(dynamic.invocations().len(), 1);
+}
+
+#[test]
 fn turn_tool_is_not_activated_while_its_visible_result_is_pending_persistence() {
     let selector = RegisteringTool::new("selector", ScriptedTool::new(spec("dynamic"), []));
     let provider = ScriptedModelProvider::new(

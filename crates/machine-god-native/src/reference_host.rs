@@ -288,8 +288,9 @@ impl NativeReferenceHost {
     ///
     /// This is the bounded extension seam used by hosts that already own MCP
     /// discovery and policy admission. Catalog acquisition is inert until the
-    /// model calls `mcp_search_tools`; this constructor performs no MCP I/O and
-    /// grants no dynamic-tool execution authority.
+    /// model calls `mcp_search_tools` or `mcp_select_tool`; this constructor
+    /// performs no MCP I/O. Injection supplies admitted metadata and executable
+    /// routing, while later dynamic calls still pass ordinary permission policy.
     ///
     /// # Errors
     ///

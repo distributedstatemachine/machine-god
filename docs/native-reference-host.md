@@ -128,7 +128,7 @@ identity-preserving clones: `copy_file`, `create_folder`, `delete_file`,
 rootless.
 `mcp_search_tools` acquires only one bounded point-in-time metadata snapshot
 when executed, never during composition; its injected boundary and intentional
-protocol/selection deferrals are defined by the
+protocol/discovery deferrals are defined by the
 [MCP search contract](mcp-search-tools.md). `mcp_select_tool` shares that exact
 catalog allocation and exact-selects one attached executable registration for
 advertisement on the next model round. The overlay remains turn-local as

@@ -614,44 +614,74 @@ fn validate_snapshot(tools: &[McpToolMetadata]) -> Result<(), McpToolCatalogBuil
 }
 
 fn validate_executable_schema(schema: &Value) -> Result<(), McpToolCatalogBuildError> {
-    let mut stack = vec![(schema, 1usize)];
-    let mut nodes = 0usize;
-    while let Some((value, depth)) = stack.pop() {
-        nodes = nodes.checked_add(1).ok_or_else(|| {
-            McpToolCatalogBuildError::new(McpToolCatalogBuildErrorKind::ResourceLimit)
-        })?;
-        if nodes > MAX_MCP_TOOL_SCHEMA_NODES {
-            return Err(McpToolCatalogBuildError::new(
-                McpToolCatalogBuildErrorKind::ResourceLimit,
-            ));
-        }
-        match value {
-            Value::Array(values) => {
-                if depth > MAX_MCP_TOOL_SCHEMA_DEPTH {
-                    return Err(McpToolCatalogBuildError::new(
-                        McpToolCatalogBuildErrorKind::ResourceLimit,
-                    ));
-                }
-                let child_depth = depth.checked_add(1).ok_or_else(|| {
-                    McpToolCatalogBuildError::new(McpToolCatalogBuildErrorKind::ResourceLimit)
-                })?;
-                stack.extend(values.iter().map(|value| (value, child_depth)));
+    enum Children<'a> {
+        Array(std::slice::Iter<'a, Value>),
+        Object(serde_json::map::Values<'a>),
+    }
+
+    impl<'a> Iterator for Children<'a> {
+        type Item = &'a Value;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            match self {
+                Self::Array(children) => children.next(),
+                Self::Object(children) => children.next(),
             }
-            Value::Object(values) => {
-                if depth > MAX_MCP_TOOL_SCHEMA_DEPTH {
-                    return Err(McpToolCatalogBuildError::new(
-                        McpToolCatalogBuildErrorKind::ResourceLimit,
-                    ));
-                }
-                let child_depth = depth.checked_add(1).ok_or_else(|| {
-                    McpToolCatalogBuildError::new(McpToolCatalogBuildErrorKind::ResourceLimit)
-                })?;
-                stack.extend(values.values().map(|value| (value, child_depth)));
-            }
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
         }
     }
-    Ok(())
+
+    struct Frame<'a> {
+        container_depth: usize,
+        children: Children<'a>,
+    }
+
+    let mut frames = Vec::<Frame<'_>>::new();
+    let mut current = Some((schema, 0usize));
+    let mut nodes = 0usize;
+
+    loop {
+        if let Some((value, parent_depth)) = current.take() {
+            nodes = nodes.checked_add(1).ok_or_else(|| {
+                McpToolCatalogBuildError::new(McpToolCatalogBuildErrorKind::ResourceLimit)
+            })?;
+            if nodes > MAX_MCP_TOOL_SCHEMA_NODES {
+                return Err(McpToolCatalogBuildError::new(
+                    McpToolCatalogBuildErrorKind::ResourceLimit,
+                ));
+            }
+
+            let children = match value {
+                Value::Array(values) => Some(Children::Array(values.iter())),
+                Value::Object(values) => Some(Children::Object(values.values())),
+                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
+            };
+            if let Some(children) = children {
+                let container_depth = parent_depth.checked_add(1).ok_or_else(|| {
+                    McpToolCatalogBuildError::new(McpToolCatalogBuildErrorKind::ResourceLimit)
+                })?;
+                if container_depth > MAX_MCP_TOOL_SCHEMA_DEPTH {
+                    return Err(McpToolCatalogBuildError::new(
+                        McpToolCatalogBuildErrorKind::ResourceLimit,
+                    ));
+                }
+                frames.push(Frame {
+                    container_depth,
+                    children,
+                });
+            }
+        }
+
+        loop {
+            let Some(frame) = frames.last_mut() else {
+                return Ok(());
+            };
+            if let Some(child) = frame.children.next() {
+                current = Some((child, frame.container_depth));
+                break;
+            }
+            frames.pop();
+        }
+    }
 }
 
 pub(crate) async fn acquire_catalog_snapshot(

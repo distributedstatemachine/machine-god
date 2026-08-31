@@ -912,7 +912,7 @@ impl TurnToolCatalog {
     fn validate_registration(
         &self,
         engine: &EngineInner,
-        registration: &TurnToolRegistration,
+        registration: &Arc<TurnToolRegistration>,
         limits: crate::EngineLimits,
     ) -> Result<bool, TurnFailure> {
         let spec = registration.spec();
@@ -923,12 +923,12 @@ impl TurnToolCatalog {
             ));
         }
         if let Some(existing) = self.tools.get(&spec.name) {
-            if existing.spec() == spec {
+            if Arc::ptr_eq(existing, registration) {
                 return Ok(false);
             }
             return Err(TurnFailure::protocol(
                 "turn_tool_name_collision",
-                "turn-local tool name was registered with a different specification",
+                "turn-local tool name was registered by a different captured implementation",
             ));
         }
 

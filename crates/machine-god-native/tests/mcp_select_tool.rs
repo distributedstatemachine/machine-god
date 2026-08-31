@@ -580,3 +580,42 @@ fn executable_admission_rejects_mismatches_unbounded_schemas_and_metadata_only_s
         McpToolCatalogBuildErrorKind::ResourceLimit
     );
 }
+
+#[test]
+fn executable_schema_node_admission_stops_at_the_exact_boundary() {
+    let base =
+        || McpToolMetadata::new("mcp_bounded", "server", "bounded", "schema", Vec::new()).unwrap();
+    let schema_with_nodes = |nodes: usize| {
+        assert!(nodes >= 3);
+        json!({
+            "type": "object",
+            "enum": vec![Value::Null; nodes - 3],
+        })
+    };
+
+    base()
+        .with_tool(SpecTool(ToolSpec {
+            name: ToolName::new("mcp_bounded").unwrap(),
+            description: "exact node limit".to_owned(),
+            input_schema: schema_with_nodes(MAX_MCP_TOOL_SCHEMA_NODES),
+        }))
+        .unwrap();
+
+    let one_over = base()
+        .with_tool(SpecTool(ToolSpec {
+            name: ToolName::new("mcp_bounded").unwrap(),
+            description: "one node over".to_owned(),
+            input_schema: schema_with_nodes(MAX_MCP_TOOL_SCHEMA_NODES + 1),
+        }))
+        .unwrap_err();
+    assert_eq!(one_over.kind(), McpToolCatalogBuildErrorKind::ResourceLimit);
+
+    let wide = base()
+        .with_tool(SpecTool(ToolSpec {
+            name: ToolName::new("mcp_bounded").unwrap(),
+            description: "wide rejected schema".to_owned(),
+            input_schema: schema_with_nodes(MAX_MCP_TOOL_SCHEMA_NODES * 128),
+        }))
+        .unwrap_err();
+    assert_eq!(wide.kind(), McpToolCatalogBuildErrorKind::ResourceLimit);
+}
