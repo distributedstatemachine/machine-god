@@ -60,6 +60,7 @@ struct SubagentInner {
 /// Calls after script exhaustion, or after the recording bound is reached,
 /// return fixed authority failures without consuming another step. Debug
 /// formatting deliberately omits scripted outcomes and request payloads.
+/// Calling `run` is inert; recording and step selection occur on first poll.
 #[derive(Clone)]
 pub struct ScriptedSubagentAuthority {
     inner: Arc<SubagentInner>,
@@ -161,9 +162,10 @@ impl SubagentAuthority for ScriptedSubagentAuthority {
         request: SubagentRequest,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<SubagentOutcome, SubagentAuthorityError>> {
-        let step = self.record_and_select(request, cancellation.clone());
+        let authority = self.clone();
         Box::pin(async move {
-            match step? {
+            let step = authority.record_and_select(request, cancellation.clone())?;
+            match step {
                 SubagentStep::Complete(outcome) => Ok(outcome),
                 SubagentStep::Error(error) => Err(error),
                 SubagentStep::Pending => {
@@ -227,6 +229,28 @@ mod tests {
         assert_eq!(recorded.len(), 2);
         assert_eq!(recorded[0].request, first);
         assert_eq!(recorded[1].request, second);
+    }
+
+    #[test]
+    fn unpolled_run_is_inert_and_preserves_the_script() {
+        let authority =
+            ScriptedSubagentAuthority::new([SubagentStep::Complete(outcome("retained result"))]);
+        let unpolled = authority.run(
+            request("call-unpolled", "unpolled", "must remain inert"),
+            CancellationToken::new(),
+        );
+
+        assert!(authority.requests().is_empty());
+        assert_eq!(authority.remaining_steps(), 1);
+        drop(unpolled);
+        assert!(authority.requests().is_empty());
+        assert_eq!(authority.remaining_steps(), 1);
+
+        let executed = request("call-executed", "executed", "consume now");
+        let result = block_on(authority.run(executed.clone(), CancellationToken::new())).unwrap();
+        assert_eq!(result.text(), "retained result");
+        assert_eq!(authority.requests()[0].request, executed);
+        assert_eq!(authority.remaining_steps(), 0);
     }
 
     #[test]

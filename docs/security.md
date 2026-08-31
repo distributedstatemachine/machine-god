@@ -68,8 +68,11 @@ MCP transports and authentication remain deferred.
 The provider-neutral `subagent` tool similarly uses no ambient child provider,
 executor, filesystem, process, network, permission, clock, task, or persistence
 authority. Its sole child-computation seam is an explicitly injected
-`SubagentAuthority`. The authority receives only a bounded name and prompt plus
-a cancellation token. It does not receive the parent transcript, grants,
+`SubagentAuthority`. The authority receives only a bounded name and prompt,
+the parent call's bounded structural session/incarnation/turn/call identifiers,
+and a cancellation token. Those identifiers support admission and attribution;
+they are not session, transcript, store, engine, or permission handles. The
+authority does not receive the parent transcript, grants,
 prepared capabilities, dynamic tools, tool catalog, recursive `subagent`
 visibility, or model/effort/permission/notification overrides. Completed text
 is stamped `trust: "untrusted_child"` and `authority: "none"`; it cannot grant

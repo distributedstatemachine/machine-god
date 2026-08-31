@@ -79,6 +79,10 @@ assert!(matches!(
   their session incarnation, including terminal cancellation delivery.
 - `ScriptedPermissionHandler` records complete requests and returns ordered
   decisions, errors, or pending futures.
+- `ScriptedSubagentAuthority` records bounded child requests on first poll and
+  returns strict completed, error, or cancellation-pending steps. Calling and
+  dropping an unpolled authority future is inert and preserves both the request
+  log and the next scripted step.
 - `ScriptedTool` preserves its advertised specification and the default
   source-compatible preflight, so policy sees raw `Capability::Tool` and
   execution receives the original arguments. It records the context, exact

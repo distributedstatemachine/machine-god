@@ -263,7 +263,7 @@ impl Tool for SubagentTool {
         validate_argument_bounds(arguments.get())?;
         let decoded = decode_arguments(arguments.into_value())?;
         let canonical = decoded.into_json();
-        ensure_serialized(&canonical, MAX_SUBAGENT_ARGUMENT_BYTES)?;
+        ensure_input_serialized(&canonical, MAX_SUBAGENT_ARGUMENT_BYTES)?;
         Ok(PreparedToolCall::without_authority(canonical))
     }
 
@@ -408,11 +408,11 @@ fn argument_limits() -> EngineLimits {
 fn validate_argument_bounds(value: &Value) -> Result<(), ToolError> {
     validate_json_roots(std::iter::once(value), argument_limits()).map_err(|violation| {
         match violation {
-            JsonLimitViolation::Depth | JsonLimitViolation::Nodes => resource_limit(),
+            JsonLimitViolation::Depth | JsonLimitViolation::Nodes => input_resource_limit(),
         }
     })?;
     validate_raw_json_text_bytes(value)?;
-    ensure_serialized(value, MAX_SUBAGENT_ARGUMENT_BYTES)
+    ensure_input_serialized(value, MAX_SUBAGENT_ARGUMENT_BYTES)
 }
 
 fn validate_raw_json_text_bytes(value: &Value) -> Result<(), ToolError> {
@@ -440,9 +440,9 @@ fn validate_raw_json_text_bytes(value: &Value) -> Result<(), ToolError> {
             if let Value::String(text) = value {
                 raw_bytes = raw_bytes
                     .checked_add(text.len())
-                    .ok_or_else(resource_limit)?;
+                    .ok_or_else(input_resource_limit)?;
                 if raw_bytes > MAX_SUBAGENT_ARGUMENT_BYTES {
-                    return Err(resource_limit());
+                    return Err(input_resource_limit());
                 }
             }
             match value {
@@ -460,9 +460,9 @@ fn validate_raw_json_text_bytes(value: &Value) -> Result<(), ToolError> {
                 if let Some(key) = key {
                     raw_bytes = raw_bytes
                         .checked_add(key.len())
-                        .ok_or_else(resource_limit)?;
+                        .ok_or_else(input_resource_limit)?;
                     if raw_bytes > MAX_SUBAGENT_ARGUMENT_BYTES {
-                        return Err(resource_limit());
+                        return Err(input_resource_limit());
                     }
                 }
                 current = Some(child);
@@ -473,13 +473,21 @@ fn validate_raw_json_text_bytes(value: &Value) -> Result<(), ToolError> {
     }
 }
 
-fn ensure_serialized(
+fn serialized_within_limit(value: &(impl serde::Serialize + ?Sized), limit: usize) -> bool {
+    match serialized_json_size_bounded(value, limit) {
+        Ok(Some(_)) => true,
+        Ok(None) | Err(_) => false,
+    }
+}
+
+fn ensure_input_serialized(
     value: &(impl serde::Serialize + ?Sized),
     limit: usize,
 ) -> Result<(), ToolError> {
-    match serialized_json_size_bounded(value, limit) {
-        Ok(Some(_)) => Ok(()),
-        Ok(None) | Err(_) => Err(resource_limit()),
+    if serialized_within_limit(value, limit) {
+        Ok(())
+    } else {
+        Err(input_resource_limit())
     }
 }
 
@@ -527,7 +535,9 @@ fn publish_outcome(
         "authority": "none",
         "text": outcome.into_text().into_string()
     }));
-    ensure_serialized(&output, MAX_SUBAGENT_OUTPUT_BYTES)?;
+    if !serialized_within_limit(&output, MAX_SUBAGENT_OUTPUT_BYTES) {
+        return Err(resource_limit());
+    }
     check_cancellation(cancellation)?;
     Ok(output)
 }
@@ -554,6 +564,15 @@ fn invalid_arguments() -> ToolError {
         ToolErrorKind::InvalidInput,
         "subagent_invalid_arguments",
         "subagent arguments are invalid",
+        false,
+    )
+}
+
+fn input_resource_limit() -> ToolError {
+    ToolError::new(
+        ToolErrorKind::InvalidInput,
+        "subagent_resource_limit",
+        "subagent resource limit exceeded",
         false,
     )
 }
@@ -918,15 +937,13 @@ mod tests {
         for _ in 0..50_000 {
             deep = Value::Array(vec![deep]);
         }
-        assert_eq!(
-            tool.prepare(call(deep)).unwrap_err().code,
-            "subagent_resource_limit"
-        );
+        let deep_error = tool.prepare(call(deep)).unwrap_err();
+        assert_eq!(deep_error.code, "subagent_resource_limit");
+        assert_eq!(deep_error.kind, ToolErrorKind::InvalidInput);
         let wide = Value::Array((0..MAX_SUBAGENT_JSON_NODES).map(|_| Value::Null).collect());
-        assert_eq!(
-            tool.prepare(call(wide)).unwrap_err().code,
-            "subagent_resource_limit"
-        );
+        let wide_error = tool.prepare(call(wide)).unwrap_err();
+        assert_eq!(wide_error.code, "subagent_resource_limit");
+        assert_eq!(wide_error.kind, ToolErrorKind::InvalidInput);
     }
 
     #[test]
@@ -952,6 +969,7 @@ mod tests {
             ))
             .unwrap_err();
             assert_eq!(error.code, "subagent_resource_limit");
+            assert_eq!(error.kind, ToolErrorKind::InvalidInput);
         }
         assert_eq!(calls.load(Ordering::Relaxed), 0);
     }
@@ -1020,15 +1038,25 @@ mod tests {
             (
                 SubagentAuthorityErrorKind::Unavailable,
                 "subagent_unavailable",
+                ToolErrorKind::Unavailable,
             ),
-            (SubagentAuthorityErrorKind::Failed, "subagent_failed"),
+            (
+                SubagentAuthorityErrorKind::Failed,
+                "subagent_failed",
+                ToolErrorKind::Execution,
+            ),
             (
                 SubagentAuthorityErrorKind::ResourceLimit,
                 "subagent_resource_limit",
+                ToolErrorKind::Execution,
             ),
-            (SubagentAuthorityErrorKind::Cancelled, "subagent_cancelled"),
+            (
+                SubagentAuthorityErrorKind::Cancelled,
+                "subagent_cancelled",
+                ToolErrorKind::Cancelled,
+            ),
         ];
-        for (kind, code) in cases {
+        for (kind, code, tool_kind) in cases {
             let calls = Arc::new(AtomicUsize::new(0));
             let tool = SubagentTool::new(ReadyAuthority {
                 calls,
@@ -1042,6 +1070,7 @@ mod tests {
             ))
             .unwrap_err();
             assert_eq!(error.code, code);
+            assert_eq!(error.kind, tool_kind);
         }
     }
 
@@ -1060,6 +1089,7 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(output_error.code, "subagent_resource_limit");
+        assert_eq!(output_error.kind, ToolErrorKind::Execution);
     }
 
     #[test]

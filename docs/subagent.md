@@ -51,10 +51,18 @@ path. The tool-specific bounds apply in addition to the engine's configured
 argument limits; the lower applicable bound wins.
 
 Preparation is synchronous, bounded, nonblocking, and effect-free. It produces
-one owned typed request and uses `PreparedToolCall::without_authority`. This is
-a narrow trusted assertion that the tool itself needs no permission-policy
-capability. It does not grant the injected authority filesystem, process,
-network, persistence, model, tool, or permission access.
+one canonical validated prepared JSON envelope and uses
+`PreparedToolCall::without_authority`. Execution revalidates that envelope and
+then constructs the typed request. This is a narrow trusted assertion that the
+tool itself needs no permission-policy capability. It does not grant the
+injected authority filesystem, process, network, persistence, model, tool, or
+permission access.
+
+Input depth, node, raw-text, and serialized-envelope exhaustion is an
+`InvalidInput` failure discovered before authority invocation. Authority-side
+or completed-output resource exhaustion remains an `Execution` failure. Both
+use the fixed `subagent_resource_limit` code without reflecting input or child
+data.
 
 ## Injected child authority
 
