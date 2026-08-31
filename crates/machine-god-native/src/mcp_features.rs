@@ -825,7 +825,7 @@ fn validate_payload_for_request(
                 return Err(resource_limit());
             }
             for value in values {
-                validate_string(value, MAX_MCP_FEATURE_COMPLETION_VALUE_BYTES, true)?;
+                validate_string(value, MAX_MCP_FEATURE_COMPLETION_VALUE_BYTES, false)?;
             }
             if object
                 .get("total")
@@ -1481,12 +1481,75 @@ fn cancelled() -> ToolError {
 }
 
 fn drop_json_iterative(value: Value) {
-    let mut pending = vec![value];
-    while let Some(value) = pending.pop() {
-        match value {
-            Value::Array(values) => pending.extend(values),
-            Value::Object(values) => pending.extend(values.into_values()),
-            _ => {}
+    enum Frame {
+        Array(std::vec::IntoIter<Value>),
+        Object(serde_json::map::IntoValues),
+    }
+
+    impl Frame {
+        fn next(&mut self) -> Option<Value> {
+            match self {
+                Self::Array(values) => values.next(),
+                Self::Object(values) => values.next(),
+            }
         }
+    }
+
+    fn push_frame(frames: &mut Vec<Frame>, frame: Frame) {
+        if frames.len() == frames.capacity() {
+            let additional = frames.capacity().max(MAX_MCP_FEATURE_JSON_DEPTH);
+            if frames.try_reserve_exact(additional).is_err() {
+                // Dropping a rejected hostile subtree must never recurse when
+                // the bounded traversal scratch cannot grow.
+                std::mem::forget(frame);
+                return;
+            }
+        }
+        frames.push(frame);
+    }
+
+    let mut frames = Vec::new();
+    let mut current = Some(value);
+    loop {
+        if let Some(value) = current.take() {
+            match value {
+                Value::Array(values) => push_frame(&mut frames, Frame::Array(values.into_iter())),
+                Value::Object(values) => {
+                    push_frame(&mut frames, Frame::Object(values.into_values()));
+                }
+                _ => {}
+            }
+        }
+        loop {
+            let Some(frame) = frames.last_mut() else {
+                return;
+            };
+            if let Some(child) = frame.next() {
+                current = Some(child);
+                break;
+            }
+            frames.pop();
+        }
+    }
+}
+
+#[cfg(test)]
+mod drop_tests {
+    use super::*;
+
+    #[test]
+    fn wide_iterative_drop_uses_depth_sized_scratch() {
+        let value = Value::Array((0..32_000).map(|_| Value::Null).collect());
+        allocation_counter::measure(|| {});
+        let allocations = allocation_counter::measure(|| drop_json_iterative(value));
+
+        assert!(
+            allocations.bytes_total < 4 * 1024,
+            "wide iterative drop allocated width-sized scratch: {allocations:?}"
+        );
+        assert!(
+            allocations.bytes_current <= 0,
+            "iterative drop retained measured memory: {allocations:?}"
+        );
     }
 }

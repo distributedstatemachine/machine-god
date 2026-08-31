@@ -165,6 +165,9 @@ Structure limits are checked iteratively before serialization, and every raw
 input or authority payload is held by an iterative-drop owner. Even rejected
 programmatically constructed JSON tens of thousands of levels deep cannot
 recurse through serialization, equality, or destruction.
+Iterative destruction consumes wide containers one child at a time, so its
+auxiliary ownership is proportional to nesting depth rather than container
+width.
 
 An input-required authority result preserves the pinned terminal error payload:
 

@@ -526,6 +526,28 @@ fn payload_builder_and_publication_reject_envelope_and_request_mismatches() {
         "mcp_features_resource_limit",
     );
 
+    for (requested, identity) in [
+        (
+            json!({"action":"prompt_complete","server":"fixture","prompt":"review","argument":"tone"}),
+            "review",
+        ),
+        (
+            json!({"action":"resource_complete","server":"fixture","uri_template":"custom:///{path}","argument":"path"}),
+            "custom:///{path}",
+        ),
+    ] {
+        let output = execute(
+            &McpFeaturesTool::new(FixedAuthority::payload(json!({
+                "identity": identity,
+                "argument": requested["argument"],
+                "values": [""]
+            }))),
+            requested,
+        )
+        .unwrap();
+        assert_eq!(output.content["values"], json!([""]));
+    }
+
     assert_error(
         execute(
             &McpFeaturesTool::new(FixedAuthority::payload(json!({
