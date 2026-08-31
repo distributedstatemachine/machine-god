@@ -14,6 +14,7 @@ use machine_god_native::{
 };
 
 const MAX_BACKGROUND_OUTPUT_BYTES: usize = 64 * 1024;
+const MAX_BACKGROUND_ID_BYTES: usize = u64::MAX.ilog10() as usize + 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BackgroundTarget {
@@ -260,7 +261,10 @@ where
         }
         target = Some(if argument == "last" {
             BackgroundTarget::Last
-        } else if !argument.is_empty() && argument.bytes().all(|byte| byte.is_ascii_digit()) {
+        } else if !argument.is_empty()
+            && argument.len() <= MAX_BACKGROUND_ID_BYTES
+            && argument.bytes().all(|byte| byte.is_ascii_digit())
+        {
             BackgroundTarget::Id(argument.parse().map_err(|_| ())?)
         } else {
             return Err(());
@@ -735,6 +739,11 @@ mod tests {
             (&["last", "--json"][..], BackgroundTarget::Last, true),
             (&["--json", "last"][..], BackgroundTarget::Last, true),
             (&["00042"][..], BackgroundTarget::Id(42), false),
+            (
+                &["00000000000000000000"][..],
+                BackgroundTarget::Id(0),
+                false,
+            ),
             (&["00042", "--json"][..], BackgroundTarget::Id(42), true),
             (&["--json", "00042"][..], BackgroundTarget::Id(42), true),
         ] {
@@ -767,6 +776,29 @@ mod tests {
             assert!(stdout.is_empty());
             assert_eq!(stderr, INVALID.as_bytes());
         }
+        assert_eq!(host.calls.get(), 0);
+        assert_eq!(host.polls.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn parser_rejects_oversized_numeric_ids_before_host_effects() {
+        let host = FakeHost::ready(Ok(empty_list()));
+        let oversized = "0".repeat(1024 * 1024);
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let exit = run_background(
+            &host,
+            [oversized],
+            &mut stdout,
+            &mut stderr,
+            INVALID,
+            OUTPUT,
+        );
+
+        assert_eq!(exit, 2);
+        assert!(stdout.is_empty());
+        assert_eq!(stderr, INVALID.as_bytes());
         assert_eq!(host.calls.get(), 0);
         assert_eq!(host.polls.load(Ordering::Relaxed), 0);
     }
