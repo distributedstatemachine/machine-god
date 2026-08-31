@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.sha }}
@@ -20,43 +21,102 @@ jobs:
   change-classification:
     name: Change classification
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
-      full: ${{ steps.classify.outputs.full }}
-      docs_only: ${{ steps.classify.outputs.docs_only }}
+      full: ${{ steps.route.outputs.full }}
+      docs_only: ${{ steps.route.outputs.docs_only }}
+      core_api_docs: ${{ steps.route.outputs.core_api_docs }}
+      testkit_docs: ${{ steps.route.outputs.testkit_docs }}
+      compatibility_docs: ${{ steps.route.outputs.compatibility_docs }}
+      vision_docs: ${{ steps.route.outputs.vision_docs }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
       - name: Classify changed paths
-        id: classify
+        id: paths
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          base: ${{ github.ref }}
+          predicate-quantifier: some-with-excludes
+          filters: |
+            documentation:
+              - 'README.md'
+              - 'docs/**/*.md'
+            non_documentation:
+              - '**'
+              - '!README.md'
+              - '!docs/**/*.md'
+            core_api_docs:
+              - 'docs/core-api.md'
+            testkit_docs:
+              - 'docs/testkit.md'
+            compatibility_docs:
+              - 'docs/compatibility.md'
+            vision_docs:
+              - 'docs/vision.md'
+      - name: Select the applicable gate
+        id: route
         env:
-          CI_EVENT_NAME: ${{ github.event_name }}
-          CI_BEFORE_SHA: ${{ github.event.before || '' }}
-          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
-          CI_DEFAULT_REF: refs/remotes/origin/${{ github.event.repository.default_branch }}
+          DOCUMENTATION: ${{ steps.paths.outputs.documentation }}
+          NON_DOCUMENTATION: ${{ steps.paths.outputs.non_documentation }}
+          CORE_API_DOCS: ${{ steps.paths.outputs.core_api_docs }}
+          TESTKIT_DOCS: ${{ steps.paths.outputs.testkit_docs }}
+          COMPATIBILITY_DOCS: ${{ steps.paths.outputs.compatibility_docs }}
+          VISION_DOCS: ${{ steps.paths.outputs.vision_docs }}
         shell: bash
         run: |
           set -euo pipefail
 
-          arguments=(
-            --event "${CI_EVENT_NAME}"
-            --head "${CI_HEAD_SHA}"
-            --default-ref "${CI_DEFAULT_REF}"
-            --output "${GITHUB_OUTPUT}"
-          )
-          if [[ -n "${CI_BEFORE_SHA}" ]]; then
-            arguments+=(--before "${CI_BEFORE_SHA}")
+          full=true
+          docs_only=false
+          core_api_docs=false
+          testkit_docs=false
+          compatibility_docs=false
+          vision_docs=false
+
+          valid=true
+          for value in \
+            "${DOCUMENTATION}" \
+            "${NON_DOCUMENTATION}" \
+            "${CORE_API_DOCS}" \
+            "${TESTKIT_DOCS}" \
+            "${COMPATIBILITY_DOCS}" \
+            "${VISION_DOCS}"
+          do
+            if [[ "${value}" != "true" && "${value}" != "false" ]]; then
+              valid=false
+            fi
+          done
+
+          if [[ "${valid}" == "true" ]]; then
+            case "${DOCUMENTATION}:${NON_DOCUMENTATION}" in
+              true:false)
+                full=false
+                docs_only=true
+                core_api_docs="${CORE_API_DOCS}"
+                testkit_docs="${TESTKIT_DOCS}"
+                compatibility_docs="${COMPATIBILITY_DOCS}"
+                vision_docs="${VISION_DOCS}"
+                ;;
+            esac
           fi
-          if [[ -n "${CI_BASE_SHA}" ]]; then
-            arguments+=(--base "${CI_BASE_SHA}")
-          fi
-          python3 scripts/classify_ci_changes.py "${arguments[@]}"
+
+          # shellcheck disable=SC2129
+          echo "full=${full}" >> "${GITHUB_OUTPUT}"
+          echo "docs_only=${docs_only}" >> "${GITHUB_OUTPUT}"
+          echo "core_api_docs=${core_api_docs}" >> "${GITHUB_OUTPUT}"
+          echo "testkit_docs=${testkit_docs}" >> "${GITHUB_OUTPUT}"
+          echo "compatibility_docs=${compatibility_docs}" >> "${GITHUB_OUTPUT}"
+          echo "vision_docs=${vision_docs}" >> "${GITHUB_OUTPUT}"
 
   documentation-policy:
     name: Documentation policy
+    needs: change-classification
+    if: ${{ always() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -65,6 +125,23 @@ jobs:
         run: python3 scripts/check_documentation.py
       - name: Test documentation policy
         run: python3 -m unittest --verbose tests/test_documentation_policy.py
+      - name: Install exact Rust toolchain for focused contract checks
+        if: ${{ needs.change-classification.outputs.core_api_docs == 'true' || needs.change-classification.outputs.testkit_docs == 'true' || needs.change-classification.outputs.vision_docs == 'true' }}
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Test core API documentation
+        if: ${{ needs.change-classification.outputs.core_api_docs == 'true' }}
+        run: cargo +"${RUST_TOOLCHAIN}" test --locked --doc -p machine-god-core
+      - name: Test testkit documentation
+        if: ${{ needs.change-classification.outputs.testkit_docs == 'true' }}
+        run: cargo +"${RUST_TOOLCHAIN}" test --locked --doc -p machine-god-testkit
+      - name: Check pinned upstream compatibility inventory
+        if: ${{ needs.change-classification.outputs.compatibility_docs == 'true' }}
+        run: python3 scripts/generate_compatibility.py --check-rendered-docs
+      - name: Check vision documentation agreement
+        if: ${{ needs.change-classification.outputs.vision_docs == 'true' }}
+        run: >-
+          python3 -m unittest --verbose
+          tests.test_native_manifest.NativeManifestTests.test_vision_portable_contract_and_native_edges_are_feature_scoped
 
   quality:
     name: Quality and tests
