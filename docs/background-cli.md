@@ -120,7 +120,11 @@ canonicalization, hashing, filesystem operation, allocation proportional to
 store contents, runtime construction, task, thread, timer, watcher, provider,
 permission, network, or process operation. All synchronous bounded work starts
 on first poll. Dropping before first poll is effect-free. The operation creates,
-locks, repairs, rewrites, deletes, probes, signals, or timestamps nothing.
+locks, repairs, rewrites, deletes, probes, signals, or explicitly changes
+timestamps. Linux record and directory descriptors request `O_NOATIME`. macOS
+has no per-open equivalent, so filesystem-managed access times may advance
+according to the mounted filesystem's policy; inspection never restores them
+with a metadata write.
 
 Existing hierarchy components are opened descriptor-relatively without
 following symlinks and must satisfy the native owner/mode and macOS ACL policy.

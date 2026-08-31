@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33440894118` (`GREEN`)
 - Main Benchmark evidence: `33440894154` (`GREEN`)
 - Active branch: `agent/m05-background-cli`
-- Active phase: `validating bounded read-only persisted background history`
-- Next gate: `complete exact-1.94.1 local feature gate`
+- Active phase: `remediating rejected background-history review findings`
+- Next gate: `complete exact-1.94.1 replacement local feature gate`
 <!-- canonical-live-status:end -->
 
 The recorded Actions runs succeeded for the exact delivered-main commit, and
