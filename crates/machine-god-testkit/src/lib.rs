@@ -5,6 +5,7 @@ mod event_sink;
 mod permission;
 mod provider;
 mod session_store;
+mod subagent;
 mod tool;
 
 pub use event_sink::{EventSinkStep, RecordingEventSink};
@@ -15,6 +16,7 @@ pub use provider::{
 pub use session_store::{
     InMemorySessionStore, RecordedSessionStoreCall, SessionStoreScript, SessionStoreStep,
 };
+pub use subagent::{RecordedSubagentRequest, ScriptedSubagentAuthority, SubagentStep};
 pub use tool::{
     RecordedToolInvocation, RecordedToolPreparation, ScriptedPreparedTool, ScriptedTool,
     ToolPrepareStep, ToolStep,
