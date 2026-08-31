@@ -10,9 +10,9 @@ use machine_god_core::{
 };
 use machine_god_native::{
     MAX_MCP_SELECT_SERIALIZED_ARGUMENT_BYTES, MAX_MCP_SELECT_SERIALIZED_RESULT_BYTES,
-    MAX_MCP_SELECTED_TOOL_SPEC_BYTES, MAX_MCP_TOOL_SCHEMA_NODES, MCP_SELECT_TOOL_NAME,
-    McpSelectTool, McpToolCatalog, McpToolCatalogBuildErrorKind, McpToolCatalogError,
-    McpToolCatalogErrorKind, McpToolCatalogSnapshot, McpToolMetadata,
+    MAX_MCP_SELECTED_TOOL_SPEC_BYTES, MAX_MCP_TOOL_SCHEMA_DEPTH, MAX_MCP_TOOL_SCHEMA_NODES,
+    MCP_SELECT_TOOL_NAME, McpSelectTool, McpToolCatalog, McpToolCatalogBuildErrorKind,
+    McpToolCatalogError, McpToolCatalogErrorKind, McpToolCatalogSnapshot, McpToolMetadata,
 };
 use serde_json::{Value, json};
 
@@ -618,4 +618,47 @@ fn executable_schema_node_admission_stops_at_the_exact_boundary() {
         }))
         .unwrap_err();
     assert_eq!(wide.kind(), McpToolCatalogBuildErrorKind::ResourceLimit);
+}
+
+#[test]
+fn executable_schema_depth_admission_accepts_64_mixed_containers_and_rejects_65() {
+    let base = || {
+        McpToolMetadata::new(
+            "mcp_depth_bounded",
+            "server",
+            "bounded",
+            "schema",
+            Vec::new(),
+        )
+        .unwrap()
+    };
+    let schema_with_depth = |container_depth: usize| {
+        assert!(container_depth >= 1);
+        let mut nested = Value::Null;
+        for level in 0..container_depth - 1 {
+            nested = if level % 2 == 0 {
+                Value::Array(vec![nested])
+            } else {
+                json!({"nested": nested})
+            };
+        }
+        json!({"nested": nested})
+    };
+
+    base()
+        .with_tool(SpecTool(ToolSpec {
+            name: ToolName::new("mcp_depth_bounded").unwrap(),
+            description: "exact depth limit".to_owned(),
+            input_schema: schema_with_depth(MAX_MCP_TOOL_SCHEMA_DEPTH),
+        }))
+        .unwrap();
+
+    let one_over = base()
+        .with_tool(SpecTool(ToolSpec {
+            name: ToolName::new("mcp_depth_bounded").unwrap(),
+            description: "one container over".to_owned(),
+            input_schema: schema_with_depth(MAX_MCP_TOOL_SCHEMA_DEPTH + 1),
+        }))
+        .unwrap_err();
+    assert_eq!(one_over.kind(), McpToolCatalogBuildErrorKind::ResourceLimit);
 }

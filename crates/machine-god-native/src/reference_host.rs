@@ -290,7 +290,8 @@ impl NativeReferenceHost {
     /// discovery and policy admission. Catalog acquisition is inert until the
     /// model calls `mcp_search_tools` or `mcp_select_tool`; this constructor
     /// performs no MCP I/O. Injection supplies admitted metadata and executable
-    /// routing, while later dynamic calls still pass ordinary permission policy.
+    /// routing. Selection grants no authority; later dynamic calls follow their
+    /// ordinary preparation and declared authorization disposition.
     ///
     /// # Errors
     ///

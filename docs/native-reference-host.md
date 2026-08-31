@@ -47,7 +47,7 @@ There are five composition paths:
 | `PreparedNativeRoots` | Production AI Gateway HTTP | Consumes the already retained identity-checked roots without reopening their selected paths, then discovers credentials and constructs the transport |
 | Existing explicit workspace and session paths | Injected `Arc<dyn AiGatewayTransport>` | Opens and retains both roots, skips credential discovery, and uses the supplied canonical `NetworkTarget` |
 | `PreparedNativeRoots` | Injected transport | Consumes retained roots, skips credential discovery, and uses the supplied canonical target |
-| Existing explicit roots | Injected transport and `Arc<dyn McpToolCatalog>` | Uses the custom transport path and advertises search over the injected admitted MCP metadata source |
+| Existing explicit roots | Injected transport and `Arc<dyn McpToolCatalog>` | Uses the custom transport path and advertises search plus exact next-round selection over the injected admitted MCP metadata and attached executable source |
 
 The explicit-path constructors require the trusted host to choose disjoint
 workspace and session roots; those constructors do not prove identity or
@@ -70,9 +70,10 @@ Every successful host contains:
   `NativeSessionLifecycle`;
 - one `MemoryTool` over an identity-preserving clone of that store's retained
   state-root descriptor, without access to session-record APIs;
-- one `McpSearchToolsTool` over an inert explicitly injected catalog source;
-  ordinary constructors use an empty ready catalog, while the MCP-aware
-  constructor accepts host-admitted metadata;
+- one `McpSearchToolsTool` and one `McpSelectTool` over the exact same inert,
+  explicitly injected catalog allocation; ordinary constructors share an empty
+  ready catalog, while the MCP-aware constructor accepts host-admitted metadata
+  and attached executable registrations;
 - default provider-neutral `EngineLimits` and the default no-op event sink;
 - one explicit `Arc<dyn WebSearchDeadline>` for bounded web-search timing,
   reused through a fixed category-only adapter for vision's capacity wait,
