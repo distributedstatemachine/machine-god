@@ -17,8 +17,8 @@ use crate::{
     NativeProviderKind, NativeSessionLifecycle, NativeTransportKind, PermissionMode,
     PermissionPrompter, PreparedNativeRoots, QuestionPrompter, ReadToolResultTool, TerminalTool,
     VisionDeadline, VisionLimits, VisionTool, VisionTransportError, VisionTransportErrorKind,
-    WebFetchTool, WebSearchDeadline, WebSearchLimits, WebSearchTool,
-    WebSearchTransportErrorKind, discover_ai_gateway_credential,
+    WebFetchTool, WebSearchDeadline, WebSearchLimits, WebSearchTool, WebSearchTransportErrorKind,
+    discover_ai_gateway_credential,
 };
 
 /// Stable stage at which native reference-host composition failed.
@@ -643,9 +643,7 @@ impl McpFeatureAuthority for EmptyMcpFeatureAuthority {
         _request: McpFeatureRequest,
         _cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpFeaturePayload, McpFeatureError>> {
-        Box::pin(async {
-            Err(McpFeatureError::new(McpFeatureErrorKind::Unavailable))
-        })
+        Box::pin(async { Err(McpFeatureError::new(McpFeatureErrorKind::Unavailable)) })
     }
 }
 

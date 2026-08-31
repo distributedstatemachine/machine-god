@@ -30,7 +30,8 @@ use machine_god_native::{
     DELETE_FILE_TOOL_NAME, EDIT_FILE_TOOL_NAME, FILE_INFO_TOOL_NAME, GLOB_FILES_TOOL_NAME,
     GREP_FILES_TOOL_NAME, INSTALL_SKILL_TOOL_NAME, LIST_FILES_TOOL_NAME, LoadedNativeConfig,
     MCP_FEATURES_TOOL_NAME, MCP_SEARCH_TOOLS_TOOL_NAME, MCP_SELECT_TOOL_NAME, MEMORY_TOOL_NAME,
-    McpToolCatalog, McpToolCatalogError, McpToolCatalogSnapshot, McpToolMetadata, NativeEnvironment,
+    McpFeatureAuthority, McpFeatureError, McpFeaturePayload, McpFeatureRequest, McpToolCatalog,
+    McpToolCatalogError, McpToolCatalogSnapshot, McpToolMetadata, NativeEnvironment,
     NativeReferenceHost, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
     OPEN_FILE_TOOL_NAME, PermissionPromptDecision, PermissionPromptError, PermissionPrompter,
     QuestionPromptAnswers, QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest,
@@ -514,6 +515,22 @@ fn mcp_select_round_responses() -> [Vec<u8>; 2] {
     [tool_call, finish]
 }
 
+fn mcp_features_round_responses() -> [Vec<u8>; 2] {
+    let tool_call = concat!(
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"mcp-features-call\",\"toolName\":\"mcp_features\",\"input\":{\"action\":\"resource_templates\",\"server\":\"fixture\"}}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    let finish = concat!(
+        "data: {\"type\":\"text-delta\",\"id\":\"answer\",\"delta\":\"MCP features complete\"}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    [tool_call, finish]
+}
+
 #[derive(Clone, Copy, Debug)]
 struct ReadyMcpCatalog;
 
@@ -536,6 +553,42 @@ impl McpToolCatalog for ReadyMcpCatalog {
                 .expect("static MCP executable is valid"),
             ])
             .expect("static MCP catalog is valid"))
+        })
+    }
+}
+
+#[derive(Clone, Default)]
+struct ReadyMcpFeatureAuthority {
+    calls: Arc<AtomicU64>,
+}
+
+impl ReadyMcpFeatureAuthority {
+    fn call_count(&self) -> u64 {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl McpFeatureAuthority for ReadyMcpFeatureAuthority {
+    fn call(
+        &self,
+        request: McpFeatureRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<McpFeaturePayload, McpFeatureError>> {
+        Box::pin(async move {
+            assert!(!cancellation.is_cancelled());
+            assert_eq!(request.server(), "fixture");
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            McpFeaturePayload::new(json!({
+                "items": [{
+                    "server": "fixture",
+                    "identity": "custom://project/{path}",
+                    "name": "project-file",
+                    "title": "Project file",
+                    "description": "UNTRUSTED_TEMPLATE_DESCRIPTION",
+                    "mimeType": "text/plain",
+                    "template": true
+                }]
+            }))
         })
     }
 }
@@ -604,6 +657,29 @@ fn compose_with_transport_and_mcp_catalog(
         inert_question_prompter(),
         never_deadline(),
         catalog,
+    )
+}
+
+fn compose_with_transport_and_mcp(
+    loaded: LoadedNativeConfig,
+    transport: ScriptedTransport,
+    workspace: &Path,
+    sessions: &Path,
+    prompter: AllowingPrompter,
+    catalog: Arc<dyn McpToolCatalog>,
+    feature_authority: Arc<dyn McpFeatureAuthority>,
+) -> Result<NativeReferenceHost, NativeReferenceHostBuildError> {
+    NativeReferenceHost::compose_with_ai_gateway_transport_and_mcp(
+        loaded,
+        Arc::new(transport),
+        production_gateway_target(),
+        workspace,
+        sessions,
+        Arc::new(prompter),
+        inert_question_prompter(),
+        never_deadline(),
+        catalog,
+        feature_authority,
     )
 }
 
@@ -1185,6 +1261,58 @@ fn composed_mcp_select_advertises_the_injected_executable_on_the_next_round() {
         .unwrap();
     assert_eq!(selected["description"], "Create a GitHub issue");
     assert_eq!(selected["inputSchema"]["required"], json!(["title"]));
+}
+
+#[test]
+fn composed_mcp_features_uses_exact_injected_authority_without_permission() {
+    let temporary = TemporaryDirectory::new("mcp-features");
+    let (workspace, sessions) = roots(temporary.path());
+    let transport = ScriptedTransport::new(
+        "MCP_FEATURES_FACTORY_SENTINEL",
+        mcp_features_round_responses(),
+    );
+    let prompter = AllowingPrompter::default();
+    let feature_authority = Arc::new(ReadyMcpFeatureAuthority::default());
+    let host = compose_with_transport_and_mcp(
+        built_in_config(),
+        transport.clone(),
+        &workspace,
+        &sessions,
+        prompter.clone(),
+        Arc::new(ReadyMcpCatalog),
+        feature_authority.clone(),
+    )
+    .unwrap();
+
+    let (_, events) = collect_turn(&host, "reference-host-mcp-features");
+    assert_completed(&events);
+    assert!(prompter.requests().is_empty());
+    assert_eq!(feature_authority.call_count(), 1);
+
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    assert_exact_native_tool_catalog(&body(&requests[0]));
+    assert_eq!(
+        decoded_tool_output(&body(&requests[1]), 2),
+        json!({
+            "content": {
+                "trust": "untrusted_external",
+                "authority": "none",
+                "action": "resource_templates",
+                "server": "fixture",
+                "items": [{
+                    "server": "fixture",
+                    "identity": "custom://project/{path}",
+                    "name": "project-file",
+                    "title": "Project file",
+                    "description": "UNTRUSTED_TEMPLATE_DESCRIPTION",
+                    "mimeType": "text/plain",
+                    "template": true
+                }]
+            },
+            "is_error": false
+        })
+    );
 }
 
 #[cfg(target_os = "linux")]

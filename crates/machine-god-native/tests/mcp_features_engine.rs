@@ -114,7 +114,8 @@ fn second_request_tool_output(provider: &ScriptedModelProvider) -> (Message, Too
     let [ContentBlock::ToolResult { output, .. }] = message.content.as_slice() else {
         panic!("expected one durable tool result")
     };
-    (message, output.clone())
+    let output = output.clone();
+    (message, output)
 }
 
 #[test]
@@ -214,8 +215,10 @@ fn engine_invalid_arguments_never_reach_feature_authority() {
     let (message, output) = second_request_tool_output(&provider);
     assert!(output.is_error);
     assert_eq!(output.content["code"], "tool_error");
-    assert!(!serde_json::to_string(&output)
-        .unwrap()
-        .contains("INVALID_FEATURE_ARGUMENT_SENTINEL"));
+    assert!(
+        !serde_json::to_string(&output)
+            .unwrap()
+            .contains("INVALID_FEATURE_ARGUMENT_SENTINEL")
+    );
     assert_eq!(store.record(&session_id).unwrap().messages[2], message);
 }
