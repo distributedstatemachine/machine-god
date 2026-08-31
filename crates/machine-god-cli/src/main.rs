@@ -1327,6 +1327,7 @@ fn run_with_workspace_host(
     )
 }
 
+#[cfg(test)]
 fn run_with_hosts(
     arguments: impl IntoIterator<Item = OsString>,
     stdout: &mut impl io::Write,

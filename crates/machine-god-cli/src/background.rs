@@ -304,7 +304,7 @@ fn validate_detail(detail: &BackgroundDetailSnapshot) -> Result<(), BackgroundOp
         "exited" if detail.exit_code != Some(0) => {
             return Err(BackgroundOperationalFailure::ResourceLimit);
         }
-        "failed" if !detail.exit_code.is_some_and(|code| code != 0) => {
+        "failed" if detail.exit_code.is_none_or(|code| code == 0) => {
             return Err(BackgroundOperationalFailure::ResourceLimit);
         }
         _ => {}
@@ -462,7 +462,7 @@ fn write_optional_number(
 ) -> std::fmt::Result {
     write!(output, "[background] {label}=")?;
     match value {
-        Some(value) => write!(output, "{value}\n"),
+        Some(value) => writeln!(output, "{value}"),
         None => output.write_str("none\n"),
     }
 }
@@ -923,7 +923,7 @@ mod tests {
     #[test]
     fn detail_human_and_json_render_every_frozen_field_safely() {
         let host = FakeHost::ready(Ok(detail()));
-        let (exit, stdout, stderr) = invoke(&host, &[]);
+        let (exit, stdout, stderr) = invoke(&host, &["last"]);
         assert_eq!(exit, 0);
         let output = String::from_utf8(stdout).unwrap();
         assert!(output.contains("[background] id=7\n"));
@@ -935,7 +935,7 @@ mod tests {
         assert!(stderr.is_empty());
 
         let host = FakeHost::ready(Ok(detail()));
-        let (exit, stdout, stderr) = invoke(&host, &["--json"]);
+        let (exit, stdout, stderr) = invoke(&host, &["last", "--json"]);
         assert_eq!(exit, 0);
         let output = String::from_utf8(stdout).unwrap();
         assert!(output.starts_with(concat!(
@@ -958,7 +958,7 @@ mod tests {
         snapshot.server_url = None;
         snapshot.diagnostic = None;
         let host = FakeHost::ready(Ok(BackgroundSnapshot::Detail(snapshot)));
-        let (_, stdout, _) = invoke(&host, &["--json"]);
+        let (_, stdout, _) = invoke(&host, &["last", "--json"]);
         let output = String::from_utf8(stdout).unwrap();
         assert!(output.contains("\"pid\":null"));
         assert!(output.contains("\"exit_code\":null"));

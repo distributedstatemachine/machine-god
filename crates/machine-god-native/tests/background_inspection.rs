@@ -94,7 +94,12 @@ impl Fixture {
     }
 
     fn write_record(&self, id: u64, updated_at_ms: u64, command: &str) -> PathBuf {
-        let value = json!({
+        let value = self.record_value(id, updated_at_ms, command);
+        self.write_value(id, &value)
+    }
+
+    fn record_value(&self, id: u64, updated_at_ms: u64, command: &str) -> Value {
+        json!({
             "version": 1,
             "workspace": self.workspace.to_str().unwrap(),
             "id": id,
@@ -107,8 +112,7 @@ impl Fixture {
             "exit_code": 0,
             "server_url": null,
             "diagnostic": null
-        });
-        self.write_value(id, &value)
+        })
     }
 
     fn write_value(&self, id: u64, value: &Value) -> PathBuf {
@@ -332,4 +336,22 @@ fn schema_filename_and_selected_file_type_are_strict() {
     ))
     .unwrap_err();
     assert_eq!(error.kind(), NativeBackgroundInspectionErrorKind::Corrupt);
+}
+
+#[test]
+fn every_nullable_schema_field_is_required_even_when_null() {
+    for field in ["pid", "exit_code", "server_url", "diagnostic"] {
+        let fixture = Fixture::new();
+        let mut value = fixture.record_value(12, 20, "command");
+        value.as_object_mut().unwrap().remove(field);
+        fixture.write_value(12, &value);
+
+        let error = block_on(inspect_native_background(
+            fixture.environment(),
+            fixture.workspace.clone(),
+            NativeBackgroundQuery::Id(12),
+        ))
+        .unwrap_err();
+        assert_eq!(error.kind(), NativeBackgroundInspectionErrorKind::Corrupt);
+    }
 }

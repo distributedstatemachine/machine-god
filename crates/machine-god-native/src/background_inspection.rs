@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use machine_god_core::BoxFuture;
 
 use crate::NativeEnvironment;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use crate::state_environment::{ProcessStateEnvironmentReader, capture_state_environment};
 
 /// Maximum number of persisted background records returned by one listing.
 pub const MAX_BACKGROUND_RECORDS: usize = 100;
@@ -361,7 +363,8 @@ pub fn inspect_process_background(
     Box::pin(async move {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
-            let environment = NativeEnvironment::from_process();
+            let mut reader = ProcessStateEnvironmentReader;
+            let environment = capture_state_environment(&mut reader);
             let workspace_root = std::env::current_dir().map_err(|_| unavailable())?;
             inspect_native_background_polled(&environment, &workspace_root, query)
         }
@@ -420,7 +423,7 @@ mod supported {
 
     use rustix::fd::{AsFd, BorrowedFd, OwnedFd};
     use rustix::fs::{AtFlags, CWD, Dir, FileType, Mode, OFlags};
-    use serde::Deserialize;
+    use serde::{Deserialize, Deserializer};
     use serde_json::Value;
     use sha2::{Digest, Sha256};
 
@@ -450,10 +453,22 @@ mod supported {
         command: String,
         cwd: String,
         state: NativeBackgroundState,
+        #[serde(deserialize_with = "required_option")]
         pid: Option<u32>,
+        #[serde(deserialize_with = "required_option")]
         exit_code: Option<i32>,
+        #[serde(deserialize_with = "required_option")]
         server_url: Option<String>,
+        #[serde(deserialize_with = "required_option")]
         diagnostic: Option<String>,
+    }
+
+    fn required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: Deserialize<'de>,
+    {
+        Option::<T>::deserialize(deserializer)
     }
 
     pub(super) fn inspect(
@@ -828,9 +843,8 @@ mod supported {
         if depth > MAX_BACKGROUND_JSON_DEPTH || nodes > MAX_BACKGROUND_JSON_NODES {
             return Err(corrupt());
         }
-        drop(value);
         let record: StoredBackgroundRecord =
-            serde_json::from_slice(bytes).map_err(|_| corrupt())?;
+            serde_json::from_value(value).map_err(|_| corrupt())?;
         validate_record(record, workspace, name)
     }
 
