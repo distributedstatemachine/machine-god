@@ -59,6 +59,8 @@ jobs:
       - name: Select the applicable gate
         id: route
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          PULL_REQUEST_CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
           DOCUMENTATION: ${{ steps.paths.outputs.documentation }}
           NON_DOCUMENTATION: ${{ steps.paths.outputs.non_documentation }}
           CORE_API_DOCS: ${{ steps.paths.outputs.core_api_docs }}
@@ -76,6 +78,16 @@ jobs:
           compatibility_docs=false
           vision_docs=false
 
+          complete_file_list=true
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            complete_file_list=false
+            if [[ "${PULL_REQUEST_CHANGED_FILES}" =~ ^[0-9]{1,4}$ ]] && \
+              (( 10#${PULL_REQUEST_CHANGED_FILES} <= 3000 ))
+            then
+              complete_file_list=true
+            fi
+          fi
+
           valid=true
           for value in \
             "${DOCUMENTATION}" \
@@ -90,7 +102,7 @@ jobs:
             fi
           done
 
-          if [[ "${valid}" == "true" ]]; then
+          if [[ "${valid}" == "true" && "${complete_file_list}" == "true" ]]; then
             case "${DOCUMENTATION}:${NON_DOCUMENTATION}" in
               true:false)
                 full=false

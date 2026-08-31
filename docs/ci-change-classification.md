@@ -43,8 +43,10 @@ On a push, the action compares the pushed commit with the previous commit on
 the same ref by using `base: ${{ github.ref }}`. A push containing several
 commits therefore covers the entire pushed range. On a pull request, the
 action uses GitHub's changed-files API against the pull-request base and the
-workflow grants only the required read permissions. Manual Benchmark dispatch
-always selects the complete evidence path.
+workflow grants only the required read permissions. Because that API returns
+at most 3,000 paths, pull requests reporting more than 3,000 changed files—or
+missing or malformed file-count metadata—fail closed to the complete product
+gate. Manual Benchmark dispatch always selects the complete evidence path.
 
 Each workflow result belongs to its own `github.sha`; a later documentation
 commit cannot replace the exact-SHA result required for an earlier product

@@ -102,6 +102,25 @@ class CiChangeClassificationTests(unittest.TestCase):
                 job(self.ci, "change-classification"),
             )
 
+    def test_oversized_or_malformed_pull_request_fails_closed(self) -> None:
+        classifier = job(self.ci, "change-classification")
+        self.assertIn("EVENT_NAME: ${{ github.event_name }}", classifier)
+        self.assertIn(
+            "PULL_REQUEST_CHANGED_FILES: "
+            "${{ github.event.pull_request.changed_files }}",
+            classifier,
+        )
+        self.assertIn('if [[ "${EVENT_NAME}" == "pull_request" ]]', classifier)
+        self.assertIn(
+            '[[ "${PULL_REQUEST_CHANGED_FILES}" =~ ^[0-9]{1,4}$ ]]',
+            classifier,
+        )
+        self.assertIn("10#${PULL_REQUEST_CHANGED_FILES} <= 3000", classifier)
+        self.assertIn(
+            '[[ "${valid}" == "true" && "${complete_file_list}" == "true" ]]',
+            classifier,
+        )
+
     def test_ci_keeps_focused_docs_light_and_mixed_changes_full(self) -> None:
         documentation = job(self.ci, "documentation-policy")
         self.assertIn("needs: change-classification", documentation)
