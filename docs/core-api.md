@@ -160,10 +160,13 @@ result projection, durable tool-result lifecycle, and next model round. It
 receives no child provider, executor, filesystem, process, network, permission,
 clock, task, thread, queue, or persistence authority implicitly.
 
-The authority receives only an owned validated name and prompt plus a
-cancellation token. The child context is fresh. Core does not pass the parent
-transcript, grants, dynamic tools, executable registrations, tool catalog,
-`subagent` capability, or model/effort/permission/notification overrides.
+The authority receives only an owned validated name and prompt, the bounded
+structural `ToolContext` identifiers for the parent session, incarnation,
+turn, and call, plus a cancellation token. Those identifiers are identities,
+not handles or authority. The child context is fresh. Core does not pass the
+parent transcript, grants, dynamic tools, executable registrations, tool
+catalog, `subagent` capability, or model/effort/permission/notification
+overrides.
 Preparation uses the explicit no-authority disposition because all child work
 is behind the separately injected seam; it does not call the permission
 handler or turn the child's returned text into authority.

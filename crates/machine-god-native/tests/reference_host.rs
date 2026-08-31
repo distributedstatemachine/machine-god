@@ -21,8 +21,8 @@ use futures_util::{StreamExt, stream};
 use machine_god_core::{
     BoxFuture, CancellationToken, Capability, ContentBlock, FilesystemAccess, NetworkTarget,
     PermissionRequest, Role, SUBAGENT_TOOL_NAME, SessionId, SessionIncarnationId, StopReason,
-    SubagentAuthority, SubagentAuthorityError, SubagentOutcome, SubagentRequest, Tool, ToolContext,
-    ToolError, ToolName, ToolOutput, ToolSpec, TurnEvent,
+    SubagentAuthority, SubagentAuthorityError, SubagentOutcome, SubagentRequest, Tool, ToolCallId,
+    ToolContext, ToolError, ToolName, ToolOutput, ToolSpec, TurnEvent, TurnId,
 };
 use machine_god_native::{
     AI_GATEWAY_DEFAULT_MODEL, ASK_USER_QUESTION_TOOL_NAME, AiGatewayByteStream,
@@ -632,10 +632,14 @@ impl SubagentAuthority for ReadySubagentAuthority {
         request: SubagentRequest,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<SubagentOutcome, SubagentAuthorityError>> {
-        assert!(!cancellation.is_cancelled());
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        self.requests.lock().unwrap().push(request);
-        Box::pin(async { SubagentOutcome::new("No correctness findings in the bounded review") })
+        let calls = Arc::clone(&self.calls);
+        let requests = Arc::clone(&self.requests);
+        Box::pin(async move {
+            assert!(!cancellation.is_cancelled());
+            calls.fetch_add(1, Ordering::SeqCst);
+            requests.lock().unwrap().push(request);
+            SubagentOutcome::new("No correctness findings in the bounded review")
+        })
     }
 }
 
@@ -1426,6 +1430,32 @@ fn composed_subagent_uses_exact_injected_authority_without_outer_permission() {
             "is_error": false
         })
     );
+}
+
+#[test]
+fn reference_subagent_fixture_is_inert_until_its_future_is_polled() {
+    let authority = ReadySubagentAuthority::default();
+    let future = authority.run(
+        SubagentRequest::new(
+            ToolContext {
+                session_id: SessionId::new("unpolled-subagent").unwrap(),
+                session_incarnation_id: SessionIncarnationId::new("unpolled-subagent-incarnation")
+                    .unwrap(),
+                turn_id: TurnId::new("unpolled-subagent-turn").unwrap(),
+                call_id: ToolCallId::new("unpolled-subagent-call").unwrap(),
+            },
+            "reviewer",
+            "Review the current change",
+        )
+        .unwrap(),
+        CancellationToken::new(),
+    );
+
+    assert_eq!(authority.call_count(), 0);
+    assert!(authority.requests().is_empty());
+    drop(future);
+    assert_eq!(authority.call_count(), 0);
+    assert!(authority.requests().is_empty());
 }
 
 #[cfg(target_os = "linux")]

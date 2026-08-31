@@ -826,10 +826,11 @@ mod tests {
             _request: SubagentRequest,
             cancellation: CancellationToken,
         ) -> BoxFuture<'_, Result<SubagentOutcome, SubagentAuthorityError>> {
-            self.calls.fetch_add(1, Ordering::Relaxed);
+            let calls = Arc::clone(&self.calls);
             let outcome = self.outcome.clone();
             let cancel_during_poll = self.cancel_during_poll;
             Box::pin(std::future::poll_fn(move |_| {
+                calls.fetch_add(1, Ordering::Relaxed);
                 if cancel_during_poll {
                     cancellation.cancel();
                 }
@@ -875,6 +876,24 @@ mod tests {
             prepared.arguments().clone(),
             CancellationToken::new(),
         );
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        drop(future);
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn fixture_authority_is_inert_until_its_future_is_polled() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let authority = ReadyAuthority {
+            calls: Arc::clone(&calls),
+            outcome: Ok(SubagentOutcome::new("done").unwrap()),
+            cancel_during_poll: false,
+        };
+        let future = authority.run(
+            SubagentRequest::new(context("parent", "call-1"), "worker", "task").unwrap(),
+            CancellationToken::new(),
+        );
+
         assert_eq!(calls.load(Ordering::Relaxed), 0);
         drop(future);
         assert_eq!(calls.load(Ordering::Relaxed), 0);
