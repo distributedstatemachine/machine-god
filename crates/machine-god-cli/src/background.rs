@@ -163,11 +163,11 @@ fn classify_inspection_error(
     }
 }
 
-pub(crate) fn is_background_command(argument: &OsStr) -> bool {
+pub(super) fn is_background_command(argument: &OsStr) -> bool {
     argument == "background"
 }
 
-pub(crate) fn run_background(
+pub(super) fn run_background(
     host: &impl BackgroundCommandHost,
     arguments: &[OsString],
     stdout: &mut impl io::Write,
