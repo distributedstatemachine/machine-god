@@ -38,7 +38,8 @@ pub use session::{
     Prompt, Session, SessionRecord, SessionRevision, SessionStore, Turn, TurnHandle,
 };
 pub use tool::{
-    PreparedToolAuthorization, PreparedToolCall, Tool, ToolCall, ToolContext, ToolOutput, ToolSpec,
+    PreparedToolAuthorization, PreparedToolCall, Tool, ToolCall, ToolContext, ToolExecution,
+    ToolOutput, ToolSpec, TurnToolRegistration,
 };
 
 use core::future::Future;

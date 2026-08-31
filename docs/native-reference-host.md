@@ -90,7 +90,7 @@ reports no discovered credential source.
 
 ## Tool catalog
 
-The engine registers exactly twenty-three tools in deterministic alphabetical
+The engine registers exactly twenty-four tools in deterministic alphabetical
 order:
 
 1. `ask_user_question`
@@ -104,18 +104,19 @@ order:
 9. `install_skill`
 10. `list_files`
 11. `mcp_search_tools`
-12. `memory`
-13. `open_file`
-14. `read_file`
-15. `read_tool_result`
-16. `rename_file`
-17. `semantic_search`
-18. `skill`
-19. `terminal`
-20. `vision`
-21. `web_fetch`
-22. `web_search`
-23. `write_file`
+12. `mcp_select_tool`
+13. `memory`
+14. `open_file`
+15. `read_file`
+16. `read_tool_result`
+17. `rename_file`
+18. `semantic_search`
+19. `skill`
+20. `terminal`
+21. `vision`
+22. `web_fetch`
+23. `web_search`
+24. `write_file`
 
 Seventeen tools use one retained workspace identity. `glob_files` consumes the
 original descriptor. The other sixteen workspace tools receive
@@ -123,11 +124,15 @@ identity-preserving clones: `copy_file`, `create_folder`, `delete_file`,
 `edit_file`, `file_info`, `grep_files`, `install_skill`, `list_files`,
 `open_file`, `read_file`, `rename_file`, `semantic_search`, `skill`, `terminal`, `vision`, and
 `write_file`.
-`ask_user_question`, `mcp_search_tools`, and `web_fetch` are rootless.
+`ask_user_question`, `mcp_search_tools`, `mcp_select_tool`, and `web_fetch` are
+rootless.
 `mcp_search_tools` acquires only one bounded point-in-time metadata snapshot
 when executed, never during composition; its injected boundary and intentional
 protocol/selection deferrals are defined by the
-[MCP search contract](mcp-search-tools.md). `read_tool_result` uses the
+[MCP search contract](mcp-search-tools.md). `mcp_select_tool` shares that exact
+catalog allocation and exact-selects one attached executable registration for
+advertisement on the next model round. The overlay remains turn-local as
+defined by the [MCP selection contract](mcp-select-tool.md). `read_tool_result` uses the
 engine's exact session-store allocation and has no workspace authority.
 `memory` uses a clone of the retained state-root identity but has no workspace
 or session-record authority; its fixed files and permission boundary are

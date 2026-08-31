@@ -3,8 +3,8 @@ use crate::{
     InferenceOptions, Message, ModelEvent, ModelEventStream, ModelRequest, PermissionDecision,
     PermissionRequest, PermissionRequestId, PermissionRisk, PreparedToolAuthorization,
     PreparedToolCall, Role, SessionId, SessionIncarnationId, SessionStoreError,
-    SessionStoreErrorKind, StopReason, TokenUsage, ToolCall, ToolContext, ToolOutput, TurnEvent,
-    TurnId,
+    SessionStoreErrorKind, StopReason, TokenUsage, ToolCall, ToolContext, ToolExecution, ToolName,
+    ToolOutput, ToolSpec, TurnEvent, TurnId, TurnToolRegistration,
 };
 use futures_core::Stream;
 use serde::{Deserialize, Serialize};
@@ -206,6 +206,12 @@ impl DrainJsonValues for ModelEvent {
 impl DrainJsonValues for ToolOutput {
     fn drain_json_values(&mut self) {
         drop_json_value_iterative(std::mem::take(&mut self.content));
+    }
+}
+
+impl DrainJsonValues for ToolExecution {
+    fn drain_json_values(&mut self) {
+        self.drain_owned_json();
     }
 }
 
@@ -875,6 +881,104 @@ struct CompletedTurn {
     usage: TokenUsage,
 }
 
+#[derive(Default)]
+struct TurnToolCatalog {
+    tools: BTreeMap<ToolName, Arc<TurnToolRegistration>>,
+}
+
+impl TurnToolCatalog {
+    fn model_specs(&self, engine: &EngineInner) -> Vec<ToolSpec> {
+        let mut specs = Vec::with_capacity(
+            engine
+                .tool_specs_ref()
+                .len()
+                .saturating_add(self.tools.len()),
+        );
+        specs.extend(engine.tool_specs_ref().iter().cloned());
+        specs.extend(
+            self.tools
+                .values()
+                .map(|registration| registration.spec().clone()),
+        );
+        specs
+    }
+
+    fn tool(&self, engine: &EngineInner, name: &ToolName) -> Option<Arc<dyn crate::Tool>> {
+        engine
+            .tool(name)
+            .or_else(|| self.tools.get(name).map(|registration| registration.tool()))
+    }
+
+    fn validate_registration(
+        &self,
+        engine: &EngineInner,
+        registration: &TurnToolRegistration,
+        limits: crate::EngineLimits,
+    ) -> Result<bool, TurnFailure> {
+        let spec = registration.spec();
+        if engine.tool(&spec.name).is_some() {
+            return Err(TurnFailure::protocol(
+                "turn_tool_name_collision",
+                "turn-local tool duplicated a statically registered tool name",
+            ));
+        }
+        if let Some(existing) = self.tools.get(&spec.name) {
+            if existing.spec() == spec {
+                return Ok(false);
+            }
+            return Err(TurnFailure::protocol(
+                "turn_tool_name_collision",
+                "turn-local tool name was registered with a different specification",
+            ));
+        }
+
+        validate_json_roots(
+            engine
+                .tool_specs_ref()
+                .iter()
+                .map(|spec| &spec.input_schema)
+                .chain(
+                    self.tools
+                        .values()
+                        .map(|registration| &registration.spec().input_schema),
+                )
+                .chain(std::iter::once(&spec.input_schema)),
+            limits,
+        )
+        .map_err(json_limit_failure)?;
+
+        let specs = engine
+            .tool_specs_ref()
+            .iter()
+            .chain(self.tools.values().map(|registration| registration.spec()))
+            .chain(std::iter::once(spec))
+            .collect::<Vec<_>>();
+        let serialized = serialized_json_size_bounded(&specs, limits.max_tool_catalog_bytes.get())
+            .map_err(|error| {
+                TurnFailure::protocol(
+                    "turn_tool_catalog_serialization",
+                    format!("turn-local tool catalog could not be serialized: {error}"),
+                )
+            })?;
+        if serialized.is_none() {
+            return Err(TurnFailure::limit(
+                "tool_catalog_size_limit",
+                "turn-local tool registration exceeded the configured catalog size limit",
+            ));
+        }
+        Ok(true)
+    }
+
+    fn insert(&mut self, registration: Arc<TurnToolRegistration>) {
+        let name = registration.spec().name.clone();
+        let previous = self.tools.insert(name, registration);
+        assert!(
+            previous.is_none(),
+            "validated turn tool insertion is unique"
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_turn(
     engine: Arc<EngineInner>,
@@ -932,6 +1036,7 @@ async fn run_turn_inner(
     let mut usage = TokenUsage::default();
     let mut assistant_bytes = 0usize;
     let mut reasoning_bytes = 0usize;
+    let mut turn_tools = TurnToolCatalog::default();
 
     loop {
         check_cancelled(&cancellation)?;
@@ -953,7 +1058,7 @@ async fn run_turn_inner(
             session_incarnation_id: session_incarnation_id.clone(),
             turn_id: turn_id.clone(),
             messages: record.messages.clone(),
-            tools: engine.tool_specs(),
+            tools: turn_tools.model_specs(&engine),
             options: options.clone(),
         };
         check_cancelled(&cancellation)?;
@@ -1062,7 +1167,7 @@ async fn run_turn_inner(
                                 )
                                 .into());
                             }
-                            if engine.tool(&call.name).is_none() {
+                            if turn_tools.tool(&engine, &call.name).is_none() {
                                 return Err(TurnFailure::protocol(
                                     "unknown_tool",
                                     format!("provider requested unregistered tool {}", call.name),
@@ -1231,7 +1336,7 @@ async fn run_turn_inner(
             check_cancelled(&cancellation)?;
             let call_id = call.id.clone();
             let call_name = call.name.clone();
-            let tool = engine.tool(&call_name).ok_or_else(|| {
+            let tool = turn_tools.tool(&engine, &call_name).ok_or_else(|| {
                 TurnFailure::protocol(
                     "unknown_tool",
                     format!("tool {call_name} disappeared after round validation"),
@@ -1240,8 +1345,8 @@ async fn run_turn_inner(
             let preparation = tool.prepare(call.clone());
             check_cancelled(&cancellation)?;
 
-            let (output, emit_finished) = match preparation {
-                Err(error) => (tool_error_output(&error), false),
+            let (output, next_round_tool, emit_finished) = match preparation {
+                Err(error) => (tool_error_output(&error), None, false),
                 Ok(prepared) => {
                     validate_prepared_tool_call(&prepared, limits)?;
                     let denied = match prepared.authorization() {
@@ -1310,13 +1415,14 @@ async fn run_turn_inner(
                                 }),
                                 is_error: true,
                             },
+                            None,
                             false,
                         )
                     } else {
                         emitter
                             .emit(TurnEvent::ToolStarted { call: call.clone() })
                             .await;
-                        let execution = tool.execute(
+                        let execution = tool.execute_for_turn(
                             ToolContext {
                                 session_id: session_id.clone(),
                                 session_incarnation_id: session_incarnation_id.clone(),
@@ -1326,12 +1432,12 @@ async fn run_turn_inner(
                             prepared.into_arguments(),
                             cancellation.clone(),
                         );
-                        let result = await_tool_output(execution, &cancellation).await?;
-                        let output = match result {
-                            Ok(output) => output,
-                            Err(error) => tool_error_output(&error),
+                        let result = await_tool_execution(execution, &cancellation).await?;
+                        let (output, next_round_tool) = match result {
+                            Ok(execution) => execution.into_parts(),
+                            Err(error) => (tool_error_output(&error), None),
                         };
-                        (output, true)
+                        (output, next_round_tool, true)
                     }
                 }
             };
@@ -1376,6 +1482,20 @@ async fn run_turn_inner(
                 return Err(failure.into());
             }
 
+            let insert_next_round_tool = if let Some(registration) = next_round_tool.as_ref() {
+                if output.get().is_error {
+                    emitter.establish_terminal();
+                    return Err(TurnFailure::protocol(
+                        "turn_tool_registration_on_error",
+                        "an error tool output cannot register a turn-local tool",
+                    )
+                    .into());
+                }
+                turn_tools.validate_registration(&engine, registration, limits)?
+            } else {
+                false
+            };
+
             let placeholder_index =
                 placeholder_start.checked_add(round_index).ok_or_else(|| {
                     TurnFailure::limit(
@@ -1393,6 +1513,10 @@ async fn run_turn_inner(
                 true,
             )
             .await?;
+            if insert_next_round_tool {
+                turn_tools
+                    .insert(next_round_tool.expect("validated turn-local registration is present"));
+            }
             if emit_finished {
                 emitter
                     .emit(TurnEvent::ToolFinished {
@@ -1943,18 +2067,18 @@ async fn await_cancellable<T>(
     .await
 }
 
-async fn await_tool_output(
-    mut future: BoxFuture<'_, Result<ToolOutput, crate::ToolError>>,
+async fn await_tool_execution(
+    mut future: BoxFuture<'_, Result<ToolExecution, crate::ToolError>>,
     cancellation: &CancellationToken,
-) -> Result<Result<ToolOutput, crate::ToolError>, WorkflowAbort> {
+) -> Result<Result<ToolExecution, crate::ToolError>, WorkflowAbort> {
     poll_fn(|context| {
         if cancellation.is_cancelled() {
             return Poll::Ready(Err(WorkflowAbort::Cancelled));
         }
         let result = future.as_mut().poll(context);
         if cancellation.is_cancelled() {
-            if let Poll::Ready(Ok(mut output)) = result {
-                output.drain_json_values();
+            if let Poll::Ready(Ok(mut execution)) = result {
+                execution.drain_owned_json();
             }
             Poll::Ready(Err(WorkflowAbort::Cancelled))
         } else {

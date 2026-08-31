@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33388482737` (`GREEN`)
 - Main Benchmark evidence: `33388482724` (`GREEN`)
 - Active branch: `agent/m05-mcp-select-tool`
-- Active phase: `defining bounded mcp_select_tool behavior over the admitted MCP catalog`
-- Next gate: `write the durable contract, then implement focused native tests and behavior`
+- Active phase: `implementing executable mcp_select_tool with a turn-local core overlay`
+- Next gate: `prove next-round advertisement, dispatch, isolation, and persistence ordering`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
@@ -44,10 +44,12 @@ Benchmark aggregate gates while skipping unrelated heavy jobs. It does not
 increment the delivered-slice count or replace the last product benchmark
 evidence.
 
-Bounded `mcp_select_tool` is the next slice. It will select one admitted dynamic
-tool without executing it, establishing the explicit handoff from metadata
-search to later next-round schema advertisement and MCP execution. Transport
-discovery, dynamic calls, resources, and prompts stay outside this slice.
+Bounded `mcp_select_tool` is the next slice. It exact-selects one admitted
+executable dynamic tool, durably records the selector result, advertises the
+captured schema on the next model round, and dispatches subsequent calls
+through the captured implementation. The overlay is limited to one turn.
+Production MCP transport discovery, authentication, resources, and prompts
+stay outside this slice.
 
 ## Architecture ownership
 

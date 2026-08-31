@@ -20,7 +20,8 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use futures_util::{StreamExt, stream};
 use machine_god_core::{
     BoxFuture, CancellationToken, Capability, ContentBlock, FilesystemAccess, NetworkTarget,
-    PermissionRequest, Role, SessionId, SessionIncarnationId, StopReason, TurnEvent,
+    PermissionRequest, Role, SessionId, SessionIncarnationId, StopReason, Tool, ToolContext,
+    ToolError, ToolName, ToolOutput, ToolSpec, TurnEvent,
 };
 use machine_god_native::{
     AI_GATEWAY_DEFAULT_MODEL, ASK_USER_QUESTION_TOOL_NAME, AiGatewayByteStream,
@@ -28,12 +29,12 @@ use machine_god_native::{
     AiGatewayTransportRequest, COPY_FILE_TOOL_NAME, CREATE_FOLDER_TOOL_NAME, ConfigOrigin,
     DELETE_FILE_TOOL_NAME, EDIT_FILE_TOOL_NAME, FILE_INFO_TOOL_NAME, GLOB_FILES_TOOL_NAME,
     GREP_FILES_TOOL_NAME, INSTALL_SKILL_TOOL_NAME, LIST_FILES_TOOL_NAME, LoadedNativeConfig,
-    MCP_SEARCH_TOOLS_TOOL_NAME, MEMORY_TOOL_NAME, McpToolCatalog, McpToolCatalogError,
-    McpToolCatalogSnapshot, McpToolMetadata, NativeEnvironment, NativeReferenceHost,
-    NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind, OPEN_FILE_TOOL_NAME,
-    PermissionPromptDecision, PermissionPromptError, PermissionPrompter, QuestionPromptAnswers,
-    QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest, QuestionPrompter,
-    READ_FILE_TOOL_NAME, READ_TOOL_RESULT_TOOL_NAME, RENAME_FILE_TOOL_NAME,
+    MCP_SEARCH_TOOLS_TOOL_NAME, MCP_SELECT_TOOL_NAME, MEMORY_TOOL_NAME, McpToolCatalog,
+    McpToolCatalogError, McpToolCatalogSnapshot, McpToolMetadata, NativeEnvironment,
+    NativeReferenceHost, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
+    OPEN_FILE_TOOL_NAME, PermissionPromptDecision, PermissionPromptError, PermissionPrompter,
+    QuestionPromptAnswers, QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest,
+    QuestionPrompter, READ_FILE_TOOL_NAME, READ_TOOL_RESULT_TOOL_NAME, RENAME_FILE_TOOL_NAME,
     SEMANTIC_SEARCH_TOOL_NAME, SKILL_TOOL_NAME, TERMINAL_TOOL_NAME, VISION_TOOL_NAME,
     WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME, WRITE_FILE_TOOL_NAME, load_native_config,
 };
@@ -497,6 +498,22 @@ fn mcp_search_round_responses() -> [Vec<u8>; 2] {
     [tool_call, finish]
 }
 
+fn mcp_select_round_responses() -> [Vec<u8>; 2] {
+    let tool_call = concat!(
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"mcp-select-call\",\"toolName\":\"mcp_select_tool\",\"input\":{\"name\":\"mcp_github_create_issue\"}}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    let finish = concat!(
+        "data: {\"type\":\"text-delta\",\"id\":\"answer\",\"delta\":\"MCP selection complete\"}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    [tool_call, finish]
+}
+
 #[derive(Clone, Copy, Debug)]
 struct ReadyMcpCatalog;
 
@@ -514,10 +531,37 @@ impl McpToolCatalog for ReadyMcpCatalog {
                     "repository title schema-private-sentinel",
                     vec!["mcp".to_owned(), "issue".to_owned()],
                 )
-                .expect("static MCP metadata is valid"),
+                .expect("static MCP metadata is valid")
+                .with_tool(ReferenceDynamicTool)
+                .expect("static MCP executable is valid"),
             ])
             .expect("static MCP catalog is valid"))
         })
+    }
+}
+
+struct ReferenceDynamicTool;
+
+impl Tool for ReferenceDynamicTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: ToolName::new("mcp_github_create_issue").unwrap(),
+            description: "Create a GitHub issue".to_owned(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {"title": {"type": "string"}},
+                "required": ["title"],
+            }),
+        }
+    }
+
+    fn execute(
+        &self,
+        _context: ToolContext,
+        _arguments: Value,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async { Ok(ToolOutput::success(json!({"created": true}))) })
     }
 }
 
@@ -660,7 +704,7 @@ fn directory_is_empty(path: &Path) -> bool {
 
 fn assert_exact_native_tool_catalog(request: &Value) {
     let tools = request["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 23);
+    assert_eq!(tools.len(), 24);
     assert_eq!(
         tools
             .iter()
@@ -678,6 +722,7 @@ fn assert_exact_native_tool_catalog(request: &Value) {
             INSTALL_SKILL_TOOL_NAME,
             LIST_FILES_TOOL_NAME,
             MCP_SEARCH_TOOLS_TOOL_NAME,
+            MCP_SELECT_TOOL_NAME,
             MEMORY_TOOL_NAME,
             OPEN_FILE_TOOL_NAME,
             READ_FILE_TOOL_NAME,
@@ -1085,6 +1130,60 @@ fn composed_mcp_search_uses_injected_catalog_without_permission_or_schema_leakag
             .unwrap()
             .contains("schema-private-sentinel")
     );
+}
+
+#[test]
+fn composed_mcp_select_advertises_the_injected_executable_on_the_next_round() {
+    let temporary = TemporaryDirectory::new("mcp-select");
+    let (workspace, sessions) = roots(temporary.path());
+    let transport =
+        ScriptedTransport::new("MCP_SELECT_FACTORY_SENTINEL", mcp_select_round_responses());
+    let prompter = AllowingPrompter::default();
+    let host = compose_with_transport_and_mcp_catalog(
+        built_in_config(),
+        transport.clone(),
+        &workspace,
+        &sessions,
+        prompter.clone(),
+        Arc::new(ReadyMcpCatalog),
+    )
+    .unwrap();
+
+    let (_, events) = collect_turn(&host, "reference-host-mcp-select");
+    assert_completed(&events);
+    assert!(prompter.requests().is_empty());
+
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    assert_exact_native_tool_catalog(&body(&requests[0]));
+    let continued = body(&requests[1]);
+    assert_eq!(
+        decoded_tool_output(&continued, 2),
+        json!({
+            "content": "Selected dynamic MCP tool `mcp_github_create_issue`. Its executable schema will be available on the next model step; call `mcp_github_create_issue` with arguments matching the selected schema.",
+            "is_error": false
+        })
+    );
+    let continued_json = serde_json::to_string(&continued).unwrap();
+    assert!(!continued_json.contains("schema-private-sentinel"));
+    assert!(!continued_json.contains("PRIVATE_DESCRIPTION_SENTINEL"));
+    assert_eq!(
+        continued["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|tool| tool["name"] == "mcp_github_create_issue")
+            .count(),
+        1
+    );
+    let selected = continued["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "mcp_github_create_issue")
+        .unwrap();
+    assert_eq!(selected["description"], "Create a GitHub issue");
+    assert_eq!(selected["inputSchema"]["required"], json!(["title"]));
 }
 
 #[cfg(target_os = "linux")]

@@ -5,6 +5,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
+use std::sync::Arc;
 
 /// Model-visible description and JSON Schema input contract for a tool.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -174,6 +175,122 @@ impl ToolOutput {
     }
 }
 
+/// One executable tool registration whose lifetime is limited to the current
+/// turn.
+///
+/// Core advertises a registration only on model rounds after the tool call
+/// that produced it has completed and its visible output has been durably
+/// stored. The registration is never written to the transcript or session
+/// store and is discarded when the turn ends.
+pub struct TurnToolRegistration {
+    spec: ToolSpec,
+    tool: Arc<dyn Tool>,
+}
+
+impl TurnToolRegistration {
+    /// Captures one tool implementation and its specification.
+    #[must_use]
+    pub fn new(tool: impl Tool) -> Self {
+        Self::shared(Arc::new(tool))
+    }
+
+    /// Captures one explicitly shared tool implementation and its
+    /// specification.
+    #[must_use]
+    pub fn shared(tool: Arc<dyn Tool>) -> Self {
+        let spec = tool.spec();
+        Self { spec, tool }
+    }
+
+    /// Returns the captured model-visible specification.
+    #[must_use]
+    pub fn spec(&self) -> &ToolSpec {
+        &self.spec
+    }
+
+    pub(crate) fn tool(&self) -> Arc<dyn Tool> {
+        Arc::clone(&self.tool)
+    }
+}
+
+impl fmt::Debug for TurnToolRegistration {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TurnToolRegistration")
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for TurnToolRegistration {
+    fn drop(&mut self) {
+        crate::session::drop_json_value_iterative(std::mem::take(&mut self.spec.input_schema));
+    }
+}
+
+/// Complete result of a tool execution inside core orchestration.
+///
+/// The ordinary output remains the only durable, model-visible result. An
+/// optional next-round registration is an ephemeral orchestration side
+/// effect. Existing tools receive this behavior through the default
+/// [`Tool::execute_for_turn`] implementation and need not opt into it.
+pub struct ToolExecution {
+    output: ToolOutput,
+    next_round_tool: Option<Arc<TurnToolRegistration>>,
+}
+
+impl ToolExecution {
+    /// Creates an execution with only an ordinary durable output.
+    #[must_use]
+    pub fn output(output: ToolOutput) -> Self {
+        Self {
+            output,
+            next_round_tool: None,
+        }
+    }
+
+    /// Creates an execution that also proposes one executable tool for later
+    /// model rounds in this turn.
+    #[must_use]
+    pub fn with_next_round_tool(
+        output: ToolOutput,
+        next_round_tool: Arc<TurnToolRegistration>,
+    ) -> Self {
+        Self {
+            output,
+            next_round_tool: Some(next_round_tool),
+        }
+    }
+
+    /// Returns the ordinary durable output carried by this execution.
+    #[must_use]
+    pub fn tool_output(&self) -> &ToolOutput {
+        &self.output
+    }
+
+    /// Returns the proposed next-round registration, when present.
+    #[must_use]
+    pub fn next_round_tool(&self) -> Option<&TurnToolRegistration> {
+        self.next_round_tool.as_deref()
+    }
+
+    pub(crate) fn into_parts(self) -> (ToolOutput, Option<Arc<TurnToolRegistration>>) {
+        (self.output, self.next_round_tool)
+    }
+
+    pub(crate) fn drain_owned_json(&mut self) {
+        crate::session::drop_json_value_iterative(std::mem::take(&mut self.output.content));
+    }
+}
+
+impl fmt::Debug for ToolExecution {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ToolExecution")
+            .field("has_next_round_tool", &self.next_round_tool.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
 /// Object-safe tool implementation supplied explicitly by a host.
 pub trait Tool: Send + Sync + 'static {
     fn spec(&self) -> ToolSpec;
@@ -235,4 +352,22 @@ pub trait Tool: Send + Sync + 'static {
         arguments: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>>;
+
+    /// Executes one tool call with access to turn-local orchestration effects.
+    ///
+    /// The default preserves the ordinary [`Tool::execute`] behavior. A tool
+    /// may override this method to propose one executable registration for
+    /// subsequent model rounds in the same turn. Core validates the complete
+    /// resulting catalog and activates the registration only after the
+    /// visible output is durably stored. Registrations never become visible in
+    /// the same provider response, survive the turn, or grant authority.
+    fn execute_for_turn(
+        &self,
+        context: ToolContext,
+        arguments: Value,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolExecution, ToolError>> {
+        let execution = self.execute(context, arguments, cancellation);
+        Box::pin(async move { execution.await.map(ToolExecution::output) })
+    }
 }

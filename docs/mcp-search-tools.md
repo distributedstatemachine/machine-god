@@ -158,9 +158,10 @@ private search text, provider data, credentials, or implementation diagnostics.
 
 ## Intentional deferrals
 
-Separate M05 slices own MCP protocol transports and discovery,
-`mcp_select_tool`, next-round executable-schema advertisement, dynamic calls,
-resources and prompts, `mcp_features`, `/mcp`, ACP, and subagents. Production
+Separate M05 slices own MCP protocol transports and discovery, resources and
+prompts, `mcp_features`, `/mcp`, ACP, and subagents. The separate
+`mcp_select_tool` contract owns exact executable selection and next-round
+turn-local advertisement. Production
 composition advertises search over an empty ready catalog until a host injects
 admitted metadata; the injected reference-host path is exercised end to end.
 Metadata is untrusted context for later exact selection, not an instruction,

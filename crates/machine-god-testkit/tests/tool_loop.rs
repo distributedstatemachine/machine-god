@@ -8,7 +8,8 @@ use machine_god_core::{
     ProviderError, ProviderErrorKind, Role, Session, SessionId, SessionIncarnationId,
     SessionRecord, SessionRevision, SessionStore, SessionStoreError, SessionStoreErrorKind,
     StopReason, TokenUsage, Tool, ToolCall, ToolCallId, ToolContext, ToolError, ToolErrorKind,
-    ToolName, ToolOutput, ToolSpec, Turn, TurnEvent, TurnHandle,
+    ToolExecution, ToolName, ToolOutput, ToolSpec, Turn, TurnEvent, TurnHandle,
+    TurnToolRegistration,
 };
 use machine_god_testkit::{
     EventSinkStep, InMemorySessionStore, ModelProviderStep, PermissionStep, RecordingEventSink,
@@ -128,6 +129,281 @@ fn collect(session: &machine_god_core::Session) -> Vec<EngineEvent> {
             .collect::<Result<Vec<_>, _>>()
             .unwrap()
     })
+}
+
+#[derive(Clone)]
+struct RegisteringTool {
+    name: ToolName,
+    registration: Arc<TurnToolRegistration>,
+    executions: Arc<AtomicUsize>,
+}
+
+impl RegisteringTool {
+    fn new(name: &str, dynamic: impl Tool) -> Self {
+        Self {
+            name: tool_name(name),
+            registration: Arc::new(TurnToolRegistration::new(dynamic)),
+            executions: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+}
+
+impl Tool for RegisteringTool {
+    fn spec(&self) -> ToolSpec {
+        spec(self.name.as_str())
+    }
+
+    fn prepare(&self, call: ToolCall) -> Result<PreparedToolCall, ToolError> {
+        Ok(PreparedToolCall::without_authority(call.arguments))
+    }
+
+    fn execute(
+        &self,
+        _context: ToolContext,
+        _arguments: Value,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        self.executions.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Ok(ToolOutput::success("registered")) })
+    }
+
+    fn execute_for_turn(
+        &self,
+        _context: ToolContext,
+        _arguments: Value,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolExecution, ToolError>> {
+        self.executions.fetch_add(1, Ordering::SeqCst);
+        let registration = Arc::clone(&self.registration);
+        Box::pin(async move {
+            Ok(ToolExecution::with_next_round_tool(
+                ToolOutput::success("registered"),
+                registration,
+            ))
+        })
+    }
+}
+
+#[test]
+fn turn_tool_is_next_round_executable_and_does_not_leak_across_turns_or_sessions() {
+    let dynamic = ScriptedTool::new(
+        spec("dynamic"),
+        [ToolStep::Output(ToolOutput::success(json!({"value": 42})))],
+    );
+    let selector = RegisteringTool::new("selector", dynamic.clone());
+    let provider = ScriptedModelProvider::new(
+        "turn-overlay",
+        [
+            events([
+                ModelEvent::ToolCall {
+                    call: call("select", "selector", json!({"name": "dynamic"})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([
+                ModelEvent::ToolCall {
+                    call: call("dynamic", "dynamic", json!({"key": "answer"})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    );
+    let permissions = ScriptedPermissionHandler::new([allow()]);
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(permissions.clone())
+        .tool(selector.clone())
+        .build()
+        .unwrap();
+    let first = engine.create_test_session(SessionId::new("overlay-first").unwrap());
+
+    let first_events = collect(&first);
+    assert!(matches!(
+        first_events.last().map(|event| &event.payload),
+        Some(TurnEvent::Completed { .. })
+    ));
+    assert_eq!(selector.executions.load(Ordering::SeqCst), 1);
+    assert_eq!(dynamic.invocations().len(), 1);
+    assert_eq!(permissions.requests().len(), 1);
+
+    let requests = provider.requests();
+    assert_eq!(requests[0].request.tools, vec![spec("selector")]);
+    assert_eq!(
+        requests[1]
+            .request
+            .tools
+            .iter()
+            .map(|spec| spec.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["selector", "dynamic"]
+    );
+    assert_eq!(requests[2].request.tools, requests[1].request.tools);
+
+    let _second_turn = collect(&first);
+    let other = engine.create_test_session(SessionId::new("overlay-other").unwrap());
+    let _other_turn = collect(&other);
+    let requests = provider.requests();
+    assert_eq!(requests[3].request.tools, vec![spec("selector")]);
+    assert_eq!(requests[4].request.tools, vec![spec("selector")]);
+}
+
+#[test]
+fn turn_tool_cannot_be_called_in_the_selection_batch() {
+    let selector = RegisteringTool::new("selector", ScriptedTool::new(spec("dynamic"), []));
+    let provider = ScriptedModelProvider::new(
+        "same-round-overlay",
+        [events([
+            ModelEvent::ToolCall {
+                call: call("select", "selector", json!({})),
+            },
+            ModelEvent::ToolCall {
+                call: call("too-early", "dynamic", json!({})),
+            },
+            ModelEvent::Stop {
+                reason: StopReason::ToolCalls,
+            },
+        ])],
+    );
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .tool(selector.clone())
+        .build()
+        .unwrap();
+    let observed = collect(&engine.create_test_session(SessionId::new("same-round").unwrap()));
+    assert!(matches!(
+        observed.last().map(|event| &event.payload),
+        Some(TurnEvent::Failed { code, .. }) if code == "unknown_tool"
+    ));
+    assert_eq!(selector.executions.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn turn_tool_collision_and_aggregate_catalog_overflow_fail_closed() {
+    for (label, dynamic, limits, expected_code) in [
+        (
+            "collision",
+            ScriptedTool::new(spec("selector"), []),
+            EngineLimits::default(),
+            "turn_tool_name_collision",
+        ),
+        (
+            "catalog-overflow",
+            ScriptedTool::new(
+                ToolSpec {
+                    name: tool_name("dynamic"),
+                    description: "x".repeat(2_048),
+                    input_schema: json!({"type": "object"}),
+                },
+                [],
+            ),
+            with_limit(EngineLimits::default(), "tool_catalog", 512),
+            "tool_catalog_size_limit",
+        ),
+    ] {
+        let selector = RegisteringTool::new("selector", dynamic);
+        let provider = ScriptedModelProvider::new(
+            label,
+            [events([
+                ModelEvent::ToolCall {
+                    call: call("select", "selector", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ])],
+        );
+        let engine = Engine::builder()
+            .provider(provider.clone())
+            .session_store(InMemorySessionStore::new())
+            .permission_handler(ScriptedPermissionHandler::new([]))
+            .limits(limits)
+            .tool(selector)
+            .build()
+            .unwrap();
+        let observed = collect(&engine.create_test_session(SessionId::new(label).unwrap()));
+        assert!(matches!(
+            observed.last().map(|event| &event.payload),
+            Some(TurnEvent::Failed { code, .. }) if code == expected_code
+        ));
+        assert_eq!(provider.requests().len(), 1);
+    }
+}
+
+#[test]
+fn turn_tool_is_not_activated_while_its_visible_result_is_pending_persistence() {
+    let selector = RegisteringTool::new("selector", ScriptedTool::new(spec("dynamic"), []));
+    let provider = ScriptedModelProvider::new(
+        "overlay-persist-first",
+        [
+            events([
+                ModelEvent::ToolCall {
+                    call: call("select", "selector", json!({})),
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            events([ModelEvent::Stop {
+                reason: StopReason::Completed,
+            }]),
+        ],
+    );
+    let store = InMemorySessionStore::configured(
+        BTreeMap::new(),
+        SessionStoreScript {
+            loads: None,
+            saves: Some(vec![
+                SessionStoreStep::Pass,
+                SessionStoreStep::Pass,
+                SessionStoreStep::Pending,
+            ]),
+        },
+        16,
+    );
+    let id = SessionId::new("overlay-persist-first").unwrap();
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store.clone())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .tool(selector.clone())
+        .build()
+        .unwrap();
+    let session = engine.create_test_session(id.clone());
+    let mut turn = futures_executor::block_on(session.prompt("select it")).unwrap();
+
+    for _ in 0..4 {
+        let _ = next(&mut turn);
+    }
+    poll_pending(&mut turn);
+    assert_eq!(selector.executions.load(Ordering::SeqCst), 1);
+    assert_eq!(provider.requests().len(), 1);
+    assert_unknown_result(&store.record(&id).unwrap().messages[2], "select");
+
+    assert!(turn.handle().cancel());
+    assert!(matches!(
+        next(&mut turn).payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    ));
+    assert_eq!(provider.requests().len(), 1);
 }
 
 #[test]

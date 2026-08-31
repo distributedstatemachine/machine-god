@@ -11,12 +11,12 @@ use crate::{
     AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayHttpTransport,
     AiGatewayProvider, AiGatewayTransport, AiGatewayVisionTransport, AiGatewayWebSearchTransport,
     AskPermissionHandler, AskUserQuestionTool, FileSessionStore, LoadedNativeConfig,
-    McpSearchToolsTool, McpToolCatalog, McpToolCatalogError, McpToolCatalogSnapshot, MemoryTool,
-    NativeCredentialSourceKind, NativeProviderKind, NativeSessionLifecycle, NativeTransportKind,
-    PermissionMode, PermissionPrompter, PreparedNativeRoots, QuestionPrompter, ReadToolResultTool,
-    TerminalTool, VisionDeadline, VisionLimits, VisionTool, VisionTransportError,
-    VisionTransportErrorKind, WebFetchTool, WebSearchDeadline, WebSearchLimits, WebSearchTool,
-    WebSearchTransportErrorKind, discover_ai_gateway_credential,
+    McpSearchToolsTool, McpSelectTool, McpToolCatalog, McpToolCatalogError, McpToolCatalogSnapshot,
+    MemoryTool, NativeCredentialSourceKind, NativeProviderKind, NativeSessionLifecycle,
+    NativeTransportKind, PermissionMode, PermissionPrompter, PreparedNativeRoots, QuestionPrompter,
+    ReadToolResultTool, TerminalTool, VisionDeadline, VisionLimits, VisionTool,
+    VisionTransportError, VisionTransportErrorKind, WebFetchTool, WebSearchDeadline,
+    WebSearchLimits, WebSearchTool, WebSearchTransportErrorKind, discover_ai_gateway_credential,
 };
 
 /// Stable stage at which native reference-host composition failed.
@@ -502,9 +502,7 @@ impl NativeReferenceHost {
         let provider = AiGatewayProvider::new(model, transport).map_err(|_| {
             NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Provider)
         })?;
-        let web_fetch = WebFetchTool::new().map_err(|_| {
-            NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::WebFetchTransport)
-        })?;
+        let web_fetch = compose_web_fetch()?;
         let permission_handler = AskPermissionHandler::shared_prompter(permission_prompter);
         let ask_user_question = AskUserQuestionTool::shared_prompter(question_prompter);
         let session_store = Arc::new(session_store);
@@ -526,7 +524,8 @@ impl NativeReferenceHost {
             .tool(workspace_tools.grep_files)
             .tool(workspace_tools.install_skill)
             .tool(workspace_tools.list_files)
-            .tool(McpSearchToolsTool::shared_catalog(mcp_catalog))
+            .tool(McpSearchToolsTool::shared_catalog(Arc::clone(&mcp_catalog)))
+            .tool(McpSelectTool::shared_catalog(mcp_catalog))
             .tool(memory)
             .tool(workspace_tools.open_file)
             .tool(workspace_tools.read_file)
@@ -556,6 +555,12 @@ impl NativeReferenceHost {
             credential_source,
         })
     }
+}
+
+fn compose_web_fetch() -> Result<WebFetchTool, NativeReferenceHostBuildError> {
+    WebFetchTool::new().map_err(|_| {
+        NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::WebFetchTransport)
+    })
 }
 
 #[derive(Clone, Copy, Debug)]

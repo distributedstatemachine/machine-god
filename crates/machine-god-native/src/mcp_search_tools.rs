@@ -9,7 +9,7 @@ use std::task::Poll;
 
 use machine_god_core::{
     BoxFuture, CancellationToken, PreparedToolCall, Tool, ToolCall, ToolContext, ToolError,
-    ToolErrorKind, ToolName, ToolOutput, ToolSpec,
+    ToolErrorKind, ToolName, ToolOutput, ToolSpec, TurnToolRegistration,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -40,6 +40,12 @@ pub const MAX_MCP_TOOL_SEARCH_TEXT_BYTES: usize = 64 * 1024;
 pub const MAX_MCP_TOOL_TAGS: usize = 32;
 /// Maximum UTF-8 bytes retained in one tag.
 pub const MAX_MCP_TOOL_TAG_BYTES: usize = 128;
+/// Maximum serialized provider-visible specification retained for selection.
+pub const MAX_MCP_SELECTED_TOOL_SPEC_BYTES: usize = 64 * 1024;
+/// Maximum JSON container depth admitted in one executable MCP input schema.
+pub const MAX_MCP_TOOL_SCHEMA_DEPTH: usize = 64;
+/// Maximum JSON nodes admitted in one executable MCP input schema.
+pub const MAX_MCP_TOOL_SCHEMA_NODES: usize = 4_096;
 /// Maximum charged substring-search work in one execution.
 pub const MAX_MCP_SEARCH_MATCH_STEPS: usize = 64 * 1024 * 1024;
 /// Maximum serialized canonical prepared arguments.
@@ -154,6 +160,7 @@ pub struct McpToolMetadata {
     description: Box<str>,
     tags: Box<[Box<str>]>,
     search_haystack: Box<str>,
+    executable: Option<Arc<TurnToolRegistration>>,
     retained_bytes: usize,
 }
 
@@ -210,8 +217,54 @@ impl McpToolMetadata {
             description: description.into_boxed_str(),
             tags: normalized_tags.into_boxed_slice(),
             search_haystack: search_haystack.into_boxed_str(),
+            executable: None,
             retained_bytes,
         })
+    }
+
+    /// Attaches one executable implementation whose captured specification
+    /// exactly matches this entry's admitted dynamic name.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed rejection when the executable name differs, its input
+    /// schema is not a bounded object schema, or its complete provider-visible
+    /// specification exceeds the selected-schema budget.
+    pub fn with_tool(self, tool: impl Tool) -> Result<Self, McpToolCatalogBuildError> {
+        self.with_shared_tool(Arc::new(tool))
+    }
+
+    /// Attaches one explicitly shared executable implementation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same fixed rejections as [`Self::with_tool`].
+    pub fn with_shared_tool(
+        mut self,
+        tool: Arc<dyn Tool>,
+    ) -> Result<Self, McpToolCatalogBuildError> {
+        if self.executable.is_some() {
+            return Err(McpToolCatalogBuildError::new(
+                McpToolCatalogBuildErrorKind::InvalidMetadata,
+            ));
+        }
+        let registration = Arc::new(TurnToolRegistration::shared(tool));
+        let spec = registration.spec();
+        if spec.name.as_str() != self.name.as_ref() || !spec.input_schema.is_object() {
+            return Err(McpToolCatalogBuildError::new(
+                McpToolCatalogBuildErrorKind::InvalidMetadata,
+            ));
+        }
+        validate_executable_schema(&spec.input_schema)?;
+        let spec_bytes =
+            serialized_value_size(spec, MAX_MCP_SELECTED_TOOL_SPEC_BYTES).ok_or_else(|| {
+                McpToolCatalogBuildError::new(McpToolCatalogBuildErrorKind::ResourceLimit)
+            })?;
+        self.retained_bytes = self.retained_bytes.checked_add(spec_bytes).ok_or_else(|| {
+            McpToolCatalogBuildError::new(McpToolCatalogBuildErrorKind::ResourceLimit)
+        })?;
+        self.executable = Some(registration);
+        Ok(self)
     }
 
     /// Returns the exact deconflicted dynamic tool name.
@@ -236,6 +289,10 @@ impl McpToolMetadata {
     #[must_use]
     pub fn tags(&self) -> &[Box<str>] {
         &self.tags
+    }
+
+    pub(crate) fn executable(&self) -> Option<Arc<TurnToolRegistration>> {
+        self.executable.as_ref().map(Arc::clone)
     }
 }
 
@@ -397,7 +454,13 @@ impl Tool for McpSearchToolsTool {
                 return Err(invalid_arguments());
             }
 
-            let snapshot = acquire_snapshot(self.catalog.as_ref(), &cancellation).await?;
+            let snapshot = acquire_catalog_snapshot(
+                self.catalog.as_ref(),
+                &cancellation,
+                map_catalog_error,
+                cancelled,
+            )
+            .await?;
             check_cancellation(&cancellation)?;
             search_snapshot(&snapshot, &decoded, &cancellation)
         })
@@ -550,21 +613,64 @@ fn validate_snapshot(tools: &[McpToolMetadata]) -> Result<(), McpToolCatalogBuil
     Ok(())
 }
 
-async fn acquire_snapshot(
+fn validate_executable_schema(schema: &Value) -> Result<(), McpToolCatalogBuildError> {
+    let mut stack = vec![(schema, 1usize)];
+    let mut nodes = 0usize;
+    while let Some((value, depth)) = stack.pop() {
+        nodes = nodes.checked_add(1).ok_or_else(|| {
+            McpToolCatalogBuildError::new(McpToolCatalogBuildErrorKind::ResourceLimit)
+        })?;
+        if nodes > MAX_MCP_TOOL_SCHEMA_NODES {
+            return Err(McpToolCatalogBuildError::new(
+                McpToolCatalogBuildErrorKind::ResourceLimit,
+            ));
+        }
+        match value {
+            Value::Array(values) => {
+                if depth > MAX_MCP_TOOL_SCHEMA_DEPTH {
+                    return Err(McpToolCatalogBuildError::new(
+                        McpToolCatalogBuildErrorKind::ResourceLimit,
+                    ));
+                }
+                let child_depth = depth.checked_add(1).ok_or_else(|| {
+                    McpToolCatalogBuildError::new(McpToolCatalogBuildErrorKind::ResourceLimit)
+                })?;
+                stack.extend(values.iter().map(|value| (value, child_depth)));
+            }
+            Value::Object(values) => {
+                if depth > MAX_MCP_TOOL_SCHEMA_DEPTH {
+                    return Err(McpToolCatalogBuildError::new(
+                        McpToolCatalogBuildErrorKind::ResourceLimit,
+                    ));
+                }
+                let child_depth = depth.checked_add(1).ok_or_else(|| {
+                    McpToolCatalogBuildError::new(McpToolCatalogBuildErrorKind::ResourceLimit)
+                })?;
+                stack.extend(values.values().map(|value| (value, child_depth)));
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        }
+    }
+    Ok(())
+}
+
+pub(crate) async fn acquire_catalog_snapshot(
     catalog: &dyn McpToolCatalog,
     cancellation: &CancellationToken,
+    map_error: fn(McpToolCatalogError) -> ToolError,
+    cancelled_error: fn() -> ToolError,
 ) -> Result<McpToolCatalogSnapshot, ToolError> {
     let mut snapshot = catalog.snapshot(cancellation.clone());
     let mut cancellation_wait = Box::pin(cancellation.cancelled());
     let result = poll_fn(|poll_context| {
         if cancellation_wait.as_mut().poll(poll_context).is_ready() {
-            return Poll::Ready(Err(cancelled()));
+            return Poll::Ready(Err(cancelled_error()));
         }
         let snapshot_result = snapshot.as_mut().poll(poll_context);
         if cancellation.is_cancelled() {
-            return Poll::Ready(Err(cancelled()));
+            return Poll::Ready(Err(cancelled_error()));
         }
-        snapshot_result.map(|result| result.map_err(map_catalog_error))
+        snapshot_result.map(|result| result.map_err(map_error))
     })
     .await;
     drop(cancellation_wait);
@@ -741,7 +847,7 @@ fn bounded_encoded_scalar(value: &str, max_bytes: usize) -> String {
     encoded
 }
 
-fn encode_model_scalar(value: &str) -> String {
+pub(crate) fn encode_model_scalar(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for character in value.chars() {
         match character {
@@ -781,8 +887,13 @@ fn ensure_serialized_arguments(arguments: &Value) -> Result<(), ToolError> {
 }
 
 fn serialized_value_fits(value: &(impl Serialize + ?Sized), limit: usize) -> bool {
+    serialized_value_size(value, limit).is_some()
+}
+
+fn serialized_value_size(value: &(impl Serialize + ?Sized), limit: usize) -> Option<usize> {
     let mut counter = JsonByteCounter { written: 0, limit };
-    serde_json::to_writer(&mut counter, value).is_ok()
+    serde_json::to_writer(&mut counter, value).ok()?;
+    Some(counter.written)
 }
 
 struct JsonByteCounter {

@@ -482,6 +482,22 @@ arguments returned by its successful preflight. A tool that implements
 idempotency, replay protection, or an audit key must include the incarnation;
 the other three values can repeat after a durable reset.
 
+Ordinary implementations return only `ToolOutput`; the source-compatible
+default `Tool::execute_for_turn` wraps that value in `ToolExecution`. A bounded
+extension tool may instead attach one opaque `TurnToolRegistration` containing
+a captured `ToolSpec` and the exact executable `Tool`. Core keeps registrations
+in a registry local to the current `run_turn` invocation. A candidate is
+checked for static/dynamic name collisions and against the complete catalog's
+configured JSON depth, node, and serialized-byte limits before its visible
+result is stored. Core activates it only after durable placeholder replacement
+succeeds. It is therefore absent from the provider response that selected it,
+present in later provider requests of the same turn, and resolved through the
+same captured executable for call admission and dispatch. Error outputs cannot
+register tools. Completion, failure, and cancellation drop the registry; it is
+never stored in `Engine`, `SessionState`, or `SessionRecord`, so later turns and
+other sessions cannot inherit it. Registration is not an authorization grant:
+the dynamic tool follows the ordinary preparation and permission pipeline.
+
 Prepared arguments may drive only effects contained by the exact prepared
 capability that policy allowed. This is a normative obligation of the trusted
 tool implementation, not a semantic relation core can infer from arbitrary

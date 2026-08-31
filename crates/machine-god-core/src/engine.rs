@@ -363,6 +363,10 @@ impl EngineInner {
         self.tool_specs.clone()
     }
 
+    pub(crate) fn tool_specs_ref(&self) -> &[ToolSpec] {
+        &self.tool_specs
+    }
+
     pub(crate) fn tool(&self, name: &ToolName) -> Option<Arc<dyn Tool>> {
         self.tools
             .get(name)
