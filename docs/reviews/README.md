@@ -109,3 +109,4 @@ product behavior; they are not penetration tests.
 - [mcp_search_tools](m05-mcp-search-tools-review-01.md)
 - [mcp_select_tool](m05-mcp-select-tool-review-01.md)
 - [mcp_features](m05-mcp-features-review-01.md)
+- [subagent](m05-subagent-review-01.md)

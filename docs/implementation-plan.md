@@ -21,36 +21,21 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `49`
-- Delivered main: `3ba687b12281e04c55b6306cc6e21e9e3a2d9bdc`
-- Main CI: `33426575748` (`GREEN`)
-- Main Benchmark evidence: `33426575586` (`GREEN`)
-- Active branch: `agent/m05-subagent`
-- Active phase: `validating the bounded foreground one-off subagent release candidate`
-- Next gate: `three fresh zero-finding adversarial product-review tracks`
+- Delivered slices: `50`
+- Delivered main: `ba52dbfeb7d05b67ee314934905abee7e0c35ffc`
+- Main CI: `33440894118` (`GREEN`)
+- Main Benchmark evidence: `33440894154` (`GREEN`)
+- Active branch: `agent/m05-background-cli`
+- Active phase: `freezing a bounded top-level background CLI contract`
+- Next gate: `pinned behavior inventory and provider-neutral lifecycle boundary`
 <!-- canonical-live-status:end -->
 
-The two recorded Actions runs succeeded for the exact delivered-main commit,
-and the Benchmark evidence run retained both required exact-SHA artifacts.
-Bounded injected-catalog `mcp_features` is delivered as slice 49.
-Documentation parser maintenance remains a separate non-product task; product
-iterations use the existing bounded repository-policy checker.
-
-Focused documentation CI routing was delivered as bounded non-product
-maintenance at `3aad3d5aa5a15e7f77d8e4b1a236b8cc7a13cee8`. It uses an
-established, commit-pinned path filter over the exact checked-out Git objects,
-fails closed when submodule changes could be hidden, and retains stable CI and
-Benchmark aggregate gates while skipping unrelated heavy jobs. It does not
-increment the delivered-slice count or replace the last product benchmark
-evidence.
-
-The built-in `subagent` tool is the active product slice. It retains the pinned
-one-off create-shaped input but runs one foreground child through explicitly
-injected provider-neutral authority. It has fixed global/per-parent admission,
-same-poll cancellation precedence, bounded untrusted final text, and no parent
-transcript, grant, dynamic-tool, or recursive-subagent inheritance. Persistent
+The recorded Actions runs succeeded for the exact delivered-main commit, and
+the Benchmark evidence run retained both required exact-SHA artifacts.
+Bounded foreground one-off `subagent` is delivered as slice 50. Persistent
 handles, inspect/message/relationship/configuration/lifecycle management, ACP,
 background/team coordination, and extension slash commands remain separate.
+Documentation parser maintenance remains a separate non-product task.
 
 ## Architecture ownership
 
@@ -163,8 +148,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 47 | Bounded injected-catalog `mcp_search_tools` | [contract](mcp-search-tools.md) | [review](reviews/m05-mcp-search-tools-review-01.md) | `a8a94f9` |
 | 48 | Turn-local executable `mcp_select_tool` | [contract](mcp-select-tool.md) | [review](reviews/m05-mcp-select-tool-review-01.md) | `c5d86c9` |
 | 49 | Bounded injected-catalog `mcp_features` | [contract](mcp-features.md) | [review](reviews/m05-mcp-features-review-01.md) | `3ba687b` |
+| 50 | Bounded foreground one-off `subagent` | [contract](subagent.md) | [review](reviews/m05-subagent-review-01.md) | `ba52dbf` |
 
-The exact delivered-main record after slice 49 is in the canonical live-status
+The exact delivered-main record after slice 50 is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.
