@@ -60,9 +60,12 @@ The wrapper forwards `SIGHUP`, `SIGINT`, and `SIGTERM` to the active child
 process group, whose numeric identity remains reserved by a readiness-handshaked,
 unreaped private anchor through final group signaling. The first handled signal
 is latched until the command has joined that group, so anchor startup cannot
-consume the command's one graceful delivery. Parent mask restoration and
-readiness-descriptor closure are independently bounded; a persistent restoration
-failure poisons further launches without replacing an active launch exception.
+consume the command's one graceful delivery. Parent mask restoration is
+independently bounded. Readiness-descriptor ownership is detached before one
+close attempt, because an interrupted close can already have released the
+numeric descriptor and retrying it could close unrelated reused authority. An
+ambiguous close fails the current launch, while a persistent mask-restoration
+failure poisons further launches; neither replaces an active launch exception.
 Cleanup after every post-launch exception defers handled signals, skips unused
 grace time once the command exits, retries final group termination, and retains
 identity-safe direct-child kill and reap fallbacks before unwinding the extraction

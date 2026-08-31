@@ -1513,6 +1513,7 @@ class ProvisionZigTests(unittest.TestCase):
     ) -> None:
         real_pipe = os.pipe
         real_close = os.close
+        real_open = os.open
         previous_mask = frozenset({signal.SIGUSR1})
 
         for fault in ("close", "restore"):
@@ -1520,6 +1521,7 @@ class ProvisionZigTests(unittest.TestCase):
                 failure = OSError(f"sentinel {fault} launch failure")
                 descriptors: list[int] = []
                 close_failed = False
+                replacement_descriptor: int | None = None
                 restore_calls = 0
 
                 def capture_pipe() -> tuple[int, int]:
@@ -1528,10 +1530,13 @@ class ProvisionZigTests(unittest.TestCase):
                     return pair
 
                 def flaky_close(descriptor: int) -> None:
-                    nonlocal close_failed
+                    nonlocal close_failed, replacement_descriptor
                     if fault == "close" and not close_failed:
                         close_failed = True
-                        raise OSError("injected close failure")
+                        real_close(descriptor)
+                        replacement_descriptor = real_open(os.devnull, os.O_RDONLY)
+                        self.assertEqual(replacement_descriptor, descriptor)
+                        raise InterruptedError("injected post-close interruption")
                     real_close(descriptor)
 
                 def flaky_mask(operation: int, mask: object):
@@ -1563,9 +1568,14 @@ class ProvisionZigTests(unittest.TestCase):
 
                 self.assertIs(caught.exception, failure)
                 self.assertEqual(len(descriptors), 2)
-                for descriptor in descriptors:
-                    with self.assertRaises(OSError):
-                        os.fstat(descriptor)
+                if fault == "close":
+                    self.assertIsNotNone(replacement_descriptor)
+                    os.fstat(replacement_descriptor)
+                    real_close(replacement_descriptor)
+                else:
+                    for descriptor in descriptors:
+                        with self.assertRaises(OSError):
+                            os.fstat(descriptor)
                 self.assertTrue(supervisor.signal_mask_valid)
                 self.assertGreaterEqual(restore_calls, 1)
 
@@ -1896,13 +1906,21 @@ class ProvisionZigTests(unittest.TestCase):
 
             child_source = "\n".join(
                 (
-                    "import signal,sys,time",
+                    "import os,signal,sys,time",
                     "ready,handled=sys.argv[1:3]",
+                    "def publish(path,payload):",
+                    " temporary=path+'.tmp'",
+                    " descriptor=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)",
+                    " try:",
+                    "  os.write(descriptor,payload)",
+                    " finally:",
+                    "  os.close(descriptor)",
+                    " os.replace(temporary,path)",
                     "def stop(_signum,_frame):",
-                    " open(handled,'w',encoding='utf-8').write('handled')",
+                    " publish(handled,b'handled')",
                     " raise SystemExit(0)",
                     "signal.signal(signal.SIGTERM,stop)",
-                    "open(ready,'w',encoding='utf-8').write('ready')",
+                    "publish(ready,b'ready')",
                     "time.sleep(60)",
                 )
             )

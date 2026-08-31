@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
-import errno
 import os
 from pathlib import Path
 import select
@@ -185,17 +184,16 @@ class ChildSupervisor:
 
     @staticmethod
     def close_descriptor(descriptor: int) -> bool:
-        """Boundedly close an owned descriptor without displacing an exception."""
-        for _attempt in range(REAP_ATTEMPTS):
-            try:
-                os.close(descriptor)
-                return True
-            except OSError as error:
-                if error.errno == errno.EBADF:
-                    return True
-            except BaseException:
-                pass
-        return False
+        """Close detached descriptor authority once without reusing its number."""
+        try:
+            os.close(descriptor)
+            return True
+        except BaseException:
+            # close(2) may have released the descriptor before surfacing an
+            # interruption. Retrying its numeric value could close unrelated
+            # authority that reused the number, so an ambiguous result fails
+            # closed without another close attempt.
+            return False
 
     def restore_signal_mask(self, previous_mask: object) -> bool:
         for _attempt in range(REAP_ATTEMPTS):
@@ -376,9 +374,9 @@ class ChildSupervisor:
                     self.group_leader = group_leader
                 except BaseException as error:
                     launch_error = error
-                write_closed = self.close_descriptor(ready_write_descriptor)
-                if write_closed:
-                    ready_write_descriptor = None
+                detached_write_descriptor = ready_write_descriptor
+                ready_write_descriptor = None
+                write_closed = self.close_descriptor(detached_write_descriptor)
                 mask_restored = self.restore_signal_mask(previous_mask)
                 if launch_error is not None:
                     raise launch_error
@@ -391,9 +389,9 @@ class ChildSupervisor:
                         "benchmark process-group readiness descriptor did not close"
                     )
                 self.wait_anchor_ready(ready_descriptor)
-                if self.close_descriptor(ready_descriptor):
-                    ready_descriptor = None
-                else:
+                detached_ready_descriptor = ready_descriptor
+                ready_descriptor = None
+                if not self.close_descriptor(detached_ready_descriptor):
                     raise RuntimeError(
                         "benchmark process-group readiness descriptor did not close"
                     )
@@ -465,11 +463,13 @@ class ChildSupervisor:
             raise
         finally:
             if ready_write_descriptor is not None:
-                self.close_descriptor(ready_write_descriptor)
+                detached_write_descriptor = ready_write_descriptor
                 ready_write_descriptor = None
+                self.close_descriptor(detached_write_descriptor)
             if ready_descriptor is not None:
-                self.close_descriptor(ready_descriptor)
+                detached_ready_descriptor = ready_descriptor
                 ready_descriptor = None
+                self.close_descriptor(detached_ready_descriptor)
             self.child = None
             self.group_leader = None
             self.anchor_ready = False
