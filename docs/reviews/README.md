@@ -107,3 +107,5 @@ product behavior; they are not penetration tests.
 - [skill](m05-skill-review-01.md)
 - [install_skill](m05-install-skill-review-01.md)
 - [mcp_search_tools](m05-mcp-search-tools-review-01.md)
+- [mcp_select_tool](m05-mcp-select-tool-review-01.md)
+- [mcp_features](m05-mcp-features-review-01.md)

@@ -21,18 +21,18 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `48`
-- Delivered main: `c5d86c91f2a39f808ebd63039884344d6c130eac`
-- Main CI: `33407513449` (`GREEN`)
-- Main Benchmark evidence: `33407513315` (`GREEN`)
-- Active branch: `agent/m05-mcp-features`
-- Active phase: `designing bounded injected-catalog mcp_features resource and prompt access`
-- Next gate: `freeze action, stable-identity, authority, lifecycle, and output bounds`
+- Delivered slices: `49`
+- Delivered main: `3ba687b12281e04c55b6306cc6e21e9e3a2d9bdc`
+- Main CI: `33426575748` (`GREEN`)
+- Main Benchmark evidence: `33426575586` (`GREEN`)
+- Active branch: `agent/m05-subagent`
+- Active phase: `scoping the bounded built-in subagent tool`
+- Next gate: `freeze child authority, lifecycle, concurrency, and result bounds`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
 and the Benchmark evidence run retained both required exact-SHA artifacts.
-Turn-local executable `mcp_select_tool` is delivered as slice 48.
+Bounded injected-catalog `mcp_features` is delivered as slice 49.
 Documentation parser maintenance remains a separate non-product task; product
 iterations use the existing bounded repository-policy checker.
 
@@ -44,12 +44,11 @@ Benchmark aggregate gates while skipping unrelated heavy jobs. It does not
 increment the delivered-slice count or replace the last product benchmark
 evidence.
 
-Bounded injected-catalog `mcp_features` is the next slice. It will expose
-resource and prompt discovery and exact stable-identity access through explicit
-native authority while keeping transport discovery, authentication, and
-production connection management outside the slice. Its action-specific input,
-output, work, cancellation, and untrusted-content boundaries must be frozen
-before implementation.
+The built-in `subagent` tool is the next product slice. Its child-engine
+authority, inherited context, tool and permission visibility, concurrency,
+cancellation, result, and lifecycle boundaries must be frozen against the
+pinned upstream behavior before implementation. Broader ACP, background/team
+coordination, and extension slash-command ownership remain separate slices.
 
 ## Architecture ownership
 
@@ -161,8 +160,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 46 | Bounded top-level help and runtime status ownership | [CLI](cli.md), [configuration](configuration.md), [performance](performance.md) | [review](reviews/m03-help-status-cli-review-01.md) | `9019770` |
 | 47 | Bounded injected-catalog `mcp_search_tools` | [contract](mcp-search-tools.md) | [review](reviews/m05-mcp-search-tools-review-01.md) | `a8a94f9` |
 | 48 | Turn-local executable `mcp_select_tool` | [contract](mcp-select-tool.md) | [review](reviews/m05-mcp-select-tool-review-01.md) | `c5d86c9` |
+| 49 | Bounded injected-catalog `mcp_features` | [contract](mcp-features.md) | [review](reviews/m05-mcp-features-review-01.md) | `3ba687b` |
 
-The exact delivered-main record after slice 48 is in the canonical live-status
+The exact delivered-main record after slice 49 is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.
