@@ -53,8 +53,8 @@ list hierarchy is an empty complete result; missing `last` or exact ID is
 
 List rows expose only `id`, recorded `state`, `updated_at_ms`, and a UTF-8
 command preview of at most 256 bytes. Preview truncation occurs at a character
-boundary and is explicit. JSON fixes top-level key order
-`kind,count,truncated,records`; each row fixes key order
+boundary and is explicit. List JSON uses kind `background` and fixes top-level
+key order `kind,count,truncated,records`; each row fixes key order
 `id,state,updated_at_ms,command_preview,preview_truncated`. Human mode starts
 with `[background] no persisted background records` for a complete empty result
 or `[background] N saved`, then one bounded row per record. A truncated list
