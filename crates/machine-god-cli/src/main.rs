@@ -13,6 +13,7 @@ use std::task::{Context, Poll, Waker};
 use std::thread::JoinHandle;
 
 mod ask;
+mod background;
 mod replay;
 mod status;
 
@@ -20,6 +21,9 @@ mod status;
 use std::sync::Arc;
 
 use ask::{AskCommandHost, ProductionAskCommandHost, parse_prompt_arguments, run_ask, run_resume};
+use background::{
+    BackgroundCommandHost, ProductionBackgroundCommandHost, is_background_command, run_background,
+};
 use machine_god_core::{BoxFuture, SessionId, SessionIncarnationId};
 #[cfg(not(target_family = "wasm"))]
 use machine_god_core::{CancellationToken, ModelCatalogProvider, ProviderError, ProviderErrorKind};
@@ -44,7 +48,7 @@ use status::{ProductionStatusCommandHost, StatusCommandHost, is_status_command, 
 
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--json] | status [--json] | workspace [list] [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--json] | status [--json] | workspace [list] [--json]]\n",
 );
 const CONFIGURATION_FAILURE: &str = "machine-god: failed to load configuration\n";
 const DOCTOR_RENDER_FAILURE: &str = "machine-god doctor: could not render report\n";
@@ -1182,20 +1186,7 @@ fn run(
     stdout: &mut impl io::Write,
     stderr: &mut impl io::Write,
 ) -> u8 {
-    run_with_hosts(
-        arguments,
-        stdout,
-        stderr,
-        (
-            &ProductionModelsCommandHost,
-            &ProductionDoctorCommandHost,
-            &ProductionSessionCommandHost,
-            &ProductionSessionsCommandHost,
-            &ProductionWorkspaceCommandHost,
-            &ProductionReplayCommandHost,
-            &ProductionAskCommandHost,
-        ),
-    )
+    run_with_background_host(arguments, stdout, stderr, &ProductionBackgroundCommandHost)
 }
 
 #[cfg(test)]
@@ -1356,6 +1347,7 @@ fn run_with_hosts(
         stderr,
         hosts,
         &ProductionStatusCommandHost,
+        &ProductionBackgroundCommandHost,
     )
 }
 
@@ -1380,6 +1372,31 @@ fn run_with_status_host(
             &ProductionAskCommandHost,
         ),
         status_host,
+        &ProductionBackgroundCommandHost,
+    )
+}
+
+fn run_with_background_host(
+    arguments: impl IntoIterator<Item = OsString>,
+    stdout: &mut impl io::Write,
+    stderr: &mut impl io::Write,
+    background_host: &impl BackgroundCommandHost,
+) -> u8 {
+    run_with_hosts_and_status(
+        arguments,
+        stdout,
+        stderr,
+        (
+            &ProductionModelsCommandHost,
+            &ProductionDoctorCommandHost,
+            &ProductionSessionCommandHost,
+            &ProductionSessionsCommandHost,
+            &ProductionWorkspaceCommandHost,
+            &ProductionReplayCommandHost,
+            &ProductionAskCommandHost,
+        ),
+        &ProductionStatusCommandHost,
+        background_host,
     )
 }
 
@@ -1397,6 +1414,7 @@ fn run_with_hosts_and_status(
         &impl AskCommandHost,
     ),
     status_host: &impl StatusCommandHost,
+    background_host: &impl BackgroundCommandHost,
 ) -> u8 {
     let (
         models_host,
@@ -1416,6 +1434,17 @@ fn run_with_hosts_and_status(
             return 1;
         }
         return 0;
+    }
+    if first.as_deref().is_some_and(is_background_command) {
+        let background_arguments = arguments.collect::<Vec<_>>();
+        return run_background(
+            background_host,
+            &background_arguments,
+            stdout,
+            stderr,
+            INVALID_ARGUMENTS,
+            OUTPUT_FAILURE,
+        );
     }
     if first.as_deref().is_some_and(is_status_command) {
         let status_arguments = arguments.collect::<Vec<_>>();
@@ -1611,6 +1640,7 @@ fn help() -> String {
             "  machine-god\n",
             "  machine-god help\n",
             "  machine-god ask [--] <prompt...>\n",
+            "  machine-god background [last | <unsigned-decimal-u64>] [--json]\n",
             "  machine-god doctor [--json]\n",
             "  machine-god models [--json]\n",
             "  machine-god permissions [--json]\n",
@@ -1624,6 +1654,7 @@ fn help() -> String {
             "Commands:\n",
             "  help         Show this help\n",
             "  ask          Run one noninteractive prompt\n",
+            "  background   Inspect persisted background history\n",
             "  doctor       Run local health and preflight checks\n",
             "  models       List available models\n",
             "  permissions  Show the permission mode and rules\n",
@@ -2304,8 +2335,9 @@ mod tests {
         classify_session_listing_error_kind, classify_workspace_inspection_error_kind, help,
         json_permissions, parse_arguments, permissions, push_json_string, render_doctor,
         render_session, render_sessions, render_workspace, run, run_with_ask_host,
-        run_with_doctor_host, run_with_models_host, run_with_session_host, run_with_sessions_host,
-        run_with_status_host, run_with_workspace_host,
+        run_with_background_host, run_with_doctor_host, run_with_models_host,
+        run_with_session_host, run_with_sessions_host, run_with_status_host,
+        run_with_workspace_host,
     };
     #[cfg(not(target_family = "wasm"))]
     use super::{ModelsCompositionEffects, classify_provider_error, list_models_with_effects};
@@ -2319,6 +2351,9 @@ mod tests {
         AskCommandExecution, AskCommandHost, AskCommandOutcome, MAX_ASK_PROMPT_BYTES,
         SessionSelection,
     };
+    use crate::background::{
+        BackgroundCommandHost, BackgroundOperationalFailure, BackgroundSnapshot,
+    };
     use crate::status::StatusCommandHost;
     use machine_god_core::{
         AvailableModel, BoxFuture, ModelCatalog, ModelCatalogAccess, PublicCatalogReason,
@@ -2328,9 +2363,9 @@ mod tests {
     #[cfg(not(target_family = "wasm"))]
     use machine_god_core::{ProviderError, ProviderErrorKind};
     use machine_god_native::{
-        AI_GATEWAY_DEFAULT_MODEL, MAX_WORKSPACE_PATH_BYTES, NativeRuntimeCredentialEnvironment,
-        NativeRuntimeStatus, NativeRuntimeStatusError, NativeRuntimeStatusInput,
-        NativeSessionInspectionErrorKind, NativeSessionListingErrorKind,
+        AI_GATEWAY_DEFAULT_MODEL, MAX_WORKSPACE_PATH_BYTES, NativeBackgroundQuery,
+        NativeRuntimeCredentialEnvironment, NativeRuntimeStatus, NativeRuntimeStatusError,
+        NativeRuntimeStatusInput, NativeSessionInspectionErrorKind, NativeSessionListingErrorKind,
         NativeWorkspaceInspectionErrorKind, inspect_native_runtime_status,
     };
     use std::cell::{Cell, RefCell};
@@ -2397,6 +2432,21 @@ mod tests {
         fn inspect_status(&self) -> Result<NativeRuntimeStatus, NativeRuntimeStatusError> {
             self.calls.set(self.calls.get() + 1);
             self.status.clone()
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct FakeBackgroundHost {
+        calls: Cell<usize>,
+    }
+
+    impl BackgroundCommandHost for FakeBackgroundHost {
+        fn inspect_background(
+            &self,
+            _query: NativeBackgroundQuery,
+        ) -> BoxFuture<'static, Result<BackgroundSnapshot, BackgroundOperationalFailure>> {
+            self.calls.set(self.calls.get() + 1);
+            Box::pin(std::future::pending())
         }
     }
 
@@ -3688,6 +3738,46 @@ mod tests {
             assert!(stderr.is_empty());
         }
         assert_eq!(host.calls.get(), 0);
+    }
+
+    #[test]
+    fn main_dispatches_background_through_the_injected_host_only_after_validation() {
+        let host = FakeBackgroundHost::default();
+        for arguments in [
+            vec![OsString::from("help"), OsString::from("background")],
+            vec![
+                OsString::from("background"),
+                OsString::from("last"),
+                OsString::from("last"),
+            ],
+        ] {
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let expected_exit = if arguments[0] == "help" { 0 } else { 2 };
+            assert_eq!(
+                run_with_background_host(arguments, &mut stdout, &mut stderr, &host),
+                expected_exit
+            );
+        }
+        assert_eq!(host.calls.get(), 0);
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        assert_eq!(
+            run_with_background_host(
+                [OsString::from("background"), OsString::from("--json")],
+                &mut stdout,
+                &mut stderr,
+                &host,
+            ),
+            1
+        );
+        assert_eq!(host.calls.get(), 1);
+        assert_eq!(
+            stdout,
+            b"{\"kind\":\"background\",\"error\":\"could not inspect background history: Unavailable\",\"code\":\"Unavailable\"}\n"
+        );
+        assert!(stderr.is_empty());
     }
 
     #[test]

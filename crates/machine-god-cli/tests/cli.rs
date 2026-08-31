@@ -51,6 +51,7 @@ const HELP: &str = concat!(
     "  machine-god\n",
     "  machine-god help\n",
     "  machine-god ask [--] <prompt...>\n",
+    "  machine-god background [last | <unsigned-decimal-u64>] [--json]\n",
     "  machine-god doctor [--json]\n",
     "  machine-god models [--json]\n",
     "  machine-god permissions [--json]\n",
@@ -64,6 +65,7 @@ const HELP: &str = concat!(
     "Commands:\n",
     "  help         Show this help\n",
     "  ask          Run one noninteractive prompt\n",
+    "  background   Inspect persisted background history\n",
     "  doctor       Run local health and preflight checks\n",
     "  models       List available models\n",
     "  permissions  Show the permission mode and rules\n",
@@ -101,7 +103,7 @@ const STATUS_MISSING_AUTH_HELP: &str = concat!(
 );
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--json] | status [--json] | workspace [list] [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--json] | status [--json] | workspace [list] [--json]]\n",
 );
 const CONFIG_FAILURE: &str = "machine-god: failed to load configuration\n";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -254,6 +256,16 @@ fn status_command(workspace: &Path, config: &OsStr, state: &OsStr) -> Command {
         .env("XDG_STATE_HOME", state)
         .env_remove("VERCEL_OIDC_TOKEN")
         .env_remove("AI_GATEWAY_API_KEY");
+    command
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn background_command(workspace: &Path, state: &OsStr) -> Command {
+    let mut command = machine_god();
+    command
+        .current_dir(workspace)
+        .env_remove("HOME")
+        .env("XDG_STATE_HOME", state);
     command
 }
 
@@ -891,6 +903,106 @@ fn first_token_help_preempts_arbitrary_tails_and_process_effects() {
                 "CLI_HELP_IGNORED_LOWER_SECRET",
             ],
         );
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn background_fresh_binary_reads_an_empty_store_with_fixed_outputs() {
+    let temporary = TestDirectory::new("background-empty-store");
+    let workspace = temporary.path().join("workspace");
+    let state = temporary.path().join("state");
+    fs::create_dir(&workspace).unwrap();
+    fs::create_dir(&state).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&state, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    for (arguments, expected) in [
+        (&[][..], "[background] no persisted background records\n"),
+        (
+            &["--json"][..],
+            "{\"kind\":\"background\",\"count\":0,\"truncated\":false,\"records\":[]}\n",
+        ),
+    ] {
+        let output = background_command(&workspace, state.as_os_str())
+            .arg("background")
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert_success(&output, expected);
+        assert!(output.stdout.len() <= 64 * 1024);
+    }
+    assert_eq!(fs::read_dir(&workspace).unwrap().count(), 0);
+    assert_eq!(fs::read_dir(&state).unwrap().count(), 0);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn missing_background_detail_has_closed_human_and_json_failures() {
+    let temporary = TestDirectory::new("background-not-found");
+    let workspace = temporary.path().join("workspace");
+    let state = temporary.path().join("state");
+    fs::create_dir(&workspace).unwrap();
+    fs::create_dir(&state).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&state, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    for target in ["last", "00042"] {
+        let human = background_command(&workspace, state.as_os_str())
+            .args(["background", target])
+            .output()
+            .unwrap();
+        assert_eq!(human.status.code(), Some(1));
+        assert!(human.stdout.is_empty());
+        assert_eq!(
+            human.stderr,
+            b"machine-god background: could not inspect background history: NotFound\n"
+        );
+
+        let json = background_command(&workspace, state.as_os_str())
+            .args(["background", "--json", target])
+            .output()
+            .unwrap();
+        assert_eq!(json.status.code(), Some(1));
+        assert_eq!(
+            json.stdout,
+            b"{\"kind\":\"background\",\"error\":\"could not inspect background history: NotFound\",\"code\":\"NotFound\"}\n"
+        );
+        assert!(json.stderr.is_empty());
+    }
+}
+
+#[test]
+fn invalid_background_grammar_is_global_and_effect_free() {
+    let temporary = TestDirectory::new("background-invalid-no-effects");
+    for arguments in [
+        &["background", "--json", "--json"][..],
+        &["background", "last", "last"][..],
+        &["background", "+1"][..],
+        &["background", "-1"][..],
+        &["background", " 1"][..],
+        &["background", "--json=true"][..],
+        &["background", "18446744073709551616"][..],
+    ] {
+        let state = temporary.path().join("missing-state");
+        let home = temporary.path().join("missing-home");
+        let output = machine_god()
+            .args(arguments)
+            .env("XDG_STATE_HOME", &state)
+            .env("HOME", &home)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert_eq!(output.stderr, INVALID_ARGUMENTS.as_bytes());
+        assert!(!state.exists());
+        assert!(!home.exists());
     }
 }
 
