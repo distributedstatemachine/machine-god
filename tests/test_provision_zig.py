@@ -1495,6 +1495,7 @@ class ProvisionZigTests(unittest.TestCase):
             mock.patch.object(
                 with_zig.subprocess, "Popen", side_effect=(anchor, child)
             ),
+            mock.patch.object(supervisor, "wait_anchor_ready", return_value=None),
             mock.patch.object(with_zig.os, "killpg", return_value=None) as killpg,
             mock.patch.object(with_zig, "SIGNAL_GRACE_SECONDS", 0.0),
             mock.patch.object(with_zig, "KILL_GRACE_SECONDS", 0.0),
@@ -1546,6 +1547,7 @@ class ProvisionZigTests(unittest.TestCase):
             mock.patch.object(
                 with_zig.subprocess, "Popen", side_effect=(anchor, child)
             ),
+            mock.patch.object(supervisor, "wait_anchor_ready", return_value=None),
             mock.patch.object(with_zig.os, "killpg", side_effect=signal_group),
             mock.patch.object(with_zig, "KILL_GRACE_SECONDS", 1.0),
         ):
@@ -1588,6 +1590,7 @@ class ProvisionZigTests(unittest.TestCase):
             mock.patch.object(
                 with_zig.subprocess, "Popen", side_effect=(anchor, failure)
             ),
+            mock.patch.object(supervisor, "wait_anchor_ready", return_value=None),
             mock.patch.object(with_zig.os, "killpg", side_effect=signal_group),
             self.assertRaises(OSError) as caught,
         ):
@@ -1667,6 +1670,128 @@ class ProvisionZigTests(unittest.TestCase):
         self.assertIsNone(supervisor.child)
         self.assertIsNone(supervisor.group_leader)
 
+    def test_wrapper_indeterminate_group_cleanup_fails_normal_run_closed(
+        self,
+    ) -> None:
+        real_popen = subprocess.Popen
+        spawned: list[subprocess.Popen] = []
+        survivor: subprocess.Popen | None = None
+
+        def capture_and_add_survivor(*arguments, **keywords):
+            nonlocal survivor
+            process = real_popen(*arguments, **keywords)
+            spawned.append(process)
+            if len(spawned) == 2:
+                survivor = real_popen(
+                    [sys.executable, "-c", "import time; time.sleep(60)"],
+                    process_group=spawned[0].pid,
+                )
+            return process
+
+        supervisor = with_zig.ChildSupervisor()
+        try:
+            with (
+                mock.patch.object(
+                    with_zig.subprocess,
+                    "Popen",
+                    side_effect=capture_and_add_survivor,
+                ),
+                mock.patch.object(
+                    with_zig.os,
+                    "killpg",
+                    side_effect=OSError("killpg failed"),
+                ) as killpg,
+                mock.patch.object(with_zig, "KILL_GRACE_SECONDS", 1.0),
+                self.assertRaisesRegex(
+                    RuntimeError, "process-group cleanup was incomplete"
+                ),
+            ):
+                supervisor.run([sys.executable, "-c", "pass"])
+
+            self.assertEqual(len(spawned), 2)
+            self.assertIsNotNone(survivor)
+            self.assertIsNone(survivor.poll())
+            self.assertEqual(killpg.call_count, with_zig.FINAL_SIGNAL_ATTEMPTS)
+            self.assertTrue(all(process.returncode is not None for process in spawned))
+        finally:
+            if survivor is not None:
+                try:
+                    survivor.kill()
+                except ProcessLookupError:
+                    pass
+                survivor.wait(timeout=2.0)
+
+    def test_wrapper_launch_window_signal_waits_for_ready_joined_command(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            child_ready = root / "child-ready"
+            child_handled = root / "child-handled"
+            real_popen = subprocess.Popen
+            spawned: list[subprocess.Popen] = []
+            wrapper_pid = os.getpid()
+
+            def signal_before_anchor_return_and_wait_for_child(*arguments, **keywords):
+                process = real_popen(*arguments, **keywords)
+                spawned.append(process)
+                if len(spawned) == 1:
+                    os.kill(wrapper_pid, signal.SIGTERM)
+                elif len(spawned) == 2:
+                    deadline = time.monotonic() + 5.0
+                    while time.monotonic() < deadline and not child_ready.exists():
+                        time.sleep(0.01)
+                    if not child_ready.exists():
+                        process.kill()
+                        process.wait(timeout=2.0)
+                        raise RuntimeError("fixture child did not become ready")
+                return process
+
+            child_source = "\n".join(
+                (
+                    "import signal,sys,time",
+                    "ready,handled=sys.argv[1:3]",
+                    "def stop(_signum,_frame):",
+                    " open(handled,'w',encoding='utf-8').write('handled')",
+                    " raise SystemExit(0)",
+                    "signal.signal(signal.SIGTERM,stop)",
+                    "open(ready,'w',encoding='utf-8').write('ready')",
+                    "time.sleep(60)",
+                )
+            )
+            supervisor = with_zig.ChildSupervisor()
+            started = time.monotonic()
+            with (
+                mock.patch.object(
+                    with_zig.subprocess,
+                    "Popen",
+                    side_effect=signal_before_anchor_return_and_wait_for_child,
+                ),
+                mock.patch.object(with_zig, "SIGNAL_GRACE_SECONDS", 2.0),
+                mock.patch.object(with_zig, "KILL_GRACE_SECONDS", 1.0),
+                supervisor.signal_handlers(),
+                self.assertRaises(with_zig.CaughtSignal) as caught,
+            ):
+                supervisor.run(
+                    [
+                        sys.executable,
+                        "-c",
+                        child_source,
+                        str(child_ready),
+                        str(child_handled),
+                    ]
+                )
+
+            self.assertEqual(caught.exception.signum, signal.SIGTERM)
+            self.assertLess(time.monotonic() - started, 1.5)
+            self.assertTrue(child_handled.is_file())
+            self.assertEqual(len(spawned), 2)
+            self.assertEqual(spawned[0].returncode, -signal.SIGKILL)
+            self.assertEqual(spawned[1].returncode, 0)
+            self.assertIsNone(supervisor.group_leader)
+            self.assertFalse(supervisor.anchor_ready)
+            self.assertFalse(supervisor.command_joined)
+
     def test_wrapper_signal_during_reap_never_reuses_closed_pgid(self) -> None:
         events: list[tuple[str, int | None]] = []
         supervisor = with_zig.ChildSupervisor()
@@ -1707,6 +1832,7 @@ class ProvisionZigTests(unittest.TestCase):
             mock.patch.object(
                 with_zig.subprocess, "Popen", side_effect=(anchor, child)
             ),
+            mock.patch.object(supervisor, "wait_anchor_ready", return_value=None),
             mock.patch.object(with_zig.os, "killpg", side_effect=signal_group),
             self.assertRaises(with_zig.CaughtSignal) as caught,
         ):
@@ -1777,6 +1903,7 @@ class ProvisionZigTests(unittest.TestCase):
             mock.patch.object(
                 with_zig.subprocess, "Popen", side_effect=(anchor, child)
             ),
+            mock.patch.object(supervisor, "wait_anchor_ready", return_value=None),
             mock.patch.object(with_zig.os, "killpg", return_value=None),
             mock.patch.object(
                 supervisor,

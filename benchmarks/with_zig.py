@@ -7,6 +7,7 @@ import argparse
 from contextlib import contextmanager
 import os
 from pathlib import Path
+import select
 import signal
 import subprocess
 import sys
@@ -44,6 +45,7 @@ FORWARDED_SIGNALS = tuple(
 )
 SIGNAL_GRACE_SECONDS = 5.0
 KILL_GRACE_SECONDS = 5.0
+ANCHOR_READY_SECONDS = 5.0
 FINAL_SIGNAL_ATTEMPTS = 3
 REAP_ATTEMPTS = 3
 
@@ -61,6 +63,8 @@ class ChildSupervisor:
         self.signal_forwarded = False
         self.spawning = False
         self.cleaning = False
+        self.anchor_ready = False
+        self.command_joined = False
 
     def forward(self, signum: int) -> None:
         group_leader = self.group_leader
@@ -75,7 +79,7 @@ class ChildSupervisor:
         if self.caught_signal is not None:
             return
         self.caught_signal = signum
-        if self.group_leader is not None:
+        if self.anchor_ready and self.command_joined:
             self.forward_once(signum)
         if not self.spawning and not self.cleaning:
             raise CaughtSignal(signum)
@@ -172,6 +176,38 @@ class ChildSupervisor:
             except BaseException:
                 pass
 
+    @staticmethod
+    def wait_anchor_ready(
+        group_leader: subprocess.Popen, ready_descriptor: int
+    ) -> None:
+        try:
+            deadline = time.monotonic() + ANCHOR_READY_SECONDS
+        except BaseException as error:
+            raise RuntimeError(
+                "benchmark process-group anchor failed to become ready"
+            ) from error
+        while True:
+            try:
+                if group_leader.poll() is not None:
+                    raise RuntimeError(
+                        "benchmark process-group anchor failed to become ready"
+                    )
+                remaining = max(0.0, deadline - time.monotonic())
+                if remaining <= 0.0:
+                    raise RuntimeError(
+                        "benchmark process-group anchor failed to become ready"
+                    )
+                readable, _, _ = select.select(
+                    [ready_descriptor], [], [], remaining
+                )
+                if not readable or os.read(ready_descriptor, 1) != b"R":
+                    raise RuntimeError(
+                        "benchmark process-group anchor failed to become ready"
+                    )
+                return
+            except InterruptedError:
+                continue
+
     def terminate_and_reap(
         self,
         child: subprocess.Popen,
@@ -179,7 +215,7 @@ class ChildSupervisor:
         *,
         initial_signal: int | None,
         grace_seconds: float | None = None,
-    ) -> None:
+    ) -> bool:
         """Best-effort bounded cleanup which never replaces an active exception."""
         previous_cleaning = self.cleaning
         self.cleaning = True
@@ -221,6 +257,7 @@ class ChildSupervisor:
                 self.reap_until(group_leader, kill_deadline)
                 self.communicate_until(child, kill_deadline)
                 self.reap_until(child, kill_deadline)
+            return group_terminated
         finally:
             self.cleaning = previous_cleaning
 
@@ -244,17 +281,32 @@ class ChildSupervisor:
             self.cleaning = previous_cleaning
 
     @staticmethod
-    def anchor_command() -> list[str]:
+    def anchor_command(ready_descriptor: int | None = None) -> list[str]:
+        ready_statement = ""
+        arguments: list[str] = []
+        if ready_descriptor is not None:
+            ready_statement = (
+                "ready=int(sys.argv[1])\n"
+                "signal.pthread_sigmask(signal.SIG_UNBLOCK,handled)\n"
+                "os.write(ready,b'R')\n"
+                "os.close(ready)\n"
+            )
+            arguments.append(str(ready_descriptor))
         return [
             sys.executable,
             "-c",
             (
-                "import signal,time\n"
+                "import os,signal,sys,time\n"
+                "handled=[]\n"
                 "for name in ('SIGHUP','SIGINT','SIGTERM'):\n"
                 " signum=getattr(signal,name,None)\n"
-                " if signum is not None: signal.signal(signum,signal.SIG_IGN)\n"
+                " if signum is not None:\n"
+                "  signal.signal(signum,signal.SIG_IGN)\n"
+                "  handled.append(signum)\n"
+                f"{ready_statement}"
                 "time.sleep(86400)\n"
             ),
+            *arguments,
         ]
 
     def run(
@@ -273,17 +325,35 @@ class ChildSupervisor:
             raise CaughtSignal(self.caught_signal)
         child: subprocess.Popen | None = None
         group_leader: subprocess.Popen | None = None
+        ready_descriptor: int | None = None
+        ready_write_descriptor: int | None = None
         try:
             self.spawning = True
             try:
-                group_leader = subprocess.Popen(
-                    self.anchor_command(),
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    process_group=0,
+                ready_descriptor, ready_write_descriptor = os.pipe()
+                previous_mask = signal.pthread_sigmask(
+                    signal.SIG_BLOCK, FORWARDED_SIGNALS
                 )
-                self.group_leader = group_leader
+                try:
+                    group_leader = subprocess.Popen(
+                        self.anchor_command(ready_write_descriptor),
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        process_group=0,
+                        pass_fds=(ready_write_descriptor,),
+                    )
+                    self.group_leader = group_leader
+                finally:
+                    try:
+                        os.close(ready_write_descriptor)
+                        ready_write_descriptor = None
+                    finally:
+                        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+                self.wait_anchor_ready(group_leader, ready_descriptor)
+                os.close(ready_descriptor)
+                ready_descriptor = None
+                self.anchor_ready = True
                 child = subprocess.Popen(
                     command,
                     stdout=stdout,
@@ -292,10 +362,12 @@ class ChildSupervisor:
                     process_group=group_leader.pid,
                 )
                 self.child = child
+                self.command_joined = True
+                if self.caught_signal is not None:
+                    self.forward_once(self.caught_signal)
             finally:
                 self.spawning = False
             if self.caught_signal is not None:
-                self.forward_once(self.caught_signal)
                 raise CaughtSignal(self.caught_signal)
             captured_stdout, captured_stderr = child.communicate(timeout=timeout)
             completed = subprocess.CompletedProcess(
@@ -304,7 +376,7 @@ class ChildSupervisor:
                 captured_stdout,
                 captured_stderr,
             )
-            self.terminate_and_reap(
+            cleanup_complete = self.terminate_and_reap(
                 child,
                 group_leader,
                 initial_signal=None,
@@ -312,6 +384,8 @@ class ChildSupervisor:
             )
             if self.caught_signal is not None:
                 raise CaughtSignal(self.caught_signal)
+            if not cleanup_complete:
+                raise RuntimeError("benchmark process-group cleanup was incomplete")
             if check:
                 completed.check_returncode()
             return completed
@@ -346,8 +420,20 @@ class ChildSupervisor:
                 self.terminate_anchor(group_leader)
             raise
         finally:
+            if ready_write_descriptor is not None:
+                try:
+                    os.close(ready_write_descriptor)
+                except BaseException:
+                    pass
+            if ready_descriptor is not None:
+                try:
+                    os.close(ready_descriptor)
+                except BaseException:
+                    pass
             self.child = None
             self.group_leader = None
+            self.anchor_ready = False
+            self.command_joined = False
 
 
 def default_cache_root() -> Path:
