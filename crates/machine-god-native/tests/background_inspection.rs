@@ -2,9 +2,15 @@
 
 use std::ffi::OsString;
 use std::fs;
+#[cfg(target_os = "linux")]
+use std::fs::{File, FileTimes};
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(target_os = "linux")]
+use std::time::SystemTime;
 
 use futures_executor::block_on;
 use machine_god_native::{
@@ -33,7 +39,7 @@ impl TempDirectory {
             match fs::create_dir(&path) {
                 Ok(()) => {
                     private_directory(&path);
-                    return Self(path);
+                    return Self(fs::canonicalize(path).unwrap());
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
                 Err(error) => panic!("create temporary directory: {error}"),
@@ -374,4 +380,108 @@ fn duplicate_schema_fields_are_rejected_before_projection() {
     ))
     .unwrap_err();
     assert_eq!(error.kind(), NativeBackgroundInspectionErrorKind::Corrupt);
+}
+
+#[test]
+fn record_paths_reject_noncanonical_lexical_spellings() {
+    let fixture = Fixture::new();
+    let workspace = fixture.workspace.to_str().unwrap();
+    for invalid in [
+        format!("{workspace}/."),
+        format!("{workspace}/child/../child"),
+        format!("{workspace}//child"),
+        format!("{workspace}/"),
+    ] {
+        let mut value = fixture.record_value(18, 20, "command");
+        value["cwd"] = json!(invalid);
+        fixture.write_value(18, &value);
+
+        let error = block_on(inspect_native_background(
+            fixture.environment(),
+            fixture.workspace.clone(),
+            NativeBackgroundQuery::Id(18),
+        ))
+        .unwrap_err();
+        assert_eq!(error.kind(), NativeBackgroundInspectionErrorKind::Corrupt);
+    }
+
+    let mut value = fixture.record_value(18, 20, "command");
+    value["workspace"] = json!(format!("{workspace}/."));
+    fixture.write_value(18, &value);
+    let error = block_on(inspect_native_background(
+        fixture.environment(),
+        fixture.workspace.clone(),
+        NativeBackgroundQuery::Id(18),
+    ))
+    .unwrap_err();
+    assert_eq!(error.kind(), NativeBackgroundInspectionErrorKind::Corrupt);
+}
+
+#[test]
+fn xdg_and_home_state_bases_reject_symlinks_in_ancestors() {
+    let temporary = TempDirectory::new();
+    let workspace = temporary.path().join("workspace");
+    fs::create_dir(&workspace).unwrap();
+    private_directory(&workspace);
+
+    let real = temporary.path().join("real");
+    fs::create_dir(&real).unwrap();
+    private_directory(&real);
+    let linked = temporary.path().join("linked");
+    symlink(&real, &linked).unwrap();
+
+    let environments = [
+        NativeEnvironment::new(None, Some(linked.join("state").into_os_string()), None),
+        NativeEnvironment::new(None, None, Some(linked.join("home").into_os_string())),
+    ];
+    for environment in environments {
+        let error = block_on(inspect_native_background(
+            environment,
+            workspace.clone(),
+            NativeBackgroundQuery::List,
+        ))
+        .unwrap_err();
+        assert_eq!(
+            error.kind(),
+            NativeBackgroundInspectionErrorKind::Unavailable
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn successful_listing_does_not_advance_record_or_directory_access_times() {
+    let fixture = Fixture::new();
+    let record = fixture.write_record(20, 20, "command");
+    set_old_access_time(&record);
+    set_old_access_time(&fixture.record_root);
+    let record_atime = access_time(&record);
+    let directory_atime = access_time(&fixture.record_root);
+
+    let result = block_on(inspect_native_background(
+        fixture.environment(),
+        fixture.workspace.clone(),
+        NativeBackgroundQuery::List,
+    ));
+    assert!(result.is_ok());
+    assert_eq!(access_time(&record), record_atime);
+    assert_eq!(access_time(&fixture.record_root), directory_atime);
+}
+
+#[cfg(target_os = "linux")]
+fn set_old_access_time(path: &Path) {
+    let file = File::open(path).unwrap();
+    let modified = file.metadata().unwrap().modified().unwrap();
+    file.set_times(
+        FileTimes::new()
+            .set_accessed(SystemTime::UNIX_EPOCH)
+            .set_modified(modified),
+    )
+    .unwrap();
+}
+
+#[cfg(target_os = "linux")]
+fn access_time(path: &Path) -> (i64, i64) {
+    let metadata = fs::metadata(path).unwrap();
+    (metadata.atime(), metadata.atime_nsec())
 }

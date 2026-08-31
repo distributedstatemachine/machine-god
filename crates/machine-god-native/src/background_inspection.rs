@@ -422,9 +422,11 @@ mod supported {
     use std::path::{Path, PathBuf};
 
     use rustix::fd::{AsFd, BorrowedFd, OwnedFd};
-    use rustix::fs::{AtFlags, CWD, Dir, FileType, Mode, OFlags};
+    #[cfg(target_os = "linux")]
+    use rustix::fs::CWD;
+    use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags};
+    use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
     use serde::{Deserialize, Deserializer};
-    use serde_json::Value;
     use sha2::{Digest, Sha256};
 
     use super::{
@@ -555,10 +557,13 @@ mod supported {
 
     fn validate_state_base(value: &OsStr) -> Result<PathBuf, NativeBackgroundInspectionError> {
         let path = Path::new(value);
-        if value.to_str().is_none() || !path.is_absolute() {
+        let Some(value) = value.to_str() else {
+            return Err(unavailable());
+        };
+        if !is_canonical_absolute_path(value) {
             return Err(unavailable());
         }
-        Ok(path.components().collect())
+        Ok(path.to_owned())
     }
 
     fn open_workspace_hierarchy(
@@ -591,26 +596,33 @@ mod supported {
     }
 
     fn open_base(path: &Path) -> Result<Option<OwnedFd>, NativeBackgroundInspectionError> {
-        let metadata = match rustix::fs::statat(CWD, path, AtFlags::SYMLINK_NOFOLLOW) {
-            Ok(metadata) => metadata,
+        let directory = match open_absolute_directory(path) {
+            Ok(directory) => directory,
             Err(error) if error == rustix::io::Errno::NOENT => return Ok(None),
             Err(_) => return Err(unavailable()),
         };
+        let metadata = rustix::fs::fstat(&directory).map_err(|_| unavailable())?;
         if !FileType::from_raw_mode(metadata.st_mode).is_dir() {
             return Err(unavailable());
         }
-        let directory = rustix::fs::open(
-            path,
-            OFlags::RDONLY
-                | OFlags::DIRECTORY
-                | OFlags::NOFOLLOW
-                | OFlags::CLOEXEC
-                | OFlags::NONBLOCK,
-            Mode::empty(),
-        )
-        .map_err(|_| unavailable())?;
-        ensure_same_identity(&metadata, &directory)?;
         Ok(Some(directory))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn open_absolute_directory(path: &Path) -> rustix::io::Result<OwnedFd> {
+        rustix::fs::openat2(
+            CWD,
+            path,
+            directory_open_flags(),
+            Mode::empty(),
+            rustix::fs::ResolveFlags::NO_SYMLINKS | rustix::fs::ResolveFlags::NO_MAGICLINKS,
+        )
+    }
+
+    #[cfg(target_os = "macos")]
+    fn open_absolute_directory(path: &Path) -> rustix::io::Result<OwnedFd> {
+        let nofollow_any = OFlags::from_bits_retain(libc::O_NOFOLLOW_ANY as _);
+        rustix::fs::open(path, directory_open_flags() | nofollow_any, Mode::empty())
     }
 
     fn open_child_directory(
@@ -628,11 +640,7 @@ mod supported {
         let directory = rustix::fs::openat(
             parent,
             name,
-            OFlags::RDONLY
-                | OFlags::DIRECTORY
-                | OFlags::NOFOLLOW
-                | OFlags::CLOEXEC
-                | OFlags::NONBLOCK,
+            directory_open_flags() | OFlags::NOFOLLOW,
             Mode::empty(),
         )
         .map_err(|_| unavailable())?;
@@ -697,11 +705,7 @@ mod supported {
         let duplicate = rustix::fs::openat(
             root,
             ".",
-            OFlags::RDONLY
-                | OFlags::DIRECTORY
-                | OFlags::NOFOLLOW
-                | OFlags::CLOEXEC
-                | OFlags::NONBLOCK,
+            directory_open_flags() | OFlags::NOFOLLOW,
             Mode::empty(),
         )
         .map_err(|_| unavailable())?;
@@ -797,7 +801,7 @@ mod supported {
         let descriptor = match rustix::fs::openat(
             root,
             name,
-            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+            record_open_flags() | OFlags::NOFOLLOW,
             Mode::empty(),
         ) {
             Ok(descriptor) => descriptor,
@@ -805,7 +809,11 @@ mod supported {
             Err(error)
                 if is_rejected_type_error(error)
                     || rustix::fs::statat(root, name, AtFlags::SYMLINK_NOFOLLOW).is_ok_and(
-                        |metadata| !FileType::from_raw_mode(metadata.st_mode).is_file(),
+                        |metadata| {
+                            !FileType::from_raw_mode(metadata.st_mode).is_file()
+                                || metadata.st_uid != rustix::process::geteuid().as_raw()
+                                || u64::from(metadata.st_mode) & GROUP_OR_OTHER_PERMISSIONS != 0
+                        },
                     ) =>
             {
                 return Err(corrupt());
@@ -838,42 +846,140 @@ mod supported {
         workspace: &str,
         name: &str,
     ) -> Result<NativeBackgroundDetail, NativeBackgroundInspectionError> {
-        let value: Value = serde_json::from_slice(bytes).map_err(|_| corrupt())?;
-        let (depth, nodes) = json_shape(&value)?;
-        if depth > MAX_BACKGROUND_JSON_DEPTH || nodes > MAX_BACKGROUND_JSON_NODES {
-            return Err(corrupt());
-        }
-        drop(value);
+        validate_json_shape(bytes)?;
         let record: StoredBackgroundRecord =
             serde_json::from_slice(bytes).map_err(|_| corrupt())?;
         validate_record(record, workspace, name)
     }
 
-    fn json_shape(root: &Value) -> Result<(usize, usize), NativeBackgroundInspectionError> {
-        let mut stack = vec![(root, 1_usize)];
-        let mut nodes = 0_usize;
-        let mut maximum_depth = 0_usize;
-        while let Some((value, depth)) = stack.pop() {
-            nodes = nodes.checked_add(1).ok_or_else(corrupt)?;
-            maximum_depth = maximum_depth.max(depth);
-            if nodes > MAX_BACKGROUND_JSON_NODES || depth > MAX_BACKGROUND_JSON_DEPTH {
-                return Ok((maximum_depth, nodes));
-            }
-            match value {
-                Value::Array(values) => {
-                    for child in values {
-                        stack.push((child, depth + 1));
-                    }
-                }
-                Value::Object(values) => {
-                    for child in values.values() {
-                        stack.push((child, depth + 1));
-                    }
-                }
-                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
-            }
+    fn validate_json_shape(bytes: &[u8]) -> Result<(), NativeBackgroundInspectionError> {
+        let context = JsonShapeContext {
+            nodes: std::cell::Cell::new(0),
+        };
+        let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+        JsonShapeSeed {
+            context: &context,
+            depth: 1,
         }
-        Ok((maximum_depth, nodes))
+        .deserialize(&mut deserializer)
+        .map_err(|_| corrupt())?;
+        deserializer.end().map_err(|_| corrupt())
+    }
+
+    struct JsonShapeContext {
+        nodes: std::cell::Cell<usize>,
+    }
+
+    impl JsonShapeContext {
+        fn consume_node<E: serde::de::Error>(&self, depth: usize) -> Result<(), E> {
+            let Some(nodes) = self.nodes.get().checked_add(1) else {
+                return Err(E::custom("background JSON node limit exceeded"));
+            };
+            if nodes > MAX_BACKGROUND_JSON_NODES || depth > MAX_BACKGROUND_JSON_DEPTH {
+                return Err(E::custom("background JSON shape limit exceeded"));
+            }
+            self.nodes.set(nodes);
+            Ok(())
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    struct JsonShapeSeed<'a> {
+        context: &'a JsonShapeContext,
+        depth: usize,
+    }
+
+    impl<'de> DeserializeSeed<'de> for JsonShapeSeed<'_> {
+        type Value = ();
+
+        fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            self.context.consume_node(self.depth)?;
+            deserializer.deserialize_any(JsonShapeVisitor { seed: self })
+        }
+    }
+
+    struct JsonShapeVisitor<'a> {
+        seed: JsonShapeSeed<'a>,
+    }
+
+    impl<'de> Visitor<'de> for JsonShapeVisitor<'_> {
+        type Value = ();
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a bounded JSON value")
+        }
+
+        fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
+            Ok(())
+        }
+
+        fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E> {
+            Ok(())
+        }
+
+        fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E> {
+            Ok(())
+        }
+
+        fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
+            Ok(())
+        }
+
+        fn visit_str<E>(self, _: &str) -> Result<Self::Value, E> {
+            Ok(())
+        }
+
+        fn visit_borrowed_str<E>(self, _: &'de str) -> Result<Self::Value, E> {
+            Ok(())
+        }
+
+        fn visit_string<E>(self, _: String) -> Result<Self::Value, E> {
+            Ok(())
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E> {
+            Ok(())
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E> {
+            Ok(())
+        }
+
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            self.seed.deserialize(deserializer)
+        }
+
+        fn visit_seq<A>(self, mut values: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let child = JsonShapeSeed {
+                context: self.seed.context,
+                depth: self.seed.depth + 1,
+            };
+            while values.next_element_seed(child)?.is_some() {}
+            Ok(())
+        }
+
+        fn visit_map<A>(self, mut values: A) -> Result<Self::Value, A::Error>
+        where
+            A: MapAccess<'de>,
+        {
+            let child = JsonShapeSeed {
+                context: self.seed.context,
+                depth: self.seed.depth + 1,
+            };
+            while values.next_key::<IgnoredAny>()?.is_some() {
+                values.next_value_seed(child)?;
+            }
+            Ok(())
+        }
     }
 
     fn validate_record(
@@ -917,12 +1023,39 @@ mod supported {
     }
 
     fn invalid_path(value: &str) -> bool {
-        invalid_string(value, MAX_BACKGROUND_PATH_BYTES)
-            || !Path::new(value).is_absolute()
-            || Path::new(value)
-                .components()
-                .any(|component| component == std::path::Component::ParentDir)
-            || Path::new(value).components().collect::<PathBuf>() != Path::new(value)
+        invalid_string(value, MAX_BACKGROUND_PATH_BYTES) || !is_canonical_absolute_path(value)
+    }
+
+    fn is_canonical_absolute_path(value: &str) -> bool {
+        if !value.starts_with('/') {
+            return false;
+        }
+        if value == "/" {
+            return true;
+        }
+        !value.ends_with('/')
+            && value
+                .split('/')
+                .skip(1)
+                .all(|component| !component.is_empty() && component != "." && component != "..")
+    }
+
+    fn directory_open_flags() -> OFlags {
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NONBLOCK | noatime_flag()
+    }
+
+    fn record_open_flags() -> OFlags {
+        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NONBLOCK | noatime_flag()
+    }
+
+    #[cfg(target_os = "linux")]
+    fn noatime_flag() -> OFlags {
+        OFlags::from_bits_retain(libc::O_NOATIME as _)
+    }
+
+    #[cfg(target_os = "macos")]
+    const fn noatime_flag() -> OFlags {
+        OFlags::empty()
     }
 
     fn invalid_string(value: &str, maximum: usize) -> bool {
@@ -976,6 +1109,25 @@ mod supported {
 
     const fn corrupt() -> NativeBackgroundInspectionError {
         NativeBackgroundInspectionError::new(NativeBackgroundInspectionErrorKind::Corrupt)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::validate_json_shape;
+
+        #[test]
+        fn streaming_shape_validation_accepts_exact_depth_and_rejects_one_excess() {
+            assert!(validate_json_shape(br"[[[0]]]").is_ok());
+            assert!(validate_json_shape(br"[[[[0]]]]").is_err());
+        }
+
+        #[test]
+        fn streaming_shape_validation_accepts_exact_nodes_and_rejects_one_excess() {
+            let exact = format!("[{}]", vec!["0"; 63].join(","));
+            let excess = format!("[{}]", vec!["0"; 64].join(","));
+            assert!(validate_json_shape(exact.as_bytes()).is_ok());
+            assert!(validate_json_shape(excess.as_bytes()).is_err());
+        }
     }
 }
 
