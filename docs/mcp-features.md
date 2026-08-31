@@ -167,7 +167,9 @@ programmatically constructed JSON tens of thousands of levels deep cannot
 recurse through serialization, equality, or destruction.
 Iterative destruction consumes wide containers one child at a time, so its
 auxiliary ownership is proportional to nesting depth rather than container
-width.
+width. The active container iterator lives in a stack slot; ancestor scratch is
+allocated only when traversal descends into a nested container, and no
+recoverable scratch-growth path abandons owned JSON.
 
 An input-required authority result preserves the pinned terminal error payload:
 

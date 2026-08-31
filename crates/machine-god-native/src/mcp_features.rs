@@ -1495,41 +1495,30 @@ fn drop_json_iterative(value: Value) {
         }
     }
 
-    fn push_frame(frames: &mut Vec<Frame>, frame: Frame) {
-        if frames.len() == frames.capacity() {
-            let additional = frames.capacity().max(MAX_MCP_FEATURE_JSON_DEPTH);
-            if frames.try_reserve_exact(additional).is_err() {
-                // Dropping a rejected hostile subtree must never recurse when
-                // the bounded traversal scratch cannot grow.
-                std::mem::forget(frame);
-                return;
-            }
+    fn into_frame(value: Value) -> Option<Frame> {
+        match value {
+            Value::Array(values) => Some(Frame::Array(values.into_iter())),
+            Value::Object(values) => Some(Frame::Object(values.into_values())),
+            _ => None,
         }
-        frames.push(frame);
     }
 
-    let mut frames = Vec::new();
-    let mut current = Some(value);
-    loop {
-        if let Some(value) = current.take() {
-            match value {
-                Value::Array(values) => push_frame(&mut frames, Frame::Array(values.into_iter())),
-                Value::Object(values) => {
-                    push_frame(&mut frames, Frame::Object(values.into_values()));
-                }
-                _ => {}
+    let Some(mut current) = into_frame(value) else {
+        return;
+    };
+    let mut ancestors = Vec::new();
+    'walk: loop {
+        while let Some(child) = current.next() {
+            if let Some(child) = into_frame(child) {
+                ancestors.push(current);
+                current = child;
+                continue 'walk;
             }
         }
-        loop {
-            let Some(frame) = frames.last_mut() else {
-                return;
-            };
-            if let Some(child) = frame.next() {
-                current = Some(child);
-                break;
-            }
-            frames.pop();
-        }
+        let Some(parent) = ancestors.pop() else {
+            return;
+        };
+        current = parent;
     }
 }
 
@@ -1544,7 +1533,7 @@ mod drop_tests {
         let allocations = allocation_counter::measure(|| drop_json_iterative(value));
 
         assert!(
-            allocations.bytes_total < 4 * 1024,
+            allocations.bytes_total == 0,
             "wide iterative drop allocated width-sized scratch: {allocations:?}"
         );
         assert!(
