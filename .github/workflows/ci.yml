@@ -61,7 +61,7 @@ jobs:
 
           reject_hidden_gitlinks "effective Git config"
           if [[ -e .gitmodules || -L .gitmodules ]]; then
-            if [[ ! -f .gitmodules ]]; then
+            if [[ -L .gitmodules || ! -f .gitmodules ]]; then
               echo "::error::.gitmodules must be a regular file"
               exit 1
             fi

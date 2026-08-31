@@ -1,5 +1,9 @@
 from pathlib import Path
+import os
 import re
+import subprocess
+import tempfile
+import textwrap
 import unittest
 
 
@@ -23,6 +27,20 @@ def job(workflow: str, name: str) -> str:
     if match is None:
         raise AssertionError(f"workflow has no {name!r} job")
     return match.group(0)
+
+
+def step_script(workflow: str, name: str) -> str:
+    match = re.search(
+        rf"(?ms)^      - name: {re.escape(name)}\n(?P<body>.*?)"
+        r"(?=^      - (?:name:|uses:)|^  [a-z0-9_-]+:\n|\Z)",
+        workflow,
+    )
+    if match is None:
+        raise AssertionError(f"workflow has no {name!r} step")
+    script = re.search(r"(?ms)^        run: \|\n(?P<body>.*)", match.group("body"))
+    if script is None:
+        raise AssertionError(f"workflow step {name!r} has no block script")
+    return textwrap.dedent(script.group("body"))
 
 
 class CiChangeClassificationTests(unittest.TestCase):
@@ -92,6 +110,35 @@ class CiChangeClassificationTests(unittest.TestCase):
             with self.subTest(output=output):
                 self.assertIn(f"            {output}:\n", classifier)
                 self.assertIn(f"              - '{path}'\n", classifier)
+
+    def test_gitlink_guard_behaviorally_rejects_gitmodules_symlinks(self) -> None:
+        environment = os.environ.copy()
+        environment["GIT_CONFIG_GLOBAL"] = os.devnull
+        environment["GIT_CONFIG_NOSYSTEM"] = "1"
+        for workflow in (self.ci, self.benchmark):
+            with self.subTest(workflow=workflow.splitlines()[0]):
+                with tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    target = root / "gitmodules-target"
+                    target.write_text(
+                        '[submodule "fixture"]\n\tpath = fixture\n',
+                        encoding="utf-8",
+                    )
+                    (root / ".gitmodules").symlink_to(target.name)
+                    result = subprocess.run(
+                        [
+                            "bash",
+                            "-c",
+                            step_script(workflow, "Require visible submodule changes"),
+                        ],
+                        cwd=root,
+                        env=environment,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(".gitmodules must be a regular file", result.stdout)
 
     def test_route_defaults_every_non_docs_only_case_to_full(self) -> None:
         for workflow in (self.ci, self.benchmark):
