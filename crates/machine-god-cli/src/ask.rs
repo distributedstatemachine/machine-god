@@ -2560,7 +2560,7 @@ mod production {
                 assert_eq!(
                     status.code(),
                     Some(expected_exit),
-                    "blocked output mode {mode}"
+                    "partial registration mode {mode}"
                 );
             }
         }
@@ -2611,7 +2611,11 @@ mod production {
                 }
                 let status = child.wait_for_exit(Duration::from_secs(10));
 
-                assert_eq!(status.code(), Some(expected_exit));
+                assert_eq!(
+                    status.code(),
+                    Some(expected_exit),
+                    "blocked output mode {mode}"
+                );
                 assert_eq!(
                     fs::read(&markers.drained).expect("drained marker should exist"),
                     b"terminal-drained"
