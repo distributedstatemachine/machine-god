@@ -10,6 +10,7 @@ mod model;
 mod model_catalog;
 mod permission;
 mod session;
+mod subagent;
 mod tool;
 
 pub use cancel::{CancellationToken, Cancelled};
@@ -36,6 +37,13 @@ pub use permission::{
 };
 pub use session::{
     Prompt, Session, SessionRecord, SessionRevision, SessionStore, Turn, TurnHandle,
+};
+pub use subagent::{
+    MAX_CONCURRENT_SUBAGENTS, MAX_CONCURRENT_SUBAGENTS_PER_PARENT_TURN,
+    MAX_SUBAGENT_ARGUMENT_BYTES, MAX_SUBAGENT_JSON_DEPTH, MAX_SUBAGENT_JSON_NODES,
+    MAX_SUBAGENT_NAME_BYTES, MAX_SUBAGENT_OUTCOME_BYTES, MAX_SUBAGENT_OUTPUT_BYTES,
+    MAX_SUBAGENT_PROMPT_BYTES, SUBAGENT_TOOL_NAME, SubagentAuthority, SubagentAuthorityError,
+    SubagentAuthorityErrorKind, SubagentOutcome, SubagentRequest, SubagentTool,
 };
 pub use tool::{
     PreparedToolAuthorization, PreparedToolCall, Tool, ToolCall, ToolContext, ToolExecution,
