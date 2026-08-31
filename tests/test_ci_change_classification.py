@@ -42,6 +42,15 @@ class CiChangeClassificationTests(unittest.TestCase):
                 self.assertIn("id: paths", classifier)
                 self.assertIn("token: ''", classifier)
                 self.assertEqual(classifier.count("ref: ${{ github.sha }}"), 2)
+                self.assertIn("Require visible submodule changes", classifier)
+                self.assertIn(
+                    "--get-regexp '^submodule\\..*\\.ignore$'", classifier
+                )
+                self.assertIn(
+                    ".gitmodules must not configure submodule ignore policies",
+                    classifier,
+                )
+                self.assertIn(".gitmodules must be valid Git config", classifier)
                 self.assertIn("predicate-quantifier: some-with-excludes", classifier)
                 self.assertIn("fetch-depth: 0", classifier)
                 self.assertIn("timeout-minutes: 5", classifier)

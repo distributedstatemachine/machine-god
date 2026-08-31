@@ -26,6 +26,28 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
           ref: ${{ github.sha }}
+      - name: Require visible submodule changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f .gitmodules ]]; then
+            exit 0
+          fi
+
+          status=0
+          git config --file .gitmodules \
+            --get-regexp '^submodule\..*\.ignore$' >/dev/null || status=$?
+          case "${status}" in
+            0)
+              echo "::error::.gitmodules must not configure submodule ignore policies"
+              exit 1
+              ;;
+            1) ;;
+            *)
+              echo "::error::.gitmodules must be valid Git config"
+              exit 1
+              ;;
+          esac
       - name: Classify changed paths
         id: paths
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
