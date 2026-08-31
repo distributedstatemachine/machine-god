@@ -25,9 +25,9 @@ input; it is not a machine-god product language or runtime dependency.
 - Delivered main: `90197707dd75bee2010d9bbab8223821166a48a8`
 - Main CI: `33347258058` (`GREEN`)
 - Main Benchmark evidence: `33347258029` (`GREEN`)
-- Active branch: `agent/m07-focused-doc-ci-v2`
-- Active phase: `replacing the custom change scanner with bounded path-filter routing`
-- Next gate: `pass focused local checks and three fresh exact-SHA CI-maintenance reviews`
+- Active branch: `agent/m05-mcp-search-tools`
+- Active phase: `reviewing and delivering bounded injected-catalog mcp_search_tools behavior`
+- Next gate: `rebase onto delivered CI maintenance, rerun the exact local gate, then open three fresh product reviews`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
@@ -36,12 +36,13 @@ Bounded top-level help and runtime status ownership is delivered as slice 46.
 Documentation parser maintenance remains a separate non-product task; product
 iterations use the existing bounded repository-policy checker.
 
-Focused documentation CI routing is a bounded non-product maintenance slice.
-It does not increment the delivered-slice count or replace the last
-artifact-producing benchmark evidence. The routing must use an established,
-commit-pinned path filter rather than expand the repository's custom Markdown
-or process tooling. After its exact remote gates pass, work returns to the
-active `mcp_search_tools` product slice.
+Focused documentation CI routing was delivered as bounded non-product
+maintenance at `3aad3d5aa5a15e7f77d8e4b1a236b8cc7a13cee8`. It uses an
+established, commit-pinned path filter over the exact checked-out Git objects,
+fails closed when submodule changes could be hidden, and retains stable CI and
+Benchmark aggregate gates while skipping unrelated heavy jobs. It does not
+increment the delivered-slice count or replace the last product benchmark
+evidence. Work has returned to the active `mcp_search_tools` product slice.
 
 ## Architecture ownership
 
