@@ -2434,14 +2434,7 @@ mod production {
                 serve_output(work_receiver, &acknowledgement_sender, &mut output);
                 worker.join().expect("child worker should join");
             });
-            let guardian = controller
-                .worker
-                .take()
-                .expect("child signal guardian should still be owned");
-            guardian
-                .join()
-                .expect("child signal guardian should exit the process");
-            panic!("child signal guardian returned without exiting the process");
+            wait_for_child_guardian_exit(controller);
         }
 
         impl From<AskSignal> for AskCommandOutcome {
@@ -2469,6 +2462,17 @@ mod production {
                 );
                 std::thread::sleep(Duration::from_millis(10));
             }
+        }
+
+        fn wait_for_child_guardian_exit(mut controller: AskSignalController) -> ! {
+            let guardian = controller
+                .worker
+                .take()
+                .expect("child signal guardian should still be owned");
+            guardian
+                .join()
+                .expect("child signal guardian should exit the process");
+            panic!("child signal guardian returned without exiting the process");
         }
 
         #[test]
