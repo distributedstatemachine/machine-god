@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33426575748` (`GREEN`)
 - Main Benchmark evidence: `33426575586` (`GREEN`)
 - Active branch: `agent/m05-subagent`
-- Active phase: `scoping the bounded built-in subagent tool`
-- Next gate: `freeze child authority, lifecycle, concurrency, and result bounds`
+- Active phase: `implementing the bounded foreground one-off subagent tool`
+- Next gate: `focused core, testkit, host, cancellation, and resource checks`
 <!-- canonical-live-status:end -->
 
 The two recorded Actions runs succeeded for the exact delivered-main commit,
@@ -44,11 +44,13 @@ Benchmark aggregate gates while skipping unrelated heavy jobs. It does not
 increment the delivered-slice count or replace the last product benchmark
 evidence.
 
-The built-in `subagent` tool is the next product slice. Its child-engine
-authority, inherited context, tool and permission visibility, concurrency,
-cancellation, result, and lifecycle boundaries must be frozen against the
-pinned upstream behavior before implementation. Broader ACP, background/team
-coordination, and extension slash-command ownership remain separate slices.
+The built-in `subagent` tool is the active product slice. It retains the pinned
+one-off create-shaped input but runs one foreground child through explicitly
+injected provider-neutral authority. It has fixed global/per-parent admission,
+same-poll cancellation precedence, bounded untrusted final text, and no parent
+transcript, grant, dynamic-tool, or recursive-subagent inheritance. Persistent
+handles, inspect/message/relationship/configuration/lifecycle management, ACP,
+background/team coordination, and extension slash commands remain separate.
 
 ## Architecture ownership
 

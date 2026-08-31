@@ -4,7 +4,11 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use machine_god_core::{BoxFuture, CancellationToken, Engine, NetworkTarget, SessionStore};
+use machine_god_core::{
+    BoxFuture, CancellationToken, Engine, NetworkTarget, SessionStore, SubagentAuthority,
+    SubagentAuthorityError, SubagentAuthorityErrorKind, SubagentOutcome, SubagentRequest,
+    SubagentTool,
+};
 
 use crate::workspace::{WorkspaceRoot, WorkspaceTools};
 use crate::{
@@ -316,7 +320,7 @@ impl NativeReferenceHost {
         let session_store = open_session_store(session_root)?;
         let memory = open_memory_tool(&session_store)?;
 
-        Self::finish_composition_with_mcp_catalog(
+        Self::finish_composition_with_extensions(
             loaded_config,
             transport,
             network_target,
@@ -329,6 +333,7 @@ impl NativeReferenceHost {
             None,
             mcp_catalog,
             Arc::new(EmptyMcpFeatureAuthority),
+            Arc::new(EmptySubagentAuthority),
         )
     }
 
@@ -364,7 +369,7 @@ impl NativeReferenceHost {
         let session_store = open_session_store(session_root)?;
         let memory = open_memory_tool(&session_store)?;
 
-        Self::finish_composition_with_mcp_catalog(
+        Self::finish_composition_with_extensions(
             loaded_config,
             transport,
             network_target,
@@ -377,6 +382,99 @@ impl NativeReferenceHost {
             None,
             mcp_catalog,
             mcp_feature_authority,
+            Arc::new(EmptySubagentAuthority),
+        )
+    }
+
+    /// Composes a reference host with an explicitly injected foreground
+    /// subagent authority and inert MCP authorities.
+    ///
+    /// The injected allocation is retained exactly and remains inert during
+    /// construction. It owns each bounded child run and must not detach work
+    /// or expose authority through its result.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed stage-only error if a configured selection is unsupported
+    /// or any ordinary reference-host component cannot be constructed safely.
+    #[allow(clippy::too_many_arguments)]
+    pub fn compose_with_ai_gateway_transport_and_subagent(
+        loaded_config: LoadedNativeConfig,
+        transport: Arc<dyn AiGatewayTransport>,
+        network_target: NetworkTarget,
+        workspace_root: &Path,
+        session_root: &Path,
+        permission_prompter: Arc<dyn PermissionPrompter>,
+        question_prompter: Arc<dyn QuestionPrompter>,
+        web_search_deadline: Arc<dyn WebSearchDeadline>,
+        subagent_authority: Arc<dyn SubagentAuthority>,
+    ) -> Result<Self, NativeReferenceHostBuildError> {
+        validate_selections(&loaded_config)?;
+        let workspace_tools = open_workspace_tools(workspace_root)?;
+        let session_store = open_session_store(session_root)?;
+        let memory = open_memory_tool(&session_store)?;
+
+        Self::finish_composition_with_extensions(
+            loaded_config,
+            transport,
+            network_target,
+            web_search_deadline,
+            workspace_tools,
+            session_store,
+            memory,
+            permission_prompter,
+            question_prompter,
+            None,
+            Arc::new(EmptyMcpToolCatalog),
+            Arc::new(EmptyMcpFeatureAuthority),
+            subagent_authority,
+        )
+    }
+
+    /// Composes a reference host with explicitly injected MCP and foreground
+    /// subagent authorities.
+    ///
+    /// Every injected allocation is retained exactly and remains inert during
+    /// construction. The subagent authority owns one bounded foreground child
+    /// run and must not detach work or expose authority through its result.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed stage-only error if a configured selection is unsupported
+    /// or any ordinary reference-host component cannot be constructed safely.
+    #[allow(clippy::too_many_arguments)]
+    pub fn compose_with_ai_gateway_transport_and_mcp_and_subagent(
+        loaded_config: LoadedNativeConfig,
+        transport: Arc<dyn AiGatewayTransport>,
+        network_target: NetworkTarget,
+        workspace_root: &Path,
+        session_root: &Path,
+        permission_prompter: Arc<dyn PermissionPrompter>,
+        question_prompter: Arc<dyn QuestionPrompter>,
+        web_search_deadline: Arc<dyn WebSearchDeadline>,
+        mcp_catalog: Arc<dyn McpToolCatalog>,
+        mcp_feature_authority: Arc<dyn McpFeatureAuthority>,
+        subagent_authority: Arc<dyn SubagentAuthority>,
+    ) -> Result<Self, NativeReferenceHostBuildError> {
+        validate_selections(&loaded_config)?;
+        let workspace_tools = open_workspace_tools(workspace_root)?;
+        let session_store = open_session_store(session_root)?;
+        let memory = open_memory_tool(&session_store)?;
+
+        Self::finish_composition_with_extensions(
+            loaded_config,
+            transport,
+            network_target,
+            web_search_deadline,
+            workspace_tools,
+            session_store,
+            memory,
+            permission_prompter,
+            question_prompter,
+            None,
+            mcp_catalog,
+            mcp_feature_authority,
+            subagent_authority,
         )
     }
 
@@ -474,7 +572,7 @@ impl NativeReferenceHost {
         question_prompter: Arc<dyn QuestionPrompter>,
         credential_source: Option<AiGatewayCredentialSource>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
-        Self::finish_composition_with_mcp_catalog(
+        Self::finish_composition_with_extensions(
             loaded_config,
             transport,
             network_target,
@@ -487,11 +585,12 @@ impl NativeReferenceHost {
             credential_source,
             Arc::new(EmptyMcpToolCatalog),
             Arc::new(EmptyMcpFeatureAuthority),
+            Arc::new(EmptySubagentAuthority),
         )
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn finish_composition_with_mcp_catalog(
+    fn finish_composition_with_extensions(
         loaded_config: LoadedNativeConfig,
         transport: Arc<dyn AiGatewayTransport>,
         network_target: NetworkTarget,
@@ -504,6 +603,7 @@ impl NativeReferenceHost {
         credential_source: Option<AiGatewayCredentialSource>,
         mcp_catalog: Arc<dyn McpToolCatalog>,
         mcp_feature_authority: Arc<dyn McpFeatureAuthority>,
+        subagent_authority: Arc<dyn SubagentAuthority>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         let model = loaded_config.config().model().to_owned();
         let terminal =
@@ -561,10 +661,7 @@ impl NativeReferenceHost {
         let permission_handler = AskPermissionHandler::shared_prompter(permission_prompter);
         let ask_user_question = AskUserQuestionTool::shared_prompter(question_prompter);
         let session_store = Arc::new(session_store);
-        let engine_session_store: Arc<dyn SessionStore> =
-            Arc::clone(&session_store) as Arc<dyn SessionStore>;
-        let read_tool_result =
-            ReadToolResultTool::shared_session_store(Arc::clone(&engine_session_store));
+        let (engine_session_store, read_tool_result) = session_store_components(&session_store);
         let engine = Engine::builder()
             .provider(provider)
             .shared_session_store(engine_session_store)
@@ -589,6 +686,7 @@ impl NativeReferenceHost {
             .tool(workspace_tools.rename_file)
             .tool(workspace_tools.semantic_search)
             .tool(workspace_tools.skill)
+            .tool(SubagentTool::shared_authority(subagent_authority))
             .tool(terminal)
             .tool(vision)
             .tool(web_fetch)
@@ -619,6 +717,14 @@ fn compose_web_fetch() -> Result<WebFetchTool, NativeReferenceHostBuildError> {
     })
 }
 
+fn session_store_components(
+    session_store: &Arc<FileSessionStore>,
+) -> (Arc<dyn SessionStore>, ReadToolResultTool) {
+    let erased = Arc::clone(session_store) as Arc<dyn SessionStore>;
+    let reader = ReadToolResultTool::shared_session_store(Arc::clone(&erased));
+    (erased, reader)
+}
+
 #[derive(Clone, Copy, Debug)]
 struct EmptyMcpToolCatalog;
 
@@ -644,6 +750,23 @@ impl McpFeatureAuthority for EmptyMcpFeatureAuthority {
         _cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<McpFeaturePayload, McpFeatureError>> {
         Box::pin(async { Err(McpFeatureError::new(McpFeatureErrorKind::Unavailable)) })
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct EmptySubagentAuthority;
+
+impl SubagentAuthority for EmptySubagentAuthority {
+    fn run(
+        &self,
+        _request: SubagentRequest,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<SubagentOutcome, SubagentAuthorityError>> {
+        Box::pin(async {
+            Err(SubagentAuthorityError::new(
+                SubagentAuthorityErrorKind::Unavailable,
+            ))
+        })
     }
 }
 

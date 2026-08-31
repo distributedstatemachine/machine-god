@@ -49,6 +49,8 @@ The root, transport, and MCP composition paths are:
 | `PreparedNativeRoots` | Injected transport | Consumes retained roots, skips credential discovery, and uses the supplied canonical target |
 | Existing explicit roots | Injected transport and `Arc<dyn McpToolCatalog>` | Uses the custom transport path and advertises search plus exact next-round selection over the injected admitted MCP metadata and attached executable source; feature access remains an inert empty authority |
 | Existing explicit roots | Injected transport, `Arc<dyn McpToolCatalog>`, and `Arc<dyn McpFeatureAuthority>` | Adds bounded exact server-qualified resource, prompt, and completion access through the separately injected read-only authority |
+| Existing explicit roots | Injected transport and `Arc<dyn SubagentAuthority>` | Adds bounded foreground one-off delegation while MCP authorities remain inert |
+| Existing explicit roots | Injected transport plus MCP catalog, MCP feature, and subagent authorities | Retains all three exact extensibility allocations without probing or polling them |
 
 Every ordinary path injects an inert unavailable `SubagentAuthority`. A
 separate explicit subagent injection seam accepts the same root/transport

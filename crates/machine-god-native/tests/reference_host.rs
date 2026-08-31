@@ -20,7 +20,8 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use futures_util::{StreamExt, stream};
 use machine_god_core::{
     BoxFuture, CancellationToken, Capability, ContentBlock, FilesystemAccess, NetworkTarget,
-    PermissionRequest, Role, SessionId, SessionIncarnationId, StopReason, Tool, ToolContext,
+    PermissionRequest, Role, SUBAGENT_TOOL_NAME, SessionId, SessionIncarnationId, StopReason,
+    SubagentAuthority, SubagentAuthorityError, SubagentOutcome, SubagentRequest, Tool, ToolContext,
     ToolError, ToolName, ToolOutput, ToolSpec, TurnEvent,
 };
 use machine_god_native::{
@@ -531,6 +532,22 @@ fn mcp_features_round_responses() -> [Vec<u8>; 2] {
     [tool_call, finish]
 }
 
+fn subagent_round_responses() -> [Vec<u8>; 2] {
+    let tool_call = concat!(
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"subagent-call\",\"toolName\":\"subagent\",\"input\":{\"command\":{\"create\":{\"name\":\"reviewer\",\"mode\":\"one_off\",\"prompt\":\"Review the current change\"}}}}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    let finish = concat!(
+        "data: {\"type\":\"text-delta\",\"id\":\"answer\",\"delta\":\"Subagent complete\"}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    [tool_call, finish]
+}
+
 #[derive(Clone, Copy, Debug)]
 struct ReadyMcpCatalog;
 
@@ -590,6 +607,35 @@ impl McpFeatureAuthority for ReadyMcpFeatureAuthority {
                 }]
             }))
         })
+    }
+}
+
+#[derive(Clone, Default)]
+struct ReadySubagentAuthority {
+    calls: Arc<AtomicU64>,
+    requests: Arc<Mutex<Vec<SubagentRequest>>>,
+}
+
+impl ReadySubagentAuthority {
+    fn call_count(&self) -> u64 {
+        self.calls.load(Ordering::SeqCst)
+    }
+
+    fn requests(&self) -> Vec<SubagentRequest> {
+        self.requests.lock().unwrap().clone()
+    }
+}
+
+impl SubagentAuthority for ReadySubagentAuthority {
+    fn run(
+        &self,
+        request: SubagentRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<SubagentOutcome, SubagentAuthorityError>> {
+        assert!(!cancellation.is_cancelled());
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.requests.lock().unwrap().push(request);
+        Box::pin(async { SubagentOutcome::new("No correctness findings in the bounded review") })
     }
 }
 
@@ -680,6 +726,27 @@ fn compose_with_transport_and_mcp(
         never_deadline(),
         catalog,
         feature_authority,
+    )
+}
+
+fn compose_with_transport_and_subagent(
+    loaded: LoadedNativeConfig,
+    transport: ScriptedTransport,
+    workspace: &Path,
+    sessions: &Path,
+    prompter: AllowingPrompter,
+    subagent_authority: Arc<dyn SubagentAuthority>,
+) -> Result<NativeReferenceHost, NativeReferenceHostBuildError> {
+    NativeReferenceHost::compose_with_ai_gateway_transport_and_subagent(
+        loaded,
+        Arc::new(transport),
+        production_gateway_target(),
+        workspace,
+        sessions,
+        Arc::new(prompter),
+        inert_question_prompter(),
+        never_deadline(),
+        subagent_authority,
     )
 }
 
@@ -780,7 +847,7 @@ fn directory_is_empty(path: &Path) -> bool {
 
 fn assert_exact_native_tool_catalog(request: &Value) {
     let tools = request["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 25);
+    assert_eq!(tools.len(), 26);
     assert_eq!(
         tools
             .iter()
@@ -807,6 +874,7 @@ fn assert_exact_native_tool_catalog(request: &Value) {
             RENAME_FILE_TOOL_NAME,
             SEMANTIC_SEARCH_TOOL_NAME,
             SKILL_TOOL_NAME,
+            SUBAGENT_TOOL_NAME,
             TERMINAL_TOOL_NAME,
             VISION_TOOL_NAME,
             WEB_FETCH_TOOL_NAME,
@@ -1309,6 +1377,51 @@ fn composed_mcp_features_uses_exact_injected_authority_without_permission() {
                     "mimeType": "text/plain",
                     "template": true
                 }]
+            },
+            "is_error": false
+        })
+    );
+}
+
+#[test]
+fn composed_subagent_uses_exact_injected_authority_without_outer_permission() {
+    let temporary = TemporaryDirectory::new("subagent");
+    let (workspace, sessions) = roots(temporary.path());
+    let transport = ScriptedTransport::new("SUBAGENT_FACTORY_SENTINEL", subagent_round_responses());
+    let prompter = AllowingPrompter::default();
+    let authority = Arc::new(ReadySubagentAuthority::default());
+    let host = compose_with_transport_and_subagent(
+        built_in_config(),
+        transport.clone(),
+        &workspace,
+        &sessions,
+        prompter.clone(),
+        authority.clone(),
+    )
+    .unwrap();
+
+    assert_eq!(authority.call_count(), 0);
+    let (_, events) = collect_turn(&host, "reference-host-subagent");
+    assert_completed(&events);
+    assert!(prompter.requests().is_empty());
+    assert_eq!(authority.call_count(), 1);
+    let requests = authority.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].name(), "reviewer");
+    assert_eq!(requests[0].prompt(), "Review the current change");
+    assert_eq!(requests[0].context().call_id.as_str(), "subagent-call");
+
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    assert_exact_native_tool_catalog(&body(&requests[0]));
+    assert_eq!(
+        decoded_tool_output(&body(&requests[1]), 2),
+        json!({
+            "content": {
+                "status": "completed",
+                "trust": "untrusted_child",
+                "authority": "none",
+                "text": "No correctness findings in the bounded review"
             },
             "is_error": false
         })

@@ -64,9 +64,12 @@ ambient provider fallback. Construction and preparation do not invoke the
 authority. Calling execution creates no authority work until the returned
 future is first polled.
 
-The authority receives an owned request containing only the validated name and
-prompt plus a cancellation token. It must start a fresh one-off child context
-for that request. In particular, core does not pass or inherit:
+The authority receives an owned request containing the validated name and
+prompt plus the parent call's structural `ToolContext` identities and a
+cancellation token. The bounded IDs support per-parent admission, isolation,
+and attribution; they are not session, transcript, store, engine, or permission
+handles. The authority must start a fresh one-off child context for that
+request. In particular, core does not pass or inherit:
 
 - the parent transcript, system-visible conversation history, or stored child
   history;
@@ -78,11 +81,11 @@ for that request. In particular, core does not pass or inherit:
 - model, reasoning-effort, permission-mode, or notification overrides.
 
 The request does not contain a parent session handle, store handle, engine
-handle, tool context, or child identifier that could be used to recover those
-values. Any provider or execution facility held privately by a concrete
-authority is separately trusted host configuration, not inherited parent
-authority. The authority must not claim that such private configuration came
-from the parent turn.
+handle, transcript snapshot, permission object, or child identifier that could
+be used to recover those values. Any provider or execution facility held
+privately by a concrete authority is separately trusted host configuration,
+not inherited parent authority. The authority must not claim that such private
+configuration came from the parent turn.
 
 Public authority, request, and error debug forms are structural. They must not
 include the prompt, child text, parent data, provider diagnostics, credentials,
