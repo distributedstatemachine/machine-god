@@ -11,12 +11,14 @@ use crate::{
     AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayHttpTransport,
     AiGatewayProvider, AiGatewayTransport, AiGatewayVisionTransport, AiGatewayWebSearchTransport,
     AskPermissionHandler, AskUserQuestionTool, FileSessionStore, LoadedNativeConfig,
-    McpSearchToolsTool, McpSelectTool, McpToolCatalog, McpToolCatalogError, McpToolCatalogSnapshot,
-    MemoryTool, NativeCredentialSourceKind, NativeProviderKind, NativeSessionLifecycle,
-    NativeTransportKind, PermissionMode, PermissionPrompter, PreparedNativeRoots, QuestionPrompter,
-    ReadToolResultTool, TerminalTool, VisionDeadline, VisionLimits, VisionTool,
-    VisionTransportError, VisionTransportErrorKind, WebFetchTool, WebSearchDeadline,
-    WebSearchLimits, WebSearchTool, WebSearchTransportErrorKind, discover_ai_gateway_credential,
+    McpFeatureAuthority, McpFeatureError, McpFeatureErrorKind, McpFeaturePayload,
+    McpFeatureRequest, McpFeaturesTool, McpSearchToolsTool, McpSelectTool, McpToolCatalog,
+    McpToolCatalogError, McpToolCatalogSnapshot, MemoryTool, NativeCredentialSourceKind,
+    NativeProviderKind, NativeSessionLifecycle, NativeTransportKind, PermissionMode,
+    PermissionPrompter, PreparedNativeRoots, QuestionPrompter, ReadToolResultTool, TerminalTool,
+    VisionDeadline, VisionLimits, VisionTool, VisionTransportError, VisionTransportErrorKind,
+    WebFetchTool, WebSearchDeadline, WebSearchLimits, WebSearchTool,
+    WebSearchTransportErrorKind, discover_ai_gateway_credential,
 };
 
 /// Stable stage at which native reference-host composition failed.
@@ -326,6 +328,55 @@ impl NativeReferenceHost {
             question_prompter,
             None,
             mcp_catalog,
+            Arc::new(EmptyMcpFeatureAuthority),
+        )
+    }
+
+    /// Composes a reference host with explicitly injected MCP tool and feature
+    /// authorities.
+    ///
+    /// This extends the catalog-only seam with bounded read-only resource,
+    /// prompt, and completion access. Both injected allocations are retained
+    /// exactly and remain inert during construction. The feature authority is
+    /// responsible for exact server/identity admission and live revalidation
+    /// before it returns untrusted data; it grants no core permission or other
+    /// product authority.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed stage-only error if a configured selection is unsupported
+    /// or any ordinary reference-host component cannot be constructed safely.
+    #[allow(clippy::too_many_arguments)]
+    pub fn compose_with_ai_gateway_transport_and_mcp(
+        loaded_config: LoadedNativeConfig,
+        transport: Arc<dyn AiGatewayTransport>,
+        network_target: NetworkTarget,
+        workspace_root: &Path,
+        session_root: &Path,
+        permission_prompter: Arc<dyn PermissionPrompter>,
+        question_prompter: Arc<dyn QuestionPrompter>,
+        web_search_deadline: Arc<dyn WebSearchDeadline>,
+        mcp_catalog: Arc<dyn McpToolCatalog>,
+        mcp_feature_authority: Arc<dyn McpFeatureAuthority>,
+    ) -> Result<Self, NativeReferenceHostBuildError> {
+        validate_selections(&loaded_config)?;
+        let workspace_tools = open_workspace_tools(workspace_root)?;
+        let session_store = open_session_store(session_root)?;
+        let memory = open_memory_tool(&session_store)?;
+
+        Self::finish_composition_with_mcp_catalog(
+            loaded_config,
+            transport,
+            network_target,
+            web_search_deadline,
+            workspace_tools,
+            session_store,
+            memory,
+            permission_prompter,
+            question_prompter,
+            None,
+            mcp_catalog,
+            mcp_feature_authority,
         )
     }
 
@@ -435,6 +486,7 @@ impl NativeReferenceHost {
             question_prompter,
             credential_source,
             Arc::new(EmptyMcpToolCatalog),
+            Arc::new(EmptyMcpFeatureAuthority),
         )
     }
 
@@ -451,6 +503,7 @@ impl NativeReferenceHost {
         question_prompter: Arc<dyn QuestionPrompter>,
         credential_source: Option<AiGatewayCredentialSource>,
         mcp_catalog: Arc<dyn McpToolCatalog>,
+        mcp_feature_authority: Arc<dyn McpFeatureAuthority>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         let model = loaded_config.config().model().to_owned();
         let terminal =
@@ -528,6 +581,7 @@ impl NativeReferenceHost {
             .tool(workspace_tools.list_files)
             .tool(McpSearchToolsTool::shared_catalog(Arc::clone(&mcp_catalog)))
             .tool(McpSelectTool::shared_catalog(mcp_catalog))
+            .tool(McpFeaturesTool::shared_authority(mcp_feature_authority))
             .tool(memory)
             .tool(workspace_tools.open_file)
             .tool(workspace_tools.read_file)
@@ -576,6 +630,21 @@ impl McpToolCatalog for EmptyMcpToolCatalog {
         Box::pin(async {
             Ok(McpToolCatalogSnapshot::new(Vec::new())
                 .expect("the empty MCP tool catalog is always valid"))
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct EmptyMcpFeatureAuthority;
+
+impl McpFeatureAuthority for EmptyMcpFeatureAuthority {
+    fn call(
+        &self,
+        _request: McpFeatureRequest,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<McpFeaturePayload, McpFeatureError>> {
+        Box::pin(async {
+            Err(McpFeatureError::new(McpFeatureErrorKind::Unavailable))
         })
     }
 }

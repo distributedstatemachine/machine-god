@@ -29,8 +29,8 @@ use machine_god_native::{
     AiGatewayTransportRequest, COPY_FILE_TOOL_NAME, CREATE_FOLDER_TOOL_NAME, ConfigOrigin,
     DELETE_FILE_TOOL_NAME, EDIT_FILE_TOOL_NAME, FILE_INFO_TOOL_NAME, GLOB_FILES_TOOL_NAME,
     GREP_FILES_TOOL_NAME, INSTALL_SKILL_TOOL_NAME, LIST_FILES_TOOL_NAME, LoadedNativeConfig,
-    MCP_SEARCH_TOOLS_TOOL_NAME, MCP_SELECT_TOOL_NAME, MEMORY_TOOL_NAME, McpToolCatalog,
-    McpToolCatalogError, McpToolCatalogSnapshot, McpToolMetadata, NativeEnvironment,
+    MCP_FEATURES_TOOL_NAME, MCP_SEARCH_TOOLS_TOOL_NAME, MCP_SELECT_TOOL_NAME, MEMORY_TOOL_NAME,
+    McpToolCatalog, McpToolCatalogError, McpToolCatalogSnapshot, McpToolMetadata, NativeEnvironment,
     NativeReferenceHost, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
     OPEN_FILE_TOOL_NAME, PermissionPromptDecision, PermissionPromptError, PermissionPrompter,
     QuestionPromptAnswers, QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest,
@@ -704,7 +704,7 @@ fn directory_is_empty(path: &Path) -> bool {
 
 fn assert_exact_native_tool_catalog(request: &Value) {
     let tools = request["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 24);
+    assert_eq!(tools.len(), 25);
     assert_eq!(
         tools
             .iter()
@@ -721,6 +721,7 @@ fn assert_exact_native_tool_catalog(request: &Value) {
             GREP_FILES_TOOL_NAME,
             INSTALL_SKILL_TOOL_NAME,
             LIST_FILES_TOOL_NAME,
+            MCP_FEATURES_TOOL_NAME,
             MCP_SEARCH_TOOLS_TOOL_NAME,
             MCP_SELECT_TOOL_NAME,
             MEMORY_TOOL_NAME,

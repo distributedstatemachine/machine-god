@@ -42,6 +42,7 @@ mod glob_files;
 mod grep_files;
 mod install_skill;
 mod list_files;
+mod mcp_features;
 mod mcp_search_tools;
 mod mcp_select_tool;
 mod memory;
@@ -263,6 +264,10 @@ pub use install_skill::{
 pub use list_files::{
     LIST_FILES_TOOL_NAME, ListFilesTool, ListFilesToolOpenError, ListFilesToolOpenErrorKind,
     MAX_LIST_FILES_ENTRIES, MAX_LIST_FILES_PATH_BYTES, MAX_LIST_FILES_TOTAL_NAME_BYTES,
+};
+pub use mcp_features::{
+    MCP_FEATURES_TOOL_NAME, McpFeatureAction, McpFeatureAuthority, McpFeatureError,
+    McpFeatureErrorKind, McpFeaturePayload, McpFeatureRequest, McpFeaturesTool,
 };
 pub use mcp_search_tools::{
     MAX_MCP_SEARCH_DESCRIPTION_BYTES, MAX_MCP_SEARCH_MATCH_STEPS, MAX_MCP_SEARCH_QUERY_BYTES,

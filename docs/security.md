@@ -56,6 +56,15 @@ UTF-8 `SKILL.md`, stages private copies, and atomically publishes one absent
 destination. Installed bytes remain untrusted and grant no execution or
 additional authority.
 
+The injected `mcp_features` tool uses no ambient MCP, process, network, or
+filesystem authority. Its sole host-interaction interface is an explicitly
+injected read-only `McpFeatureAuthority`. That trusted boundary must admit the
+exact server-qualified action and identity before any underlying effect and
+revalidate the same live authority generation before returning. Resource and
+prompt content is marked untrusted with `authority: "none"`; it cannot grant a
+permission, authorize a later tool, or override user instructions. Production
+MCP transports and authentication remain deferred.
+
 Authority-bearing capabilities pass through the injected permission handler.
 An error is never approval. The native ask adapter maps prompt failure to a
 fixed denial-class error and does not cache grants.
@@ -226,8 +235,9 @@ The following remain explicit future work rather than implied guarantees:
 - hardened non-Unix workspace and store construction;
 - a true process sandbox or stronger descendant containment;
 - private/authenticated web destinations and redirect authorization; and
-- remote or packaged skill discovery/installation and extension, MCP, ACP,
-  subagent, and SDK authority models.
+- remote or packaged skill discovery/installation, production MCP transport
+  and authentication, extension/ACP/subagent authority, and SDK authority
+  models.
 
 Each subsystem contract is normative for its exact platform, effect, limits,
 and race semantics.

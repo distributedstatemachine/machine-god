@@ -39,7 +39,7 @@ schema origin/version.
 
 ## Constructors
 
-There are five composition paths:
+There are six composition paths:
 
 | Roots | Transport | Constructor behavior |
 | --- | --- | --- |
@@ -47,7 +47,8 @@ There are five composition paths:
 | `PreparedNativeRoots` | Production AI Gateway HTTP | Consumes the already retained identity-checked roots without reopening their selected paths, then discovers credentials and constructs the transport |
 | Existing explicit workspace and session paths | Injected `Arc<dyn AiGatewayTransport>` | Opens and retains both roots, skips credential discovery, and uses the supplied canonical `NetworkTarget` |
 | `PreparedNativeRoots` | Injected transport | Consumes retained roots, skips credential discovery, and uses the supplied canonical target |
-| Existing explicit roots | Injected transport and `Arc<dyn McpToolCatalog>` | Uses the custom transport path and advertises search plus exact next-round selection over the injected admitted MCP metadata and attached executable source |
+| Existing explicit roots | Injected transport and `Arc<dyn McpToolCatalog>` | Uses the custom transport path and advertises search plus exact next-round selection over the injected admitted MCP metadata and attached executable source; feature access remains an inert empty authority |
+| Existing explicit roots | Injected transport, `Arc<dyn McpToolCatalog>`, and `Arc<dyn McpFeatureAuthority>` | Adds bounded exact server-qualified resource, prompt, and completion access through the separately injected read-only authority |
 
 The explicit-path constructors require the trusted host to choose disjoint
 workspace and session roots; those constructors do not prove identity or
@@ -74,6 +75,9 @@ Every successful host contains:
   explicitly injected catalog allocation; ordinary constructors share an empty
   ready catalog, while the MCP-aware constructor accepts host-admitted metadata
   and attached executable registrations;
+- one `McpFeaturesTool` over an inert, explicitly injected read-only feature
+  authority; ordinary and catalog-only constructors share an empty authority,
+  while the complete MCP seam retains the caller's exact allocation;
 - default provider-neutral `EngineLimits` and the default no-op event sink;
 - one explicit `Arc<dyn WebSearchDeadline>` for bounded web-search timing,
   reused through a fixed category-only adapter for vision's capacity wait,
@@ -91,7 +95,7 @@ reports no discovered credential source.
 
 ## Tool catalog
 
-The engine registers exactly twenty-four tools in deterministic alphabetical
+The engine registers exactly twenty-five tools in deterministic alphabetical
 order:
 
 1. `ask_user_question`
@@ -104,20 +108,21 @@ order:
 8. `grep_files`
 9. `install_skill`
 10. `list_files`
-11. `mcp_search_tools`
-12. `mcp_select_tool`
-13. `memory`
-14. `open_file`
-15. `read_file`
-16. `read_tool_result`
-17. `rename_file`
-18. `semantic_search`
-19. `skill`
-20. `terminal`
-21. `vision`
-22. `web_fetch`
-23. `web_search`
-24. `write_file`
+11. `mcp_features`
+12. `mcp_search_tools`
+13. `mcp_select_tool`
+14. `memory`
+15. `open_file`
+16. `read_file`
+17. `read_tool_result`
+18. `rename_file`
+19. `semantic_search`
+20. `skill`
+21. `terminal`
+22. `vision`
+23. `web_fetch`
+24. `web_search`
+25. `write_file`
 
 Seventeen tools use one retained workspace identity. `glob_files` consumes the
 original descriptor. The other sixteen workspace tools receive
@@ -125,8 +130,12 @@ identity-preserving clones: `copy_file`, `create_folder`, `delete_file`,
 `edit_file`, `file_info`, `grep_files`, `install_skill`, `list_files`,
 `open_file`, `read_file`, `rename_file`, `semantic_search`, `skill`, `terminal`, `vision`, and
 `write_file`.
-`ask_user_question`, `mcp_search_tools`, `mcp_select_tool`, and `web_fetch` are
-rootless.
+`ask_user_question`, `mcp_features`, `mcp_search_tools`, `mcp_select_tool`, and
+`web_fetch` are rootless.
+`mcp_features` uses only its explicitly injected read-only authority. It stamps
+all returned resource and prompt data as untrusted and grants no permission or
+execution authority; its complete boundary is defined by the
+[MCP features contract](mcp-features.md).
 `mcp_search_tools` acquires only one bounded point-in-time metadata snapshot
 when executed, never during composition; its injected boundary and intentional
 protocol/discovery deferrals are defined by the
@@ -177,7 +186,8 @@ later authority:
   transport;
 - construct `web_fetch`, including its bounded native resolver/entropy setup.
 
-Composition does not poll or snapshot the MCP catalog.
+Composition does not poll or snapshot the MCP catalog and does not call the MCP
+feature authority.
 
 Later provider, web-fetch, web-search, and vision polling requires a compatible
 host-owned Tokio runtime with the capabilities stated by their contracts. The
@@ -224,7 +234,8 @@ component detail.
 The reference host does not itself supply a full interactive CLI/TUI,
 persistent grant policy, alternate provider or credential selections, remote
 or packaged skill discovery and installation, production MCP transport,
-authentication, and protocol-driven catalog discovery, ACP or subagent
+authentication, protocol-driven catalog discovery, caching, subscriptions,
+ACP or subagent
 infrastructure, encrypted storage, non-Unix root hardening, durable image
 attachments, prompt images, or CLI image flags. Those additions must preserve
 the crate ownership and authority boundaries in
