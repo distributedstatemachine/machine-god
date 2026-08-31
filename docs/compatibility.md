@@ -117,7 +117,7 @@ Package: `libfx`. Source: `sdk/package.json` and the mapped modules.
 
 | Package entrypoint | Conditions and modules |
 | --- | --- |
-| `.` | `browser` → `./browser.js`, `default` → `./browser.js`, `node` → `./node.js` |
+| `.` | `node` → `./node.js`, `browser` → `./browser.js`, `default` → `./browser.js` |
 | `./node` | `default` → `./node.js` |
 | `./browser` | `default` → `./browser.js` |
 | `./wasm` | `default` → `./fx-sdk.js` |

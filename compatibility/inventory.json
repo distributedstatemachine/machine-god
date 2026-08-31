@@ -19,7 +19,7 @@
       "surface": "E2E owners"
     }
   ],
-  "schema_version": 1,
+  "schema_version": 2,
   "surfaces": {
     "builtin_tool_names": {
       "count": 26,
@@ -505,29 +505,47 @@
       "entrypoints": [
         {
           "specifier": ".",
-          "targets": {
-            "browser": "./browser.js",
-            "default": "./browser.js",
-            "node": "./node.js"
-          }
+          "targets": [
+            {
+              "condition": "node",
+              "module": "./node.js"
+            },
+            {
+              "condition": "browser",
+              "module": "./browser.js"
+            },
+            {
+              "condition": "default",
+              "module": "./browser.js"
+            }
+          ]
         },
         {
           "specifier": "./node",
-          "targets": {
-            "default": "./node.js"
-          }
+          "targets": [
+            {
+              "condition": "default",
+              "module": "./node.js"
+            }
+          ]
         },
         {
           "specifier": "./browser",
-          "targets": {
-            "default": "./browser.js"
-          }
+          "targets": [
+            {
+              "condition": "default",
+              "module": "./browser.js"
+            }
+          ]
         },
         {
           "specifier": "./wasm",
-          "targets": {
-            "default": "./fx-sdk.js"
-          }
+          "targets": [
+            {
+              "condition": "default",
+              "module": "./fx-sdk.js"
+            }
+          ]
         }
       ],
       "milestone": "06",

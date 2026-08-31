@@ -1124,19 +1124,26 @@ def package_entrypoints(package: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(specifier, str):
             raise InventoryError("SDK export specifier must be text")
         require_pattern(specifier, PACKAGE_SPECIFIER, "SDK package specifier")
-        targets: dict[str, str]
+        targets: list[dict[str, str]]
         if isinstance(target, str):
-            targets = {"default": target}
+            targets = [{"condition": "default", "module": target}]
         elif isinstance(target, dict) and all(
             isinstance(condition, str) and isinstance(value, str)
             for condition, value in target.items()
         ):
-            targets = dict(target)
+            targets = [
+                {"condition": condition, "module": value}
+                for condition, value in target.items()
+            ]
         else:
             raise InventoryError(f"unsupported SDK exports map for {specifier}")
-        for condition, value in targets.items():
-            require_pattern(condition, PACKAGE_CONDITION, "SDK export condition")
-            require_pattern(value, PACKAGE_TARGET, "SDK module target")
+        for ordered_target in targets:
+            require_pattern(
+                ordered_target["condition"], PACKAGE_CONDITION, "SDK export condition"
+            )
+            require_pattern(
+                ordered_target["module"], PACKAGE_TARGET, "SDK module target"
+            )
         entrypoints.append({"specifier": specifier, "targets": targets})
     return entrypoints
 
@@ -1158,7 +1165,8 @@ def extract_sdk_exports(source: GitSnapshot) -> dict[str, Any]:
         )
     known_modules = {module["path"] for module in modules}
     for entrypoint in package_entrypoints(package):
-        for target in entrypoint["targets"].values():
+        for ordered_target in entrypoint["targets"]:
+            target = ordered_target["module"]
             module_path = f"sdk/{target.removeprefix('./')}"
             if module_path not in known_modules:
                 raise InventoryError(f"SDK entrypoint targets unparsed module {target}")
@@ -1336,7 +1344,7 @@ def build_inventory(
     source_files, source_set = source_provenance(source)
     surface_policy = policy["surfaces"]
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "upstream": {
             "repository": lock["repository"],
             "commit": lock["commit"],
@@ -1525,8 +1533,8 @@ def render_docs(inventory: dict[str, Any]) -> str:
     )
     for entrypoint in surfaces["sdk_exports"]["entrypoints"]:
         targets = ", ".join(
-            f"{markdown_code(condition)} → {markdown_code(target)}"
-            for condition, target in entrypoint["targets"].items()
+            f"{markdown_code(target['condition'])} → {markdown_code(target['module'])}"
+            for target in entrypoint["targets"]
         )
         lines.append(f"| {markdown_code(entrypoint['specifier'])} | {targets} |")
     lines.extend(["", "| Module | Named exports |", "| --- | --- |"])
@@ -1620,8 +1628,8 @@ def render_inventory_artifact(path: Path) -> str:
         raise InventoryError(
             f"cannot read compatibility inventory {path}: {error}"
         ) from error
-    if not isinstance(inventory, dict) or inventory.get("schema_version") != 1:
-        raise InventoryError("compatibility inventory must use schema_version 1")
+    if not isinstance(inventory, dict) or inventory.get("schema_version") != 2:
+        raise InventoryError("compatibility inventory must use schema_version 2")
     try:
         return render_docs(inventory)
     except (KeyError, TypeError) as error:

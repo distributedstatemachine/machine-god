@@ -101,6 +101,24 @@ class CompatibilityGeneratorTest(unittest.TestCase):
         )
         self.assertIn("fixture.lock", GENERATOR.render_docs(inventory))
 
+    def test_sdk_condition_order_survives_inventory_round_trip(self) -> None:
+        inventory_text = GENERATOR.json_document(self.fixture_inventory())
+        inventory = self.temporary / "inventory.json"
+        inventory.write_text(inventory_text, encoding="utf-8")
+
+        round_tripped = json.loads(inventory_text)
+        root_entrypoint = round_tripped["surfaces"]["sdk_exports"]["entrypoints"][0]
+        self.assertEqual(
+            [target["condition"] for target in root_entrypoint["targets"]],
+            ["node", "browser", "default"],
+        )
+        rendered = GENERATOR.render_inventory_artifact(inventory)
+        self.assertIn(
+            "| `.` | `node` → `./node.js`, `browser` → `./browser.js`, "
+            "`default` → `./browser.js` |",
+            rendered,
+        )
+
     def test_canonical_commit_bytes_ignore_crlf_worktree_and_head_races(self) -> None:
         baseline = self.fixture_inventory()
         source = self.source()
