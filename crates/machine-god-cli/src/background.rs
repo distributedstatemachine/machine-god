@@ -248,7 +248,11 @@ where
     let mut json = false;
     let mut target = None;
     for argument in arguments {
-        let argument = argument.as_ref().to_str().ok_or(())?;
+        let argument = argument.as_ref();
+        if argument.len() > MAX_BACKGROUND_ID_BYTES {
+            return Err(());
+        }
+        let argument = argument.to_str().ok_or(())?;
         if argument == "--json" {
             if json {
                 return Err(());
@@ -261,10 +265,7 @@ where
         }
         target = Some(if argument == "last" {
             BackgroundTarget::Last
-        } else if !argument.is_empty()
-            && argument.len() <= MAX_BACKGROUND_ID_BYTES
-            && argument.bytes().all(|byte| byte.is_ascii_digit())
-        {
+        } else if !argument.is_empty() && argument.bytes().all(|byte| byte.is_ascii_digit()) {
             BackgroundTarget::Id(argument.parse().map_err(|_| ())?)
         } else {
             return Err(());

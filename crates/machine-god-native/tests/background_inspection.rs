@@ -445,6 +445,30 @@ fn selected_record_with_access_granting_acl_is_corrupt() {
     assert_eq!(error.kind(), NativeBackgroundInspectionErrorKind::Corrupt);
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn selected_record_accepts_a_protective_deny_delete_acl() {
+    let fixture = Fixture::new();
+    let record = fixture.write_record(17, 20, "command");
+    let status = Command::new("/bin/chmod")
+        .args(["+a", "everyone deny delete"])
+        .arg(&record)
+        .status()
+        .expect("macOS chmod executable is available");
+    assert!(
+        status.success(),
+        "failed to install protective record ACL fixture: {status}"
+    );
+    let _acl_cleanup = MacAclCleanup(record);
+
+    let result = block_on(inspect_native_background(
+        fixture.environment(),
+        fixture.workspace.clone(),
+        NativeBackgroundQuery::Id(17),
+    ));
+    assert!(result.is_ok());
+}
+
 #[test]
 fn record_paths_reject_noncanonical_lexical_spellings() {
     let fixture = Fixture::new();
