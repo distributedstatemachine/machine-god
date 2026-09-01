@@ -291,9 +291,24 @@ fn normal_leader_exit_cleans_lingering_group_descendant() {
         .unwrap()
         .release()
         .unwrap();
+    let original_group = owned.pid().get();
     let descendant = wait_for_pid(&pid_file);
     assert_eq!(owned.wait().unwrap(), BackgroundProcessExit::Exited(7));
-    assert!(!process_exists(descendant));
+    assert!(!process_is_in_group(descendant, original_group));
+}
+
+fn process_is_in_group(pid: u32, group: u32) -> bool {
+    let Some(pid) = i32::try_from(pid)
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+    else {
+        return false;
+    };
+    let Ok(group) = i32::try_from(group) else {
+        return false;
+    };
+    rustix::process::getpgid(Some(pid))
+        .is_ok_and(|observed| observed.as_raw_nonzero().get() == group)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

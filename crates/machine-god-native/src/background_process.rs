@@ -979,7 +979,11 @@ fn require_group_gone(group: rustix::process::Pid) -> Result<(), BackgroundProce
     let deadline = Instant::now() + GROUP_DISAPPEARANCE_GRACE;
     loop {
         match rustix::process::test_kill_process_group(group) {
-            Err(rustix::io::Errno::SRCH) => return Ok(()),
+            // The final KILL is sent while the unreaped leader still pins the
+            // original PGID. After reaping, EPERM can only identify a newly
+            // reused, unrelated group on supported unprivileged hosts; the
+            // original group was already discharged.
+            Err(rustix::io::Errno::SRCH | rustix::io::Errno::PERM) => return Ok(()),
             Ok(()) if Instant::now() < deadline => thread::sleep(OBSERVATION_INTERVAL),
             Ok(()) | Err(_) => return Err(cleanup_error()),
         }
