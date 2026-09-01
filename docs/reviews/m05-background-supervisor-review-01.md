@@ -151,6 +151,24 @@ admission, waker destruction outside shared locks, and Linux test compilation.
 The complete replacement gate and all three fresh review tracks restart after
 every finding is remediated.
 
+## Rejected product candidate: cycle 08
+
+Three fresh review tracks inspected exact candidate
+`4048ae9d47a1b88e87e8208c4d6d49137a68d9d7` after the complete exact local gate
+passed. All three tracks rejected the candidate.
+
+| Track | Decisive findings |
+| --- | --- |
+| Correctness, API, and compatibility | The complete pre-KILL membership snapshot was discarded; a credential-changed survivor could escape its group before post-KILL capture and then be treated as gone, allowing false successful cleanup. |
+| Lifecycle, platform, and effects | Same-poll cancellation could mask a preparation cleanup failure, and the post-readiness cancellation path dropped its prepared process while ignoring fallible abort. |
+| Performance and resources | Child reap probing and release-frame writes remained synchronously unbounded after helper readiness; captured-member backoff could repeatedly traverse a 32,768-member vanished prefix. |
+
+Cycle 08 remains rejection evidence. Replacement requires stronger cleanup
+errors to survive cancellation arbitration, bounded cancellation-aware probe
+and frame I/O, retained identity-bound pre-KILL membership across group escape,
+and amortized captured-member observation. The complete replacement gate and
+all three fresh review tracks restart after every finding is remediated.
+
 ## Rejected product candidate: cycle 06
 
 Three fresh review tracks inspected exact candidate

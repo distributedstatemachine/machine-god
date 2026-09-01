@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33455374424` (`GREEN`)
 - Main Benchmark evidence: `33455374426` (`GREEN`)
 - Active branch: `agent/m05-background-supervisor`
-- Active phase: `remediating rejected background-supervisor review cycle 07`
-- Next gate: `integrate cycle-07 fixes, then run the complete exact-1.94.1 replacement gate`
+- Active phase: `remediating rejected background-supervisor review cycle 08`
+- Next gate: `integrate cycle-08 fixes, then run the complete exact-1.94.1 replacement gate`
 <!-- canonical-live-status:end -->
 
 The recorded Actions runs succeeded for the exact delivered-main commit, and
@@ -75,7 +75,11 @@ amplified allocations. Exact replacement `6325c3b` passed the complete gate;
 cycle 07 correctness was green, while lifecycle and performance found that
 pre-submission cancellation could be misreported as capacity, helper readiness
 was not interruptible, lingering cleanup repeated whole-system scans, and
-environment uniqueness validation was quadratic. Those findings are being
+environment uniqueness validation was quadratic. Exact replacement `4048ae9`
+passed the complete gate, but cycle 08 found that cancellation could still
+mask failed cleanup, post-readiness probe and frame I/O remained blocking,
+captured group members could escape before observation, and member polling
+could repeatedly traverse a vanished prefix. Those findings are being
 remediated; no rejected result is acceptance evidence.
 Persistent handles, message/relationship/configuration/lifecycle management,
 ACP, teams, and extension slash commands remain separate. Documentation parser
