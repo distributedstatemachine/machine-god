@@ -1276,6 +1276,22 @@ mod tests {
         }
     }
 
+    fn lock_eventually(file: &OwnedFd) {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            match lock_exclusive(file) {
+                Ok(()) => return,
+                Err(error)
+                    if error.kind() == BackgroundStoreErrorKind::Unavailable
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::yield_now();
+                }
+                Err(error) => panic!("acquire background test lock: {error:?}"),
+            }
+        }
+    }
+
     #[test]
     fn writer_round_trips_through_strict_reader_and_replaces_atomically() {
         let fixture = Fixture::new();
@@ -1698,7 +1714,7 @@ mod tests {
             .join(CONTROL_DIRECTORY);
         let descriptor = rustix::fs::open(&control, directory_open_flags(), Mode::empty()).unwrap();
         let holder = open_private_lock(descriptor.as_fd(), ALLOCATOR_LOCK_NAME).unwrap();
-        lock_exclusive(&holder).unwrap();
+        lock_eventually(&holder);
 
         let state_root = fixture.state_root.clone();
         let workspace = fixture.workspace.clone();
@@ -1737,7 +1753,7 @@ mod tests {
         reserve_thread.join().unwrap();
 
         let record_holder = open_private_lock(descriptor.as_fd(), &record_lock_name(1)).unwrap();
-        lock_exclusive(&record_holder).unwrap();
+        lock_eventually(&record_holder);
         let (sender, receiver) = mpsc::channel();
         let contender = Arc::clone(&store);
         let record_thread = std::thread::spawn(move || {
