@@ -10,6 +10,8 @@ use std::collections::BTreeSet;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::collections::HashSet;
 use std::error::Error;
+#[cfg(target_os = "linux")]
+use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::fmt;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -46,7 +48,7 @@ use std::process::ChildStderr;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicI32, AtomicU32};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -135,6 +137,14 @@ static GROUP_SNAPSHOT_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
 static GROUP_SNAPSHOT_TEST_LOCK: Mutex<()> = Mutex::new(());
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 static CANCEL_RELEASE_BEFORE_COMMIT_PID: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static RELEASE_FAILURE_WITH_CANCELLATION_PID: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static TRY_WAIT_FAILURE_PID: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static TRY_WAIT_FAILURES: AtomicUsize = AtomicUsize::new(0);
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static TRY_WAIT_ERRNO: AtomicI32 = AtomicI32::new(0);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_HELPER_PATH_BYTES: usize = 4 * 1024;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -282,11 +292,13 @@ fn run_child_reaper(reaper: &ChildReaper) {
         }
         let mut index = 0;
         while index < children.len() {
-            match children[index].child.try_wait() {
-                Ok(Some(_)) => {
+            match try_wait_child(&mut children[index].child) {
+                Ok(Some(_)) | Err(ChildTryWaitError::LostAuthority) => {
                     children.swap_remove(index);
                 }
-                Ok(None) | Err(_) => index += 1,
+                Ok(None) | Err(ChildTryWaitError::Interrupted | ChildTryWaitError::Operation) => {
+                    index += 1;
+                }
             }
         }
         let _ = reaper
@@ -939,7 +951,7 @@ fn require_exclusive_child_reaping_with(
         if cancellation.is_cancelled() {
             break;
         }
-        match child.as_mut().ok_or_else(invariant_error)?.try_wait() {
+        match try_wait_child(child.as_mut().ok_or_else(invariant_error)?) {
             Ok(Some(status)) if status.success() => {
                 drop(child.take());
                 drop(permit.take());
@@ -949,7 +961,15 @@ fn require_exclusive_child_reaping_with(
                 OBSERVATION_INITIAL_INTERVAL,
                 deadline.saturating_duration_since(Instant::now()),
             )),
-            Ok(Some(_) | None) | Err(_) => break,
+            Err(ChildTryWaitError::Interrupted) if Instant::now() < deadline => {
+                cancellation.park_timeout(OBSERVATION_INITIAL_INTERVAL);
+            }
+            Ok(Some(_) | None)
+            | Err(
+                ChildTryWaitError::Interrupted
+                | ChildTryWaitError::LostAuthority
+                | ChildTryWaitError::Operation,
+            ) => break,
         }
     }
     terminate_and_reap_or_quarantine(&mut child, &mut permit);
@@ -1410,13 +1430,10 @@ fn write_release_frame_bounded(
         cancellation_token: cancellation.clone(),
         cancellation: CancellationParker::new(cancellation),
         deadline: Instant::now() + RELEASE_FRAME_TIMEOUT,
+        failure: None,
     };
     if write_release_frame(&mut output, command, environment).is_err() {
-        return Err(if output.cancellation_token.is_cancelled() {
-            ReleaseWriteFailure::Cancelled
-        } else {
-            ReleaseWriteFailure::Release
-        });
+        return Err(output.observed_failure());
     }
     #[cfg(test)]
     if CANCEL_RELEASE_BEFORE_COMMIT_PID.load(Ordering::Acquire) == pid.get() {
@@ -1429,13 +1446,14 @@ fn write_release_frame_bounded(
             ReleaseWriteFailure::Release
         });
     }
-    std::io::Write::write_all(&mut output, &[RELEASE_COMMIT_BYTE]).map_err(|_| {
-        if output.cancellation_token.is_cancelled() {
-            ReleaseWriteFailure::Cancelled
-        } else {
-            ReleaseWriteFailure::Release
-        }
-    })?;
+    #[cfg(test)]
+    if RELEASE_FAILURE_WITH_CANCELLATION_PID.load(Ordering::Acquire) == pid.get() {
+        output.failure = Some(ReleaseWriteFailure::Release);
+        output.cancellation_token.cancel();
+        return Err(output.observed_failure());
+    }
+    std::io::Write::write_all(&mut output, &[RELEASE_COMMIT_BYTE])
+        .map_err(|_| output.observed_failure())?;
     Ok(())
 }
 
@@ -1462,6 +1480,14 @@ struct BoundedGateWriter<'a> {
     cancellation_token: CancellationToken,
     cancellation: CancellationParker,
     deadline: Instant,
+    failure: Option<ReleaseWriteFailure>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl BoundedGateWriter<'_> {
+    fn observed_failure(&self) -> ReleaseWriteFailure {
+        self.failure.unwrap_or(ReleaseWriteFailure::Release)
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1472,13 +1498,18 @@ impl std::io::Write for BoundedGateWriter<'_> {
                 // `Write::write_all` retries `Interrupted`; use the same fixed
                 // terminal category as the bounded deadline so cancellation
                 // cannot turn into a retry loop.
+                self.failure = Some(ReleaseWriteFailure::Cancelled);
                 return Err(std::io::ErrorKind::TimedOut.into());
             }
             if Instant::now() >= self.deadline {
+                self.failure = Some(ReleaseWriteFailure::Release);
                 return Err(std::io::ErrorKind::TimedOut.into());
             }
             match self.output.write(bytes) {
-                Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
+                Ok(0) => {
+                    self.failure = Some(ReleaseWriteFailure::Release);
+                    return Err(std::io::ErrorKind::WriteZero.into());
+                }
                 Ok(written) => return Ok(written),
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -1487,7 +1518,10 @@ impl std::io::Write for BoundedGateWriter<'_> {
                         self.deadline.saturating_duration_since(Instant::now()),
                     ));
                 }
-                Err(error) => return Err(error),
+                Err(error) => {
+                    self.failure = Some(ReleaseWriteFailure::Release);
+                    return Err(error);
+                }
             }
         }
     }
@@ -1710,7 +1744,39 @@ fn exit_status(status: ExitStatus) -> BackgroundProcessExit {
 enum BoundedReap {
     Reaped(ExitStatus),
     LostAuthority,
+    ObservationFailed,
     TimedOut,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ChildTryWaitError {
+    Interrupted,
+    LostAuthority,
+    Operation,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn try_wait_child(child: &mut Child) -> Result<Option<ExitStatus>, ChildTryWaitError> {
+    #[cfg(test)]
+    if consume_injected_failure(&TRY_WAIT_FAILURE_PID, &TRY_WAIT_FAILURES, child.id()) {
+        let raw = TRY_WAIT_ERRNO.load(Ordering::Acquire);
+        return Err(classify_try_wait_error(&std::io::Error::from_raw_os_error(
+            raw,
+        )));
+    }
+    child
+        .try_wait()
+        .map_err(|error| classify_try_wait_error(&error))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn classify_try_wait_error(error: &std::io::Error) -> ChildTryWaitError {
+    match error.raw_os_error() {
+        Some(libc::EINTR) => ChildTryWaitError::Interrupted,
+        Some(libc::ECHILD) => ChildTryWaitError::LostAuthority,
+        _ => ChildTryWaitError::Operation,
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1720,16 +1786,17 @@ fn poll_child_reap(
 ) -> Result<BoundedReap, BackgroundProcessError> {
     loop {
         let child = child.as_mut().ok_or_else(invariant_error)?;
-        match child.try_wait() {
+        match try_wait_child(child) {
             Ok(Some(status)) => return Ok(BoundedReap::Reaped(status)),
-            Ok(None) if Instant::now() < deadline => {
+            Ok(None) | Err(ChildTryWaitError::Interrupted) if Instant::now() < deadline => {
                 thread::sleep(std::cmp::min(
                     OBSERVATION_INITIAL_INTERVAL,
                     deadline.saturating_duration_since(Instant::now()),
                 ));
             }
-            Ok(None) => return Ok(BoundedReap::TimedOut),
-            Err(_) => return Ok(BoundedReap::LostAuthority),
+            Ok(None) | Err(ChildTryWaitError::Interrupted) => return Ok(BoundedReap::TimedOut),
+            Err(ChildTryWaitError::LostAuthority) => return Ok(BoundedReap::LostAuthority),
+            Err(ChildTryWaitError::Operation) => return Ok(BoundedReap::ObservationFailed),
         }
     }
 }
@@ -1766,7 +1833,7 @@ fn terminate_and_reap_or_quarantine(
         Ok(BoundedReap::Reaped(_) | BoundedReap::LostAuthority) | Err(_) => {
             discharge_reaped_child(child, reap_permit);
         }
-        Ok(BoundedReap::TimedOut) => {
+        Ok(BoundedReap::TimedOut | BoundedReap::ObservationFailed) => {
             let _ = quarantine_owned_child(child, reap_permit);
         }
     }
@@ -1794,6 +1861,12 @@ fn reap_child_bounded(
             failures.record(wait_error());
             discharge_reaped_child(child, reap_permit);
         }
+        Ok(BoundedReap::ObservationFailed) => {
+            failures.record(wait_error());
+            if let Err(error) = quarantine_owned_child(child, reap_permit) {
+                failures.record(error);
+            }
+        }
         Ok(BoundedReap::TimedOut) => {
             if child.as_mut().is_none_or(|child| child.kill().is_err()) {
                 failures.record(cleanup_error());
@@ -1808,6 +1881,12 @@ fn reap_child_bounded(
                 Ok(BoundedReap::LostAuthority) => {
                     failures.record(wait_error());
                     discharge_reaped_child(child, reap_permit);
+                }
+                Ok(BoundedReap::ObservationFailed) => {
+                    failures.record(wait_error());
+                    if let Err(error) = quarantine_owned_child(child, reap_permit) {
+                        failures.record(error);
+                    }
                 }
                 Ok(BoundedReap::TimedOut) => {
                     failures.record(cleanup_error());
@@ -2122,7 +2201,7 @@ fn require_original_group_quiescent(
     );
     #[cfg(target_os = "linux")]
     let mut stat_bytes = Vec::with_capacity(MAX_LINUX_PROC_STAT_BYTES + 1);
-    loop {
+    let captured_resolved = loop {
         match observe_leader(group) {
             Err(LeaderObservationFailure::LostAuthority) => return Err(wait_error()),
             Err(LeaderObservationFailure::Operation(_)) => observed_failure = true,
@@ -2134,21 +2213,31 @@ fn require_original_group_quiescent(
         let captured_poll = captured
             .poll(|member| captured_group_member_exists(authority, member, &mut stat_bytes));
         match captured_poll {
-            Ok(true) => break,
+            Ok(true) => break true,
             Ok(false) => {}
             Err(_) => {
                 observed_failure = true;
                 sleep_through(deadline.saturating_duration_since(Instant::now()));
-                break;
+                break false;
             }
         }
         if Instant::now() >= deadline {
-            break;
+            break false;
         }
         observation.sleep_and_advance();
-    }
+    };
     let members = group_members(authority, group)?;
-    if observed_failure || !only_group_leader_remains(&members, group) {
+    require_group_quiescence_evidence(observed_failure, captured_resolved, &members, group)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn require_group_quiescence_evidence(
+    observed_failure: bool,
+    captured_resolved: bool,
+    members: &[CapturedGroupMember],
+    group: rustix::process::Pid,
+) -> Result<(), BackgroundProcessError> {
+    if observed_failure || !captured_resolved || !only_group_leader_remains(members, group) {
         Err(cleanup_error())
     } else {
         Ok(())
@@ -2247,8 +2336,6 @@ fn group_members(
     _authority: &GroupSnapshotAuthority,
     group: rustix::process::Pid,
 ) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
-    use std::io::Read;
-
     #[cfg(test)]
     record_group_snapshot_for_test(group);
 
@@ -2270,44 +2357,33 @@ fn group_members(
         .stderr(Stdio::null());
     let mut reap_permit = Some(reserve_child_reap_authority().map_err(|_| cleanup_error())?);
     let mut child = Some(command.spawn().map_err(|_| cleanup_error())?);
-    let output = child
+    let mut output = child
         .as_mut()
         .and_then(|child| child.stdout.take())
         .ok_or_else(cleanup_error)?;
-    let reader = thread::Builder::new()
-        .name("machine-god-bg-group-snapshot".to_owned())
-        .spawn(move || {
-            let mut bytes = Vec::with_capacity(MAX_GROUP_SNAPSHOT_BYTES + 1);
-            output
-                .take((MAX_GROUP_SNAPSHOT_BYTES + 1) as u64)
-                .read_to_end(&mut bytes)
-                .map(|_| bytes)
-        });
-    let Ok(reader) = reader else {
+    let Ok(flags) = rustix::fs::fcntl_getfl(&output) else {
         terminate_and_reap_or_quarantine(&mut child, &mut reap_permit);
         return Err(cleanup_error());
     };
+    if rustix::fs::fcntl_setfl(&output, flags | OFlags::NONBLOCK).is_err() {
+        terminate_and_reap_or_quarantine(&mut child, &mut reap_permit);
+        return Err(cleanup_error());
+    }
     let deadline = Instant::now() + GROUP_SNAPSHOT_TIMEOUT;
-    let status = loop {
-        match child.as_mut().ok_or_else(cleanup_error)?.try_wait() {
-            Ok(Some(status)) => {
-                discharge_reaped_child(&mut child, &mut reap_permit);
-                break Ok(status);
-            }
-            Ok(None) if Instant::now() < deadline => {
-                thread::sleep(OBSERVATION_INITIAL_INTERVAL);
-            }
-            Ok(None) | Err(_) => {
-                terminate_and_reap_or_quarantine(&mut child, &mut reap_permit);
-                break Err(cleanup_error());
-            }
-        }
+    let snapshot = collect_group_snapshot_output(&mut output, deadline, || {
+        let state = match try_wait_child(child.as_mut().ok_or(())?) {
+            Ok(Some(status)) => SnapshotChildState::Exited(status.success()),
+            Ok(None) | Err(ChildTryWaitError::Interrupted) => SnapshotChildState::Running,
+            Err(ChildTryWaitError::LostAuthority | ChildTryWaitError::Operation) => return Err(()),
+        };
+        Ok(state)
+    });
+    let Ok(bytes) = snapshot else {
+        terminate_and_reap_or_quarantine(&mut child, &mut reap_permit);
+        return Err(cleanup_error());
     };
-    let bytes = reader
-        .join()
-        .map_err(|_| cleanup_error())?
-        .map_err(|_| cleanup_error())?;
-    if !status?.success() || bytes.len() > MAX_GROUP_SNAPSHOT_BYTES {
+    discharge_reaped_child(&mut child, &mut reap_permit);
+    if bytes.len() > MAX_GROUP_SNAPSHOT_BYTES {
         return Err(cleanup_error());
     }
     #[cfg(test)]
@@ -2327,6 +2403,66 @@ fn group_members(
             })
             .collect()
     })
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SnapshotChildState {
+    Running,
+    Exited(bool),
+}
+
+#[cfg(target_os = "macos")]
+fn collect_group_snapshot_output(
+    reader: &mut impl std::io::Read,
+    deadline: Instant,
+    mut child_state: impl FnMut() -> Result<SnapshotChildState, ()>,
+) -> Result<Vec<u8>, ()> {
+    let mut bytes = Vec::with_capacity(MAX_GROUP_SNAPSHOT_BYTES + 1);
+    let mut buffer = [0_u8; 8 * 1024];
+    let mut eof = false;
+    let mut exited = None;
+    loop {
+        if !eof {
+            match reader.read(&mut buffer) {
+                Ok(0) => eof = true,
+                Ok(read) => {
+                    if bytes.len().saturating_add(read) > MAX_GROUP_SNAPSHOT_BYTES {
+                        return Err(());
+                    }
+                    bytes.extend_from_slice(&buffer[..read]);
+                    continue;
+                }
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::Interrupted
+                        && Instant::now() < deadline =>
+                {
+                    thread::sleep(std::cmp::min(
+                        OBSERVATION_INITIAL_INTERVAL,
+                        deadline.saturating_duration_since(Instant::now()),
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => return Err(()),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(_) => return Err(()),
+            }
+        }
+        if exited.is_none()
+            && let SnapshotChildState::Exited(success) = child_state()?
+        {
+            exited = Some(success);
+        }
+        if eof && exited.is_some() {
+            return exited.filter(|success| *success).map(|_| bytes).ok_or(());
+        }
+        if Instant::now() >= deadline {
+            return Err(());
+        }
+        thread::sleep(std::cmp::min(
+            OBSERVATION_INITIAL_INTERVAL,
+            deadline.saturating_duration_since(Instant::now()),
+        ));
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -2515,7 +2651,8 @@ fn captured_group_member_exists(
 ) -> Result<bool, BackgroundProcessError> {
     use std::io::Read;
 
-    let name = member.pid.as_raw_nonzero().get().to_string();
+    let mut name_bytes = [0_u8; 10];
+    let name = linux_pid_path(member.pid, &mut name_bytes);
     let pid_fd = match rustix::fs::openat(
         authority.proc_root.as_fd(),
         name,
@@ -2546,6 +2683,20 @@ fn captured_group_member_exists(
     }
     let parsed = parse_linux_proc_stat(bytes, member.pid)?;
     Ok(member.identity == Some(parsed.start_time))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_pid_path(pid: rustix::process::Pid, storage: &mut [u8; 10]) -> &OsStr {
+    let mut value = pid.as_raw_nonzero().get().cast_unsigned();
+    let mut cursor = storage.len();
+    loop {
+        cursor -= 1;
+        storage[cursor] = b'0' + u8::try_from(value % 10).expect("one decimal digit");
+        value /= 10;
+        if value == 0 {
+            return OsStr::from_bytes(&storage[cursor..]);
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -3053,6 +3204,183 @@ mod process_regression_tests {
         )
         .expect_err("a duplicate at the exact bound is rejected");
         assert_eq!(error.kind(), BackgroundProcessErrorKind::InvalidRequest);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn release_io_failure_is_not_relabelled_by_simultaneous_cancellation() {
+        let _guard = GROUP_SNAPSHOT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let directory = TestDirectory::new("release-failure-cancel-race");
+        let helper = BackgroundProcessHelper::new(
+            PathBuf::from("/bin/sh"),
+            vec![
+                OsString::from("-c"),
+                OsString::from("printf '\\247' >&2; exec /bin/sleep 30"),
+            ],
+        )
+        .expect("bounded inert helper");
+        let request = BackgroundProcessRequest::open(
+            "true".to_owned(),
+            "workspace".to_owned(),
+            Vec::new(),
+            &directory.0,
+        )
+        .expect("bounded process request");
+        let prepared = SystemBackgroundProcessAdapter::with_helper(helper)
+            .prepare(request)
+            .expect("helper becomes ready");
+        let pid = prepared.pid();
+        RELEASE_FAILURE_WITH_CANCELLATION_PID.store(pid.get(), Ordering::Release);
+        let cancellation = CancellationToken::new();
+
+        let error = prepared
+            .release_cancellable(&cancellation)
+            .expect_err("injected failing release does not publish ownership");
+
+        RELEASE_FAILURE_WITH_CANCELLATION_PID.store(0, Ordering::Release);
+        assert!(cancellation.is_cancelled());
+        assert_eq!(error.kind(), BackgroundProcessErrorKind::Release);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn child_reap_errno_preserves_exact_authority_outcome() {
+        let _guard = GROUP_SNAPSHOT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let spawn = || {
+            let permit = reserve_child_reap_authority().expect("reserve child authority");
+            let child = Command::new("/bin/sleep")
+                .arg("30")
+                .env_clear()
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn retained child");
+            (Some(child), Some(permit))
+        };
+        let finish = |child: &mut Option<Child>, permit: &mut Option<ChildReapPermit>| {
+            child
+                .as_mut()
+                .expect("child authority retained")
+                .kill()
+                .expect("kill retained child");
+            assert!(matches!(
+                poll_child_reap(child, Instant::now() + CHILD_REAP_PROBE_TIMEOUT)
+                    .expect("final reap observation succeeds"),
+                BoundedReap::Reaped(_)
+            ));
+            discharge_reaped_child(child, permit);
+        };
+
+        let (mut child, mut permit) = spawn();
+        let pid = NonZeroU32::new(child.as_ref().expect("child retained").id()).unwrap();
+        inject_failures(&TRY_WAIT_FAILURE_PID, &TRY_WAIT_FAILURES, pid, 1);
+        TRY_WAIT_ERRNO.store(libc::EINTR, Ordering::Release);
+        assert!(matches!(
+            poll_child_reap(&mut child, Instant::now() + Duration::from_millis(20))
+                .expect("interruption has a bounded retry outcome"),
+            BoundedReap::TimedOut
+        ));
+        assert!(child.is_some(), "interruption retained child authority");
+        finish(&mut child, &mut permit);
+
+        let (mut child, mut permit) = spawn();
+        let pid = NonZeroU32::new(child.as_ref().expect("child retained").id()).unwrap();
+        inject_failures(&TRY_WAIT_FAILURE_PID, &TRY_WAIT_FAILURES, pid, 1);
+        TRY_WAIT_ERRNO.store(libc::ECHILD, Ordering::Release);
+        assert!(matches!(
+            poll_child_reap(&mut child, Instant::now() + Duration::from_millis(20))
+                .expect("lost authority is a stable observation"),
+            BoundedReap::LostAuthority
+        ));
+        finish(&mut child, &mut permit);
+
+        let (mut child, mut permit) = spawn();
+        let pid = NonZeroU32::new(child.as_ref().expect("child retained").id()).unwrap();
+        child
+            .as_mut()
+            .expect("child retained before quarantine")
+            .kill()
+            .expect("kill child before injected observation failure");
+        inject_failures(&TRY_WAIT_FAILURE_PID, &TRY_WAIT_FAILURES, pid, 1);
+        TRY_WAIT_ERRNO.store(libc::EIO, Ordering::Release);
+        let mut failures = CleanupFailures::default();
+        reap_child_bounded(&mut child, &mut permit, None, &mut failures);
+        assert_eq!(
+            failures
+                .finish()
+                .expect_err("observation failure remains visible")
+                .kind(),
+            BackgroundProcessErrorKind::Wait
+        );
+        assert!(
+            child.is_none() && permit.is_none(),
+            "operation failure transferred both authorities to quarantine"
+        );
+
+        TRY_WAIT_FAILURE_PID.store(0, Ordering::Release);
+        TRY_WAIT_FAILURES.store(0, Ordering::Release);
+        TRY_WAIT_ERRNO.store(0, Ordering::Release);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn unresolved_escaped_member_rejects_deadline_quiescence() {
+        let leader = rustix::process::Pid::from_raw(71).expect("positive leader");
+        let members = [CapturedGroupMember {
+            pid: leader,
+            identity: Some(1),
+        }];
+        assert_eq!(
+            require_group_quiescence_evidence(false, false, &members, leader)
+                .expect_err("an escaped retained member is unresolved at the deadline")
+                .kind(),
+            BackgroundProcessErrorKind::Cleanup
+        );
+        require_group_quiescence_evidence(false, true, &members, leader)
+            .expect("resolved retained members and the sole leader are quiescent");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn group_snapshot_reader_timeout_has_no_join_dependency() {
+        struct WouldBlockReader;
+
+        impl std::io::Read for WouldBlockReader {
+            fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::ErrorKind::WouldBlock.into())
+            }
+        }
+
+        let started = Instant::now();
+        assert_eq!(
+            collect_group_snapshot_output(
+                &mut WouldBlockReader,
+                Instant::now() + Duration::from_millis(20),
+                || Ok(SnapshotChildState::Exited(true)),
+            ),
+            Err(())
+        );
+        assert!(started.elapsed() < Duration::from_millis(250));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn repeated_pid_path_formatting_allocates_nothing() {
+        let pid = rustix::process::Pid::from_raw(i32::MAX).expect("positive PID");
+        allocation_counter::measure(|| {});
+        let allocations = allocation_counter::measure(|| {
+            let mut storage = [0_u8; 10];
+            for _ in 0..10_000 {
+                std::hint::black_box(linux_pid_path(pid, &mut storage));
+            }
+        });
+        assert_eq!(allocations.count_total, 0, "{allocations:?}");
+        assert_eq!(allocations.bytes_total, 0, "{allocations:?}");
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
