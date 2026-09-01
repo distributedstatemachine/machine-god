@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33455374424` (`GREEN`)
 - Main Benchmark evidence: `33455374426` (`GREEN`)
 - Active branch: `agent/m05-background-supervisor`
-- Active phase: `remediating the rejected background-supervisor cycle 02 candidate`
-- Next gate: `run the complete replacement gate, freeze one SHA, and use three fresh reviewers`
+- Active phase: `running the background-supervisor cycle 02 replacement gate`
+- Next gate: `freeze the exact green SHA and run three fresh adversarial reviews`
 <!-- canonical-live-status:end -->
 
 The recorded Actions runs succeeded for the exact delivered-main commit, and
@@ -41,8 +41,12 @@ tracks. Cycle 02 found incomplete completion debug redaction, unavoidable
 post-rename publication ambiguity missing from the contract, cleanup paths
 that could release ownership before kill and reap, incremental compaction,
 unreclaimed record temporaries, and a reconciliation/compaction disappearance
-race. Those findings are under bounded parallel remediation; no rejected review
-result is reused as acceptance evidence.
+race. Every finding is now remediated: completion debug is payload-free, the
+complete-record sync ambiguity is explicit, cleanup retains ownership through
+all termination and reap attempts, compaction preflights all victims, canonical
+temporaries are reclaimed within the scan bound, and reconciliation is
+allocator-serialized. The complete replacement gate is running; no rejected
+review result is reused as acceptance evidence.
 Persistent handles, message/relationship/configuration/lifecycle management,
 ACP, teams, and extension slash commands remain separate. Documentation parser
 maintenance remains a separate non-product task.

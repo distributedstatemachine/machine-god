@@ -55,3 +55,24 @@ record publication-ambiguity contract, cleanup that retains ownership through
 best-effort group termination and direct-child reap, two-phase compaction,
 bounded temporary reclamation, and race-safe reconciliation. Cycle 02 remains
 historical rejection evidence and cannot contribute to acceptance.
+
+## Cycle 02 remediation
+
+The rejected candidate was replaced by these bounded changes:
+
+- completion outcomes and completion records use fixed categorical debug
+  output, and publication failure explicitly permits only one complete valid
+  running record after a successful rename followed by directory-sync failure;
+- process cleanup accumulates deterministic failures while still attempting
+  group TERM, group KILL, direct-child kill, quiescence, and direct-child reap
+  with the observed leader retained until descendant cleanup is exhausted;
+- compaction retains enough nonblocking, revalidated victim authorities before
+  deleting anything, so insufficient capacity leaves the namespace unchanged;
+- the lifecycle scan reclaims bounded canonical orphan temporaries while
+  preserving contended owners; and
+- reconciliation holds allocator authority, uses existing record locks, and
+  cannot race compaction into false corruption or an orphan lock.
+
+Fault, race, survivor, namespace-equivalence, and bounded-scan regressions cover
+each change. Acceptance still requires the complete replacement gate and three
+entirely fresh zero-finding reviewers on one later exact SHA.
