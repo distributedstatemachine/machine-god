@@ -197,15 +197,10 @@ impl NativeBackgroundSupervisor {
         state_root: &Path,
         limits: NativeBackgroundLimits,
     ) -> Result<Self, NativeBackgroundSupervisorError> {
-        let workspace_path = std::fs::canonicalize(workspace_root).map_err(|_| {
-            NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Workspace)
-        })?;
-        let workspace = workspace_path.to_str().ok_or_else(|| {
-            NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Workspace)
-        })?;
-        let workspace_root = open_directory(workspace_path.as_path()).map_err(|()| {
-            NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Workspace)
-        })?;
+        let (workspace, workspace_root) =
+            retain_canonical_directory(workspace_root).map_err(|()| {
+                NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Workspace)
+            })?;
         let session_store = FileSessionStore::open(state_root).map_err(|_| {
             NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::State)
         })?;
@@ -213,7 +208,7 @@ impl NativeBackgroundSupervisor {
             NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::State)
         })?;
         Self::from_root_descriptors(
-            workspace.to_owned(),
+            workspace,
             workspace_root,
             state_root,
             env::vars_os().collect(),
@@ -900,6 +895,29 @@ fn open_directory(path: &Path) -> Result<OwnedFd, ()> {
     Ok(descriptor)
 }
 
+fn retain_canonical_directory(path: &Path) -> Result<(String, OwnedFd), ()> {
+    retain_canonical_directory_with(path, |_| {})
+}
+
+fn retain_canonical_directory_with(
+    path: &Path,
+    before_open: impl FnOnce(&Path),
+) -> Result<(String, OwnedFd), ()> {
+    let canonical = std::fs::canonicalize(path).map_err(|_| ())?;
+    let workspace = canonical.to_str().ok_or(())?.to_owned();
+    let expected = rustix::fs::stat(&canonical).map_err(|_| ())?;
+    if expected.st_nlink == 0 || !FileType::from_raw_mode(expected.st_mode).is_dir() {
+        return Err(());
+    }
+    before_open(&canonical);
+    let descriptor = open_directory(&canonical)?;
+    let retained = rustix::fs::fstat(descriptor.as_fd()).map_err(|_| ())?;
+    if expected.st_dev != retained.st_dev || expected.st_ino != retained.st_ino {
+        return Err(());
+    }
+    Ok((workspace, descriptor))
+}
+
 fn validate_directory(directory: rustix::fd::BorrowedFd<'_>) -> Result<(), ()> {
     let metadata = rustix::fs::fstat(directory).map_err(|_| ())?;
     if metadata.st_nlink == 0 || !FileType::from_raw_mode(metadata.st_mode).is_dir() {
@@ -935,7 +953,7 @@ const fn start_error(kind: BackgroundStartErrorKind) -> BackgroundStartError {
 mod tests {
     use super::{
         NativeBackgroundLimits, NativeBackgroundSupervisor, SystemBackgroundProcessAdapter,
-        open_directory,
+        open_directory, retain_canonical_directory_with,
     };
     #[cfg(target_os = "macos")]
     use crate::background_process::{BackgroundProcessHelper, run_background_process_helper};
@@ -1111,6 +1129,20 @@ mod tests {
         assert_eq!(detail.exit_code(), Some(0));
         assert_eq!(detail.cwd(), fixture.workspace);
         assert_eq!(fs::read_to_string(marker).expect("marker"), "ready");
+    }
+
+    #[test]
+    fn production_workspace_open_rejects_identity_replacement() {
+        let fixture = Fixture::new();
+        let moved = fixture.root.join("workspace-before-replacement");
+        let replacement = fixture.workspace_path.clone();
+        let retained = retain_canonical_directory_with(&fixture.workspace_path, |_| {
+            fs::rename(&replacement, &moved).expect("move original workspace");
+            fs::create_dir(&replacement).expect("create replacement workspace");
+            private_directory(&replacement);
+        });
+
+        assert!(retained.is_err(), "replacement identity must fail closed");
     }
 
     #[test]
