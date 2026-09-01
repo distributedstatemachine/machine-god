@@ -6,7 +6,9 @@
 )]
 
 #[cfg(unix)]
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::collections::HashSet;
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
