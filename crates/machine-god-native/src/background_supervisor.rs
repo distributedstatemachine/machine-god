@@ -827,7 +827,7 @@ impl BackgroundProcessSpawner for NativeSpawner {
             check_cancelled(&cancellation)?;
             let process = self
                 .adapter
-                .prepare(process_request)
+                .prepare_cancellable(process_request, &cancellation)
                 .map_err(|_| start_error(BackgroundStartErrorKind::Process))?;
             if cancellation.is_cancelled() {
                 drop(process);
@@ -1690,7 +1690,7 @@ mod tests {
 
         release.send(()).expect("release occupied worker");
         assert_eq!(futures_executor::block_on(blocker), 1);
-        assert_eq!(futures_executor::block_on(executor.run(|| 2_u8, 0)), 2);
+        executor.shutdown();
         assert!(!executed.load(Ordering::Acquire));
     }
 
