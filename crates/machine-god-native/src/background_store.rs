@@ -1612,6 +1612,28 @@ mod tests {
         .unwrap();
     }
 
+    fn seed_running_history(
+        store: &BackgroundStore,
+        workspace_root: &Path,
+        control: &Path,
+        count: usize,
+    ) {
+        for id in 1..=count as u64 {
+            let record = running(store, id, 10 + id);
+            let data = workspace_root.join(background_record_name(id));
+            fs::write(&data, serde_json::to_vec(&record).unwrap()).unwrap();
+            fs::set_permissions(&data, fs::Permissions::from_mode(0o600)).unwrap();
+            let lock = control.join(record_lock_name(id));
+            fs::write(&lock, b"").unwrap();
+            fs::set_permissions(&lock, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        fs::write(
+            control.join(ALLOCATOR_COUNTER_NAME),
+            (count as u64).to_be_bytes(),
+        )
+        .unwrap();
+    }
+
     fn count_record_files(root: &Path) -> usize {
         fs::read_dir(root)
             .unwrap()
@@ -1698,17 +1720,20 @@ mod tests {
     }
 
     #[test]
-    fn active_records_consume_total_capacity_without_reader_overflow() {
+    fn running_records_consume_total_capacity_without_reader_overflow() {
         let fixture = Fixture::new();
         let store = fixture.store();
-        let mut active = Vec::new();
-        for index in 0..MAX_RETAINED_BACKGROUND_RECORDS {
-            let lease = store.reserve_id().unwrap();
-            store
-                .publish_initial(&lease, &running(&store, lease.id(), 10 + index as u64))
-                .unwrap();
-            active.push(lease);
-        }
+        let workspace_root = fixture
+            .state_root
+            .join(BACKGROUND_DIRECTORY)
+            .join(background_workspace_name(&fixture.workspace));
+        let control = workspace_root.join(CONTROL_DIRECTORY);
+        seed_running_history(
+            &store,
+            &workspace_root,
+            &control,
+            MAX_RETAINED_BACKGROUND_RECORDS,
+        );
 
         let error = store.reserve_id().unwrap_err();
         assert_eq!(error.kind(), BackgroundStoreErrorKind::ResourceLimit);
@@ -1723,10 +1748,9 @@ mod tests {
         assert!(!list.truncated());
         assert_eq!(list.records().len(), crate::MAX_BACKGROUND_RECORDS);
 
-        drop(active.remove(0));
         let reconciliation = store.reconcile().unwrap();
-        assert_eq!(reconciliation.active, MAX_RETAINED_BACKGROUND_RECORDS - 1);
-        assert_eq!(reconciliation.marked_stale, 1);
+        assert_eq!(reconciliation.active, 0);
+        assert_eq!(reconciliation.marked_stale, MAX_RETAINED_BACKGROUND_RECORDS);
         let continued = store.reserve_id().unwrap();
         assert_eq!(continued.id(), MAX_RETAINED_BACKGROUND_RECORDS as u64 + 1);
     }
