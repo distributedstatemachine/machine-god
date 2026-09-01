@@ -186,7 +186,7 @@ pub enum BackgroundProcessErrorKind {
     Spawn,
     /// The private start gate could not be released.
     Release,
-    /// Release was cancelled before its explicit commit and cleanup succeeded.
+    /// Preparation or release was cancelled before commit and cleanup succeeded.
     Cancelled,
     /// Process observation or reaping failed.
     Wait,
@@ -947,8 +947,10 @@ fn require_exclusive_child_reaping_with(
     let mut child = Some(probe.spawn().map_err(|_| spawn_error())?);
     let deadline = Instant::now() + CHILD_REAP_PROBE_TIMEOUT;
     let mut cancellation = CancellationParker::new(cancellation);
+    let mut cancelled = false;
     loop {
         if cancellation.is_cancelled() {
+            cancelled = true;
             break;
         }
         match try_wait_child(child.as_mut().ok_or_else(invariant_error)?) {
@@ -972,8 +974,12 @@ fn require_exclusive_child_reaping_with(
             ) => break,
         }
     }
-    terminate_and_reap_or_quarantine(&mut child, &mut permit);
-    Err(spawn_error())
+    let cleanup_succeeded = terminate_and_reap_or_quarantine(&mut child, &mut permit);
+    Err(if cancelled && cleanup_succeeded {
+        cancelled_error()
+    } else {
+        spawn_error()
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -1172,7 +1178,7 @@ fn prepare_system(
     cancellation: &CancellationToken,
 ) -> Result<PreparedBackgroundProcess, BackgroundProcessError> {
     if cancellation.is_cancelled() {
-        return Err(spawn_error());
+        return Err(cancelled_error());
     }
     // Recheck immediately before the only effect so a closed or substituted
     // descriptor-backed path fails before spawning.
@@ -1207,7 +1213,7 @@ fn prepare_system(
     command.stdout(Stdio::from(directory));
     command.stderr(Stdio::piped());
     if cancellation.is_cancelled() {
-        return Err(spawn_error());
+        return Err(cancelled_error());
     }
     let mut reap_permit = Some(reserve_child_reap_authority()?);
     let mut child = Some(command.spawn().map_err(|_| spawn_error())?);
@@ -1246,7 +1252,7 @@ fn prepare_system(
         );
         return Err(spawn_error());
     };
-    if await_helper_ready(ready, cancellation).is_err() {
+    if let Err(readiness_error) = await_helper_ready(ready, cancellation) {
         cleanup_child(
             &mut child,
             &mut reap_permit,
@@ -1254,7 +1260,7 @@ fn prepare_system(
             Duration::ZERO,
             &snapshot_authority,
         )?;
-        return Err(spawn_error());
+        return Err(readiness_error);
     }
     // `spawn` has completed the descriptor-backed chdir in the child. Move
     // only the inert release frame out of the retained request.
@@ -1292,35 +1298,51 @@ fn await_helper_ready(
     mut ready: ChildStderr,
     cancellation: &CancellationToken,
 ) -> Result<(), BackgroundProcessError> {
-    use std::io::Read;
-
     let flags = rustix::fs::fcntl_getfl(&ready).map_err(|_| spawn_error())?;
     rustix::fs::fcntl_setfl(&ready, flags | OFlags::NONBLOCK).map_err(|_| spawn_error())?;
-    let deadline = Instant::now() + HELPER_READY_TIMEOUT;
+    await_helper_ready_bounded(
+        &mut ready,
+        cancellation,
+        Instant::now() + HELPER_READY_TIMEOUT,
+    )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn await_helper_ready_bounded(
+    ready: &mut impl std::io::Read,
+    cancellation: &CancellationToken,
+    deadline: Instant,
+) -> Result<(), BackgroundProcessError> {
     let mut cancellation = CancellationParker::new(cancellation);
+    let mut observation = ObservationBackoff::new();
     let mut byte = [0_u8; 1];
     loop {
         if cancellation.is_cancelled() {
+            return Err(cancelled_error());
+        }
+        if Instant::now() >= deadline {
             return Err(spawn_error());
         }
         match ready.read(&mut byte) {
             Ok(1) if byte[0] == HELPER_READY_BYTE => {
                 return if cancellation.is_cancelled() {
-                    Err(spawn_error())
+                    Err(cancelled_error())
                 } else {
                     Ok(())
                 };
             }
             Ok(1 | 0) => return Err(spawn_error()),
             Ok(_) => unreachable!("one-byte ready buffer has bounded reads"),
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
             Err(error)
-                if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+                ) =>
             {
-                cancellation.park_timeout(std::cmp::min(
-                    OBSERVATION_INITIAL_INTERVAL,
-                    deadline.saturating_duration_since(Instant::now()),
-                ));
+                if Instant::now() >= deadline {
+                    return Err(spawn_error());
+                }
+                observation.park_until_and_advance(&mut cancellation, deadline);
             }
             Err(_) => return Err(spawn_error()),
         }
@@ -1825,16 +1847,22 @@ fn quarantine_owned_child(
 fn terminate_and_reap_or_quarantine(
     child: &mut Option<Child>,
     reap_permit: &mut Option<ChildReapPermit>,
-) {
+) -> bool {
     if let Some(child) = child.as_mut() {
         let _ = child.kill();
     }
     match poll_child_reap(child, Instant::now() + CHILD_REAP_PROBE_TIMEOUT) {
-        Ok(BoundedReap::Reaped(_) | BoundedReap::LostAuthority) | Err(_) => {
+        Ok(BoundedReap::Reaped(_)) => {
             discharge_reaped_child(child, reap_permit);
+            true
+        }
+        Ok(BoundedReap::LostAuthority) | Err(_) => {
+            discharge_reaped_child(child, reap_permit);
+            false
         }
         Ok(BoundedReap::TimedOut | BoundedReap::ObservationFailed) => {
             let _ = quarantine_owned_child(child, reap_permit);
+            false
         }
     }
 }
@@ -2963,6 +2991,14 @@ impl ObservationBackoff {
         self.advance();
     }
 
+    fn park_until_and_advance(&mut self, cancellation: &mut CancellationParker, deadline: Instant) {
+        cancellation.park_timeout(std::cmp::min(
+            self.current,
+            deadline.saturating_duration_since(Instant::now()),
+        ));
+        self.advance();
+    }
+
     fn advance(&mut self) {
         self.current = self.current.saturating_mul(2).min(self.maximum);
     }
@@ -2970,12 +3006,13 @@ impl ObservationBackoff {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn sleep_through(duration: Duration) {
-    let deadline = Instant::now() + duration;
-    while Instant::now() < deadline {
-        thread::sleep(std::cmp::min(
-            OBSERVATION_INITIAL_INTERVAL,
-            deadline.saturating_duration_since(Instant::now()),
-        ));
+    sleep_through_with(duration, thread::sleep);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn sleep_through_with(duration: Duration, sleep: impl FnOnce(Duration)) {
+    if !duration.is_zero() {
+        sleep(duration);
     }
 }
 
@@ -2987,6 +3024,11 @@ fn invalid_request() -> BackgroundProcessError {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn spawn_error() -> BackgroundProcessError {
     BackgroundProcessError::new(BackgroundProcessErrorKind::Spawn)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn cancelled_error() -> BackgroundProcessError {
+    BackgroundProcessError::new(BackgroundProcessErrorKind::Cancelled)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -3422,7 +3464,7 @@ mod process_regression_tests {
                 .expect("join cancelled probe")
                 .expect_err("cancelled probe fails")
                 .kind(),
-            BackgroundProcessErrorKind::Spawn
+            BackgroundProcessErrorKind::Cancelled
         );
         assert!(started.elapsed() < Duration::from_millis(250));
         assert_eq!(
@@ -3669,6 +3711,75 @@ mod process_regression_tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
+    fn readiness_error_is_not_relabelled_by_racing_cancellation() {
+        struct ErrorAndCancelReader(CancellationToken);
+
+        impl std::io::Read for ErrorAndCancelReader {
+            fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+                assert!(self.0.cancel());
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            }
+        }
+
+        let cancellation = CancellationToken::new();
+        let mut reader = ErrorAndCancelReader(cancellation.clone());
+        let error = await_helper_ready_bounded(
+            &mut reader,
+            &cancellation,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .expect_err("readiness failure wins at its failing read");
+        assert_eq!(error.kind(), BackgroundProcessErrorKind::Spawn);
+        assert!(cancellation.is_cancelled());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn repeated_interrupted_readiness_is_deadline_bounded_and_backed_off() {
+        struct InterruptedReader {
+            reads: usize,
+        }
+
+        impl std::io::Read for InterruptedReader {
+            fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+                self.reads += 1;
+                Err(std::io::ErrorKind::Interrupted.into())
+            }
+        }
+
+        let cancellation = CancellationToken::new();
+        let mut reader = InterruptedReader { reads: 0 };
+        let timeout = Duration::from_millis(20);
+        let started = Instant::now();
+        let error = await_helper_ready_bounded(&mut reader, &cancellation, started + timeout)
+            .expect_err("an interrupted reader cannot outlive readiness deadline");
+        let elapsed = started.elapsed();
+        assert_eq!(error.kind(), BackgroundProcessErrorKind::Spawn);
+        assert!(elapsed >= timeout, "readiness returned before its deadline");
+        assert!(
+            elapsed < Duration::from_millis(250),
+            "interrupted readiness exceeded its bounded deadline: {elapsed:?}"
+        );
+        assert!(
+            reader.reads <= 8,
+            "interrupted readiness busy-spun for {} reads",
+            reader.reads
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn sleep_through_uses_one_exact_bounded_wait() {
+        let requested = Duration::from_secs(5);
+        let mut waits = Vec::new();
+
+        sleep_through_with(requested, |duration| waits.push(duration));
+
+        assert_eq!(waits, [requested]);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
     fn cancelled_helper_readiness_wakes_and_reaps_before_timeout() {
         let directory = TestDirectory::new("cancel-readiness");
         let helper_pid = directory.0.join("helper.pid");
@@ -3716,7 +3827,7 @@ mod process_regression_tests {
             .join()
             .expect("join cancelled helper preparation")
             .expect_err("cancelled helper preparation fails");
-        assert_eq!(error.kind(), BackgroundProcessErrorKind::Spawn);
+        assert_eq!(error.kind(), BackgroundProcessErrorKind::Cancelled);
         assert!(
             started.elapsed() < Duration::from_millis(750),
             "cancellation retained helper readiness capacity until its timeout"
