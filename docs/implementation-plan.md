@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33455374424` (`GREEN`)
 - Main Benchmark evidence: `33455374426` (`GREEN`)
 - Active branch: `agent/m05-background-supervisor`
-- Active phase: `remediating rejected background-supervisor review cycle 09`
-- Next gate: `integrate cycle-09 fixes, then run the complete exact-1.94.1 replacement gate`
+- Active phase: `remediating rejected background-supervisor review cycle 10`
+- Next gate: `integrate cycle-10 fixes, then run the complete exact-1.94.1 replacement gate`
 <!-- canonical-live-status:end -->
 
 The recorded Actions runs succeeded for the exact delivered-main commit, and
@@ -83,7 +83,13 @@ could repeatedly traverse a vanished prefix. Exact replacement `0ee4150`
 passed the complete gate, but cycle 09 found an EOF release-commit ambiguity,
 prepared-cancellation paths that still ignored fallible abort, unbounded reap
 and worker joins, an uncapped quadratic member union, extra EPERM scans, and a
-per-probe stat allocation. Those findings are being remediated; no rejected
+per-probe stat allocation. Exact replacement `3d07a99` passed the complete
+gate, including its FreeBSD import fix, but cycle 10 found cancellation
+arbitration that could still mask a ready operation or abort failure, release
+write races with inaccurate cancellation classification, incomplete reap errno
+handling, escaped-member and macOS reader timeout gaps, synchronous shutdown
+cleanup, unbounded retainer joins, implicit detached-worker ownership, and
+per-PID decimal allocation. Those findings are being remediated; no rejected
 result is acceptance evidence.
 Persistent handles, message/relationship/configuration/lifecycle management,
 ACP, teams, and extension slash commands remain separate. Documentation parser

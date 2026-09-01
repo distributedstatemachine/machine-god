@@ -151,6 +151,27 @@ admission, waker destruction outside shared locks, and Linux test compilation.
 The complete replacement gate and all three fresh review tracks restart after
 every finding is remediated.
 
+## Rejected product candidate: cycle 10
+
+Three fresh review tracks inspected exact candidate
+`3d07a9905364a3ae7807f082db695602de94b779` after its complete exact Rust and
+Cargo 1.94.1 local gate passed. All three tracks rejected the candidate.
+
+| Track | Decisive findings |
+| --- | --- |
+| Correctness, API, and compatibility | Cancellation-first repolls could mask a simultaneously ready preparation or fallible abort; release write failures could be mislabeled by later cancellation; bounded pool shutdown detached unresolved workers without an explicit retained ownership contract. |
+| Lifecycle, platform, and effects | The cancellation ordering affected all three core selectors, and native child probing treated every `try_wait` error as irrevocably lost wait authority instead of distinguishing interruption and `ECHILD`. |
+| Performance and resources | Escaped captured members could survive the disappearance deadline; macOS snapshot reader join, retainer joins, and shutdown cleanup could block; detached worker ownership was implicit; Linux polling allocated a decimal PID string per probe. |
+
+Cycle 10 remains rejection evidence. Replacement requires started-operation
+failure precedence with cancellation-before-first-poll inertness, failure-site
+release classification, errno-specific reap ownership, complete captured-member
+resolution, independently bounded macOS snapshot collection, asynchronous
+fixed-capacity shutdown cleanup with explicit retained ownership, bounded
+retainer teardown, and allocation-free repeated PID observation. The complete
+replacement gate and all three fresh review tracks restart after every finding
+is remediated.
+
 ## Rejected product candidate: cycle 08
 
 Three fresh review tracks inspected exact candidate
