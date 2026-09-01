@@ -598,19 +598,8 @@ async fn start_polled(
         Err(CommitAwaitError::Operation(error)) => {
             // A persistence failure can mean that atomic installation succeeded
             // but its directory synchronization failed. If cancellation is now
-            // observable, conservatively replace that possibly installed record.
-            // Preserve every other error category: a broken implementation must
-            // not let cancellation hide a stronger invariant or process failure.
-            if error.kind() == BackgroundStartErrorKind::Persistence && cancellation.is_cancelled()
-            {
-                return cleanup_after_possible_publication(
-                    prepared,
-                    lease.as_ref(),
-                    &record,
-                    BackgroundStartError::new(BackgroundStartErrorKind::Cancelled),
-                )
-                .await;
-            }
+            // observable, conservatively replace that possibly installed record,
+            // while preserving the already-observed operation failure.
             if cancellation.is_cancelled() {
                 return cleanup_after_possible_publication(
                     prepared,
@@ -667,7 +656,14 @@ async fn cleanup_after_possible_publication(
 ) -> Result<BackgroundHandle, BackgroundStartError> {
     let (outcome, result) = match prepared.abort() {
         Ok(()) => (BackgroundProcessOutcome::Stopped(None), primary),
-        Err(error) => (BackgroundProcessOutcome::Dead, error),
+        Err(error) => {
+            let result = if primary.kind() == BackgroundStartErrorKind::Persistence {
+                primary
+            } else {
+                error
+            };
+            (BackgroundProcessOutcome::Dead, result)
+        }
     };
     if let Ok(completion) = record.completion(record.started_at_ms(), outcome) {
         let _ = lease.publish_completion(record, &completion).await;
@@ -814,12 +810,8 @@ async fn await_commit_or_cancel<T>(
             operation_polled = true;
         }
         match operation.as_mut().poll(context) {
-            Poll::Ready(Err(error))
-                if cancellation.is_cancelled()
-                    && error.kind() == BackgroundStartErrorKind::Persistence =>
-            {
-                Poll::Ready(Err(CommitAwaitError::CancelledAfterPoll))
-            }
+            // Once publication has been polled, its failure is primary even if
+            // cancellation becomes ready in the same scheduling window.
             Poll::Ready(Err(error)) => Poll::Ready(Err(CommitAwaitError::Operation(error))),
             Poll::Ready(Ok(value)) if cancellation.is_cancelled() => {
                 drop(value);
@@ -1071,12 +1063,17 @@ mod tests {
                 self.observations
                     .completion_publications
                     .fetch_add(1, Ordering::Relaxed);
+                if completion.outcome() == BackgroundProcessOutcome::Dead {
+                    self.observations
+                        .dead_completion_publications
+                        .fetch_add(1, Ordering::Relaxed);
+                }
                 assert_eq!(initial.id(), 7);
                 assert_eq!(completion.updated_at_ms(), 1_234);
-                assert_eq!(
+                assert!(matches!(
                     completion.outcome(),
-                    BackgroundProcessOutcome::Stopped(None)
-                );
+                    BackgroundProcessOutcome::Dead | BackgroundProcessOutcome::Stopped(None)
+                ));
                 Ok(())
             })
         }
@@ -1427,6 +1424,14 @@ mod tests {
         result: ScriptedPublishResult,
         cancellation: CancellationToken,
     ) -> (BackgroundSupervisor, Arc<Observations>) {
+        scripted_publication_fixture_with_abort(result, cancellation, false)
+    }
+
+    fn scripted_publication_fixture_with_abort(
+        result: ScriptedPublishResult,
+        cancellation: CancellationToken,
+        abort_fail: bool,
+    ) -> (BackgroundSupervisor, Arc<Observations>) {
         let observations = Arc::new(Observations::default());
         let supervisor = BackgroundSupervisor::new(
             Arc::new(FakeClock {
@@ -1442,7 +1447,7 @@ mod tests {
                 observations: Arc::clone(&observations),
                 prepare_fail: false,
                 release_fail: false,
-                abort_fail: false,
+                abort_fail,
                 cancel_during_prepare: None,
                 cancel_during_pid: None,
                 cancel_during_release: None,
@@ -1823,11 +1828,11 @@ mod tests {
     }
 
     #[test]
-    fn started_commit_failure_precedes_cancellation_when_both_wake_before_repoll() {
+    fn started_commit_persistence_failure_precedes_cancellation_after_two_wakeups() {
         let cancellation = CancellationToken::new();
         let gate = Arc::new(PollGate::default());
         let operation = Box::pin(GatedFuture::new(
-            Err::<(), BackgroundStartError>(error(BackgroundStartErrorKind::Process)),
+            Err::<(), BackgroundStartError>(error(BackgroundStartErrorKind::Persistence)),
             Arc::clone(&gate),
         ));
         let mut selector = Box::pin(await_commit_or_cancel(operation, &cancellation));
@@ -1846,7 +1851,7 @@ mod tests {
         assert!(matches!(
             selector.as_mut().poll(&mut context),
             Poll::Ready(Err(CommitAwaitError::Operation(error)))
-                if error.kind() == BackgroundStartErrorKind::Process
+                if error.kind() == BackgroundStartErrorKind::Persistence
         ));
         assert_eq!(gate.polls.load(Ordering::Relaxed), 2);
     }
@@ -2024,7 +2029,7 @@ mod tests {
     }
 
     #[test]
-    fn cancellation_after_ambiguous_persistence_replaces_with_stopped() {
+    fn same_poll_cancellation_preserves_ambiguous_persistence_and_replaces_with_stopped() {
         let cancellation = CancellationToken::new();
         let (supervisor, observations) =
             scripted_publication_fixture(ScriptedPublishResult::Persistence, cancellation.clone());
@@ -2033,7 +2038,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().kind(),
-            BackgroundStartErrorKind::Cancelled
+            BackgroundStartErrorKind::Persistence
         );
         assert!(cancellation.is_cancelled());
         assert_eq!(
@@ -2045,6 +2050,39 @@ mod tests {
         assert_eq!(observations.aborted.load(Ordering::Relaxed), 1);
         assert_eq!(
             observations.completion_publications.load(Ordering::Relaxed),
+            1
+        );
+        assert_eq!(observations.executed.load(Ordering::Relaxed), 0);
+        assert_eq!(observations.retained.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn same_poll_persistence_remains_primary_when_abort_requires_dead_replacement() {
+        let cancellation = CancellationToken::new();
+        let (supervisor, observations) = scripted_publication_fixture_with_abort(
+            ScriptedPublishResult::Persistence,
+            cancellation.clone(),
+            true,
+        );
+
+        let result = block_on(supervisor.start(request(), cancellation.clone()));
+
+        assert_eq!(
+            result.unwrap_err().kind(),
+            BackgroundStartErrorKind::Persistence
+        );
+        assert!(cancellation.is_cancelled());
+        assert_eq!(
+            observations.events(),
+            [
+                "admit", "reserve", "clock", "prepare", "publish", "abort", "complete"
+            ]
+        );
+        assert_eq!(observations.aborted.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            observations
+                .dead_completion_publications
+                .load(Ordering::Relaxed),
             1
         );
         assert_eq!(observations.executed.load(Ordering::Relaxed), 0);
