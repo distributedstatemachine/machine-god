@@ -314,15 +314,25 @@ impl NativeBackgroundSupervisor {
         let start = self
             .supervisor
             .start(request, operation_cancellation.clone());
-        Box::pin(self.blocking.run_cancellable(
+        let blocking = self.blocking.run_cancellable(
             move || {
                 catch_unwind(AssertUnwindSafe(|| futures_executor::block_on(start)))
                     .unwrap_or_else(|_| Err(start_error(BackgroundStartErrorKind::Process)))
             },
-            Err(start_error(BackgroundStartErrorKind::Capacity)),
             caller_cancellation,
             operation_cancellation,
-        ))
+        );
+        Box::pin(async move {
+            match blocking.await {
+                Ok(result) => result,
+                Err(BlockingTaskFailure::Admission) => {
+                    Err(start_error(BackgroundStartErrorKind::Capacity))
+                }
+                Err(BlockingTaskFailure::CancelledBeforeSubmission) => {
+                    Err(start_error(BackgroundStartErrorKind::Cancelled))
+                }
+            }
+        })
     }
 
     /// Reconciles persisted unlocked running records when this future is polled.
@@ -396,10 +406,17 @@ struct BlockingTaskFuture<T> {
     pool: Arc<BlockingPool>,
     task: Option<Box<dyn FnOnce() -> T + Send + 'static>>,
     admission_failure: Option<T>,
+    pre_submission_cancellation: Option<T>,
     result: Arc<Mutex<BlockingResult<T>>>,
     submitted: bool,
     caller_cancellation: Option<Cancelled>,
     operation_cancellation: Option<CancellationToken>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BlockingTaskFailure {
+    Admission,
+    CancelledBeforeSubmission,
 }
 
 impl BlockingExecutor {
@@ -454,6 +471,7 @@ impl BlockingExecutor {
             pool: Arc::clone(&self.pool),
             task: Some(Box::new(task)),
             admission_failure: Some(admission_failure),
+            pre_submission_cancellation: None,
             result: Arc::new(Mutex::new(BlockingResult {
                 value: None,
                 waker: None,
@@ -467,17 +485,17 @@ impl BlockingExecutor {
     fn run_cancellable<T>(
         &self,
         task: impl FnOnce() -> T + Send + 'static,
-        admission_failure: T,
         caller_cancellation: Cancelled,
         operation_cancellation: CancellationToken,
-    ) -> BlockingTaskFuture<T>
+    ) -> BlockingTaskFuture<Result<T, BlockingTaskFailure>>
     where
         T: Send + Unpin + 'static,
     {
         BlockingTaskFuture {
             pool: Arc::clone(&self.pool),
-            task: Some(Box::new(task)),
-            admission_failure: Some(admission_failure),
+            task: Some(Box::new(move || Ok(task()))),
+            admission_failure: Some(Err(BlockingTaskFailure::Admission)),
+            pre_submission_cancellation: Some(Err(BlockingTaskFailure::CancelledBeforeSubmission)),
             result: Arc::new(Mutex::new(BlockingResult {
                 value: None,
                 waker: None,
@@ -547,10 +565,21 @@ where
             .as_mut()
             .is_some_and(|cancelled| Pin::new(cancelled).poll(context).is_ready());
         if caller_cancelled {
+            if !this.submitted {
+                this.task = None;
+                this.caller_cancellation = None;
+                this.operation_cancellation = None;
+                return Poll::Ready(
+                    this.pre_submission_cancellation
+                        .take()
+                        .expect("pre-submission cancellation completes once"),
+                );
+            }
             if let Some(cancellation) = &this.operation_cancellation {
                 cancellation.cancel();
             }
             this.caller_cancellation = None;
+            this.pre_submission_cancellation = None;
         }
         if !this.submitted {
             let incoming = context.waker().clone();
@@ -1272,9 +1301,10 @@ const fn start_error(kind: BackgroundStartErrorKind) -> BackgroundStartError {
 #[cfg(test)]
 mod tests {
     use super::{
-        BlockingExecutor, BlockingResult, NativeBackgroundLimits, NativeBackgroundSupervisor,
-        NativeSpawner, NativeStore, RetainedJob, SystemBackgroundProcessAdapter, SystemClock,
-        finish_without_worker, open_directory, retain_canonical_directory_with,
+        BlockingExecutor, BlockingResult, BlockingTaskFailure, NativeBackgroundLimits,
+        NativeBackgroundSupervisor, NativeSpawner, NativeStore, RetainedJob,
+        SystemBackgroundProcessAdapter, SystemClock, finish_without_worker, open_directory,
+        retain_canonical_directory_with,
     };
     use crate::background_process::{BackgroundProcessHelper, run_background_process_helper};
     use crate::{
@@ -1590,6 +1620,81 @@ mod tests {
     }
 
     #[test]
+    fn pre_cancelled_start_completes_on_first_poll_without_process_execution() {
+        let fixture = Fixture::new();
+        let supervisor = fixture.supervisor(1);
+        let marker = fixture.workspace_path.join("must-not-exist");
+        let request =
+            BackgroundStartRequest::new("printf executed > must-not-exist", &fixture.workspace)
+                .expect("request");
+        let cancellation = CancellationToken::new();
+        let mut start = supervisor.start(request, cancellation.clone());
+        cancellation.cancel();
+
+        let result = start.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+        assert!(matches!(
+            result,
+            Poll::Ready(Err(error))
+                if error.kind() == BackgroundStartErrorKind::Cancelled
+        ));
+        assert!(!marker.exists(), "cancelled start must remain inert");
+    }
+
+    #[test]
+    fn pre_submission_cancellation_wins_saturated_pool_without_execution() {
+        let executor = BlockingExecutor::new(1).expect("blocking executor");
+        let (occupied, occupied_receiver) = mpsc::sync_channel(1);
+        let (release, release_receiver) = mpsc::sync_channel(1);
+        let mut blocker = Box::pin(executor.run(
+            move || {
+                occupied.send(()).expect("report occupied worker");
+                release_receiver
+                    .recv_timeout(Duration::from_secs(1))
+                    .expect("release occupied worker");
+                1_u8
+            },
+            0,
+        ));
+        assert!(matches!(
+            blocker
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        occupied_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("sole worker is occupied");
+
+        let caller_cancellation = CancellationToken::new();
+        let operation_cancellation = CancellationToken::new();
+        let executed = Arc::new(AtomicBool::new(false));
+        let worker_executed = Arc::clone(&executed);
+        let mut cancelled = Box::pin(executor.run_cancellable(
+            move || {
+                worker_executed.store(true, Ordering::Release);
+                7_u8
+            },
+            caller_cancellation.cancelled(),
+            operation_cancellation.clone(),
+        ));
+        caller_cancellation.cancel();
+
+        assert!(matches!(
+            cancelled
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(Err(BlockingTaskFailure::CancelledBeforeSubmission))
+        ));
+        assert!(!executed.load(Ordering::Acquire));
+        assert!(!operation_cancellation.is_cancelled());
+
+        release.send(()).expect("release occupied worker");
+        assert_eq!(futures_executor::block_on(blocker), 1);
+        assert_eq!(futures_executor::block_on(executor.run(|| 2_u8, 0)), 2);
+        assert!(!executed.load(Ordering::Acquire));
+    }
+
+    #[test]
     fn dropped_blocking_future_leaves_cancelled_cleanup_owned_by_worker() {
         let executor = BlockingExecutor::new(1).expect("blocking executor");
         let caller_cancellation = CancellationToken::new();
@@ -1602,7 +1707,6 @@ mod tests {
                 finished.send(()).expect("report cleanup");
                 Ok::<(), ()>(())
             },
-            Err(()),
             caller_cancellation.cancelled(),
             operation_cancellation,
         ));
@@ -1644,7 +1748,6 @@ mod tests {
                     Ok(())
                 }
             },
-            Err(()),
             caller_cancellation.cancelled(),
             operation_cancellation.clone(),
         );
@@ -1664,7 +1767,10 @@ mod tests {
         }
         assert!(operation_cancellation.is_cancelled());
         unblock.send(()).expect("unblock start step");
-        assert!(caller.join().expect("caller executor").is_err());
+        assert!(matches!(
+            caller.join().expect("caller executor"),
+            Ok(Err(()))
+        ));
         assert!(cleaned.load(Ordering::Acquire));
         assert!(!released.load(Ordering::Acquire));
 
@@ -1673,11 +1779,10 @@ mod tests {
         assert_eq!(
             futures_executor::block_on(executor.run_cancellable(
                 || 7_u8,
-                0,
                 sibling_caller.cancelled(),
                 sibling_operation.clone(),
             )),
-            7
+            Ok(7)
         );
         assert!(!sibling_caller.is_cancelled());
         assert!(!sibling_operation.is_cancelled());
