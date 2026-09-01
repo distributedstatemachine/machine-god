@@ -21,20 +21,21 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `50`
-- Delivered main: `ba52dbfeb7d05b67ee314934905abee7e0c35ffc`
-- Main CI: `33440894118` (`GREEN`)
-- Main Benchmark evidence: `33440894154` (`GREEN`)
-- Active branch: `agent/m05-background-cli`
-- Active phase: `remediating rejected background-history review findings`
-- Next gate: `complete exact-1.94.1 replacement local feature gate`
+- Delivered slices: `51`
+- Delivered main: `a665289da640d69ae88d0a4a336ad90ece889086`
+- Main CI: `33455374424` (`GREEN`)
+- Main Benchmark evidence: `33455374426` (`GREEN`)
+- Active branch: `agent/m05-background-supervisor`
+- Active phase: `freezing the bounded background supervisor and writer contract`
+- Next gate: `freeze background producer ownership, lifecycle, and persistence bounds`
 <!-- canonical-live-status:end -->
 
 The recorded Actions runs succeeded for the exact delivered-main commit, and
 the Benchmark evidence run retained both required exact-SHA artifacts.
-Bounded foreground one-off `subagent` is delivered as slice 50. Persistent
-handles, inspect/message/relationship/configuration/lifecycle management, ACP,
-background/team coordination, and extension slash commands remain separate.
+Bounded read-only persisted `background` inspection is delivered as slice 51.
+There is not yet a production background-record writer or supervisor;
+persistent handles, message/relationship/configuration/lifecycle management,
+ACP, teams, and extension slash commands remain separate.
 Documentation parser maintenance remains a separate non-product task.
 
 ## Architecture ownership
@@ -149,8 +150,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 48 | Turn-local executable `mcp_select_tool` | [contract](mcp-select-tool.md) | [review](reviews/m05-mcp-select-tool-review-01.md) | `c5d86c9` |
 | 49 | Bounded injected-catalog `mcp_features` | [contract](mcp-features.md) | [review](reviews/m05-mcp-features-review-01.md) | `3ba687b` |
 | 50 | Bounded foreground one-off `subagent` | [contract](subagent.md) | [review](reviews/m05-subagent-review-01.md) | `ba52dbf` |
+| 51 | Bounded read-only persisted `background` CLI | [contract](background-cli.md) | [review](reviews/m05-background-cli-review-01.md) | `a665289` |
 
-The exact delivered-main record after slice 50 is in the canonical live-status
+The exact delivered-main record after slice 51 is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.
