@@ -2402,7 +2402,9 @@ mod process_regression_tests {
             PathBuf::from("/bin/sh"),
             vec![
                 OsString::from("-c"),
-                OsString::from("printf '%s' \"$$\" > \"$1\"; exec sleep 30"),
+                OsString::from(
+                    "printf '%s' \"$$\" > \"$1.tmp\"; /bin/mv \"$1.tmp\" \"$1\"; exec /bin/sleep 30",
+                ),
                 OsString::from("machine-god-stalled-helper"),
                 helper_pid.as_os_str().to_owned(),
             ],
