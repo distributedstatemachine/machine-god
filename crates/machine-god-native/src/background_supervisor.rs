@@ -13,7 +13,7 @@ use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 use std::thread::{self, JoinHandle};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use machine_god_core::{
     BackgroundClock, BackgroundCompletionRecord, BackgroundProcessOutcome as CoreProcessOutcome,
@@ -29,8 +29,9 @@ use rustix::fs::{FileType, Mode, OFlags};
 use crate::background_inspection::{NativeBackgroundState, StoredBackgroundRecord};
 use crate::background_process::BackgroundProcessHelper;
 use crate::background_process::{
-    BackgroundProcessExit, BackgroundProcessOutcome, BackgroundProcessRequest,
-    OwnedBackgroundProcess, PreparedBackgroundProcess, SystemBackgroundProcessAdapter,
+    BackgroundProcessErrorKind, BackgroundProcessExit, BackgroundProcessOutcome,
+    BackgroundProcessRequest, OwnedBackgroundProcess, PreparedBackgroundProcess,
+    SystemBackgroundProcessAdapter,
 };
 use crate::background_store::{
     BackgroundReconciliation, BackgroundRecordLease as NativeRecordAuthority, BackgroundStore,
@@ -381,6 +382,8 @@ impl Drop for NativeBackgroundSupervisor {
 
 type BlockingJob = Box<dyn FnOnce() + Send + 'static>;
 
+const BLOCKING_SHUTDOWN_GRACE: Duration = Duration::from_millis(100);
+
 enum BlockingMessage {
     Run(BlockingJob),
     Shutdown,
@@ -544,8 +547,27 @@ impl BlockingPool {
         for sender in &self.senders {
             let _ = sender.try_send(BlockingMessage::Shutdown);
         }
-        if let Ok(mut workers) = self.workers.lock() {
-            for worker in workers.drain(..) {
+        let workers = {
+            let mut workers = self
+                .workers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            workers.drain(..).collect::<Vec<_>>()
+        };
+        let deadline = Instant::now() + BLOCKING_SHUTDOWN_GRACE;
+        while workers.iter().any(|worker| !worker.is_finished()) {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            thread::sleep(remaining.min(Duration::from_millis(1)));
+        }
+        // A finished handle is the only join that cannot extend the grace
+        // deadline. Dropping any unresolved handle detaches its thread; the
+        // worker closure and submitted job continue to own their receiver,
+        // cancellation state, and result publication until they return.
+        for worker in workers {
+            if worker.is_finished() {
                 let _ = worker.join();
             }
         }
@@ -904,7 +926,7 @@ impl CorePreparedProcess for NativePrepared {
             .ok_or_else(|| start_error(BackgroundStartErrorKind::Process))?;
         let owned = prepared
             .release_cancellable(cancellation)
-            .map_err(|_| start_error(BackgroundStartErrorKind::Process))?;
+            .map_err(|error| start_error(release_error_kind(error.kind())))?;
         Ok(Box::new(NativeOwned(Some(owned))))
     }
 
@@ -916,6 +938,13 @@ impl CorePreparedProcess for NativePrepared {
         prepared
             .abort_and_reap()
             .map_err(|_| start_error(BackgroundStartErrorKind::Process))
+    }
+}
+
+const fn release_error_kind(kind: BackgroundProcessErrorKind) -> BackgroundStartErrorKind {
+    match kind {
+        BackgroundProcessErrorKind::Cancelled => BackgroundStartErrorKind::Cancelled,
+        _ => BackgroundStartErrorKind::Process,
     }
 }
 
@@ -1320,9 +1349,11 @@ mod tests {
         BlockingExecutor, BlockingResult, BlockingTaskFailure, NativeBackgroundLimits,
         NativeBackgroundSupervisor, NativeSpawner, NativeStore, RetainedJob,
         SystemBackgroundProcessAdapter, SystemClock, finish_prepared_after_readiness,
-        finish_without_worker, open_directory, retain_canonical_directory_with,
+        finish_without_worker, open_directory, release_error_kind, retain_canonical_directory_with,
     };
-    use crate::background_process::{BackgroundProcessHelper, run_background_process_helper};
+    use crate::background_process::{
+        BackgroundProcessErrorKind, BackgroundProcessHelper, run_background_process_helper,
+    };
     use crate::{
         NativeBackgroundInspection, NativeBackgroundQuery, NativeBackgroundState,
         NativeEnvironment, inspect_native_background,
@@ -1365,13 +1396,13 @@ mod tests {
 
     impl Drop for ReentrantDropWake {
         fn drop(&mut self) {
-            self.worker_can_finish.store(true, Ordering::Release);
             let Some(result) = self.result.upgrade() else {
                 return;
             };
             let _result = result
                 .try_lock()
                 .expect("superseded waker must be dropped after unlocking its result");
+            self.worker_can_finish.store(true, Ordering::Release);
             self.entered.send(()).expect("report hostile drop");
             self.release
                 .lock()
@@ -1575,6 +1606,26 @@ mod tests {
     }
 
     #[test]
+    fn proven_release_cancellation_maps_to_cancelled_start() {
+        assert_eq!(
+            release_error_kind(BackgroundProcessErrorKind::Cancelled),
+            BackgroundStartErrorKind::Cancelled
+        );
+    }
+
+    #[test]
+    fn ambiguous_release_cleanup_maps_to_process_failure() {
+        assert_eq!(
+            release_error_kind(BackgroundProcessErrorKind::Cleanup),
+            BackgroundStartErrorKind::Process
+        );
+        assert_eq!(
+            release_error_kind(BackgroundProcessErrorKind::Release),
+            BackgroundStartErrorKind::Process
+        );
+    }
+
+    #[test]
     fn production_composition_publishes_then_completes_a_real_process() {
         let fixture = Fixture::new();
         let supervisor = fixture.supervisor(2);
@@ -1767,6 +1818,63 @@ mod tests {
     }
 
     #[test]
+    fn blocking_shutdown_detaches_a_stuck_worker_without_losing_job_ownership() {
+        let executor = BlockingExecutor::new(1).expect("blocking executor");
+        let owned = Arc::new(());
+        let weak_owned = Arc::downgrade(&owned);
+        let (entered, entered_receiver) = mpsc::sync_channel(1);
+        let (release, release_receiver) = mpsc::sync_channel(1);
+        let mut task = Box::pin(executor.run(
+            move || {
+                entered.send(()).expect("report stuck worker");
+                release_receiver.recv().expect("release stuck worker");
+                owned
+            },
+            Arc::new(()),
+        ));
+
+        assert!(matches!(
+            task.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        entered_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker owns the submitted job");
+
+        let (shutdown_done, shutdown_receiver) = mpsc::sync_channel(1);
+        let shutdown_thread = thread::spawn(move || {
+            let started = Instant::now();
+            executor.shutdown();
+            shutdown_done
+                .send(started.elapsed())
+                .expect("report shutdown latency");
+        });
+        let Ok(shutdown_elapsed) = shutdown_receiver.recv_timeout(Duration::from_millis(500))
+        else {
+            release.send(()).expect("release stuck shutdown");
+            shutdown_thread.join().expect("join stuck shutdown");
+            panic!("shutdown joined a stuck blocking worker");
+        };
+        assert!(shutdown_elapsed < Duration::from_millis(500));
+        assert!(
+            weak_owned.upgrade().is_some(),
+            "the detached worker must retain its job resources"
+        );
+
+        release.send(()).expect("release detached worker");
+        let returned = futures_executor::block_on(task);
+        assert!(Arc::ptr_eq(
+            &returned,
+            &weak_owned
+                .upgrade()
+                .expect("result remains owned by the future")
+        ));
+        drop(returned);
+        assert!(weak_owned.upgrade().is_none());
+        shutdown_thread.join().expect("join bounded shutdown");
+    }
+
+    #[test]
     fn caller_cancellation_reaches_a_blocked_start_before_release() {
         let executor = BlockingExecutor::new(1).expect("blocking executor");
         let caller_cancellation = CancellationToken::new();
@@ -1883,6 +1991,23 @@ mod tests {
             Poll::Ready(7)
         ));
 
+        let slot_deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            let slot_available = !executor
+                .pool
+                .available
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty();
+            if slot_available {
+                break;
+            }
+            assert!(
+                Instant::now() < slot_deadline,
+                "worker did not return its blocking slot"
+            );
+            thread::yield_now();
+        }
         assert_eq!(futures_executor::block_on(executor.run(|| 9_u8, 0)), 9);
         executor.shutdown();
     }
