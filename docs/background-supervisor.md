@@ -20,9 +20,18 @@ fixed program is `/bin/sh` with arguments `[-c, command]`; the command is an
 argument and is never interpolated into a machine-god wrapper script.
 Standard input, output, and error are null after release. This slice captures
 no output, detects no URL, accepts no interactive input, and creates no PTY.
-The Linux release wrapper consumes only its private gate frame and redirects
-the user shell's input from `/dev/null`; the macOS helper does the same before
-exec.
+Linux and macOS use the same private helper protocol. The helper consumes only
+its bounded release frame and gives the user shell input from `/dev/null`.
+
+The requested environment is never installed in the pre-release process. The
+host starts its helper with an emptied, fixed bootstrap environment; loader
+controls such as `LD_PRELOAD`, `LD_AUDIT`, and `DYLD_*` therefore cannot affect
+helper loading, cwd retention, or readiness. The already-validated command and
+environment remain inert bytes in a versioned, length-delimited frame retained
+by the parent. That frame is written only by release after the running record
+is durable. The helper independently revalidates every bound and applies the
+requested environment only to the final post-release `/bin/sh` exec. Frame
+bytes cannot be interpreted as readiness, arguments, or shell interpolation.
 
 The public start future is inert until first poll. Dropping it before first
 poll has no store, process, clock, allocation-ID, thread, or task effect.
@@ -60,13 +69,14 @@ only through the exact live child and process-group handles it already owns.
 
 ## Cross-platform retained-cwd launch
 
-Linux and macOS both launch from the retained directory identity, not by
-reopening the original cwd spelling after preparation. Linux uses the retained
-descriptor through the platform descriptor path. macOS uses a fixed internal
-single-threaded exec helper: the parent passes the retained directory as a
-standard descriptor, the helper applies safe `fchdir` through `rustix`, waits
-on the private release channel, and then replaces itself with fixed
-`/bin/sh`. No machine-god crate contains unsafe Rust.
+Linux and macOS both launch a fixed internal single-threaded exec helper from
+the retained directory identity, not by reopening the original cwd spelling
+after preparation. Linux starts it through the retained platform descriptor
+path. On macOS the parent passes the retained directory as a standard
+descriptor and the helper applies safe `fchdir` through `rustix`. In both
+cases the helper first emits one fixed readiness byte, waits for the complete
+private release frame, and then replaces itself with fixed `/bin/sh`. No
+machine-god crate contains unsafe Rust.
 
 The production adapter resolves the current host executable and supplies one
 exact private helper argument. Native hosts must dispatch that exact singleton
@@ -151,6 +161,24 @@ group. The query accepts at most 64 KiB and the helper has a 250 ms timeout.
 Permission denial is never disappearance evidence; a surviving
 credential-changed member therefore produces a fixed cleanup failure. The
 numeric group identity is not consulted after it becomes reusable.
+
+This process-local adapter requires exclusive child-reaping authority for the
+entire prepared/owned-handle lifetime: the host must leave `SIGCHLD` waitable
+and must not run another `wait`/`waitpid` consumer that can reap these exact
+children. Immediately before each helper spawn, the adapter creates and waits
+for a fixed no-op probe. On systems where `SIGCHLD = SIG_IGN` or
+`SA_NOCLDWAIT` removes wait authority, or when a competing reaper steals that
+probe, preparation fails before the requested helper exists. Signal modes that
+remain waitable on a supported operating system are compatible.
+
+Every `waitid` errno is classified before public redaction. `ECHILD` means the
+exclusive prerequisite was violated after admission and irreversibly loses
+authority over the child identity. That path returns the fixed wait failure,
+drops the stale handle, and performs no later numeric PID/PGID signal or group
+query; it cannot accidentally target a recycled process group. Other
+observation failures retain the still-waitable leader through best-effort
+cleanup. The adapter never attempts a redundant direct-child signal after the
+group KILL.
 
 An active worker observes a new process after 2 ms and exponentially backs off
 to a 32 ms maximum, keeping an idle job below 40 leader observations per

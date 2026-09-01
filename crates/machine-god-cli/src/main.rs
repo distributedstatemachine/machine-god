@@ -1176,7 +1176,7 @@ fn classify_provider_error(error: &ProviderError) -> ModelsOperationalFailure {
 }
 
 fn main() -> ExitCode {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     if is_background_process_helper_arguments(env::args_os().skip(1)) {
         let _ = machine_god_native::run_background_process_helper();
         return ExitCode::from(125);
@@ -1186,7 +1186,7 @@ fn main() -> ExitCode {
     ExitCode::from(run(env::args_os().skip(1), &mut stdout, &mut stderr))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn is_background_process_helper_arguments(arguments: impl IntoIterator<Item = OsString>) -> bool {
     let mut arguments = arguments.into_iter();
     arguments.next().as_deref()
@@ -5924,7 +5924,7 @@ mod tests {
         assert_eq!(stderr, INVALID_ARGUMENTS.as_bytes());
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn private_background_helper_dispatch_requires_the_exact_single_argument() {
         let helper = machine_god_native::BACKGROUND_PROCESS_HELPER_ARGUMENT;

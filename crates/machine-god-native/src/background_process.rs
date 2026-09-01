@@ -32,8 +32,10 @@ use rustix::fs::{FileType, Mode, OFlags};
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::os::unix::ffi::OsStringExt;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::os::unix::process::{CommandExt, ExitStatusExt};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::ChildStderr;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
@@ -95,21 +97,28 @@ static GROUP_SNAPSHOT_FAILURES: AtomicUsize = AtomicUsize::new(0);
 static GROUP_SNAPSHOT_SPAWN_FAILURE_GROUP: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 static GROUP_SNAPSHOT_SPAWN_FAILURES: AtomicUsize = AtomicUsize::new(0);
-#[cfg(target_os = "linux")]
-const GATE_WRAPPER: &str =
-    "IFS= read -r _machine_god_gate || exit 125\nexec /bin/sh -c \"$1\" </dev/null";
-#[cfg(target_os = "linux")]
-const GATE_ARGV_ZERO: &str = "machine-god-background-gate";
-#[cfg(target_os = "macos")]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static OBSERVED_GROUP_SIGNAL: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static GROUP_SIGNAL_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_HELPER_PATH_BYTES: usize = 4 * 1024;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_HELPER_ARGUMENTS: usize = 16;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_HELPER_ARGUMENT_BYTES: usize = 1024;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const HELPER_READY_BYTE: u8 = 0xa7;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const HELPER_READY_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const RELEASE_FRAME_MAGIC: &[u8; 8] = b"MGBG\0\0\0\x01";
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const SAFE_BOOTSTRAP_LANGUAGE: &str = "C";
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const SAFE_BOOTSTRAP_MODE_KEY: &str = "MACHINE_GOD_BACKGROUND_HELPER_MODE";
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const SAFE_BOOTSTRAP_MODE_VALUE: &str = "1";
 
 /// Stable background-process failure category.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -306,16 +315,15 @@ pub enum BackgroundProcessOutcome {
     Stopped,
 }
 
-/// Explicit executable and private arguments used by the macOS inherited-FD
-/// launch helper.
-#[cfg(target_os = "macos")]
+/// Explicit executable and private arguments used by the safe launch helper.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Clone, Debug)]
 pub struct BackgroundProcessHelper {
     program: PathBuf,
     arguments: Vec<OsString>,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl BackgroundProcessHelper {
     /// Validates an absolute helper executable and its fixed private arguments.
     ///
@@ -345,13 +353,13 @@ impl BackgroundProcessHelper {
 /// Other targets return a fixed unsupported error without spawning.
 #[derive(Clone, Debug, Default)]
 pub struct SystemBackgroundProcessAdapter {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     helper: Option<BackgroundProcessHelper>,
 }
 
 impl SystemBackgroundProcessAdapter {
-    /// Constructs the active macOS adapter with an explicitly supplied helper.
-    #[cfg(target_os = "macos")]
+    /// Constructs an active adapter with an explicitly supplied safe bootstrap.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[must_use]
     pub const fn with_helper(helper: BackgroundProcessHelper) -> Self {
         Self {
@@ -373,24 +381,31 @@ impl SystemBackgroundProcessAdapter {
     }
 }
 
-/// Runs the macOS inherited-directory helper protocol and replaces the helper
-/// with the fixed shell. Hosts call this only for their private helper mode,
-/// before ordinary CLI parsing or worker creation.
+/// Runs the inherited-directory helper protocol and replaces the helper with
+/// the fixed shell. Hosts call this only for their private helper mode, before
+/// ordinary CLI parsing or worker creation.
 ///
-/// The parent maps a clone of the retained directory descriptor to stdout and
-/// sends the bounded command frame over stdin only when releasing the process.
-/// An EOF before that frame aborts without executing a user command.
+/// On macOS the parent maps a clone of the retained directory descriptor to
+/// stdout. Linux starts the helper in the retained directory. On both systems,
+/// the requested command and environment remain inert bytes in a bounded stdin
+/// frame until release. An EOF before a complete frame aborts without executing
+/// a user command.
 ///
 /// # Errors
 ///
 /// Returns a fixed release, invalid-request, or spawn failure. A successful
 /// call does not return because the helper is replaced with `/bin/sh`.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn run_background_process_helper() -> Result<(), BackgroundProcessError> {
-    use std::io::{Read, Write, stderr, stdin, stdout};
+    #[cfg(target_os = "macos")]
+    use std::io::stdout;
+    use std::io::{Read, Write, stderr, stdin};
 
+    #[cfg(target_os = "macos")]
     let stdout = stdout();
+    #[cfg(target_os = "macos")]
     validate_directory(stdout.as_fd()).map_err(|_| spawn_error())?;
+    #[cfg(target_os = "macos")]
     rustix::process::fchdir(stdout.as_fd()).map_err(|_| spawn_error())?;
     let mut ready = stderr().lock();
     ready
@@ -400,30 +415,20 @@ pub fn run_background_process_helper() -> Result<(), BackgroundProcessError> {
     drop(ready);
 
     let mut input = stdin().lock();
-    let mut length = [0_u8; 4];
-    input
-        .read_exact(&mut length)
-        .map_err(|_| BackgroundProcessError::new(BackgroundProcessErrorKind::Release))?;
-    let length = usize::try_from(u32::from_be_bytes(length)).map_err(|_| invalid_request())?;
-    if !(1..=MAX_BACKGROUND_PROCESS_COMMAND_BYTES).contains(&length) {
-        return Err(invalid_request());
-    }
-    let mut command = vec![0_u8; length];
-    input
-        .read_exact(&mut command)
-        .map_err(|_| BackgroundProcessError::new(BackgroundProcessErrorKind::Release))?;
+    let (command, environment) = read_release_frame(&mut input)?;
     let mut trailing = [0_u8; 1];
     if input.read(&mut trailing).map_err(|_| invalid_request())? != 0 {
         return Err(invalid_request());
     }
-    let command = String::from_utf8(command).map_err(|_| invalid_request())?;
-    if command.contains('\0') {
-        return Err(invalid_request());
-    }
+    #[cfg(target_os = "macos")]
     drop((input, stdout));
+    #[cfg(target_os = "linux")]
+    drop(input);
     let error = Command::new(BACKGROUND_PROCESS_PROGRAM)
         .arg("-c")
         .arg(command)
+        .env_clear()
+        .envs(environment)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -432,13 +437,79 @@ pub fn run_background_process_helper() -> Result<(), BackgroundProcessError> {
     Err(spawn_error())
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn read_release_frame(
+    input: &mut impl std::io::Read,
+) -> Result<(String, Vec<(OsString, OsString)>), BackgroundProcessError> {
+    let mut magic = [0_u8; RELEASE_FRAME_MAGIC.len()];
+    read_release_bytes(input, &mut magic)?;
+    if &magic != RELEASE_FRAME_MAGIC {
+        return Err(invalid_request());
+    }
+    let command_length = read_release_length(input, MAX_BACKGROUND_PROCESS_COMMAND_BYTES)?;
+    if command_length == 0 {
+        return Err(invalid_request());
+    }
+    let mut command = vec![0_u8; command_length];
+    read_release_bytes(input, &mut command)?;
+    let command = String::from_utf8(command).map_err(|_| invalid_request())?;
+
+    let environment_count = read_release_length(input, MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES)?;
+    let mut environment = Vec::with_capacity(environment_count);
+    let mut aggregate = 0_usize;
+    for _ in 0..environment_count {
+        let key_length = read_release_length(input, MAX_BACKGROUND_PROCESS_ENVIRONMENT_KEY_BYTES)?;
+        if key_length == 0 {
+            return Err(invalid_request());
+        }
+        let value_length =
+            read_release_length(input, MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES)?;
+        aggregate = aggregate
+            .checked_add(key_length)
+            .and_then(|total| total.checked_add(value_length))
+            .filter(|total| *total <= MAX_BACKGROUND_PROCESS_ENVIRONMENT_BYTES)
+            .ok_or_else(invalid_request)?;
+        let mut key = vec![0_u8; key_length];
+        let mut value = vec![0_u8; value_length];
+        read_release_bytes(input, &mut key)?;
+        read_release_bytes(input, &mut value)?;
+        environment.push((OsString::from_vec(key), OsString::from_vec(value)));
+    }
+    validate_request(&command, "helper", &environment)?;
+    Ok((command, environment))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn read_release_length(
+    input: &mut impl std::io::Read,
+    maximum: usize,
+) -> Result<usize, BackgroundProcessError> {
+    let mut bytes = [0_u8; 4];
+    read_release_bytes(input, &mut bytes)?;
+    let length = usize::try_from(u32::from_be_bytes(bytes)).map_err(|_| invalid_request())?;
+    if length > maximum {
+        return Err(invalid_request());
+    }
+    Ok(length)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn read_release_bytes(
+    input: &mut impl std::io::Read,
+    bytes: &mut [u8],
+) -> Result<(), BackgroundProcessError> {
+    input
+        .read_exact(bytes)
+        .map_err(|_| BackgroundProcessError::new(BackgroundProcessErrorKind::Release))
+}
+
 /// Returns the fixed unsupported result on platforms without the helper
 /// protocol, allowing a host to keep one private-mode dispatch path.
 ///
 /// # Errors
 ///
-/// Always returns the fixed unsupported category outside macOS.
-#[cfg(not(target_os = "macos"))]
+/// Always returns the fixed unsupported category outside Linux and macOS.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn run_background_process_helper() -> Result<(), BackgroundProcessError> {
     Err(BackgroundProcessError::new(
         BackgroundProcessErrorKind::Unsupported,
@@ -451,8 +522,10 @@ pub struct PreparedBackgroundProcess {
     child: Option<Child>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     gate: Option<ChildStdin>,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     command: Option<String>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    environment: Option<Vec<(OsString, OsString)>>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     group: rustix::process::Pid,
     pid: NonZeroU32,
@@ -643,77 +716,70 @@ fn validated_descriptor_path(directory: BorrowedFd<'_>) -> Result<PathBuf, Backg
     Ok(path)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn require_exclusive_child_reaping() -> Result<(), BackgroundProcessError> {
+    // `SIGCHLD = SIG_IGN`, `SA_NOCLDWAIT`, and a competing process-wide reaper
+    // all make a direct child non-waitable. Exercise the exact wait authority
+    // immediately before admission without changing process-wide signal state.
+    // The caller must keep that authority exclusive for the returned handle's
+    // lifetime; a later ECHILD is handled as irrevocable authority loss.
+    let mut probe = Command::new(BACKGROUND_PROCESS_PROGRAM);
+    probe
+        .arg("-c")
+        .arg("exit 0")
+        .env_clear()
+        .env("LANG", SAFE_BOOTSTRAP_LANGUAGE)
+        .env("LC_ALL", SAFE_BOOTSTRAP_LANGUAGE)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut child = probe.spawn().map_err(|_| spawn_error())?;
+    match child.wait() {
+        Ok(status) if status.success() => Ok(()),
+        Ok(_) | Err(_) => Err(spawn_error()),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn prepare_system(
-    _adapter: &SystemBackgroundProcessAdapter,
+    adapter: &SystemBackgroundProcessAdapter,
     request: BackgroundProcessRequest,
 ) -> Result<PreparedBackgroundProcess, BackgroundProcessError> {
     // Recheck immediately before the only effect so a closed or substituted
     // descriptor-backed path fails before spawning.
     validate_directory(request.directory.as_fd()).map_err(|_| spawn_error())?;
-    let descriptor_path =
-        validated_descriptor_path(request.directory.as_fd()).map_err(|_| spawn_error())?;
-    if descriptor_path != request.descriptor_path {
-        return Err(spawn_error());
-    }
-
-    let mut command = Command::new(BACKGROUND_PROCESS_PROGRAM);
-    command
-        .arg("-c")
-        .arg(GATE_WRAPPER)
-        .arg(GATE_ARGV_ZERO)
-        .arg(&request.command)
-        .current_dir(&request.descriptor_path)
-        .env_clear()
-        .envs(request.environment.iter().cloned())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .process_group(0);
-    let mut child = command.spawn().map_err(|_| spawn_error())?;
-    // `spawn` has completed the descriptor-backed chdir in the child. Retain
-    // the request through that boundary, then explicitly discharge it.
-    drop(request);
-    let pid = NonZeroU32::new(child.id()).ok_or_else(invariant_error)?;
-    let group =
-        rustix::process::Pid::from_raw(i32::try_from(pid.get()).map_err(|_| invariant_error())?)
-            .ok_or_else(invariant_error)?;
-    if rustix::process::getpgid(Some(group)) != Ok(group) {
-        let _ = cleanup_child(&mut child, group, Duration::ZERO);
-        return Err(invariant_error());
-    }
-    let Some(gate) = child.stdin.take() else {
-        let _ = cleanup_child(&mut child, group, Duration::ZERO);
-        return Err(spawn_error());
-    };
-    Ok(PreparedBackgroundProcess {
-        child: Some(child),
-        gate: Some(gate),
-        group,
-        pid,
-    })
-}
-
-#[cfg(target_os = "macos")]
-fn prepare_system(
-    adapter: &SystemBackgroundProcessAdapter,
-    request: BackgroundProcessRequest,
-) -> Result<PreparedBackgroundProcess, BackgroundProcessError> {
-    validate_directory(request.directory.as_fd()).map_err(|_| spawn_error())?;
     let helper = adapter
         .helper
         .as_ref()
         .ok_or_else(|| BackgroundProcessError::new(BackgroundProcessErrorKind::Unsupported))?;
+    require_exclusive_child_reaping()?;
+    #[cfg(target_os = "linux")]
+    let retained_cwd = {
+        let descriptor_path =
+            validated_descriptor_path(request.directory.as_fd()).map_err(|_| spawn_error())?;
+        if descriptor_path != request.descriptor_path {
+            return Err(spawn_error());
+        }
+        descriptor_path
+    };
+    #[cfg(target_os = "macos")]
     let directory = rustix::io::dup(request.directory.as_fd()).map_err(|_| spawn_error())?;
+
     let mut command = Command::new(&helper.program);
     command
         .args(&helper.arguments)
         .env_clear()
-        .envs(request.environment.iter().cloned())
+        .env("LANG", SAFE_BOOTSTRAP_LANGUAGE)
+        .env("LC_ALL", SAFE_BOOTSTRAP_LANGUAGE)
+        .env(SAFE_BOOTSTRAP_MODE_KEY, SAFE_BOOTSTRAP_MODE_VALUE)
         .stdin(Stdio::piped())
-        .stdout(Stdio::from(directory))
-        .stderr(Stdio::piped())
+        .stderr(Stdio::null())
         .process_group(0);
+    #[cfg(target_os = "linux")]
+    command.current_dir(retained_cwd).stdout(Stdio::null());
+    #[cfg(target_os = "macos")]
+    command.stdout(Stdio::from(directory));
+    command.stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|_| spawn_error())?;
     let pid = NonZeroU32::new(child.id()).ok_or_else(invariant_error)?;
     let group =
@@ -735,16 +801,24 @@ fn prepare_system(
         let _ = cleanup_child(&mut child, group, Duration::ZERO);
         return Err(spawn_error());
     }
+    // `spawn` has completed the descriptor-backed chdir in the child. Move
+    // only the inert release frame out of the retained request.
+    let BackgroundProcessRequest {
+        command,
+        environment,
+        ..
+    } = request;
     Ok(PreparedBackgroundProcess {
         child: Some(child),
         gate: Some(gate),
-        command: Some(request.command),
+        command: Some(command),
+        environment: Some(environment),
         group,
         pid,
     })
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn await_helper_ready(mut ready: ChildStderr) -> Result<(), BackgroundProcessError> {
     use std::io::Read;
 
@@ -783,22 +857,16 @@ fn prepare_system(
 fn release_prepared(
     prepared: &mut PreparedBackgroundProcess,
 ) -> Result<OwnedBackgroundProcess, BackgroundProcessError> {
-    use std::io::Write;
-
     let Some(mut gate) = prepared.gate.take() else {
         return Err(invariant_error());
     };
-    #[cfg(target_os = "linux")]
-    let release = gate.write_all(b"\n");
-    #[cfg(target_os = "macos")]
     let release = prepared
         .command
         .take()
         .ok_or_else(invariant_error)
         .and_then(|command| {
-            let length = u32::try_from(command.len()).map_err(|_| invariant_error())?;
-            gate.write_all(&length.to_be_bytes())
-                .and_then(|()| gate.write_all(command.as_bytes()))
+            let environment = prepared.environment.take().ok_or_else(invariant_error)?;
+            write_release_frame(&mut gate, &command, &environment)
                 .map_err(|_| BackgroundProcessError::new(BackgroundProcessErrorKind::Release))
         });
     if release.is_err() {
@@ -815,6 +883,33 @@ fn release_prepared(
         group: prepared.group,
         pid: prepared.pid,
     })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn write_release_frame(
+    output: &mut impl std::io::Write,
+    command: &str,
+    environment: &[(OsString, OsString)],
+) -> std::io::Result<()> {
+    output.write_all(RELEASE_FRAME_MAGIC)?;
+    write_frame_length(output, command.len())?;
+    output.write_all(command.as_bytes())?;
+    write_frame_length(output, environment.len())?;
+    for (key, value) in environment {
+        let key = key.as_os_str().as_bytes();
+        let value = value.as_os_str().as_bytes();
+        write_frame_length(output, key.len())?;
+        write_frame_length(output, value.len())?;
+        output.write_all(key)?;
+        output.write_all(value)?;
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn write_frame_length(output: &mut impl std::io::Write, length: usize) -> std::io::Result<()> {
+    let length = u32::try_from(length).map_err(|_| std::io::ErrorKind::InvalidInput)?;
+    output.write_all(&length.to_be_bytes())
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -854,7 +949,11 @@ fn wait_owned(
     let mut observation = ObservationBackoff::new();
     let observed = loop {
         match observe_leader(owned.group) {
-            Err(error) => {
+            Err(LeaderObservationFailure::LostAuthority) => {
+                drop(owned.child.take());
+                return Err(wait_error());
+            }
+            Err(LeaderObservationFailure::Operation(error)) => {
                 let cleanup = cleanup_owned_child(owned, Duration::ZERO, None, true);
                 return Err(combine_cleanup_failures(error, cleanup));
             }
@@ -894,7 +993,11 @@ fn wait_owned_with_stop(
                 return finish_observed(owned, status).map(BackgroundProcessOutcome::Completed);
             }
             Ok(None) => {}
-            Err(error) => {
+            Err(LeaderObservationFailure::LostAuthority) => {
+                drop(owned.child.take());
+                return Err(wait_error());
+            }
+            Err(LeaderObservationFailure::Operation(error)) => {
                 let cleanup = cleanup_owned_child(owned, Duration::ZERO, None, true);
                 return Err(combine_cleanup_failures(error, cleanup));
             }
@@ -942,7 +1045,7 @@ fn stop_owned(_owned: &mut OwnedBackgroundProcess) -> Result<(), BackgroundProce
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn observe_leader(
     leader: rustix::process::Pid,
-) -> Result<Option<BackgroundProcessExit>, BackgroundProcessError> {
+) -> Result<Option<BackgroundProcessExit>, LeaderObservationFailure> {
     #[cfg(test)]
     if OBSERVED_LEADER.load(Ordering::Relaxed) == leader.as_raw_nonzero().get().cast_unsigned() {
         LEADER_OBSERVATIONS.fetch_add(1, Ordering::Relaxed);
@@ -953,7 +1056,7 @@ fn observe_leader(
         &WAITID_FAILURES,
         leader.as_raw_nonzero().get().cast_unsigned(),
     ) {
-        return Err(wait_error());
+        return Err(LeaderObservationFailure::Operation(wait_error()));
     }
     let status = rustix::process::waitid(
         rustix::process::WaitId::Pid(leader),
@@ -961,8 +1064,23 @@ fn observe_leader(
             | rustix::process::WaitIdOptions::NOHANG
             | rustix::process::WaitIdOptions::NOWAIT,
     )
-    .map_err(|_| wait_error())?;
-    status.map(waitid_status).transpose()
+    .map_err(|error| {
+        if error == rustix::io::Errno::CHILD {
+            LeaderObservationFailure::LostAuthority
+        } else {
+            LeaderObservationFailure::Operation(wait_error())
+        }
+    })?;
+    status
+        .map(waitid_status)
+        .transpose()
+        .map_err(LeaderObservationFailure::Operation)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+enum LeaderObservationFailure {
+    LostAuthority,
+    Operation(BackgroundProcessError),
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1018,32 +1136,34 @@ fn cleanup_child_with_expected(
 ) -> Result<(), BackgroundProcessError> {
     let mut failures = CleanupFailures::default();
     let mut force_signals = force_cleanup;
-    let mut group_quiescent = cleanup_group_signal_phase(
+    let mut group_phase = cleanup_group_signal_phase(
         group,
         rustix::process::Signal::TERM,
-        expected.is_some(),
         &mut force_signals,
         &mut failures,
     );
-    if !group_quiescent {
+    if group_phase == CleanupSignalPhase::LostAuthority {
+        return failures.finish();
+    }
+    if group_phase != CleanupSignalPhase::Quiescent {
         if !term_grace.is_zero() {
             sleep_through(term_grace);
         }
-        group_quiescent = cleanup_group_signal_phase(
+        group_phase = cleanup_group_signal_phase(
             group,
             rustix::process::Signal::KILL,
-            false,
             &mut force_signals,
             &mut failures,
         );
-        // Group discovery and group signalling are fallible independent
-        // effects. Always target the retained direct child on a real cleanup
-        // path. It remains unreaped, so the numeric PID and PGID cannot be
-        // recycled through this boundary.
-        if child.kill().is_err() {
-            failures.record(cleanup_error());
+        if group_phase == CleanupSignalPhase::LostAuthority {
+            return failures.finish();
         }
-        if !group_quiescent && let Err(error) = require_original_group_quiescent(group) {
+        // A successful group KILL already targets the retained leader. Avoid a
+        // redundant numeric child signal, and retain wait authority while the
+        // bounded group-disappearance proof runs.
+        if group_phase != CleanupSignalPhase::Quiescent
+            && let Err(error) = require_original_group_quiescent(group)
+        {
             failures.record(error);
         }
     }
@@ -1062,20 +1182,19 @@ fn cleanup_child_with_expected(
 fn cleanup_group_signal_phase(
     group: rustix::process::Pid,
     signal: rustix::process::Signal,
-    leader_known_exited: bool,
     force_signals: &mut bool,
     failures: &mut CleanupFailures,
-) -> bool {
-    let leader_exited = if leader_known_exited {
-        true
-    } else {
-        match observe_leader(group) {
-            Ok(status) => status.is_some(),
-            Err(error) => {
-                *force_signals = true;
-                failures.record(error);
-                false
-            }
+) -> CleanupSignalPhase {
+    let leader_exited = match observe_leader(group) {
+        Ok(status) => status.is_some(),
+        Err(LeaderObservationFailure::LostAuthority) => {
+            failures.record(wait_error());
+            return CleanupSignalPhase::LostAuthority;
+        }
+        Err(LeaderObservationFailure::Operation(error)) => {
+            *force_signals = true;
+            failures.record(error);
+            false
         }
     };
     let only_exited_leader = match group_members(group) {
@@ -1092,10 +1211,30 @@ fn cleanup_group_signal_phase(
     if (*force_signals || !only_exited_leader)
         && let Err(error) = signal_group_or_confirm_exited_leader(group, signal)
     {
-        *force_signals = true;
-        failures.record(error);
+        match error {
+            LeaderObservationFailure::LostAuthority => {
+                failures.record(wait_error());
+                return CleanupSignalPhase::LostAuthority;
+            }
+            LeaderObservationFailure::Operation(error) => {
+                *force_signals = true;
+                failures.record(error);
+            }
+        }
     }
-    only_exited_leader && !*force_signals
+    if only_exited_leader && !*force_signals {
+        CleanupSignalPhase::Quiescent
+    } else {
+        CleanupSignalPhase::Active
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum CleanupSignalPhase {
+    Quiescent,
+    Active,
+    LostAuthority,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1158,18 +1297,26 @@ fn signal_group(
 fn signal_group_or_confirm_exited_leader(
     group: rustix::process::Pid,
     signal: rustix::process::Signal,
-) -> Result<(), BackgroundProcessError> {
+) -> Result<(), LeaderObservationFailure> {
+    #[cfg(test)]
+    if OBSERVED_GROUP_SIGNAL.load(Ordering::Acquire) == group.as_raw_nonzero().get().cast_unsigned()
+    {
+        GROUP_SIGNAL_ATTEMPTS.fetch_add(1, Ordering::AcqRel);
+    }
     match rustix::process::kill_process_group(group, signal) {
         Err(rustix::io::Errno::PERM)
             if observe_leader(group)?.is_some()
-                && only_group_leader_remains(&group_members(group)?, group) =>
+                && only_group_leader_remains(
+                    &group_members(group).map_err(LeaderObservationFailure::Operation)?,
+                    group,
+                ) =>
         {
             // EPERM is not evidence of success or disappearance. The separate
             // NOWAIT observation and bounded process-group snapshot prove that
             // the only remaining member is the already-exited retained leader.
             Ok(())
         }
-        result => classify_group_signal(result),
+        result => classify_group_signal(result).map_err(LeaderObservationFailure::Operation),
     }
 }
 
@@ -1194,6 +1341,11 @@ fn require_original_group_quiescent(
     );
     let mut observed_failure = false;
     loop {
+        match observe_leader(group) {
+            Err(LeaderObservationFailure::LostAuthority) => return Err(wait_error()),
+            Err(LeaderObservationFailure::Operation(_)) => observed_failure = true,
+            Ok(_) => {}
+        }
         match group_members(group) {
             Ok(members) if only_group_leader_remains(&members, group) => {
                 return if observed_failure {
@@ -1391,6 +1543,17 @@ pub(crate) fn cancellation_wakeup_latency_for_test(timeout: Duration) -> Duratio
     ready_receiver.recv().expect("await registered waiter");
     assert!(cancellation.cancel());
     worker.join().expect("join cancellation waiter")
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+pub(crate) fn reset_group_signal_attempts_for_test(group: NonZeroU32) {
+    OBSERVED_GROUP_SIGNAL.store(group.get(), Ordering::Release);
+    GROUP_SIGNAL_ATTEMPTS.store(0, Ordering::Release);
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+pub(crate) fn group_signal_attempts_for_test() -> usize {
+    GROUP_SIGNAL_ATTEMPTS.load(Ordering::Acquire)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

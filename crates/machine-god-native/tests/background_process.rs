@@ -3,22 +3,25 @@
 #[path = "../src/background_process.rs"]
 mod background_process;
 
-#[cfg(target_os = "macos")]
 use background_process::BackgroundProcessHelper;
 use background_process::{
     BACKGROUND_PROCESS_TERM_GRACE, BackgroundProcessErrorKind, BackgroundProcessExit,
     BackgroundProcessOutcome, BackgroundProcessRequest, MAX_BACKGROUND_PROCESS_COMMAND_BYTES,
     MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES, OwnedBackgroundProcess,
     SystemBackgroundProcessAdapter, cancellation_wakeup_latency_for_test,
-    group_snapshot_is_quiescent_for_test, inject_group_snapshot_failures_for_test,
-    inject_group_snapshot_spawn_failures_for_test, inject_waitid_failures_for_test,
-    leader_observations_for_test, permission_denied_group_signal_is_failure_for_test,
+    group_signal_attempts_for_test, group_snapshot_is_quiescent_for_test,
+    inject_group_snapshot_failures_for_test, inject_group_snapshot_spawn_failures_for_test,
+    inject_waitid_failures_for_test, leader_observations_for_test,
+    permission_denied_group_signal_is_failure_for_test, reset_group_signal_attempts_for_test,
     reset_leader_observations_for_test, run_background_process_helper,
 };
 use machine_god_core::CancellationToken;
 use std::ffi::OsString;
 use std::fs;
+use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -52,16 +55,7 @@ impl Drop for FreshDirectory {
 }
 
 fn request(directory: &Path, command: impl Into<String>) -> BackgroundProcessRequest {
-    #[cfg(target_os = "linux")]
     let environment = vec![(OsString::from("LANG"), OsString::from("C"))];
-    #[cfg(target_os = "macos")]
-    let environment = vec![
-        (OsString::from("LANG"), OsString::from("C")),
-        (
-            OsString::from("MACHINE_GOD_BACKGROUND_HELPER_TEST"),
-            OsString::from("1"),
-        ),
-    ];
     BackgroundProcessRequest::open(
         command.into(),
         "workspace".to_owned(),
@@ -71,18 +65,12 @@ fn request(directory: &Path, command: impl Into<String>) -> BackgroundProcessReq
     .unwrap()
 }
 
-#[cfg(target_os = "linux")]
-fn adapter() -> SystemBackgroundProcessAdapter {
-    SystemBackgroundProcessAdapter::default()
-}
-
-#[cfg(target_os = "macos")]
 fn adapter() -> SystemBackgroundProcessAdapter {
     let helper = BackgroundProcessHelper::new(
         std::env::current_exe().unwrap(),
         vec![
             OsString::from("--exact"),
-            OsString::from("macos_helper_process_entry"),
+            OsString::from("helper_process_entry"),
             OsString::from("--test-threads=1"),
             OsString::from("--quiet"),
         ],
@@ -91,18 +79,165 @@ fn adapter() -> SystemBackgroundProcessAdapter {
     SystemBackgroundProcessAdapter::with_helper(helper)
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn macos_helper_process_entry() {
-    if std::env::var_os("MACHINE_GOD_BACKGROUND_HELPER_TEST").is_some() {
+fn helper_process_entry() {
+    if std::env::var_os("MACHINE_GOD_BACKGROUND_HELPER_MODE").is_some() {
+        for key in [
+            "LD_PRELOAD",
+            "LD_AUDIT",
+            "DYLD_INSERT_LIBRARIES",
+            "DYLD_LIBRARY_PATH",
+        ] {
+            assert!(
+                std::env::var_os(key).is_none(),
+                "requested loader environment reached the pre-release helper"
+            );
+        }
         run_background_process_helper().unwrap();
         unreachable!("successful helper execution replaces this process");
     }
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn macos_prepare_requires_helper_ready_handshake() {
+fn requested_environment_is_inert_until_release_and_frame_bytes_cannot_fake_readiness() {
+    let directory = FreshDirectory::new("inert-environment");
+    let marker = directory.path().join("released");
+    let environment = vec![
+        (OsString::from("PAYLOAD"), OsString::from("after-release")),
+        (
+            OsString::from("LD_PRELOAD"),
+            OsString::from("/definitely/missing"),
+        ),
+        (
+            OsString::from("LD_AUDIT"),
+            OsString::from("/definitely/missing"),
+        ),
+        (
+            OsString::from("DYLD_INSERT_LIBRARIES"),
+            OsString::from("/definitely/missing"),
+        ),
+        (
+            OsString::from("DYLD_LIBRARY_PATH"),
+            OsString::from("/definitely/missing"),
+        ),
+        (
+            OsString::from("FRAME_BYTES"),
+            OsString::from_vec(b"\xa7MGBG-FRAME-\xff".to_vec()),
+        ),
+    ];
+    let request = BackgroundProcessRequest::open(
+        "[ \"$PAYLOAD\" = after-release ] && printf released > released".to_owned(),
+        "workspace".to_owned(),
+        environment,
+        directory.path(),
+    )
+    .unwrap();
+
+    let prepared = adapter().prepare(request).unwrap();
+    thread::sleep(Duration::from_millis(100));
+    assert!(
+        !marker.exists(),
+        "requested environment caused a pre-release effect"
+    );
+    let owned = prepared.release().unwrap();
+    assert_eq!(owned.wait().unwrap(), BackgroundProcessExit::Exited(0));
+    assert_eq!(fs::read_to_string(marker).unwrap(), "released");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn child_reaping_mode_entry() {
+    let Some(root) = std::env::var_os("MACHINE_GOD_REAP_MODE_TEST_ROOT") else {
+        return;
+    };
+    let root = PathBuf::from(root);
+    let error = adapter()
+        .prepare(request(&root, "printf bad > must-not-run"))
+        .unwrap_err();
+    assert_eq!(error.kind(), BackgroundProcessErrorKind::Spawn);
+    assert!(!root.join("must-not-run").exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn incompatible_sigchld_modes_fail_before_the_requested_child_is_spawned() {
+    let executable = std::env::current_exe().unwrap();
+    for mode in ["ignored", "no-cld-wait"] {
+        let directory = FreshDirectory::new(mode);
+        let status = if mode == "ignored" {
+            Command::new("/bin/sh")
+                .args([
+                    "-c",
+                    "trap '' CHLD; exec \"$1\" --exact child_reaping_mode_entry --test-threads=1 --quiet",
+                    "machine-god-reap-launcher",
+                ])
+                .arg(&executable)
+                .env("MACHINE_GOD_REAP_MODE_TEST_ROOT", directory.path())
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+        } else {
+            let source = directory.path().join("no-cld-wait.c");
+            let launcher = directory.path().join("no-cld-wait");
+            fs::write(
+                &source,
+                b"#include <signal.h>\n#include <unistd.h>\nint main(int argc, char **argv) { (void)argc; struct sigaction sa = {0}; sa.sa_handler = SIG_DFL; sigemptyset(&sa.sa_mask); sa.sa_flags = SA_NOCLDWAIT; if (sigaction(SIGCHLD, &sa, 0) != 0) return 90; execv(argv[1], &argv[1]); return 91; }\n",
+            )
+            .unwrap();
+            assert!(
+                Command::new("cc")
+                    .args(["-Wall", "-Wextra", "-Werror", "-o"])
+                    .arg(&launcher)
+                    .arg(&source)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            Command::new(&launcher)
+                .arg(&executable)
+                .args([
+                    "--exact",
+                    "child_reaping_mode_entry",
+                    "--test-threads=1",
+                    "--quiet",
+                ])
+                .env("MACHINE_GOD_REAP_MODE_TEST_ROOT", directory.path())
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+        };
+        assert!(status.success(), "{mode} subprocess failed: {status}");
+        assert!(!directory.path().join("must-not-run").exists());
+    }
+}
+
+#[test]
+fn external_reap_loses_authority_without_any_group_signal() {
+    let directory = FreshDirectory::new("external-reap");
+    let owned = adapter()
+        .prepare(request(directory.path(), "exit 0"))
+        .unwrap()
+        .release()
+        .unwrap();
+    let leader = owned.pid();
+    let pid = rustix::process::Pid::from_raw(i32::try_from(leader.get()).unwrap()).unwrap();
+    rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::empty())
+        .unwrap()
+        .expect("external reaper retained the child");
+    reset_group_signal_attempts_for_test(leader);
+
+    let error = owned.wait().unwrap_err();
+
+    assert_eq!(error.kind(), BackgroundProcessErrorKind::Wait);
+    assert_eq!(group_signal_attempts_for_test(), 0);
+}
+
+#[test]
+fn prepare_requires_helper_ready_handshake() {
     let directory = FreshDirectory::new("helper-ready");
     let request = BackgroundProcessRequest::open(
         "printf bad > marker".to_owned(),
@@ -111,18 +246,16 @@ fn macos_prepare_requires_helper_ready_handshake() {
         directory.path(),
     )
     .unwrap();
-    let error = adapter().prepare(request).unwrap_err();
+    let helper = BackgroundProcessHelper::new(
+        PathBuf::from("/bin/sh"),
+        vec![OsString::from("-c"), OsString::from("exit 0")],
+    )
+    .unwrap();
+    let error = SystemBackgroundProcessAdapter::with_helper(helper)
+        .prepare(request)
+        .unwrap_err();
     assert_eq!(error.kind(), BackgroundProcessErrorKind::Spawn);
     assert!(!directory.path().join("marker").exists());
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-fn non_macos_helper_entry_is_an_active_unsupported_error() {
-    assert_eq!(
-        run_background_process_helper().unwrap_err().kind(),
-        BackgroundProcessErrorKind::Unsupported
-    );
 }
 
 fn wait_for(path: &Path) {
@@ -346,16 +479,7 @@ fn command_is_an_argv_value_not_wrapper_interpolation() {
         command.to_owned(),
         "workspace".to_owned(),
         {
-            #[cfg(target_os = "linux")]
             let environment = vec![(OsString::from("PAYLOAD"), OsString::from("a ' b $ c"))];
-            #[cfg(target_os = "macos")]
-            let environment = vec![
-                (OsString::from("PAYLOAD"), OsString::from("a ' b $ c")),
-                (
-                    OsString::from("MACHINE_GOD_BACKGROUND_HELPER_TEST"),
-                    OsString::from("1"),
-                ),
-            ];
             environment
         },
         directory.path(),

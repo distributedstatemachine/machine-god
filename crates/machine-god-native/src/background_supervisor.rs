@@ -23,7 +23,6 @@ use rustix::fd::{AsFd, OwnedFd};
 use rustix::fs::{FileType, Mode, OFlags};
 
 use crate::background_inspection::{NativeBackgroundState, StoredBackgroundRecord};
-#[cfg(target_os = "macos")]
 use crate::background_process::BackgroundProcessHelper;
 use crate::background_process::{
     BackgroundProcessExit, BackgroundProcessOutcome, BackgroundProcessRequest,
@@ -38,7 +37,7 @@ use crate::session_store::FileSessionStore;
 pub const NATIVE_BACKGROUND_DEFAULT_MAX_ACTIVE: usize = 4;
 /// Hard upper bound for concurrently retained background processes.
 pub const NATIVE_BACKGROUND_HARD_MAX_ACTIVE: usize = 16;
-/// Exact private CLI argument used by the macOS inherited-directory helper.
+/// Exact private CLI argument used by the Linux/macOS safe launch helper.
 pub const BACKGROUND_PROCESS_HELPER_ARGUMENT: &str = "--__machine-god-background-exec-helper";
 
 /// Fixed host-owned background concurrency limits.
@@ -233,9 +232,6 @@ impl NativeBackgroundSupervisor {
         environment: Vec<(OsString, OsString)>,
         limits: NativeBackgroundLimits,
     ) -> Result<Self, NativeBackgroundSupervisorError> {
-        #[cfg(target_os = "linux")]
-        let adapter = system_process_adapter();
-        #[cfg(target_os = "macos")]
         let adapter = system_process_adapter()?;
         Self::from_parts(
             workspace,
@@ -845,12 +841,6 @@ fn system_millis() -> Option<u64> {
     .ok()
 }
 
-#[cfg(target_os = "linux")]
-fn system_process_adapter() -> SystemBackgroundProcessAdapter {
-    SystemBackgroundProcessAdapter::default()
-}
-
-#[cfg(target_os = "macos")]
 fn system_process_adapter()
 -> Result<SystemBackgroundProcessAdapter, NativeBackgroundSupervisorError> {
     let executable = env::current_exe().map_err(|_| {
@@ -957,7 +947,6 @@ mod tests {
         NativeBackgroundLimits, NativeBackgroundSupervisor, SystemBackgroundProcessAdapter,
         open_directory, retain_canonical_directory_with,
     };
-    #[cfg(target_os = "macos")]
     use crate::background_process::{BackgroundProcessHelper, run_background_process_helper};
     use crate::{
         NativeBackgroundInspection, NativeBackgroundQuery, NativeBackgroundState,
@@ -973,8 +962,6 @@ mod tests {
     use std::time::{Duration, Instant};
 
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
-    #[cfg(target_os = "macos")]
-    const HELPER_TEST_ENVIRONMENT: &str = "MACHINE_GOD_BACKGROUND_HELPER_TEST";
 
     struct Fixture {
         root: PathBuf,
@@ -1102,18 +1089,12 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
-    fn test_adapter() -> SystemBackgroundProcessAdapter {
-        SystemBackgroundProcessAdapter::default()
-    }
-
-    #[cfg(target_os = "macos")]
     fn test_adapter() -> SystemBackgroundProcessAdapter {
         let helper = BackgroundProcessHelper::new(
             std::env::current_exe().expect("test executable"),
             vec![
                 OsString::from("--exact"),
-                OsString::from("background_supervisor::tests::macos_helper_process_entry"),
+                OsString::from("background_supervisor::tests::helper_process_entry"),
                 OsString::from("--nocapture"),
             ],
         )
@@ -1121,20 +1102,13 @@ mod tests {
         SystemBackgroundProcessAdapter::with_helper(helper)
     }
 
-    #[cfg(target_os = "linux")]
     fn test_environment() -> Vec<(OsString, OsString)> {
         Vec::new()
     }
 
-    #[cfg(target_os = "macos")]
-    fn test_environment() -> Vec<(OsString, OsString)> {
-        vec![(OsString::from(HELPER_TEST_ENVIRONMENT), OsString::from("1"))]
-    }
-
-    #[cfg(target_os = "macos")]
     #[test]
-    fn macos_helper_process_entry() {
-        if std::env::var_os(HELPER_TEST_ENVIRONMENT).is_some() {
+    fn helper_process_entry() {
+        if std::env::var_os("MACHINE_GOD_BACKGROUND_HELPER_MODE").is_some() {
             run_background_process_helper().expect("helper exec");
         }
     }
