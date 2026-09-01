@@ -87,6 +87,12 @@ const MAX_LINUX_PROC_ENTRIES: usize = 128 * 1024;
 const MAX_LINUX_PROC_STAT_BYTES: usize = 4 * 1024;
 #[cfg(target_os = "linux")]
 const MAX_LINUX_PROC_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
+#[cfg(target_os = "linux")]
+const MAX_LINUX_MOUNTINFO_BYTES: usize = 1024 * 1024;
+#[cfg(target_os = "linux")]
+const MAX_LINUX_MOUNTINFO_ENTRIES: usize = 4 * 1024;
+#[cfg(target_os = "linux")]
+const LINUX_PROC_SUPER_MAGIC: u64 = 0x9fa0;
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 static OBSERVED_LEADER: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
@@ -746,6 +752,96 @@ fn require_exclusive_child_reaping() -> Result<(), BackgroundProcessError> {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn require_linux_proc_authority() -> Result<(), BackgroundProcessError> {
+    use std::io::Read;
+
+    let filesystem = rustix::fs::statfs("/proc").map_err(|_| spawn_error())?;
+    if u64::try_from(filesystem.f_type).ok() != Some(LINUX_PROC_SUPER_MAGIC) {
+        return Err(spawn_error());
+    }
+    let mut mountinfo = std::fs::File::open("/proc/self/mountinfo").map_err(|_| spawn_error())?;
+    let mut bytes = Vec::with_capacity(MAX_LINUX_MOUNTINFO_BYTES + 1);
+    mountinfo
+        .by_ref()
+        .take((MAX_LINUX_MOUNTINFO_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| spawn_error())?;
+    if bytes.len() > MAX_LINUX_MOUNTINFO_BYTES {
+        return Err(spawn_error());
+    }
+    parse_linux_proc_mount_authority(&bytes)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_proc_mount_authority(bytes: &[u8]) -> Result<(), BackgroundProcessError> {
+    if bytes.is_empty() || bytes.len() > MAX_LINUX_MOUNTINFO_BYTES || !bytes.ends_with(b"\n") {
+        return Err(spawn_error());
+    }
+    let mut proc_mounts = 0_usize;
+    let mut entries = 0_usize;
+    for line in bytes.split(|byte| *byte == b'\n') {
+        if line.is_empty() {
+            continue;
+        }
+        entries = entries
+            .checked_add(1)
+            .filter(|count| *count <= MAX_LINUX_MOUNTINFO_ENTRIES)
+            .ok_or_else(spawn_error)?;
+        let fields = line
+            .split(u8::is_ascii_whitespace)
+            .filter(|field| !field.is_empty())
+            .collect::<Vec<_>>();
+        let separator = fields
+            .iter()
+            .position(|field| *field == b"-")
+            .filter(|separator| *separator >= 6 && separator + 3 < fields.len())
+            .ok_or_else(spawn_error)?;
+        if fields[separator + 1..]
+            .iter()
+            .skip(1)
+            .any(|field| *field == b"-")
+        {
+            return Err(spawn_error());
+        }
+        let mountpoint = fields[4];
+        if linux_numeric_proc_mountpoint(mountpoint) {
+            return Err(spawn_error());
+        }
+        if mountpoint != b"/proc" {
+            continue;
+        }
+        proc_mounts = proc_mounts.checked_add(1).ok_or_else(spawn_error)?;
+        if fields[3] != b"/"
+            || fields[separator + 1] != b"proc"
+            || !linux_proc_options_are_unrestricted(fields[5])
+            || !linux_proc_options_are_unrestricted(fields[separator + 3])
+        {
+            return Err(spawn_error());
+        }
+    }
+    if proc_mounts == 1 {
+        Ok(())
+    } else {
+        Err(spawn_error())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_proc_options_are_unrestricted(options: &[u8]) -> bool {
+    options
+        .split(|byte| *byte == b',')
+        .all(|option| !option.starts_with(b"hidepid") || option == b"hidepid=0")
+}
+
+#[cfg(target_os = "linux")]
+fn linux_numeric_proc_mountpoint(mountpoint: &[u8]) -> bool {
+    mountpoint
+        .strip_prefix(b"/proc/")
+        .and_then(|suffix| suffix.split(|byte| *byte == b'/').next())
+        .is_some_and(|component| !component.is_empty() && component.iter().all(u8::is_ascii_digit))
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn prepare_system(
     adapter: &SystemBackgroundProcessAdapter,
@@ -758,6 +854,8 @@ fn prepare_system(
         .helper
         .as_ref()
         .ok_or_else(|| BackgroundProcessError::new(BackgroundProcessErrorKind::Unsupported))?;
+    #[cfg(target_os = "linux")]
+    require_linux_proc_authority()?;
     require_exclusive_child_reaping()?;
     #[cfg(target_os = "linux")]
     let retained_cwd = {
@@ -1817,6 +1915,9 @@ fn invariant_error() -> BackgroundProcessError {
 mod linux_proc_tests {
     use super::*;
 
+    const UNRESTRICTED_PROC: &[u8] =
+        b"36 25 0:32 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw,hidepid=0\n";
+
     fn pid(raw: i32) -> rustix::process::Pid {
         rustix::process::Pid::from_raw(raw).expect("positive test pid")
     }
@@ -1865,5 +1966,48 @@ mod linux_proc_tests {
         assert!(parse_linux_proc_directory_pid(b"321x").is_err());
         assert!(parse_linux_proc_directory_pid(b"0").is_err());
         assert!(parse_linux_proc_directory_pid(b"999999999999999999999").is_err());
+    }
+
+    #[test]
+    fn proc_mount_authority_requires_one_unrestricted_root_procfs() {
+        assert!(parse_linux_proc_mount_authority(UNRESTRICTED_PROC).is_ok());
+        assert!(
+            parse_linux_proc_mount_authority(b"36 25 0:32 / /proc rw,nosuid - proc proc rw\n")
+                .is_ok()
+        );
+
+        for restricted in [
+            b"36 25 0:32 / /proc rw - proc proc rw,hidepid=1\n".as_slice(),
+            b"36 25 0:32 / /proc rw,hidepid=2 - proc proc rw\n".as_slice(),
+            b"36 25 0:32 / /proc rw - proc proc rw,hidepid=invisible\n".as_slice(),
+            b"36 25 0:32 / /proc rw - proc proc rw,hidepid=unknown\n".as_slice(),
+            b"36 25 0:32 /subtree /proc rw - proc proc rw\n".as_slice(),
+            b"36 25 0:32 / /proc rw - tmpfs tmpfs rw\n".as_slice(),
+            b"36 25 0:32 / /other rw - proc proc rw\n".as_slice(),
+            b"36 25 0:32 / /proc rw - proc proc rw".as_slice(),
+        ] {
+            assert!(parse_linux_proc_mount_authority(restricted).is_err());
+        }
+    }
+
+    #[test]
+    fn proc_mount_authority_rejects_numeric_pid_path_overmounts_and_ambiguity() {
+        let numeric_overmount = [
+            UNRESTRICTED_PROC,
+            b"37 36 0:33 / /proc/321 rw - tmpfs tmpfs rw\n",
+        ]
+        .concat();
+        assert!(parse_linux_proc_mount_authority(&numeric_overmount).is_err());
+
+        let duplicate = [UNRESTRICTED_PROC, UNRESTRICTED_PROC].concat();
+        assert!(parse_linux_proc_mount_authority(&duplicate).is_err());
+        assert!(linux_numeric_proc_mountpoint(b"/proc/321/stat"));
+        assert!(!linux_numeric_proc_mountpoint(b"/proc/self"));
+        assert!(!linux_numeric_proc_mountpoint(b"/proc/321x"));
+    }
+
+    #[test]
+    fn host_proc_mount_satisfies_pre_release_authority_contract() {
+        require_linux_proc_authority().expect("test host must expose unrestricted procfs");
     }
 }

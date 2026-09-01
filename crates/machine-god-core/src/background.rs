@@ -359,6 +359,8 @@ pub trait BackgroundStore: Send + Sync + 'static {
 /// that the requested command did not execute. `release` is the sole operation
 /// that may open the barrier. On a release error the implementation retains the
 /// same no-command-executed guarantee and completes cleanup before returning.
+/// `abort` is the fallible proof used after an initial record might have been
+/// published: only its success permits that record to become `stopped`.
 pub trait PreparedBackgroundProcess: Send + 'static {
     /// Returns a display-only process ID, when the platform exposes one.
     fn pid(&self) -> Option<NonZeroU32>;
@@ -370,6 +372,23 @@ pub trait PreparedBackgroundProcess: Send + 'static {
     /// Returns a fixed process failure only after guaranteeing the command did
     /// not execute and every prepared native resource was cleaned.
     fn release(self: Box<Self>) -> Result<Box<dyn OwnedBackgroundProcess>, BackgroundStartError>;
+
+    /// Closes the execution barrier, terminates, and reaps the prepared child.
+    ///
+    /// The default is deliberately conservative for implementations that only
+    /// provide infallible `Drop` cleanup: it performs that cleanup but reports
+    /// ambiguity, so a possibly published record cannot claim `stopped`
+    /// without an explicit success result.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed process failure whenever complete cleanup cannot be
+    /// proven. The implementation must still make its best cleanup attempt
+    /// before returning.
+    fn abort(self: Box<Self>) -> Result<(), BackgroundStartError> {
+        drop(self);
+        Err(BackgroundStartError::new(BackgroundStartErrorKind::Process))
+    }
 }
 
 /// A released native process whose ownership is sufficient to observe its
@@ -634,11 +653,12 @@ async fn cleanup_after_possible_publication(
     record: &BackgroundRunningRecord,
     primary: BackgroundStartError,
 ) -> Result<BackgroundHandle, BackgroundStartError> {
-    drop(prepared);
-    if let Ok(completion) = record.completion(
-        record.started_at_ms(),
-        BackgroundProcessOutcome::Stopped(None),
-    ) {
+    let outcome = if prepared.abort().is_ok() {
+        BackgroundProcessOutcome::Stopped(None)
+    } else {
+        BackgroundProcessOutcome::Dead
+    };
+    if let Ok(completion) = record.completion(record.started_at_ms(), outcome) {
         let _ = lease.publish_completion(record, &completion).await;
     }
     Err(primary)
@@ -751,6 +771,7 @@ mod tests {
         publish: bool,
         completion: bool,
         release: bool,
+        abort: bool,
     }
 
     #[derive(Debug, Default)]
@@ -760,6 +781,7 @@ mod tests {
         executed: AtomicUsize,
         retained: AtomicUsize,
         completion_publications: AtomicUsize,
+        dead_completion_publications: AtomicUsize,
     }
 
     impl Observations {
@@ -868,6 +890,11 @@ mod tests {
                 self.observations
                     .completion_publications
                     .fetch_add(1, Ordering::Relaxed);
+                if completion.outcome() == BackgroundProcessOutcome::Dead {
+                    self.observations
+                        .dead_completion_publications
+                        .fetch_add(1, Ordering::Relaxed);
+                }
                 assert_eq!(initial.id(), 7);
                 assert_eq!(completion.updated_at_ms(), 1_234);
                 assert!(matches!(
@@ -991,10 +1018,15 @@ mod tests {
     }
 
     #[derive(Debug)]
+    #[allow(
+        clippy::struct_excessive_bools,
+        reason = "test double independently injects each process lifecycle boundary"
+    )]
     struct FakeSpawner {
         observations: Arc<Observations>,
         prepare_fail: bool,
         release_fail: bool,
+        abort_fail: bool,
         cancel_during_prepare: Option<CancellationToken>,
         stay_pending: bool,
         pending_dropped: Arc<AtomicUsize>,
@@ -1020,6 +1052,7 @@ mod tests {
                     observations: Arc::clone(&self.observations),
                     released: false,
                     release_fail: self.release_fail,
+                    abort_fail: self.abort_fail,
                 });
                 if let Some(cancellation) = &self.cancel_during_prepare {
                     cancellation.cancel();
@@ -1043,6 +1076,7 @@ mod tests {
         observations: Arc<Observations>,
         released: bool,
         release_fail: bool,
+        abort_fail: bool,
     }
 
     impl Drop for FakePrepared {
@@ -1070,6 +1104,17 @@ mod tests {
             self.observations.executed.fetch_add(1, Ordering::Relaxed);
             self.released = true;
             Ok(Box::new(FakeOwned))
+        }
+
+        fn abort(mut self: Box<Self>) -> Result<(), BackgroundStartError> {
+            self.observations.aborted.fetch_add(1, Ordering::Relaxed);
+            self.observations.event("abort");
+            self.released = true;
+            if self.abort_fail {
+                Err(error(BackgroundStartErrorKind::Process))
+            } else {
+                Ok(())
+            }
         }
     }
 
@@ -1166,6 +1211,7 @@ mod tests {
                 observations: Arc::clone(&observations),
                 prepare_fail: failures.prepare,
                 release_fail: failures.release,
+                abort_fail: failures.abort,
                 cancel_during_prepare: (cancel_stage == Some("prepare"))
                     .then_some(cancellation.clone())
                     .flatten(),
@@ -1202,6 +1248,7 @@ mod tests {
                 observations: Arc::clone(&observations),
                 prepare_fail: false,
                 release_fail: false,
+                abort_fail: false,
                 cancel_during_prepare: None,
                 stay_pending: false,
                 pending_dropped: Arc::new(AtomicUsize::new(0)),
@@ -1635,6 +1682,33 @@ mod tests {
             observations.completion_publications.load(Ordering::Relaxed),
             1
         );
+    }
+
+    #[test]
+    fn cancellation_records_dead_when_prepared_abort_cannot_prove_cleanup() {
+        let cancellation = CancellationToken::new();
+        let failures = Failures {
+            abort: true,
+            ..Failures::default()
+        };
+        let (supervisor, observations, _) =
+            fixture(failures, Some(cancellation.clone()), Some("publish"), false);
+
+        let result = block_on(supervisor.start(request(), cancellation));
+
+        assert_eq!(
+            result.unwrap_err().kind(),
+            BackgroundStartErrorKind::Cancelled
+        );
+        assert_eq!(observations.aborted.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            observations
+                .dead_completion_publications
+                .load(Ordering::Relaxed),
+            1
+        );
+        assert_eq!(observations.executed.load(Ordering::Relaxed), 0);
+        assert_eq!(observations.retained.load(Ordering::Relaxed), 0);
     }
 
     #[test]

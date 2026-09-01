@@ -64,9 +64,11 @@ gate or helper has already failed; that path guarantees the command did not
 run, reaps the child, and attempts to replace the already-published `running`
 record with `dead` before returning a fixed process failure. A failed
 replacement cannot mask that primary process failure. Likewise, cancellation
-after initial publication attempts a `stopped` replacement but always returns
-the fixed cancellation result. Retention after a successful release is an
-infallible ownership transfer: dropping the caller's start future cannot
+after initial publication explicitly aborts and reaps the prepared child. It
+publishes `stopped` only when that fallible cleanup proves success and
+publishes `dead` when cleanup fails or remains ambiguous, while always
+preserving the fixed cancellation result. Retention after a successful release
+is an infallible ownership transfer: dropping the caller's start future cannot
 orphan a process or free its capacity slot.
 
 The successful start result contains only the allocated ID and display-only
@@ -168,7 +170,17 @@ descendants before releasing the record lease and capacity. Stop sends TERM to
 the owned group, waits through a fixed grace period, sends KILL if still
 present, and reaps. Before reaping the leader, a bounded platform group scan
 proves that the unreaped leader is the sole remaining member of its original
-group. Linux reads the required numeric process and group identities directly
+group. Before creating any Linux helper, the adapter verifies `/proc` with
+`statfs` and parses at most 1 MiB and 4,096 entries from
+`/proc/self/mountinfo`. It requires exactly one procfs mounted at `/proc` from
+the procfs root, accepts only absent or explicit `hidepid=0`, and rejects
+malformed, truncated, duplicated, unknown-`hidepid`, restricted, or numeric
+PID-path-overmounted configurations. This makes the required stat identity
+fields visible even when a descendant changes UID or GID; a host that cannot
+prove that cross-credential visibility fails before the requested helper is
+spawned or released.
+
+Linux then reads the required numeric process and group identities directly
 from a `/proc` traversal bounded to 131,072 entries, 4 KiB per stat record,
 32 MiB of aggregate stat bytes, and 32,768 retained members; it does not depend
 on a GNU `ps` dialect. macOS retains its fixed `/bin/ps` adapter with a 64 KiB
