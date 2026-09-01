@@ -357,8 +357,10 @@ pub trait BackgroundStore: Send + Sync + 'static {
 /// Dropping this value before successful release must synchronously close the
 /// barrier, terminate and reap every prepared child resource, and guarantee
 /// that the requested command did not execute. `release` is the sole operation
-/// that may open the barrier. On a release error the implementation retains the
-/// same no-command-executed guarantee and completes cleanup before returning.
+/// that may open the barrier. It observes the operation cancellation token
+/// until that irreversible point. On a release error the implementation
+/// retains the same no-command-executed guarantee and completes cleanup before
+/// returning.
 /// `abort` is the fallible proof used after an initial record might have been
 /// published: only its success permits that record to become `stopped`.
 pub trait PreparedBackgroundProcess: Send + 'static {
@@ -371,7 +373,10 @@ pub trait PreparedBackgroundProcess: Send + 'static {
     ///
     /// Returns a fixed process failure only after guaranteeing the command did
     /// not execute and every prepared native resource was cleaned.
-    fn release(self: Box<Self>) -> Result<Box<dyn OwnedBackgroundProcess>, BackgroundStartError>;
+    fn release(
+        self: Box<Self>,
+        cancellation: &CancellationToken,
+    ) -> Result<Box<dyn OwnedBackgroundProcess>, BackgroundStartError>;
 
     /// Closes the execution barrier, terminates, and reaps the prepared child.
     ///
@@ -513,9 +518,10 @@ impl BackgroundSupervisor {
     /// Constructing this future is inert. On first poll, admission is
     /// fail-fast, then core orders durable ID reservation, explicit clock read,
     /// process preparation, complete initial publication, barrier release, and
-    /// infallible ownership transfer. Cancellation can win only before release;
-    /// it then drops and cleans the prepared process. Once release begins,
-    /// cancellation cannot revoke ownership or change the returned result.
+    /// infallible ownership transfer. Cancellation can win until native release
+    /// opens the execution barrier; it then drops and cleans the prepared
+    /// process. Once that barrier opens, cancellation cannot revoke ownership
+    /// or change the returned result.
     #[must_use]
     pub fn start(
         &self,
@@ -625,10 +631,10 @@ async fn start_polled(
         .await;
     }
 
-    // Release is the irreversible commit point. The cancellation observation
-    // above is deliberately the last one; cancellation cannot revoke ownership
-    // after this call begins.
-    let process = match prepared.release() {
+    // Opening the execution barrier is the irreversible commit point. Release
+    // observes the same operation token while performing bounded pre-open work;
+    // cancellation cannot revoke ownership after the barrier opens.
+    let process = match prepared.release(&cancellation) {
         Ok(process) => process,
         Err(error) => {
             if let Ok(completion) = record.completion(started_at_ms, BackgroundProcessOutcome::Dead)
@@ -1104,6 +1110,7 @@ mod tests {
 
         fn release(
             mut self: Box<Self>,
+            _cancellation: &CancellationToken,
         ) -> Result<Box<dyn OwnedBackgroundProcess>, BackgroundStartError> {
             self.observations.event("release");
             if self.release_fail {
