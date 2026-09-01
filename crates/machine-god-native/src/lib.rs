@@ -33,6 +33,8 @@ mod ask_permission;
 mod ask_user_question;
 mod background_inspection;
 mod background_process;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod background_store;
 mod config;
 mod copy_file;
 mod create_folder;

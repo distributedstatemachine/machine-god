@@ -3,6 +3,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use machine_god_core::BoxFuture;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use sha2::{Digest, Sha256};
 
 use crate::NativeEnvironment;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -34,11 +36,11 @@ pub const MAX_BACKGROUND_JSON_DEPTH: usize = 4;
 pub const MAX_BACKGROUND_JSON_NODES: usize = 64;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-const WORKSPACE_DIGEST_DOMAIN: &[u8] = b"machine-god:background-workspace:v1:";
+pub(crate) const WORKSPACE_DIGEST_DOMAIN: &[u8] = b"machine-god:background-workspace:v1:";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-const RECORD_DIGEST_DOMAIN: &[u8] = b"machine-god:background-record:v1:";
+pub(crate) const RECORD_DIGEST_DOMAIN: &[u8] = b"machine-god:background-record:v1:";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-const BACKGROUND_DIRECTORY: &str = "background-v1";
+pub(crate) const BACKGROUND_DIRECTORY: &str = "background-v1";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const RECORD_PREFIX: &[u8] = b"record-";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -56,7 +58,7 @@ pub enum NativeBackgroundQuery {
 }
 
 /// Recorded background history state. This is not a liveness assertion.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NativeBackgroundState {
     Running,
@@ -65,6 +67,37 @@ pub enum NativeBackgroundState {
     Stopped,
     Dead,
     Stale,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StoredBackgroundRecord {
+    pub(crate) version: u32,
+    pub(crate) workspace: String,
+    pub(crate) id: u64,
+    pub(crate) started_at_ms: u64,
+    pub(crate) updated_at_ms: u64,
+    pub(crate) command: String,
+    pub(crate) cwd: String,
+    pub(crate) state: NativeBackgroundState,
+    #[serde(deserialize_with = "required_background_option")]
+    pub(crate) pid: Option<u32>,
+    #[serde(deserialize_with = "required_background_option")]
+    pub(crate) exit_code: Option<i32>,
+    #[serde(deserialize_with = "required_background_option")]
+    pub(crate) server_url: Option<String>,
+    #[serde(deserialize_with = "required_background_option")]
+    pub(crate) diagnostic: Option<String>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn required_background_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    <Option<T> as serde::Deserialize>::deserialize(deserializer)
 }
 
 impl NativeBackgroundState {
@@ -413,12 +446,97 @@ fn floor_char_boundary(value: &str, maximum: usize) -> usize {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn background_workspace_name(workspace: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(WORKSPACE_DIGEST_DOMAIN);
+    hasher.update(workspace.as_bytes());
+    format!("workspace-{:x}", hasher.finalize())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn background_record_name(id: u64) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(RECORD_DIGEST_DOMAIN);
+    hasher.update(id.to_be_bytes());
+    format!("record-{:x}.json", hasher.finalize())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn is_background_record_name(name: &[u8]) -> bool {
+    name.len() == RECORD_PREFIX.len() + 64 + RECORD_SUFFIX.len()
+        && name.starts_with(RECORD_PREFIX)
+        && name.ends_with(RECORD_SUFFIX)
+        && name[RECORD_PREFIX.len()..RECORD_PREFIX.len() + 64]
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || matches!(*byte, b'a'..=b'f'))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn valid_background_record(record: &StoredBackgroundRecord, workspace: &str) -> bool {
+    record.version == 1
+        && record.workspace == workspace
+        && record.updated_at_ms >= record.started_at_ms
+        && !record.command.is_empty()
+        && !invalid_background_string(&record.command, MAX_BACKGROUND_COMMAND_BYTES)
+        && valid_background_path(&record.workspace)
+        && valid_background_path(&record.cwd)
+        && record.pid != Some(0)
+        && record
+            .server_url
+            .as_deref()
+            .is_none_or(|value| !invalid_background_string(value, MAX_BACKGROUND_SERVER_URL_BYTES))
+        && record
+            .diagnostic
+            .as_deref()
+            .is_none_or(|value| !invalid_background_string(value, MAX_BACKGROUND_DIAGNOSTIC_BYTES))
+        && valid_background_exit_code(record.state, record.exit_code)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn valid_background_path(value: &str) -> bool {
+    !invalid_background_string(value, MAX_BACKGROUND_PATH_BYTES)
+        && is_canonical_absolute_background_path(value)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn is_canonical_absolute_background_path(value: &str) -> bool {
+    if !value.starts_with('/') {
+        return false;
+    }
+    if value == "/" {
+        return true;
+    }
+    !value.ends_with('/')
+        && value
+            .split('/')
+            .skip(1)
+            .all(|component| !component.is_empty() && component != "." && component != "..")
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn invalid_background_string(value: &str, maximum: usize) -> bool {
+    value.len() > maximum || value.contains('\0')
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn valid_background_exit_code(state: NativeBackgroundState, code: Option<i32>) -> bool {
+    match state {
+        NativeBackgroundState::Running => code.is_none(),
+        NativeBackgroundState::Exited => code == Some(0),
+        NativeBackgroundState::Failed => code.is_some_and(|code| code != 0),
+        NativeBackgroundState::Stopped
+        | NativeBackgroundState::Dead
+        | NativeBackgroundState::Stale => true,
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const fn unavailable() -> NativeBackgroundInspectionError {
     NativeBackgroundInspectionError::new(NativeBackgroundInspectionErrorKind::Unavailable)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-mod supported {
+pub(crate) mod supported {
     use std::ffi::OsStr;
     use std::io::Read;
     use std::os::unix::ffi::OsStrExt;
@@ -429,18 +547,15 @@ mod supported {
     use rustix::fs::CWD;
     use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags};
     use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
-    use serde::{Deserialize, Deserializer};
-    use sha2::{Digest, Sha256};
 
     use super::{
-        BACKGROUND_DIRECTORY, MAX_BACKGROUND_COMMAND_BYTES, MAX_BACKGROUND_DIAGNOSTIC_BYTES,
-        MAX_BACKGROUND_DIRECTORY_ENTRIES, MAX_BACKGROUND_JSON_DEPTH, MAX_BACKGROUND_JSON_NODES,
-        MAX_BACKGROUND_PATH_BYTES, MAX_BACKGROUND_RECORD_BYTES, MAX_BACKGROUND_RECORDS,
-        MAX_BACKGROUND_SERVER_URL_BYTES, MAX_BACKGROUND_STATE_BASE_BYTES,
-        MAX_BACKGROUND_TOTAL_RECORD_BYTES, NativeBackgroundDetail, NativeBackgroundInspection,
-        NativeBackgroundInspectionError, NativeBackgroundInspectionErrorKind, NativeBackgroundList,
-        NativeBackgroundQuery, NativeBackgroundState, RECORD_DIGEST_DOMAIN, RECORD_PREFIX,
-        RECORD_SUFFIX, WORKSPACE_DIGEST_DOMAIN, unavailable,
+        BACKGROUND_DIRECTORY, MAX_BACKGROUND_DIRECTORY_ENTRIES, MAX_BACKGROUND_JSON_DEPTH,
+        MAX_BACKGROUND_JSON_NODES, MAX_BACKGROUND_PATH_BYTES, MAX_BACKGROUND_RECORD_BYTES,
+        MAX_BACKGROUND_RECORDS, MAX_BACKGROUND_STATE_BASE_BYTES, MAX_BACKGROUND_TOTAL_RECORD_BYTES,
+        NativeBackgroundDetail, NativeBackgroundInspection, NativeBackgroundInspectionError,
+        NativeBackgroundInspectionErrorKind, NativeBackgroundList, NativeBackgroundQuery,
+        StoredBackgroundRecord, background_record_name, background_workspace_name,
+        is_background_record_name, unavailable, valid_background_record,
     };
     use crate::NativeEnvironment;
 
@@ -448,35 +563,6 @@ mod supported {
     const GROUP_OR_OTHER_PERMISSIONS: u64 = 0o077;
     #[cfg(target_os = "macos")]
     const OWNER_READ_PERMISSION: u64 = 0o400;
-
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct StoredBackgroundRecord {
-        version: u32,
-        workspace: String,
-        id: u64,
-        started_at_ms: u64,
-        updated_at_ms: u64,
-        command: String,
-        cwd: String,
-        state: NativeBackgroundState,
-        #[serde(deserialize_with = "required_option")]
-        pid: Option<u32>,
-        #[serde(deserialize_with = "required_option")]
-        exit_code: Option<i32>,
-        #[serde(deserialize_with = "required_option")]
-        server_url: Option<String>,
-        #[serde(deserialize_with = "required_option")]
-        diagnostic: Option<String>,
-    }
-
-    fn required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-    where
-        D: Deserializer<'de>,
-        T: Deserialize<'de>,
-    {
-        Option::<T>::deserialize(deserializer)
-    }
 
     pub(super) fn inspect(
         environment: &NativeEnvironment,
@@ -593,7 +679,7 @@ mod supported {
             validate_directory(&next, index >= first_private)?;
             directory = next;
         }
-        let workspace_name = workspace_name(workspace);
+        let workspace_name = background_workspace_name(workspace);
         let Some(workspace_directory) = open_child_directory(directory.as_fd(), &workspace_name)?
         else {
             return Ok(None);
@@ -734,7 +820,7 @@ mod supported {
                 break;
             }
             scanned += 1;
-            if is_record_name(name) {
+            if is_background_record_name(name) {
                 candidates.push(
                     std::str::from_utf8(name)
                         .expect("canonical background names are ASCII")
@@ -790,7 +876,7 @@ mod supported {
         workspace: &str,
         id: u64,
     ) -> Result<Option<NativeBackgroundDetail>, NativeBackgroundInspectionError> {
-        let name = record_name(id);
+        let name = background_record_name(id);
         let Some((detail, _)) = read_named_record(root, workspace, &name)? else {
             return Ok(None);
         };
@@ -918,10 +1004,31 @@ mod supported {
         workspace: &str,
         name: &str,
     ) -> Result<NativeBackgroundDetail, NativeBackgroundInspectionError> {
+        let record = decode_stored_record(bytes, workspace, name)?;
+        Ok(NativeBackgroundDetail {
+            id: record.id,
+            state: record.state,
+            started_at_ms: record.started_at_ms,
+            updated_at_ms: record.updated_at_ms,
+            pid: record.pid,
+            command: record.command,
+            cwd: record.cwd,
+            exit_code: record.exit_code,
+            server_url: record.server_url,
+            diagnostic: record.diagnostic,
+        })
+    }
+
+    pub(crate) fn decode_stored_record(
+        bytes: &[u8],
+        workspace: &str,
+        name: &str,
+    ) -> Result<StoredBackgroundRecord, NativeBackgroundInspectionError> {
         validate_json_shape(bytes)?;
         let record: StoredBackgroundRecord =
             serde_json::from_slice(bytes).map_err(|_| corrupt())?;
-        validate_record(record, workspace, name)
+        validate_record(&record, workspace, name)?;
+        Ok(record)
     }
 
     fn validate_json_shape(bytes: &[u8]) -> Result<(), NativeBackgroundInspectionError> {
@@ -1066,61 +1173,15 @@ mod supported {
     }
 
     fn validate_record(
-        record: StoredBackgroundRecord,
+        record: &StoredBackgroundRecord,
         workspace: &str,
         name: &str,
-    ) -> Result<NativeBackgroundDetail, NativeBackgroundInspectionError> {
-        if record.version != 1
-            || record.workspace != workspace
-            || record.updated_at_ms < record.started_at_ms
-            || record.command.is_empty()
-            || invalid_string(&record.command, MAX_BACKGROUND_COMMAND_BYTES)
-            || invalid_path(&record.workspace)
-            || invalid_path(&record.cwd)
-            || record.pid == Some(0)
-            || record
-                .server_url
-                .as_deref()
-                .is_some_and(|value| invalid_string(value, MAX_BACKGROUND_SERVER_URL_BYTES))
-            || record
-                .diagnostic
-                .as_deref()
-                .is_some_and(|value| invalid_string(value, MAX_BACKGROUND_DIAGNOSTIC_BYTES))
-            || record_name(record.id) != name
-            || !valid_exit_code(record.state, record.exit_code)
+    ) -> Result<(), NativeBackgroundInspectionError> {
+        if !valid_background_record(record, workspace) || background_record_name(record.id) != name
         {
             return Err(corrupt());
         }
-        Ok(NativeBackgroundDetail {
-            id: record.id,
-            state: record.state,
-            started_at_ms: record.started_at_ms,
-            updated_at_ms: record.updated_at_ms,
-            pid: record.pid,
-            command: record.command,
-            cwd: record.cwd,
-            exit_code: record.exit_code,
-            server_url: record.server_url,
-            diagnostic: record.diagnostic,
-        })
-    }
-
-    fn invalid_path(value: &str) -> bool {
-        invalid_string(value, MAX_BACKGROUND_PATH_BYTES) || !is_canonical_absolute_path(value)
-    }
-
-    fn is_canonical_absolute_path(value: &str) -> bool {
-        if !value.starts_with('/') {
-            return false;
-        }
-        if value == "/" {
-            return true;
-        }
-        !value.ends_with('/')
-            && value
-                .split('/')
-                .skip(1)
-                .all(|component| !component.is_empty() && component != "." && component != "..")
+        Ok(())
     }
 
     fn directory_open_flags() -> OFlags {
@@ -1144,44 +1205,6 @@ mod supported {
     #[cfg(target_os = "macos")]
     const fn noatime_flag() -> OFlags {
         OFlags::empty()
-    }
-
-    fn invalid_string(value: &str, maximum: usize) -> bool {
-        value.len() > maximum || value.contains('\0')
-    }
-
-    fn valid_exit_code(state: NativeBackgroundState, code: Option<i32>) -> bool {
-        match state {
-            NativeBackgroundState::Running => code.is_none(),
-            NativeBackgroundState::Exited => code == Some(0),
-            NativeBackgroundState::Failed => code.is_some_and(|code| code != 0),
-            NativeBackgroundState::Stopped
-            | NativeBackgroundState::Dead
-            | NativeBackgroundState::Stale => true,
-        }
-    }
-
-    fn workspace_name(workspace: &str) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(WORKSPACE_DIGEST_DOMAIN);
-        hasher.update(workspace.as_bytes());
-        format!("workspace-{:x}", hasher.finalize())
-    }
-
-    fn record_name(id: u64) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(RECORD_DIGEST_DOMAIN);
-        hasher.update(id.to_be_bytes());
-        format!("record-{:x}.json", hasher.finalize())
-    }
-
-    fn is_record_name(name: &[u8]) -> bool {
-        name.len() == RECORD_PREFIX.len() + 64 + RECORD_SUFFIX.len()
-            && name.starts_with(RECORD_PREFIX)
-            && name.ends_with(RECORD_SUFFIX)
-            && name[RECORD_PREFIX.len()..RECORD_PREFIX.len() + 64]
-                .iter()
-                .all(|byte| byte.is_ascii_digit() || matches!(*byte, b'a'..=b'f'))
     }
 
     fn is_rejected_type_error(error: rustix::io::Errno) -> bool {
