@@ -19,7 +19,7 @@ exact Rust and Cargo 1.94.1 local gate before review. Every track rejected it.
 
 ## Cycle 01 remediation
 
-The rejected candidate was replaced by bounded changes through `4dc62e4`:
+The rejected candidate was replaced by bounded changes through `e35e486`:
 
 - lifecycle scanning and compaction cap total record or pending occupancy at
   100, preserve active work, retain the newest terminal history, and reclaim
@@ -37,4 +37,3 @@ The rejected candidate was replaced by bounded changes through `4dc62e4`:
 Every finding rejected the entire candidate. Acceptance requires the complete
 replacement local gate and three entirely fresh reviewers on one later exact
 SHA; no result from this rejected cycle is reused as acceptance evidence.
-
