@@ -84,6 +84,8 @@ exact durability, locking, and race contracts.
 
 - retained workspace and state descriptors for confined filesystem work;
 - fixed process configuration and retained cwd identity for terminal work;
+- a host-owned background supervisor that composes provider-neutral admission
+  with durable records and exact process-group ownership;
 - bounded credentials and fixed endpoints for AI Gateway access;
 - injected permission and question prompters for human interaction;
 - host-owned runtime, clock, deadline, and transport implementations where
@@ -140,8 +142,10 @@ according to the authority they require. The complete AI Gateway reference host
 is compiled for Linux and macOS, non-WebAssembly targets, with
 `ai-gateway-http`. Some portable native contracts expose an injected seam on
 more targets while their production system implementation is narrower; for
-example, the terminal system executor is Linux-only. The contract for each
-component is authoritative.
+example, the terminal system executor is Linux-only. The process-local
+background supervisor has production adapters for both Linux and macOS; macOS
+uses the fixed safe-Rust inherited-descriptor helper described by its contract.
+The contract for each component is authoritative.
 
 Skills, MCP, ACP, subagents, SDK surfaces, advanced compatibility, optimization,
 and packaging belong to later milestones. They must extend these boundaries

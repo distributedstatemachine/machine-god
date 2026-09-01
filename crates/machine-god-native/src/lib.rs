@@ -35,6 +35,8 @@ mod background_inspection;
 mod background_process;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod background_store;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod background_supervisor;
 mod config;
 mod copy_file;
 mod create_folder;
@@ -191,6 +193,13 @@ pub use background_inspection::{
     inspect_native_background, inspect_process_background,
 };
 pub use background_process::run_background_process_helper;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use background_supervisor::{
+    BACKGROUND_PROCESS_HELPER_ARGUMENT, NATIVE_BACKGROUND_DEFAULT_MAX_ACTIVE,
+    NATIVE_BACKGROUND_HARD_MAX_ACTIVE, NativeBackgroundLimits, NativeBackgroundReconciliation,
+    NativeBackgroundSupervisor, NativeBackgroundSupervisorError,
+    NativeBackgroundSupervisorErrorKind,
+};
 #[cfg(all(feature = "vision", not(target_family = "wasm")))]
 pub use vision::{
     MAX_VISION_BATCH_BYTES, MAX_VISION_IMAGE_BYTES, MAX_VISION_IMAGES, MAX_VISION_PATH_BYTES,

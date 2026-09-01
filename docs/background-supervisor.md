@@ -62,6 +62,13 @@ standard descriptor, the helper applies safe `fchdir` through `rustix`, waits
 on the private release channel, and then replaces itself with fixed
 `/bin/sh`. No machine-god crate contains unsafe Rust.
 
+The production adapter resolves the current host executable and supplies one
+exact private helper argument. Native hosts must dispatch that exact singleton
+argument to `run_background_process_helper` before ordinary argument parsing,
+without first locking or replacing standard streams. The reference CLI does
+so. The argument plus any additional value is ordinary invalid public input;
+helper failure returns the fixed private exit status without reflected output.
+
 Renaming the retained directory or replacing its old path with a symlink or a
 different directory cannot redirect the child. Helper startup or protocol
 failure is a pre-release spawn failure and runs no requested command. The
@@ -86,10 +93,11 @@ by directory synchronization. An ambiguous durability result fails closed and
 is never blindly retried.
 
 Normal exit records `exited` with code zero or `failed` with the nonzero exit
-code. Explicit owned stop records `stopped`. An ambiguous cleanup failure
-records `dead` when a durable replacement is possible. If completion
-publication fails, the last complete record remains readable; no partial JSON
-is exposed.
+code. A signal termination is recorded as the conventional nonzero
+`128 + signal` failed code. Explicit owned stop records `stopped`. An ambiguous
+cleanup failure records `dead` when a durable replacement is possible. If
+completion publication fails, the last complete record remains readable; no
+partial JSON is exposed.
 
 Startup reconciliation takes record locks nonblocking and changes only
 unlocked persisted `running` records to `stale`, within the reader's fixed scan

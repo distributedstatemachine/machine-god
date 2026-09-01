@@ -1176,9 +1176,24 @@ fn classify_provider_error(error: &ProviderError) -> ModelsOperationalFailure {
 }
 
 fn main() -> ExitCode {
+    #[cfg(target_os = "macos")]
+    if is_background_process_helper_arguments(env::args_os().skip(1)) {
+        let _ = machine_god_native::run_background_process_helper();
+        return ExitCode::from(125);
+    }
     let mut stdout = io::stdout().lock();
     let mut stderr = io::stderr().lock();
     ExitCode::from(run(env::args_os().skip(1), &mut stdout, &mut stderr))
+}
+
+#[cfg(target_os = "macos")]
+fn is_background_process_helper_arguments(arguments: impl IntoIterator<Item = OsString>) -> bool {
+    let mut arguments = arguments.into_iter();
+    arguments.next().as_deref()
+        == Some(std::ffi::OsStr::new(
+            machine_god_native::BACKGROUND_PROCESS_HELPER_ARGUMENT,
+        ))
+        && arguments.next().is_none()
 }
 
 fn run(
@@ -2323,6 +2338,8 @@ fn write_json_string_content(output: &mut impl std::fmt::Write, value: &str) -> 
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
+    use super::is_background_process_helper_arguments;
     use super::{
         BoundedSessionOutput, BoundedSessionsOutput, BoundedWorkspaceOutput, Command,
         DOCTOR_RENDER_FAILURE, DoctorCheckSnapshot, DoctorCheckStatus, DoctorCommandHost,
@@ -5905,6 +5922,23 @@ mod tests {
         assert_eq!(exit, 2);
         assert!(stdout.is_empty());
         assert_eq!(stderr, INVALID_ARGUMENTS.as_bytes());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn private_background_helper_dispatch_requires_the_exact_single_argument() {
+        let helper = machine_god_native::BACKGROUND_PROCESS_HELPER_ARGUMENT;
+        assert!(is_background_process_helper_arguments([OsString::from(
+            helper
+        )]));
+        assert!(!is_background_process_helper_arguments([]));
+        assert!(!is_background_process_helper_arguments([
+            OsString::from(helper),
+            OsString::from("extra"),
+        ]));
+        assert!(!is_background_process_helper_arguments([OsString::from(
+            "background"
+        )]));
     }
 
     #[cfg(unix)]

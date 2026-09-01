@@ -1,5 +1,10 @@
 //! Prepared, process-group-owned background shell execution.
 
+#![allow(
+    dead_code,
+    reason = "lower-level process lifecycle primitives remain directly integration-tested"
+)]
+
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;

@@ -1,14 +1,6 @@
 //! Descriptor-confined persistence used by the native background supervisor.
 
 #![cfg(any(target_os = "linux", target_os = "macos"))]
-#![cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "wired into the concurrently implemented native background supervisor"
-    )
-)]
-
 use std::error::Error;
 use std::fmt;
 use std::io::{Read, Write};
@@ -366,6 +358,7 @@ fn valid_replacement(
         && current.started_at_ms == replacement.started_at_ms
         && current.command == replacement.command
         && current.cwd == replacement.cwd
+        && current.pid == replacement.pid
         && replacement.updated_at_ms >= current.updated_at_ms
         && current.state == NativeBackgroundState::Running
 }
@@ -1070,6 +1063,12 @@ mod tests {
         exited.updated_at_ms = 20;
         exited.state = NativeBackgroundState::Exited;
         exited.exit_code = Some(0);
+        let mut substituted_pid = exited.clone();
+        substituted_pid.pid = Some(if record.pid == Some(1) { 2 } else { 1 });
+        assert_eq!(
+            store.replace(&lease, &substituted_pid).unwrap_err().kind(),
+            BackgroundStoreErrorKind::Conflict
+        );
         store.replace(&lease, &exited).unwrap();
         let NativeBackgroundInspection::Detail(detail) = block_on(inspect_native_background(
             fixture.environment(),
