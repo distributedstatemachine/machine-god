@@ -172,6 +172,25 @@ retainer teardown, and allocation-free repeated PID observation. The complete
 replacement gate and all three fresh review tracks restart after every finding
 is remediated.
 
+## Rejected product candidate: cycle 11
+
+Three fresh review tracks inspected exact candidate
+`89ba68d7d74fe6f37f32b5f8cc4905eefba0c739` after its complete exact Rust and
+Cargo 1.94.1 local gate passed. All three tracks rejected the candidate.
+
+| Track | Decisive findings |
+| --- | --- |
+| Correctness, API, and compatibility | Proven cancellation during helper preparation was reported as `Process`, while a ready persistence failure could still be replaced by `Cancelled`. |
+| Lifecycle, platform, and effects | Dropping the supervisor did not cancel a start already submitted to the blocking pool, leaving a release window after supervisor drop. |
+| Performance and resources | Interrupted helper-readiness reads retried without a deadline check or park, and long cleanup waits used repeated two-millisecond sleeps. |
+
+Cycle 11 remains rejection evidence. Replacement requires failure-site
+preparation cancellation classification, persistence-error precedence after a
+started publication, race-safe cancellation of every submitted start during
+shutdown, deadline-aware interrupted readiness, and bounded coarse sleep work.
+The complete replacement gate and all three fresh review tracks restart after
+every finding is remediated.
+
 ## Rejected product candidate: cycle 08
 
 Three fresh review tracks inspected exact candidate
