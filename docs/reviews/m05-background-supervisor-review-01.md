@@ -132,3 +132,21 @@ Replacement requires the bounded supervisor-owned blocking worker boundary,
 platform-specific bounded group discovery, and outcome-accurate stopped/dead
 persistence described by the durable contract. The complete exact-1.94.1
 replacement gate must pass before three entirely fresh review tracks begin.
+
+## Rejected product candidate: cycle 05
+
+Three fresh review tracks inspected exact candidate
+`8b78bae20c491cd1eafc8df2e3e34b2db8120c0d` after its complete exact Rust and
+Cargo 1.94.1 local gate passed. Every track rejected it.
+
+| Track | Decisive findings |
+| --- | --- |
+| Correctness, API, and compatibility | Post-publication cancellation could publish `stopped` despite ambiguous prepared-process cleanup; dropping one submitted start cancelled a caller token shared with unrelated work; a Linux-enabled helper test had a macOS-only import. |
+| Lifecycle, platform, and effects | A restrictive Linux procfs `hidepid` mount could hide a credential-changed group member, allowing false quiescence and a leaked descendant. |
+| Performance and resources | Replacing and dropping a task waker while holding the result mutex could deadlock publication, exhaust blocking capacity, and hang shutdown. |
+
+Cycle 05 remains rejection evidence. Replacement requires fallible prepared
+abort classification, private drop cancellation, visibility-complete procfs
+admission, waker destruction outside shared locks, and Linux test compilation.
+The complete replacement gate and all three fresh review tracks restart after
+every finding is remediated.
