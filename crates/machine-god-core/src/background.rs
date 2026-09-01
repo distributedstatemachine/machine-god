@@ -714,11 +714,20 @@ async fn await_or_cancel<T>(
     cancellation: &CancellationToken,
 ) -> Result<T, BackgroundStartError> {
     let mut cancellation_wait = Box::pin(cancellation.cancelled());
+    let mut operation_polled = false;
     std::future::poll_fn(|context| {
-        if cancellation_wait.as_mut().poll(context).is_ready() {
-            return Poll::Ready(Err(BackgroundStartError::new(
-                BackgroundStartErrorKind::Cancelled,
-            )));
+        // Cancellation wins before the operation's first poll so an already
+        // cancelled request cannot exercise authority. Once started, poll the
+        // operation first: independent operation and cancellation wakeups may
+        // both arrive before the executor repolls this selector, and a ready
+        // operation failure must not be hidden by cancellation.
+        if !operation_polled {
+            if cancellation_wait.as_mut().poll(context).is_ready() {
+                return Poll::Ready(Err(BackgroundStartError::new(
+                    BackgroundStartErrorKind::Cancelled,
+                )));
+            }
+            operation_polled = true;
         }
         match operation.as_mut().poll(context) {
             // An operation failure is stronger evidence than cancellation
@@ -732,10 +741,15 @@ async fn await_or_cancel<T>(
                 )))
             }
             Poll::Ready(Ok(value)) => Poll::Ready(Ok(value)),
-            Poll::Pending if cancellation.is_cancelled() => Poll::Ready(Err(
-                BackgroundStartError::new(BackgroundStartErrorKind::Cancelled),
-            )),
-            Poll::Pending => Poll::Pending,
+            Poll::Pending => {
+                if cancellation_wait.as_mut().poll(context).is_ready() {
+                    Poll::Ready(Err(BackgroundStartError::new(
+                        BackgroundStartErrorKind::Cancelled,
+                    )))
+                } else {
+                    Poll::Pending
+                }
+            }
         }
     })
     .await
@@ -746,11 +760,15 @@ async fn await_prepared_or_cancel(
     cancellation: &CancellationToken,
 ) -> Result<Box<dyn PreparedBackgroundProcess>, BackgroundStartError> {
     let mut cancellation_wait = Box::pin(cancellation.cancelled());
+    let mut operation_polled = false;
     std::future::poll_fn(|context| {
-        if cancellation_wait.as_mut().poll(context).is_ready() {
-            return Poll::Ready(Err(BackgroundStartError::new(
-                BackgroundStartErrorKind::Cancelled,
-            )));
+        if !operation_polled {
+            if cancellation_wait.as_mut().poll(context).is_ready() {
+                return Poll::Ready(Err(BackgroundStartError::new(
+                    BackgroundStartErrorKind::Cancelled,
+                )));
+            }
+            operation_polled = true;
         }
         match operation.as_mut().poll(context) {
             Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
@@ -761,10 +779,15 @@ async fn await_prepared_or_cancel(
                 )))
             }
             Poll::Ready(Ok(prepared)) => Poll::Ready(Ok(prepared)),
-            Poll::Pending if cancellation.is_cancelled() => Poll::Ready(Err(
-                BackgroundStartError::new(BackgroundStartErrorKind::Cancelled),
-            )),
-            Poll::Pending => Poll::Pending,
+            Poll::Pending => {
+                if cancellation_wait.as_mut().poll(context).is_ready() {
+                    Poll::Ready(Err(BackgroundStartError::new(
+                        BackgroundStartErrorKind::Cancelled,
+                    )))
+                } else {
+                    Poll::Pending
+                }
+            }
         }
     })
     .await
@@ -784,14 +807,12 @@ async fn await_commit_or_cancel<T>(
     let mut cancellation_wait = Box::pin(cancellation.cancelled());
     let mut operation_polled = false;
     std::future::poll_fn(|context| {
-        if cancellation_wait.as_mut().poll(context).is_ready() {
-            return Poll::Ready(Err(if operation_polled {
-                CommitAwaitError::CancelledAfterPoll
-            } else {
-                CommitAwaitError::CancelledBeforePoll
-            }));
+        if !operation_polled {
+            if cancellation_wait.as_mut().poll(context).is_ready() {
+                return Poll::Ready(Err(CommitAwaitError::CancelledBeforePoll));
+            }
+            operation_polled = true;
         }
-        operation_polled = true;
         match operation.as_mut().poll(context) {
             Poll::Ready(Err(error))
                 if cancellation.is_cancelled()
@@ -805,10 +826,13 @@ async fn await_commit_or_cancel<T>(
                 Poll::Ready(Err(CommitAwaitError::CancelledAfterPoll))
             }
             Poll::Ready(Ok(value)) => Poll::Ready(Ok(value)),
-            Poll::Pending if cancellation.is_cancelled() => {
-                Poll::Ready(Err(CommitAwaitError::CancelledAfterPoll))
+            Poll::Pending => {
+                if cancellation_wait.as_mut().poll(context).is_ready() {
+                    Poll::Ready(Err(CommitAwaitError::CancelledAfterPoll))
+                } else {
+                    Poll::Pending
+                }
             }
-            Poll::Pending => Poll::Pending,
         }
     })
     .await
@@ -821,18 +845,20 @@ mod tests {
         BackgroundProcessRetainer, BackgroundProcessSpawner, BackgroundRecordLease,
         BackgroundRetentionPermit, BackgroundRunningRecord, BackgroundStartError,
         BackgroundStartErrorKind, BackgroundStartRequest, BackgroundStore, BackgroundSupervisor,
-        MAX_BACKGROUND_COMMAND_BYTES, MAX_BACKGROUND_CWD_BYTES, OwnedBackgroundProcess,
-        PreparedBackgroundProcess,
+        CommitAwaitError, MAX_BACKGROUND_COMMAND_BYTES, MAX_BACKGROUND_CWD_BYTES,
+        OwnedBackgroundProcess, PreparedBackgroundProcess, await_commit_or_cancel, await_or_cancel,
+        await_prepared_or_cancel,
     };
     use crate::{BoxFuture, CancellationToken};
     use core::future::Future;
     use core::num::NonZeroU32;
     use core::pin::Pin;
-    use core::sync::atomic::{AtomicUsize, Ordering};
+    use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use core::task::{Context, Poll};
     use futures_executor::block_on;
     use futures_util::task::noop_waker_ref;
     use std::sync::{Arc, Mutex};
+    use std::task::{Wake, Waker};
 
     #[derive(Clone, Copy, Debug, Default)]
     #[allow(clippy::struct_excessive_bools)]
@@ -1144,6 +1170,80 @@ mod tests {
 
     impl Drop for DropCounter {
         fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct PollGate {
+        ready: AtomicBool,
+        polls: AtomicUsize,
+        waker: Mutex<Option<Waker>>,
+    }
+
+    impl PollGate {
+        fn open(&self) {
+            self.ready.store(true, Ordering::Release);
+            let waker = self
+                .waker
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
+            if let Some(waker) = waker {
+                waker.wake();
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct GatedFuture<T> {
+        output: Option<T>,
+        gate: Arc<PollGate>,
+    }
+
+    impl<T> GatedFuture<T> {
+        fn new(output: T, gate: Arc<PollGate>) -> Self {
+            Self {
+                output: Some(output),
+                gate,
+            }
+        }
+    }
+
+    impl<T: Unpin> Future for GatedFuture<T> {
+        type Output = T;
+
+        fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+            self.gate.polls.fetch_add(1, Ordering::Relaxed);
+            if self.gate.ready.load(Ordering::Acquire) {
+                return Poll::Ready(self.output.take().expect("gated future resolves once"));
+            }
+
+            let superseded = self
+                .gate
+                .waker
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .replace(context.waker().clone());
+            drop(superseded);
+
+            if self.gate.ready.load(Ordering::Acquire) {
+                Poll::Ready(self.output.take().expect("gated future resolves once"))
+            } else {
+                Poll::Pending
+            }
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct WakeCounter(AtomicUsize);
+
+    impl Wake for WakeCounter {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
             self.0.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -1602,6 +1702,153 @@ mod tests {
             BackgroundStartErrorKind::Cancelled
         );
         assert!(observations.events().is_empty());
+    }
+
+    #[test]
+    fn selector_cancellation_before_first_poll_does_not_poll_the_operation() {
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let gate = Arc::new(PollGate::default());
+        let operation = Box::pin(GatedFuture::new(
+            Ok::<(), BackgroundStartError>(()),
+            Arc::clone(&gate),
+        ));
+        let mut selector = Box::pin(await_or_cancel(operation, &cancellation));
+        let mut context = Context::from_waker(noop_waker_ref());
+
+        let result = selector.as_mut().poll(&mut context);
+
+        assert!(matches!(
+            result,
+            Poll::Ready(Err(error)) if error.kind() == BackgroundStartErrorKind::Cancelled
+        ));
+        assert_eq!(gate.polls.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn started_operation_failure_precedes_cancellation_when_both_wake_before_repoll() {
+        let cancellation = CancellationToken::new();
+        let gate = Arc::new(PollGate::default());
+        let operation = Box::pin(GatedFuture::new(
+            Err::<(), BackgroundStartError>(error(BackgroundStartErrorKind::Persistence)),
+            Arc::clone(&gate),
+        ));
+        let mut selector = Box::pin(await_or_cancel(operation, &cancellation));
+        let wake_counter = Arc::new(WakeCounter::default());
+        let waker = Waker::from(Arc::clone(&wake_counter));
+        let mut context = Context::from_waker(&waker);
+
+        assert!(matches!(
+            selector.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
+        gate.open();
+        cancellation.cancel();
+        assert_eq!(wake_counter.0.load(Ordering::Relaxed), 2);
+
+        assert!(matches!(
+            selector.as_mut().poll(&mut context),
+            Poll::Ready(Err(error)) if error.kind() == BackgroundStartErrorKind::Persistence
+        ));
+        assert_eq!(gate.polls.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn ready_prepared_abort_failure_precedes_cancellation_after_two_wakeups() {
+        let cancellation = CancellationToken::new();
+        let observations = Arc::new(Observations::default());
+        let gate = Arc::new(PollGate::default());
+        let prepared: Box<dyn PreparedBackgroundProcess> = Box::new(FakePrepared {
+            observations: Arc::clone(&observations),
+            released: false,
+            release_fail: false,
+            abort_fail: true,
+            cancel_during_pid: None,
+            cancel_during_release: None,
+        });
+        let operation = Box::pin(GatedFuture::new(
+            Ok::<Box<dyn PreparedBackgroundProcess>, BackgroundStartError>(prepared),
+            Arc::clone(&gate),
+        ));
+        let mut selector = Box::pin(await_prepared_or_cancel(operation, &cancellation));
+        let wake_counter = Arc::new(WakeCounter::default());
+        let waker = Waker::from(Arc::clone(&wake_counter));
+        let mut context = Context::from_waker(&waker);
+
+        assert!(matches!(
+            selector.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
+        gate.open();
+        cancellation.cancel();
+        assert_eq!(wake_counter.0.load(Ordering::Relaxed), 2);
+
+        assert!(matches!(
+            selector.as_mut().poll(&mut context),
+            Poll::Ready(Err(error)) if error.kind() == BackgroundStartErrorKind::Process
+        ));
+        assert_eq!(gate.polls.load(Ordering::Relaxed), 2);
+        assert_eq!(observations.events(), ["abort"]);
+        assert_eq!(observations.aborted.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn started_preparation_failure_precedes_cancellation_after_two_wakeups() {
+        let cancellation = CancellationToken::new();
+        let gate = Arc::new(PollGate::default());
+        let operation = Box::pin(GatedFuture::new(
+            Err::<Box<dyn PreparedBackgroundProcess>, BackgroundStartError>(error(
+                BackgroundStartErrorKind::Process,
+            )),
+            Arc::clone(&gate),
+        ));
+        let mut selector = Box::pin(await_prepared_or_cancel(operation, &cancellation));
+        let wake_counter = Arc::new(WakeCounter::default());
+        let waker = Waker::from(Arc::clone(&wake_counter));
+        let mut context = Context::from_waker(&waker);
+
+        assert!(matches!(
+            selector.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
+        gate.open();
+        cancellation.cancel();
+        assert_eq!(wake_counter.0.load(Ordering::Relaxed), 2);
+
+        assert!(matches!(
+            selector.as_mut().poll(&mut context),
+            Poll::Ready(Err(error)) if error.kind() == BackgroundStartErrorKind::Process
+        ));
+        assert_eq!(gate.polls.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn started_commit_failure_precedes_cancellation_when_both_wake_before_repoll() {
+        let cancellation = CancellationToken::new();
+        let gate = Arc::new(PollGate::default());
+        let operation = Box::pin(GatedFuture::new(
+            Err::<(), BackgroundStartError>(error(BackgroundStartErrorKind::Process)),
+            Arc::clone(&gate),
+        ));
+        let mut selector = Box::pin(await_commit_or_cancel(operation, &cancellation));
+        let wake_counter = Arc::new(WakeCounter::default());
+        let waker = Waker::from(Arc::clone(&wake_counter));
+        let mut context = Context::from_waker(&waker);
+
+        assert!(matches!(
+            selector.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
+        gate.open();
+        cancellation.cancel();
+        assert_eq!(wake_counter.0.load(Ordering::Relaxed), 2);
+
+        assert!(matches!(
+            selector.as_mut().poll(&mut context),
+            Poll::Ready(Err(CommitAwaitError::Operation(error)))
+                if error.kind() == BackgroundStartErrorKind::Process
+        ));
+        assert_eq!(gate.polls.load(Ordering::Relaxed), 2);
     }
 
     #[test]
