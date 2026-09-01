@@ -866,6 +866,16 @@ impl CorePreparedProcess for NativePrepared {
             .map_err(|_| start_error(BackgroundStartErrorKind::Process))?;
         Ok(Box::new(NativeOwned(Some(owned))))
     }
+
+    fn abort(mut self: Box<Self>) -> Result<(), BackgroundStartError> {
+        let prepared = self
+            .0
+            .take()
+            .ok_or_else(|| start_error(BackgroundStartErrorKind::Process))?;
+        prepared
+            .abort_and_reap()
+            .map_err(|_| start_error(BackgroundStartErrorKind::Process))
+    }
 }
 
 struct NativeOwned(Option<OwnedBackgroundProcess>);
