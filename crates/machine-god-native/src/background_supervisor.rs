@@ -1740,12 +1740,17 @@ mod tests {
 
     #[test]
     fn dropping_one_submitted_start_does_not_cancel_a_shared_caller_token() {
-        let fixture = Fixture::new();
-        let supervisor = fixture.supervisor(2);
-        let request = BackgroundStartRequest::new(":", &fixture.workspace).expect("request");
+        let dropped_fixture = Fixture::new();
+        let sibling_fixture = Fixture::new();
+        let dropped_supervisor = dropped_fixture.supervisor(1);
+        let sibling_supervisor = sibling_fixture.supervisor(1);
+        let dropped_request =
+            BackgroundStartRequest::new(":", &dropped_fixture.workspace).expect("request");
+        let sibling_request =
+            BackgroundStartRequest::new(":", &sibling_fixture.workspace).expect("request");
         let shared = CancellationToken::new();
-        let mut dropped = supervisor.start(request.clone(), shared.clone());
-        let mut sibling = supervisor.start(request, shared.clone());
+        let mut dropped = dropped_supervisor.start(dropped_request, shared.clone());
+        let mut sibling = sibling_supervisor.start(sibling_request, shared.clone());
 
         assert!(matches!(
             dropped
@@ -1764,7 +1769,7 @@ mod tests {
         assert!(!shared.is_cancelled());
         let sibling = futures_executor::block_on(sibling).expect("sibling start completes");
         assert!(!shared.is_cancelled());
-        fixture.await_terminal(sibling.id());
+        sibling_fixture.await_terminal(sibling.id());
     }
 
     #[test]
