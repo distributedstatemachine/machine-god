@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33455374424` (`GREEN`)
 - Main Benchmark evidence: `33455374426` (`GREEN`)
 - Active branch: `agent/m05-background-supervisor`
-- Active phase: `running the background-supervisor replacement gate`
-- Next gate: `freeze the exact green SHA and run three fresh adversarial reviews`
+- Active phase: `remediating the rejected background-supervisor cycle 02 candidate`
+- Next gate: `run the complete replacement gate, freeze one SHA, and use three fresh reviewers`
 <!-- canonical-live-status:end -->
 
 The recorded Actions runs succeeded for the exact delivered-main commit, and
@@ -35,13 +35,14 @@ the Benchmark evidence run retained both required exact-SHA artifacts.
 Bounded read-only persisted `background` inspection is delivered as slice 51.
 The current bounded slice has composed the production process-local writer,
 fixed worker retainer, Linux process adapter, and safe-Rust macOS inherited-cwd
-helper without changing the read-only top-level grammar. Its first exact local
-candidate passed the complete gate but was rejected by all three product-review
-tracks. Every reported finding is now remediated: history and locks compact
-within the reader bound, allocation is nonblocking, the canonical workspace is
-identity-bound, primary errors and debug redaction are fixed, Linux input is
-null, cleanup proves original-group membership before reap, and idle waiting
-backs off with cancellation wakeup. The complete replacement gate is running.
+helper without changing the read-only top-level grammar. Two exact candidates
+passed the complete local gate and were rejected by all three fresh review
+tracks. Cycle 02 found incomplete completion debug redaction, unavoidable
+post-rename publication ambiguity missing from the contract, cleanup paths
+that could release ownership before kill and reap, incremental compaction,
+unreclaimed record temporaries, and a reconciliation/compaction disappearance
+race. Those findings are under bounded parallel remediation; no rejected review
+result is reused as acceptance evidence.
 Persistent handles, message/relationship/configuration/lifecycle management,
 ACP, teams, and extension slash commands remain separate. Documentation parser
 maintenance remains a separate non-product task.

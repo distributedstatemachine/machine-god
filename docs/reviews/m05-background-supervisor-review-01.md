@@ -37,3 +37,21 @@ The rejected candidate was replaced by bounded changes through `e35e486`:
 Every finding rejected the entire candidate. Acceptance requires the complete
 replacement local gate and three entirely fresh reviewers on one later exact
 SHA; no result from this rejected cycle is reused as acceptance evidence.
+
+## Rejected product candidate: cycle 02
+
+Three fresh review tracks inspected exact candidate
+`ee67e9ae187b2d16dd01d4ab49779c3bf24b396c` after its complete exact local
+gate passed. Every track rejected it.
+
+| Track | Decisive findings |
+| --- | --- |
+| Correctness, API, and compatibility | A post-rename directory-sync failure could leave a complete running record despite a contract promising publication or nothing; completion outcome and record debug output exposed payloads. |
+| Lifecycle, platform, and effects | Observation or group-snapshot failures could release child ownership before kill and reap; compaction deleted some valid history before proving enough victims; reconciliation could misclassify a concurrently compacted record and leave an orphan lock. |
+| Performance and resources | The same cleanup and partial-compaction defects could orphan work or mutate rejected reservations; crash-left canonical record temporaries were never reclaimed and could exhaust the bounded lifecycle scan. |
+
+The unique findings require payload-free completion debug, a precise complete-
+record publication-ambiguity contract, cleanup that retains ownership through
+best-effort group termination and direct-child reap, two-phase compaction,
+bounded temporary reclamation, and race-safe reconciliation. Cycle 02 remains
+historical rejection evidence and cannot contribute to acceptance.
