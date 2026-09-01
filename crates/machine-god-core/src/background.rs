@@ -225,7 +225,7 @@ impl fmt::Debug for BackgroundRunningRecord {
 }
 
 /// Terminal process observation supplied by an owned native process.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum BackgroundProcessOutcome {
     /// The process exited normally with the given platform exit code.
@@ -236,11 +236,30 @@ pub enum BackgroundProcessOutcome {
     Dead,
 }
 
+impl fmt::Debug for BackgroundProcessOutcome {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Exited(_) => "Exited(..)",
+            Self::Stopped(_) => "Stopped(..)",
+            Self::Dead => "Dead",
+        })
+    }
+}
+
 /// One terminal replacement for an initially published running record.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct BackgroundCompletionRecord {
     updated_at_ms: u64,
     outcome: BackgroundProcessOutcome,
+}
+
+impl fmt::Debug for BackgroundCompletionRecord {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BackgroundCompletionRecord")
+            .field("outcome", &self.outcome)
+            .finish_non_exhaustive()
+    }
 }
 
 impl BackgroundCompletionRecord {
@@ -283,14 +302,26 @@ impl BackgroundRunningRecord {
 ///
 /// `id` is a display and persistence identity only. Implementations must hold
 /// any native record lease for the entire object lifetime. `publish_initial`
-/// atomically publishes a complete private `running` record or publishes
-/// nothing; returning success is the commit barrier before process release.
+/// atomically installs a complete private `running` record without clobbering
+/// an existing record. A failure before installation publishes nothing. A
+/// failure synchronizing the parent directory after installation may leave
+/// exactly one complete valid `running` record at the reserved identity; it
+/// must never expose partial record bytes. The caller drops the prepared
+/// process and releases the lease, after which the next successful bounded
+/// startup reconciliation replaces that unlocked record with `stale`.
+/// Returning success is the commit barrier before process release.
 /// Constructing either returned future is inert.
 pub trait BackgroundRecordLease: Send + Sync + 'static {
     /// Returns the durably reserved nonzero numeric ID.
     fn id(&self) -> u64;
 
     /// Publishes the complete initial running record atomically.
+    ///
+    /// # Errors
+    ///
+    /// A failure before atomic installation must publish nothing. A failure
+    /// synchronizing directories after installation may leave the one complete
+    /// valid record described by the trait contract.
     fn publish_initial<'a>(
         &'a self,
         record: &'a BackgroundRunningRecord,
@@ -1025,6 +1056,41 @@ mod tests {
             let diagnostic = error(kind).to_string();
             assert!(!diagnostic.contains("PRIVATE"));
         }
+    }
+
+    #[test]
+    fn process_outcomes_and_completion_do_not_debug_payloads() {
+        const EXIT_SENTINEL: i32 = -847_362_901;
+        const TIMESTAMP_SENTINEL: u64 = 1_735_689_421_987;
+
+        assert_eq!(
+            format!("{:?}", BackgroundProcessOutcome::Exited(EXIT_SENTINEL)),
+            "Exited(..)"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                BackgroundProcessOutcome::Stopped(Some(EXIT_SENTINEL))
+            ),
+            "Stopped(..)"
+        );
+        assert_eq!(
+            format!("{:?}", BackgroundProcessOutcome::Stopped(None)),
+            "Stopped(..)"
+        );
+        assert_eq!(format!("{:?}", BackgroundProcessOutcome::Dead), "Dead");
+
+        let completion = BackgroundCompletionRecord {
+            updated_at_ms: TIMESTAMP_SENTINEL,
+            outcome: BackgroundProcessOutcome::Exited(EXIT_SENTINEL),
+        };
+        let debug = format!("{completion:?}");
+        assert_eq!(
+            debug,
+            "BackgroundCompletionRecord { outcome: Exited(..), .. }"
+        );
+        assert!(!debug.contains(&EXIT_SENTINEL.to_string()));
+        assert!(!debug.contains(&TIMESTAMP_SENTINEL.to_string()));
     }
 
     #[test]

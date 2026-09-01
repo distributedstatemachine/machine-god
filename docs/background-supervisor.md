@@ -102,10 +102,17 @@ nonblocking: contention fails the operation promptly rather than blocking an
 async poll or constructor. Allocation is monotonic across cooperating
 processes; gaps after a failed start are allowed, IDs are never reused, and
 overflow fails closed. Each live record retains its own exclusive lock.
-Initial publication is no-clobber. Later complete records are written to a
-bounded private temporary file, synchronized, atomically renamed, and followed
-by directory synchronization. An ambiguous durability result fails closed and
-is never blindly retried.
+Initial publication is no-clobber. Its bounded private temporary file is
+synchronized and atomically renamed before the record directory is
+synchronized. A failure before rename publishes nothing. If rename succeeds
+but the directory synchronization fails, admission fails closed and may leave
+exactly one complete valid `running` record at the reserved ID; it never leaves
+partial record bytes or overwrites an existing record. Caller cleanup releases
+the prepared process and record lease; the next successful bounded startup
+reconciliation then replaces that unlocked record with `stale`. The ambiguous
+publication is never blindly retried. Later complete records use the same
+synchronized temporary-file, atomic-rename, and directory-synchronization
+sequence.
 
 The writer keeps at most 100 total record or admitted-unpublished slots per
 workspace. On open it validates a lifecycle snapshot of at most 1,024 entries
