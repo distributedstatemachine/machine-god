@@ -685,13 +685,22 @@ async fn await_or_cancel<T>(
                 BackgroundStartErrorKind::Cancelled,
             )));
         }
-        let result = operation.as_mut().poll(context);
-        if cancellation.is_cancelled() {
-            Poll::Ready(Err(BackgroundStartError::new(
-                BackgroundStartErrorKind::Cancelled,
-            )))
-        } else {
-            result
+        match operation.as_mut().poll(context) {
+            // An operation failure is stronger evidence than cancellation
+            // observed during that same poll. In particular, preparation must
+            // not report clean cancellation when native cleanup itself failed.
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Ready(Ok(value)) if cancellation.is_cancelled() => {
+                drop(value);
+                Poll::Ready(Err(BackgroundStartError::new(
+                    BackgroundStartErrorKind::Cancelled,
+                )))
+            }
+            Poll::Ready(Ok(value)) => Poll::Ready(Ok(value)),
+            Poll::Pending if cancellation.is_cancelled() => Poll::Ready(Err(
+                BackgroundStartError::new(BackgroundStartErrorKind::Cancelled),
+            )),
+            Poll::Pending => Poll::Pending,
         }
     })
     .await
@@ -1045,6 +1054,9 @@ mod tests {
                 if self.stay_pending {
                     std::future::pending::<()>().await;
                 }
+                if let Some(cancellation) = &self.cancel_during_prepare {
+                    cancellation.cancel();
+                }
                 if self.prepare_fail {
                     return Err(error(BackgroundStartErrorKind::Process));
                 }
@@ -1054,9 +1066,6 @@ mod tests {
                     release_fail: self.release_fail,
                     abort_fail: self.abort_fail,
                 });
-                if let Some(cancellation) = &self.cancel_during_prepare {
-                    cancellation.cancel();
-                }
                 Ok(prepared)
             })
         }
@@ -1527,6 +1536,31 @@ mod tests {
             ["admit", "reserve", "clock", "prepare", "abort"]
         );
         assert_eq!(observations.aborted.load(Ordering::Relaxed), 1);
+        assert_eq!(observations.executed.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn same_poll_prepare_process_failure_takes_precedence_over_cancellation() {
+        let cancellation = CancellationToken::new();
+        let failures = Failures {
+            prepare: true,
+            ..Failures::default()
+        };
+        let (supervisor, observations, _) =
+            fixture(failures, Some(cancellation.clone()), Some("prepare"), false);
+
+        let result = block_on(supervisor.start(request(), cancellation.clone()));
+
+        assert_eq!(
+            result.unwrap_err().kind(),
+            BackgroundStartErrorKind::Process
+        );
+        assert!(cancellation.is_cancelled());
+        assert_eq!(
+            observations.events(),
+            ["admit", "reserve", "clock", "prepare"]
+        );
+        assert_eq!(observations.aborted.load(Ordering::Relaxed), 0);
         assert_eq!(observations.executed.load(Ordering::Relaxed), 0);
     }
 
