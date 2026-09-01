@@ -68,7 +68,11 @@ collector bounds. Helper readiness observes the same private operation
 cancellation token through a registered thread wakeup. Cancellation therefore
 interrupts a stalled readiness wait promptly, closes the private gate, signals
 and reaps the helper group, and releases blocking capacity without waiting for
-the two-second readiness deadline. The exclusive-child-
+the two-second readiness deadline. A preparation failure maps to the fixed
+`cancelled` start result only when the native adapter reports its typed
+cancellation after proving that cleanup completed. A readiness, protocol, or
+spawn failure remains the fixed process result when cancellation merely races
+that failure. The exclusive-child-
 reaping probe uses the same registered cancellation wakeup and a fixed 500 ms
 deadline; a stalled probe is killed and either reaped or transferred to bounded
 quarantine ownership before preparation returns.

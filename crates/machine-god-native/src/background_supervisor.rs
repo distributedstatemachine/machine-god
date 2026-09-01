@@ -1026,7 +1026,7 @@ impl BackgroundProcessSpawner for NativeSpawner {
             let process = self
                 .adapter
                 .prepare_cancellable(process_request, &cancellation)
-                .map_err(|_| start_error(BackgroundStartErrorKind::Process))?;
+                .map_err(|error| start_error(process_error_kind(error.kind())))?;
             let process = finish_prepared_after_readiness(
                 process,
                 &cancellation,
@@ -1102,7 +1102,7 @@ impl CorePreparedProcess for NativePrepared {
             .ok_or_else(|| start_error(BackgroundStartErrorKind::Process))?;
         let owned = prepared
             .release_cancellable(cancellation)
-            .map_err(|error| start_error(release_error_kind(error.kind())))?;
+            .map_err(|error| start_error(process_error_kind(error.kind())))?;
         Ok(Box::new(NativeOwned(Some(owned))))
     }
 
@@ -1117,7 +1117,7 @@ impl CorePreparedProcess for NativePrepared {
     }
 }
 
-const fn release_error_kind(kind: BackgroundProcessErrorKind) -> BackgroundStartErrorKind {
+const fn process_error_kind(kind: BackgroundProcessErrorKind) -> BackgroundStartErrorKind {
     match kind {
         BackgroundProcessErrorKind::Cancelled => BackgroundStartErrorKind::Cancelled,
         _ => BackgroundStartErrorKind::Process,
@@ -1541,7 +1541,7 @@ mod tests {
         BlockingExecutor, BlockingResult, BlockingTaskFailure, NativeBackgroundLimits,
         NativeBackgroundSupervisor, NativeSpawner, NativeStore, RetainedJob,
         SystemBackgroundProcessAdapter, SystemClock, WORKER_OWNERSHIP_CAPACITY, WorkerRetainer,
-        finish_prepared_after_readiness, open_directory, release_error_kind,
+        finish_prepared_after_readiness, open_directory, process_error_kind,
         retain_canonical_directory_with, worker_ownership_registry,
     };
     use crate::background_process::{
@@ -1924,21 +1924,25 @@ mod tests {
     }
 
     #[test]
-    fn proven_release_cancellation_maps_to_cancelled_start() {
+    fn proven_native_process_cancellation_maps_to_cancelled_start() {
         assert_eq!(
-            release_error_kind(BackgroundProcessErrorKind::Cancelled),
+            process_error_kind(BackgroundProcessErrorKind::Cancelled),
             BackgroundStartErrorKind::Cancelled
         );
     }
 
     #[test]
-    fn ambiguous_release_cleanup_maps_to_process_failure() {
+    fn native_spawn_and_ambiguous_cleanup_map_to_process_failure() {
         assert_eq!(
-            release_error_kind(BackgroundProcessErrorKind::Cleanup),
+            process_error_kind(BackgroundProcessErrorKind::Spawn),
             BackgroundStartErrorKind::Process
         );
         assert_eq!(
-            release_error_kind(BackgroundProcessErrorKind::Release),
+            process_error_kind(BackgroundProcessErrorKind::Cleanup),
+            BackgroundStartErrorKind::Process
+        );
+        assert_eq!(
+            process_error_kind(BackgroundProcessErrorKind::Release),
             BackgroundStartErrorKind::Process
         );
     }
