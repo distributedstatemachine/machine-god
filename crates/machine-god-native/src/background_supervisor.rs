@@ -1078,6 +1078,30 @@ mod tests {
             .expect("private directory mode");
     }
 
+    fn start_eventually(
+        supervisor: &NativeBackgroundSupervisor,
+        request: &BackgroundStartRequest,
+    ) -> machine_god_core::BackgroundHandle {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            match futures_executor::block_on(
+                supervisor.start(request.clone(), CancellationToken::new()),
+            ) {
+                Ok(handle) => return handle,
+                Err(error)
+                    if error.kind() == BackgroundStartErrorKind::Persistence
+                        && Instant::now() < deadline =>
+                {
+                    // Parallel tests can fork while a CLOEXEC allocator lock
+                    // is live. Production admission correctly fails fast;
+                    // this unrelated integration setup retries after exec.
+                    thread::yield_now();
+                }
+                Err(error) => panic!("start background test process: {error:?}"),
+            }
+        }
+    }
+
     #[cfg(target_os = "linux")]
     fn test_adapter() -> SystemBackgroundProcessAdapter {
         SystemBackgroundProcessAdapter::default()
@@ -1122,9 +1146,7 @@ mod tests {
         let marker = fixture.workspace_path.join("completed");
         let request = BackgroundStartRequest::new("printf ready > completed", &fixture.workspace)
             .expect("request");
-        let handle =
-            futures_executor::block_on(supervisor.start(request, CancellationToken::new()))
-                .expect("start");
+        let handle = start_eventually(&supervisor, &request);
 
         let detail = fixture.await_terminal(handle.id());
         assert_eq!(detail.state(), NativeBackgroundState::Exited);
@@ -1156,9 +1178,7 @@ mod tests {
             &fixture.workspace,
         )
         .expect("request");
-        let first =
-            futures_executor::block_on(supervisor.start(request.clone(), CancellationToken::new()))
-                .expect("first start");
+        let first = start_eventually(&supervisor, &request);
         let pid = first.pid().expect("process PID").get();
         let second =
             futures_executor::block_on(supervisor.start(request, CancellationToken::new()))

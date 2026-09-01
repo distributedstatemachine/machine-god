@@ -1143,7 +1143,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::mpsc;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use futures_executor::block_on;
 
@@ -1239,11 +1239,48 @@ mod tests {
         }
     }
 
+    fn reserve_eventually(store: &BackgroundStore) -> BackgroundRecordLease {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            match store.reserve_id() {
+                Ok(lease) => return lease,
+                Err(error)
+                    if error.kind() == BackgroundStoreErrorKind::Unavailable
+                        && Instant::now() < deadline =>
+                {
+                    // A concurrently forked test child can retain a CLOEXEC
+                    // flock only until its exec boundary. The production API
+                    // correctly fails that contention promptly; unrelated
+                    // tests retry their setup after the bounded fork window.
+                    std::thread::yield_now();
+                }
+                Err(error) => panic!("reserve background test ID: {error:?}"),
+            }
+        }
+    }
+
+    fn reconcile_eventually(
+        store: &BackgroundStore,
+        expected_active: usize,
+        expected_marked_stale: usize,
+    ) -> BackgroundReconciliation {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            let result = store.reconcile().unwrap();
+            if (result.active == expected_active && result.marked_stale == expected_marked_stale)
+                || Instant::now() >= deadline
+            {
+                return result;
+            }
+            std::thread::yield_now();
+        }
+    }
+
     #[test]
     fn writer_round_trips_through_strict_reader_and_replaces_atomically() {
         let fixture = Fixture::new();
         let store = fixture.store();
-        let lease = store.reserve_id().unwrap();
+        let lease = reserve_eventually(&store);
         assert_eq!(lease.id(), 1);
         let record = running(&store, lease.id(), 10);
         store.publish_initial(&lease, &record).unwrap();
@@ -1287,14 +1324,14 @@ mod tests {
     fn identifiers_are_monotonic_across_store_instances_and_no_clobber_is_enforced() {
         let fixture = Fixture::new();
         let first_store = fixture.store();
-        let first = first_store.reserve_id().unwrap();
+        let first = reserve_eventually(&first_store);
         first_store
             .publish_initial(&first, &running(&first_store, first.id(), 10))
             .unwrap();
         drop(first);
 
         let second_store = fixture.store();
-        let second = second_store.reserve_id().unwrap();
+        let second = reserve_eventually(&second_store);
         assert_eq!(second.id(), 2);
         let mut wrong_id = running(&second_store, second.id(), 10);
         wrong_id.id += 1;
@@ -1313,7 +1350,7 @@ mod tests {
     fn identifiers_are_monotonic_across_processes() {
         let fixture = Fixture::new();
         let store = fixture.store();
-        let first = store.reserve_id().unwrap();
+        let first = reserve_eventually(&store);
         assert_eq!(first.id(), 1);
         drop(first);
 
@@ -1330,7 +1367,7 @@ mod tests {
         assert!(status.success());
         assert_eq!(fs::read_to_string(child_result).unwrap(), "2");
 
-        let third = store.reserve_id().unwrap();
+        let third = reserve_eventually(&store);
         assert_eq!(third.id(), 3);
     }
 
@@ -1348,7 +1385,7 @@ mod tests {
         )
         .unwrap();
         let store = BackgroundStore::prepare(descriptor, workspace).unwrap();
-        let lease = store.reserve_id().unwrap();
+        let lease = reserve_eventually(&store);
         fs::write(result, lease.id().to_string()).unwrap();
     }
 
@@ -1356,18 +1393,18 @@ mod tests {
     fn reconciliation_marks_only_unlocked_running_records_stale() {
         let fixture = Fixture::new();
         let store = fixture.store();
-        let active = store.reserve_id().unwrap();
+        let active = reserve_eventually(&store);
         store
             .publish_initial(&active, &running(&store, active.id(), 10))
             .unwrap();
-        let abandoned = store.reserve_id().unwrap();
+        let abandoned = reserve_eventually(&store);
         let abandoned_id = abandoned.id();
         store
             .publish_initial(&abandoned, &running(&store, abandoned_id, 20))
             .unwrap();
         drop(abandoned);
 
-        let result = store.reconcile().unwrap();
+        let result = reconcile_eventually(&store, 1, 1);
         assert_eq!(result.inspected, 2);
         assert_eq!(result.active, 1);
         assert_eq!(result.marked_stale, 1);
@@ -1387,14 +1424,14 @@ mod tests {
     fn reconciliation_fails_closed_before_mutation_on_corrupt_scan() {
         let fixture = Fixture::new();
         let store = fixture.store();
-        let lease = store.reserve_id().unwrap();
+        let lease = reserve_eventually(&store);
         let id = lease.id();
         store
             .publish_initial(&lease, &running(&store, id, 10))
             .unwrap();
         drop(lease);
 
-        let corrupt_id = store.reserve_id().unwrap().id();
+        let corrupt_id = reserve_eventually(&store).id();
         let root = fixture
             .state_root
             .join(BACKGROUND_DIRECTORY)
@@ -1420,7 +1457,7 @@ mod tests {
     fn publication_rejects_serialized_overflow_without_exposing_a_record() {
         let fixture = Fixture::new();
         let store = fixture.store();
-        let lease = store.reserve_id().unwrap();
+        let lease = reserve_eventually(&store);
         let mut record = running(&store, lease.id(), 10);
         record.command = "\u{1}".repeat(crate::MAX_BACKGROUND_COMMAND_BYTES);
         let error = store.publish_initial(&lease, &record).unwrap_err();
@@ -1462,7 +1499,7 @@ mod tests {
     fn permanent_control_entries_do_not_consume_the_record_scan_budget() {
         let fixture = Fixture::new();
         let store = fixture.store();
-        let lease = store.reserve_id().unwrap();
+        let lease = reserve_eventually(&store);
         let id = lease.id();
         store
             .publish_initial(&lease, &running(&store, id, 10))
@@ -1478,7 +1515,7 @@ mod tests {
             fs::write(control.join(format!("unrelated-{index}")), b"").unwrap();
         }
 
-        let result = store.reconcile().unwrap();
+        let result = reconcile_eventually(&store, 0, 1);
         assert_eq!(result.inspected, 1);
         assert_eq!(result.marked_stale, 1);
         let NativeBackgroundInspection::List(list) = block_on(inspect_native_background(
@@ -1541,7 +1578,7 @@ mod tests {
         };
         assert_eq!(newest.state(), NativeBackgroundState::Exited);
 
-        let active = reopened.reserve_id().unwrap();
+        let active = reserve_eventually(&reopened);
         let active_id = active.id();
         assert_eq!(active_id, completed_count as u64 + 1);
         reopened
@@ -1573,9 +1610,9 @@ mod tests {
         assert_eq!(reconciliation.active, 1);
         assert_eq!(reconciliation.marked_stale, 0);
         drop(active);
-        let reconciliation = reopened.reconcile().unwrap();
+        let reconciliation = reconcile_eventually(&reopened, 0, 1);
         assert_eq!(reconciliation.marked_stale, 1);
-        let continued = reopened.reserve_id().unwrap();
+        let continued = reserve_eventually(&reopened);
         assert_eq!(continued.id(), active_id + 1);
         assert_eq!(
             count_record_files(&workspace_root),
@@ -1751,7 +1788,7 @@ mod tests {
         let reconciliation = store.reconcile().unwrap();
         assert_eq!(reconciliation.active, 0);
         assert_eq!(reconciliation.marked_stale, MAX_RETAINED_BACKGROUND_RECORDS);
-        let continued = store.reserve_id().unwrap();
+        let continued = reserve_eventually(&store);
         assert_eq!(continued.id(), MAX_RETAINED_BACKGROUND_RECORDS as u64 + 1);
     }
 
