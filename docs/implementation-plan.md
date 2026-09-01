@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33455374424` (`GREEN`)
 - Main Benchmark evidence: `33455374426` (`GREEN`)
 - Active branch: `agent/m05-background-supervisor`
-- Active phase: `validating the bounded background supervisor candidate`
-- Next gate: `run the complete exact-1.94.1 local replacement gate`
+- Active phase: `remediating background-supervisor adversarial cycle 01`
+- Next gate: `integrate every finding, then run the complete exact-1.94.1 replacement gate`
 <!-- canonical-live-status:end -->
 
 The recorded Actions runs succeeded for the exact delivered-main commit, and
@@ -35,11 +35,15 @@ the Benchmark evidence run retained both required exact-SHA artifacts.
 Bounded read-only persisted `background` inspection is delivered as slice 51.
 The current bounded slice has composed the production process-local writer,
 fixed worker retainer, Linux process adapter, and safe-Rust macOS inherited-cwd
-helper without changing the read-only top-level grammar. Focused macOS runtime
-tests and Linux cross-target compilation are green; the complete local gate is
-next. Persistent handles, message/relationship/configuration/lifecycle
-management, ACP, teams, and extension slash commands remain separate.
-Documentation parser maintenance remains a separate non-product task.
+helper without changing the read-only top-level grammar. Its first exact local
+candidate passed the complete gate but was rejected by all three product-review
+tracks. Remediation is in progress for bounded history retention, nonblocking
+allocation, canonical workspace identity, fixed primary-error precedence,
+redacted debug output, null Linux input, permission-safe group cleanup, and
+low-wakeup waiting. Persistent handles, message/relationship/configuration/
+lifecycle management, ACP, teams, and extension slash commands remain
+separate. Documentation parser maintenance remains a separate non-product
+task.
 
 ## Architecture ownership
 
