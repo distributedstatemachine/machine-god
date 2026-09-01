@@ -114,3 +114,21 @@ The rejected candidate was replaced by these bounded changes:
 Deterministic cancellation, publication-race, reduced-descriptor, loader-
 variable, signal-mode, and external-reap regressions cover the replacement.
 Acceptance still requires the complete gate and three new zero-finding reviews.
+
+## Rejected product candidate: cycle 04
+
+Three fresh review tracks inspected exact candidate
+`f06b2d508a4dd64e2b6192ca661c27e153a00be1` after its complete exact Rust and
+Cargo 1.94.1 local gate passed. Every track rejected it.
+
+| Track | Decisive findings |
+| --- | --- |
+| Correctness, API, and compatibility | Successful supervisor shutdown or post-release dispatch cleanup could persist `dead`; successful owned termination and reap must persist `stopped`, with `dead` reserved for ambiguous cleanup. |
+| Lifecycle, platform, and effects | Linux group membership depended on GNU-specific `/bin/ps` behavior; Linux requires a bounded distro-independent `/proc` scan while macOS retains its bounded platform adapter. |
+| Performance and resources | Polling could execute blocking process preparation and release on the caller's async executor; the supervisor requires fixed-size, fail-fast blocking offload with cancellation and drop retaining cleanup ownership. |
+
+Cycle 04 remains rejection evidence and cannot contribute to acceptance.
+Replacement requires the bounded supervisor-owned blocking worker boundary,
+platform-specific bounded group discovery, and outcome-accurate stopped/dead
+persistence described by the durable contract. The complete exact-1.94.1
+replacement gate must pass before three entirely fresh review tracks begin.

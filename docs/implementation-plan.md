@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33455374424` (`GREEN`)
 - Main Benchmark evidence: `33455374426` (`GREEN`)
 - Active branch: `agent/m05-background-supervisor`
-- Active phase: `running the background-supervisor cycle 03 replacement gate`
-- Next gate: `freeze the exact green SHA and run three fresh adversarial reviews`
+- Active phase: `remediating rejected background-supervisor review cycle 04`
+- Next gate: `run the complete exact-1.94.1 replacement gate`
 <!-- canonical-live-status:end -->
 
 The recorded Actions runs succeeded for the exact delivered-main commit, and
@@ -56,7 +56,16 @@ closes the visible record, lock classification revalidates concurrent
 publication, maintenance retains at most eight authorities and progresses at
 the supported descriptor floor, both platforms use a fixed-environment helper
 with a bounded post-release frame, and lost wait authority forbids later
-numeric group operations. The complete replacement gate is running.
+numeric group operations. Exact candidate
+`f06b2d508a4dd64e2b6192ca661c27e153a00be1` then passed the complete local
+gate and was rejected by all three cycle 04 review tracks: polling could run
+blocking process operations on the async executor, Linux group discovery
+assumed GNU `ps`, and successful owned shutdown could persist `dead` instead
+of `stopped`. Remediation now requires fixed-size fail-fast blocking offload,
+bounded distro-independent Linux `/proc` discovery with the macOS adapter
+retained, and `stopped` persistence after successful owned cleanup while
+reserving `dead` for ambiguous cleanup. No rejected result is acceptance
+evidence; the complete replacement gate must pass before three fresh reviews.
 Persistent handles, message/relationship/configuration/lifecycle management,
 ACP, teams, and extension slash commands remain separate. Documentation parser
 maintenance remains a separate non-product task.

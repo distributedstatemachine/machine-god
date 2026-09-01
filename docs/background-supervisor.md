@@ -37,7 +37,12 @@ The public start future is inert until first poll. Dropping it before first
 poll has no store, process, clock, allocation-ID, thread, or task effect.
 Admission is fail-fast with no queue: the default is four active jobs and the
 hard configurable maximum is sixteen. Saturation occurs before ID reservation
-or process preparation.
+or process preparation. Polling performs no potentially blocking process
+operation on the caller's async executor. The supervisor owns one fixed-size,
+bounded blocking worker set, and offload admission fails promptly rather than
+queuing without a bound. Cancellation or drop retains cleanup ownership until
+the admitted blocking operation returns and the prepared or released process
+has been closed through the applicable lifecycle path.
 
 ## Persist-before-release protocol
 
@@ -140,8 +145,10 @@ valid history.
 
 Normal exit records `exited` with code zero or `failed` with the nonzero exit
 code. A signal termination is recorded as the conventional nonzero
-`128 + signal` failed code. Explicit owned stop records `stopped`. An ambiguous
-cleanup failure records `dead` when a durable replacement is possible. If
+`128 + signal` failed code. Supervisor shutdown, explicit stop, or dispatch
+failure after release records `stopped` when owned termination and reap
+succeed. `dead` is reserved for cleanup whose process outcome remains
+ambiguous after the supervisor exhausts its owned cleanup protocol. If
 completion publication fails, the last complete record remains readable; no
 partial JSON is exposed.
 
@@ -158,12 +165,15 @@ Every released child is a process-group leader retained by one host-owned
 worker. Waiting reaps the direct child and removes remaining original-group
 descendants before releasing the record lease and capacity. Stop sends TERM to
 the owned group, waits through a fixed grace period, sends KILL if still
-present, and reaps. Before reaping the leader, a bounded fixed `/bin/ps` query
+present, and reaps. Before reaping the leader, a bounded platform group scan
 proves that the unreaped leader is the sole remaining member of its original
-group. The query accepts at most 64 KiB and the helper has a 250 ms timeout.
-Permission denial is never disappearance evidence; a surviving
-credential-changed member therefore produces a fixed cleanup failure. The
-numeric group identity is not consulted after it becomes reusable.
+group. Linux reads the required numeric process and group identities directly
+from a bounded `/proc` traversal and does not depend on a GNU `ps` dialect.
+macOS retains its fixed `/bin/ps` adapter. Each adapter accepts at most 64 KiB
+of evidence and has a 250 ms timeout. Permission denial is never disappearance
+evidence; a surviving credential-changed member therefore produces a fixed
+cleanup failure. The numeric group identity is not consulted after it becomes
+reusable.
 
 This process-local adapter requires exclusive child-reaping authority for the
 entire prepared/owned-handle lifetime: the host must leave `SIGCHLD` waitable
