@@ -10,8 +10,9 @@ use background_process::{
     BackgroundProcessOutcome, BackgroundProcessRequest, MAX_BACKGROUND_PROCESS_COMMAND_BYTES,
     MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES, OwnedBackgroundProcess,
     SystemBackgroundProcessAdapter, cancellation_wakeup_latency_for_test,
-    group_snapshot_is_quiescent_for_test, idle_observation_count_for_test,
-    permission_denied_group_signal_is_failure_for_test, run_background_process_helper,
+    group_snapshot_is_quiescent_for_test, leader_observations_for_test,
+    permission_denied_group_signal_is_failure_for_test, reset_leader_observations_for_test,
+    run_background_process_helper,
 };
 use machine_god_core::CancellationToken;
 use std::ffi::OsString;
@@ -210,7 +211,15 @@ fn command_is_blocked_before_release_then_receives_null_stdin() {
 
 #[test]
 fn idle_wait_observation_uses_bounded_backoff_and_stays_shutdown_responsive() {
-    let observations = idle_observation_count_for_test(Duration::from_secs(1));
+    let directory = FreshDirectory::new("backoff-idle");
+    let owned = adapter()
+        .prepare(request(directory.path(), "sleep 1"))
+        .unwrap()
+        .release()
+        .unwrap();
+    reset_leader_observations_for_test();
+    assert_eq!(owned.wait().unwrap(), BackgroundProcessExit::Exited(0));
+    let observations = leader_observations_for_test();
     assert!(
         observations < 40,
         "one idle process used {observations} observations per second"
