@@ -10,9 +10,10 @@ use background_process::{
     BackgroundProcessOutcome, BackgroundProcessRequest, MAX_BACKGROUND_PROCESS_COMMAND_BYTES,
     MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES, OwnedBackgroundProcess,
     SystemBackgroundProcessAdapter, cancellation_wakeup_latency_for_test,
-    group_snapshot_is_quiescent_for_test, leader_observations_for_test,
-    permission_denied_group_signal_is_failure_for_test, reset_leader_observations_for_test,
-    run_background_process_helper,
+    group_snapshot_is_quiescent_for_test, inject_group_snapshot_failures_for_test,
+    inject_group_snapshot_spawn_failures_for_test, inject_waitid_failures_for_test,
+    leader_observations_for_test, permission_denied_group_signal_is_failure_for_test,
+    reset_leader_observations_for_test, run_background_process_helper,
 };
 use machine_god_core::CancellationToken;
 use std::ffi::OsString;
@@ -155,6 +156,32 @@ fn process_exists(pid: u32) -> bool {
     rustix::process::test_kill_process(pid).is_ok()
 }
 
+fn assert_processes_absent(pids: &[u32]) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let surviving = pids
+            .iter()
+            .copied()
+            .filter(|pid| process_exists(*pid))
+            .collect::<Vec<_>>();
+        if surviving.is_empty() {
+            return;
+        }
+        if Instant::now() >= deadline {
+            for pid in &surviving {
+                if let Some(pid) = i32::try_from(*pid)
+                    .ok()
+                    .and_then(rustix::process::Pid::from_raw)
+                {
+                    let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
+                }
+            }
+            panic!("cleanup returned while processes still existed: {surviving:?}");
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
 #[test]
 fn request_is_bounded_and_errors_are_redacted() {
     let directory = FreshDirectory::new("bounds");
@@ -263,6 +290,51 @@ fn group_cleanup_fails_closed_for_permission_denial_and_surviving_members() {
     assert!(!group_snapshot_is_quiescent_for_test(b"", 41).unwrap());
     assert!(!group_snapshot_is_quiescent_for_test(b"41\n73\n", 41).unwrap());
     assert!(group_snapshot_is_quiescent_for_test(b"not-a-pid\n", 41).is_err());
+}
+
+#[test]
+fn waitid_and_snapshot_spawn_failures_keep_wait_precedence_and_cleanup() {
+    let directory = FreshDirectory::new("waitid-cleanup-failure");
+    let pid_file = directory.path().join("descendant.pid");
+    let owned = adapter()
+        .prepare(request(
+            directory.path(),
+            "trap '' TERM; sleep 30 & printf '%s' \"$!\" > descendant.pid; while :; do :; done",
+        ))
+        .unwrap()
+        .release()
+        .unwrap();
+    let leader = owned.pid();
+    let descendant = wait_for_pid(&pid_file);
+    inject_waitid_failures_for_test(leader, 1);
+    inject_group_snapshot_spawn_failures_for_test(leader, 1);
+
+    let error = owned.wait().unwrap_err();
+
+    assert_eq!(error.kind(), BackgroundProcessErrorKind::Wait);
+    assert_processes_absent(&[leader.get(), descendant]);
+}
+
+#[test]
+fn group_snapshot_failure_after_observation_still_cleans_and_reaps() {
+    let directory = FreshDirectory::new("snapshot-cleanup-failure");
+    let pid_file = directory.path().join("descendant.pid");
+    let owned = adapter()
+        .prepare(request(
+            directory.path(),
+            "sleep 30 & printf '%s' \"$!\" > descendant.pid; exit 7",
+        ))
+        .unwrap()
+        .release()
+        .unwrap();
+    let leader = owned.pid();
+    let descendant = wait_for_pid(&pid_file);
+    inject_group_snapshot_failures_for_test(leader, 1);
+
+    let error = owned.wait().unwrap_err();
+
+    assert_eq!(error.kind(), BackgroundProcessErrorKind::Cleanup);
+    assert_processes_absent(&[leader.get(), descendant]);
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

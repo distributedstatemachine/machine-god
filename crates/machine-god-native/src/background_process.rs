@@ -83,6 +83,18 @@ const MAX_GROUP_SNAPSHOT_BYTES: usize = 64 * 1024;
 static OBSERVED_LEADER: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 static LEADER_OBSERVATIONS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static WAITID_FAILURE_LEADER: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static WAITID_FAILURES: AtomicUsize = AtomicUsize::new(0);
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static GROUP_SNAPSHOT_FAILURE_GROUP: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static GROUP_SNAPSHOT_FAILURES: AtomicUsize = AtomicUsize::new(0);
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static GROUP_SNAPSHOT_SPAWN_FAILURE_GROUP: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static GROUP_SNAPSHOT_SPAWN_FAILURES: AtomicUsize = AtomicUsize::new(0);
 #[cfg(target_os = "linux")]
 const GATE_WRAPPER: &str =
     "IFS= read -r _machine_god_gate || exit 125\nexec /bin/sh -c \"$1\" </dev/null";
@@ -841,9 +853,13 @@ fn wait_owned(
     }
     let mut observation = ObservationBackoff::new();
     let observed = loop {
-        match observe_leader(owned.group)? {
-            Some(status) => break status,
-            None => observation.sleep_and_advance(),
+        match observe_leader(owned.group) {
+            Err(error) => {
+                let cleanup = cleanup_owned_child(owned, Duration::ZERO, None, true);
+                return Err(combine_cleanup_failures(error, cleanup));
+            }
+            Ok(Some(status)) => break status,
+            Ok(None) => observation.sleep_and_advance(),
         }
     };
     finish_observed(owned, observed)
@@ -863,6 +879,9 @@ fn wait_owned_with_stop(
     owned: &mut OwnedBackgroundProcess,
     stop: &CancellationToken,
 ) -> Result<BackgroundProcessOutcome, BackgroundProcessError> {
+    if owned.child.is_none() {
+        return Err(invariant_error());
+    }
     let mut observation = ObservationBackoff::new();
     let mut cancellation = CancellationParker::new(stop);
     loop {
@@ -870,8 +889,15 @@ fn wait_owned_with_stop(
             stop_owned(owned)?;
             return Ok(BackgroundProcessOutcome::Stopped);
         }
-        if let Some(status) = observe_leader(owned.group)? {
-            return finish_observed(owned, status).map(BackgroundProcessOutcome::Completed);
+        match observe_leader(owned.group) {
+            Ok(Some(status)) => {
+                return finish_observed(owned, status).map(BackgroundProcessOutcome::Completed);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let cleanup = cleanup_owned_child(owned, Duration::ZERO, None, true);
+                return Err(combine_cleanup_failures(error, cleanup));
+            }
         }
         observation.park_and_advance(&mut cancellation);
     }
@@ -892,38 +918,16 @@ fn finish_observed(
     owned: &mut OwnedBackgroundProcess,
     observed: BackgroundProcessExit,
 ) -> Result<BackgroundProcessExit, BackgroundProcessError> {
-    // The NOWAIT-observed leader remains a zombie and pins the numeric PID and
-    // PGID while every remaining original-group descendant is signalled.
-    let cleanup = match group_members(owned.group) {
-        Ok(members) if only_group_leader_remains(&members, owned.group) => Ok(()),
-        Ok(_) => signal_group_or_confirm_exited_leader(owned.group, rustix::process::Signal::TERM)
-            .and_then(|()| {
-                signal_group_or_confirm_exited_leader(owned.group, rustix::process::Signal::KILL)
-            })
-            .and_then(|()| require_original_group_quiescent(owned.group)),
-        Err(error) => Err(error),
-    };
-    let reaped = owned
-        .child
-        .as_mut()
-        .ok_or_else(invariant_error)?
-        .wait()
-        .map_err(|_| wait_error());
-    owned.child = None;
-    cleanup?;
-    let reaped = reaped?;
-    if exit_status(reaped) != observed {
-        return Err(invariant_error());
-    }
+    cleanup_owned_child(owned, Duration::ZERO, Some(observed), false)?;
     Ok(observed)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn stop_owned(owned: &mut OwnedBackgroundProcess) -> Result<(), BackgroundProcessError> {
-    let Some(mut child) = owned.child.take() else {
+    if owned.child.is_none() {
         return Ok(());
-    };
-    cleanup_child(&mut child, owned.group, BACKGROUND_PROCESS_TERM_GRACE)
+    }
+    cleanup_owned_child(owned, BACKGROUND_PROCESS_TERM_GRACE, None, false)
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -942,6 +946,14 @@ fn observe_leader(
     #[cfg(test)]
     if OBSERVED_LEADER.load(Ordering::Relaxed) == leader.as_raw_nonzero().get().cast_unsigned() {
         LEADER_OBSERVATIONS.fetch_add(1, Ordering::Relaxed);
+    }
+    #[cfg(test)]
+    if consume_injected_failure(
+        &WAITID_FAILURE_LEADER,
+        &WAITID_FAILURES,
+        leader.as_raw_nonzero().get().cast_unsigned(),
+    ) {
+        return Err(wait_error());
     }
     let status = rustix::process::waitid(
         rustix::process::WaitId::Pid(leader),
@@ -980,36 +992,158 @@ fn cleanup_child(
     group: rustix::process::Pid,
     term_grace: Duration,
 ) -> Result<(), BackgroundProcessError> {
-    let leader_exited = observe_leader(group)?.is_some();
-    let term = match group_members(group) {
-        Ok(members) if leader_exited && only_group_leader_remains(&members, group) => Ok(()),
-        Ok(_) => signal_group_or_confirm_exited_leader(group, rustix::process::Signal::TERM),
-        Err(error) => Err(error),
+    cleanup_child_with_expected(child, group, term_grace, None, false)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn cleanup_owned_child(
+    owned: &mut OwnedBackgroundProcess,
+    term_grace: Duration,
+    expected: Option<BackgroundProcessExit>,
+    force_cleanup: bool,
+) -> Result<(), BackgroundProcessError> {
+    let Some(mut child) = owned.child.take() else {
+        return Err(invariant_error());
     };
-    if !term_grace.is_zero() {
-        sleep_through(term_grace);
+    cleanup_child_with_expected(&mut child, owned.group, term_grace, expected, force_cleanup)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn cleanup_child_with_expected(
+    child: &mut Child,
+    group: rustix::process::Pid,
+    term_grace: Duration,
+    expected: Option<BackgroundProcessExit>,
+    force_cleanup: bool,
+) -> Result<(), BackgroundProcessError> {
+    let mut failures = CleanupFailures::default();
+    let mut force_signals = force_cleanup;
+    let mut group_quiescent = cleanup_group_signal_phase(
+        group,
+        rustix::process::Signal::TERM,
+        expected.is_some(),
+        &mut force_signals,
+        &mut failures,
+    );
+    if !group_quiescent {
+        if !term_grace.is_zero() {
+            sleep_through(term_grace);
+        }
+        group_quiescent = cleanup_group_signal_phase(
+            group,
+            rustix::process::Signal::KILL,
+            false,
+            &mut force_signals,
+            &mut failures,
+        );
+        // Group discovery and group signalling are fallible independent
+        // effects. Always target the retained direct child on a real cleanup
+        // path. It remains unreaped, so the numeric PID and PGID cannot be
+        // recycled through this boundary.
+        if child.kill().is_err() {
+            failures.record(cleanup_error());
+        }
+        if !group_quiescent && let Err(error) = require_original_group_quiescent(group) {
+            failures.record(error);
+        }
     }
-    // Keep `child` unreaped until this final original-group signal so the
-    // leader's numeric PID/PGID cannot be recycled into an unrelated group.
-    let leader_exited = observe_leader(group)?.is_some();
-    let kill = match group_members(group) {
-        Ok(members) if leader_exited && only_group_leader_remains(&members, group) => Ok(()),
-        Ok(_) => signal_group_or_confirm_exited_leader(group, rustix::process::Signal::KILL),
-        Err(error) => Err(error),
-    };
-    let direct_kill = if kill.is_err() {
-        child.kill().map_err(|_| cleanup_error())
+    match child.wait() {
+        Ok(status) => {
+            if expected.is_some_and(|expected| exit_status(status) != expected) {
+                failures.record(invariant_error());
+            }
+        }
+        Err(_) => failures.record(wait_error()),
+    }
+    failures.finish()
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn cleanup_group_signal_phase(
+    group: rustix::process::Pid,
+    signal: rustix::process::Signal,
+    leader_known_exited: bool,
+    force_signals: &mut bool,
+    failures: &mut CleanupFailures,
+) -> bool {
+    let leader_exited = if leader_known_exited {
+        true
     } else {
-        Ok(())
+        match observe_leader(group) {
+            Ok(status) => status.is_some(),
+            Err(error) => {
+                *force_signals = true;
+                failures.record(error);
+                false
+            }
+        }
     };
-    let quiescent = require_original_group_quiescent(group);
-    let reaped = child.wait().map(|_| ()).map_err(|_| wait_error());
-    term?;
-    kill?;
-    direct_kill?;
-    quiescent?;
-    reaped?;
-    Ok(())
+    let only_exited_leader = match group_members(group) {
+        Ok(members) => leader_exited && only_group_leader_remains(&members, group),
+        Err(error) => {
+            *force_signals = true;
+            failures.record(error);
+            false
+        }
+    };
+    // Keep the leader unreaped throughout the signal phases. Any observation
+    // failure forces both group signals instead of becoming a cleanup short
+    // circuit; a clean sole-zombie proof avoids unnecessary signalling.
+    if (*force_signals || !only_exited_leader)
+        && let Err(error) = signal_group_or_confirm_exited_leader(group, signal)
+    {
+        *force_signals = true;
+        failures.record(error);
+    }
+    only_exited_leader && !*force_signals
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Default)]
+struct CleanupFailures {
+    invariant: bool,
+    wait: bool,
+    cleanup: bool,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl CleanupFailures {
+    fn record(&mut self, error: BackgroundProcessError) {
+        match error.kind() {
+            BackgroundProcessErrorKind::Wait => self.wait = true,
+            BackgroundProcessErrorKind::Cleanup => self.cleanup = true,
+            _ => self.invariant = true,
+        }
+    }
+
+    fn finish(self) -> Result<(), BackgroundProcessError> {
+        // Stable category precedence is independent of which best-effort OS
+        // action happens to report its failure first.
+        if self.invariant {
+            Err(invariant_error())
+        } else if self.wait {
+            Err(wait_error())
+        } else if self.cleanup {
+            Err(cleanup_error())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn combine_cleanup_failures(
+    primary: BackgroundProcessError,
+    cleanup: Result<(), BackgroundProcessError>,
+) -> BackgroundProcessError {
+    let mut failures = CleanupFailures::default();
+    failures.record(primary);
+    if let Err(error) = cleanup {
+        failures.record(error);
+    }
+    failures
+        .finish()
+        .expect_err("the primary operation supplied one failure")
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1058,10 +1192,18 @@ fn require_original_group_quiescent(
         GROUP_SNAPSHOT_INITIAL_INTERVAL,
         GROUP_SNAPSHOT_MAX_INTERVAL,
     );
+    let mut observed_failure = false;
     loop {
-        let members = group_members(group)?;
-        if only_group_leader_remains(&members, group) {
-            return Ok(());
+        match group_members(group) {
+            Ok(members) if only_group_leader_remains(&members, group) => {
+                return if observed_failure {
+                    Err(cleanup_error())
+                } else {
+                    Ok(())
+                };
+            }
+            Ok(_) => {}
+            Err(_) => observed_failure = true,
         }
         if Instant::now() >= deadline {
             return Err(cleanup_error());
@@ -1076,6 +1218,14 @@ fn group_members(
 ) -> Result<Vec<rustix::process::Pid>, BackgroundProcessError> {
     use std::io::Read;
 
+    #[cfg(test)]
+    if consume_injected_failure(
+        &GROUP_SNAPSHOT_SPAWN_FAILURE_GROUP,
+        &GROUP_SNAPSHOT_SPAWN_FAILURES,
+        group.as_raw_nonzero().get().cast_unsigned(),
+    ) {
+        return Err(cleanup_error());
+    }
     let mut command = Command::new("/bin/ps");
     #[cfg(target_os = "linux")]
     command.args(["--no-headers", "-o", "pid", "--pgroup"]);
@@ -1124,6 +1274,14 @@ fn group_members(
     if !status?.success() || bytes.len() > MAX_GROUP_SNAPSHOT_BYTES {
         return Err(cleanup_error());
     }
+    #[cfg(test)]
+    if consume_injected_failure(
+        &GROUP_SNAPSHOT_FAILURE_GROUP,
+        &GROUP_SNAPSHOT_FAILURES,
+        group.as_raw_nonzero().get().cast_unsigned(),
+    ) {
+        return Err(cleanup_error());
+    }
     parse_group_members(&bytes)
 }
 
@@ -1148,6 +1306,47 @@ fn only_group_leader_remains(
     leader: rustix::process::Pid,
 ) -> bool {
     members == [leader]
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+fn consume_injected_failure(target: &AtomicU32, remaining: &AtomicUsize, actual: u32) -> bool {
+    target.load(Ordering::Acquire) == actual
+        && remaining
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                count.checked_sub(1)
+            })
+            .is_ok()
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+fn inject_failures(target: &AtomicU32, remaining: &AtomicUsize, pid: NonZeroU32, count: usize) {
+    target.store(pid.get(), Ordering::Release);
+    remaining.store(count, Ordering::Release);
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+pub(crate) fn inject_waitid_failures_for_test(leader: NonZeroU32, count: usize) {
+    inject_failures(&WAITID_FAILURE_LEADER, &WAITID_FAILURES, leader, count);
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+pub(crate) fn inject_group_snapshot_failures_for_test(group: NonZeroU32, count: usize) {
+    inject_failures(
+        &GROUP_SNAPSHOT_FAILURE_GROUP,
+        &GROUP_SNAPSHOT_FAILURES,
+        group,
+        count,
+    );
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+pub(crate) fn inject_group_snapshot_spawn_failures_for_test(group: NonZeroU32, count: usize) {
+    inject_failures(
+        &GROUP_SNAPSHOT_SPAWN_FAILURE_GROUP,
+        &GROUP_SNAPSHOT_SPAWN_FAILURES,
+        group,
+        count,
+    );
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
