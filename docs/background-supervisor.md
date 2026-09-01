@@ -11,8 +11,9 @@ not turn a persisted PID into process-control authority.
 injected clock, store, process-spawner, and process-retainer traits. Core owns
 no filesystem, environment, clock, thread, task, process, signal, or network
 effect. `machine-god-native` owns the concrete Linux and macOS store and
-process implementations. A host must retain the native supervisor for at least
-as long as work may run.
+process implementations. While a supervisor is live it accepts work; dropping
+it closes admission and requests stop without abandoning already-acquired
+ownership.
 
 One start request contains a nonempty command of at most 32 KiB and one
 absolute canonical Unicode cwd of at most 4,096 bytes. Both reject NUL. The
@@ -44,8 +45,14 @@ Admission is fail-fast with no queue: the default is four active jobs and the
 hard configurable maximum is sixteen. Saturation occurs before ID reservation
 or process preparation. Polling performs no potentially blocking process
 operation on the caller's async executor. In addition to its fixed retainer
-workers, the supervisor owns one fixed-size blocking-operation worker set;
-offload admission fails promptly rather than queuing without a bound.
+workers and one retainer rescue worker, the supervisor owns one fixed-size
+blocking-operation worker set; offload admission fails promptly rather than
+queuing without a bound. Every worker handle is registered at creation with a
+process-wide collector that retains at most 256 handles. One supervisor
+reserves `2 * max_active + 1` of those authorities during construction, so
+collector saturation fails construction with the fixed worker category before
+the supervisor can accept work. Finished handles return their authorities to
+the collector; unresolved handles are never implicitly detached.
 Cancellation or drop retains cleanup ownership until the admitted blocking
 operation returns and the prepared or released process has been closed through
 the applicable lifecycle path. Helper readiness observes the same private
@@ -61,8 +68,12 @@ under both cooperative cancellation and a fixed 500 ms deadline. Cancellation,
 timeout, or any uncommitted frame closes the gate and completes owned group
 cleanup, so a ready helper that stops reading cannot retain blocking capacity.
 Pre-commit cancellation has its distinct native category only after abort and
-reap succeed; ambiguous cleanup remains a process failure rather than being
-hidden by cancellation.
+reap succeed. Proven cancellation remains `cancelled` only when cancellation
+itself terminates the bounded write. A terminal frame or commit-write failure
+is classified from the cause observed at that failing attempt and is not
+relabelled if cancellation races after that observation. Every pre-commit
+failure aborts and reaps before return; ambiguous cleanup remains a process
+failure rather than being hidden by cancellation.
 
 ## Persist-before-release protocol
 
@@ -87,9 +98,12 @@ after initial publication explicitly aborts and reaps the prepared child. It
 publishes `stopped` only when that fallible cleanup proves success and
 publishes `dead` when cleanup fails or remains ambiguous. Only proven cleanup
 preserves the fixed cancellation result; ambiguous cleanup returns the fixed
-process result. Retention after a successful release
-is an infallible ownership transfer: dropping the caller's start future cannot
-orphan a process or free its capacity slot.
+process result. Retention after a successful release is an infallible ownership
+transfer: dropping the caller's start future cannot orphan a process or free
+its capacity slot. A retention permit reserved before shutdown still
+dispatches to its reserved worker. The fixed rescue worker owns the otherwise
+unreachable channel-failure path, so dispatch never performs a process wait or
+completion publication on the polling caller.
 
 The successful start result contains only the allocated ID and display-only
 PID. Neither value authorizes signaling. The supervisor controls a process
@@ -228,14 +242,20 @@ original group after partial signal delivery. macOS lacks that retained
 start-time identity in this adapter and conservatively treats any still-
 existing captured PID as a survivor. The wait advances permanently past each
 vanished prefix member and checks one live witness per backoff interval, making
-its work linear in captured members plus wait iterations. The unreaped leader
-reserves the original group identity throughout. A raced or previously
+its work linear in captured members plus wait iterations. Reaching the fixed
+disappearance deadline with any captured member unresolved fails cleanup even
+when the final original-group snapshot contains only the leader. The unreaped
+leader reserves the original group identity throughout. A raced or previously
 uncaptured survivor makes the final proof fail closed. macOS retains its fixed
-`/bin/ps` adapter with a 64 KiB output bound and 250 ms timeout. Permission
-denial is never disappearance evidence. The EPERM path reuses its phase
-snapshot and adds no global scan; a surviving credential-changed member
-therefore produces a fixed cleanup failure. The numeric group identity is not
-consulted after it becomes reusable.
+`/bin/ps` adapter with a 64 KiB output bound and one 250 ms deadline shared by
+nonblocking pipe reads and child observation. It has no snapshot-reader thread
+or reader join; timeout kills and then boundedly reaps or quarantines the exact
+child. Permission denial is never disappearance evidence. The EPERM path
+reuses its phase snapshot and adds no global scan; a surviving
+credential-changed member therefore produces a fixed cleanup failure. The
+numeric group identity is not consulted after it becomes reusable. Linux
+formats repeated descriptor-relative PID components in a fixed ten-byte stack
+buffer and allocates no decimal string per observation.
 
 Direct-child reaping uses nonblocking probes under fixed deadlines. Before any
 probe or helper spawn, the adapter reserves one of 64 process-wide reap
@@ -253,14 +273,16 @@ for a fixed no-op probe. On systems where `SIGCHLD = SIG_IGN` or
 probe, preparation fails before the requested helper exists. Signal modes that
 remain waitable on a supported operating system are compatible.
 
-Every `waitid` errno is classified before public redaction. `ECHILD` means the
-exclusive prerequisite was violated after admission and irreversibly loses
-authority over the child identity. That path returns the fixed wait failure,
-drops the stale handle, and performs no later numeric PID/PGID signal or group
-query; it cannot accidentally target a recycled process group. Other
-observation failures retain the still-waitable leader through best-effort
-cleanup. The adapter never attempts a redundant direct-child signal after the
-group KILL.
+Every `waitid` and direct-child `try_wait` errno is classified before public
+redaction. Bounded direct-child reaping retries `EINTR` only within the current
+fixed observation deadline. `ECHILD` means the exclusive prerequisite was
+violated after admission and irreversibly loses authority over the child
+identity. That path returns the fixed wait failure, drops the stale handle, and
+performs no later numeric PID/PGID signal or group query; it cannot accidentally
+target a recycled process group. Any other direct-child observation failure
+remains a wait failure and transfers both the child handle and its process-wide
+reap authority to the bounded quarantine instead of dropping either. The
+adapter never attempts a redundant direct-child signal after the group KILL.
 
 An active worker observes a new process after 2 ms and exponentially backs off
 to a 32 ms maximum, keeping an idle job below 40 leader observations per
@@ -269,15 +291,24 @@ the parked observation instead of waiting for that timeout. Completion may be
 observed within the bounded backoff interval; explicit stop still includes its
 fixed TERM grace.
 
-Dropping the native supervisor stops, joins, and reaps every process it still
-owns. This is process-local supervision: jobs do not promise survival after
-host exit, cross-process control, crash adoption, or control by a later
-machine-god invocation.
+Dropping the native supervisor closes both pools, cancels active process waits,
+and returns without joining a worker or running process cleanup on the caller.
+The process-wide fixed-capacity collector already owns every worker handle;
+retainer workers continue the bounded stop, reap, and terminal-publication
+protocol, while blocking workers finish any acquired prepared-process cleanup.
+The collector joins each handle after it reports finished and only then returns
+its reserved authority. Thus Drop latency does not inherit a process grace
+period or worker stall, while leases, processes, job results, and cleanup
+tokens remain explicitly owned until completion. This remains process-local
+supervision: cleanup continues only while the host process exists, and jobs do
+not promise survival after host exit, cross-process control, crash adoption, or
+control by a later machine-god invocation.
 
 All public errors and debug output use closed fixed categories and do not
 reflect commands, paths, environment values, record contents, helper details,
-PIDs, IDs, or operating-system diagnostics. Host syscalls and joins have no
-unconditional wall-clock guarantee.
+PIDs, IDs, or operating-system diagnostics. Worker-side host syscalls retain
+their documented deadlines; supervisor Drop itself performs no worker join or
+process syscall.
 
 ## Deferred surface
 

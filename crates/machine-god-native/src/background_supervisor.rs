@@ -8,12 +8,14 @@ use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc::{
+    Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError, sync_channel,
+};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::task::{Context, Poll, Waker};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use machine_god_core::{
     BackgroundClock, BackgroundCompletionRecord, BackgroundProcessOutcome as CoreProcessOutcome,
@@ -382,7 +384,137 @@ impl Drop for NativeBackgroundSupervisor {
 
 type BlockingJob = Box<dyn FnOnce() + Send + 'static>;
 
-const BLOCKING_SHUTDOWN_GRACE: Duration = Duration::from_millis(100);
+const WORKER_OWNERSHIP_CAPACITY: usize = 256;
+const WORKER_COLLECTION_INTERVAL: Duration = Duration::from_millis(10);
+
+struct WorkerOwnershipRegistry {
+    sender: SyncSender<OwnedWorkerHandle>,
+    retained: Arc<AtomicUsize>,
+    _collector: JoinHandle<()>,
+}
+
+struct WorkerOwnershipReservation {
+    permits: Vec<WorkerOwnershipPermit>,
+    cohort: Arc<AtomicUsize>,
+}
+
+struct WorkerOwnershipPermit {
+    retained: Arc<AtomicUsize>,
+    cohort: Arc<AtomicUsize>,
+}
+
+struct OwnedWorkerHandle {
+    handle: JoinHandle<()>,
+    _permit: WorkerOwnershipPermit,
+}
+
+impl WorkerOwnershipRegistry {
+    fn new() -> Result<Self, ()> {
+        let (sender, receiver) = sync_channel(WORKER_OWNERSHIP_CAPACITY);
+        let retained = Arc::new(AtomicUsize::new(0));
+        let collector = thread::Builder::new()
+            .name("machine-god-bg-worker-collector".to_owned())
+            .spawn(move || worker_collector_loop(&receiver))
+            .map_err(|_| ())?;
+        Ok(Self {
+            sender,
+            retained,
+            _collector: collector,
+        })
+    }
+
+    fn reserve(&self, count: usize) -> Result<WorkerOwnershipReservation, ()> {
+        let mut retained = self.retained.load(Ordering::Acquire);
+        loop {
+            let next = retained.checked_add(count).ok_or(())?;
+            if next > WORKER_OWNERSHIP_CAPACITY {
+                return Err(());
+            }
+            match self.retained.compare_exchange_weak(
+                retained,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(observed) => retained = observed,
+            }
+        }
+        let cohort = Arc::new(AtomicUsize::new(count));
+        let permits = (0..count)
+            .map(|_| WorkerOwnershipPermit {
+                retained: Arc::clone(&self.retained),
+                cohort: Arc::clone(&cohort),
+            })
+            .collect();
+        Ok(WorkerOwnershipReservation { permits, cohort })
+    }
+
+    fn register(
+        &self,
+        handle: JoinHandle<()>,
+        permit: WorkerOwnershipPermit,
+    ) -> Result<(), OwnedWorkerHandle> {
+        let owned = OwnedWorkerHandle {
+            handle,
+            _permit: permit,
+        };
+        match self.sender.try_send(owned) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(owned) | TrySendError::Disconnected(owned)) => Err(owned),
+        }
+    }
+}
+
+impl WorkerOwnershipReservation {
+    fn take(&mut self) -> WorkerOwnershipPermit {
+        self.permits
+            .pop()
+            .expect("worker ownership was reserved before spawning")
+    }
+}
+
+impl Drop for WorkerOwnershipPermit {
+    fn drop(&mut self) {
+        self.cohort.fetch_sub(1, Ordering::AcqRel);
+        self.retained.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+fn worker_ownership_registry() -> Result<&'static WorkerOwnershipRegistry, ()> {
+    static REGISTRY: OnceLock<Option<WorkerOwnershipRegistry>> = OnceLock::new();
+    REGISTRY
+        .get_or_init(|| WorkerOwnershipRegistry::new().ok())
+        .as_ref()
+        .ok_or(())
+}
+
+fn worker_collector_loop(receiver: &Receiver<OwnedWorkerHandle>) {
+    let mut retained = Vec::with_capacity(WORKER_OWNERSHIP_CAPACITY);
+    loop {
+        match receiver.recv_timeout(WORKER_COLLECTION_INTERVAL) {
+            Ok(worker) => retained.push(worker),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+        loop {
+            match receiver.try_recv() {
+                Ok(worker) => retained.push(worker),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => return,
+            }
+        }
+        let mut index = 0;
+        while index < retained.len() {
+            if retained[index].handle.is_finished() {
+                let worker = retained.swap_remove(index);
+                let _ = worker.handle.join();
+            } else {
+                index += 1;
+            }
+        }
+    }
+}
 
 enum BlockingMessage {
     Run(BlockingJob),
@@ -397,7 +529,7 @@ struct BlockingPool {
     senders: Vec<SyncSender<BlockingMessage>>,
     available: Arc<Mutex<Vec<usize>>>,
     closing: Arc<AtomicBool>,
-    workers: Mutex<Vec<JoinHandle<()>>>,
+    worker_cohort: Arc<AtomicUsize>,
 }
 
 struct BlockingResult<T> {
@@ -424,10 +556,15 @@ enum BlockingTaskFailure {
 
 impl BlockingExecutor {
     fn new(size: usize) -> Result<Self, NativeBackgroundSupervisorError> {
+        let registry = worker_ownership_registry().map_err(|()| {
+            NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Worker)
+        })?;
+        let mut ownership = registry.reserve(size).map_err(|()| {
+            NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Worker)
+        })?;
         let available = Arc::new(Mutex::new((0..size).rev().collect()));
         let closing = Arc::new(AtomicBool::new(false));
         let mut senders: Vec<SyncSender<BlockingMessage>> = Vec::with_capacity(size);
-        let mut workers: Vec<JoinHandle<()>> = Vec::with_capacity(size);
         for index in 0..size {
             let (sender, receiver) = sync_channel(1);
             let worker_available = Arc::clone(&available);
@@ -442,22 +579,28 @@ impl BlockingExecutor {
                 for sender in &senders {
                     let _ = sender.try_send(BlockingMessage::Shutdown);
                 }
-                for worker in workers {
-                    let _ = worker.join();
-                }
                 return Err(NativeBackgroundSupervisorError::new(
                     NativeBackgroundSupervisorErrorKind::Worker,
                 ));
             };
             senders.push(sender);
-            workers.push(handle);
+            if let Err(owned) = registry.register(handle, ownership.take()) {
+                closing.store(true, Ordering::Release);
+                for sender in &senders {
+                    let _ = sender.try_send(BlockingMessage::Shutdown);
+                }
+                let _ = owned.handle.join();
+                return Err(NativeBackgroundSupervisorError::new(
+                    NativeBackgroundSupervisorErrorKind::Worker,
+                ));
+            }
         }
         Ok(Self {
             pool: Arc::new(BlockingPool {
                 senders,
                 available,
                 closing,
-                workers: Mutex::new(workers),
+                worker_cohort: ownership.cohort,
             }),
         })
     }
@@ -541,35 +684,12 @@ impl BlockingPool {
     }
 
     fn shutdown(&self) {
+        debug_assert!(self.worker_cohort.load(Ordering::Acquire) <= self.senders.len());
         if self.closing.swap(true, Ordering::AcqRel) {
             return;
         }
         for sender in &self.senders {
             let _ = sender.try_send(BlockingMessage::Shutdown);
-        }
-        let workers = {
-            let mut workers = self
-                .workers
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            workers.drain(..).collect::<Vec<_>>()
-        };
-        let deadline = Instant::now() + BLOCKING_SHUTDOWN_GRACE;
-        while workers.iter().any(|worker| !worker.is_finished()) {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                break;
-            }
-            thread::sleep(remaining.min(Duration::from_millis(1)));
-        }
-        // A finished handle is the only join that cannot extend the grace
-        // deadline. Dropping any unresolved handle detaches its thread; the
-        // worker closure and submitted job continue to own their receiver,
-        // cancellation state, and result publication until they return.
-        for worker in workers {
-            if worker.is_finished() {
-                let _ = worker.join();
-            }
         }
     }
 }
@@ -996,16 +1116,22 @@ struct WorkerPool {
     available: Arc<Mutex<Vec<usize>>>,
     stops: Arc<Vec<Mutex<Option<CancellationToken>>>>,
     closing: Arc<AtomicBool>,
-    workers: Mutex<Vec<JoinHandle<()>>>,
+    rescue: SyncSender<RetainedJob>,
+    worker_cohort: Arc<AtomicUsize>,
 }
 
 impl WorkerRetainer {
     fn new(size: usize) -> Result<Self, NativeBackgroundSupervisorError> {
+        let registry = worker_ownership_registry().map_err(|()| {
+            NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Worker)
+        })?;
+        let mut ownership = registry.reserve(size.saturating_add(1)).map_err(|()| {
+            NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Worker)
+        })?;
         let available = Arc::new(Mutex::new((0..size).rev().collect()));
         let stops = Arc::new((0..size).map(|_| Mutex::new(None)).collect::<Vec<_>>());
         let closing = Arc::new(AtomicBool::new(false));
         let mut senders: Vec<SyncSender<WorkerMessage>> = Vec::with_capacity(size);
-        let mut workers: Vec<JoinHandle<()>> = Vec::with_capacity(size);
         for index in 0..size {
             let (sender, receiver) = sync_channel(1);
             let worker_available = Arc::clone(&available);
@@ -1024,18 +1150,36 @@ impl WorkerRetainer {
                 })
             else {
                 closing.store(true, Ordering::Release);
-                for sender in &senders {
-                    let _ = sender.try_send(WorkerMessage::Shutdown);
-                }
-                for worker in workers {
-                    let _ = worker.join();
-                }
                 return Err(NativeBackgroundSupervisorError::new(
                     NativeBackgroundSupervisorErrorKind::Worker,
                 ));
             };
             senders.push(sender);
-            workers.push(handle);
+            if let Err(owned) = registry.register(handle, ownership.take()) {
+                closing.store(true, Ordering::Release);
+                let _ = owned.handle.join();
+                return Err(NativeBackgroundSupervisorError::new(
+                    NativeBackgroundSupervisorErrorKind::Worker,
+                ));
+            }
+        }
+        let (rescue, rescue_receiver) = sync_channel(size);
+        let Ok(rescue_worker) = thread::Builder::new()
+            .name("machine-god-bg-rescue".to_owned())
+            .spawn(move || rescue_worker_loop(&rescue_receiver))
+        else {
+            closing.store(true, Ordering::Release);
+            return Err(NativeBackgroundSupervisorError::new(
+                NativeBackgroundSupervisorErrorKind::Worker,
+            ));
+        };
+        if let Err(owned) = registry.register(rescue_worker, ownership.take()) {
+            drop(rescue);
+            let _ = owned.handle.join();
+            closing.store(true, Ordering::Release);
+            return Err(NativeBackgroundSupervisorError::new(
+                NativeBackgroundSupervisorErrorKind::Worker,
+            ));
         }
         Ok(Self {
             pool: Arc::new(WorkerPool {
@@ -1043,7 +1187,8 @@ impl WorkerRetainer {
                 available,
                 stops,
                 closing,
-                workers: Mutex::new(workers),
+                rescue,
+                worker_cohort: ownership.cohort,
             }),
         })
     }
@@ -1055,37 +1200,34 @@ impl WorkerRetainer {
 
 impl WorkerPool {
     fn dispatch(&self, index: usize, job: RetainedJob) {
-        if self.closing.load(Ordering::Acquire) {
-            finish_without_worker(job);
-            return;
-        }
         match self.senders[index].try_send(WorkerMessage::Run(job)) {
             Ok(()) => {}
             Err(TrySendError::Full(message) | TrySendError::Disconnected(message)) => {
-                if let WorkerMessage::Run(job) = message {
-                    finish_without_worker(job);
-                }
+                let WorkerMessage::Run(job) = message else {
+                    unreachable!("dispatch submits only retained jobs")
+                };
+                self.rescue
+                    .try_send(job)
+                    .unwrap_or_else(|_| unreachable!("bounded rescue queue retains every permit"));
             }
         }
     }
 
     fn shutdown(&self) {
+        debug_assert!(self.worker_cohort.load(Ordering::Acquire) <= self.senders.len() + 1);
         if self.closing.swap(true, Ordering::AcqRel) {
             return;
         }
         for stop in self.stops.iter() {
-            if let Ok(guard) = stop.lock()
+            if let Ok(guard) = stop.try_lock()
                 && let Some(token) = guard.as_ref()
             {
                 token.cancel();
             }
         }
-        for sender in &self.senders {
-            let _ = sender.try_send(WorkerMessage::Shutdown);
-        }
-        if let Ok(mut workers) = self.workers.lock() {
-            for worker in workers.drain(..) {
-                let _ = worker.join();
+        if let Ok(idle) = self.available.try_lock() {
+            for index in idle.iter().copied() {
+                let _ = self.senders[index].try_send(WorkerMessage::Shutdown);
             }
         }
     }
@@ -1126,14 +1268,10 @@ impl BackgroundRetentionPermit for WorkerPermit {
         record: BackgroundRunningRecord,
         process: Box<dyn CoreOwnedProcess>,
     ) {
-        let Some(index) = self.index.take() else {
-            finish_without_worker(RetainedJob {
-                lease,
-                record,
-                process,
-            });
-            return;
-        };
+        let index = self
+            .index
+            .take()
+            .expect("a consumed retention permit owns exactly one worker slot");
         self.pool.dispatch(
             index,
             RetainedJob {
@@ -1149,6 +1287,9 @@ impl Drop for WorkerPermit {
     fn drop(&mut self) {
         if let Some(index) = self.index.take() {
             return_slot(&self.pool.available, index);
+            if self.pool.closing.load(Ordering::Acquire) {
+                let _ = self.pool.senders[index].try_send(WorkerMessage::Shutdown);
+            }
         }
     }
 }
@@ -1184,25 +1325,20 @@ fn worker_loop(
     }
 }
 
+fn rescue_worker_loop(receiver: &Receiver<RetainedJob>) {
+    while let Ok(job) = receiver.recv() {
+        let stop = CancellationToken::new();
+        stop.cancel();
+        finish_job(job, stop);
+    }
+}
+
 fn finish_job(job: RetainedJob, stop: CancellationToken) {
     let RetainedJob {
         lease,
         record,
         process,
     } = job;
-    let outcome =
-        futures_executor::block_on(process.wait(stop)).unwrap_or(CoreProcessOutcome::Dead);
-    publish_terminal(lease.as_ref(), &record, outcome);
-}
-
-fn finish_without_worker(job: RetainedJob) {
-    let RetainedJob {
-        lease,
-        record,
-        process,
-    } = job;
-    let stop = CancellationToken::new();
-    stop.cancel();
     let outcome =
         futures_executor::block_on(process.wait(stop)).unwrap_or(CoreProcessOutcome::Dead);
     publish_terminal(lease.as_ref(), &record, outcome);
@@ -1348,8 +1484,9 @@ mod tests {
     use super::{
         BlockingExecutor, BlockingResult, BlockingTaskFailure, NativeBackgroundLimits,
         NativeBackgroundSupervisor, NativeSpawner, NativeStore, RetainedJob,
-        SystemBackgroundProcessAdapter, SystemClock, finish_prepared_after_readiness,
-        finish_without_worker, open_directory, release_error_kind, retain_canonical_directory_with,
+        SystemBackgroundProcessAdapter, SystemClock, WORKER_OWNERSHIP_CAPACITY, WorkerRetainer,
+        finish_prepared_after_readiness, open_directory, release_error_kind,
+        retain_canonical_directory_with, worker_ownership_registry,
     };
     use crate::background_process::{
         BackgroundProcessErrorKind, BackgroundProcessHelper, run_background_process_helper,
@@ -1367,7 +1504,7 @@ mod tests {
     use std::future::Future;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex, Weak, mpsc};
     use std::task::{Context, Poll, Wake, Waker};
     use std::thread;
@@ -1440,6 +1577,46 @@ mod tests {
                 record,
                 process,
             });
+        }
+    }
+
+    struct BlockingOwnedProcess {
+        inner: Box<dyn machine_god_core::OwnedBackgroundProcess>,
+        resource: Arc<()>,
+        entered: mpsc::SyncSender<()>,
+        release: mpsc::Receiver<()>,
+    }
+
+    impl machine_god_core::OwnedBackgroundProcess for BlockingOwnedProcess {
+        fn pid(&self) -> Option<std::num::NonZeroU32> {
+            self.inner.pid()
+        }
+
+        fn wait(
+            self: Box<Self>,
+            stop: CancellationToken,
+        ) -> machine_god_core::BoxFuture<
+            'static,
+            Result<
+                machine_god_core::BackgroundProcessOutcome,
+                machine_god_core::BackgroundStartError,
+            >,
+        > {
+            let Self {
+                inner,
+                resource,
+                entered,
+                release,
+            } = *self;
+            Box::pin(async move {
+                entered.send(()).expect("report retained process ownership");
+                release
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("release retained process ownership");
+                let outcome = inner.wait(stop).await;
+                drop(resource);
+                outcome
+            })
         }
     }
 
@@ -1671,12 +1848,14 @@ mod tests {
                 .expect_err("capacity must reject");
         assert_eq!(second.kind(), BackgroundStartErrorKind::Capacity);
 
+        let drop_started = Instant::now();
         drop(supervisor);
-        assert!(!process_exists(pid));
+        assert!(drop_started.elapsed() < Duration::from_millis(250));
         assert_eq!(
             fixture.await_terminal(first.id()).state(),
             NativeBackgroundState::Stopped
         );
+        assert!(!process_exists(pid));
     }
 
     #[test]
@@ -1790,6 +1969,16 @@ mod tests {
     }
 
     #[test]
+    fn worker_ownership_capacity_rejects_an_unreservable_cohort() {
+        assert!(
+            worker_ownership_registry()
+                .expect("worker ownership registry")
+                .reserve(WORKER_OWNERSHIP_CAPACITY + 1)
+                .is_err()
+        );
+    }
+
+    #[test]
     fn dropped_blocking_future_leaves_cancelled_cleanup_owned_by_worker() {
         let executor = BlockingExecutor::new(1).expect("blocking executor");
         let caller_cancellation = CancellationToken::new();
@@ -1818,8 +2007,9 @@ mod tests {
     }
 
     #[test]
-    fn blocking_shutdown_detaches_a_stuck_worker_without_losing_job_ownership() {
+    fn blocking_shutdown_transfers_a_stuck_worker_to_bounded_ownership() {
         let executor = BlockingExecutor::new(1).expect("blocking executor");
+        let worker_cohort = Arc::clone(&executor.pool.worker_cohort);
         let owned = Arc::new(());
         let weak_owned = Arc::downgrade(&owned);
         let (entered, entered_receiver) = mpsc::sync_channel(1);
@@ -1872,6 +2062,7 @@ mod tests {
         drop(returned);
         assert!(weak_owned.upgrade().is_none());
         shutdown_thread.join().expect("join bounded shutdown");
+        wait_for_zero(&worker_cohort, "blocking worker was not collected");
     }
 
     #[test]
@@ -2047,7 +2238,7 @@ mod tests {
     }
 
     #[test]
-    fn closing_dispatch_waits_and_persists_a_successful_stop() {
+    fn closing_dispatch_returns_promptly_and_persists_a_successful_stop() {
         let fixture = Fixture::new();
         let state_root = open_directory(&fixture.state_root).expect("state descriptor");
         let store = Arc::new(NativeStore {
@@ -2091,8 +2282,42 @@ mod tests {
             .take()
             .expect("released job");
 
-        finish_without_worker(job);
-
+        let resource = Arc::new(());
+        let weak_resource = Arc::downgrade(&resource);
+        let (entered, entered_receiver) = mpsc::sync_channel(1);
+        let (release, release_receiver) = mpsc::sync_channel(1);
+        let process = Box::new(BlockingOwnedProcess {
+            inner: job.process,
+            resource,
+            entered,
+            release: release_receiver,
+        });
+        let retainer = WorkerRetainer::new(1).expect("worker retainer");
+        let worker_cohort = Arc::clone(&retainer.pool.worker_cohort);
+        let permit = retainer.try_admit().expect("retention permit");
+        retainer.shutdown();
+        let started = Instant::now();
+        permit.retain(job.lease, job.record, process);
+        assert!(
+            started.elapsed() < Duration::from_millis(250),
+            "closing dispatch performed process cleanup on the caller"
+        );
+        entered_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker retained the process");
+        let drop_started = Instant::now();
+        drop(retainer);
+        assert!(
+            drop_started.elapsed() < Duration::from_millis(250),
+            "retainer Drop waited for a process worker"
+        );
+        assert!(
+            weak_resource.upgrade().is_some(),
+            "the ownership registry must retain the process job after Drop"
+        );
+        release.send(()).expect("release retained process");
+        wait_for_zero(&worker_cohort, "retainer workers were not collected");
+        assert!(weak_resource.upgrade().is_none());
         assert_eq!(
             fixture.detail(handle.id()).state(),
             NativeBackgroundState::Stopped
@@ -2103,6 +2328,14 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(2);
         while !wake.0.load(Ordering::Acquire) {
             assert!(Instant::now() < deadline, "worker did not wake task");
+            thread::yield_now();
+        }
+    }
+
+    fn wait_for_zero(value: &AtomicUsize, message: &str) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while value.load(Ordering::Acquire) != 0 {
+            assert!(Instant::now() < deadline, "{message}");
             thread::yield_now();
         }
     }
