@@ -18,6 +18,8 @@ pub const MAX_BACKGROUND_RECORD_BYTES: usize = 64 * 1_024;
 pub const MAX_BACKGROUND_TOTAL_RECORD_BYTES: usize = 8 * 1_024 * 1_024;
 /// Maximum encoded workspace or working-directory path length.
 pub const MAX_BACKGROUND_PATH_BYTES: usize = 4_096;
+/// Maximum raw byte length of an injected state-base environment value.
+pub const MAX_BACKGROUND_STATE_BASE_BYTES: usize = 4_096;
 /// Maximum command length in one persisted record.
 pub const MAX_BACKGROUND_COMMAND_BYTES: usize = 32 * 1_024;
 /// Maximum command preview length in one list row.
@@ -419,6 +421,7 @@ const fn unavailable() -> NativeBackgroundInspectionError {
 mod supported {
     use std::ffi::OsStr;
     use std::io::Read;
+    use std::os::unix::ffi::OsStrExt;
     use std::path::{Path, PathBuf};
 
     use rustix::fd::{AsFd, BorrowedFd, OwnedFd};
@@ -433,16 +436,18 @@ mod supported {
         BACKGROUND_DIRECTORY, MAX_BACKGROUND_COMMAND_BYTES, MAX_BACKGROUND_DIAGNOSTIC_BYTES,
         MAX_BACKGROUND_DIRECTORY_ENTRIES, MAX_BACKGROUND_JSON_DEPTH, MAX_BACKGROUND_JSON_NODES,
         MAX_BACKGROUND_PATH_BYTES, MAX_BACKGROUND_RECORD_BYTES, MAX_BACKGROUND_RECORDS,
-        MAX_BACKGROUND_SERVER_URL_BYTES, MAX_BACKGROUND_TOTAL_RECORD_BYTES, NativeBackgroundDetail,
-        NativeBackgroundInspection, NativeBackgroundInspectionError,
-        NativeBackgroundInspectionErrorKind, NativeBackgroundList, NativeBackgroundQuery,
-        NativeBackgroundState, RECORD_DIGEST_DOMAIN, RECORD_PREFIX, RECORD_SUFFIX,
-        WORKSPACE_DIGEST_DOMAIN, unavailable,
+        MAX_BACKGROUND_SERVER_URL_BYTES, MAX_BACKGROUND_STATE_BASE_BYTES,
+        MAX_BACKGROUND_TOTAL_RECORD_BYTES, NativeBackgroundDetail, NativeBackgroundInspection,
+        NativeBackgroundInspectionError, NativeBackgroundInspectionErrorKind, NativeBackgroundList,
+        NativeBackgroundQuery, NativeBackgroundState, RECORD_DIGEST_DOMAIN, RECORD_PREFIX,
+        RECORD_SUFFIX, WORKSPACE_DIGEST_DOMAIN, unavailable,
     };
     use crate::NativeEnvironment;
 
     const GROUP_OR_OTHER_WRITE: u64 = 0o022;
     const GROUP_OR_OTHER_PERMISSIONS: u64 = 0o077;
+    #[cfg(target_os = "macos")]
+    const OWNER_READ_PERMISSION: u64 = 0o400;
 
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -556,6 +561,11 @@ mod supported {
     }
 
     fn validate_state_base(value: &OsStr) -> Result<PathBuf, NativeBackgroundInspectionError> {
+        if value.as_bytes().len() > MAX_BACKGROUND_STATE_BASE_BYTES {
+            return Err(NativeBackgroundInspectionError::new(
+                NativeBackgroundInspectionErrorKind::ResourceLimit,
+            ));
+        }
         let path = Path::new(value);
         if value.to_str().is_none() || !path.is_absolute() {
             return Err(unavailable());
@@ -795,6 +805,48 @@ mod supported {
         workspace: &str,
         name: &str,
     ) -> Result<Option<(NativeBackgroundDetail, usize)>, NativeBackgroundInspectionError> {
+        #[cfg(target_os = "macos")]
+        let preflight = match rustix::fs::openat(
+            root,
+            name,
+            record_preflight_open_flags() | OFlags::NOFOLLOW,
+            Mode::empty(),
+        ) {
+            Ok(descriptor) => descriptor,
+            Err(error) if error == rustix::io::Errno::NOENT => return Ok(None),
+            Err(error)
+                if is_rejected_type_error(error)
+                    || rustix::fs::statat(root, name, AtFlags::SYMLINK_NOFOLLOW)
+                        .is_ok_and(|metadata| invalid_record_metadata(&metadata)) =>
+            {
+                return Err(corrupt());
+            }
+            Err(error)
+                if error == rustix::io::Errno::ACCESS
+                    && rustix::fs::statat(root, name, AtFlags::SYMLINK_NOFOLLOW).is_ok_and(
+                        |metadata| {
+                            !invalid_record_metadata(&metadata)
+                                && u64::from(metadata.st_mode) & OWNER_READ_PERMISSION != 0
+                        },
+                    ) =>
+            {
+                // macOS applies a `DENY read` ACL even to `O_EVTONLY`. Once
+                // descriptor-relative metadata proves an otherwise readable,
+                // owned private record, this denial is outside the closed ACL
+                // policy rather than an ordinary owner-mode access failure.
+                return Err(corrupt());
+            }
+            Err(_) => return Err(unavailable()),
+        };
+        #[cfg(target_os = "macos")]
+        let preflight_metadata = rustix::fs::fstat(&preflight).map_err(|_| unavailable())?;
+        #[cfg(target_os = "macos")]
+        if invalid_record_metadata(&preflight_metadata) {
+            return Err(corrupt());
+        }
+        #[cfg(target_os = "macos")]
+        validate_record_acl(&preflight)?;
+
         let descriptor = match rustix::fs::openat(
             root,
             name,
@@ -805,24 +857,24 @@ mod supported {
             Err(error) if error == rustix::io::Errno::NOENT => return Ok(None),
             Err(error)
                 if is_rejected_type_error(error)
-                    || rustix::fs::statat(root, name, AtFlags::SYMLINK_NOFOLLOW).is_ok_and(
-                        |metadata| {
-                            !FileType::from_raw_mode(metadata.st_mode).is_file()
-                                || metadata.st_uid != rustix::process::geteuid().as_raw()
-                                || u64::from(metadata.st_mode) & GROUP_OR_OTHER_PERMISSIONS != 0
-                        },
-                    ) =>
+                    || rustix::fs::statat(root, name, AtFlags::SYMLINK_NOFOLLOW)
+                        .is_ok_and(|metadata| invalid_record_metadata(&metadata)) =>
             {
                 return Err(corrupt());
             }
             Err(_) => return Err(unavailable()),
         };
         let metadata = rustix::fs::fstat(&descriptor).map_err(|_| unavailable())?;
-        if !FileType::from_raw_mode(metadata.st_mode).is_file()
-            || metadata.st_uid != rustix::process::geteuid().as_raw()
-            || u64::from(metadata.st_mode) & GROUP_OR_OTHER_PERMISSIONS != 0
-        {
+        if invalid_record_metadata(&metadata) {
             return Err(corrupt());
+        }
+        #[cfg(target_os = "macos")]
+        if metadata.st_dev != preflight_metadata.st_dev
+            || metadata.st_ino != preflight_metadata.st_ino
+            || FileType::from_raw_mode(metadata.st_mode)
+                != FileType::from_raw_mode(preflight_metadata.st_mode)
+        {
+            return Err(unavailable());
         }
         #[cfg(target_os = "macos")]
         validate_record_acl(&descriptor)?;
@@ -853,6 +905,12 @@ mod supported {
             return Err(corrupt());
         }
         Ok(())
+    }
+
+    fn invalid_record_metadata(metadata: &rustix::fs::Stat) -> bool {
+        !FileType::from_raw_mode(metadata.st_mode).is_file()
+            || metadata.st_uid != rustix::process::geteuid().as_raw()
+            || u64::from(metadata.st_mode) & GROUP_OR_OTHER_PERMISSIONS != 0
     }
 
     fn decode_record(
@@ -1071,6 +1129,11 @@ mod supported {
 
     fn record_open_flags() -> OFlags {
         OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NONBLOCK | noatime_flag()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn record_preflight_open_flags() -> OFlags {
+        OFlags::from_bits_retain(libc::O_EVTONLY as _) | OFlags::CLOEXEC | OFlags::NONBLOCK
     }
 
     #[cfg(target_os = "linux")]

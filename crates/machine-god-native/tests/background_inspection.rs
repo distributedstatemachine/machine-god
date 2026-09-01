@@ -4,6 +4,7 @@ use std::ffi::OsString;
 use std::fs;
 #[cfg(target_os = "linux")]
 use std::fs::{File, FileTimes};
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::{PermissionsExt, symlink};
@@ -16,9 +17,9 @@ use std::time::SystemTime;
 
 use futures_executor::block_on;
 use machine_god_native::{
-    MAX_BACKGROUND_RECORD_BYTES, NativeBackgroundInspection, NativeBackgroundInspectionErrorKind,
-    NativeBackgroundQuery, NativeBackgroundRecordSummary, NativeBackgroundState, NativeEnvironment,
-    inspect_native_background,
+    MAX_BACKGROUND_RECORD_BYTES, MAX_BACKGROUND_STATE_BASE_BYTES, NativeBackgroundInspection,
+    NativeBackgroundInspectionErrorKind, NativeBackgroundQuery, NativeBackgroundRecordSummary,
+    NativeBackgroundState, NativeEnvironment, inspect_native_background,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -447,6 +448,31 @@ fn selected_record_with_access_granting_acl_is_corrupt() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn selected_record_with_read_denying_acl_is_corrupt() {
+    let fixture = Fixture::new();
+    let record = fixture.write_record(19, 20, "command");
+    let status = Command::new("/bin/chmod")
+        .args(["+a", "everyone deny read"])
+        .arg(&record)
+        .status()
+        .expect("macOS chmod executable is available");
+    assert!(
+        status.success(),
+        "failed to install read-denying record ACL fixture: {status}"
+    );
+    let _acl_cleanup = MacAclCleanup(record);
+
+    let error = block_on(inspect_native_background(
+        fixture.environment(),
+        fixture.workspace.clone(),
+        NativeBackgroundQuery::Id(19),
+    ))
+    .unwrap_err();
+    assert_eq!(error.kind(), NativeBackgroundInspectionErrorKind::Corrupt);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn selected_record_accepts_a_protective_deny_delete_acl() {
     let fixture = Fixture::new();
     let record = fixture.write_record(17, 20, "command");
@@ -567,6 +593,69 @@ fn xdg_and_home_state_bases_accept_normalized_absolute_spellings() {
         assert!(list.records().is_empty());
         assert!(!list.truncated());
     }
+}
+
+#[test]
+fn xdg_state_home_raw_byte_limit_accepts_exact_and_rejects_one_over() {
+    state_base_raw_byte_limit_accepts_exact_and_rejects_one_over(true);
+}
+
+#[test]
+fn home_raw_byte_limit_accepts_exact_and_rejects_one_over() {
+    state_base_raw_byte_limit_accepts_exact_and_rejects_one_over(false);
+}
+
+fn state_base_raw_byte_limit_accepts_exact_and_rejects_one_over(use_xdg: bool) {
+    let temporary = TempDirectory::new();
+    let workspace = temporary.path().join("workspace");
+    fs::create_dir(&workspace).unwrap();
+    private_directory(&workspace);
+
+    let base = temporary.path().join("base");
+    fs::create_dir(&base).unwrap();
+    private_directory(&base);
+    let base_bytes = base.as_os_str().as_bytes();
+    assert!(base_bytes.len() + 2 < MAX_BACKGROUND_STATE_BASE_BYTES);
+
+    let exact = normalized_spelling_with_raw_length(base_bytes, MAX_BACKGROUND_STATE_BASE_BYTES);
+    let environment = if use_xdg {
+        NativeEnvironment::new(None, Some(exact), None)
+    } else {
+        NativeEnvironment::new(None, None, Some(exact))
+    };
+    let result = block_on(inspect_native_background(
+        environment,
+        workspace.clone(),
+        NativeBackgroundQuery::List,
+    ));
+    assert!(result.is_ok());
+
+    let overflow =
+        normalized_spelling_with_raw_length(base_bytes, MAX_BACKGROUND_STATE_BASE_BYTES + 1);
+    let environment = if use_xdg {
+        NativeEnvironment::new(None, Some(overflow), None)
+    } else {
+        NativeEnvironment::new(None, None, Some(overflow))
+    };
+    let error = block_on(inspect_native_background(
+        environment,
+        workspace.clone(),
+        NativeBackgroundQuery::List,
+    ))
+    .unwrap_err();
+    assert_eq!(
+        error.kind(),
+        NativeBackgroundInspectionErrorKind::ResourceLimit
+    );
+}
+
+fn normalized_spelling_with_raw_length(base: &[u8], length: usize) -> OsString {
+    let mut bytes = Vec::with_capacity(length);
+    bytes.extend_from_slice(base);
+    bytes.resize(length - 1, b'/');
+    bytes.push(b'.');
+    assert_eq!(bytes.len(), length);
+    OsString::from_vec(bytes)
 }
 
 #[cfg(target_os = "linux")]
