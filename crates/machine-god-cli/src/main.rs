@@ -2338,7 +2338,7 @@ fn write_json_string_content(output: &mut impl std::fmt::Write, value: &str) -> 
 
 #[cfg(test)]
 mod tests {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     use super::is_background_process_helper_arguments;
     use super::{
         BoundedSessionOutput, BoundedSessionsOutput, BoundedWorkspaceOutput, Command,
