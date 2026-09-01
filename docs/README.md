@@ -60,6 +60,8 @@ SHAs, workflow IDs, review counts, or slice-by-slice history.
   [mcp_select_tool](mcp-select-tool.md), and
   [mcp_features](mcp-features.md).
 - Foreground one-off delegation: [subagent](subagent.md).
+- Host-owned background execution and durable history production:
+  [background supervisor](background-supervisor.md).
 - Network tools: [web_fetch](web-fetch.md) and
   [web_search](web-search.md).
 - Local image inspection: [vision](vision.md).

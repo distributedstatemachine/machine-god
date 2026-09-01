@@ -26,16 +26,17 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33455374424` (`GREEN`)
 - Main Benchmark evidence: `33455374426` (`GREEN`)
 - Active branch: `agent/m05-background-supervisor`
-- Active phase: `freezing the bounded background supervisor and writer contract`
-- Next gate: `freeze background producer ownership, lifecycle, and persistence bounds`
+- Active phase: `implementing the bounded background supervisor and cross-platform process launch`
+- Next gate: `prove retained-cwd Linux and macOS launch, durable ordering, and owned cleanup`
 <!-- canonical-live-status:end -->
 
 The recorded Actions runs succeeded for the exact delivered-main commit, and
 the Benchmark evidence run retained both required exact-SHA artifacts.
 Bounded read-only persisted `background` inspection is delivered as slice 51.
-There is not yet a production background-record writer or supervisor;
-persistent handles, message/relationship/configuration/lifecycle management,
-ACP, teams, and extension slash commands remain separate.
+The current bounded slice is adding the production process-local writer and
+supervisor without changing the read-only top-level grammar. Persistent handles,
+message/relationship/configuration/lifecycle management, ACP, teams, and
+extension slash commands remain separate.
 Documentation parser maintenance remains a separate non-product task.
 
 ## Architecture ownership

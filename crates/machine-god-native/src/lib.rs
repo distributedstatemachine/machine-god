@@ -32,6 +32,7 @@ mod ai_gateway_web_search;
 mod ask_permission;
 mod ask_user_question;
 mod background_inspection;
+mod background_process;
 mod config;
 mod copy_file;
 mod create_folder;
@@ -187,6 +188,7 @@ pub use background_inspection::{
     NativeBackgroundQuery, NativeBackgroundRecordSummary, NativeBackgroundState,
     inspect_native_background, inspect_process_background,
 };
+pub use background_process::run_background_process_helper;
 #[cfg(all(feature = "vision", not(target_family = "wasm")))]
 pub use vision::{
     MAX_VISION_BATCH_BYTES, MAX_VISION_IMAGE_BYTES, MAX_VISION_IMAGES, MAX_VISION_PATH_BYTES,

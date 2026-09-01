@@ -498,7 +498,8 @@ async fn start_polled(
     check_cancellation(&cancellation)?;
 
     let lease = await_or_cancel(store.reserve(), &cancellation).await?;
-    if lease.id() == 0 {
+    let id = lease.id();
+    if id == 0 {
         return Err(BackgroundStartError::new(
             BackgroundStartErrorKind::Persistence,
         ));
@@ -514,7 +515,7 @@ async fn start_polled(
     check_cancellation(&cancellation)?;
 
     let pid = prepared.pid();
-    let record = BackgroundRunningRecord::new(lease.id(), started_at_ms, &request, pid);
+    let record = BackgroundRunningRecord::new(id, started_at_ms, &request, pid);
     await_commit_or_cancel(lease.publish_initial(&record), &cancellation).await?;
     if cancellation.is_cancelled() {
         drop(prepared);

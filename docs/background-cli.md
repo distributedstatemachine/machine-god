@@ -6,11 +6,11 @@ presentation, exit codes, and output writes. Native code owns environment,
 current-directory, state-root, descriptor, record, and hashing effects. This
 slice starts no work and deliberately has no process-control authority.
 
-There is not yet a production background-record writer. Ordinary installations
-therefore normally return an empty list until the separately reviewed native
-supervisor slice is delivered. The reader is nevertheless a real strict store
-implementation exercised through injected native fixtures; it is not a
-hard-coded empty compatibility stub.
+The separately reviewed native [background supervisor](background-supervisor.md)
+is the production writer for this store. This top-level command remains a
+strict read-only observer: invoking it never starts, stops, adopts, or probes a
+job. A host that has not used the supervisor may therefore still observe an
+empty list.
 
 ## Grammar and exits
 
@@ -136,7 +136,7 @@ with a metadata write.
 
 Existing hierarchy components are opened descriptor-relatively without
 following symlinks and must satisfy the native owner/mode and macOS ACL policy.
-A cooperating future writer must publish complete private regular files by
+The cooperating native writer publishes complete private regular files by
 atomic replacement; a reader may observe the complete old or new inode but no
 multi-record snapshot is promised. Concurrent disappearance may omit a list
 candidate or yield `NotFound` for exact lookup. Other I/O ambiguity is redacted
@@ -147,14 +147,14 @@ FreeBSD, Windows, WASI, and other unsupported targets return the active fixed
 
 ## Deferred pinned-fx surface
 
-Pinned fx also has a native supervisor plus interactive `/background stop`,
-`open`, and `logs` commands. Those require durable workspace/session leases,
-global ID admission, worker-ready commit handshakes, process-instance tokens,
-bounded managed logs, authenticated control, crash recovery, and process-tree
-cleanup. A recorded PID alone is never stop or liveness authority. None of
-those capabilities, terminal background input, detached threads, arbitrary log
-paths, URL probing, `/proc` inspection, repair, or migration is part of this
-read-only slice.
+Pinned fx also connects its native supervisor to interactive `/background
+stop`, `open`, and `logs` commands. Machine-god's process-local supervisor is
+not exposed through those commands. Durable cross-process control still
+requires workspace/session leases, process-instance tokens, bounded managed
+logs, authenticated control, and crash recovery. A recorded PID alone is never
+stop or liveness authority. None of those capabilities, terminal background
+input, arbitrary log paths, URL probing, `/proc` inspection, repair, or
+migration is part of this read-only command.
 
 The compatibility scenario moves only from unimplemented to
 implemented-but-non-equivalent and remains not measured and claim-ineligible.

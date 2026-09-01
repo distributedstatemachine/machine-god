@@ -186,6 +186,34 @@ to 48 KiB each; and tool-local JSON to 8 container levels and 64 nodes. See the
 complete [subagent contract](subagent.md) for failure, drop, reference-host, and
 intentional pinned-manager divergence semantics.
 
+## Background admission boundary
+
+The provider-neutral [`BackgroundSupervisor`](crate::BackgroundSupervisor)
+orders one bounded process-local start across explicitly injected
+[`BackgroundClock`](crate::BackgroundClock),
+[`BackgroundStore`](crate::BackgroundStore),
+[`BackgroundProcessSpawner`](crate::BackgroundProcessSpawner), and
+[`BackgroundProcessRetainer`](crate::BackgroundProcessRetainer) authorities.
+Core receives no ambient clock, filesystem, environment, task, thread,
+process, signal, or persistence authority.
+
+[`BackgroundStartRequest`](crate::BackgroundStartRequest) owns one bounded
+command and absolute canonical persisted cwd. Its start future is inert until
+poll. On poll, core admits capacity fail-fast, reserves one durable nonzero ID,
+reads the injected clock, prepares a barrier-held process, durably publishes
+the complete running record, releases the barrier, and transfers the lease and
+exact owned process to the retainer. Cancellation and every pre-release error
+drop the prepared process under its no-command-executed cleanup guarantee.
+Cancellation cannot revoke a process after release begins.
+
+The returned [`BackgroundHandle`](crate::BackgroundHandle) exposes only the
+durable ID and optional PID for presentation. Those numbers provide no
+liveness, lookup, or signaling authority. Retained completion waits receive a
+host-owned stop token; cancellation of that token requests cleanup and yields
+a stopped outcome only after the exact owned process tree is reaped. The full
+native persistence and lifecycle contract is in the
+[background supervisor contract](background-supervisor.md).
+
 ## Available-model catalog boundary
 
 The available-model catalog adds provider-neutral
