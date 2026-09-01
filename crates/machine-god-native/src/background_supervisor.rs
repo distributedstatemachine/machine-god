@@ -894,13 +894,16 @@ impl CorePreparedProcess for NativePrepared {
         self.0.as_ref().map(PreparedBackgroundProcess::pid)
     }
 
-    fn release(mut self: Box<Self>) -> Result<Box<dyn CoreOwnedProcess>, BackgroundStartError> {
+    fn release(
+        mut self: Box<Self>,
+        cancellation: &CancellationToken,
+    ) -> Result<Box<dyn CoreOwnedProcess>, BackgroundStartError> {
         let prepared = self
             .0
             .take()
             .ok_or_else(|| start_error(BackgroundStartErrorKind::Process))?;
         let owned = prepared
-            .release()
+            .release_cancellable(cancellation)
             .map_err(|_| start_error(BackgroundStartErrorKind::Process))?;
         Ok(Box::new(NativeOwned(Some(owned))))
     }
