@@ -220,6 +220,11 @@ class CiChangeClassificationTests(unittest.TestCase):
     def test_release_smoke_canonicalizes_its_temporary_workspace(self) -> None:
         release_smoke = step_script(self.ci, "Release smoke test")
         self.assertIn(
+            'runner_temp = Path(os.environ["RUNNER_TEMP"]).resolve()',
+            release_smoke,
+        )
+        self.assertEqual(release_smoke.count("dir=runner_temp"), 5)
+        self.assertIn(
             'workspace_root = (workspace_smoke_root / "primary workspace").resolve()',
             release_smoke,
         )

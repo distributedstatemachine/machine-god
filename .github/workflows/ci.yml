@@ -313,7 +313,8 @@ jobs:
           from pathlib import Path
 
           binary = Path("target/release/machine-god").resolve()
-          root = Path(tempfile.mkdtemp(prefix="machine-god-doctor-", dir=os.environ["RUNNER_TEMP"]))
+          runner_temp = Path(os.environ["RUNNER_TEMP"]).resolve()
+          root = Path(tempfile.mkdtemp(prefix="machine-god-doctor-", dir=runner_temp))
           config_root = root / "missing-config"
           state_root = root / "missing-state"
           home = root / "missing-home"
@@ -519,7 +520,7 @@ jobs:
               raise SystemExit("doctor created an isolated missing root")
 
           workspace_smoke_root = Path(
-              tempfile.mkdtemp(prefix="machine-god-workspace-", dir=os.environ["RUNNER_TEMP"])
+              tempfile.mkdtemp(prefix="machine-god-workspace-", dir=runner_temp)
           )
           workspace_root = (workspace_smoke_root / "primary workspace").resolve()
           workspace_root.mkdir()
@@ -621,7 +622,7 @@ jobs:
               raise SystemExit("workspace inspection created an isolated missing root")
 
           sessions_root = Path(
-              tempfile.mkdtemp(prefix="machine-god-sessions-", dir=os.environ["RUNNER_TEMP"])
+              tempfile.mkdtemp(prefix="machine-god-sessions-", dir=runner_temp)
           )
           sessions_config_root = sessions_root / "missing-config"
           sessions_state_root = sessions_root / "missing-state"
@@ -676,7 +677,7 @@ jobs:
               raise SystemExit("sessions created an isolated missing root")
 
           background_root = Path(
-              tempfile.mkdtemp(prefix="machine-god-background-", dir=os.environ["RUNNER_TEMP"])
+              tempfile.mkdtemp(prefix="machine-god-background-", dir=runner_temp)
           )
           background_workspace = (background_root / "workspace").resolve()
           background_workspace.mkdir(mode=0o700)
@@ -743,7 +744,7 @@ jobs:
               raise SystemExit("background inspection created an isolated missing root")
 
           session_root = Path(
-              tempfile.mkdtemp(prefix="machine-god-session-", dir=os.environ["RUNNER_TEMP"])
+              tempfile.mkdtemp(prefix="machine-god-session-", dir=runner_temp)
           )
           session_config_root = session_root / "missing-config"
           session_state_root = session_root / "state"
