@@ -79,7 +79,7 @@ failure uses only the fixed global output diagnostic.
 Linux and macOS select nonempty `XDG_STATE_HOME`, otherwise nonempty `HOME`
 plus `.local/state`, and then the fixed `machine-god/background-v1` hierarchy.
 The selected raw Unicode environment base and canonical Unicode current
-workspace are each limited to 4,096 bytes; an over-limit base is `Unavailable`.
+workspace are each limited to 4,096 bytes; an over-limit base is `ResourceLimit`.
 A domain-separated SHA-256 of that exact path selects
 `workspace-<64-lowercase-hex>`. Each record uses a domain-separated SHA-256 of
 its big-endian numeric ID as `record-<64-lowercase-hex>.json`. Decoded workspace
