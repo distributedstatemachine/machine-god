@@ -150,3 +150,22 @@ abort classification, private drop cancellation, visibility-complete procfs
 admission, waker destruction outside shared locks, and Linux test compilation.
 The complete replacement gate and all three fresh review tracks restart after
 every finding is remediated.
+
+## Rejected product candidate: cycle 06
+
+Three fresh review tracks inspected exact candidate
+`faf112bac133087456e1052d6582e8289d7477a6` after the complete exact local gate
+passed. Correctness reported zero findings; lifecycle and performance rejected
+the candidate.
+
+| Track | Decisive findings |
+| --- | --- |
+| Correctness, API, and compatibility | Zero findings. |
+| Lifecycle, platform, and effects | Procfs admission proved one path snapshot but retained no descriptor-bound mount authority, so a mountinfo overmount or later procfs topology change could invalidate descendant visibility during cleanup. |
+| Performance and resources | Caller cancellation depended on the same blocking worker that could be occupied by synchronous start work; mountinfo parsing amplified a maximum line into a large field vector; group scans allocated a fresh stat buffer per PID. |
+
+Cycle 06 remains rejection evidence. Replacement requires independent caller-
+side cancellation forwarding, a retained descriptor-relative procfs authority
+with mount identity and topology revalidation, one-pass bounded mountinfo
+parsing, and one reusable stat buffer per group scan. All three review tracks
+restart after the complete replacement gate.

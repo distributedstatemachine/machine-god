@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33455374424` (`GREEN`)
 - Main Benchmark evidence: `33455374426` (`GREEN`)
 - Active branch: `agent/m05-background-supervisor`
-- Active phase: `remediating rejected background-supervisor review cycle 05`
-- Next gate: `integrate cycle-05 fixes, then run the complete exact-1.94.1 replacement gate`
+- Active phase: `remediating rejected background-supervisor review cycle 06`
+- Next gate: `integrate cycle-06 fixes, then run the complete exact-1.94.1 replacement gate`
 <!-- canonical-live-status:end -->
 
 The recorded Actions runs succeeded for the exact delivered-main commit, and
@@ -67,8 +67,12 @@ retained, and `stopped` persistence after successful owned cleanup while
 reserving `dead` for ambiguous cleanup. Exact candidate `8b78bae` passed the
 complete local gate but cycle 05 found ambiguous prepared-abort classification,
 caller-token cancellation on dropped starts, restrictive-procfs invisibility,
-waker destruction under the result lock, and a Linux test import error. Those
-findings are being remediated; no rejected result is acceptance evidence.
+waker destruction under the result lock, and a Linux test import error. Exact
+replacement `faf112b` passed the complete gate; cycle 06 correctness was green,
+but lifecycle and performance found cancellation still depended on the busy
+worker, procfs proof was not retained across cleanup, and two scan parsers
+amplified allocations. Those findings are being remediated; no rejected result
+is acceptance evidence.
 Persistent handles, message/relationship/configuration/lifecycle management,
 ACP, teams, and extension slash commands remain separate. Documentation parser
 maintenance remains a separate non-product task.
