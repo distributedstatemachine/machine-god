@@ -55,11 +55,20 @@ the supervisor can accept work. Finished handles return their authorities to
 the collector; unresolved handles are never implicitly detached.
 Cancellation or drop retains cleanup ownership until the admitted blocking
 operation returns and the prepared or released process has been closed through
-the applicable lifecycle path. Helper readiness observes the same private
-operation cancellation token through a registered thread wakeup. Cancellation
-therefore interrupts a stalled readiness wait promptly, closes the private
-gate, signals and reaps the helper group, and releases blocking capacity
-without waiting for the two-second readiness deadline. The exclusive-child-
+the applicable lifecycle path. Before enqueueing each cancellable start, the
+blocking pool registers that start's private operation token with its assigned
+worker. Shutdown first closes admission and cancels every registered token.
+Registration rechecks the closed state before enqueue, so shutdown either
+observes and cancels the token or makes the registering thread cancel it; this
+also covers shutdown between the final admission check and channel send.
+Workers unregister only after the submitted operation returns. Pool shutdown
+never runs cleanup inline and never waits for user work; the registered worker
+continues to own cleanup and result publication within the fixed worker and
+collector bounds. Helper readiness observes the same private operation
+cancellation token through a registered thread wakeup. Cancellation therefore
+interrupts a stalled readiness wait promptly, closes the private gate, signals
+and reaps the helper group, and releases blocking capacity without waiting for
+the two-second readiness deadline. The exclusive-child-
 reaping probe uses the same registered cancellation wakeup and a fixed 500 ms
 deadline; a stalled probe is killed and either reaped or transferred to bounded
 quarantine ownership before preparation returns.

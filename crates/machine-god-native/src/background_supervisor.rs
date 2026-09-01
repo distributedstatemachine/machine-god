@@ -528,6 +528,7 @@ struct BlockingExecutor {
 struct BlockingPool {
     senders: Vec<SyncSender<BlockingMessage>>,
     available: Arc<Mutex<Vec<usize>>>,
+    cancellations: Arc<Vec<Mutex<Option<CancellationToken>>>>,
     closing: Arc<AtomicBool>,
     worker_cohort: Arc<AtomicUsize>,
 }
@@ -563,16 +564,28 @@ impl BlockingExecutor {
             NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Worker)
         })?;
         let available = Arc::new(Mutex::new((0..size).rev().collect()));
+        let cancellations = Arc::new(
+            (0..size)
+                .map(|_| Mutex::new(None))
+                .collect::<Vec<Mutex<Option<CancellationToken>>>>(),
+        );
         let closing = Arc::new(AtomicBool::new(false));
         let mut senders: Vec<SyncSender<BlockingMessage>> = Vec::with_capacity(size);
         for index in 0..size {
             let (sender, receiver) = sync_channel(1);
             let worker_available = Arc::clone(&available);
+            let worker_cancellations = Arc::clone(&cancellations);
             let worker_closing = Arc::clone(&closing);
             let Ok(handle) = thread::Builder::new()
                 .name(format!("machine-god-bg-blocking-{index}"))
                 .spawn(move || {
-                    blocking_worker_loop(index, &receiver, &worker_available, &worker_closing);
+                    blocking_worker_loop(
+                        index,
+                        &receiver,
+                        &worker_available,
+                        &worker_cancellations,
+                        &worker_closing,
+                    );
                 })
             else {
                 closing.store(true, Ordering::Release);
@@ -599,6 +612,7 @@ impl BlockingExecutor {
             pool: Arc::new(BlockingPool {
                 senders,
                 available,
+                cancellations,
                 closing,
                 worker_cohort: ownership.cohort,
             }),
@@ -664,19 +678,42 @@ impl Drop for BlockingExecutor {
 }
 
 impl BlockingPool {
-    fn try_submit(&self, job: BlockingJob) -> Result<(), ()> {
+    fn try_submit(
+        &self,
+        job: BlockingJob,
+        cancellation: Option<CancellationToken>,
+    ) -> Result<(), ()> {
         if self.closing.load(Ordering::Acquire) {
             return Err(());
         }
         let mut available = self.available.try_lock().map_err(|_| ())?;
         let index = available.pop().ok_or(())?;
+        {
+            let Ok(mut registered) = self.cancellations[index].try_lock() else {
+                available.push(index);
+                return Err(());
+            };
+            debug_assert!(registered.is_none());
+            *registered = cancellation;
+        }
         if self.closing.load(Ordering::Acquire) {
+            if let Some(cancellation) = self.cancellations[index]
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+            {
+                cancellation.cancel();
+            }
             available.push(index);
             return Err(());
         }
         match self.senders[index].try_send(BlockingMessage::Run(job)) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
+                self.cancellations[index]
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take();
                 available.push(index);
                 Err(())
             }
@@ -687,6 +724,16 @@ impl BlockingPool {
         debug_assert!(self.worker_cohort.load(Ordering::Acquire) <= self.senders.len());
         if self.closing.swap(true, Ordering::AcqRel) {
             return;
+        }
+        for registered in self.cancellations.iter() {
+            // A contending registrar observes `closing` after installing its
+            // token and cancels it itself. A contending worker has already
+            // completed its job, so shutdown never waits on either lock.
+            if let Ok(registered) = registered.try_lock()
+                && let Some(cancellation) = registered.as_ref()
+            {
+                cancellation.cancel();
+            }
         }
         for sender in &self.senders {
             let _ = sender.try_send(BlockingMessage::Shutdown);
@@ -748,7 +795,11 @@ where
                     waker.wake();
                 }
             });
-            if this.pool.try_submit(job).is_err() {
+            if this
+                .pool
+                .try_submit(job, this.operation_cancellation.clone())
+                .is_err()
+            {
                 this.caller_cancellation = None;
                 this.operation_cancellation = None;
                 return Poll::Ready(
@@ -804,12 +855,17 @@ fn blocking_worker_loop(
     index: usize,
     receiver: &Receiver<BlockingMessage>,
     available: &Mutex<Vec<usize>>,
+    cancellations: &[Mutex<Option<CancellationToken>>],
     closing: &AtomicBool,
 ) {
     while let Ok(message) = receiver.recv() {
         match message {
             BlockingMessage::Run(job) => {
                 let _ = catch_unwind(AssertUnwindSafe(job));
+                cancellations[index]
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take();
                 if closing.load(Ordering::Acquire) {
                     break;
                 }
@@ -1496,8 +1552,10 @@ mod tests {
         NativeEnvironment, inspect_native_background,
     };
     use machine_god_core::{
-        BackgroundProcessRetainer, BackgroundRetentionPermit, BackgroundStartError,
-        BackgroundStartErrorKind, BackgroundStartRequest, BackgroundSupervisor, CancellationToken,
+        BackgroundProcessOutcome, BackgroundProcessRetainer, BackgroundProcessSpawner,
+        BackgroundRetentionPermit, BackgroundStartError, BackgroundStartErrorKind,
+        BackgroundStartRequest, BackgroundSupervisor, BoxFuture, CancellationToken,
+        OwnedBackgroundProcess, PreparedBackgroundProcess,
     };
     use std::ffi::OsString;
     use std::fs;
@@ -1505,7 +1563,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex, Weak, mpsc};
+    use std::sync::{Arc, Barrier, Mutex, Weak, mpsc};
     use std::task::{Context, Poll, Wake, Waker};
     use std::thread;
     use std::time::{Duration, Instant};
@@ -1585,6 +1643,89 @@ mod tests {
         resource: Arc<()>,
         entered: mpsc::SyncSender<()>,
         release: mpsc::Receiver<()>,
+    }
+
+    struct PausedSpawner {
+        entered: mpsc::SyncSender<()>,
+        release: Mutex<Option<mpsc::Receiver<()>>>,
+        cleaned: Arc<AtomicBool>,
+        command_executed: Arc<AtomicBool>,
+    }
+
+    impl BackgroundProcessSpawner for PausedSpawner {
+        fn prepare<'a>(
+            &'a self,
+            _request: &'a BackgroundStartRequest,
+            _cancellation: CancellationToken,
+        ) -> BoxFuture<'a, Result<Box<dyn PreparedBackgroundProcess>, BackgroundStartError>>
+        {
+            let prepared = PausedPrepared {
+                entered: self.entered.clone(),
+                release: self.release.lock().expect("lock release gate").take(),
+                cleaned: Arc::clone(&self.cleaned),
+                command_executed: Arc::clone(&self.command_executed),
+            };
+            Box::pin(async move { Ok(Box::new(prepared) as Box<dyn PreparedBackgroundProcess>) })
+        }
+    }
+
+    struct PausedPrepared {
+        entered: mpsc::SyncSender<()>,
+        release: Option<mpsc::Receiver<()>>,
+        cleaned: Arc<AtomicBool>,
+        command_executed: Arc<AtomicBool>,
+    }
+
+    impl PreparedBackgroundProcess for PausedPrepared {
+        fn pid(&self) -> Option<std::num::NonZeroU32> {
+            None
+        }
+
+        fn release(
+            mut self: Box<Self>,
+            cancellation: &CancellationToken,
+        ) -> Result<Box<dyn OwnedBackgroundProcess>, BackgroundStartError> {
+            self.entered.send(()).expect("report release boundary");
+            self.release
+                .take()
+                .expect("release gate is present")
+                .recv_timeout(Duration::from_secs(2))
+                .expect("open release boundary");
+            if cancellation.is_cancelled() {
+                self.cleaned.store(true, Ordering::Release);
+                return Err(BackgroundStartError::new(
+                    BackgroundStartErrorKind::Cancelled,
+                ));
+            }
+            self.command_executed.store(true, Ordering::Release);
+            Ok(Box::new(ImmediateOwned))
+        }
+
+        fn abort(self: Box<Self>) -> Result<(), BackgroundStartError> {
+            self.cleaned.store(true, Ordering::Release);
+            Ok(())
+        }
+    }
+
+    impl Drop for PausedPrepared {
+        fn drop(&mut self) {
+            self.cleaned.store(true, Ordering::Release);
+        }
+    }
+
+    struct ImmediateOwned;
+
+    impl OwnedBackgroundProcess for ImmediateOwned {
+        fn pid(&self) -> Option<std::num::NonZeroU32> {
+            None
+        }
+
+        fn wait(
+            self: Box<Self>,
+            _stop: CancellationToken,
+        ) -> BoxFuture<'static, Result<BackgroundProcessOutcome, BackgroundStartError>> {
+            Box::pin(async { Ok(BackgroundProcessOutcome::Exited(0)) })
+        }
     }
 
     impl machine_god_core::OwnedBackgroundProcess for BlockingOwnedProcess {
@@ -2063,6 +2204,119 @@ mod tests {
         assert!(weak_owned.upgrade().is_none());
         shutdown_thread.join().expect("join bounded shutdown");
         wait_for_zero(&worker_cohort, "blocking worker was not collected");
+    }
+
+    #[test]
+    fn supervisor_shutdown_cancels_an_admitted_start_before_release() {
+        let fixture = Fixture::new();
+        let state_root = open_directory(&fixture.state_root).expect("state descriptor");
+        let store = Arc::new(NativeStore {
+            inner: Arc::new(
+                crate::background_store::BackgroundStore::prepare(
+                    state_root,
+                    fixture.workspace.clone(),
+                )
+                .expect("background store"),
+            ),
+        });
+        let (entered, entered_receiver) = mpsc::sync_channel(1);
+        let (release, release_receiver) = mpsc::sync_channel(1);
+        let cleaned = Arc::new(AtomicBool::new(false));
+        let command_executed = Arc::new(AtomicBool::new(false));
+        let spawner = Arc::new(PausedSpawner {
+            entered,
+            release: Mutex::new(Some(release_receiver)),
+            cleaned: Arc::clone(&cleaned),
+            command_executed: Arc::clone(&command_executed),
+        });
+        let retainer = Arc::new(WorkerRetainer::new(1).expect("worker retainer"));
+        let supervisor = NativeBackgroundSupervisor {
+            supervisor: BackgroundSupervisor::new(
+                Arc::new(SystemClock),
+                Arc::clone(&store) as Arc<dyn machine_god_core::BackgroundStore>,
+                spawner as Arc<dyn BackgroundProcessSpawner>,
+                Arc::clone(&retainer) as Arc<dyn BackgroundProcessRetainer>,
+            ),
+            store,
+            retainer,
+            blocking: BlockingExecutor::new(1).expect("blocking executor"),
+        };
+        let request =
+            BackgroundStartRequest::new("must-not-execute", &fixture.workspace).expect("request");
+        let mut start = supervisor.start(request, CancellationToken::new());
+
+        assert!(matches!(
+            start.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        entered_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("admitted start reached the release boundary");
+
+        let drop_started = Instant::now();
+        drop(supervisor);
+        assert!(
+            drop_started.elapsed() < Duration::from_millis(250),
+            "supervisor shutdown waited for the admitted start"
+        );
+        release.send(()).expect("open paused release boundary");
+
+        let error = futures_executor::block_on(start)
+            .expect_err("shutdown cancellation must reject the admitted start");
+        assert_eq!(error.kind(), BackgroundStartErrorKind::Cancelled);
+        assert!(cleaned.load(Ordering::Acquire));
+        assert!(!command_executed.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn cancellable_admission_and_shutdown_race_never_misses_worker_cancellation() {
+        for _ in 0..64 {
+            let executor = BlockingExecutor::new(1).expect("blocking executor");
+            let shutdown = BlockingExecutor {
+                pool: Arc::clone(&executor.pool),
+            };
+            let worker_cohort = Arc::clone(&executor.pool.worker_cohort);
+            let operation_cancellation = CancellationToken::new();
+            let worker_cancellation = operation_cancellation.clone();
+            let caller_cancellation = CancellationToken::new();
+            let race = Arc::new(Barrier::new(2));
+            let poll_race = Arc::clone(&race);
+            let (finished, finished_receiver) = mpsc::sync_channel(1);
+            let task = executor.run_cancellable(
+                move || {
+                    let deadline = Instant::now() + Duration::from_secs(1);
+                    while !worker_cancellation.is_cancelled() && Instant::now() < deadline {
+                        thread::yield_now();
+                    }
+                    worker_cancellation.is_cancelled()
+                },
+                caller_cancellation.cancelled(),
+                operation_cancellation,
+            );
+            let poller = thread::spawn(move || {
+                poll_race.wait();
+                finished
+                    .send(futures_executor::block_on(task))
+                    .expect("report raced admission");
+            });
+
+            race.wait();
+            shutdown.shutdown();
+            match finished_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("raced start must finish")
+            {
+                Ok(cancelled) => assert!(cancelled, "submitted worker missed shutdown"),
+                Err(BlockingTaskFailure::Admission) => {}
+                Err(BlockingTaskFailure::CancelledBeforeSubmission) => {
+                    panic!("caller token was not cancelled")
+                }
+            }
+            poller.join().expect("join raced admission");
+            drop(shutdown);
+            drop(executor);
+            wait_for_zero(&worker_cohort, "raced blocking worker was not collected");
+        }
     }
 
     #[test]
