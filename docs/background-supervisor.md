@@ -112,6 +112,9 @@ nonblocking: contention fails the operation promptly rather than blocking an
 async poll or constructor. Allocation is monotonic across cooperating
 processes; gaps after a failed start are allowed, IDs are never reused, and
 overflow fails closed. Each live record retains its own exclusive lock.
+Every successful allocator, record, and maintenance authority explicitly
+unlocks on logical release before its descriptor closes, so a forked
+pre-`exec` descriptor duplicate cannot extend that authority's lifetime.
 Initial publication is no-clobber. Its bounded private temporary file is
 synchronized and atomically renamed before the record directory is
 synchronized. A failure before rename publishes nothing. If rename succeeds

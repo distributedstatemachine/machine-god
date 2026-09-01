@@ -103,7 +103,7 @@ pub(crate) struct BackgroundRecordLease {
     root_inode: u128,
     control_device: i128,
     control_inode: u128,
-    _lock: OwnedFd,
+    _lock: ExclusiveFileLock,
 }
 
 impl BackgroundRecordLease {
@@ -183,8 +183,10 @@ impl BackgroundStore {
     /// returns the permanent lock authority for the reserved nonzero ID.
     pub(crate) fn reserve_id(&self) -> Result<BackgroundRecordLease, BackgroundStoreError> {
         self.validate_root()?;
-        let allocator = open_private_lock(self.control.as_fd(), ALLOCATOR_LOCK_NAME)?;
-        lock_exclusive(&allocator)?;
+        let _allocator = acquire_exclusive(open_private_lock(
+            self.control.as_fd(),
+            ALLOCATOR_LOCK_NAME,
+        )?)?;
         let current = read_counter(self.control.as_fd())?;
         let id = current
             .checked_add(1)
@@ -192,8 +194,10 @@ impl BackgroundStore {
         self.compact_history_locked(MAX_RETAINED_BACKGROUND_RECORDS - 1, current)?;
         replace_counter(self.control.as_fd(), id)?;
 
-        let lock = open_private_lock(self.control.as_fd(), &record_lock_name(id))?;
-        lock_exclusive(&lock)?;
+        let lock = acquire_exclusive(open_private_lock(
+            self.control.as_fd(),
+            &record_lock_name(id),
+        )?)?;
         Ok(BackgroundRecordLease {
             id,
             root_device: self.root_device,
@@ -258,8 +262,10 @@ impl BackgroundStore {
         after_snapshot: impl FnOnce(),
     ) -> Result<BackgroundReconciliation, BackgroundStoreError> {
         self.validate_root()?;
-        let allocator = open_private_lock(self.control.as_fd(), ALLOCATOR_LOCK_NAME)?;
-        lock_exclusive(&allocator)?;
+        let _allocator = acquire_exclusive(open_private_lock(
+            self.control.as_fd(),
+            ALLOCATOR_LOCK_NAME,
+        )?)?;
         let current = read_counter(self.control.as_fd())?;
         self.compact_history_locked(MAX_RETAINED_BACKGROUND_RECORDS, current)?;
         let records = scan_complete_records(self.root.as_fd(), &self.workspace)?;
@@ -276,16 +282,10 @@ impl BackgroundStore {
             }
             let lock =
                 open_existing_private_file(self.control.as_fd(), &record_lock_name(observed.id))?;
-            match retry_interrupted(|| {
-                rustix::fs::flock(&lock, FlockOperation::NonBlockingLockExclusive)
-            }) {
-                Ok(()) => {}
-                Err(error) if is_lock_contention(error) => {
-                    result.active += 1;
-                    continue;
-                }
-                Err(_) => return Err(unavailable()),
-            }
+            let Some(_authority) = try_acquire_exclusive(lock)? else {
+                result.active += 1;
+                continue;
+            };
 
             // The preflight snapshot proves global completeness. Re-read under
             // this record's authority so a just-finished owner is never
@@ -308,8 +308,10 @@ impl BackgroundStore {
     }
 
     fn prepare_allocator(&self) -> Result<(), BackgroundStoreError> {
-        let allocator = open_private_lock(self.control.as_fd(), ALLOCATOR_LOCK_NAME)?;
-        lock_exclusive(&allocator)?;
+        let _allocator = acquire_exclusive(open_private_lock(
+            self.control.as_fd(),
+            ALLOCATOR_LOCK_NAME,
+        )?)?;
         let current = if let Some(current) = read_counter_optional(self.control.as_fd())? {
             current
         } else {
@@ -393,7 +395,7 @@ impl BackgroundStore {
                 continue;
             }
             let lock = open_existing_private_file(self.control.as_fd(), name)?;
-            if try_lock_exclusive(&lock)? {
+            if let Some(_authority) = try_acquire_exclusive(lock)? {
                 // Record publication and the control snapshot are not one
                 // atomic namespace operation. If a publisher completed in
                 // that interval and released its lease, this acquired lock is
@@ -431,7 +433,7 @@ impl BackgroundStore {
                 continue;
             }
             let lock = open_existing_private_file(self.control.as_fd(), &lock_name)?;
-            if try_lock_exclusive(&lock)? {
+            if let Some(_authority) = try_acquire_exclusive(lock)? {
                 removable_temps.insert(temp_name.clone());
             } else {
                 contended_locks.insert(lock_name);
@@ -465,10 +467,10 @@ impl BackgroundStore {
                 continue;
             }
             let lock = open_existing_private_file(self.control.as_fd(), &lock_name)?;
-            if !try_lock_exclusive(&lock)? {
+            let Some(_authority) = try_acquire_exclusive(lock)? else {
                 contended_locks.insert(lock_name);
                 continue;
-            }
+            };
             let data_name = background_record_name(record.id);
             let Some((current, _)) = read_record(self.root.as_fd(), &self.workspace, &data_name)?
             else {
@@ -499,9 +501,9 @@ impl BackgroundStore {
             let mut authorities = Vec::with_capacity(batch.len());
             for victim in batch {
                 let lock = open_existing_private_file(self.control.as_fd(), &victim.lock_name)?;
-                if !try_lock_exclusive(&lock)? {
+                let Some(authority) = try_acquire_exclusive(lock)? else {
                     return Err(unavailable());
-                }
+                };
                 let Some((current, _)) =
                     read_record(self.root.as_fd(), &self.workspace, &victim.data_name)?
                 else {
@@ -510,7 +512,7 @@ impl BackgroundStore {
                 if current != victim.record || current.state == NativeBackgroundState::Running {
                     return Err(unavailable());
                 }
-                authorities.push(lock);
+                authorities.push(authority);
             }
             for victim in batch {
                 rustix::fs::unlinkat(self.root.as_fd(), &victim.data_name, AtFlags::empty())
@@ -536,9 +538,9 @@ impl BackgroundStore {
             let mut authorities = Vec::with_capacity(batch.len());
             for name in batch {
                 let lock = open_existing_private_file(self.control.as_fd(), name)?;
-                if !try_lock_exclusive(&lock)? {
+                let Some(authority) = try_acquire_exclusive(lock)? else {
                     continue;
-                }
+                };
                 if read_record(
                     self.root.as_fd(),
                     &self.workspace,
@@ -548,7 +550,7 @@ impl BackgroundStore {
                 {
                     return Err(unavailable());
                 }
-                authorities.push(((*name).clone(), lock));
+                authorities.push(((*name).clone(), authority));
             }
             for (name, _) in &authorities {
                 rustix::fs::unlinkat(self.control.as_fd(), name, AtFlags::empty())
@@ -565,11 +567,15 @@ impl BackgroundStore {
         for temp_name in removable_temps {
             let lock_name = temp_lock_name(temp_name);
             let lock = open_existing_private_file_optional(self.control.as_fd(), &lock_name)?;
-            if let Some(lock) = lock
-                && !try_lock_exclusive(&lock)?
-            {
-                continue;
-            }
+            let _authority = match lock {
+                Some(lock) => {
+                    let Some(authority) = try_acquire_exclusive(lock)? else {
+                        continue;
+                    };
+                    Some(authority)
+                }
+                None => None,
+            };
             match rustix::fs::unlinkat(self.control.as_fd(), temp_name, AtFlags::empty()) {
                 Ok(()) => removed_temp = true,
                 Err(error) if error == rustix::io::Errno::NOENT => {}
@@ -633,6 +639,27 @@ struct TerminalVictim {
     data_name: String,
     lock_name: String,
     record: StoredBackgroundRecord,
+}
+
+/// Owns one successfully acquired flock authority.
+///
+/// Closing the descriptor alone is insufficient when a concurrently spawned
+/// child inherited the same open-file description before `exec`. Explicitly
+/// unlocking on logical release updates that shared description immediately.
+struct ExclusiveFileLock {
+    file: OwnedFd,
+}
+
+impl AsFd for ExclusiveFileLock {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.file.as_fd()
+    }
+}
+
+impl Drop for ExclusiveFileLock {
+    fn drop(&mut self) {
+        let _ = retry_interrupted(|| rustix::fs::flock(&self.file, FlockOperation::Unlock));
+    }
 }
 
 fn record_names(id: u64) -> RecordNames {
@@ -1280,18 +1307,18 @@ fn sync_directory(directory: BorrowedFd<'_>) -> Result<(), BackgroundStoreError>
     retry_interrupted(|| rustix::fs::fsync(directory)).map_err(|_| unavailable())
 }
 
-fn lock_exclusive(file: &OwnedFd) -> Result<(), BackgroundStoreError> {
-    match retry_interrupted(|| rustix::fs::flock(file, FlockOperation::NonBlockingLockExclusive)) {
-        Ok(()) => Ok(()),
+fn acquire_exclusive(file: OwnedFd) -> Result<ExclusiveFileLock, BackgroundStoreError> {
+    match retry_interrupted(|| rustix::fs::flock(&file, FlockOperation::NonBlockingLockExclusive)) {
+        Ok(()) => Ok(ExclusiveFileLock { file }),
         Err(error) if is_lock_contention(error) => Err(unavailable()),
         Err(_) => Err(unavailable()),
     }
 }
 
-fn try_lock_exclusive(file: &OwnedFd) -> Result<bool, BackgroundStoreError> {
-    match retry_interrupted(|| rustix::fs::flock(file, FlockOperation::NonBlockingLockExclusive)) {
-        Ok(()) => Ok(true),
-        Err(error) if is_lock_contention(error) => Ok(false),
+fn try_acquire_exclusive(file: OwnedFd) -> Result<Option<ExclusiveFileLock>, BackgroundStoreError> {
+    match retry_interrupted(|| rustix::fs::flock(&file, FlockOperation::NonBlockingLockExclusive)) {
+        Ok(()) => Ok(Some(ExclusiveFileLock { file })),
+        Err(error) if is_lock_contention(error) => Ok(None),
         Err(_) => Err(unavailable()),
     }
 }
@@ -1477,23 +1504,7 @@ mod tests {
     }
 
     fn reserve_eventually(store: &BackgroundStore) -> BackgroundRecordLease {
-        let deadline = Instant::now() + Duration::from_secs(1);
-        loop {
-            match store.reserve_id() {
-                Ok(lease) => return lease,
-                Err(error)
-                    if error.kind() == BackgroundStoreErrorKind::Unavailable
-                        && Instant::now() < deadline =>
-                {
-                    // A concurrently forked test child can retain a CLOEXEC
-                    // flock only until its exec boundary. The production API
-                    // correctly fails that contention promptly; unrelated
-                    // tests retry their setup after the bounded fork window.
-                    std::thread::yield_now();
-                }
-                Err(error) => panic!("reserve background test ID: {error:?}"),
-            }
-        }
+        store.reserve_id().expect("reserve background test ID")
     }
 
     fn reconcile_eventually(
@@ -1510,22 +1521,6 @@ mod tests {
                 return result;
             }
             std::thread::yield_now();
-        }
-    }
-
-    fn lock_eventually(file: &OwnedFd) {
-        let deadline = Instant::now() + Duration::from_secs(1);
-        loop {
-            match lock_exclusive(file) {
-                Ok(()) => return,
-                Err(error)
-                    if error.kind() == BackgroundStoreErrorKind::Unavailable
-                        && Instant::now() < deadline =>
-                {
-                    std::thread::yield_now();
-                }
-                Err(error) => panic!("acquire background test lock: {error:?}"),
-            }
         }
     }
 
@@ -1571,6 +1566,23 @@ mod tests {
         };
         assert_eq!(detail.state(), NativeBackgroundState::Exited);
         assert_eq!(detail.exit_code(), Some(0));
+    }
+
+    #[test]
+    #[allow(clippy::used_underscore_binding)]
+    fn lease_release_unlocks_an_inherited_open_file_description() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let lease = reserve_eventually(&store);
+        let id = lease.id();
+        let inherited = rustix::io::dup(lease._lock.as_fd()).unwrap();
+
+        drop(lease);
+
+        let reopened = open_private_lock(store.control.as_fd(), &record_lock_name(id)).unwrap();
+        let authority = acquire_exclusive(reopened).unwrap();
+        drop(authority);
+        drop(inherited);
     }
 
     #[test]
@@ -1948,8 +1960,9 @@ mod tests {
             .join(background_workspace_name(&fixture.workspace))
             .join(CONTROL_DIRECTORY);
         let descriptor = rustix::fs::open(&control, directory_open_flags(), Mode::empty()).unwrap();
-        let holder = open_private_lock(descriptor.as_fd(), ALLOCATOR_LOCK_NAME).unwrap();
-        lock_eventually(&holder);
+        let holder =
+            acquire_exclusive(open_private_lock(descriptor.as_fd(), ALLOCATOR_LOCK_NAME).unwrap())
+                .unwrap();
 
         let state_root = fixture.state_root.clone();
         let workspace = fixture.workspace.clone();
@@ -1987,8 +2000,9 @@ mod tests {
         drop(holder);
         reserve_thread.join().unwrap();
 
-        let record_holder = open_private_lock(descriptor.as_fd(), &record_lock_name(1)).unwrap();
-        lock_eventually(&record_holder);
+        let record_holder =
+            acquire_exclusive(open_private_lock(descriptor.as_fd(), &record_lock_name(1)).unwrap())
+                .unwrap();
         let (sender, receiver) = mpsc::channel();
         let contender = Arc::clone(&store);
         let record_thread = std::thread::spawn(move || {
@@ -2071,12 +2085,14 @@ mod tests {
 
         let control_descriptor =
             rustix::fs::open(&control, directory_open_flags(), Mode::empty()).unwrap();
-        let terminal_holder =
-            open_existing_private_file(control_descriptor.as_fd(), &record_lock_name(2)).unwrap();
-        lock_eventually(&terminal_holder);
-        let allocator =
-            open_existing_private_file(control_descriptor.as_fd(), ALLOCATOR_LOCK_NAME).unwrap();
-        lock_eventually(&allocator);
+        let _terminal_holder = acquire_exclusive(
+            open_existing_private_file(control_descriptor.as_fd(), &record_lock_name(2)).unwrap(),
+        )
+        .unwrap();
+        let _allocator = acquire_exclusive(
+            open_existing_private_file(control_descriptor.as_fd(), ALLOCATOR_LOCK_NAME).unwrap(),
+        )
+        .unwrap();
         let records_before = record_file_names(&workspace_root);
         let control_before = control_lifecycle_names(&control);
 
