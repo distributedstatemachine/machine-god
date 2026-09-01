@@ -169,3 +169,23 @@ side cancellation forwarding, a retained descriptor-relative procfs authority
 with mount identity and topology revalidation, one-pass bounded mountinfo
 parsing, and one reusable stat buffer per group scan. All three review tracks
 restart after the complete replacement gate.
+
+## Rejected product candidate: cycle 07
+
+Three fresh review tracks inspected exact candidate
+`6325c3b136ec232a97a567441b9ed04b8c4062ff` after the complete exact local gate
+passed. Correctness reported zero findings; lifecycle and performance rejected
+the candidate.
+
+| Track | Decisive findings |
+| --- | --- |
+| Correctness, API, and compatibility | Zero findings. |
+| Lifecycle, platform, and effects | Caller cancellation observed before blocking-pool submission still attempted admission, so a saturated or contended pool could return `Capacity` instead of `Cancelled` and an available pool could execute known-cancelled work. |
+| Performance and resources | Helper readiness was not cancellation-aware and could retain a blocking slot for its two-second timeout; lingering cleanup could perform roughly 54 whole-system process snapshots per job; maximum environment uniqueness validation was quadratic. |
+
+Cycle 07 remains rejection evidence. Replacement requires cancellation to win
+before unsubmitted blocking admission, interruptible helper preparation with
+owned abort and reap, a constant bounded number of global process snapshots
+during cleanup, and one-pass or linearithmic bounded environment validation.
+The complete replacement gate and all three fresh review tracks restart after
+every finding is remediated.

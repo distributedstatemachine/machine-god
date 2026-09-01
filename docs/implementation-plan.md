@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33455374424` (`GREEN`)
 - Main Benchmark evidence: `33455374426` (`GREEN`)
 - Active branch: `agent/m05-background-supervisor`
-- Active phase: `remediating rejected background-supervisor review cycle 06`
-- Next gate: `integrate cycle-06 fixes, then run the complete exact-1.94.1 replacement gate`
+- Active phase: `remediating rejected background-supervisor review cycle 07`
+- Next gate: `integrate cycle-07 fixes, then run the complete exact-1.94.1 replacement gate`
 <!-- canonical-live-status:end -->
 
 The recorded Actions runs succeeded for the exact delivered-main commit, and
@@ -71,8 +71,12 @@ waker destruction under the result lock, and a Linux test import error. Exact
 replacement `faf112b` passed the complete gate; cycle 06 correctness was green,
 but lifecycle and performance found cancellation still depended on the busy
 worker, procfs proof was not retained across cleanup, and two scan parsers
-amplified allocations. Those findings are being remediated; no rejected result
-is acceptance evidence.
+amplified allocations. Exact replacement `6325c3b` passed the complete gate;
+cycle 07 correctness was green, while lifecycle and performance found that
+pre-submission cancellation could be misreported as capacity, helper readiness
+was not interruptible, lingering cleanup repeated whole-system scans, and
+environment uniqueness validation was quadratic. Those findings are being
+remediated; no rejected result is acceptance evidence.
 Persistent handles, message/relationship/configuration/lifecycle management,
 ACP, teams, and extension slash commands remain separate. Documentation parser
 maintenance remains a separate non-product task.
