@@ -56,9 +56,20 @@ pub const BACKGROUND_PROCESS_TERM_GRACE: Duration = Duration::from_millis(250);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const GROUP_DISAPPEARANCE_GRACE: Duration = Duration::from_secs(5);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-const OBSERVATION_INTERVAL: Duration = Duration::from_millis(2);
+const OBSERVATION_INITIAL_INTERVAL: Duration = Duration::from_millis(2);
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const OBSERVATION_MAX_INTERVAL: Duration = Duration::from_millis(32);
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const GROUP_SNAPSHOT_INITIAL_INTERVAL: Duration = Duration::from_millis(10);
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const GROUP_SNAPSHOT_MAX_INTERVAL: Duration = Duration::from_millis(100);
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const GROUP_SNAPSHOT_TIMEOUT: Duration = Duration::from_millis(250);
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const MAX_GROUP_SNAPSHOT_BYTES: usize = 64 * 1024;
 #[cfg(target_os = "linux")]
-const GATE_WRAPPER: &str = "IFS= read -r _machine_god_gate || exit 125\nexec /bin/sh -c \"$1\"";
+const GATE_WRAPPER: &str =
+    "IFS= read -r _machine_god_gate || exit 125\nexec /bin/sh -c \"$1\" </dev/null";
 #[cfg(target_os = "linux")]
 const GATE_ARGV_ZERO: &str = "machine-god-background-gate";
 #[cfg(target_os = "macos")]
@@ -722,7 +733,7 @@ fn await_helper_ready(mut ready: ChildStderr) -> Result<(), BackgroundProcessErr
             Err(error)
                 if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
             {
-                thread::sleep(OBSERVATION_INTERVAL);
+                thread::sleep(OBSERVATION_INITIAL_INTERVAL);
             }
             Err(_) => return Err(spawn_error()),
         }
@@ -812,10 +823,11 @@ fn wait_owned(
     if owned.child.is_none() {
         return Err(invariant_error());
     }
+    let mut observation = ObservationBackoff::new();
     let observed = loop {
         match observe_leader(owned.group)? {
             Some(status) => break status,
-            None => thread::sleep(OBSERVATION_INTERVAL),
+            None => observation.sleep_and_advance(),
         }
     };
     finish_observed(owned, observed)
@@ -835,6 +847,7 @@ fn wait_owned_with_stop(
     owned: &mut OwnedBackgroundProcess,
     stop: &CancellationToken,
 ) -> Result<BackgroundProcessOutcome, BackgroundProcessError> {
+    let mut observation = ObservationBackoff::new();
     loop {
         if stop.is_cancelled() {
             stop_owned(owned)?;
@@ -843,7 +856,7 @@ fn wait_owned_with_stop(
         if let Some(status) = observe_leader(owned.group)? {
             return finish_observed(owned, status).map(BackgroundProcessOutcome::Completed);
         }
-        thread::sleep(OBSERVATION_INTERVAL);
+        observation.sleep_and_advance();
     }
 }
 
@@ -864,8 +877,15 @@ fn finish_observed(
 ) -> Result<BackgroundProcessExit, BackgroundProcessError> {
     // The NOWAIT-observed leader remains a zombie and pins the numeric PID and
     // PGID while every remaining original-group descendant is signalled.
-    let term = signal_group(owned.group, rustix::process::Signal::TERM);
-    let kill = signal_group(owned.group, rustix::process::Signal::KILL);
+    let cleanup = match group_members(owned.group) {
+        Ok(members) if only_group_leader_remains(&members, owned.group) => Ok(()),
+        Ok(_) => signal_group_or_confirm_exited_leader(owned.group, rustix::process::Signal::TERM)
+            .and_then(|()| {
+                signal_group_or_confirm_exited_leader(owned.group, rustix::process::Signal::KILL)
+            })
+            .and_then(|()| require_original_group_quiescent(owned.group)),
+        Err(error) => Err(error),
+    };
     let reaped = owned
         .child
         .as_mut()
@@ -873,11 +893,8 @@ fn finish_observed(
         .wait()
         .map_err(|_| wait_error());
     owned.child = None;
-    let gone = require_group_gone(owned.group);
-    term?;
-    kill?;
+    cleanup?;
     let reaped = reaped?;
-    gone?;
     if exit_status(reaped) != observed {
         return Err(invariant_error());
     }
@@ -942,25 +959,36 @@ fn cleanup_child(
     group: rustix::process::Pid,
     term_grace: Duration,
 ) -> Result<(), BackgroundProcessError> {
-    let term = signal_group(group, rustix::process::Signal::TERM);
+    let leader_exited = observe_leader(group)?.is_some();
+    let term = match group_members(group) {
+        Ok(members) if leader_exited && only_group_leader_remains(&members, group) => Ok(()),
+        Ok(_) => signal_group_or_confirm_exited_leader(group, rustix::process::Signal::TERM),
+        Err(error) => Err(error),
+    };
     if !term_grace.is_zero() {
         sleep_through(term_grace);
     }
     // Keep `child` unreaped until this final original-group signal so the
     // leader's numeric PID/PGID cannot be recycled into an unrelated group.
-    let kill = signal_group(group, rustix::process::Signal::KILL);
+    let leader_exited = observe_leader(group)?.is_some();
+    let kill = match group_members(group) {
+        Ok(members) if leader_exited && only_group_leader_remains(&members, group) => Ok(()),
+        Ok(_) => signal_group_or_confirm_exited_leader(group, rustix::process::Signal::KILL),
+        Err(error) => Err(error),
+    };
     let direct_kill = if kill.is_err() {
         child.kill().map_err(|_| cleanup_error())
     } else {
         Ok(())
     };
+    let quiescent = require_original_group_quiescent(group);
     let reaped = child.wait().map(|_| ()).map_err(|_| wait_error());
-    let gone = require_group_gone(group);
     term?;
     kill?;
     direct_kill?;
+    quiescent?;
     reaped?;
-    gone
+    Ok(())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -968,25 +996,191 @@ fn signal_group(
     group: rustix::process::Pid,
     signal: rustix::process::Signal,
 ) -> Result<(), BackgroundProcessError> {
+    classify_group_signal(rustix::process::kill_process_group(group, signal))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn signal_group_or_confirm_exited_leader(
+    group: rustix::process::Pid,
+    signal: rustix::process::Signal,
+) -> Result<(), BackgroundProcessError> {
     match rustix::process::kill_process_group(group, signal) {
-        Ok(()) | Err(rustix::io::Errno::SRCH | rustix::io::Errno::PERM) => Ok(()),
+        Err(rustix::io::Errno::PERM)
+            if observe_leader(group)?.is_some()
+                && only_group_leader_remains(&group_members(group)?, group) =>
+        {
+            // EPERM is not evidence of success or disappearance. The separate
+            // NOWAIT observation and bounded process-group snapshot prove that
+            // the only remaining member is the already-exited retained leader.
+            Ok(())
+        }
+        result => classify_group_signal(result),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn classify_group_signal(
+    result: Result<(), rustix::io::Errno>,
+) -> Result<(), BackgroundProcessError> {
+    match result {
+        Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
         Err(_) => Err(cleanup_error()),
     }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn require_group_gone(group: rustix::process::Pid) -> Result<(), BackgroundProcessError> {
+fn require_original_group_quiescent(
+    group: rustix::process::Pid,
+) -> Result<(), BackgroundProcessError> {
     let deadline = Instant::now() + GROUP_DISAPPEARANCE_GRACE;
+    let mut observation = ObservationBackoff::with_bounds(
+        GROUP_SNAPSHOT_INITIAL_INTERVAL,
+        GROUP_SNAPSHOT_MAX_INTERVAL,
+    );
     loop {
-        match rustix::process::test_kill_process_group(group) {
-            // The final KILL is sent while the unreaped leader still pins the
-            // original PGID. After reaping, EPERM can only identify a newly
-            // reused, unrelated group on supported unprivileged hosts; the
-            // original group was already discharged.
-            Err(rustix::io::Errno::SRCH | rustix::io::Errno::PERM) => return Ok(()),
-            Ok(()) if Instant::now() < deadline => thread::sleep(OBSERVATION_INTERVAL),
-            Ok(()) | Err(_) => return Err(cleanup_error()),
+        let members = group_members(group)?;
+        if only_group_leader_remains(&members, group) {
+            return Ok(());
         }
+        if Instant::now() >= deadline {
+            return Err(cleanup_error());
+        }
+        observation.sleep_and_advance();
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn group_members(
+    group: rustix::process::Pid,
+) -> Result<Vec<rustix::process::Pid>, BackgroundProcessError> {
+    use std::io::Read;
+
+    let mut command = Command::new("/bin/ps");
+    #[cfg(target_os = "linux")]
+    command.args(["--no-headers", "-o", "pid", "--pgroup"]);
+    #[cfg(target_os = "macos")]
+    command.args(["-o", "pid=", "-g"]);
+    command
+        .arg(group.as_raw_nonzero().get().to_string())
+        .env_clear()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = command.spawn().map_err(|_| cleanup_error())?;
+    let output = child.stdout.take().ok_or_else(cleanup_error)?;
+    let reader = thread::Builder::new()
+        .name("machine-god-bg-group-snapshot".to_owned())
+        .spawn(move || {
+            let mut bytes = Vec::with_capacity(MAX_GROUP_SNAPSHOT_BYTES + 1);
+            output
+                .take((MAX_GROUP_SNAPSHOT_BYTES + 1) as u64)
+                .read_to_end(&mut bytes)
+                .map(|_| bytes)
+        });
+    let Ok(reader) = reader else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(cleanup_error());
+    };
+    let deadline = Instant::now() + GROUP_SNAPSHOT_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) if Instant::now() < deadline => {
+                thread::sleep(OBSERVATION_INITIAL_INTERVAL);
+            }
+            Ok(None) | Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break Err(cleanup_error());
+            }
+        }
+    };
+    let bytes = reader
+        .join()
+        .map_err(|_| cleanup_error())?
+        .map_err(|_| cleanup_error())?;
+    if !status?.success() || bytes.len() > MAX_GROUP_SNAPSHOT_BYTES {
+        return Err(cleanup_error());
+    }
+    parse_group_members(&bytes)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn parse_group_members(bytes: &[u8]) -> Result<Vec<rustix::process::Pid>, BackgroundProcessError> {
+    let text = std::str::from_utf8(bytes).map_err(|_| cleanup_error())?;
+    let mut members = Vec::new();
+    for field in text.split_ascii_whitespace() {
+        if members.len() == MAX_GROUP_SNAPSHOT_BYTES / 2 {
+            return Err(cleanup_error());
+        }
+        let raw = field.parse::<i32>().map_err(|_| cleanup_error())?;
+        let member = rustix::process::Pid::from_raw(raw).ok_or_else(cleanup_error)?;
+        members.push(member);
+    }
+    Ok(members)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn only_group_leader_remains(
+    members: &[rustix::process::Pid],
+    leader: rustix::process::Pid,
+) -> bool {
+    members == [leader]
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+pub(crate) fn group_snapshot_is_quiescent_for_test(
+    bytes: &[u8],
+    leader: i32,
+) -> Result<bool, BackgroundProcessError> {
+    let leader = rustix::process::Pid::from_raw(leader).ok_or_else(cleanup_error)?;
+    parse_group_members(bytes).map(|members| only_group_leader_remains(&members, leader))
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+pub(crate) fn permission_denied_group_signal_is_failure_for_test() -> bool {
+    classify_group_signal(Err(rustix::io::Errno::PERM)).is_err()
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+pub(crate) fn idle_observation_count_for_test(window: Duration) -> usize {
+    let mut observation = ObservationBackoff::new();
+    let mut elapsed = Duration::ZERO;
+    let mut observations = 1_usize;
+    while elapsed < window {
+        elapsed = elapsed.saturating_add(observation.current);
+        observation.current = observation
+            .current
+            .saturating_mul(2)
+            .min(observation.maximum);
+        observations += 1;
+    }
+    observations
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct ObservationBackoff {
+    current: Duration,
+    maximum: Duration,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl ObservationBackoff {
+    const fn new() -> Self {
+        Self::with_bounds(OBSERVATION_INITIAL_INTERVAL, OBSERVATION_MAX_INTERVAL)
+    }
+
+    const fn with_bounds(initial: Duration, maximum: Duration) -> Self {
+        Self {
+            current: initial,
+            maximum,
+        }
+    }
+
+    fn sleep_and_advance(&mut self) {
+        thread::sleep(self.current);
+        self.current = self.current.saturating_mul(2).min(self.maximum);
     }
 }
 
@@ -995,7 +1189,7 @@ fn sleep_through(duration: Duration) {
     let deadline = Instant::now() + duration;
     while Instant::now() < deadline {
         thread::sleep(std::cmp::min(
-            OBSERVATION_INTERVAL,
+            OBSERVATION_INITIAL_INTERVAL,
             deadline.saturating_duration_since(Instant::now()),
         ));
     }

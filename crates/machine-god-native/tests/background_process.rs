@@ -9,7 +9,9 @@ use background_process::{
     BACKGROUND_PROCESS_TERM_GRACE, BackgroundProcessErrorKind, BackgroundProcessExit,
     BackgroundProcessOutcome, BackgroundProcessRequest, MAX_BACKGROUND_PROCESS_COMMAND_BYTES,
     MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES, OwnedBackgroundProcess,
-    SystemBackgroundProcessAdapter, run_background_process_helper,
+    SystemBackgroundProcessAdapter, group_snapshot_is_quiescent_for_test,
+    idle_observation_count_for_test, permission_denied_group_signal_is_failure_for_test,
+    run_background_process_helper,
 };
 use machine_god_core::CancellationToken;
 use std::ffi::OsString;
@@ -191,10 +193,10 @@ fn request_is_bounded_and_errors_are_redacted() {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn command_is_blocked_before_release_then_receives_stdin_eof() {
+fn command_is_blocked_before_release_then_receives_null_stdin() {
     let directory = FreshDirectory::new("gate");
     let marker = directory.path().join("released");
-    let command = "if IFS= read -r value; then exit 91; fi; printf released > released";
+    let command = "if IFS= read -r value; then exit 91; fi; [ -c /dev/stdin ] || exit 92; printf released > released";
     let prepared = adapter()
         .prepare(request(directory.path(), command))
         .unwrap();
@@ -204,6 +206,50 @@ fn command_is_blocked_before_release_then_receives_stdin_eof() {
     let owned = prepared.release().unwrap();
     assert_eq!(owned.wait().unwrap(), BackgroundProcessExit::Exited(0));
     assert_eq!(fs::read_to_string(marker).unwrap(), "released");
+}
+
+#[test]
+fn idle_wait_observation_uses_bounded_backoff_and_stays_shutdown_responsive() {
+    let observations = idle_observation_count_for_test(Duration::from_secs(1));
+    assert!(
+        observations < 40,
+        "one idle process used {observations} observations per second"
+    );
+
+    let directory = FreshDirectory::new("backoff-cancel");
+    let ready = directory.path().join("ready");
+    let owned = adapter()
+        .prepare(request(
+            directory.path(),
+            "printf ready > ready; while :; do /bin/sleep 1; done",
+        ))
+        .unwrap()
+        .release()
+        .unwrap();
+    wait_for(&ready);
+    let stop = CancellationToken::new();
+    let worker_stop = stop.clone();
+    let worker = thread::spawn(move || owned.wait_with_stop(&worker_stop));
+    thread::sleep(Duration::from_millis(100));
+    let started = Instant::now();
+    assert!(stop.cancel());
+    assert_eq!(
+        worker.join().unwrap().unwrap(),
+        BackgroundProcessOutcome::Stopped
+    );
+    assert!(
+        started.elapsed() < BACKGROUND_PROCESS_TERM_GRACE + Duration::from_millis(250),
+        "bounded observation backoff delayed cooperative shutdown"
+    );
+}
+
+#[test]
+fn group_cleanup_fails_closed_for_permission_denial_and_surviving_members() {
+    assert!(permission_denied_group_signal_is_failure_for_test());
+    assert!(group_snapshot_is_quiescent_for_test(b"41\n", 41).unwrap());
+    assert!(!group_snapshot_is_quiescent_for_test(b"", 41).unwrap());
+    assert!(!group_snapshot_is_quiescent_for_test(b"41\n73\n", 41).unwrap());
+    assert!(group_snapshot_is_quiescent_for_test(b"not-a-pid\n", 41).is_err());
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
