@@ -10,6 +10,8 @@ use std::ffi::OsString;
 use std::fmt;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::future::Future;
+#[cfg(target_os = "linux")]
+use std::mem::MaybeUninit;
 use std::num::NonZeroU32;
 #[cfg(unix)]
 use std::path::Path;
@@ -540,6 +542,8 @@ pub struct PreparedBackgroundProcess {
     environment: Option<Vec<(OsString, OsString)>>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     group: rustix::process::Pid,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    snapshot_authority: Option<GroupSnapshotAuthority>,
     pid: NonZeroU32,
 }
 
@@ -594,6 +598,8 @@ pub struct OwnedBackgroundProcess {
     child: Option<Child>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     group: rustix::process::Pid,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    snapshot_authority: Option<GroupSnapshotAuthority>,
     pid: NonZeroU32,
 }
 
@@ -753,78 +759,165 @@ fn require_exclusive_child_reaping() -> Result<(), BackgroundProcessError> {
 }
 
 #[cfg(target_os = "linux")]
-fn require_linux_proc_authority() -> Result<(), BackgroundProcessError> {
-    use std::io::Read;
+struct GroupSnapshotAuthority {
+    proc_root: OwnedFd,
+    mount_id: u64,
+}
 
-    let filesystem = rustix::fs::statfs("/proc").map_err(|_| spawn_error())?;
-    if u64::try_from(filesystem.f_type).ok() != Some(LINUX_PROC_SUPER_MAGIC) {
-        return Err(spawn_error());
-    }
-    let mut mountinfo = std::fs::File::open("/proc/self/mountinfo").map_err(|_| spawn_error())?;
-    let mut bytes = Vec::with_capacity(MAX_LINUX_MOUNTINFO_BYTES + 1);
-    mountinfo
-        .by_ref()
-        .take((MAX_LINUX_MOUNTINFO_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)
+#[cfg(target_os = "macos")]
+#[derive(Default)]
+struct GroupSnapshotAuthority;
+
+#[cfg(target_os = "linux")]
+impl GroupSnapshotAuthority {
+    fn open() -> Result<Self, BackgroundProcessError> {
+        let proc_root = rustix::fs::open(
+            "/proc",
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
         .map_err(|_| spawn_error())?;
-    if bytes.len() > MAX_LINUX_MOUNTINFO_BYTES {
-        return Err(spawn_error());
+        let mount_id = linux_fd_mount_id(proc_root.as_fd()).map_err(|()| spawn_error())?;
+        let authority = Self {
+            proc_root,
+            mount_id,
+        };
+        authority.validate().map_err(|()| spawn_error())?;
+        Ok(authority)
     }
-    parse_linux_proc_mount_authority(&bytes)
+
+    fn validate(&self) -> Result<(), ()> {
+        let filesystem = rustix::fs::fstatfs(self.proc_root.as_fd()).map_err(|_| ())?;
+        if u64::try_from(filesystem.f_type).ok() != Some(LINUX_PROC_SUPER_MAGIC)
+            || linux_fd_mount_id(self.proc_root.as_fd())? != self.mount_id
+        {
+            return Err(());
+        }
+        let mountinfo_fd = rustix::fs::openat(
+            self.proc_root.as_fd(),
+            "self/mountinfo",
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|_| ())?;
+        if linux_fd_mount_id(mountinfo_fd.as_fd())? != self.mount_id {
+            return Err(());
+        }
+        let mountinfo = std::fs::File::from(mountinfo_fd);
+        validate_linux_proc_mountinfo(std::io::BufReader::new(mountinfo), self.mount_id)
+    }
 }
 
 #[cfg(target_os = "linux")]
-fn parse_linux_proc_mount_authority(bytes: &[u8]) -> Result<(), BackgroundProcessError> {
-    if bytes.is_empty() || bytes.len() > MAX_LINUX_MOUNTINFO_BYTES || !bytes.ends_with(b"\n") {
-        return Err(spawn_error());
+fn linux_fd_mount_id(fd: BorrowedFd<'_>) -> Result<u64, ()> {
+    use rustix::fs::{AtFlags, StatxFlags};
+
+    let status =
+        rustix::fs::statx(fd, "", AtFlags::EMPTY_PATH, StatxFlags::MNT_ID).map_err(|_| ())?;
+    if status.stx_mask & StatxFlags::MNT_ID.bits() == 0 {
+        return Err(());
     }
-    let mut proc_mounts = 0_usize;
+    Ok(status.stx_mnt_id)
+}
+
+#[cfg(target_os = "linux")]
+fn validate_linux_proc_mountinfo(
+    reader: impl std::io::BufRead,
+    expected_mount_id: u64,
+) -> Result<(), ()> {
+    let mut reader = std::io::Read::take(
+        reader,
+        u64::try_from(MAX_LINUX_MOUNTINFO_BYTES + 1).map_err(|_| ())?,
+    );
+    let mut line = Vec::with_capacity(256);
+    let mut bytes = 0_usize;
     let mut entries = 0_usize;
-    for line in bytes.split(|byte| *byte == b'\n') {
-        if line.is_empty() {
-            continue;
+    let mut proc_mounts = 0_usize;
+    loop {
+        line.clear();
+        let read = std::io::BufRead::read_until(&mut reader, b'\n', &mut line).map_err(|_| ())?;
+        if read == 0 {
+            break;
         }
+        bytes = bytes
+            .checked_add(read)
+            .filter(|value| *value <= MAX_LINUX_MOUNTINFO_BYTES)
+            .ok_or(())?;
         entries = entries
             .checked_add(1)
-            .filter(|count| *count <= MAX_LINUX_MOUNTINFO_ENTRIES)
-            .ok_or_else(spawn_error)?;
-        let fields = line
-            .split(u8::is_ascii_whitespace)
-            .filter(|field| !field.is_empty())
-            .collect::<Vec<_>>();
-        let separator = fields
-            .iter()
-            .position(|field| *field == b"-")
-            .filter(|separator| *separator >= 6 && separator + 3 < fields.len())
-            .ok_or_else(spawn_error)?;
-        if fields[separator + 1..]
-            .iter()
-            .skip(1)
-            .any(|field| *field == b"-")
-        {
-            return Err(spawn_error());
+            .filter(|value| *value <= MAX_LINUX_MOUNTINFO_ENTRIES)
+            .ok_or(())?;
+        let content = line.strip_suffix(b"\n").ok_or(())?;
+        if content.is_empty() {
+            return Err(());
         }
-        let mountpoint = fields[4];
-        if linux_numeric_proc_mountpoint(mountpoint) {
-            return Err(spawn_error());
-        }
-        if mountpoint != b"/proc" {
-            continue;
-        }
-        proc_mounts = proc_mounts.checked_add(1).ok_or_else(spawn_error)?;
-        if fields[3] != b"/"
-            || fields[separator + 1] != b"proc"
-            || !linux_proc_options_are_unrestricted(fields[5])
-            || !linux_proc_options_are_unrestricted(fields[separator + 3])
-        {
-            return Err(spawn_error());
+        if parse_linux_mountinfo_line(content, expected_mount_id)? {
+            proc_mounts = proc_mounts.checked_add(1).ok_or(())?;
         }
     }
-    if proc_mounts == 1 {
-        Ok(())
-    } else {
-        Err(spawn_error())
+    if bytes == 0 || proc_mounts != 1 {
+        return Err(());
     }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_proc_mount_authority(
+    bytes: &[u8],
+    expected_mount_id: u64,
+) -> Result<(), BackgroundProcessError> {
+    validate_linux_proc_mountinfo(std::io::Cursor::new(bytes), expected_mount_id)
+        .map_err(|()| spawn_error())
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_mountinfo_line(line: &[u8], expected_mount_id: u64) -> Result<bool, ()> {
+    let mut fields = line
+        .split(u8::is_ascii_whitespace)
+        .filter(|field| !field.is_empty());
+    let mount_id = fields.next().and_then(parse_linux_positive_u64).ok_or(())?;
+    fields
+        .next()
+        .and_then(parse_linux_nonnegative_u64)
+        .ok_or(())?;
+    let device = fields.next().ok_or(())?;
+    if !device.contains(&b':') {
+        return Err(());
+    }
+    let root = fields.next().ok_or(())?;
+    let mountpoint = fields.next().ok_or(())?;
+    let mount_options = fields.next().ok_or(())?;
+    let mut separator = false;
+    for field in fields.by_ref() {
+        if field == b"-" {
+            separator = true;
+            break;
+        }
+    }
+    if !separator {
+        return Err(());
+    }
+    let filesystem = fields.next().ok_or(())?;
+    fields.next().ok_or(())?;
+    let super_options = fields.next().ok_or(())?;
+    if fields.next().is_some() {
+        return Err(());
+    }
+    if linux_proc_authority_overmount(mountpoint) {
+        return Err(());
+    }
+    if mountpoint != b"/proc" {
+        return Ok(false);
+    }
+    if mount_id != expected_mount_id
+        || root != b"/"
+        || filesystem != b"proc"
+        || !linux_proc_options_are_unrestricted(mount_options)
+        || !linux_proc_options_are_unrestricted(super_options)
+    {
+        return Err(());
+    }
+    Ok(true)
 }
 
 #[cfg(target_os = "linux")]
@@ -842,6 +935,18 @@ fn linux_numeric_proc_mountpoint(mountpoint: &[u8]) -> bool {
         .is_some_and(|component| !component.is_empty() && component.iter().all(u8::is_ascii_digit))
 }
 
+#[cfg(target_os = "linux")]
+fn linux_proc_authority_overmount(mountpoint: &[u8]) -> bool {
+    linux_numeric_proc_mountpoint(mountpoint)
+        || matches!(
+            mountpoint,
+            b"/proc/self"
+                | b"/proc/self/mountinfo"
+                | b"/proc/thread-self"
+                | b"/proc/thread-self/mountinfo"
+        )
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn prepare_system(
     adapter: &SystemBackgroundProcessAdapter,
@@ -855,7 +960,9 @@ fn prepare_system(
         .as_ref()
         .ok_or_else(|| BackgroundProcessError::new(BackgroundProcessErrorKind::Unsupported))?;
     #[cfg(target_os = "linux")]
-    require_linux_proc_authority()?;
+    let snapshot_authority = GroupSnapshotAuthority::open()?;
+    #[cfg(target_os = "macos")]
+    let snapshot_authority = GroupSnapshotAuthority;
     require_exclusive_child_reaping()?;
     #[cfg(target_os = "linux")]
     let retained_cwd = {
@@ -890,19 +997,19 @@ fn prepare_system(
         rustix::process::Pid::from_raw(i32::try_from(pid.get()).map_err(|_| invariant_error())?)
             .ok_or_else(invariant_error)?;
     if rustix::process::getpgid(Some(group)) != Ok(group) {
-        let _ = cleanup_child(&mut child, group, Duration::ZERO);
+        let _ = cleanup_child(&mut child, group, Duration::ZERO, &snapshot_authority);
         return Err(invariant_error());
     }
     let Some(gate) = child.stdin.take() else {
-        let _ = cleanup_child(&mut child, group, Duration::ZERO);
+        let _ = cleanup_child(&mut child, group, Duration::ZERO, &snapshot_authority);
         return Err(spawn_error());
     };
     let Some(ready) = child.stderr.take() else {
-        let _ = cleanup_child(&mut child, group, Duration::ZERO);
+        let _ = cleanup_child(&mut child, group, Duration::ZERO, &snapshot_authority);
         return Err(spawn_error());
     };
     if await_helper_ready(ready).is_err() {
-        let _ = cleanup_child(&mut child, group, Duration::ZERO);
+        let _ = cleanup_child(&mut child, group, Duration::ZERO, &snapshot_authority);
         return Err(spawn_error());
     }
     // `spawn` has completed the descriptor-backed chdir in the child. Move
@@ -918,6 +1025,7 @@ fn prepare_system(
         command: Some(command),
         environment: Some(environment),
         group,
+        snapshot_authority: Some(snapshot_authority),
         pid,
     })
 }
@@ -982,9 +1090,14 @@ fn release_prepared(
     }
     drop(gate);
     let child = prepared.child.take().ok_or_else(invariant_error)?;
+    let snapshot_authority = prepared
+        .snapshot_authority
+        .take()
+        .ok_or_else(invariant_error)?;
     Ok(OwnedBackgroundProcess {
         child: Some(child),
         group: prepared.group,
+        snapshot_authority: Some(snapshot_authority),
         pid: prepared.pid,
     })
 }
@@ -1028,10 +1141,15 @@ fn release_prepared(
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn abort_prepared(prepared: &mut PreparedBackgroundProcess) -> Result<(), BackgroundProcessError> {
     drop(prepared.gate.take());
-    let Some(mut child) = prepared.child.take() else {
+    if prepared.child.is_none() {
         return Ok(());
-    };
-    cleanup_child(&mut child, prepared.group, Duration::ZERO)
+    }
+    let authority = prepared
+        .snapshot_authority
+        .as_ref()
+        .ok_or_else(invariant_error)?;
+    let mut child = prepared.child.take().ok_or_else(invariant_error)?;
+    cleanup_child(&mut child, prepared.group, Duration::ZERO, authority)
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -1213,8 +1331,9 @@ fn cleanup_child(
     child: &mut Child,
     group: rustix::process::Pid,
     term_grace: Duration,
+    authority: &GroupSnapshotAuthority,
 ) -> Result<(), BackgroundProcessError> {
-    cleanup_child_with_expected(child, group, term_grace, None, false)
+    cleanup_child_with_expected(child, group, term_grace, None, false, authority)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1224,10 +1343,22 @@ fn cleanup_owned_child(
     expected: Option<BackgroundProcessExit>,
     force_cleanup: bool,
 ) -> Result<(), BackgroundProcessError> {
-    let Some(mut child) = owned.child.take() else {
+    if owned.child.is_none() {
         return Err(invariant_error());
-    };
-    cleanup_child_with_expected(&mut child, owned.group, term_grace, expected, force_cleanup)
+    }
+    let authority = owned
+        .snapshot_authority
+        .as_ref()
+        .ok_or_else(invariant_error)?;
+    let mut child = owned.child.take().ok_or_else(invariant_error)?;
+    cleanup_child_with_expected(
+        &mut child,
+        owned.group,
+        term_grace,
+        expected,
+        force_cleanup,
+        authority,
+    )
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1237,6 +1368,7 @@ fn cleanup_child_with_expected(
     term_grace: Duration,
     expected: Option<BackgroundProcessExit>,
     force_cleanup: bool,
+    authority: &GroupSnapshotAuthority,
 ) -> Result<(), BackgroundProcessError> {
     let mut failures = CleanupFailures::default();
     let mut force_signals = force_cleanup;
@@ -1245,6 +1377,7 @@ fn cleanup_child_with_expected(
         rustix::process::Signal::TERM,
         &mut force_signals,
         &mut failures,
+        authority,
     );
     if group_phase == CleanupSignalPhase::LostAuthority {
         return failures.finish();
@@ -1258,6 +1391,7 @@ fn cleanup_child_with_expected(
             rustix::process::Signal::KILL,
             &mut force_signals,
             &mut failures,
+            authority,
         );
         if group_phase == CleanupSignalPhase::LostAuthority {
             return failures.finish();
@@ -1266,7 +1400,7 @@ fn cleanup_child_with_expected(
         // redundant numeric child signal, and retain wait authority while the
         // bounded group-disappearance proof runs.
         if group_phase != CleanupSignalPhase::Quiescent
-            && let Err(error) = require_original_group_quiescent(group)
+            && let Err(error) = require_original_group_quiescent(group, authority)
         {
             failures.record(error);
         }
@@ -1288,6 +1422,7 @@ fn cleanup_group_signal_phase(
     signal: rustix::process::Signal,
     force_signals: &mut bool,
     failures: &mut CleanupFailures,
+    authority: &GroupSnapshotAuthority,
 ) -> CleanupSignalPhase {
     let leader_exited = match observe_leader(group) {
         Ok(status) => status.is_some(),
@@ -1301,7 +1436,7 @@ fn cleanup_group_signal_phase(
             false
         }
     };
-    let only_exited_leader = match group_members(group) {
+    let only_exited_leader = match group_members(authority, group) {
         Ok(members) => leader_exited && only_group_leader_remains(&members, group),
         Err(error) => {
             *force_signals = true;
@@ -1313,7 +1448,7 @@ fn cleanup_group_signal_phase(
     // failure forces both group signals instead of becoming a cleanup short
     // circuit; a clean sole-zombie proof avoids unnecessary signalling.
     if (*force_signals || !only_exited_leader)
-        && let Err(error) = signal_group_or_confirm_exited_leader(group, signal)
+        && let Err(error) = signal_group_or_confirm_exited_leader(group, signal, authority)
     {
         match error {
             LeaderObservationFailure::LostAuthority => {
@@ -1401,6 +1536,7 @@ fn signal_group(
 fn signal_group_or_confirm_exited_leader(
     group: rustix::process::Pid,
     signal: rustix::process::Signal,
+    authority: &GroupSnapshotAuthority,
 ) -> Result<(), LeaderObservationFailure> {
     #[cfg(test)]
     if OBSERVED_GROUP_SIGNAL.load(Ordering::Acquire) == group.as_raw_nonzero().get().cast_unsigned()
@@ -1411,7 +1547,8 @@ fn signal_group_or_confirm_exited_leader(
         Err(rustix::io::Errno::PERM)
             if observe_leader(group)?.is_some()
                 && only_group_leader_remains(
-                    &group_members(group).map_err(LeaderObservationFailure::Operation)?,
+                    &group_members(authority, group)
+                        .map_err(LeaderObservationFailure::Operation)?,
                     group,
                 ) =>
         {
@@ -1437,6 +1574,7 @@ fn classify_group_signal(
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn require_original_group_quiescent(
     group: rustix::process::Pid,
+    authority: &GroupSnapshotAuthority,
 ) -> Result<(), BackgroundProcessError> {
     let deadline = Instant::now() + GROUP_DISAPPEARANCE_GRACE;
     let mut observation = ObservationBackoff::with_bounds(
@@ -1450,7 +1588,7 @@ fn require_original_group_quiescent(
             Err(LeaderObservationFailure::Operation(_)) => observed_failure = true,
             Ok(_) => {}
         }
-        match group_members(group) {
+        match group_members(authority, group) {
             Ok(members) if only_group_leader_remains(&members, group) => {
                 return if observed_failure {
                     Err(cleanup_error())
@@ -1470,6 +1608,7 @@ fn require_original_group_quiescent(
 
 #[cfg(target_os = "macos")]
 fn group_members(
+    _authority: &GroupSnapshotAuthority,
     group: rustix::process::Pid,
 ) -> Result<Vec<rustix::process::Pid>, BackgroundProcessError> {
     use std::io::Read;
@@ -1540,6 +1679,7 @@ fn group_members(
 
 #[cfg(target_os = "linux")]
 fn group_members(
+    authority: &GroupSnapshotAuthority,
     group: rustix::process::Pid,
 ) -> Result<Vec<rustix::process::Pid>, BackgroundProcessError> {
     use std::io::Read;
@@ -1553,46 +1693,74 @@ fn group_members(
         return Err(cleanup_error());
     }
 
-    let entries = std::fs::read_dir("/proc").map_err(|_| cleanup_error())?;
+    authority.validate().map_err(|()| cleanup_error())?;
+    let scan_fd = rustix::fs::openat(
+        authority.proc_root.as_fd(),
+        ".",
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|_| cleanup_error())?;
+    let mut directory_buffer = [MaybeUninit::<u8>::uninit(); 8 * 1024];
+    let mut entries = rustix::fs::RawDir::new(scan_fd, &mut directory_buffer);
     let mut inspected_entries = 0_usize;
     let mut inspected_bytes = 0_usize;
     let mut members = Vec::new();
-    for entry in entries {
+    let mut stat_bytes = Vec::with_capacity(MAX_LINUX_PROC_STAT_BYTES + 1);
+    while let Some(entry) = entries.next() {
         inspected_entries = inspected_entries
             .checked_add(1)
             .filter(|count| *count <= MAX_LINUX_PROC_ENTRIES)
             .ok_or_else(cleanup_error)?;
         let entry = entry.map_err(|_| cleanup_error())?;
-        let Some(pid) = parse_linux_proc_directory_pid(entry.file_name().as_bytes())? else {
+        let name = entry.file_name();
+        let Some(pid) = parse_linux_proc_directory_pid(name.to_bytes())? else {
             continue;
         };
-        if !entry.file_type().map_err(|_| cleanup_error())?.is_dir() {
-            return Err(cleanup_error());
-        }
-        let mut stat = match std::fs::File::open(entry.path().join("stat")) {
-            Ok(stat) => stat,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+        let pid_fd = match rustix::fs::openat(
+            authority.proc_root.as_fd(),
+            name,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        ) {
+            Ok(fd) => fd,
+            Err(rustix::io::Errno::NOENT) => continue,
             Err(_) => return Err(cleanup_error()),
         };
-        let mut bytes = Vec::with_capacity(MAX_LINUX_PROC_STAT_BYTES + 1);
+        let stat_fd = match rustix::fs::openat(
+            pid_fd.as_fd(),
+            "stat",
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        ) {
+            Ok(fd) => fd,
+            Err(rustix::io::Errno::NOENT) => continue,
+            Err(_) => return Err(cleanup_error()),
+        };
+        let mut stat = std::fs::File::from(stat_fd);
+        stat_bytes.clear();
         stat.by_ref()
             .take((MAX_LINUX_PROC_STAT_BYTES + 1) as u64)
-            .read_to_end(&mut bytes)
+            .read_to_end(&mut stat_bytes)
             .map_err(|_| cleanup_error())?;
-        if bytes.len() > MAX_LINUX_PROC_STAT_BYTES {
+        if stat_bytes.len() > MAX_LINUX_PROC_STAT_BYTES {
             return Err(cleanup_error());
         }
         inspected_bytes = inspected_bytes
-            .checked_add(bytes.len())
+            .checked_add(stat_bytes.len())
             .filter(|bytes| *bytes <= MAX_LINUX_PROC_SNAPSHOT_BYTES)
             .ok_or_else(cleanup_error)?;
-        if parse_linux_proc_stat(&bytes, pid)? == Some(group) {
+        if parse_linux_proc_stat(&stat_bytes, pid)? == Some(group) {
             if members.len() == MAX_GROUP_SNAPSHOT_BYTES / 2 {
                 return Err(cleanup_error());
             }
             members.push(pid);
         }
     }
+
+    // A proof is accepted only if the same retained procfs authority still
+    // has the admitted identity, options, and mount topology after the scan.
+    authority.validate().map_err(|()| cleanup_error())?;
 
     #[cfg(test)]
     if consume_injected_failure(
@@ -1677,6 +1845,23 @@ fn parse_linux_nonnegative_i32(bytes: &[u8]) -> Option<i32> {
     bytes.iter().try_fold(0_i32, |value, byte| {
         let digit = byte.checked_sub(b'0').filter(|digit| *digit < 10)?;
         value.checked_mul(10)?.checked_add(i32::from(digit))
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_positive_u64(bytes: &[u8]) -> Option<u64> {
+    let value = parse_linux_nonnegative_u64(bytes)?;
+    (value > 0).then_some(value)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_nonnegative_u64(bytes: &[u8]) -> Option<u64> {
+    if bytes.is_empty() {
+        return None;
+    }
+    bytes.iter().try_fold(0_u64, |value, byte| {
+        let digit = byte.checked_sub(b'0').filter(|digit| *digit < 10)?;
+        value.checked_mul(10)?.checked_add(u64::from(digit))
     })
 }
 
@@ -1970,11 +2155,12 @@ mod linux_proc_tests {
 
     #[test]
     fn proc_mount_authority_requires_one_unrestricted_root_procfs() {
-        assert!(parse_linux_proc_mount_authority(UNRESTRICTED_PROC).is_ok());
+        assert!(parse_linux_proc_mount_authority(UNRESTRICTED_PROC, 36).is_ok());
         assert!(
-            parse_linux_proc_mount_authority(b"36 25 0:32 / /proc rw,nosuid - proc proc rw\n")
+            parse_linux_proc_mount_authority(b"36 25 0:32 / /proc rw,nosuid - proc proc rw\n", 36,)
                 .is_ok()
         );
+        assert!(parse_linux_proc_mount_authority(UNRESTRICTED_PROC, 37).is_err());
 
         for restricted in [
             b"36 25 0:32 / /proc rw - proc proc rw,hidepid=1\n".as_slice(),
@@ -1986,7 +2172,7 @@ mod linux_proc_tests {
             b"36 25 0:32 / /other rw - proc proc rw\n".as_slice(),
             b"36 25 0:32 / /proc rw - proc proc rw".as_slice(),
         ] {
-            assert!(parse_linux_proc_mount_authority(restricted).is_err());
+            assert!(parse_linux_proc_mount_authority(restricted, 36).is_err());
         }
     }
 
@@ -1997,17 +2183,45 @@ mod linux_proc_tests {
             b"37 36 0:33 / /proc/321 rw - tmpfs tmpfs rw\n",
         ]
         .concat();
-        assert!(parse_linux_proc_mount_authority(&numeric_overmount).is_err());
+        assert!(parse_linux_proc_mount_authority(&numeric_overmount, 36).is_err());
+
+        let mountinfo_overmount = [
+            UNRESTRICTED_PROC,
+            b"37 36 0:33 / /proc/self/mountinfo rw - tmpfs tmpfs rw\n",
+        ]
+        .concat();
+        assert!(parse_linux_proc_mount_authority(&mountinfo_overmount, 36).is_err());
 
         let duplicate = [UNRESTRICTED_PROC, UNRESTRICTED_PROC].concat();
-        assert!(parse_linux_proc_mount_authority(&duplicate).is_err());
+        assert!(parse_linux_proc_mount_authority(&duplicate, 36).is_err());
         assert!(linux_numeric_proc_mountpoint(b"/proc/321/stat"));
         assert!(!linux_numeric_proc_mountpoint(b"/proc/self"));
         assert!(!linux_numeric_proc_mountpoint(b"/proc/321x"));
+        assert!(linux_proc_authority_overmount(b"/proc/self/mountinfo"));
     }
 
     #[test]
     fn host_proc_mount_satisfies_pre_release_authority_contract() {
-        require_linux_proc_authority().expect("test host must expose unrestricted procfs");
+        GroupSnapshotAuthority::open().expect("test host must expose unrestricted procfs");
+    }
+
+    #[test]
+    fn proc_mount_authority_rejects_post_admission_topology_change() {
+        assert!(parse_linux_proc_mount_authority(UNRESTRICTED_PROC, 36).is_ok());
+        let changed = [
+            UNRESTRICTED_PROC,
+            b"37 36 0:33 / /proc/999/stat rw - tmpfs tmpfs rw\n",
+        ]
+        .concat();
+        assert!(parse_linux_proc_mount_authority(&changed, 36).is_err());
+    }
+
+    #[test]
+    fn proc_mount_authority_enforces_incremental_input_bounds() {
+        let truncated = b"36 25 0:32 / /proc rw - proc proc rw";
+        assert!(parse_linux_proc_mount_authority(truncated, 36).is_err());
+
+        let oversized = vec![b'x'; MAX_LINUX_MOUNTINFO_BYTES + 1];
+        assert!(parse_linux_proc_mount_authority(&oversized, 36).is_err());
     }
 }

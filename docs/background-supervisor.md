@@ -170,24 +170,35 @@ descendants before releasing the record lease and capacity. Stop sends TERM to
 the owned group, waits through a fixed grace period, sends KILL if still
 present, and reaps. Before reaping the leader, a bounded platform group scan
 proves that the unreaped leader is the sole remaining member of its original
-group. Before creating any Linux helper, the adapter verifies `/proc` with
-`statfs` and parses at most 1 MiB and 4,096 entries from
-`/proc/self/mountinfo`. It requires exactly one procfs mounted at `/proc` from
-the procfs root, accepts only absent or explicit `hidepid=0`, and rejects
-malformed, truncated, duplicated, unknown-`hidepid`, restricted, or numeric
-PID-path-overmounted configurations. This makes the required stat identity
-fields visible even when a descendant changes UID or GID; a host that cannot
-prove that cross-credential visibility fails before the requested helper is
-spawned or released.
+group. Before creating any Linux helper, the adapter opens and retains the
+procfs root and binds it to the exact mount ID reported by both
+`statx(STATX_MNT_ID)` and its descriptor-relative `self/mountinfo`. Linux
+therefore requires mount-ID reporting support and fails closed when it is
+unavailable. Mount metadata is read incrementally without a 1 MiB reserve,
+while still accepting at most 1 MiB and 4,096 complete entries. The adapter
+requires exactly that retained mount ID to identify one procfs mounted at
+`/proc` from the procfs root, accepts only absent or explicit `hidepid=0`, and
+rejects malformed, truncated, duplicated, unknown-`hidepid`, restricted,
+numeric PID-path-overmounted, or authority-file-overmounted configurations.
+This makes the required stat identity fields visible even when a descendant
+changes UID or GID; a host that cannot prove that cross-credential visibility
+fails before the requested helper is spawned or released.
 
-Linux then reads the required numeric process and group identities directly
-from a `/proc` traversal bounded to 131,072 entries, 4 KiB per stat record,
-32 MiB of aggregate stat bytes, and 32,768 retained members; it does not depend
-on a GNU `ps` dialect. macOS retains its fixed `/bin/ps` adapter with a 64 KiB
-output bound and 250 ms timeout. Permission denial is never disappearance
-evidence; a surviving credential-changed member therefore produces a fixed
-cleanup failure. The numeric group identity is not consulted after it becomes
-reusable.
+Linux retains one proc-root descriptor for that authority through both prepared
+and released process ownership. Every group snapshot opens the proc root,
+numeric PID directories, and each `stat` file descriptor-relatively; it does
+not reopen ambient `/proc`.
+It revalidates the retained filesystem type, exact mount identity, options,
+and topology before and after every scan, so a remount, bind overmount, or
+post-admission topology change fails cleanup before the leader is reaped. The
+traversal remains bounded to 131,072 entries, 4 KiB per stat record, 32 MiB of
+aggregate stat bytes, and 32,768 retained members. It reuses one directory
+buffer and one stat-record buffer for the scan rather than allocating per PID,
+and does not depend on a GNU `ps` dialect. macOS retains its fixed `/bin/ps`
+adapter with a 64 KiB output bound and 250 ms timeout. Permission denial is
+never disappearance evidence; a surviving credential-changed member therefore
+produces a fixed cleanup failure. The numeric group identity is not consulted
+after it becomes reusable.
 
 This process-local adapter requires exclusive child-reaping authority for the
 entire prepared/owned-handle lifetime: the host must leave `SIGCHLD` waitable
