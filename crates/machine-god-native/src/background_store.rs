@@ -1,6 +1,7 @@
 //! Descriptor-confined persistence used by the native background supervisor.
 
 #![cfg(any(target_os = "linux", target_os = "macos"))]
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::io::{Read, Write};
@@ -10,9 +11,9 @@ use rustix::fs::{AtFlags, Dir, FileType, FlockOperation, Mode, OFlags, RenameFla
 
 use crate::background_inspection::{
     BACKGROUND_DIRECTORY, MAX_BACKGROUND_DIRECTORY_ENTRIES, MAX_BACKGROUND_PATH_BYTES,
-    MAX_BACKGROUND_RECORD_BYTES, MAX_BACKGROUND_RECORDS, MAX_BACKGROUND_TOTAL_RECORD_BYTES,
-    NativeBackgroundState, StoredBackgroundRecord, background_record_name,
-    background_workspace_name, is_background_record_name, is_canonical_absolute_background_path,
+    MAX_BACKGROUND_RECORD_BYTES, MAX_BACKGROUND_TOTAL_RECORD_BYTES, NativeBackgroundState,
+    StoredBackgroundRecord, background_record_name, background_workspace_name,
+    is_background_record_name, is_canonical_absolute_background_path,
     supported::decode_stored_record, valid_background_record,
 };
 
@@ -25,6 +26,7 @@ const ALLOCATOR_COUNTER_NAME: &str = "allocator.counter";
 const ALLOCATOR_COUNTER_TEMP_NAME: &str = "allocator.counter.tmp";
 const COUNTER_BYTES: usize = size_of::<u64>();
 const COUNTER_BYTES_I64: i64 = 8;
+const MAX_RETAINED_BACKGROUND_RECORDS: usize = 100;
 
 /// Stable category for a descriptor-confined background-store failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -83,8 +85,8 @@ impl Error for BackgroundStoreError {}
 
 /// A retained exclusive per-record authority.
 ///
-/// Dropping the lease releases the authority. The lock entry itself is
-/// permanent and is never unlinked or replaced by the store.
+/// Dropping the lease releases the authority. A later bounded compaction may
+/// unlink the lock entry only after proving that no live lease owns it.
 pub(crate) struct BackgroundRecordLease {
     id: u64,
     root_device: i128,
@@ -177,6 +179,7 @@ impl BackgroundStore {
         let id = current
             .checked_add(1)
             .ok_or_else(|| error(BackgroundStoreErrorKind::IdExhausted))?;
+        self.compact_history_locked(MAX_RETAINED_BACKGROUND_RECORDS - 1, current)?;
         replace_counter(self.control.as_fd(), id)?;
 
         let lock = open_private_lock(self.control.as_fd(), &record_lock_name(id))?;
@@ -284,10 +287,129 @@ impl BackgroundStore {
     fn prepare_allocator(&self) -> Result<(), BackgroundStoreError> {
         let allocator = open_private_lock(self.control.as_fd(), ALLOCATOR_LOCK_NAME)?;
         lock_exclusive(&allocator)?;
-        match read_counter_optional(self.control.as_fd())? {
-            Some(_) => Ok(()),
-            None => publish_counter_initial(self.control.as_fd()),
+        let current = if let Some(current) = read_counter_optional(self.control.as_fd())? {
+            current
+        } else {
+            if !scan_complete_records(self.root.as_fd(), &self.workspace)?.is_empty()
+                || !scan_complete_record_locks(self.control.as_fd())?.is_empty()
+            {
+                return Err(corrupt());
+            }
+            publish_counter_initial(self.control.as_fd())?;
+            0
+        };
+        self.compact_history_locked(MAX_RETAINED_BACKGROUND_RECORDS, current)
+    }
+
+    /// Compacts only after complete record and control snapshots validate.
+    /// The caller holds the workspace allocator lock, serializing compactors
+    /// and ID allocation across cooperating processes.
+    fn compact_history_locked(
+        &self,
+        maximum_occupancy: usize,
+        allocator_value: u64,
+    ) -> Result<(), BackgroundStoreError> {
+        let records = scan_complete_records(self.root.as_fd(), &self.workspace)?;
+        if records.iter().any(|record| record.id > allocator_value) {
+            return Err(corrupt());
         }
+        let lock_names = scan_complete_record_locks(self.control.as_fd())?;
+        let expected_locks: BTreeSet<String> = records
+            .iter()
+            .map(|record| record_lock_name(record.id))
+            .collect();
+
+        // A contended lock without a record is an admitted start that may
+        // publish after this snapshot. It consumes capacity just like an
+        // existing record. An unlocked orphan is durably reclaimed.
+        let mut pending = 0_usize;
+        for name in lock_names {
+            if !expected_locks.contains(&name) && self.reclaim_or_count_orphan_lock(&name)? {
+                pending = pending
+                    .checked_add(1)
+                    .ok_or_else(|| error(BackgroundStoreErrorKind::ResourceLimit))?;
+            }
+        }
+        let maximum_records = maximum_occupancy
+            .checked_sub(pending)
+            .ok_or_else(|| error(BackgroundStoreErrorKind::ResourceLimit))?;
+
+        let mut terminal: Vec<&StoredBackgroundRecord> = records
+            .iter()
+            .filter(|record| record.state != NativeBackgroundState::Running)
+            .collect();
+        terminal.sort_unstable_by(|left, right| {
+            left.updated_at_ms
+                .cmp(&right.updated_at_ms)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        let remove_count = records.len().saturating_sub(maximum_records);
+
+        // No namespace mutation occurs until both bounded snapshots and every
+        // selected record have validated. Each victim is then revalidated
+        // under its nonblocking per-record authority before deletion.
+        let mut removed = 0_usize;
+        for record in terminal {
+            if removed == remove_count {
+                break;
+            }
+            if self.remove_terminal_record_if_unowned(record)? {
+                removed += 1;
+            }
+        }
+        if removed == remove_count {
+            Ok(())
+        } else {
+            Err(error(BackgroundStoreErrorKind::ResourceLimit))
+        }
+    }
+
+    fn remove_terminal_record_if_unowned(
+        &self,
+        observed: &StoredBackgroundRecord,
+    ) -> Result<bool, BackgroundStoreError> {
+        let lock_name = record_lock_name(observed.id);
+        let lock = open_private_lock(self.control.as_fd(), &lock_name)?;
+        if !try_lock_exclusive(&lock)? {
+            return Ok(false);
+        }
+        let data_name = background_record_name(observed.id);
+        let Some((current, _)) = read_record(self.root.as_fd(), &self.workspace, &data_name)?
+        else {
+            return Err(corrupt());
+        };
+        if &current != observed || current.state == NativeBackgroundState::Running {
+            return Ok(false);
+        }
+        rustix::fs::unlinkat(self.root.as_fd(), &data_name, AtFlags::empty())
+            .map_err(|_| unavailable())?;
+        sync_directory(self.root.as_fd())?;
+        rustix::fs::unlinkat(self.control.as_fd(), &lock_name, AtFlags::empty())
+            .map_err(|_| unavailable())?;
+        sync_directory(self.control.as_fd())?;
+        Ok(true)
+    }
+
+    /// Returns `true` when a live lease or concurrently published record still
+    /// occupies this slot and `false` after reclaiming an unlocked orphan.
+    fn reclaim_or_count_orphan_lock(&self, lock_name: &str) -> Result<bool, BackgroundStoreError> {
+        let lock = open_existing_private_file(self.control.as_fd(), lock_name)?;
+        if !try_lock_exclusive(&lock)? {
+            return Ok(true);
+        }
+        let data_name = format!(
+            "{}.json",
+            lock_name
+                .strip_suffix(".lock")
+                .expect("validated record lock has a fixed suffix")
+        );
+        if read_record(self.root.as_fd(), &self.workspace, &data_name)?.is_some() {
+            return Ok(true);
+        }
+        rustix::fs::unlinkat(self.control.as_fd(), lock_name, AtFlags::empty())
+            .map_err(|_| unavailable())?;
+        sync_directory(self.control.as_fd())?;
+        Ok(false)
     }
 
     fn validate_root(&self) -> Result<(), BackgroundStoreError> {
@@ -444,10 +566,11 @@ fn scan_complete_records(
     }
     names.sort_unstable();
     names.dedup();
-    if names.len() > MAX_BACKGROUND_RECORDS {
-        return Err(error(BackgroundStoreErrorKind::ResourceLimit));
-    }
 
+    // Reconciliation must validate every canonical candidate in its bounded
+    // snapshot. The reader's smaller presentation limit does not constrain
+    // writer lifecycle maintenance; the directory-entry and aggregate-byte
+    // budgets above and below remain the hard reconciliation bounds.
     let mut records = Vec::with_capacity(names.len());
     let mut total = 0_usize;
     for name in names {
@@ -459,6 +582,55 @@ fn scan_complete_records(
         records.push(record);
     }
     Ok(records)
+}
+
+fn scan_complete_record_locks(
+    control: BorrowedFd<'_>,
+) -> Result<Vec<String>, BackgroundStoreError> {
+    let duplicate = rustix::fs::openat(control, ".", directory_open_flags(), Mode::empty())
+        .map_err(|_| unavailable())?;
+    let mut directory = Dir::new(duplicate).map_err(|_| unavailable())?;
+    let mut names = Vec::new();
+    let mut entries = 0_usize;
+    loop {
+        let Some(entry) = directory.next() else {
+            break;
+        };
+        let entry = entry.map_err(|_| unavailable())?;
+        let name = entry.file_name().to_bytes();
+        if name == b"." || name == b".." {
+            continue;
+        }
+        if entries == MAX_BACKGROUND_DIRECTORY_ENTRIES {
+            return Err(error(BackgroundStoreErrorKind::ResourceLimit));
+        }
+        entries += 1;
+        if is_background_record_lock_name(name) {
+            let name = std::str::from_utf8(name)
+                .expect("canonical background lock names are ASCII")
+                .to_owned();
+            let file = open_existing_private_file(control, &name)?;
+            validate_private_file(&file)?;
+            names.push(name);
+        }
+    }
+    names.sort_unstable();
+    names.dedup();
+    Ok(names)
+}
+
+fn is_background_record_lock_name(name: &[u8]) -> bool {
+    const PREFIX: &[u8] = b"record-";
+    const SUFFIX: &[u8] = b".lock";
+    name.len() == PREFIX.len() + 64 + SUFFIX.len()
+        && name.starts_with(PREFIX)
+        && name.ends_with(SUFFIX)
+        && name[PREFIX.len()..name.len() - SUFFIX.len()]
+            .iter()
+            .all(u8::is_ascii_hexdigit)
+        && !name[PREFIX.len()..name.len() - SUFFIX.len()]
+            .iter()
+            .any(u8::is_ascii_uppercase)
 }
 
 fn read_record(
@@ -616,6 +788,21 @@ fn prepare_private_directory(
 
 fn open_private_lock(root: BorrowedFd<'_>, name: &str) -> Result<OwnedFd, BackgroundStoreError> {
     open_or_create_private_file(root, name, true)
+}
+
+fn open_existing_private_file(
+    root: BorrowedFd<'_>,
+    name: &str,
+) -> Result<OwnedFd, BackgroundStoreError> {
+    let file = rustix::fs::openat(
+        root,
+        name,
+        OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+        Mode::empty(),
+    )
+    .map_err(|error| map_entry_error(root, name, error))?;
+    validate_private_file(&file)?;
+    Ok(file)
 }
 
 fn open_or_create_private_file(
@@ -857,8 +1044,19 @@ fn sync_directory(directory: BorrowedFd<'_>) -> Result<(), BackgroundStoreError>
 }
 
 fn lock_exclusive(file: &OwnedFd) -> Result<(), BackgroundStoreError> {
-    retry_interrupted(|| rustix::fs::flock(file, FlockOperation::LockExclusive))
-        .map_err(|_| unavailable())
+    match retry_interrupted(|| rustix::fs::flock(file, FlockOperation::NonBlockingLockExclusive)) {
+        Ok(()) => Ok(()),
+        Err(error) if is_lock_contention(error) => Err(unavailable()),
+        Err(_) => Err(unavailable()),
+    }
+}
+
+fn try_lock_exclusive(file: &OwnedFd) -> Result<bool, BackgroundStoreError> {
+    match retry_interrupted(|| rustix::fs::flock(file, FlockOperation::NonBlockingLockExclusive)) {
+        Ok(()) => Ok(true),
+        Err(error) if is_lock_contention(error) => Ok(false),
+        Err(_) => Err(unavailable()),
+    }
 }
 
 fn retry_interrupted<T>(
@@ -942,7 +1140,10 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::process::Command;
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::mpsc;
+    use std::time::Duration;
 
     use futures_executor::block_on;
 
@@ -1290,5 +1491,282 @@ mod tests {
         };
         assert!(!list.truncated());
         assert_eq!(list.records().len(), 1);
+    }
+
+    #[test]
+    fn completed_history_beyond_listing_limit_reopens_and_reconciles() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let completed_count = crate::MAX_BACKGROUND_RECORDS + 1;
+        let workspace_root = fixture
+            .state_root
+            .join(BACKGROUND_DIRECTORY)
+            .join(background_workspace_name(&fixture.workspace));
+        let control = workspace_root.join(CONTROL_DIRECTORY);
+        seed_completed_history(&store, &workspace_root, &control, completed_count);
+        assert_eq!(count_record_files(&workspace_root), completed_count);
+        assert_eq!(count_record_locks(&control), completed_count);
+        drop(store);
+
+        let reopened = fixture.store();
+        let reconciliation = reopened.reconcile().unwrap();
+        assert_eq!(reconciliation.inspected, MAX_RETAINED_BACKGROUND_RECORDS);
+        assert_eq!(reconciliation.active, 0);
+        assert_eq!(reconciliation.marked_stale, 0);
+        assert_eq!(
+            count_record_files(&workspace_root),
+            MAX_RETAINED_BACKGROUND_RECORDS
+        );
+        assert_eq!(
+            count_record_locks(&control),
+            MAX_RETAINED_BACKGROUND_RECORDS
+        );
+        let oldest = block_on(inspect_native_background(
+            fixture.environment(),
+            PathBuf::from(&fixture.workspace),
+            NativeBackgroundQuery::Id(1),
+        ))
+        .unwrap_err();
+        assert_eq!(
+            oldest.kind(),
+            crate::NativeBackgroundInspectionErrorKind::NotFound
+        );
+        let NativeBackgroundInspection::Detail(newest) = block_on(inspect_native_background(
+            fixture.environment(),
+            PathBuf::from(&fixture.workspace),
+            NativeBackgroundQuery::Id(completed_count as u64),
+        ))
+        .unwrap() else {
+            panic!("expected detail");
+        };
+        assert_eq!(newest.state(), NativeBackgroundState::Exited);
+
+        let active = reopened.reserve_id().unwrap();
+        let active_id = active.id();
+        assert_eq!(active_id, completed_count as u64 + 1);
+        reopened
+            .publish_initial(&active, &running(&reopened, active_id, 1_000))
+            .unwrap();
+        let NativeBackgroundInspection::List(list) = block_on(inspect_native_background(
+            fixture.environment(),
+            PathBuf::from(&fixture.workspace),
+            NativeBackgroundQuery::List,
+        ))
+        .unwrap() else {
+            panic!("expected list");
+        };
+        assert!(!list.truncated());
+        assert_eq!(list.records().len(), crate::MAX_BACKGROUND_RECORDS);
+        let NativeBackgroundInspection::Detail(detail) = block_on(inspect_native_background(
+            fixture.environment(),
+            PathBuf::from(&fixture.workspace),
+            NativeBackgroundQuery::Id(active_id),
+        ))
+        .unwrap() else {
+            panic!("expected detail");
+        };
+        assert_eq!(detail.state(), NativeBackgroundState::Running);
+
+        drop(reopened);
+        let reopened = fixture.store();
+        let reconciliation = reopened.reconcile().unwrap();
+        assert_eq!(reconciliation.active, 1);
+        assert_eq!(reconciliation.marked_stale, 0);
+        drop(active);
+        let reconciliation = reopened.reconcile().unwrap();
+        assert_eq!(reconciliation.marked_stale, 1);
+        let continued = reopened.reserve_id().unwrap();
+        assert_eq!(continued.id(), active_id + 1);
+        assert_eq!(
+            count_record_files(&workspace_root),
+            MAX_RETAINED_BACKGROUND_RECORDS - 1
+        );
+        assert_eq!(
+            count_record_locks(&control),
+            MAX_RETAINED_BACKGROUND_RECORDS
+        );
+    }
+
+    fn seed_completed_history(
+        store: &BackgroundStore,
+        workspace_root: &Path,
+        control: &Path,
+        count: usize,
+    ) {
+        for id in 1..=count as u64 {
+            let mut record = running(store, id, 10 + id);
+            record.updated_at_ms += 1;
+            record.state = NativeBackgroundState::Exited;
+            record.exit_code = Some(0);
+            let data = workspace_root.join(background_record_name(id));
+            fs::write(&data, serde_json::to_vec(&record).unwrap()).unwrap();
+            fs::set_permissions(&data, fs::Permissions::from_mode(0o600)).unwrap();
+            let lock = control.join(record_lock_name(id));
+            fs::write(&lock, b"").unwrap();
+            fs::set_permissions(&lock, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        fs::write(
+            control.join(ALLOCATOR_COUNTER_NAME),
+            (count as u64).to_be_bytes(),
+        )
+        .unwrap();
+    }
+
+    fn count_record_files(root: &Path) -> usize {
+        fs::read_dir(root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| is_background_record_name(entry.file_name().as_encoded_bytes()))
+            .count()
+    }
+
+    fn count_record_locks(control: &Path) -> usize {
+        fs::read_dir(control)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| is_background_record_lock_name(entry.file_name().as_encoded_bytes()))
+            .count()
+    }
+
+    #[test]
+    fn allocator_and_record_lock_contention_return_promptly() {
+        let fixture = Fixture::new();
+        let store = Arc::new(fixture.store());
+        let control = fixture
+            .state_root
+            .join(BACKGROUND_DIRECTORY)
+            .join(background_workspace_name(&fixture.workspace))
+            .join(CONTROL_DIRECTORY);
+        let descriptor = rustix::fs::open(&control, directory_open_flags(), Mode::empty()).unwrap();
+        let holder = open_private_lock(descriptor.as_fd(), ALLOCATOR_LOCK_NAME).unwrap();
+        lock_exclusive(&holder).unwrap();
+
+        let state_root = fixture.state_root.clone();
+        let workspace = fixture.workspace.clone();
+        let (sender, receiver) = mpsc::channel();
+        let open_thread = std::thread::spawn(move || {
+            let descriptor =
+                rustix::fs::open(state_root, directory_open_flags(), Mode::empty()).unwrap();
+            sender
+                .send(BackgroundStore::prepare(descriptor, workspace).map(|_| ()))
+                .unwrap();
+        });
+        let open_result = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("contended store preparation must return promptly");
+        assert_eq!(
+            open_result.unwrap_err().kind(),
+            BackgroundStoreErrorKind::Unavailable
+        );
+        open_thread.join().unwrap();
+
+        let (sender, receiver) = mpsc::channel();
+        let contender = Arc::clone(&store);
+        let reserve_thread = std::thread::spawn(move || {
+            sender
+                .send(contender.reserve_id().map(|lease| lease.id()))
+                .unwrap();
+        });
+        let result = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("nonblocking allocator contention must return promptly");
+        assert_eq!(
+            result.unwrap_err().kind(),
+            BackgroundStoreErrorKind::Unavailable
+        );
+        drop(holder);
+        reserve_thread.join().unwrap();
+
+        let record_holder = open_private_lock(descriptor.as_fd(), &record_lock_name(1)).unwrap();
+        lock_exclusive(&record_holder).unwrap();
+        let (sender, receiver) = mpsc::channel();
+        let contender = Arc::clone(&store);
+        let record_thread = std::thread::spawn(move || {
+            sender
+                .send(contender.reserve_id().map(|lease| lease.id()))
+                .unwrap();
+        });
+        let record_result = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("contended per-record lock must return promptly");
+        assert_eq!(
+            record_result.unwrap_err().kind(),
+            BackgroundStoreErrorKind::Unavailable
+        );
+        drop(record_holder);
+        record_thread.join().unwrap();
+    }
+
+    #[test]
+    fn active_records_consume_total_capacity_without_reader_overflow() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let mut active = Vec::new();
+        for index in 0..MAX_RETAINED_BACKGROUND_RECORDS {
+            let lease = store.reserve_id().unwrap();
+            store
+                .publish_initial(&lease, &running(&store, lease.id(), 10 + index as u64))
+                .unwrap();
+            active.push(lease);
+        }
+
+        let error = store.reserve_id().unwrap_err();
+        assert_eq!(error.kind(), BackgroundStoreErrorKind::ResourceLimit);
+        let NativeBackgroundInspection::List(list) = block_on(inspect_native_background(
+            fixture.environment(),
+            PathBuf::from(&fixture.workspace),
+            NativeBackgroundQuery::List,
+        ))
+        .unwrap() else {
+            panic!("expected list");
+        };
+        assert!(!list.truncated());
+        assert_eq!(list.records().len(), crate::MAX_BACKGROUND_RECORDS);
+
+        drop(active.remove(0));
+        let reconciliation = store.reconcile().unwrap();
+        assert_eq!(reconciliation.active, MAX_RETAINED_BACKGROUND_RECORDS - 1);
+        assert_eq!(reconciliation.marked_stale, 1);
+        let continued = store.reserve_id().unwrap();
+        assert_eq!(continued.id(), MAX_RETAINED_BACKGROUND_RECORDS as u64 + 1);
+    }
+
+    #[test]
+    fn compaction_corrupt_preflight_never_deletes_valid_history() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let workspace_root = fixture
+            .state_root
+            .join(BACKGROUND_DIRECTORY)
+            .join(background_workspace_name(&fixture.workspace));
+        let control = workspace_root.join(CONTROL_DIRECTORY);
+        seed_completed_history(
+            &store,
+            &workspace_root,
+            &control,
+            MAX_RETAINED_BACKGROUND_RECORDS + 1,
+        );
+        let corrupt = workspace_root.join(background_record_name(10_000));
+        fs::write(&corrupt, b"{").unwrap();
+        fs::set_permissions(&corrupt, fs::Permissions::from_mode(0o600)).unwrap();
+        let before = record_file_names(&workspace_root);
+        drop(store);
+
+        let descriptor =
+            rustix::fs::open(&fixture.state_root, directory_open_flags(), Mode::empty()).unwrap();
+        let error = BackgroundStore::prepare(descriptor, fixture.workspace.clone()).unwrap_err();
+        assert_eq!(error.kind(), BackgroundStoreErrorKind::Corrupt);
+        assert_eq!(record_file_names(&workspace_root), before);
+    }
+
+    fn record_file_names(root: &Path) -> Vec<std::ffi::OsString> {
+        let mut names: Vec<_> = fs::read_dir(root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name())
+            .filter(|name| is_background_record_name(name.as_encoded_bytes()))
+            .collect();
+        names.sort_unstable();
+        names
     }
 }
