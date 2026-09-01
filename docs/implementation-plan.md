@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33455374424` (`GREEN`)
 - Main Benchmark evidence: `33455374426` (`GREEN`)
 - Active branch: `agent/m05-background-supervisor`
-- Active phase: `remediating rejected background-supervisor review cycle 08`
-- Next gate: `integrate cycle-08 fixes, then run the complete exact-1.94.1 replacement gate`
+- Active phase: `remediating rejected background-supervisor review cycle 09`
+- Next gate: `integrate cycle-09 fixes, then run the complete exact-1.94.1 replacement gate`
 <!-- canonical-live-status:end -->
 
 The recorded Actions runs succeeded for the exact delivered-main commit, and
@@ -79,8 +79,12 @@ environment uniqueness validation was quadratic. Exact replacement `4048ae9`
 passed the complete gate, but cycle 08 found that cancellation could still
 mask failed cleanup, post-readiness probe and frame I/O remained blocking,
 captured group members could escape before observation, and member polling
-could repeatedly traverse a vanished prefix. Those findings are being
-remediated; no rejected result is acceptance evidence.
+could repeatedly traverse a vanished prefix. Exact replacement `0ee4150`
+passed the complete gate, but cycle 09 found an EOF release-commit ambiguity,
+prepared-cancellation paths that still ignored fallible abort, unbounded reap
+and worker joins, an uncapped quadratic member union, extra EPERM scans, and a
+per-probe stat allocation. Those findings are being remediated; no rejected
+result is acceptance evidence.
 Persistent handles, message/relationship/configuration/lifecycle management,
 ACP, teams, and extension slash commands remain separate. Documentation parser
 maintenance remains a separate non-product task.

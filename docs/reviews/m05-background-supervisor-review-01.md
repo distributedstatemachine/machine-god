@@ -169,6 +169,26 @@ and frame I/O, retained identity-bound pre-KILL membership across group escape,
 and amortized captured-member observation. The complete replacement gate and
 all three fresh review tracks restart after every finding is remediated.
 
+## Rejected product candidate: cycle 09
+
+Three fresh review tracks inspected exact candidate
+`0ee41506d1ad7dffb8a53147b125cf3ef1ffd8b3` after the complete exact local gate
+passed. All three tracks rejected the candidate.
+
+| Track | Decisive findings |
+| --- | --- |
+| Correctness, API, and compatibility | EOF served as both abort and release commit, so cancellation after a complete frame could still execute the command; proven release cancellation was misclassified as `Process`/`dead` instead of `Cancelled`/`stopped`. |
+| Lifecycle, platform, and effects | Same-poll and subsequent prepared-process cancellation boundaries still dropped the prepared handle without invoking its fallible abort, allowing cleanup failure to be masked as cancellation. |
+| Performance and resources | Cleanup retained unconditional reap and worker joins; the three-snapshot member union was quadratic and could retain 98,304 entries; EPERM could exceed the four-scan contract; Linux member polling allocated a new stat buffer on every backoff. |
+
+Cycle 09 remains rejection evidence. Replacement requires an explicit release
+commit that abort EOF cannot emulate, fallible abort at every prepared-
+cancellation boundary, cancellation/stopped classification after proven
+cleanup, bounded unresolved-reap and worker ownership, one aggregate linear
+member cap, no EPERM rescan, and reusable polling storage. The complete
+replacement gate and all three fresh review tracks restart after every finding
+is remediated.
+
 ## Rejected product candidate: cycle 06
 
 Three fresh review tracks inspected exact candidate
