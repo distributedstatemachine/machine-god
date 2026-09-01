@@ -130,6 +130,8 @@ static OBSERVED_GROUP_SNAPSHOT: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 static GROUP_SNAPSHOT_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static GROUP_SNAPSHOT_TEST_LOCK: Mutex<()> = Mutex::new(());
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 static CANCEL_RELEASE_BEFORE_COMMIT_PID: AtomicU32 = AtomicU32::new(0);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_HELPER_PATH_BYTES: usize = 4 * 1024;
@@ -3072,14 +3074,15 @@ mod process_regression_tests {
             require_exclusive_child_reaping_with(command, &worker_cancellation)
         });
         let deadline = Instant::now() + Duration::from_secs(5);
-        while !pid_file.exists() {
+        let pid = loop {
+            if let Ok(pid) = fs::read_to_string(&pid_file)
+                && let Ok(pid) = pid.parse::<i32>()
+            {
+                break pid;
+            }
             assert!(Instant::now() < deadline, "probe did not publish its PID");
             thread::sleep(Duration::from_millis(2));
-        }
-        let pid = fs::read_to_string(&pid_file)
-            .expect("read probe PID")
-            .parse::<i32>()
-            .expect("parse probe PID");
+        };
 
         let started = Instant::now();
         assert!(cancellation.cancel());
@@ -3430,6 +3433,9 @@ mod process_regression_tests {
         let authority = GroupSnapshotAuthority::open().expect("open group snapshot authority");
         #[cfg(target_os = "macos")]
         let authority = GroupSnapshotAuthority;
+        let snapshot_guard = GROUP_SNAPSHOT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         reset_group_snapshots_for_test(leader);
         inject_group_signal_eperm_for_test(leader, 2);
 
@@ -3449,6 +3455,7 @@ mod process_regression_tests {
             4,
             "EPERM must reuse TERM and KILL phase snapshots"
         );
+        drop(snapshot_guard);
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -3486,6 +3493,9 @@ mod process_regression_tests {
         let authority = GroupSnapshotAuthority::open().expect("open group snapshot authority");
         #[cfg(target_os = "macos")]
         let authority = GroupSnapshotAuthority;
+        let snapshot_guard = GROUP_SNAPSHOT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         reset_group_snapshots_for_test(leader);
 
         cleanup_child_with_expected(
@@ -3504,5 +3514,6 @@ mod process_regression_tests {
             4,
             "cleanup must use TERM, KILL, post-KILL, and final global proofs only"
         );
+        drop(snapshot_guard);
     }
 }
