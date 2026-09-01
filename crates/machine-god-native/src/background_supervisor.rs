@@ -308,12 +308,21 @@ impl NativeBackgroundSupervisor {
         request: BackgroundStartRequest,
         cancellation: CancellationToken,
     ) -> BoxFuture<'static, Result<machine_god_core::BackgroundHandle, BackgroundStartError>> {
-        let drop_cancellation = cancellation.clone();
-        let start = self.supervisor.start(request, cancellation);
+        let operation_cancellation = CancellationToken::new();
+        let drop_cancellation = operation_cancellation.clone();
+        let start = self
+            .supervisor
+            .start(request, operation_cancellation.clone());
         Box::pin(self.blocking.run_cancellable(
             move || {
-                catch_unwind(AssertUnwindSafe(|| futures_executor::block_on(start)))
-                    .unwrap_or_else(|_| Err(start_error(BackgroundStartErrorKind::Process)))
+                catch_unwind(AssertUnwindSafe(|| {
+                    futures_executor::block_on(forward_cancellation(
+                        start,
+                        cancellation,
+                        operation_cancellation,
+                    ))
+                }))
+                .unwrap_or_else(|_| Err(start_error(BackgroundStartErrorKind::Process)))
             },
             Err(start_error(BackgroundStartErrorKind::Capacity)),
             drop_cancellation,
@@ -534,13 +543,15 @@ where
     fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
         if !this.submitted {
-            {
+            let incoming = context.waker().clone();
+            let superseded = {
                 let mut result = this
                     .result
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                result.waker = Some(context.waker().clone());
-            }
+                result.waker.replace(incoming)
+            };
+            drop(superseded);
             let task = this.task.take().expect("blocking task is submitted once");
             let result = Arc::clone(&this.result);
             let job = Box::new(move || {
@@ -568,20 +579,29 @@ where
             return Poll::Pending;
         }
 
-        let mut result = this
-            .result
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(value) = result.value.take() {
+        let incoming = context.waker().clone();
+        let (value, superseded, unused) = {
+            let mut result = this
+                .result
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(value) = result.value.take() {
+                (Some(value), None, Some(incoming))
+            } else if result
+                .waker
+                .as_ref()
+                .is_some_and(|waker| waker.will_wake(context.waker()))
+            {
+                (None, None, Some(incoming))
+            } else {
+                (None, result.waker.replace(incoming), None)
+            }
+        };
+        drop(superseded);
+        drop(unused);
+        if let Some(value) = value {
             this.drop_cancellation = None;
             return Poll::Ready(value);
-        }
-        if result
-            .waker
-            .as_ref()
-            .is_none_or(|waker| !waker.will_wake(context.waker()))
-        {
-            result.waker = Some(context.waker().clone());
         }
         Poll::Pending
     }
@@ -595,6 +615,22 @@ impl<T> Drop for BlockingTaskFuture<T> {
             cancellation.cancel();
         }
     }
+}
+
+async fn forward_cancellation<T>(
+    operation: impl Future<Output = T>,
+    caller: CancellationToken,
+    operation_cancellation: CancellationToken,
+) -> T {
+    let mut operation = Box::pin(operation);
+    let mut caller_cancellation = Box::pin(caller.cancelled());
+    std::future::poll_fn(move |context| {
+        if caller_cancellation.as_mut().poll(context).is_ready() {
+            operation_cancellation.cancel();
+        }
+        operation.as_mut().poll(context)
+    })
+    .await
 }
 
 fn blocking_worker_loop(
@@ -1230,9 +1266,10 @@ const fn start_error(kind: BackgroundStartErrorKind) -> BackgroundStartError {
 #[cfg(test)]
 mod tests {
     use super::{
-        BlockingExecutor, NativeBackgroundLimits, NativeBackgroundSupervisor, NativeSpawner,
-        NativeStore, RetainedJob, SystemBackgroundProcessAdapter, SystemClock,
-        finish_without_worker, open_directory, retain_canonical_directory_with,
+        BlockingExecutor, BlockingResult, NativeBackgroundLimits, NativeBackgroundSupervisor,
+        NativeSpawner, NativeStore, RetainedJob, SystemBackgroundProcessAdapter, SystemClock,
+        finish_without_worker, forward_cancellation, open_directory,
+        retain_canonical_directory_with,
     };
     use crate::background_process::{BackgroundProcessHelper, run_background_process_helper};
     use crate::{
@@ -1249,7 +1286,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-    use std::sync::{Arc, Mutex, mpsc};
+    use std::sync::{Arc, Mutex, Weak, mpsc};
     use std::task::{Context, Poll, Wake, Waker};
     use std::thread;
     use std::time::{Duration, Instant};
@@ -1261,6 +1298,35 @@ mod tests {
     impl Wake for WakeFlag {
         fn wake(self: Arc<Self>) {
             self.0.store(true, Ordering::Release);
+        }
+    }
+
+    struct ReentrantDropWake {
+        result: Weak<Mutex<BlockingResult<u8>>>,
+        worker_can_finish: Arc<AtomicBool>,
+        entered: mpsc::SyncSender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+    }
+
+    impl Wake for ReentrantDropWake {
+        fn wake(self: Arc<Self>) {}
+    }
+
+    impl Drop for ReentrantDropWake {
+        fn drop(&mut self) {
+            self.worker_can_finish.store(true, Ordering::Release);
+            let Some(result) = self.result.upgrade() else {
+                return;
+            };
+            let _result = result
+                .try_lock()
+                .expect("superseded waker must be dropped after unlocking its result");
+            self.entered.send(()).expect("report hostile drop");
+            self.release
+                .lock()
+                .expect("lock hostile release")
+                .recv_timeout(Duration::from_secs(1))
+                .expect("release hostile drop");
         }
     }
 
@@ -1542,6 +1608,121 @@ mod tests {
         finished_receiver
             .recv_timeout(Duration::from_secs(1))
             .expect("worker retained cleanup ownership");
+    }
+
+    #[test]
+    fn superseded_waker_drop_is_reentrant_without_blocking_publication_or_reuse() {
+        let executor = BlockingExecutor::new(1).expect("blocking executor");
+        let worker_can_finish = Arc::new(AtomicBool::new(false));
+        let worker_gate = Arc::clone(&worker_can_finish);
+        let task = executor.run(
+            move || {
+                while !worker_gate.load(Ordering::Acquire) {
+                    thread::yield_now();
+                }
+                7_u8
+            },
+            0,
+        );
+        let result = Arc::downgrade(&task.result);
+        let mut task = Box::pin(task);
+        let (entered, entered_receiver) = mpsc::sync_channel(1);
+        let (release, release_receiver) = mpsc::sync_channel(1);
+        let hostile = Arc::new(ReentrantDropWake {
+            result,
+            worker_can_finish,
+            entered,
+            release: Mutex::new(release_receiver),
+        });
+        let hostile_waker = Waker::from(hostile);
+
+        assert!(matches!(
+            task.as_mut().poll(&mut Context::from_waker(&hostile_waker)),
+            Poll::Pending
+        ));
+        drop(hostile_waker);
+
+        let replacement = Arc::new(WakeFlag(AtomicBool::new(false)));
+        let poll_wake = Arc::clone(&replacement);
+        let poller = thread::spawn(move || {
+            let waker = Waker::from(Arc::clone(&poll_wake));
+            let poll = task.as_mut().poll(&mut Context::from_waker(&waker));
+            (task, poll_wake, poll)
+        });
+        entered_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("hostile waker drop entered after unlocking");
+        release.send(()).expect("release hostile waker drop");
+        let (mut task, replacement, poll) = poller.join().expect("replacement poll");
+        assert!(matches!(poll, Poll::Pending));
+        wait_for_wake(&replacement);
+        assert!(matches!(
+            task.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(7)
+        ));
+
+        assert_eq!(futures_executor::block_on(executor.run(|| 9_u8, 0)), 9);
+        executor.shutdown();
+    }
+
+    #[test]
+    fn dropping_one_submitted_start_does_not_cancel_a_shared_caller_token() {
+        let fixture = Fixture::new();
+        let supervisor = fixture.supervisor(2);
+        let request = BackgroundStartRequest::new(":", &fixture.workspace).expect("request");
+        let shared = CancellationToken::new();
+        let mut dropped = supervisor.start(request.clone(), shared.clone());
+        let mut sibling = supervisor.start(request, shared.clone());
+
+        assert!(matches!(
+            dropped
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        assert!(matches!(
+            sibling
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        drop(dropped);
+
+        assert!(!shared.is_cancelled());
+        let sibling = futures_executor::block_on(sibling).expect("sibling start completes");
+        assert!(!shared.is_cancelled());
+        fixture.await_terminal(sibling.id());
+    }
+
+    #[test]
+    fn caller_cancellation_is_forwarded_to_the_private_start_token() {
+        let caller = CancellationToken::new();
+        let operation_cancellation = CancellationToken::new();
+        let observed = operation_cancellation.clone();
+        let mut forwarded = Box::pin(forward_cancellation(
+            async move {
+                observed.cancelled().await;
+                observed.is_cancelled()
+            },
+            caller.clone(),
+            operation_cancellation.clone(),
+        ));
+
+        assert!(matches!(
+            forwarded
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        assert!(!operation_cancellation.is_cancelled());
+        caller.cancel();
+        assert!(matches!(
+            forwarded
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(true)
+        ));
+        assert!(operation_cancellation.is_cancelled());
     }
 
     #[test]
