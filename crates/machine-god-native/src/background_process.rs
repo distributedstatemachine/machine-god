@@ -40,7 +40,7 @@ use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::sync::Arc;
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::task::{Context, Poll, Wake, Waker};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -79,6 +79,8 @@ const GROUP_SNAPSHOT_MAX_INTERVAL: Duration = Duration::from_millis(100);
 const GROUP_SNAPSHOT_TIMEOUT: Duration = Duration::from_millis(250);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_GROUP_SNAPSHOT_BYTES: usize = 64 * 1024;
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static OBSERVED_LEADER: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 static LEADER_OBSERVATIONS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(target_os = "linux")]
@@ -938,7 +940,9 @@ fn observe_leader(
     leader: rustix::process::Pid,
 ) -> Result<Option<BackgroundProcessExit>, BackgroundProcessError> {
     #[cfg(test)]
-    LEADER_OBSERVATIONS.fetch_add(1, Ordering::Relaxed);
+    if OBSERVED_LEADER.load(Ordering::Relaxed) == leader.as_raw_nonzero().get().cast_unsigned() {
+        LEADER_OBSERVATIONS.fetch_add(1, Ordering::Relaxed);
+    }
     let status = rustix::process::waitid(
         rustix::process::WaitId::Pid(leader),
         rustix::process::WaitIdOptions::EXITED
@@ -1161,7 +1165,8 @@ pub(crate) fn permission_denied_group_signal_is_failure_for_test() -> bool {
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
-pub(crate) fn reset_leader_observations_for_test() {
+pub(crate) fn reset_leader_observations_for_test(leader: NonZeroU32) {
+    OBSERVED_LEADER.store(leader.get(), Ordering::Relaxed);
     LEADER_OBSERVATIONS.store(0, Ordering::Relaxed);
 }
 

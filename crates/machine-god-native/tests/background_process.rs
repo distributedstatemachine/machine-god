@@ -217,7 +217,7 @@ fn idle_wait_observation_uses_bounded_backoff_and_stays_shutdown_responsive() {
         .unwrap()
         .release()
         .unwrap();
-    reset_leader_observations_for_test();
+    reset_leader_observations_for_test(owned.pid());
     assert_eq!(owned.wait().unwrap(), BackgroundProcessExit::Exited(0));
     let observations = leader_observations_for_test();
     assert!(
