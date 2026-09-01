@@ -829,13 +829,26 @@ impl BackgroundProcessSpawner for NativeSpawner {
                 .adapter
                 .prepare_cancellable(process_request, &cancellation)
                 .map_err(|_| start_error(BackgroundStartErrorKind::Process))?;
-            if cancellation.is_cancelled() {
-                drop(process);
-                return Err(start_error(BackgroundStartErrorKind::Cancelled));
-            }
+            let process = finish_prepared_after_readiness(
+                process,
+                &cancellation,
+                PreparedBackgroundProcess::abort_and_reap,
+            )?;
             Ok(Box::new(NativePrepared(Some(process))) as Box<dyn CorePreparedProcess>)
         })
     }
+}
+
+fn finish_prepared_after_readiness<T, E>(
+    prepared: T,
+    cancellation: &CancellationToken,
+    abort_and_reap: impl FnOnce(T) -> Result<(), E>,
+) -> Result<T, BackgroundStartError> {
+    if !cancellation.is_cancelled() {
+        return Ok(prepared);
+    }
+    abort_and_reap(prepared).map_err(|_| start_error(BackgroundStartErrorKind::Process))?;
+    Err(start_error(BackgroundStartErrorKind::Cancelled))
 }
 
 impl NativeSpawner {
@@ -1303,8 +1316,8 @@ mod tests {
     use super::{
         BlockingExecutor, BlockingResult, BlockingTaskFailure, NativeBackgroundLimits,
         NativeBackgroundSupervisor, NativeSpawner, NativeStore, RetainedJob,
-        SystemBackgroundProcessAdapter, SystemClock, finish_without_worker, open_directory,
-        retain_canonical_directory_with,
+        SystemBackgroundProcessAdapter, SystemClock, finish_prepared_after_readiness,
+        finish_without_worker, open_directory, retain_canonical_directory_with,
     };
     use crate::background_process::{BackgroundProcessHelper, run_background_process_helper};
     use crate::{
@@ -1528,6 +1541,34 @@ mod tests {
         if std::env::var_os("MACHINE_GOD_BACKGROUND_HELPER_MODE").is_some() {
             run_background_process_helper().expect("helper exec");
         }
+    }
+
+    #[test]
+    fn post_readiness_cancellation_reports_cancelled_only_after_proven_cleanup() {
+        let cancellation = CancellationToken::new();
+        assert!(cancellation.cancel());
+        let mut aborted = false;
+
+        let error = finish_prepared_after_readiness(7_u8, &cancellation, |prepared| {
+            assert_eq!(prepared, 7);
+            aborted = true;
+            Ok::<(), ()>(())
+        })
+        .expect_err("post-readiness cancellation must abort the prepared process");
+
+        assert!(aborted);
+        assert_eq!(error.kind(), BackgroundStartErrorKind::Cancelled);
+    }
+
+    #[test]
+    fn post_readiness_cleanup_failure_outranks_cancellation() {
+        let cancellation = CancellationToken::new();
+        assert!(cancellation.cancel());
+
+        let error = finish_prepared_after_readiness(7_u8, &cancellation, |_| Err::<(), ()>(()))
+            .expect_err("failed cleanup must reject the start as a process failure");
+
+        assert_eq!(error.kind(), BackgroundStartErrorKind::Process);
     }
 
     #[test]
