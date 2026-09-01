@@ -81,6 +81,12 @@ const GROUP_SNAPSHOT_MAX_INTERVAL: Duration = Duration::from_millis(100);
 const GROUP_SNAPSHOT_TIMEOUT: Duration = Duration::from_millis(250);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_GROUP_SNAPSHOT_BYTES: usize = 64 * 1024;
+#[cfg(target_os = "linux")]
+const MAX_LINUX_PROC_ENTRIES: usize = 128 * 1024;
+#[cfg(target_os = "linux")]
+const MAX_LINUX_PROC_STAT_BYTES: usize = 4 * 1024;
+#[cfg(target_os = "linux")]
+const MAX_LINUX_PROC_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 static OBSERVED_LEADER: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
@@ -1364,7 +1370,7 @@ fn require_original_group_quiescent(
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 fn group_members(
     group: rustix::process::Pid,
 ) -> Result<Vec<rustix::process::Pid>, BackgroundProcessError> {
@@ -1379,9 +1385,6 @@ fn group_members(
         return Err(cleanup_error());
     }
     let mut command = Command::new("/bin/ps");
-    #[cfg(target_os = "linux")]
-    command.args(["--no-headers", "-o", "pid", "--pgroup"]);
-    #[cfg(target_os = "macos")]
     command.args(["-o", "pid=", "-g"]);
     command
         .arg(group.as_raw_nonzero().get().to_string())
@@ -1435,6 +1438,148 @@ fn group_members(
         return Err(cleanup_error());
     }
     parse_group_members(&bytes)
+}
+
+#[cfg(target_os = "linux")]
+fn group_members(
+    group: rustix::process::Pid,
+) -> Result<Vec<rustix::process::Pid>, BackgroundProcessError> {
+    use std::io::Read;
+
+    #[cfg(test)]
+    if consume_injected_failure(
+        &GROUP_SNAPSHOT_SPAWN_FAILURE_GROUP,
+        &GROUP_SNAPSHOT_SPAWN_FAILURES,
+        group.as_raw_nonzero().get().cast_unsigned(),
+    ) {
+        return Err(cleanup_error());
+    }
+
+    let entries = std::fs::read_dir("/proc").map_err(|_| cleanup_error())?;
+    let mut inspected_entries = 0_usize;
+    let mut inspected_bytes = 0_usize;
+    let mut members = Vec::new();
+    for entry in entries {
+        inspected_entries = inspected_entries
+            .checked_add(1)
+            .filter(|count| *count <= MAX_LINUX_PROC_ENTRIES)
+            .ok_or_else(cleanup_error)?;
+        let entry = entry.map_err(|_| cleanup_error())?;
+        let Some(pid) = parse_linux_proc_directory_pid(entry.file_name().as_bytes())? else {
+            continue;
+        };
+        if !entry.file_type().map_err(|_| cleanup_error())?.is_dir() {
+            return Err(cleanup_error());
+        }
+        let mut stat = match std::fs::File::open(entry.path().join("stat")) {
+            Ok(stat) => stat,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return Err(cleanup_error()),
+        };
+        let mut bytes = Vec::with_capacity(MAX_LINUX_PROC_STAT_BYTES + 1);
+        stat.by_ref()
+            .take((MAX_LINUX_PROC_STAT_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|_| cleanup_error())?;
+        if bytes.len() > MAX_LINUX_PROC_STAT_BYTES {
+            return Err(cleanup_error());
+        }
+        inspected_bytes = inspected_bytes
+            .checked_add(bytes.len())
+            .filter(|bytes| *bytes <= MAX_LINUX_PROC_SNAPSHOT_BYTES)
+            .ok_or_else(cleanup_error)?;
+        if parse_linux_proc_stat(&bytes, pid)? == Some(group) {
+            if members.len() == MAX_GROUP_SNAPSHOT_BYTES / 2 {
+                return Err(cleanup_error());
+            }
+            members.push(pid);
+        }
+    }
+
+    #[cfg(test)]
+    if consume_injected_failure(
+        &GROUP_SNAPSHOT_FAILURE_GROUP,
+        &GROUP_SNAPSHOT_FAILURES,
+        group.as_raw_nonzero().get().cast_unsigned(),
+    ) {
+        return Err(cleanup_error());
+    }
+    Ok(members)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_proc_directory_pid(
+    name: &[u8],
+) -> Result<Option<rustix::process::Pid>, BackgroundProcessError> {
+    if !name.first().is_some_and(u8::is_ascii_digit) {
+        return Ok(None);
+    }
+    parse_linux_positive_i32(name)
+        .and_then(rustix::process::Pid::from_raw)
+        .map(Some)
+        .ok_or_else(cleanup_error)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_proc_stat(
+    bytes: &[u8],
+    expected_pid: rustix::process::Pid,
+) -> Result<Option<rustix::process::Pid>, BackgroundProcessError> {
+    if bytes.is_empty() || bytes.len() > MAX_LINUX_PROC_STAT_BYTES {
+        return Err(cleanup_error());
+    }
+    let open = bytes
+        .iter()
+        .position(|byte| *byte == b'(')
+        .ok_or_else(cleanup_error)?;
+    let close = bytes
+        .iter()
+        .rposition(|byte| *byte == b')')
+        .filter(|close| *close > open)
+        .ok_or_else(cleanup_error)?;
+    let pid = bytes[..open]
+        .strip_suffix(b" ")
+        .and_then(parse_linux_positive_i32)
+        .and_then(rustix::process::Pid::from_raw)
+        .ok_or_else(cleanup_error)?;
+    if pid != expected_pid
+        || !bytes[close + 1..]
+            .first()
+            .is_some_and(u8::is_ascii_whitespace)
+    {
+        return Err(cleanup_error());
+    }
+    let mut fields = bytes[close + 1..]
+        .split(u8::is_ascii_whitespace)
+        .filter(|field| !field.is_empty());
+    let state = fields.next().ok_or_else(cleanup_error)?;
+    if state.len() != 1 {
+        return Err(cleanup_error());
+    }
+    parse_linux_nonnegative_i32(fields.next().ok_or_else(cleanup_error)?)
+        .ok_or_else(cleanup_error)?;
+    fields
+        .next()
+        .and_then(parse_linux_nonnegative_i32)
+        .map(rustix::process::Pid::from_raw)
+        .ok_or_else(cleanup_error)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_positive_i32(bytes: &[u8]) -> Option<i32> {
+    let value = parse_linux_nonnegative_i32(bytes)?;
+    (value > 0).then_some(value)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_nonnegative_i32(bytes: &[u8]) -> Option<i32> {
+    if bytes.is_empty() {
+        return None;
+    }
+    bytes.iter().try_fold(0_i32, |value, byte| {
+        let digit = byte.checked_sub(b'0').filter(|digit| *digit < 10)?;
+        value.checked_mul(10)?.checked_add(i32::from(digit))
+    })
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1666,4 +1811,59 @@ fn cleanup_error() -> BackgroundProcessError {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn invariant_error() -> BackgroundProcessError {
     BackgroundProcessError::new(BackgroundProcessErrorKind::Invariant)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_proc_tests {
+    use super::*;
+
+    fn pid(raw: i32) -> rustix::process::Pid {
+        rustix::process::Pid::from_raw(raw).expect("positive test pid")
+    }
+
+    #[test]
+    fn proc_stat_uses_the_final_parenthesis_after_a_hostile_comm() {
+        let stat = b"321 (worker ) name (with parentheses)) S 12 77 77 0 -1";
+
+        assert_eq!(
+            parse_linux_proc_stat(stat, pid(321)).unwrap(),
+            Some(pid(77))
+        );
+    }
+
+    #[test]
+    fn proc_stat_rejects_pid_mismatch_and_ambiguous_fields() {
+        assert!(parse_linux_proc_stat(b"322 (worker) S 12 77 77", pid(321)).is_err());
+        assert!(parse_linux_proc_stat(b"321 (worker) S 12", pid(321)).is_err());
+        assert!(parse_linux_proc_stat(b"321 (worker) S 1x 77", pid(321)).is_err());
+        assert!(parse_linux_proc_stat(b"321 (worker) S 12 +77", pid(321)).is_err());
+        assert!(parse_linux_proc_stat(b"321 (worker) SS 12 77", pid(321)).is_err());
+    }
+
+    #[test]
+    fn proc_stat_accepts_kernel_processes_without_a_process_group() {
+        assert_eq!(
+            parse_linux_proc_stat(b"2 (kthreadd) S 0 0 0", pid(2)).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn proc_stat_enforces_its_record_bound() {
+        let oversized = vec![b'x'; MAX_LINUX_PROC_STAT_BYTES + 1];
+
+        assert!(parse_linux_proc_stat(&oversized, pid(321)).is_err());
+    }
+
+    #[test]
+    fn proc_directory_pid_parser_ignores_kernel_names_and_rejects_numeric_ambiguity() {
+        assert_eq!(parse_linux_proc_directory_pid(b"self").unwrap(), None);
+        assert_eq!(
+            parse_linux_proc_directory_pid(b"321").unwrap(),
+            Some(pid(321))
+        );
+        assert!(parse_linux_proc_directory_pid(b"321x").is_err());
+        assert!(parse_linux_proc_directory_pid(b"0").is_err());
+        assert!(parse_linux_proc_directory_pid(b"999999999999999999999").is_err());
+    }
 }
