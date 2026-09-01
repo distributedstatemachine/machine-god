@@ -5,6 +5,8 @@
     reason = "lower-level process lifecycle primitives remain directly integration-tested"
 )]
 
+#[cfg(unix)]
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
@@ -115,6 +117,10 @@ static GROUP_SNAPSHOT_SPAWN_FAILURES: AtomicUsize = AtomicUsize::new(0);
 static OBSERVED_GROUP_SIGNAL: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 static GROUP_SIGNAL_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static OBSERVED_GROUP_SNAPSHOT: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static GROUP_SNAPSHOT_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_HELPER_PATH_BYTES: usize = 4 * 1024;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -391,7 +397,23 @@ impl SystemBackgroundProcessAdapter {
         &self,
         request: BackgroundProcessRequest,
     ) -> Result<PreparedBackgroundProcess, BackgroundProcessError> {
-        prepare_system(self, request)
+        self.prepare_cancellable(request, &CancellationToken::new())
+    }
+
+    /// Spawns a private-gated process-group leader while observing cooperative
+    /// cancellation through helper readiness and cleanup.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed spawn, invariant, or unsupported failure. Cancellation
+    /// is reported as a spawn failure at this native boundary after the helper
+    /// and its process group have been terminated and reaped.
+    pub fn prepare_cancellable(
+        &self,
+        request: BackgroundProcessRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<PreparedBackgroundProcess, BackgroundProcessError> {
+        prepare_system(self, request, cancellation)
     }
 }
 
@@ -681,7 +703,8 @@ fn validate_request(
         return Err(invalid_request());
     }
     let mut aggregate = 0_usize;
-    for (index, (key, value)) in environment.iter().enumerate() {
+    let mut keys = BTreeSet::new();
+    for (key, value) in environment {
         let key = key.as_os_str().as_bytes();
         let value = value.as_os_str().as_bytes();
         if key.is_empty()
@@ -690,9 +713,7 @@ fn validate_request(
             || key.contains(&b'=')
             || key.contains(&0)
             || value.contains(&0)
-            || environment[..index]
-                .iter()
-                .any(|(previous, _)| previous.as_os_str().as_bytes() == key)
+            || !keys.insert(key)
         {
             return Err(invalid_request());
         }
@@ -951,7 +972,11 @@ fn linux_proc_authority_overmount(mountpoint: &[u8]) -> bool {
 fn prepare_system(
     adapter: &SystemBackgroundProcessAdapter,
     request: BackgroundProcessRequest,
+    cancellation: &CancellationToken,
 ) -> Result<PreparedBackgroundProcess, BackgroundProcessError> {
+    if cancellation.is_cancelled() {
+        return Err(spawn_error());
+    }
     // Recheck immediately before the only effect so a closed or substituted
     // descriptor-backed path fails before spawning.
     validate_directory(request.directory.as_fd()).map_err(|_| spawn_error())?;
@@ -991,6 +1016,9 @@ fn prepare_system(
     #[cfg(target_os = "macos")]
     command.stdout(Stdio::from(directory));
     command.stderr(Stdio::piped());
+    if cancellation.is_cancelled() {
+        return Err(spawn_error());
+    }
     let mut child = command.spawn().map_err(|_| spawn_error())?;
     let pid = NonZeroU32::new(child.id()).ok_or_else(invariant_error)?;
     let group =
@@ -1008,8 +1036,8 @@ fn prepare_system(
         let _ = cleanup_child(&mut child, group, Duration::ZERO, &snapshot_authority);
         return Err(spawn_error());
     };
-    if await_helper_ready(ready).is_err() {
-        let _ = cleanup_child(&mut child, group, Duration::ZERO, &snapshot_authority);
+    if await_helper_ready(ready, cancellation).is_err() {
+        cleanup_child(&mut child, group, Duration::ZERO, &snapshot_authority)?;
         return Err(spawn_error());
     }
     // `spawn` has completed the descriptor-backed chdir in the child. Move
@@ -1031,23 +1059,39 @@ fn prepare_system(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn await_helper_ready(mut ready: ChildStderr) -> Result<(), BackgroundProcessError> {
+fn await_helper_ready(
+    mut ready: ChildStderr,
+    cancellation: &CancellationToken,
+) -> Result<(), BackgroundProcessError> {
     use std::io::Read;
 
     let flags = rustix::fs::fcntl_getfl(&ready).map_err(|_| spawn_error())?;
     rustix::fs::fcntl_setfl(&ready, flags | OFlags::NONBLOCK).map_err(|_| spawn_error())?;
     let deadline = Instant::now() + HELPER_READY_TIMEOUT;
+    let mut cancellation = CancellationParker::new(cancellation);
     let mut byte = [0_u8; 1];
     loop {
+        if cancellation.is_cancelled() {
+            return Err(spawn_error());
+        }
         match ready.read(&mut byte) {
-            Ok(1) if byte[0] == HELPER_READY_BYTE => return Ok(()),
+            Ok(1) if byte[0] == HELPER_READY_BYTE => {
+                return if cancellation.is_cancelled() {
+                    Err(spawn_error())
+                } else {
+                    Ok(())
+                };
+            }
             Ok(1 | 0) => return Err(spawn_error()),
             Ok(_) => unreachable!("one-byte ready buffer has bounded reads"),
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
             Err(error)
                 if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
             {
-                thread::sleep(OBSERVATION_INITIAL_INTERVAL);
+                cancellation.park_timeout(std::cmp::min(
+                    OBSERVATION_INITIAL_INTERVAL,
+                    deadline.saturating_duration_since(Instant::now()),
+                ));
             }
             Err(_) => return Err(spawn_error()),
         }
@@ -1058,6 +1102,7 @@ fn await_helper_ready(mut ready: ChildStderr) -> Result<(), BackgroundProcessErr
 fn prepare_system(
     _adapter: &SystemBackgroundProcessAdapter,
     request: BackgroundProcessRequest,
+    _cancellation: &CancellationToken,
 ) -> Result<PreparedBackgroundProcess, BackgroundProcessError> {
     drop(request);
     Err(BackgroundProcessError::new(
@@ -1576,34 +1621,68 @@ fn require_original_group_quiescent(
     group: rustix::process::Pid,
     authority: &GroupSnapshotAuthority,
 ) -> Result<(), BackgroundProcessError> {
+    // Capture the complete post-KILL membership once. The retained, unreaped
+    // leader keeps the original numeric group identity from being reused while
+    // descriptor-relative procfs (Linux) or `ps` (macOS) supplies the bounded
+    // capture. Subsequent waits inspect only those captured PIDs. One final
+    // global scan proves that no member raced into or escaped the capture.
     let deadline = Instant::now() + GROUP_DISAPPEARANCE_GRACE;
+    thread::sleep(GROUP_SNAPSHOT_INITIAL_INTERVAL);
+    let mut observed_failure = false;
+    let captured = if let Ok(captured) = group_members(authority, group) {
+        Some(captured)
+    } else {
+        observed_failure = true;
+        None
+    };
     let mut observation = ObservationBackoff::with_bounds(
         GROUP_SNAPSHOT_INITIAL_INTERVAL,
         GROUP_SNAPSHOT_MAX_INTERVAL,
     );
-    let mut observed_failure = false;
     loop {
         match observe_leader(group) {
             Err(LeaderObservationFailure::LostAuthority) => return Err(wait_error()),
             Err(LeaderObservationFailure::Operation(_)) => observed_failure = true,
             Ok(_) => {}
         }
-        match group_members(authority, group) {
-            Ok(members) if only_group_leader_remains(&members, group) => {
-                return if observed_failure {
-                    Err(cleanup_error())
-                } else {
-                    Ok(())
-                };
+        match captured
+            .as_deref()
+            .map(|captured| captured_group_members_are_gone(captured, group))
+        {
+            Some(Ok(true)) => break,
+            Some(Ok(false)) => {}
+            Some(Err(_)) | None => {
+                observed_failure = true;
+                sleep_through(deadline.saturating_duration_since(Instant::now()));
+                break;
             }
-            Ok(_) => {}
-            Err(_) => observed_failure = true,
         }
         if Instant::now() >= deadline {
-            return Err(cleanup_error());
+            break;
         }
         observation.sleep_and_advance();
     }
+    let members = group_members(authority, group)?;
+    if observed_failure || !only_group_leader_remains(&members, group) {
+        Err(cleanup_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn captured_group_members_are_gone(
+    captured: &[rustix::process::Pid],
+    leader: rustix::process::Pid,
+) -> Result<bool, BackgroundProcessError> {
+    for member in captured.iter().copied().filter(|member| *member != leader) {
+        match rustix::process::getpgid(Some(member)) {
+            Ok(group) if group == leader => return Ok(false),
+            Ok(_) | Err(rustix::io::Errno::SRCH) => {}
+            Err(_) => return Err(cleanup_error()),
+        }
+    }
+    Ok(true)
 }
 
 #[cfg(target_os = "macos")]
@@ -1612,6 +1691,9 @@ fn group_members(
     group: rustix::process::Pid,
 ) -> Result<Vec<rustix::process::Pid>, BackgroundProcessError> {
     use std::io::Read;
+
+    #[cfg(test)]
+    record_group_snapshot_for_test(group);
 
     #[cfg(test)]
     if consume_injected_failure(
@@ -1683,6 +1765,9 @@ fn group_members(
     group: rustix::process::Pid,
 ) -> Result<Vec<rustix::process::Pid>, BackgroundProcessError> {
     use std::io::Read;
+
+    #[cfg(test)]
+    record_group_snapshot_for_test(group);
 
     #[cfg(test)]
     if consume_injected_failure(
@@ -1902,6 +1987,26 @@ fn consume_injected_failure(target: &AtomicU32, remaining: &AtomicUsize, actual:
 fn inject_failures(target: &AtomicU32, remaining: &AtomicUsize, pid: NonZeroU32, count: usize) {
     target.store(pid.get(), Ordering::Release);
     remaining.store(count, Ordering::Release);
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+fn record_group_snapshot_for_test(group: rustix::process::Pid) {
+    if OBSERVED_GROUP_SNAPSHOT.load(Ordering::Acquire)
+        == group.as_raw_nonzero().get().cast_unsigned()
+    {
+        GROUP_SNAPSHOT_ATTEMPTS.fetch_add(1, Ordering::AcqRel);
+    }
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+fn reset_group_snapshots_for_test(group: NonZeroU32) {
+    OBSERVED_GROUP_SNAPSHOT.store(group.get(), Ordering::Release);
+    GROUP_SNAPSHOT_ATTEMPTS.store(0, Ordering::Release);
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+fn group_snapshots_for_test() -> usize {
+    GROUP_SNAPSHOT_ATTEMPTS.load(Ordering::Acquire)
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
@@ -2223,5 +2328,177 @@ mod linux_proc_tests {
 
         let oversized = vec![b'x'; MAX_LINUX_MOUNTINFO_BYTES + 1];
         assert!(parse_linux_proc_mount_authority(&oversized, 36).is_err());
+    }
+}
+
+#[cfg(test)]
+mod process_regression_tests {
+    use super::*;
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new(label: &str) -> Self {
+            let sequence = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "machine-god-background-process-unit-{}-{sequence}-{label}",
+                std::process::id()
+            ));
+            fs::create_dir(&path).expect("create isolated process test directory");
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn environment_duplicate_validation_handles_exact_shared_prefix_bound() {
+        let directory = TestDirectory::new("environment-prefix");
+        let prefix = "k".repeat(508);
+        let environment = (0..MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES)
+            .map(|index| {
+                (
+                    OsString::from(format!("{prefix}{index:03}")),
+                    OsString::new(),
+                )
+            })
+            .collect::<Vec<_>>();
+        BackgroundProcessRequest::open(
+            "true".to_owned(),
+            "workspace".to_owned(),
+            environment.clone(),
+            &directory.0,
+        )
+        .expect("the exact shared-prefix bound is valid");
+
+        let mut duplicate = environment;
+        duplicate[MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES - 1].0 = duplicate[0].0.clone();
+        let error = BackgroundProcessRequest::open(
+            "true".to_owned(),
+            "workspace".to_owned(),
+            duplicate,
+            &directory.0,
+        )
+        .expect_err("a duplicate at the exact bound is rejected");
+        assert_eq!(error.kind(), BackgroundProcessErrorKind::InvalidRequest);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn cancelled_helper_readiness_wakes_and_reaps_before_timeout() {
+        let directory = TestDirectory::new("cancel-readiness");
+        let helper_pid = directory.0.join("helper.pid");
+        let user_marker = directory.0.join("user-ran");
+        let helper = BackgroundProcessHelper::new(
+            PathBuf::from("/bin/sh"),
+            vec![
+                OsString::from("-c"),
+                OsString::from("printf '%s' \"$$\" > \"$1\"; exec sleep 30"),
+                OsString::from("machine-god-stalled-helper"),
+                helper_pid.as_os_str().to_owned(),
+            ],
+        )
+        .expect("bounded stalled helper");
+        let adapter = SystemBackgroundProcessAdapter::with_helper(helper);
+        let request = BackgroundProcessRequest::open(
+            "printf bad > user-ran".to_owned(),
+            "workspace".to_owned(),
+            Vec::new(),
+            &directory.0,
+        )
+        .expect("bounded process request");
+        let cancellation = CancellationToken::new();
+        let worker_cancellation = cancellation.clone();
+        let worker =
+            thread::spawn(move || adapter.prepare_cancellable(request, &worker_cancellation));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !helper_pid.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "helper did not reach stalled readiness"
+            );
+            thread::sleep(Duration::from_millis(2));
+        }
+        let pid = fs::read_to_string(&helper_pid)
+            .expect("read helper PID")
+            .parse::<i32>()
+            .expect("parse helper PID");
+
+        let started = Instant::now();
+        assert!(cancellation.cancel());
+        let error = worker
+            .join()
+            .expect("join cancelled helper preparation")
+            .expect_err("cancelled helper preparation fails");
+        assert_eq!(error.kind(), BackgroundProcessErrorKind::Spawn);
+        assert!(
+            started.elapsed() < Duration::from_millis(750),
+            "cancellation retained helper readiness capacity until its timeout"
+        );
+        let pid = rustix::process::Pid::from_raw(pid).expect("positive helper PID");
+        assert_eq!(
+            rustix::process::test_kill_process(pid),
+            Err(rustix::io::Errno::SRCH),
+            "cancelled helper survived cleanup"
+        );
+        assert!(!user_marker.exists(), "the gated user command ran");
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn lingering_group_cleanup_uses_constant_global_snapshots() {
+        let directory = TestDirectory::new("snapshot-count");
+        let marker = directory.0.join("descendant.pid");
+        let command = "trap '' TERM; /bin/sh -c 'trap \"\" TERM; printf \"%s\" \"$$\" > descendant.pid; while :; do :; done' & while [ ! -s descendant.pid ]; do :; done; exit 7";
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", command])
+            .current_dir(&directory.0)
+            .env_clear()
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .expect("spawn test process group");
+        let leader = NonZeroU32::new(child.id()).expect("positive process-group leader");
+        let group = rustix::process::Pid::from_raw(
+            i32::try_from(leader.get()).expect("test PID fits signed range"),
+        )
+        .expect("positive process group");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !marker.exists() {
+            assert!(Instant::now() < deadline, "descendant did not become ready");
+            thread::sleep(Duration::from_millis(2));
+        }
+        #[cfg(target_os = "linux")]
+        let authority = GroupSnapshotAuthority::open().expect("open group snapshot authority");
+        #[cfg(target_os = "macos")]
+        let authority = GroupSnapshotAuthority;
+        reset_group_snapshots_for_test(leader);
+
+        cleanup_child_with_expected(
+            &mut child,
+            group,
+            Duration::ZERO,
+            Some(BackgroundProcessExit::Exited(7)),
+            false,
+            &authority,
+        )
+        .expect("clean lingering original-group descendant");
+
+        assert_eq!(
+            group_snapshots_for_test(),
+            4,
+            "cleanup must use TERM, KILL, post-KILL, and final global proofs only"
+        );
     }
 }

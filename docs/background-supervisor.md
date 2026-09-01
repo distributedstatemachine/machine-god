@@ -32,6 +32,8 @@ by the parent. That frame is written only by release after the running record
 is durable. The helper independently revalidates every bound and applies the
 requested environment only to the final post-release `/bin/sh` exec. Frame
 bytes cannot be interpreted as readiness, arguments, or shell interpolation.
+Environment-key uniqueness is validated in one pass through a borrowed-key
+ordered set; the 512-entry bound does not trigger a quadratic prefix scan.
 
 The public start future is inert until first poll. Dropping it before first
 poll has no store, process, clock, allocation-ID, thread, or task effect.
@@ -43,7 +45,11 @@ workers, the supervisor owns one fixed-size blocking-operation worker set;
 offload admission fails promptly rather than queuing without a bound.
 Cancellation or drop retains cleanup ownership until the admitted blocking
 operation returns and the prepared or released process has been closed through
-the applicable lifecycle path.
+the applicable lifecycle path. Helper readiness observes the same private
+operation cancellation token through a registered thread wakeup. Cancellation
+therefore interrupts a stalled readiness wait promptly, closes the private
+gate, signals and reaps the helper group, and releases blocking capacity
+without waiting for the two-second readiness deadline.
 
 ## Persist-before-release protocol
 
@@ -194,11 +200,16 @@ post-admission topology change fails cleanup before the leader is reaped. The
 traversal remains bounded to 131,072 entries, 4 KiB per stat record, 32 MiB of
 aggregate stat bytes, and 32,768 retained members. It reuses one directory
 buffer and one stat-record buffer for the scan rather than allocating per PID,
-and does not depend on a GNU `ps` dialect. macOS retains its fixed `/bin/ps`
-adapter with a 64 KiB output bound and 250 ms timeout. Permission denial is
-never disappearance evidence; a surviving credential-changed member therefore
-produces a fixed cleanup failure. The numeric group identity is not consulted
-after it becomes reusable.
+and does not depend on a GNU `ps` dialect. Lingering cleanup performs a
+constant number of global process-table scans: the TERM and KILL observations,
+one complete post-KILL capture, and one final completeness proof. Between the
+last two scans it checks only the captured PIDs against the original group,
+whose identity remains reserved by the unreaped leader. A raced or previously
+uncaptured survivor makes the final proof fail closed. macOS retains its fixed
+`/bin/ps` adapter with a 64 KiB output bound and 250 ms timeout. Permission
+denial is never disappearance evidence; a surviving credential-changed member
+therefore produces a fixed cleanup failure. The numeric group identity is not
+consulted after it becomes reusable.
 
 This process-local adapter requires exclusive child-reaping authority for the
 entire prepared/owned-handle lifetime: the host must leave `SIGCHLD` waitable
