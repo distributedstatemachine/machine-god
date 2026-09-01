@@ -6,7 +6,7 @@
 )]
 
 #[cfg(unix)]
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
@@ -43,10 +43,12 @@ use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::ChildStderr;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use std::sync::Arc;
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::AtomicU32;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::task::{Context, Poll, Wake, Waker};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -85,6 +87,8 @@ const GROUP_SNAPSHOT_MAX_INTERVAL: Duration = Duration::from_millis(100);
 const GROUP_SNAPSHOT_TIMEOUT: Duration = Duration::from_millis(250);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_GROUP_SNAPSHOT_BYTES: usize = 64 * 1024;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const MAX_CAPTURED_GROUP_MEMBERS: usize = 32 * 1024;
 #[cfg(target_os = "linux")]
 const MAX_LINUX_PROC_ENTRIES: usize = 128 * 1024;
 #[cfg(target_os = "linux")]
@@ -118,9 +122,15 @@ static OBSERVED_GROUP_SIGNAL: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 static GROUP_SIGNAL_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static GROUP_SIGNAL_EPERM_GROUP: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static GROUP_SIGNAL_EPERM_REMAINING: AtomicUsize = AtomicUsize::new(0);
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 static OBSERVED_GROUP_SNAPSHOT: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 static GROUP_SNAPSHOT_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static CANCEL_RELEASE_BEFORE_COMMIT_PID: AtomicU32 = AtomicU32::new(0);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_HELPER_PATH_BYTES: usize = 4 * 1024;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -137,6 +147,12 @@ const CHILD_REAP_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 const RELEASE_FRAME_TIMEOUT: Duration = Duration::from_millis(500);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const RELEASE_FRAME_MAGIC: &[u8; 8] = b"MGBG\0\0\0\x01";
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const RELEASE_COMMIT_BYTE: u8 = 0x6d;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const MAX_CHILD_REAP_AUTHORITIES: usize = 64;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+static ACTIVE_CHILD_REAP_AUTHORITIES: AtomicUsize = AtomicUsize::new(0);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const SAFE_BOOTSTRAP_LANGUAGE: &str = "C";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -156,6 +172,8 @@ pub enum BackgroundProcessErrorKind {
     Spawn,
     /// The private start gate could not be released.
     Release,
+    /// Release was cancelled before its explicit commit and cleanup succeeded.
+    Cancelled,
     /// Process observation or reaping failed.
     Wait,
     /// Process-group cleanup could not be proven complete.
@@ -198,6 +216,107 @@ impl fmt::Display for BackgroundProcessError {
 }
 
 impl Error for BackgroundProcessError {}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct ChildReapPermit {
+    reaper: Arc<ChildReaper>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Drop for ChildReapPermit {
+    fn drop(&mut self) {
+        ACTIVE_CHILD_REAP_AUTHORITIES.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct QuarantinedChild {
+    child: Child,
+    _permit: ChildReapPermit,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct ChildReaper {
+    children: Mutex<Vec<QuarantinedChild>>,
+    wake: Condvar,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+static CHILD_REAPER: OnceLock<Result<Arc<ChildReaper>, ()>> = OnceLock::new();
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn child_reaper() -> Result<&'static Arc<ChildReaper>, BackgroundProcessError> {
+    CHILD_REAPER
+        .get_or_init(|| {
+            let reaper = Arc::new(ChildReaper {
+                children: Mutex::new(Vec::with_capacity(MAX_CHILD_REAP_AUTHORITIES)),
+                wake: Condvar::new(),
+            });
+            let worker_reaper = Arc::clone(&reaper);
+            thread::Builder::new()
+                .name("machine-god-bg-child-reaper".to_owned())
+                .spawn(move || run_child_reaper(&worker_reaper))
+                .map(|_| reaper)
+                .map_err(|_| ())
+        })
+        .as_ref()
+        .map_err(|()| spawn_error())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn run_child_reaper(reaper: &ChildReaper) {
+    loop {
+        let mut children = reaper
+            .children
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while children.is_empty() {
+            children = reaper
+                .wake
+                .wait(children)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        let mut index = 0;
+        while index < children.len() {
+            match children[index].child.try_wait() {
+                Ok(Some(_)) => {
+                    children.swap_remove(index);
+                }
+                Ok(None) | Err(_) => index += 1,
+            }
+        }
+        let _ = reaper
+            .wake
+            .wait_timeout(children, OBSERVATION_MAX_INTERVAL)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn reserve_child_reap_authority() -> Result<ChildReapPermit, BackgroundProcessError> {
+    let reaper = Arc::clone(child_reaper()?);
+    ACTIVE_CHILD_REAP_AUTHORITIES
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
+            (active < MAX_CHILD_REAP_AUTHORITIES).then_some(active + 1)
+        })
+        .map_err(|_| spawn_error())?;
+    Ok(ChildReapPermit { reaper })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn quarantine_child(child: Child, permit: ChildReapPermit) {
+    let reaper = Arc::clone(&permit.reaper);
+    let mut children = reaper
+        .children
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    debug_assert!(children.len() < MAX_CHILD_REAP_AUTHORITIES);
+    children.push(QuarantinedChild {
+        child,
+        _permit: permit,
+    });
+    reaper.wake.notify_one();
+}
 
 /// Exact, bounded request for one prepared background command.
 pub struct BackgroundProcessRequest {
@@ -428,8 +547,9 @@ impl SystemBackgroundProcessAdapter {
 /// On macOS the parent maps a clone of the retained directory descriptor to
 /// stdout. Linux starts the helper in the retained directory. On both systems,
 /// the requested command and environment remain inert bytes in a bounded stdin
-/// frame until release. An EOF before a complete frame aborts without executing
-/// a user command.
+/// frame until release. The complete payload is inert until a distinct final
+/// commit byte arrives; EOF at any earlier point aborts without executing a
+/// user command.
 ///
 /// # Errors
 ///
@@ -439,7 +559,7 @@ impl SystemBackgroundProcessAdapter {
 pub fn run_background_process_helper() -> Result<(), BackgroundProcessError> {
     #[cfg(target_os = "macos")]
     use std::io::stdout;
-    use std::io::{Read, Write, stderr, stdin};
+    use std::io::{Write, stderr, stdin};
 
     #[cfg(target_os = "macos")]
     let stdout = stdout();
@@ -456,8 +576,9 @@ pub fn run_background_process_helper() -> Result<(), BackgroundProcessError> {
 
     let mut input = stdin().lock();
     let (command, environment) = read_release_frame(&mut input)?;
-    let mut trailing = [0_u8; 1];
-    if input.read(&mut trailing).map_err(|_| invalid_request())? != 0 {
+    let mut commit = [0_u8; 1];
+    read_release_bytes(&mut input, &mut commit)?;
+    if commit[0] != RELEASE_COMMIT_BYTE {
         return Err(invalid_request());
     }
     #[cfg(target_os = "macos")]
@@ -570,6 +691,8 @@ pub struct PreparedBackgroundProcess {
     group: rustix::process::Pid,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     snapshot_authority: Option<GroupSnapshotAuthority>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    reap_permit: Option<ChildReapPermit>,
     pid: NonZeroU32,
 }
 
@@ -642,6 +765,8 @@ pub struct OwnedBackgroundProcess {
     group: rustix::process::Pid,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     snapshot_authority: Option<GroupSnapshotAuthority>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    reap_permit: Option<ChildReapPermit>,
     pid: NonZeroU32,
 }
 
@@ -802,15 +927,20 @@ fn require_exclusive_child_reaping_with(
     mut probe: Command,
     cancellation: &CancellationToken,
 ) -> Result<(), BackgroundProcessError> {
-    let mut child = probe.spawn().map_err(|_| spawn_error())?;
+    let mut permit = Some(reserve_child_reap_authority()?);
+    let mut child = Some(probe.spawn().map_err(|_| spawn_error())?);
     let deadline = Instant::now() + CHILD_REAP_PROBE_TIMEOUT;
     let mut cancellation = CancellationParker::new(cancellation);
     loop {
         if cancellation.is_cancelled() {
             break;
         }
-        match child.try_wait() {
-            Ok(Some(status)) if status.success() => return Ok(()),
+        match child.as_mut().ok_or_else(invariant_error)?.try_wait() {
+            Ok(Some(status)) if status.success() => {
+                drop(child.take());
+                drop(permit.take());
+                return Ok(());
+            }
             Ok(None) if Instant::now() < deadline => cancellation.park_timeout(std::cmp::min(
                 OBSERVATION_INITIAL_INTERVAL,
                 deadline.saturating_duration_since(Instant::now()),
@@ -818,8 +948,7 @@ fn require_exclusive_child_reaping_with(
             Ok(Some(_) | None) | Err(_) => break,
         }
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    terminate_and_reap_or_quarantine(&mut child, &mut permit);
     Err(spawn_error())
 }
 
@@ -1034,14 +1163,7 @@ fn prepare_system(
     let snapshot_authority = GroupSnapshotAuthority;
     require_exclusive_child_reaping(cancellation)?;
     #[cfg(target_os = "linux")]
-    let retained_cwd = {
-        let descriptor_path =
-            validated_descriptor_path(request.directory.as_fd()).map_err(|_| spawn_error())?;
-        if descriptor_path != request.descriptor_path {
-            return Err(spawn_error());
-        }
-        descriptor_path
-    };
+    let retained_cwd = retained_linux_cwd(&request)?;
     #[cfg(target_os = "macos")]
     let directory = rustix::io::dup(request.directory.as_fd()).map_err(|_| spawn_error())?;
 
@@ -1063,25 +1185,51 @@ fn prepare_system(
     if cancellation.is_cancelled() {
         return Err(spawn_error());
     }
-    let mut child = command.spawn().map_err(|_| spawn_error())?;
-    let pid = NonZeroU32::new(child.id()).ok_or_else(invariant_error)?;
+    let mut reap_permit = Some(reserve_child_reap_authority()?);
+    let mut child = Some(command.spawn().map_err(|_| spawn_error())?);
+    let pid = NonZeroU32::new(child.as_ref().ok_or_else(invariant_error)?.id())
+        .ok_or_else(invariant_error)?;
     let group =
         rustix::process::Pid::from_raw(i32::try_from(pid.get()).map_err(|_| invariant_error())?)
             .ok_or_else(invariant_error)?;
     if rustix::process::getpgid(Some(group)) != Ok(group) {
-        let _ = cleanup_child(&mut child, group, Duration::ZERO, &snapshot_authority);
+        let _ = cleanup_child(
+            &mut child,
+            &mut reap_permit,
+            group,
+            Duration::ZERO,
+            &snapshot_authority,
+        );
         return Err(invariant_error());
     }
-    let Some(gate) = child.stdin.take() else {
-        let _ = cleanup_child(&mut child, group, Duration::ZERO, &snapshot_authority);
+    let Some(gate) = child.as_mut().and_then(|child| child.stdin.take()) else {
+        let _ = cleanup_child(
+            &mut child,
+            &mut reap_permit,
+            group,
+            Duration::ZERO,
+            &snapshot_authority,
+        );
         return Err(spawn_error());
     };
-    let Some(ready) = child.stderr.take() else {
-        let _ = cleanup_child(&mut child, group, Duration::ZERO, &snapshot_authority);
+    let Some(ready) = child.as_mut().and_then(|child| child.stderr.take()) else {
+        let _ = cleanup_child(
+            &mut child,
+            &mut reap_permit,
+            group,
+            Duration::ZERO,
+            &snapshot_authority,
+        );
         return Err(spawn_error());
     };
     if await_helper_ready(ready, cancellation).is_err() {
-        cleanup_child(&mut child, group, Duration::ZERO, &snapshot_authority)?;
+        cleanup_child(
+            &mut child,
+            &mut reap_permit,
+            group,
+            Duration::ZERO,
+            &snapshot_authority,
+        )?;
         return Err(spawn_error());
     }
     // `spawn` has completed the descriptor-backed chdir in the child. Move
@@ -1092,14 +1240,27 @@ fn prepare_system(
         ..
     } = request;
     Ok(PreparedBackgroundProcess {
-        child: Some(child),
+        child,
         gate: Some(gate),
         command: Some(command),
         environment: Some(environment),
         group,
         snapshot_authority: Some(snapshot_authority),
+        reap_permit,
         pid,
     })
+}
+
+#[cfg(target_os = "linux")]
+fn retained_linux_cwd(
+    request: &BackgroundProcessRequest,
+) -> Result<PathBuf, BackgroundProcessError> {
+    let descriptor_path =
+        validated_descriptor_path(request.directory.as_fd()).map_err(|_| spawn_error())?;
+    if descriptor_path != request.descriptor_path {
+        return Err(spawn_error());
+    }
+    Ok(descriptor_path)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1168,26 +1329,40 @@ fn release_prepared(
         .ok_or_else(invariant_error)
         .and_then(|command| {
             let environment = prepared.environment.take().ok_or_else(invariant_error)?;
-            write_release_frame_bounded(&mut gate, &command, &environment, cancellation)
-                .map_err(|_| BackgroundProcessError::new(BackgroundProcessErrorKind::Release))
+            write_release_frame_bounded(
+                &mut gate,
+                &command,
+                &environment,
+                cancellation,
+                prepared.pid,
+            )
+            .map_err(ReleaseWriteFailure::into_process_error)
         });
-    if release.is_err() {
+    if let Err(release_error) = release {
         drop(gate);
-        let cleanup = abort_prepared(prepared);
-        return cleanup.and(Err(BackgroundProcessError::new(
-            BackgroundProcessErrorKind::Release,
-        )));
+        return match abort_prepared(prepared) {
+            Ok(()) => Err(release_error),
+            Err(cleanup_error) => Err(cleanup_error),
+        };
     }
     drop(gate);
+    if prepared.child.is_none()
+        || prepared.snapshot_authority.is_none()
+        || prepared.reap_permit.is_none()
+    {
+        return Err(invariant_error());
+    }
     let child = prepared.child.take().ok_or_else(invariant_error)?;
     let snapshot_authority = prepared
         .snapshot_authority
         .take()
         .ok_or_else(invariant_error)?;
+    let reap_permit = prepared.reap_permit.take().ok_or_else(invariant_error)?;
     Ok(OwnedBackgroundProcess {
         child: Some(child),
         group: prepared.group,
         snapshot_authority: Some(snapshot_authority),
+        reap_permit: Some(reap_permit),
         pid: prepared.pid,
     })
 }
@@ -1219,20 +1394,62 @@ fn write_release_frame_bounded(
     command: &str,
     environment: &[(OsString, OsString)],
     cancellation: &CancellationToken,
-) -> std::io::Result<()> {
-    let flags = rustix::fs::fcntl_getfl(&*output)?;
-    rustix::fs::fcntl_setfl(&*output, flags | OFlags::NONBLOCK)?;
+    pid: NonZeroU32,
+) -> Result<(), ReleaseWriteFailure> {
+    #[cfg(not(test))]
+    let _ = pid;
+    let flags = rustix::fs::fcntl_getfl(&*output).map_err(|_| ReleaseWriteFailure::Release)?;
+    rustix::fs::fcntl_setfl(&*output, flags | OFlags::NONBLOCK)
+        .map_err(|_| ReleaseWriteFailure::Release)?;
     let mut output = BoundedGateWriter {
         output,
         cancellation_token: cancellation.clone(),
         cancellation: CancellationParker::new(cancellation),
         deadline: Instant::now() + RELEASE_FRAME_TIMEOUT,
     };
-    write_release_frame(&mut output, command, environment)?;
-    if output.cancellation_token.is_cancelled() || Instant::now() >= output.deadline {
-        return Err(std::io::ErrorKind::TimedOut.into());
+    if write_release_frame(&mut output, command, environment).is_err() {
+        return Err(if output.cancellation_token.is_cancelled() {
+            ReleaseWriteFailure::Cancelled
+        } else {
+            ReleaseWriteFailure::Release
+        });
     }
+    #[cfg(test)]
+    if CANCEL_RELEASE_BEFORE_COMMIT_PID.load(Ordering::Acquire) == pid.get() {
+        output.cancellation_token.cancel();
+    }
+    if output.cancellation_token.is_cancelled() || Instant::now() >= output.deadline {
+        return Err(if output.cancellation_token.is_cancelled() {
+            ReleaseWriteFailure::Cancelled
+        } else {
+            ReleaseWriteFailure::Release
+        });
+    }
+    std::io::Write::write_all(&mut output, &[RELEASE_COMMIT_BYTE]).map_err(|_| {
+        if output.cancellation_token.is_cancelled() {
+            ReleaseWriteFailure::Cancelled
+        } else {
+            ReleaseWriteFailure::Release
+        }
+    })?;
     Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy)]
+enum ReleaseWriteFailure {
+    Cancelled,
+    Release,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl ReleaseWriteFailure {
+    const fn into_process_error(self) -> BackgroundProcessError {
+        BackgroundProcessError::new(match self {
+            Self::Cancelled => BackgroundProcessErrorKind::Cancelled,
+            Self::Release => BackgroundProcessErrorKind::Release,
+        })
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1302,8 +1519,13 @@ fn abort_prepared(prepared: &mut PreparedBackgroundProcess) -> Result<(), Backgr
         .snapshot_authority
         .as_ref()
         .ok_or_else(invariant_error)?;
-    let mut child = prepared.child.take().ok_or_else(invariant_error)?;
-    cleanup_child(&mut child, prepared.group, Duration::ZERO, authority)
+    cleanup_child(
+        &mut prepared.child,
+        &mut prepared.reap_permit,
+        prepared.group,
+        Duration::ZERO,
+        authority,
+    )
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -1481,13 +1703,138 @@ fn exit_status(status: ExitStatus) -> BackgroundProcessExit {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+enum BoundedReap {
+    Reaped(ExitStatus),
+    LostAuthority,
+    TimedOut,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn poll_child_reap(
+    child: &mut Option<Child>,
+    deadline: Instant,
+) -> Result<BoundedReap, BackgroundProcessError> {
+    loop {
+        let child = child.as_mut().ok_or_else(invariant_error)?;
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(BoundedReap::Reaped(status)),
+            Ok(None) if Instant::now() < deadline => {
+                thread::sleep(std::cmp::min(
+                    OBSERVATION_INITIAL_INTERVAL,
+                    deadline.saturating_duration_since(Instant::now()),
+                ));
+            }
+            Ok(None) => return Ok(BoundedReap::TimedOut),
+            Err(_) => return Ok(BoundedReap::LostAuthority),
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn discharge_reaped_child(child: &mut Option<Child>, reap_permit: &mut Option<ChildReapPermit>) {
+    drop(child.take());
+    drop(reap_permit.take());
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn quarantine_owned_child(
+    child: &mut Option<Child>,
+    reap_permit: &mut Option<ChildReapPermit>,
+) -> Result<(), BackgroundProcessError> {
+    if child.is_none() || reap_permit.is_none() {
+        return Err(invariant_error());
+    }
+    let child = child.take().ok_or_else(invariant_error)?;
+    let permit = reap_permit.take().ok_or_else(invariant_error)?;
+    quarantine_child(child, permit);
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn terminate_and_reap_or_quarantine(
+    child: &mut Option<Child>,
+    reap_permit: &mut Option<ChildReapPermit>,
+) {
+    if let Some(child) = child.as_mut() {
+        let _ = child.kill();
+    }
+    match poll_child_reap(child, Instant::now() + CHILD_REAP_PROBE_TIMEOUT) {
+        Ok(BoundedReap::Reaped(_) | BoundedReap::LostAuthority) | Err(_) => {
+            discharge_reaped_child(child, reap_permit);
+        }
+        Ok(BoundedReap::TimedOut) => {
+            let _ = quarantine_owned_child(child, reap_permit);
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn reap_child_bounded(
+    child: &mut Option<Child>,
+    reap_permit: &mut Option<ChildReapPermit>,
+    expected: Option<BackgroundProcessExit>,
+    failures: &mut CleanupFailures,
+) {
+    if child.is_none() || reap_permit.is_none() {
+        failures.record(invariant_error());
+        return;
+    }
+    match poll_child_reap(child, Instant::now() + CHILD_REAP_PROBE_TIMEOUT) {
+        Ok(BoundedReap::Reaped(status)) => {
+            if expected.is_some_and(|expected| exit_status(status) != expected) {
+                failures.record(invariant_error());
+            }
+            discharge_reaped_child(child, reap_permit);
+        }
+        Ok(BoundedReap::LostAuthority) => {
+            failures.record(wait_error());
+            discharge_reaped_child(child, reap_permit);
+        }
+        Ok(BoundedReap::TimedOut) => {
+            if child.as_mut().is_none_or(|child| child.kill().is_err()) {
+                failures.record(cleanup_error());
+            }
+            match poll_child_reap(child, Instant::now() + CHILD_REAP_PROBE_TIMEOUT) {
+                Ok(BoundedReap::Reaped(status)) => {
+                    if expected.is_some_and(|expected| exit_status(status) != expected) {
+                        failures.record(invariant_error());
+                    }
+                    discharge_reaped_child(child, reap_permit);
+                }
+                Ok(BoundedReap::LostAuthority) => {
+                    failures.record(wait_error());
+                    discharge_reaped_child(child, reap_permit);
+                }
+                Ok(BoundedReap::TimedOut) => {
+                    failures.record(cleanup_error());
+                    if let Err(error) = quarantine_owned_child(child, reap_permit) {
+                        failures.record(error);
+                    }
+                }
+                Err(error) => failures.record(error),
+            }
+        }
+        Err(error) => failures.record(error),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn cleanup_child(
-    child: &mut Child,
+    child: &mut Option<Child>,
+    reap_permit: &mut Option<ChildReapPermit>,
     group: rustix::process::Pid,
     term_grace: Duration,
     authority: &GroupSnapshotAuthority,
 ) -> Result<(), BackgroundProcessError> {
-    cleanup_child_with_expected(child, group, term_grace, None, false, authority)
+    cleanup_child_with_expected(
+        child,
+        reap_permit,
+        group,
+        term_grace,
+        None,
+        false,
+        authority,
+    )
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1504,9 +1851,9 @@ fn cleanup_owned_child(
         .snapshot_authority
         .as_ref()
         .ok_or_else(invariant_error)?;
-    let mut child = owned.child.take().ok_or_else(invariant_error)?;
     cleanup_child_with_expected(
-        &mut child,
+        &mut owned.child,
+        &mut owned.reap_permit,
         owned.group,
         term_grace,
         expected,
@@ -1517,7 +1864,8 @@ fn cleanup_owned_child(
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn cleanup_child_with_expected(
-    child: &mut Child,
+    child: &mut Option<Child>,
+    reap_permit: &mut Option<ChildReapPermit>,
     group: rustix::process::Pid,
     term_grace: Duration,
     expected: Option<BackgroundProcessExit>,
@@ -1526,7 +1874,7 @@ fn cleanup_child_with_expected(
 ) -> Result<(), BackgroundProcessError> {
     let mut failures = CleanupFailures::default();
     let mut force_signals = force_cleanup;
-    let mut captured_members = Vec::new();
+    let mut captured_members = CapturedMemberUnion::new();
     let mut group_phase = cleanup_group_signal_phase(
         group,
         rustix::process::Signal::TERM,
@@ -1536,6 +1884,7 @@ fn cleanup_child_with_expected(
         &mut captured_members,
     );
     if group_phase == CleanupSignalPhase::LostAuthority {
+        discharge_reaped_child(child, reap_permit);
         return failures.finish();
     }
     if group_phase != CleanupSignalPhase::Quiescent {
@@ -1551,6 +1900,7 @@ fn cleanup_child_with_expected(
             &mut captured_members,
         );
         if group_phase == CleanupSignalPhase::LostAuthority {
+            discharge_reaped_child(child, reap_permit);
             return failures.finish();
         }
         // A successful group KILL already targets the retained leader. Avoid a
@@ -1563,14 +1913,7 @@ fn cleanup_child_with_expected(
             failures.record(error);
         }
     }
-    match child.wait() {
-        Ok(status) => {
-            if expected.is_some_and(|expected| exit_status(status) != expected) {
-                failures.record(invariant_error());
-            }
-        }
-        Err(_) => failures.record(wait_error()),
-    }
+    reap_child_bounded(child, reap_permit, expected, &mut failures);
     failures.finish()
 }
 
@@ -1581,7 +1924,7 @@ fn cleanup_group_signal_phase(
     force_signals: &mut bool,
     failures: &mut CleanupFailures,
     authority: &GroupSnapshotAuthority,
-    captured_members: &mut Vec<CapturedGroupMember>,
+    captured_members: &mut CapturedMemberUnion,
 ) -> CleanupSignalPhase {
     let leader_exited = match observe_leader(group) {
         Ok(status) => status.is_some(),
@@ -1595,23 +1938,27 @@ fn cleanup_group_signal_phase(
             false
         }
     };
-    let only_exited_leader = match group_members(authority, group) {
+    let (only_exited_leader, phase_only_leader) = match group_members(authority, group) {
         Ok(members) => {
-            let only_exited_leader = leader_exited && only_group_leader_remains(&members, group);
-            retain_group_members(captured_members, members);
-            only_exited_leader
+            let phase_only_leader = only_group_leader_remains(&members, group);
+            let only_exited_leader = leader_exited && phase_only_leader;
+            if let Err(error) = captured_members.retain(members) {
+                *force_signals = true;
+                failures.record(error);
+            }
+            (only_exited_leader, phase_only_leader)
         }
         Err(error) => {
             *force_signals = true;
             failures.record(error);
-            false
+            (false, false)
         }
     };
     // Keep the leader unreaped throughout the signal phases. Any observation
     // failure forces both group signals instead of becoming a cleanup short
     // circuit; a clean sole-zombie proof avoids unnecessary signalling.
     if (*force_signals || !only_exited_leader)
-        && let Err(error) = signal_group_or_confirm_exited_leader(group, signal, authority)
+        && let Err(error) = signal_group_or_confirm_exited_leader(group, signal, phase_only_leader)
     {
         match error {
             LeaderObservationFailure::LostAuthority => {
@@ -1699,25 +2046,33 @@ fn signal_group(
 fn signal_group_or_confirm_exited_leader(
     group: rustix::process::Pid,
     signal: rustix::process::Signal,
-    authority: &GroupSnapshotAuthority,
+    phase_proved_only_leader: bool,
 ) -> Result<(), LeaderObservationFailure> {
     #[cfg(test)]
     if OBSERVED_GROUP_SIGNAL.load(Ordering::Acquire) == group.as_raw_nonzero().get().cast_unsigned()
     {
         GROUP_SIGNAL_ATTEMPTS.fetch_add(1, Ordering::AcqRel);
     }
-    match rustix::process::kill_process_group(group, signal) {
+    #[cfg(test)]
+    let signal_result = if consume_injected_failure(
+        &GROUP_SIGNAL_EPERM_GROUP,
+        &GROUP_SIGNAL_EPERM_REMAINING,
+        group.as_raw_nonzero().get().cast_unsigned(),
+    ) {
         Err(rustix::io::Errno::PERM)
-            if observe_leader(group)?.is_some()
-                && only_group_leader_remains(
-                    &group_members(authority, group)
-                        .map_err(LeaderObservationFailure::Operation)?,
-                    group,
-                ) =>
+    } else {
+        rustix::process::kill_process_group(group, signal)
+    };
+    #[cfg(not(test))]
+    let signal_result = rustix::process::kill_process_group(group, signal);
+    match signal_result {
+        Err(rustix::io::Errno::PERM)
+            if phase_proved_only_leader && observe_leader(group)?.is_some() =>
         {
             // EPERM is not evidence of success or disappearance. The separate
-            // NOWAIT observation and bounded process-group snapshot prove that
-            // the only remaining member is the already-exited retained leader.
+            // NOWAIT observation and process-group snapshot from this exact
+            // signal phase already prove that the only remaining member is the
+            // exited retained leader; do not add another global table scan.
             Ok(())
         }
         result => classify_group_signal(result).map_err(LeaderObservationFailure::Operation),
@@ -1738,7 +2093,7 @@ fn classify_group_signal(
 fn require_original_group_quiescent(
     group: rustix::process::Pid,
     authority: &GroupSnapshotAuthority,
-    mut captured: Vec<CapturedGroupMember>,
+    mut captured: CapturedMemberUnion,
 ) -> Result<(), BackgroundProcessError> {
     // Capture the complete post-KILL membership once. The retained, unreaped
     // leader keeps the original numeric group identity from being reused while
@@ -1749,21 +2104,32 @@ fn require_original_group_quiescent(
     thread::sleep(GROUP_SNAPSHOT_INITIAL_INTERVAL);
     let mut observed_failure = false;
     match group_members(authority, group) {
-        Ok(members) => retain_group_members(&mut captured, members),
+        Ok(members) => {
+            if captured.retain(members).is_err() {
+                observed_failure = true;
+            }
+        }
         Err(_) => observed_failure = true,
     }
-    let mut captured = RetainedMemberWait::new(captured, group);
+    let mut captured = RetainedMemberWait::new(captured.into_members(), group);
     let mut observation = ObservationBackoff::with_bounds(
         GROUP_SNAPSHOT_INITIAL_INTERVAL,
         GROUP_SNAPSHOT_MAX_INTERVAL,
     );
+    #[cfg(target_os = "linux")]
+    let mut stat_bytes = Vec::with_capacity(MAX_LINUX_PROC_STAT_BYTES + 1);
     loop {
         match observe_leader(group) {
             Err(LeaderObservationFailure::LostAuthority) => return Err(wait_error()),
             Err(LeaderObservationFailure::Operation(_)) => observed_failure = true,
             Ok(_) => {}
         }
-        match captured.poll(|member| captured_group_member_exists(authority, member)) {
+        #[cfg(target_os = "macos")]
+        let captured_poll = captured.poll(|member| captured_group_member_exists(authority, member));
+        #[cfg(target_os = "linux")]
+        let captured_poll = captured
+            .poll(|member| captured_group_member_exists(authority, member, &mut stat_bytes));
+        match captured_poll {
             Ok(true) => break,
             Ok(false) => {}
             Err(_) => {
@@ -1786,21 +2152,47 @@ fn require_original_group_quiescent(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct CapturedGroupMember {
     pid: rustix::process::Pid,
     identity: Option<u64>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn retain_group_members(
-    retained: &mut Vec<CapturedGroupMember>,
-    observed: Vec<CapturedGroupMember>,
-) {
-    for member in observed {
-        if !retained.contains(&member) {
-            retained.push(member);
+struct CapturedMemberUnion {
+    members: Vec<CapturedGroupMember>,
+    index: HashSet<CapturedGroupMember>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl CapturedMemberUnion {
+    fn new() -> Self {
+        Self {
+            members: Vec::new(),
+            index: HashSet::new(),
         }
+    }
+
+    fn retain(&mut self, observed: Vec<CapturedGroupMember>) -> Result<(), BackgroundProcessError> {
+        for member in observed {
+            if self.index.contains(&member) {
+                continue;
+            }
+            if self.members.len() == MAX_CAPTURED_GROUP_MEMBERS {
+                return Err(cleanup_error());
+            }
+            self.index.insert(member);
+            self.members.push(member);
+        }
+        Ok(())
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &CapturedGroupMember> {
+        self.members.iter()
+    }
+
+    fn into_members(self) -> Vec<CapturedGroupMember> {
+        self.members
     }
 }
 
@@ -1872,8 +2264,12 @@ fn group_members(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    let mut child = command.spawn().map_err(|_| cleanup_error())?;
-    let output = child.stdout.take().ok_or_else(cleanup_error)?;
+    let mut reap_permit = Some(reserve_child_reap_authority().map_err(|_| cleanup_error())?);
+    let mut child = Some(command.spawn().map_err(|_| cleanup_error())?);
+    let output = child
+        .as_mut()
+        .and_then(|child| child.stdout.take())
+        .ok_or_else(cleanup_error)?;
     let reader = thread::Builder::new()
         .name("machine-god-bg-group-snapshot".to_owned())
         .spawn(move || {
@@ -1884,20 +2280,21 @@ fn group_members(
                 .map(|_| bytes)
         });
     let Ok(reader) = reader else {
-        let _ = child.kill();
-        let _ = child.wait();
+        terminate_and_reap_or_quarantine(&mut child, &mut reap_permit);
         return Err(cleanup_error());
     };
     let deadline = Instant::now() + GROUP_SNAPSHOT_TIMEOUT;
     let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Ok(status),
+        match child.as_mut().ok_or_else(cleanup_error)?.try_wait() {
+            Ok(Some(status)) => {
+                discharge_reaped_child(&mut child, &mut reap_permit);
+                break Ok(status);
+            }
             Ok(None) if Instant::now() < deadline => {
                 thread::sleep(OBSERVATION_INITIAL_INTERVAL);
             }
             Ok(None) | Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                terminate_and_reap_or_quarantine(&mut child, &mut reap_permit);
                 break Err(cleanup_error());
             }
         }
@@ -2006,7 +2403,7 @@ fn group_members(
             .ok_or_else(cleanup_error)?;
         let parsed = parse_linux_proc_stat(&stat_bytes, pid)?;
         if parsed.group == Some(group) {
-            if members.len() == MAX_GROUP_SNAPSHOT_BYTES / 2 {
+            if members.len() == MAX_CAPTURED_GROUP_MEMBERS {
                 return Err(cleanup_error());
             }
             members.push(CapturedGroupMember {
@@ -2110,6 +2507,7 @@ struct LinuxProcStat {
 fn captured_group_member_exists(
     authority: &GroupSnapshotAuthority,
     member: &CapturedGroupMember,
+    bytes: &mut Vec<u8>,
 ) -> Result<bool, BackgroundProcessError> {
     use std::io::Read;
 
@@ -2134,15 +2532,15 @@ fn captured_group_member_exists(
         Err(rustix::io::Errno::NOENT) => return Ok(false),
         Err(_) => return Err(cleanup_error()),
     };
-    let mut bytes = Vec::with_capacity(MAX_LINUX_PROC_STAT_BYTES + 1);
+    bytes.clear();
     std::fs::File::from(stat_fd)
         .take((MAX_LINUX_PROC_STAT_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)
+        .read_to_end(bytes)
         .map_err(|_| cleanup_error())?;
     if bytes.len() > MAX_LINUX_PROC_STAT_BYTES {
         return Err(cleanup_error());
     }
-    let parsed = parse_linux_proc_stat(&bytes, member.pid)?;
+    let parsed = parse_linux_proc_stat(bytes, member.pid)?;
     Ok(member.identity == Some(parsed.start_time))
 }
 
@@ -2185,7 +2583,7 @@ fn parse_group_members(bytes: &[u8]) -> Result<Vec<rustix::process::Pid>, Backgr
     let text = std::str::from_utf8(bytes).map_err(|_| cleanup_error())?;
     let mut members = Vec::new();
     for field in text.split_ascii_whitespace() {
-        if members.len() == MAX_GROUP_SNAPSHOT_BYTES / 2 {
+        if members.len() == MAX_CAPTURED_GROUP_MEMBERS {
             return Err(cleanup_error());
         }
         let raw = field.parse::<i32>().map_err(|_| cleanup_error())?;
@@ -2240,8 +2638,28 @@ fn group_snapshots_for_test() -> usize {
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+fn inject_group_signal_eperm_for_test(group: NonZeroU32, count: usize) {
+    inject_failures(
+        &GROUP_SIGNAL_EPERM_GROUP,
+        &GROUP_SIGNAL_EPERM_REMAINING,
+        group,
+        count,
+    );
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 pub(crate) fn inject_waitid_failures_for_test(leader: NonZeroU32, count: usize) {
     inject_failures(&WAITID_FAILURE_LEADER, &WAITID_FAILURES, leader, count);
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+pub(crate) fn cancel_release_before_commit_for_test(pid: NonZeroU32) {
+    CANCEL_RELEASE_BEFORE_COMMIT_PID.store(pid.get(), Ordering::Release);
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+pub(crate) fn clear_release_before_commit_cancellation_for_test() {
+    CANCEL_RELEASE_BEFORE_COMMIT_PID.store(0, Ordering::Release);
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
@@ -2734,7 +3152,7 @@ mod process_regression_tests {
                 .expect("join cancelled release")
                 .expect_err("cancelled release fails")
                 .kind(),
-            BackgroundProcessErrorKind::Release
+            BackgroundProcessErrorKind::Cancelled
         );
         assert!(started.elapsed() < Duration::from_millis(250));
         assert_eq!(
@@ -2813,18 +3231,54 @@ mod process_regression_tests {
             pid: leader,
             identity: Some(9000),
         };
-        let mut retained = Vec::new();
-        retain_group_members(&mut retained, vec![leader_member, escaped]);
+        let mut retained = CapturedMemberUnion::new();
+        retained
+            .retain(vec![leader_member, escaped])
+            .expect("initial member union fits");
         // The later pre-KILL snapshot no longer contains the descendant: it
         // escaped after partial TERM delivery. The retained union must not
         // discard it merely because the original group no longer reports it.
-        retain_group_members(&mut retained, vec![leader_member]);
+        retained
+            .retain(vec![leader_member])
+            .expect("duplicate member union fits");
 
-        let mut wait = RetainedMemberWait::new(retained, leader);
+        let mut wait = RetainedMemberWait::new(retained.into_members(), leader);
         assert!(
             !wait
                 .poll(|member| Ok(*member == escaped))
                 .expect("injected escaped-member observation succeeds")
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn captured_member_union_has_one_exact_32768_member_bound() {
+        let member = |raw: i32| CapturedGroupMember {
+            pid: rustix::process::Pid::from_raw(raw).expect("positive test PID"),
+            identity: Some(u64::try_from(raw).expect("positive identity")),
+        };
+        let first_half: Vec<_> = (1..=16_384).map(member).collect();
+        let second_half: Vec<_> = (16_385..=32_768).map(member).collect();
+        let mut captured = CapturedMemberUnion::new();
+        captured
+            .retain(first_half.clone())
+            .expect("first disjoint half fits");
+        captured
+            .retain(second_half.clone())
+            .expect("exact aggregate bound fits");
+        let mut reversed = second_half;
+        reversed.reverse();
+        reversed.extend(first_half.into_iter().rev());
+        captured
+            .retain(reversed)
+            .expect("reversed duplicates do not consume aggregate capacity");
+        assert_eq!(captured.iter().count(), MAX_CAPTURED_GROUP_MEMBERS);
+        assert_eq!(
+            captured
+                .retain(vec![member(32_769)])
+                .expect_err("one disjoint churn member exceeds the exact bound")
+                .kind(),
+            BackgroundProcessErrorKind::Cleanup
         );
     }
 
@@ -2860,8 +3314,9 @@ mod process_regression_tests {
             pid,
             identity: Some(stat.start_time),
         };
+        let mut observation_bytes = Vec::with_capacity(MAX_LINUX_PROC_STAT_BYTES + 1);
         assert!(
-            captured_group_member_exists(&authority, &escaped)
+            captured_group_member_exists(&authority, &escaped, &mut observation_bytes)
                 .expect("escaped member observation succeeds")
         );
         assert_ne!(
@@ -2874,7 +3329,7 @@ mod process_regression_tests {
             ..escaped
         };
         assert!(
-            !captured_group_member_exists(&authority, &reused)
+            !captured_group_member_exists(&authority, &reused, &mut observation_bytes)
                 .expect("PID reuse observation succeeds")
         );
     }
@@ -2944,21 +3399,80 @@ mod process_regression_tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
+    fn eperm_reuses_phase_snapshot_and_stays_within_four_global_scans() {
+        let directory = TestDirectory::new("eperm-phase-snapshot");
+        let mut reap_permit =
+            Some(reserve_child_reap_authority().expect("reserve test child reap authority"));
+        let mut child = Some(
+            Command::new("/bin/sh")
+                .args(["-c", "exit 7"])
+                .current_dir(&directory.0)
+                .env_clear()
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .process_group(0)
+                .spawn()
+                .expect("spawn exited test process group"),
+        );
+        let leader = NonZeroU32::new(child.as_ref().expect("test child retained").id())
+            .expect("positive process-group leader");
+        let group = rustix::process::Pid::from_raw(
+            i32::try_from(leader.get()).expect("test PID fits signed range"),
+        )
+        .expect("positive process group");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !matches!(observe_leader(group), Ok(Some(_))) {
+            assert!(Instant::now() < deadline, "leader did not exit");
+            thread::sleep(Duration::from_millis(2));
+        }
+        #[cfg(target_os = "linux")]
+        let authority = GroupSnapshotAuthority::open().expect("open group snapshot authority");
+        #[cfg(target_os = "macos")]
+        let authority = GroupSnapshotAuthority;
+        reset_group_snapshots_for_test(leader);
+        inject_group_signal_eperm_for_test(leader, 2);
+
+        cleanup_child_with_expected(
+            &mut child,
+            &mut reap_permit,
+            group,
+            Duration::ZERO,
+            Some(BackgroundProcessExit::Exited(7)),
+            true,
+            &authority,
+        )
+        .expect("phase evidence accepts EPERM for an exited sole leader");
+
+        assert_eq!(
+            group_snapshots_for_test(),
+            4,
+            "EPERM must reuse TERM and KILL phase snapshots"
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
     fn lingering_group_cleanup_uses_constant_global_snapshots() {
         let directory = TestDirectory::new("snapshot-count");
         let marker = directory.0.join("descendant.pid");
         let command = "trap '' TERM; /bin/sh -c 'trap \"\" TERM; printf \"%s\" \"$$\" > descendant.pid; while :; do :; done' & while [ ! -s descendant.pid ]; do :; done; exit 7";
-        let mut child = Command::new("/bin/sh")
-            .args(["-c", command])
-            .current_dir(&directory.0)
-            .env_clear()
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .process_group(0)
-            .spawn()
-            .expect("spawn test process group");
-        let leader = NonZeroU32::new(child.id()).expect("positive process-group leader");
+        let mut reap_permit =
+            Some(reserve_child_reap_authority().expect("reserve test child reap authority"));
+        let mut child = Some(
+            Command::new("/bin/sh")
+                .args(["-c", command])
+                .current_dir(&directory.0)
+                .env_clear()
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .process_group(0)
+                .spawn()
+                .expect("spawn test process group"),
+        );
+        let leader = NonZeroU32::new(child.as_ref().expect("test child retained").id())
+            .expect("positive process-group leader");
         let group = rustix::process::Pid::from_raw(
             i32::try_from(leader.get()).expect("test PID fits signed range"),
         )
@@ -2976,6 +3490,7 @@ mod process_regression_tests {
 
         cleanup_child_with_expected(
             &mut child,
+            &mut reap_permit,
             group,
             Duration::ZERO,
             Some(BackgroundProcessExit::Exited(7)),

@@ -8,7 +8,8 @@ use background_process::{
     BACKGROUND_PROCESS_TERM_GRACE, BackgroundProcessErrorKind, BackgroundProcessExit,
     BackgroundProcessOutcome, BackgroundProcessRequest, MAX_BACKGROUND_PROCESS_COMMAND_BYTES,
     MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES, OwnedBackgroundProcess,
-    SystemBackgroundProcessAdapter, cancellation_wakeup_latency_for_test,
+    SystemBackgroundProcessAdapter, cancel_release_before_commit_for_test,
+    cancellation_wakeup_latency_for_test, clear_release_before_commit_cancellation_for_test,
     group_signal_attempts_for_test, group_snapshot_is_quiescent_for_test,
     inject_group_snapshot_failures_for_test, inject_group_snapshot_spawn_failures_for_test,
     inject_waitid_failures_for_test, leader_observations_for_test,
@@ -142,6 +143,29 @@ fn requested_environment_is_inert_until_release_and_frame_bytes_cannot_fake_read
     let owned = prepared.release().unwrap();
     assert_eq!(owned.wait().unwrap(), BackgroundProcessExit::Exited(0));
     assert_eq!(fs::read_to_string(marker).unwrap(), "released");
+}
+
+#[test]
+fn cancellation_after_complete_payload_before_commit_runs_no_user_command() {
+    let directory = FreshDirectory::new("cancel-before-commit");
+    let marker = directory.path().join("user-ran");
+    let prepared = adapter()
+        .prepare(request(directory.path(), "printf user-ran > user-ran"))
+        .expect("prepare inert helper");
+    let pid = prepared.pid();
+    let cancellation = CancellationToken::new();
+    cancel_release_before_commit_for_test(pid);
+    let error = prepared
+        .release_cancellable(&cancellation)
+        .expect_err("pre-commit cancellation aborts release");
+    clear_release_before_commit_cancellation_for_test();
+
+    assert_eq!(error.kind(), BackgroundProcessErrorKind::Cancelled);
+    assert!(cancellation.is_cancelled());
+    assert!(
+        !marker.exists(),
+        "complete payload without the final commit byte executed the user command"
+    );
 }
 
 #[cfg(target_os = "linux")]

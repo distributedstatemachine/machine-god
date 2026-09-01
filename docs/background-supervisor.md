@@ -29,7 +29,10 @@ controls such as `LD_PRELOAD`, `LD_AUDIT`, and `DYLD_*` therefore cannot affect
 helper loading, cwd retention, or readiness. The already-validated command and
 environment remain inert bytes in a versioned, length-delimited frame retained
 by the parent. That frame is written only by release after the running record
-is durable. The helper independently revalidates every bound and applies the
+is durable. Its bounded payload remains inert until a distinct final commit
+byte is written after the last cancellation and deadline checks; closing the
+gate after any payload prefix, including the complete payload, cannot emulate
+that commit. The helper independently revalidates every bound and applies the
 requested environment only to the final post-release `/bin/sh` exec. Frame
 bytes cannot be interpreted as readiness, arguments, or shell interpolation.
 Environment-key uniqueness is validated in one pass through a borrowed-key
@@ -51,11 +54,15 @@ therefore interrupts a stalled readiness wait promptly, closes the private
 gate, signals and reaps the helper group, and releases blocking capacity
 without waiting for the two-second readiness deadline. The exclusive-child-
 reaping probe uses the same registered cancellation wakeup and a fixed 500 ms
-deadline; a stalled probe is killed and reaped before preparation returns.
+deadline; a stalled probe is killed and either reaped or transferred to bounded
+quarantine ownership before preparation returns.
 After readiness, release makes the gate nonblocking and transmits the frame
 under both cooperative cancellation and a fixed 500 ms deadline. Cancellation,
-timeout, or any incomplete frame closes the gate and completes owned group
+timeout, or any uncommitted frame closes the gate and completes owned group
 cleanup, so a ready helper that stops reading cannot retain blocking capacity.
+Pre-commit cancellation has its distinct native category only after abort and
+reap succeed; ambiguous cleanup remains a process failure rather than being
+hidden by cancellation.
 
 ## Persist-before-release protocol
 
@@ -78,8 +85,9 @@ record with `dead` before returning a fixed process failure. A failed
 replacement cannot mask that primary process failure. Likewise, cancellation
 after initial publication explicitly aborts and reaps the prepared child. It
 publishes `stopped` only when that fallible cleanup proves success and
-publishes `dead` when cleanup fails or remains ambiguous, while always
-preserving the fixed cancellation result. Retention after a successful release
+publishes `dead` when cleanup fails or remains ambiguous. Only proven cleanup
+preserves the fixed cancellation result; ambiguous cleanup returns the fixed
+process result. Retention after a successful release
 is an infallible ownership transfer: dropping the caller's start future cannot
 orphan a process or free its capacity slot.
 
@@ -204,8 +212,11 @@ It revalidates the retained filesystem type, exact mount identity, options,
 and topology before and after every scan, so a remount, bind overmount, or
 post-admission topology change fails cleanup before the leader is reaped. The
 traversal remains bounded to 131,072 entries, 4 KiB per stat record, 32 MiB of
-aggregate stat bytes, and 32,768 retained members. It reuses one directory
-buffer and one stat-record buffer for the scan rather than allocating per PID,
+aggregate stat bytes, and one aggregate union of at most 32,768 retained
+members across every phase. An indexed union makes duplicate and reversed
+snapshots linear rather than quadratic. It reuses one directory buffer and
+one stat-record buffer for a scan, and reuses one stat-record buffer throughout
+the captured-member backoff rather than allocating per PID,
 and does not depend on a GNU `ps` dialect. Lingering cleanup performs a
 constant number of global process-table scans: the TERM and KILL observations,
 one complete post-KILL capture, and one final completeness proof. Between the
@@ -221,9 +232,17 @@ its work linear in captured members plus wait iterations. The unreaped leader
 reserves the original group identity throughout. A raced or previously
 uncaptured survivor makes the final proof fail closed. macOS retains its fixed
 `/bin/ps` adapter with a 64 KiB output bound and 250 ms timeout. Permission
-denial is never disappearance evidence; a surviving credential-changed member
+denial is never disappearance evidence. The EPERM path reuses its phase
+snapshot and adds no global scan; a surviving credential-changed member
 therefore produces a fixed cleanup failure. The numeric group identity is not
 consulted after it becomes reusable.
+
+Direct-child reaping uses nonblocking probes under fixed deadlines. Before any
+probe or helper spawn, the adapter reserves one of 64 process-wide reap
+authorities and fails fast before spawning when none is available. A killed
+child that remains unreaped at the deadline transfers, with its authority, to
+one fixed-capacity background quarantine reaper; no cleanup caller blocks in an
+unbounded child wait, and unresolved ownership cannot grow without bound.
 
 This process-local adapter requires exclusive child-reaping authority for the
 entire prepared/owned-handle lifetime: the host must leave `SIGCHLD` waitable
