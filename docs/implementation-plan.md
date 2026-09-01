@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33455374424` (`GREEN`)
 - Main Benchmark evidence: `33455374426` (`GREEN`)
 - Active branch: `agent/m05-background-supervisor`
-- Active phase: `running the background-supervisor cycle 02 replacement gate`
-- Next gate: `freeze the exact green SHA and run three fresh adversarial reviews`
+- Active phase: `remediating the rejected background-supervisor cycle 03 candidate`
+- Next gate: `run the complete replacement gate, freeze one SHA, and use three fresh reviewers`
 <!-- canonical-live-status:end -->
 
 The recorded Actions runs succeeded for the exact delivered-main commit, and
@@ -46,7 +46,12 @@ complete-record sync ambiguity is explicit, cleanup retains ownership through
 all termination and reap attempts, compaction preflights all victims, canonical
 temporaries are reclaimed within the scan bound, and reconciliation is
 allocator-serialized. The complete replacement gate is running; no rejected
-review result is reused as acceptance evidence.
+review result is reused as acceptance evidence. Cycle 03 then found a
+publication/control-snapshot lock race, excessive retained maintenance file
+descriptors, cancellation that could bypass stopped replacement after an
+ambiguous publication, pre-release dynamic-loader effects from the requested
+environment, and unsafe numeric group signaling after child wait authority is
+lost. Those findings are under bounded parallel remediation.
 Persistent handles, message/relationship/configuration/lifecycle management,
 ACP, teams, and extension slash commands remain separate. Documentation parser
 maintenance remains a separate non-product task.

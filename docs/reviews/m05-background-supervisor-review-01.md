@@ -76,3 +76,20 @@ The rejected candidate was replaced by these bounded changes:
 Fault, race, survivor, namespace-equivalence, and bounded-scan regressions cover
 each change. Acceptance still requires the complete replacement gate and three
 entirely fresh zero-finding reviewers on one later exact SHA.
+
+## Rejected product candidate: cycle 03
+
+Three fresh review tracks inspected exact candidate
+`1297cb36ed3e0b8cf68e7c651c707e7de046e451` after the complete exact local gate
+passed. Every track rejected it.
+
+| Track | Decisive findings |
+| --- | --- |
+| Correctness, API, and compatibility | Publication between the record and control snapshots could make compaction unlink a newly required lock; cancellation after an installed but pending or ambiguous initial publication could bypass stopped replacement. |
+| Lifecycle, platform, and effects | Requested loader-control environment variables could execute code before the persistence gate; losing child wait authority could still signal a reusable numeric process group. |
+| Performance and resources | Retaining an authority for every in-bound orphan or victim could exhaust a valid reduced process file-descriptor limit and prevent maintenance progress. |
+
+Cycle 03 remains rejection evidence. Replacement requires snapshot-safe lock
+classification, a fixed-FD maintenance protocol, cancellation closure after
+ambiguous publication, inert framed environment transfer to a safe bootstrap,
+and explicit lost-wait-authority handling before another fresh review cycle.
