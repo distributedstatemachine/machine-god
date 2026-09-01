@@ -220,9 +220,6 @@ impl fmt::Debug for BackgroundRunningRecord {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("BackgroundRunningRecord")
-            .field("id", &self.id)
-            .field("started_at_ms", &self.started_at_ms)
-            .field("pid", &self.pid)
             .finish_non_exhaustive()
     }
 }
@@ -408,10 +405,18 @@ pub trait BackgroundProcessRetainer: Send + Sync + 'static {
 }
 
 /// Display identity returned after durable publication and ownership transfer.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct BackgroundHandle {
     id: u64,
     pid: Option<NonZeroU32>,
+}
+
+impl fmt::Debug for BackgroundHandle {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BackgroundHandle")
+            .finish_non_exhaustive()
+    }
 }
 
 impl BackgroundHandle {
@@ -519,9 +524,11 @@ async fn start_polled(
     await_commit_or_cancel(lease.publish_initial(&record), &cancellation).await?;
     if cancellation.is_cancelled() {
         drop(prepared);
-        let completion =
-            record.completion(started_at_ms, BackgroundProcessOutcome::Stopped(None))?;
-        lease.publish_completion(&record, &completion).await?;
+        if let Ok(completion) =
+            record.completion(started_at_ms, BackgroundProcessOutcome::Stopped(None))
+        {
+            let _ = lease.publish_completion(&record, &completion).await;
+        }
         return Err(BackgroundStartError::new(
             BackgroundStartErrorKind::Cancelled,
         ));
@@ -533,8 +540,10 @@ async fn start_polled(
     let process = match prepared.release() {
         Ok(process) => process,
         Err(error) => {
-            let completion = record.completion(started_at_ms, BackgroundProcessOutcome::Dead)?;
-            lease.publish_completion(&record, &completion).await?;
+            if let Ok(completion) = record.completion(started_at_ms, BackgroundProcessOutcome::Dead)
+            {
+                let _ = lease.publish_completion(&record, &completion).await;
+            }
             return Err(error);
         }
     };
@@ -600,7 +609,7 @@ async fn await_commit_or_cancel<T>(
 #[cfg(test)]
 mod tests {
     use super::{
-        BackgroundClock, BackgroundCompletionRecord, BackgroundProcessOutcome,
+        BackgroundClock, BackgroundCompletionRecord, BackgroundHandle, BackgroundProcessOutcome,
         BackgroundProcessRetainer, BackgroundProcessSpawner, BackgroundRecordLease,
         BackgroundRetentionPermit, BackgroundRunningRecord, BackgroundStartError,
         BackgroundStartErrorKind, BackgroundStartRequest, BackgroundStore, BackgroundSupervisor,
@@ -625,6 +634,7 @@ mod tests {
         clock: bool,
         prepare: bool,
         publish: bool,
+        completion: bool,
         release: bool,
     }
 
@@ -675,6 +685,7 @@ mod tests {
         observations: Arc<Observations>,
         reserve_fail: bool,
         publish_fail: bool,
+        completion_fail: bool,
         cancel_during_publish: Option<CancellationToken>,
     }
 
@@ -690,6 +701,7 @@ mod tests {
                     Ok(Box::new(FakeLease {
                         observations: Arc::clone(&self.observations),
                         publish_fail: self.publish_fail,
+                        completion_fail: self.completion_fail,
                         cancel_during_publish: self.cancel_during_publish.clone(),
                     }) as Box<dyn BackgroundRecordLease>)
                 }
@@ -701,6 +713,7 @@ mod tests {
     struct FakeLease {
         observations: Arc<Observations>,
         publish_fail: bool,
+        completion_fail: bool,
         cancel_during_publish: Option<CancellationToken>,
     }
 
@@ -746,7 +759,11 @@ mod tests {
                     completion.outcome(),
                     BackgroundProcessOutcome::Dead | BackgroundProcessOutcome::Stopped(None)
                 ));
-                Ok(())
+                if self.completion_fail {
+                    Err(error(BackgroundStartErrorKind::Persistence))
+                } else {
+                    Ok(())
+                }
             })
         }
     }
@@ -918,6 +935,7 @@ mod tests {
                 observations: Arc::clone(&observations),
                 reserve_fail: failures.reserve,
                 publish_fail: failures.publish,
+                completion_fail: failures.completion,
                 cancel_during_publish: (cancel_stage == Some("publish"))
                     .then_some(cancellation.clone())
                     .flatten(),
@@ -984,8 +1002,18 @@ mod tests {
     fn request_record_and_errors_do_not_debug_secrets() {
         let request = BackgroundStartRequest::new("PRIVATE_COMMAND", "/PRIVATE_CWD").unwrap();
         assert!(!format!("{request:?}").contains("PRIVATE"));
-        let record = BackgroundRunningRecord::new(9, 11, &request, NonZeroU32::new(12));
-        assert!(!format!("{record:?}").contains("PRIVATE"));
+        let record = BackgroundRunningRecord::new(
+            9_876_543_210,
+            8_765_432_109,
+            &request,
+            NonZeroU32::new(4_000_000_007),
+        );
+        assert_eq!(format!("{record:?}"), "BackgroundRunningRecord { .. }");
+        let handle = BackgroundHandle {
+            id: 7_654_321_098,
+            pid: NonZeroU32::new(4_000_000_009),
+        };
+        assert_eq!(format!("{handle:?}"), "BackgroundHandle { .. }");
         for kind in [
             BackgroundStartErrorKind::InvalidRequest,
             BackgroundStartErrorKind::Capacity,
@@ -1107,6 +1135,31 @@ mod tests {
     }
 
     #[test]
+    fn release_failure_preserves_process_error_when_completion_publication_fails() {
+        let failures = Failures {
+            completion: true,
+            release: true,
+            ..Failures::default()
+        };
+        let (supervisor, observations, _) = fixture(failures, None, None, false);
+        let result = block_on(supervisor.start(request(), CancellationToken::new()));
+        assert_eq!(
+            result.unwrap_err().kind(),
+            BackgroundStartErrorKind::Process
+        );
+        assert_eq!(
+            observations.events(),
+            [
+                "admit", "reserve", "clock", "prepare", "publish", "release", "complete"
+            ]
+        );
+        assert_eq!(
+            observations.completion_publications.load(Ordering::Relaxed),
+            1
+        );
+    }
+
+    #[test]
     fn cancellation_before_poll_exercises_no_authority() {
         let cancellation = CancellationToken::new();
         cancellation.cancel();
@@ -1184,6 +1237,32 @@ mod tests {
         );
         assert_eq!(observations.executed.load(Ordering::Relaxed), 0);
         assert_eq!(observations.retained.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn cancellation_preserves_cancelled_when_completion_publication_fails() {
+        let cancellation = CancellationToken::new();
+        let failures = Failures {
+            completion: true,
+            ..Failures::default()
+        };
+        let (supervisor, observations, _) =
+            fixture(failures, Some(cancellation.clone()), Some("publish"), false);
+        let result = block_on(supervisor.start(request(), cancellation));
+        assert_eq!(
+            result.unwrap_err().kind(),
+            BackgroundStartErrorKind::Cancelled
+        );
+        assert_eq!(
+            observations.events(),
+            [
+                "admit", "reserve", "clock", "prepare", "publish", "abort", "complete"
+            ]
+        );
+        assert_eq!(
+            observations.completion_publications.load(Ordering::Relaxed),
+            1
+        );
     }
 
     #[test]
