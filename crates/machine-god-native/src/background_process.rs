@@ -395,6 +395,10 @@ pub fn run_background_process_helper() -> Result<(), BackgroundProcessError> {
 
 /// Returns the fixed unsupported result on platforms without the helper
 /// protocol, allowing a host to keep one private-mode dispatch path.
+///
+/// # Errors
+///
+/// Always returns the fixed unsupported category outside macOS.
 #[cfg(not(target_os = "macos"))]
 pub fn run_background_process_helper() -> Result<(), BackgroundProcessError> {
     Err(BackgroundProcessError::new(
@@ -793,6 +797,10 @@ fn abort_prepared(prepared: &mut PreparedBackgroundProcess) -> Result<(), Backgr
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "keeps one platform-neutral prepared-process cleanup shape"
+)]
 fn abort_prepared(_prepared: &mut PreparedBackgroundProcess) -> Result<(), BackgroundProcessError> {
     Ok(())
 }
@@ -885,6 +893,10 @@ fn stop_owned(owned: &mut OwnedBackgroundProcess) -> Result<(), BackgroundProces
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "keeps one platform-neutral owned-process cleanup shape"
+)]
 fn stop_owned(_owned: &mut OwnedBackgroundProcess) -> Result<(), BackgroundProcessError> {
     Ok(())
 }
