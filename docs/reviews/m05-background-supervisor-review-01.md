@@ -93,3 +93,24 @@ Cycle 03 remains rejection evidence. Replacement requires snapshot-safe lock
 classification, a fixed-FD maintenance protocol, cancellation closure after
 ambiguous publication, inert framed environment transfer to a safe bootstrap,
 and explicit lost-wait-authority handling before another fresh review cycle.
+
+## Cycle 03 remediation
+
+The rejected candidate was replaced by these bounded changes:
+
+- once initial publication has been polled, cancellation aborts the prepared
+  process and attempts stopped replacement even after pending or ambiguous
+  persistence outcomes;
+- unexpected acquired locks are revalidated against concurrent publication
+  before mutation, and store maintenance retains at most eight authorities
+  while making progress at a tested 24-descriptor process limit;
+- Linux and macOS launch the private bootstrap with a fixed safe environment;
+  the bounded command and requested environment are framed only at release and
+  applied solely to the final `/bin/sh` exec; and
+- `ECHILD` is preserved as lost wait authority, which immediately disables all
+  later numeric process and group queries or signals; incompatible Linux child-
+  reaping modes are rejected before spawn.
+
+Deterministic cancellation, publication-race, reduced-descriptor, loader-
+variable, signal-mode, and external-reap regressions cover the replacement.
+Acceptance still requires the complete gate and three new zero-finding reviews.
