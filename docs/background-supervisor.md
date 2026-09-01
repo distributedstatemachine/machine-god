@@ -49,7 +49,13 @@ the applicable lifecycle path. Helper readiness observes the same private
 operation cancellation token through a registered thread wakeup. Cancellation
 therefore interrupts a stalled readiness wait promptly, closes the private
 gate, signals and reaps the helper group, and releases blocking capacity
-without waiting for the two-second readiness deadline.
+without waiting for the two-second readiness deadline. The exclusive-child-
+reaping probe uses the same registered cancellation wakeup and a fixed 500 ms
+deadline; a stalled probe is killed and reaped before preparation returns.
+After readiness, release makes the gate nonblocking and transmits the frame
+under both cooperative cancellation and a fixed 500 ms deadline. Cancellation,
+timeout, or any incomplete frame closes the gate and completes owned group
+cleanup, so a ready helper that stops reading cannot retain blocking capacity.
 
 ## Persist-before-release protocol
 
@@ -203,8 +209,16 @@ buffer and one stat-record buffer for the scan rather than allocating per PID,
 and does not depend on a GNU `ps` dialect. Lingering cleanup performs a
 constant number of global process-table scans: the TERM and KILL observations,
 one complete post-KILL capture, and one final completeness proof. Between the
-last two scans it checks only the captured PIDs against the original group,
-whose identity remains reserved by the unreaped leader. A raced or previously
+last two scans it checks an identity-bearing union of every member observed
+before TERM, before KILL, or in the post-KILL capture. Linux binds each
+captured PID to its procfs start time and therefore distinguishes disappearance
+from PID reuse; a captured process must cease to exist even if it leaves the
+original group after partial signal delivery. macOS lacks that retained
+start-time identity in this adapter and conservatively treats any still-
+existing captured PID as a survivor. The wait advances permanently past each
+vanished prefix member and checks one live witness per backoff interval, making
+its work linear in captured members plus wait iterations. The unreaped leader
+reserves the original group identity throughout. A raced or previously
 uncaptured survivor makes the final proof fail closed. macOS retains its fixed
 `/bin/ps` adapter with a 64 KiB output bound and 250 ms timeout. Permission
 denial is never disappearance evidence; a surviving credential-changed member

@@ -132,6 +132,10 @@ const HELPER_READY_BYTE: u8 = 0xa7;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const HELPER_READY_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+const CHILD_REAP_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const RELEASE_FRAME_TIMEOUT: Duration = Duration::from_millis(500);
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const RELEASE_FRAME_MAGIC: &[u8; 8] = b"MGBG\0\0\0\x01";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const SAFE_BOOTSTRAP_LANGUAGE: &str = "C";
@@ -585,7 +589,23 @@ impl PreparedBackgroundProcess {
     /// Returns a fixed release or cleanup failure and reaps the child when the
     /// gate cannot be released.
     pub fn release(mut self) -> Result<OwnedBackgroundProcess, BackgroundProcessError> {
-        release_prepared(&mut self)
+        release_prepared(&mut self, &CancellationToken::new())
+    }
+
+    /// Releases the private start gate while observing cooperative
+    /// cancellation. Frame transmission is nonblocking and bounded by a fixed
+    /// deadline even when the ready helper stops reading its gate.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed release or cleanup failure. Cancellation, timeout, or
+    /// an incomplete frame closes the gate and reaps the prepared group before
+    /// returning.
+    pub fn release_cancellable(
+        mut self,
+        cancellation: &CancellationToken,
+    ) -> Result<OwnedBackgroundProcess, BackgroundProcessError> {
+        release_prepared(&mut self, cancellation)
     }
 
     /// Aborts the prepared process without permitting the user command to run,
@@ -756,7 +776,9 @@ fn validated_descriptor_path(directory: BorrowedFd<'_>) -> Result<PathBuf, Backg
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn require_exclusive_child_reaping() -> Result<(), BackgroundProcessError> {
+fn require_exclusive_child_reaping(
+    cancellation: &CancellationToken,
+) -> Result<(), BackgroundProcessError> {
     // `SIGCHLD = SIG_IGN`, `SA_NOCLDWAIT`, and a competing process-wide reaper
     // all make a direct child non-waitable. Exercise the exact wait authority
     // immediately before admission without changing process-wide signal state.
@@ -772,11 +794,33 @@ fn require_exclusive_child_reaping() -> Result<(), BackgroundProcessError> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    require_exclusive_child_reaping_with(probe, cancellation)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn require_exclusive_child_reaping_with(
+    mut probe: Command,
+    cancellation: &CancellationToken,
+) -> Result<(), BackgroundProcessError> {
     let mut child = probe.spawn().map_err(|_| spawn_error())?;
-    match child.wait() {
-        Ok(status) if status.success() => Ok(()),
-        Ok(_) | Err(_) => Err(spawn_error()),
+    let deadline = Instant::now() + CHILD_REAP_PROBE_TIMEOUT;
+    let mut cancellation = CancellationParker::new(cancellation);
+    loop {
+        if cancellation.is_cancelled() {
+            break;
+        }
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(None) if Instant::now() < deadline => cancellation.park_timeout(std::cmp::min(
+                OBSERVATION_INITIAL_INTERVAL,
+                deadline.saturating_duration_since(Instant::now()),
+            )),
+            Ok(Some(_) | None) | Err(_) => break,
+        }
     }
+    let _ = child.kill();
+    let _ = child.wait();
+    Err(spawn_error())
 }
 
 #[cfg(target_os = "linux")]
@@ -988,7 +1032,7 @@ fn prepare_system(
     let snapshot_authority = GroupSnapshotAuthority::open()?;
     #[cfg(target_os = "macos")]
     let snapshot_authority = GroupSnapshotAuthority;
-    require_exclusive_child_reaping()?;
+    require_exclusive_child_reaping(cancellation)?;
     #[cfg(target_os = "linux")]
     let retained_cwd = {
         let descriptor_path =
@@ -1113,6 +1157,7 @@ fn prepare_system(
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn release_prepared(
     prepared: &mut PreparedBackgroundProcess,
+    cancellation: &CancellationToken,
 ) -> Result<OwnedBackgroundProcess, BackgroundProcessError> {
     let Some(mut gate) = prepared.gate.take() else {
         return Err(invariant_error());
@@ -1123,7 +1168,7 @@ fn release_prepared(
         .ok_or_else(invariant_error)
         .and_then(|command| {
             let environment = prepared.environment.take().ok_or_else(invariant_error)?;
-            write_release_frame(&mut gate, &command, &environment)
+            write_release_frame_bounded(&mut gate, &command, &environment, cancellation)
                 .map_err(|_| BackgroundProcessError::new(BackgroundProcessErrorKind::Release))
         });
     if release.is_err() {
@@ -1169,6 +1214,69 @@ fn write_release_frame(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+fn write_release_frame_bounded(
+    output: &mut ChildStdin,
+    command: &str,
+    environment: &[(OsString, OsString)],
+    cancellation: &CancellationToken,
+) -> std::io::Result<()> {
+    let flags = rustix::fs::fcntl_getfl(&*output)?;
+    rustix::fs::fcntl_setfl(&*output, flags | OFlags::NONBLOCK)?;
+    let mut output = BoundedGateWriter {
+        output,
+        cancellation_token: cancellation.clone(),
+        cancellation: CancellationParker::new(cancellation),
+        deadline: Instant::now() + RELEASE_FRAME_TIMEOUT,
+    };
+    write_release_frame(&mut output, command, environment)?;
+    if output.cancellation_token.is_cancelled() || Instant::now() >= output.deadline {
+        return Err(std::io::ErrorKind::TimedOut.into());
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct BoundedGateWriter<'a> {
+    output: &'a mut ChildStdin,
+    cancellation_token: CancellationToken,
+    cancellation: CancellationParker,
+    deadline: Instant,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl std::io::Write for BoundedGateWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        loop {
+            if self.cancellation_token.is_cancelled() {
+                // `Write::write_all` retries `Interrupted`; use the same fixed
+                // terminal category as the bounded deadline so cancellation
+                // cannot turn into a retry loop.
+                return Err(std::io::ErrorKind::TimedOut.into());
+            }
+            if Instant::now() >= self.deadline {
+                return Err(std::io::ErrorKind::TimedOut.into());
+            }
+            match self.output.write(bytes) {
+                Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
+                Ok(written) => return Ok(written),
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    self.cancellation.park_timeout(std::cmp::min(
+                        OBSERVATION_INITIAL_INTERVAL,
+                        self.deadline.saturating_duration_since(Instant::now()),
+                    ));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn write_frame_length(output: &mut impl std::io::Write, length: usize) -> std::io::Result<()> {
     let length = u32::try_from(length).map_err(|_| std::io::ErrorKind::InvalidInput)?;
     output.write_all(&length.to_be_bytes())
@@ -1177,6 +1285,7 @@ fn write_frame_length(output: &mut impl std::io::Write, length: usize) -> std::i
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn release_prepared(
     _prepared: &mut PreparedBackgroundProcess,
+    _cancellation: &CancellationToken,
 ) -> Result<OwnedBackgroundProcess, BackgroundProcessError> {
     Err(BackgroundProcessError::new(
         BackgroundProcessErrorKind::Unsupported,
@@ -1417,12 +1526,14 @@ fn cleanup_child_with_expected(
 ) -> Result<(), BackgroundProcessError> {
     let mut failures = CleanupFailures::default();
     let mut force_signals = force_cleanup;
+    let mut captured_members = Vec::new();
     let mut group_phase = cleanup_group_signal_phase(
         group,
         rustix::process::Signal::TERM,
         &mut force_signals,
         &mut failures,
         authority,
+        &mut captured_members,
     );
     if group_phase == CleanupSignalPhase::LostAuthority {
         return failures.finish();
@@ -1437,6 +1548,7 @@ fn cleanup_child_with_expected(
             &mut force_signals,
             &mut failures,
             authority,
+            &mut captured_members,
         );
         if group_phase == CleanupSignalPhase::LostAuthority {
             return failures.finish();
@@ -1444,8 +1556,9 @@ fn cleanup_child_with_expected(
         // A successful group KILL already targets the retained leader. Avoid a
         // redundant numeric child signal, and retain wait authority while the
         // bounded group-disappearance proof runs.
-        if group_phase != CleanupSignalPhase::Quiescent
-            && let Err(error) = require_original_group_quiescent(group, authority)
+        if (group_phase != CleanupSignalPhase::Quiescent
+            || captured_members.iter().any(|member| member.pid != group))
+            && let Err(error) = require_original_group_quiescent(group, authority, captured_members)
         {
             failures.record(error);
         }
@@ -1468,6 +1581,7 @@ fn cleanup_group_signal_phase(
     force_signals: &mut bool,
     failures: &mut CleanupFailures,
     authority: &GroupSnapshotAuthority,
+    captured_members: &mut Vec<CapturedGroupMember>,
 ) -> CleanupSignalPhase {
     let leader_exited = match observe_leader(group) {
         Ok(status) => status.is_some(),
@@ -1482,7 +1596,11 @@ fn cleanup_group_signal_phase(
         }
     };
     let only_exited_leader = match group_members(authority, group) {
-        Ok(members) => leader_exited && only_group_leader_remains(&members, group),
+        Ok(members) => {
+            let only_exited_leader = leader_exited && only_group_leader_remains(&members, group);
+            retain_group_members(captured_members, members);
+            only_exited_leader
+        }
         Err(error) => {
             *force_signals = true;
             failures.record(error);
@@ -1620,6 +1738,7 @@ fn classify_group_signal(
 fn require_original_group_quiescent(
     group: rustix::process::Pid,
     authority: &GroupSnapshotAuthority,
+    mut captured: Vec<CapturedGroupMember>,
 ) -> Result<(), BackgroundProcessError> {
     // Capture the complete post-KILL membership once. The retained, unreaped
     // leader keeps the original numeric group identity from being reused while
@@ -1629,12 +1748,11 @@ fn require_original_group_quiescent(
     let deadline = Instant::now() + GROUP_DISAPPEARANCE_GRACE;
     thread::sleep(GROUP_SNAPSHOT_INITIAL_INTERVAL);
     let mut observed_failure = false;
-    let captured = if let Ok(captured) = group_members(authority, group) {
-        Some(captured)
-    } else {
-        observed_failure = true;
-        None
-    };
+    match group_members(authority, group) {
+        Ok(members) => retain_group_members(&mut captured, members),
+        Err(_) => observed_failure = true,
+    }
+    let mut captured = RetainedMemberWait::new(captured, group);
     let mut observation = ObservationBackoff::with_bounds(
         GROUP_SNAPSHOT_INITIAL_INTERVAL,
         GROUP_SNAPSHOT_MAX_INTERVAL,
@@ -1645,13 +1763,10 @@ fn require_original_group_quiescent(
             Err(LeaderObservationFailure::Operation(_)) => observed_failure = true,
             Ok(_) => {}
         }
-        match captured
-            .as_deref()
-            .map(|captured| captured_group_members_are_gone(captured, group))
-        {
-            Some(Ok(true)) => break,
-            Some(Ok(false)) => {}
-            Some(Err(_)) | None => {
+        match captured.poll(|member| captured_group_member_exists(authority, member)) {
+            Ok(true) => break,
+            Ok(false) => {}
+            Err(_) => {
                 observed_failure = true;
                 sleep_through(deadline.saturating_duration_since(Instant::now()));
                 break;
@@ -1671,25 +1786,71 @@ fn require_original_group_quiescent(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn captured_group_members_are_gone(
-    captured: &[rustix::process::Pid],
-    leader: rustix::process::Pid,
-) -> Result<bool, BackgroundProcessError> {
-    for member in captured.iter().copied().filter(|member| *member != leader) {
-        match rustix::process::getpgid(Some(member)) {
-            Ok(group) if group == leader => return Ok(false),
-            Ok(_) | Err(rustix::io::Errno::SRCH) => {}
-            Err(_) => return Err(cleanup_error()),
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CapturedGroupMember {
+    pid: rustix::process::Pid,
+    identity: Option<u64>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn retain_group_members(
+    retained: &mut Vec<CapturedGroupMember>,
+    observed: Vec<CapturedGroupMember>,
+) {
+    for member in observed {
+        if !retained.contains(&member) {
+            retained.push(member);
         }
     }
-    Ok(true)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct RetainedMemberWait {
+    unresolved: Vec<CapturedGroupMember>,
+    cursor: usize,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl RetainedMemberWait {
+    fn new(mut captured: Vec<CapturedGroupMember>, leader: rustix::process::Pid) -> Self {
+        captured.retain(|member| member.pid != leader);
+        Self {
+            unresolved: captured,
+            cursor: 0,
+        }
+    }
+
+    fn poll(
+        &mut self,
+        mut exists: impl FnMut(&CapturedGroupMember) -> Result<bool, BackgroundProcessError>,
+    ) -> Result<bool, BackgroundProcessError> {
+        while self.cursor < self.unresolved.len() {
+            if exists(&self.unresolved[self.cursor])? {
+                return Ok(false);
+            }
+            self.cursor += 1;
+        }
+        Ok(true)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn captured_group_member_exists(
+    _authority: &GroupSnapshotAuthority,
+    member: &CapturedGroupMember,
+) -> Result<bool, BackgroundProcessError> {
+    match rustix::process::getpgid(Some(member.pid)) {
+        Ok(_) => Ok(true),
+        Err(rustix::io::Errno::SRCH) => Ok(false),
+        Err(_) => Err(cleanup_error()),
+    }
 }
 
 #[cfg(target_os = "macos")]
 fn group_members(
     _authority: &GroupSnapshotAuthority,
     group: rustix::process::Pid,
-) -> Result<Vec<rustix::process::Pid>, BackgroundProcessError> {
+) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
     use std::io::Read;
 
     #[cfg(test)]
@@ -1756,14 +1917,22 @@ fn group_members(
     ) {
         return Err(cleanup_error());
     }
-    parse_group_members(&bytes)
+    parse_group_members(&bytes).map(|members| {
+        members
+            .into_iter()
+            .map(|pid| CapturedGroupMember {
+                pid,
+                identity: None,
+            })
+            .collect()
+    })
 }
 
 #[cfg(target_os = "linux")]
 fn group_members(
     authority: &GroupSnapshotAuthority,
     group: rustix::process::Pid,
-) -> Result<Vec<rustix::process::Pid>, BackgroundProcessError> {
+) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
     use std::io::Read;
 
     #[cfg(test)]
@@ -1835,11 +2004,15 @@ fn group_members(
             .checked_add(stat_bytes.len())
             .filter(|bytes| *bytes <= MAX_LINUX_PROC_SNAPSHOT_BYTES)
             .ok_or_else(cleanup_error)?;
-        if parse_linux_proc_stat(&stat_bytes, pid)? == Some(group) {
+        let parsed = parse_linux_proc_stat(&stat_bytes, pid)?;
+        if parsed.group == Some(group) {
             if members.len() == MAX_GROUP_SNAPSHOT_BYTES / 2 {
                 return Err(cleanup_error());
             }
-            members.push(pid);
+            members.push(CapturedGroupMember {
+                pid,
+                identity: Some(parsed.start_time),
+            });
         }
     }
 
@@ -1875,7 +2048,7 @@ fn parse_linux_proc_directory_pid(
 fn parse_linux_proc_stat(
     bytes: &[u8],
     expected_pid: rustix::process::Pid,
-) -> Result<Option<rustix::process::Pid>, BackgroundProcessError> {
+) -> Result<LinuxProcStat, BackgroundProcessError> {
     if bytes.is_empty() || bytes.len() > MAX_LINUX_PROC_STAT_BYTES {
         return Err(cleanup_error());
     }
@@ -1909,11 +2082,68 @@ fn parse_linux_proc_stat(
     }
     parse_linux_nonnegative_i32(fields.next().ok_or_else(cleanup_error)?)
         .ok_or_else(cleanup_error)?;
-    fields
+    let group = fields
         .next()
         .and_then(parse_linux_nonnegative_i32)
-        .map(rustix::process::Pid::from_raw)
-        .ok_or_else(cleanup_error)
+        .ok_or_else(cleanup_error)?;
+    for _ in 0..16 {
+        fields.next().ok_or_else(cleanup_error)?;
+    }
+    let start_time = fields
+        .next()
+        .and_then(parse_linux_nonnegative_u64)
+        .ok_or_else(cleanup_error)?;
+    Ok(LinuxProcStat {
+        group: rustix::process::Pid::from_raw(group),
+        start_time,
+    })
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LinuxProcStat {
+    group: Option<rustix::process::Pid>,
+    start_time: u64,
+}
+
+#[cfg(target_os = "linux")]
+fn captured_group_member_exists(
+    authority: &GroupSnapshotAuthority,
+    member: &CapturedGroupMember,
+) -> Result<bool, BackgroundProcessError> {
+    use std::io::Read;
+
+    let name = member.pid.as_raw_nonzero().get().to_string();
+    let pid_fd = match rustix::fs::openat(
+        authority.proc_root.as_fd(),
+        name,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    ) {
+        Ok(fd) => fd,
+        Err(rustix::io::Errno::NOENT) => return Ok(false),
+        Err(_) => return Err(cleanup_error()),
+    };
+    let stat_fd = match rustix::fs::openat(
+        pid_fd.as_fd(),
+        "stat",
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    ) {
+        Ok(fd) => fd,
+        Err(rustix::io::Errno::NOENT) => return Ok(false),
+        Err(_) => return Err(cleanup_error()),
+    };
+    let mut bytes = Vec::with_capacity(MAX_LINUX_PROC_STAT_BYTES + 1);
+    std::fs::File::from(stat_fd)
+        .take((MAX_LINUX_PROC_STAT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| cleanup_error())?;
+    if bytes.len() > MAX_LINUX_PROC_STAT_BYTES {
+        return Err(cleanup_error());
+    }
+    let parsed = parse_linux_proc_stat(&bytes, member.pid)?;
+    Ok(member.identity == Some(parsed.start_time))
 }
 
 #[cfg(target_os = "linux")]
@@ -1967,10 +2197,10 @@ fn parse_group_members(bytes: &[u8]) -> Result<Vec<rustix::process::Pid>, Backgr
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn only_group_leader_remains(
-    members: &[rustix::process::Pid],
+    members: &[CapturedGroupMember],
     leader: rustix::process::Pid,
 ) -> bool {
-    members == [leader]
+    members.len() == 1 && members[0].pid == leader
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
@@ -2040,7 +2270,7 @@ pub(crate) fn group_snapshot_is_quiescent_for_test(
     leader: i32,
 ) -> Result<bool, BackgroundProcessError> {
     let leader = rustix::process::Pid::from_raw(leader).ok_or_else(cleanup_error)?;
-    parse_group_members(bytes).map(|members| only_group_leader_remains(&members, leader))
+    parse_group_members(bytes).map(|members| members == [leader])
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
@@ -2214,11 +2444,15 @@ mod linux_proc_tests {
 
     #[test]
     fn proc_stat_uses_the_final_parenthesis_after_a_hostile_comm() {
-        let stat = b"321 (worker ) name (with parentheses)) S 12 77 77 0 -1";
+        let stat =
+            b"321 (worker ) name (with parentheses)) S 12 77 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 4242";
 
         assert_eq!(
             parse_linux_proc_stat(stat, pid(321)).unwrap(),
-            Some(pid(77))
+            LinuxProcStat {
+                group: Some(pid(77)),
+                start_time: 4242,
+            }
         );
     }
 
@@ -2234,8 +2468,15 @@ mod linux_proc_tests {
     #[test]
     fn proc_stat_accepts_kernel_processes_without_a_process_group() {
         assert_eq!(
-            parse_linux_proc_stat(b"2 (kthreadd) S 0 0 0", pid(2)).unwrap(),
-            None
+            parse_linux_proc_stat(
+                b"2 (kthreadd) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 99",
+                pid(2)
+            )
+            .unwrap(),
+            LinuxProcStat {
+                group: None,
+                start_time: 99,
+            }
         );
     }
 
@@ -2390,6 +2631,252 @@ mod process_regression_tests {
         )
         .expect_err("a duplicate at the exact bound is rejected");
         assert_eq!(error.kind(), BackgroundProcessErrorKind::InvalidRequest);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn stalled_child_reap_probe_is_cancelled_and_reaped_promptly() {
+        let directory = TestDirectory::new("cancel-reap-probe");
+        let pid_file = directory.0.join("probe.pid");
+        let mut command = Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("printf '%s' \"$$\" > \"$1\"; exec /bin/sleep 30")
+            .arg("machine-god-stalled-reap-probe")
+            .arg(&pid_file)
+            .env_clear()
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let cancellation = CancellationToken::new();
+        let worker_cancellation = cancellation.clone();
+        let worker = thread::spawn(move || {
+            require_exclusive_child_reaping_with(command, &worker_cancellation)
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !pid_file.exists() {
+            assert!(Instant::now() < deadline, "probe did not publish its PID");
+            thread::sleep(Duration::from_millis(2));
+        }
+        let pid = fs::read_to_string(&pid_file)
+            .expect("read probe PID")
+            .parse::<i32>()
+            .expect("parse probe PID");
+
+        let started = Instant::now();
+        assert!(cancellation.cancel());
+        assert_eq!(
+            worker
+                .join()
+                .expect("join cancelled probe")
+                .expect_err("cancelled probe fails")
+                .kind(),
+            BackgroundProcessErrorKind::Spawn
+        );
+        assert!(started.elapsed() < Duration::from_millis(250));
+        assert_eq!(
+            rustix::process::test_kill_process(
+                rustix::process::Pid::from_raw(pid).expect("positive probe PID")
+            ),
+            Err(rustix::io::Errno::SRCH)
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn ready_helper_not_reading_maximum_frame_is_bounded_and_reaped() {
+        let directory = TestDirectory::new("stalled-release-frame");
+        let helper_pid = directory.0.join("helper.pid");
+        let prepare = || {
+            let helper = BackgroundProcessHelper::new(
+                PathBuf::from("/bin/sh"),
+                vec![
+                    OsString::from("-c"),
+                    OsString::from(
+                        "printf '%s' \"$$\" > \"$1\"; printf '\\247' >&2; exec /bin/sleep 30",
+                    ),
+                    OsString::from("machine-god-stalled-release-helper"),
+                    helper_pid.as_os_str().to_owned(),
+                ],
+            )
+            .expect("bounded stalled release helper");
+            let environment = (0..15)
+                .map(|index| {
+                    (
+                        OsString::from(format!("K{index}")),
+                        OsString::from("v".repeat(MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES)),
+                    )
+                })
+                .collect();
+            let request = BackgroundProcessRequest::open(
+                "x".repeat(MAX_BACKGROUND_PROCESS_COMMAND_BYTES),
+                "workspace".to_owned(),
+                environment,
+                &directory.0,
+            )
+            .expect("maximum stalled frame request");
+            SystemBackgroundProcessAdapter::with_helper(helper)
+                .prepare(request)
+                .expect("helper becomes ready")
+        };
+
+        let prepared = prepare();
+        let cancelled_pid = prepared.pid();
+        let cancellation = CancellationToken::new();
+        let worker_cancellation = cancellation.clone();
+        let worker = thread::spawn(move || prepared.release_cancellable(&worker_cancellation));
+        thread::sleep(Duration::from_millis(50));
+        let started = Instant::now();
+        assert!(cancellation.cancel());
+        assert_eq!(
+            worker
+                .join()
+                .expect("join cancelled release")
+                .expect_err("cancelled release fails")
+                .kind(),
+            BackgroundProcessErrorKind::Release
+        );
+        assert!(started.elapsed() < Duration::from_millis(250));
+        assert_eq!(
+            rustix::process::test_kill_process(
+                rustix::process::Pid::from_raw(
+                    i32::try_from(cancelled_pid.get()).expect("helper PID fits signed range")
+                )
+                .expect("positive helper PID")
+            ),
+            Err(rustix::io::Errno::SRCH)
+        );
+
+        let prepared = prepare();
+        let pid = prepared.pid();
+
+        let started = Instant::now();
+        let error = prepared
+            .release_cancellable(&CancellationToken::new())
+            .expect_err("non-reading helper cannot consume the complete frame");
+        assert_eq!(error.kind(), BackgroundProcessErrorKind::Release);
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(
+            rustix::process::test_kill_process(
+                rustix::process::Pid::from_raw(
+                    i32::try_from(pid.get()).expect("helper PID fits signed range")
+                )
+                .expect("positive helper PID")
+            ),
+            Err(rustix::io::Errno::SRCH)
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn retained_member_wait_amortizes_vanished_prefix_and_one_live_witness() {
+        let leader = rustix::process::Pid::from_raw(1).expect("positive leader");
+        let trailing = rustix::process::Pid::from_raw(4095).expect("positive witness");
+        let captured = (2..=4095)
+            .map(|raw| CapturedGroupMember {
+                pid: rustix::process::Pid::from_raw(raw).expect("positive captured PID"),
+                identity: None,
+            })
+            .collect();
+        let mut wait = RetainedMemberWait::new(captured, leader);
+        let mut observations = 0_usize;
+        for _ in 0..100 {
+            assert!(
+                !wait
+                    .poll(|member| {
+                        observations += 1;
+                        Ok(member.pid == trailing)
+                    })
+                    .expect("injected observation succeeds")
+            );
+        }
+        assert_eq!(observations, 4093 + 100);
+        assert!(
+            wait.poll(|_| {
+                observations += 1;
+                Ok(false)
+            })
+            .expect("final witness disappearance succeeds")
+        );
+        assert_eq!(observations, 4093 + 101);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn partial_signal_delivery_retains_member_that_escaped_before_later_snapshot() {
+        let leader = rustix::process::Pid::from_raw(71).expect("positive leader");
+        let escaped = CapturedGroupMember {
+            pid: rustix::process::Pid::from_raw(72).expect("positive descendant"),
+            identity: Some(9001),
+        };
+        let leader_member = CapturedGroupMember {
+            pid: leader,
+            identity: Some(9000),
+        };
+        let mut retained = Vec::new();
+        retain_group_members(&mut retained, vec![leader_member, escaped]);
+        // The later pre-KILL snapshot no longer contains the descendant: it
+        // escaped after partial TERM delivery. The retained union must not
+        // discard it merely because the original group no longer reports it.
+        retain_group_members(&mut retained, vec![leader_member]);
+
+        let mut wait = RetainedMemberWait::new(retained, leader);
+        assert!(
+            !wait
+                .poll(|member| Ok(*member == escaped))
+                .expect("injected escaped-member observation succeeds")
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn retained_stable_identity_detects_a_member_that_escaped_the_group() {
+        use std::io::Read;
+
+        let authority = GroupSnapshotAuthority::open().expect("open proc authority");
+        let raw = i32::try_from(std::process::id()).expect("current PID fits signed range");
+        let pid = rustix::process::Pid::from_raw(raw).expect("positive current PID");
+        let stat_fd = rustix::fs::openat(
+            authority.proc_root.as_fd(),
+            raw.to_string(),
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .and_then(|pid_fd| {
+            rustix::fs::openat(
+                pid_fd.as_fd(),
+                "stat",
+                OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+        })
+        .expect("open current stat");
+        let mut bytes = Vec::new();
+        std::fs::File::from(stat_fd)
+            .read_to_end(&mut bytes)
+            .expect("read current stat");
+        let stat = parse_linux_proc_stat(&bytes, pid).expect("parse current identity");
+        let escaped = CapturedGroupMember {
+            pid,
+            identity: Some(stat.start_time),
+        };
+        assert!(
+            captured_group_member_exists(&authority, &escaped)
+                .expect("escaped member observation succeeds")
+        );
+        assert_ne!(
+            stat.group,
+            Some(rustix::process::Pid::from_raw(1).expect("positive comparison group"))
+        );
+
+        let reused = CapturedGroupMember {
+            identity: Some(stat.start_time.wrapping_add(1)),
+            ..escaped
+        };
+        assert!(
+            !captured_group_member_exists(&authority, &reused)
+                .expect("PID reuse observation succeeds")
+        );
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

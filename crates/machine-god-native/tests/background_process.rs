@@ -552,6 +552,68 @@ fn normal_leader_exit_cleans_lingering_group_descendant() {
     assert!(!process_is_in_group(descendant, original_group));
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn partial_term_delivery_cannot_hide_a_descendant_that_escapes_the_group() {
+    let directory = FreshDirectory::new("escaped-descendant");
+    let source = directory.path().join("escape.c");
+    let executable = directory.path().join("escape");
+    fs::write(
+        &source,
+        br#"#include <signal.h>
+#include <stdio.h>
+#include <unistd.h>
+static volatile sig_atomic_t leave_group = 0;
+static void on_term(int signal) { (void)signal; leave_group = 1; }
+int main(void) {
+  pid_t child = fork();
+  if (child < 0) return 80;
+  if (child == 0) {
+    struct sigaction action = {0};
+    action.sa_handler = on_term;
+    sigemptyset(&action.sa_mask);
+    if (sigaction(SIGTERM, &action, 0) != 0) return 81;
+    FILE *marker = fopen("escaped.pid.tmp", "w");
+    if (!marker || fprintf(marker, "%d", (int)getpid()) < 1 || fclose(marker) != 0) return 82;
+    if (rename("escaped.pid.tmp", "escaped.pid") != 0) return 83;
+    while (!leave_group) pause();
+    if (setpgid(0, 0) != 0) return 84;
+    for (;;) pause();
+  }
+  signal(SIGTERM, SIG_IGN);
+  for (;;) pause();
+}
+"#,
+    )
+    .unwrap();
+    assert!(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror", "-o"])
+            .arg(&executable)
+            .arg(&source)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let owned = adapter()
+        .prepare(request(directory.path(), "exec ./escape"))
+        .unwrap()
+        .release()
+        .unwrap();
+    let escaped = wait_for_pid(&directory.path().join("escaped.pid"));
+
+    let error = owned.stop().unwrap_err();
+
+    assert_eq!(error.kind(), BackgroundProcessErrorKind::Cleanup);
+    assert!(
+        process_exists(escaped),
+        "escaped identity was mistaken for gone"
+    );
+    let escaped_pid = rustix::process::Pid::from_raw(i32::try_from(escaped).unwrap()).unwrap();
+    rustix::process::kill_process(escaped_pid, rustix::process::Signal::KILL).unwrap();
+    assert_processes_absent(&[escaped]);
+}
+
 fn process_is_in_group(pid: u32, group: u32) -> bool {
     let Some(pid) = i32::try_from(pid)
         .ok()
