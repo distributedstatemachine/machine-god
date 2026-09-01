@@ -552,17 +552,58 @@ async fn start_polled(
 
     let pid = prepared.pid();
     let record = BackgroundRunningRecord::new(id, started_at_ms, &request, pid);
-    await_commit_or_cancel(lease.publish_initial(&record), &cancellation).await?;
-    if cancellation.is_cancelled() {
-        drop(prepared);
-        if let Ok(completion) =
-            record.completion(started_at_ms, BackgroundProcessOutcome::Stopped(None))
-        {
-            let _ = lease.publish_completion(&record, &completion).await;
+    match await_commit_or_cancel(lease.publish_initial(&record), &cancellation).await {
+        Ok(()) => {}
+        Err(CommitAwaitError::CancelledBeforePoll) => {
+            return Err(BackgroundStartError::new(
+                BackgroundStartErrorKind::Cancelled,
+            ));
         }
-        return Err(BackgroundStartError::new(
-            BackgroundStartErrorKind::Cancelled,
-        ));
+        Err(CommitAwaitError::CancelledAfterPoll) => {
+            return cleanup_after_possible_publication(
+                prepared,
+                lease.as_ref(),
+                &record,
+                BackgroundStartError::new(BackgroundStartErrorKind::Cancelled),
+            )
+            .await;
+        }
+        Err(CommitAwaitError::Operation(error)) => {
+            // A persistence failure can mean that atomic installation succeeded
+            // but its directory synchronization failed. If cancellation is now
+            // observable, conservatively replace that possibly installed record.
+            // Preserve every other error category: a broken implementation must
+            // not let cancellation hide a stronger invariant or process failure.
+            if error.kind() == BackgroundStartErrorKind::Persistence && cancellation.is_cancelled()
+            {
+                return cleanup_after_possible_publication(
+                    prepared,
+                    lease.as_ref(),
+                    &record,
+                    BackgroundStartError::new(BackgroundStartErrorKind::Cancelled),
+                )
+                .await;
+            }
+            if cancellation.is_cancelled() {
+                return cleanup_after_possible_publication(
+                    prepared,
+                    lease.as_ref(),
+                    &record,
+                    error,
+                )
+                .await;
+            }
+            return Err(error);
+        }
+    }
+    if cancellation.is_cancelled() {
+        return cleanup_after_possible_publication(
+            prepared,
+            lease.as_ref(),
+            &record,
+            BackgroundStartError::new(BackgroundStartErrorKind::Cancelled),
+        )
+        .await;
     }
 
     // Release is the irreversible commit point. The cancellation observation
@@ -585,6 +626,22 @@ async fn start_polled(
     };
     permit.retain(lease, record, process);
     Ok(handle)
+}
+
+async fn cleanup_after_possible_publication(
+    prepared: Box<dyn PreparedBackgroundProcess>,
+    lease: &dyn BackgroundRecordLease,
+    record: &BackgroundRunningRecord,
+    primary: BackgroundStartError,
+) -> Result<BackgroundHandle, BackgroundStartError> {
+    drop(prepared);
+    if let Ok(completion) = record.completion(
+        record.started_at_ms(),
+        BackgroundProcessOutcome::Stopped(None),
+    ) {
+        let _ = lease.publish_completion(record, &completion).await;
+    }
+    Err(primary)
 }
 
 fn check_cancellation(cancellation: &CancellationToken) -> Result<(), BackgroundStartError> {
@@ -620,18 +677,45 @@ async fn await_or_cancel<T>(
     .await
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CommitAwaitError {
+    CancelledBeforePoll,
+    CancelledAfterPoll,
+    Operation(BackgroundStartError),
+}
+
 async fn await_commit_or_cancel<T>(
     mut operation: BoxFuture<'_, Result<T, BackgroundStartError>>,
     cancellation: &CancellationToken,
-) -> Result<T, BackgroundStartError> {
+) -> Result<T, CommitAwaitError> {
     let mut cancellation_wait = Box::pin(cancellation.cancelled());
+    let mut operation_polled = false;
     std::future::poll_fn(|context| {
         if cancellation_wait.as_mut().poll(context).is_ready() {
-            Poll::Ready(Err(BackgroundStartError::new(
-                BackgroundStartErrorKind::Cancelled,
-            )))
-        } else {
-            operation.as_mut().poll(context)
+            return Poll::Ready(Err(if operation_polled {
+                CommitAwaitError::CancelledAfterPoll
+            } else {
+                CommitAwaitError::CancelledBeforePoll
+            }));
+        }
+        operation_polled = true;
+        match operation.as_mut().poll(context) {
+            Poll::Ready(Err(error))
+                if cancellation.is_cancelled()
+                    && error.kind() == BackgroundStartErrorKind::Persistence =>
+            {
+                Poll::Ready(Err(CommitAwaitError::CancelledAfterPoll))
+            }
+            Poll::Ready(Err(error)) => Poll::Ready(Err(CommitAwaitError::Operation(error))),
+            Poll::Ready(Ok(value)) if cancellation.is_cancelled() => {
+                drop(value);
+                Poll::Ready(Err(CommitAwaitError::CancelledAfterPoll))
+            }
+            Poll::Ready(Ok(value)) => Poll::Ready(Ok(value)),
+            Poll::Pending if cancellation.is_cancelled() => {
+                Poll::Ready(Err(CommitAwaitError::CancelledAfterPoll))
+            }
+            Poll::Pending => Poll::Pending,
         }
     })
     .await
@@ -796,6 +880,113 @@ mod tests {
                     Ok(())
                 }
             })
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum ScriptedPublishResult {
+        Pending,
+        Persistence,
+        Process,
+    }
+
+    #[derive(Debug)]
+    struct ScriptedPublishStore {
+        observations: Arc<Observations>,
+        cancellation: CancellationToken,
+        result: ScriptedPublishResult,
+    }
+
+    impl BackgroundStore for ScriptedPublishStore {
+        fn reserve(
+            &self,
+        ) -> BoxFuture<'_, Result<Box<dyn BackgroundRecordLease>, BackgroundStartError>> {
+            Box::pin(async move {
+                self.observations.event("reserve");
+                Ok(Box::new(ScriptedPublishLease {
+                    observations: Arc::clone(&self.observations),
+                    cancellation: self.cancellation.clone(),
+                    result: self.result,
+                }) as Box<dyn BackgroundRecordLease>)
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct ScriptedPublishLease {
+        observations: Arc<Observations>,
+        cancellation: CancellationToken,
+        result: ScriptedPublishResult,
+    }
+
+    impl BackgroundRecordLease for ScriptedPublishLease {
+        fn id(&self) -> u64 {
+            7
+        }
+
+        fn publish_initial<'a>(
+            &'a self,
+            record: &'a BackgroundRunningRecord,
+        ) -> BoxFuture<'a, Result<(), BackgroundStartError>> {
+            Box::pin(ScriptedPublishFuture {
+                lease: self,
+                record,
+                first_poll: true,
+            })
+        }
+
+        fn publish_completion<'a>(
+            &'a self,
+            initial: &'a BackgroundRunningRecord,
+            completion: &'a BackgroundCompletionRecord,
+        ) -> BoxFuture<'a, Result<(), BackgroundStartError>> {
+            Box::pin(async move {
+                self.observations.event("complete");
+                self.observations
+                    .completion_publications
+                    .fetch_add(1, Ordering::Relaxed);
+                assert_eq!(initial.id(), 7);
+                assert_eq!(completion.updated_at_ms(), 1_234);
+                assert_eq!(
+                    completion.outcome(),
+                    BackgroundProcessOutcome::Stopped(None)
+                );
+                Ok(())
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct ScriptedPublishFuture<'a> {
+        lease: &'a ScriptedPublishLease,
+        record: &'a BackgroundRunningRecord,
+        first_poll: bool,
+    }
+
+    impl Future for ScriptedPublishFuture<'_> {
+        type Output = Result<(), BackgroundStartError>;
+
+        fn poll(mut self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+            assert!(self.first_poll, "scripted publication must not be repolled");
+            self.first_poll = false;
+            self.lease.observations.event("publish");
+            assert_eq!(self.record.id(), 7);
+            assert_eq!(self.record.started_at_ms(), 1_234);
+            assert_eq!(self.record.command(), "echo ready");
+            assert_eq!(self.record.cwd(), "/workspace");
+
+            // Model atomic installation before the native adapter either
+            // yields or reports the permitted directory-sync ambiguity.
+            self.lease.cancellation.cancel();
+            match self.lease.result {
+                ScriptedPublishResult::Pending => Poll::Pending,
+                ScriptedPublishResult::Persistence => {
+                    Poll::Ready(Err(error(BackgroundStartErrorKind::Persistence)))
+                }
+                ScriptedPublishResult::Process => {
+                    Poll::Ready(Err(error(BackgroundStartErrorKind::Process)))
+                }
+            }
         }
     }
 
@@ -990,6 +1181,38 @@ mod tests {
             }),
         );
         (supervisor, observations, pending_dropped)
+    }
+
+    fn scripted_publication_fixture(
+        result: ScriptedPublishResult,
+        cancellation: CancellationToken,
+    ) -> (BackgroundSupervisor, Arc<Observations>) {
+        let observations = Arc::new(Observations::default());
+        let supervisor = BackgroundSupervisor::new(
+            Arc::new(FakeClock {
+                observations: Arc::clone(&observations),
+                fail: false,
+            }),
+            Arc::new(ScriptedPublishStore {
+                observations: Arc::clone(&observations),
+                cancellation,
+                result,
+            }),
+            Arc::new(FakeSpawner {
+                observations: Arc::clone(&observations),
+                prepare_fail: false,
+                release_fail: false,
+                cancel_during_prepare: None,
+                stay_pending: false,
+                pending_dropped: Arc::new(AtomicUsize::new(0)),
+            }),
+            Arc::new(FakeRetainer {
+                observations: Arc::clone(&observations),
+                capacity_fail: false,
+                cancel_during_retain: None,
+            }),
+        );
+        (supervisor, observations)
     }
 
     #[test]
@@ -1300,6 +1523,89 @@ mod tests {
             [
                 "admit", "reserve", "clock", "prepare", "publish", "abort", "complete"
             ]
+        );
+        assert_eq!(observations.executed.load(Ordering::Relaxed), 0);
+        assert_eq!(observations.retained.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn cancellation_after_install_then_pending_replaces_with_stopped() {
+        let cancellation = CancellationToken::new();
+        let (supervisor, observations) =
+            scripted_publication_fixture(ScriptedPublishResult::Pending, cancellation.clone());
+
+        let result = block_on(supervisor.start(request(), cancellation.clone()));
+
+        assert_eq!(
+            result.unwrap_err().kind(),
+            BackgroundStartErrorKind::Cancelled
+        );
+        assert!(cancellation.is_cancelled());
+        assert_eq!(
+            observations.events(),
+            [
+                "admit", "reserve", "clock", "prepare", "publish", "abort", "complete"
+            ]
+        );
+        assert_eq!(observations.aborted.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            observations.completion_publications.load(Ordering::Relaxed),
+            1
+        );
+        assert_eq!(observations.executed.load(Ordering::Relaxed), 0);
+        assert_eq!(observations.retained.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn cancellation_after_ambiguous_persistence_replaces_with_stopped() {
+        let cancellation = CancellationToken::new();
+        let (supervisor, observations) =
+            scripted_publication_fixture(ScriptedPublishResult::Persistence, cancellation.clone());
+
+        let result = block_on(supervisor.start(request(), cancellation.clone()));
+
+        assert_eq!(
+            result.unwrap_err().kind(),
+            BackgroundStartErrorKind::Cancelled
+        );
+        assert!(cancellation.is_cancelled());
+        assert_eq!(
+            observations.events(),
+            [
+                "admit", "reserve", "clock", "prepare", "publish", "abort", "complete"
+            ]
+        );
+        assert_eq!(observations.aborted.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            observations.completion_publications.load(Ordering::Relaxed),
+            1
+        );
+        assert_eq!(observations.executed.load(Ordering::Relaxed), 0);
+        assert_eq!(observations.retained.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn cancellation_does_not_mask_a_stronger_publication_error() {
+        let cancellation = CancellationToken::new();
+        let (supervisor, observations) =
+            scripted_publication_fixture(ScriptedPublishResult::Process, cancellation.clone());
+
+        let result = block_on(supervisor.start(request(), cancellation));
+
+        assert_eq!(
+            result.unwrap_err().kind(),
+            BackgroundStartErrorKind::Process
+        );
+        assert_eq!(
+            observations.events(),
+            [
+                "admit", "reserve", "clock", "prepare", "publish", "abort", "complete"
+            ]
+        );
+        assert_eq!(observations.aborted.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            observations.completion_publications.load(Ordering::Relaxed),
+            1
         );
         assert_eq!(observations.executed.load(Ordering::Relaxed), 0);
         assert_eq!(observations.retained.load(Ordering::Relaxed), 0);
