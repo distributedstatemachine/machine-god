@@ -24,7 +24,7 @@ pub enum BackgroundStartErrorKind {
     Clock,
     /// Durable reservation or record publication failed.
     Persistence,
-    /// Process preparation or release failed.
+    /// Process preparation, release, or cleanup failed.
     Process,
     /// Cancellation won before the prepared process was released.
     Cancelled,
@@ -371,8 +371,9 @@ pub trait PreparedBackgroundProcess: Send + 'static {
     ///
     /// # Errors
     ///
-    /// Returns a fixed process failure only after guaranteeing the command did
-    /// not execute and every prepared native resource was cleaned.
+    /// Returns `Cancelled` only when cancellation won before the barrier opened
+    /// and complete prepared-resource cleanup was proven. Returns `Process`
+    /// when release or cleanup failed or their result is ambiguous.
     fn release(
         self: Box<Self>,
         cancellation: &CancellationToken,
@@ -568,20 +569,21 @@ async fn start_polled(
     let started_at_ms = clock.now_millis()?;
     check_cancellation(&cancellation)?;
 
-    let prepared = await_or_cancel(
+    let prepared = await_prepared_or_cancel(
         spawner.prepare(&request, cancellation.clone()),
         &cancellation,
     )
     .await?;
-    check_cancellation(&cancellation)?;
+    let prepared = ensure_prepared_not_cancelled(prepared, &cancellation)?;
 
     let pid = prepared.pid();
     let record = BackgroundRunningRecord::new(id, started_at_ms, &request, pid);
     match await_commit_or_cancel(lease.publish_initial(&record), &cancellation).await {
         Ok(()) => {}
         Err(CommitAwaitError::CancelledBeforePoll) => {
-            return Err(BackgroundStartError::new(
-                BackgroundStartErrorKind::Cancelled,
+            return Err(abort_prepared(
+                prepared,
+                BackgroundStartError::new(BackgroundStartErrorKind::Cancelled),
             ));
         }
         Err(CommitAwaitError::CancelledAfterPoll) => {
@@ -637,8 +639,12 @@ async fn start_polled(
     let process = match prepared.release(&cancellation) {
         Ok(process) => process,
         Err(error) => {
-            if let Ok(completion) = record.completion(started_at_ms, BackgroundProcessOutcome::Dead)
-            {
+            let outcome = if error.kind() == BackgroundStartErrorKind::Cancelled {
+                BackgroundProcessOutcome::Stopped(None)
+            } else {
+                BackgroundProcessOutcome::Dead
+            };
+            if let Ok(completion) = record.completion(started_at_ms, outcome) {
                 let _ = lease.publish_completion(&record, &completion).await;
             }
             return Err(error);
@@ -659,15 +665,38 @@ async fn cleanup_after_possible_publication(
     record: &BackgroundRunningRecord,
     primary: BackgroundStartError,
 ) -> Result<BackgroundHandle, BackgroundStartError> {
-    let outcome = if prepared.abort().is_ok() {
-        BackgroundProcessOutcome::Stopped(None)
-    } else {
-        BackgroundProcessOutcome::Dead
+    let (outcome, result) = match prepared.abort() {
+        Ok(()) => (BackgroundProcessOutcome::Stopped(None), primary),
+        Err(error) => (BackgroundProcessOutcome::Dead, error),
     };
     if let Ok(completion) = record.completion(record.started_at_ms(), outcome) {
         let _ = lease.publish_completion(record, &completion).await;
     }
-    Err(primary)
+    Err(result)
+}
+
+fn abort_prepared(
+    prepared: Box<dyn PreparedBackgroundProcess>,
+    primary: BackgroundStartError,
+) -> BackgroundStartError {
+    match prepared.abort() {
+        Ok(()) => primary,
+        Err(error) => error,
+    }
+}
+
+fn ensure_prepared_not_cancelled(
+    prepared: Box<dyn PreparedBackgroundProcess>,
+    cancellation: &CancellationToken,
+) -> Result<Box<dyn PreparedBackgroundProcess>, BackgroundStartError> {
+    if cancellation.is_cancelled() {
+        Err(abort_prepared(
+            prepared,
+            BackgroundStartError::new(BackgroundStartErrorKind::Cancelled),
+        ))
+    } else {
+        Ok(prepared)
+    }
 }
 
 fn check_cancellation(cancellation: &CancellationToken) -> Result<(), BackgroundStartError> {
@@ -703,6 +732,35 @@ async fn await_or_cancel<T>(
                 )))
             }
             Poll::Ready(Ok(value)) => Poll::Ready(Ok(value)),
+            Poll::Pending if cancellation.is_cancelled() => Poll::Ready(Err(
+                BackgroundStartError::new(BackgroundStartErrorKind::Cancelled),
+            )),
+            Poll::Pending => Poll::Pending,
+        }
+    })
+    .await
+}
+
+async fn await_prepared_or_cancel(
+    mut operation: BoxFuture<'_, Result<Box<dyn PreparedBackgroundProcess>, BackgroundStartError>>,
+    cancellation: &CancellationToken,
+) -> Result<Box<dyn PreparedBackgroundProcess>, BackgroundStartError> {
+    let mut cancellation_wait = Box::pin(cancellation.cancelled());
+    std::future::poll_fn(|context| {
+        if cancellation_wait.as_mut().poll(context).is_ready() {
+            return Poll::Ready(Err(BackgroundStartError::new(
+                BackgroundStartErrorKind::Cancelled,
+            )));
+        }
+        match operation.as_mut().poll(context) {
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Ready(Ok(prepared)) if cancellation.is_cancelled() => {
+                Poll::Ready(Err(abort_prepared(
+                    prepared,
+                    BackgroundStartError::new(BackgroundStartErrorKind::Cancelled),
+                )))
+            }
+            Poll::Ready(Ok(prepared)) => Poll::Ready(Ok(prepared)),
             Poll::Pending if cancellation.is_cancelled() => Poll::Ready(Err(
                 BackgroundStartError::new(BackgroundStartErrorKind::Cancelled),
             )),
@@ -1043,6 +1101,8 @@ mod tests {
         release_fail: bool,
         abort_fail: bool,
         cancel_during_prepare: Option<CancellationToken>,
+        cancel_during_pid: Option<CancellationToken>,
+        cancel_during_release: Option<CancellationToken>,
         stay_pending: bool,
         pending_dropped: Arc<AtomicUsize>,
     }
@@ -1071,6 +1131,8 @@ mod tests {
                     released: false,
                     release_fail: self.release_fail,
                     abort_fail: self.abort_fail,
+                    cancel_during_pid: self.cancel_during_pid.clone(),
+                    cancel_during_release: self.cancel_during_release.clone(),
                 });
                 Ok(prepared)
             })
@@ -1092,6 +1154,8 @@ mod tests {
         released: bool,
         release_fail: bool,
         abort_fail: bool,
+        cancel_during_pid: Option<CancellationToken>,
+        cancel_during_release: Option<CancellationToken>,
     }
 
     impl Drop for FakePrepared {
@@ -1105,6 +1169,9 @@ mod tests {
 
     impl PreparedBackgroundProcess for FakePrepared {
         fn pid(&self) -> Option<NonZeroU32> {
+            if let Some(cancellation) = &self.cancel_during_pid {
+                cancellation.cancel();
+            }
             NonZeroU32::new(42)
         }
 
@@ -1113,6 +1180,11 @@ mod tests {
             _cancellation: &CancellationToken,
         ) -> Result<Box<dyn OwnedBackgroundProcess>, BackgroundStartError> {
             self.observations.event("release");
+            if let Some(cancellation) = &self.cancel_during_release {
+                cancellation.cancel();
+                self.released = true;
+                return Err(error(BackgroundStartErrorKind::Cancelled));
+            }
             if self.release_fail {
                 self.released = true;
                 return Err(error(BackgroundStartErrorKind::Process));
@@ -1231,6 +1303,12 @@ mod tests {
                 cancel_during_prepare: (cancel_stage == Some("prepare"))
                     .then_some(cancellation.clone())
                     .flatten(),
+                cancel_during_pid: (cancel_stage == Some("pid"))
+                    .then_some(cancellation.clone())
+                    .flatten(),
+                cancel_during_release: (cancel_stage == Some("release"))
+                    .then_some(cancellation.clone())
+                    .flatten(),
                 stay_pending,
                 pending_dropped: Arc::clone(&pending_dropped),
             }),
@@ -1266,6 +1344,8 @@ mod tests {
                 release_fail: false,
                 abort_fail: false,
                 cancel_during_prepare: None,
+                cancel_during_pid: None,
+                cancel_during_release: None,
                 stay_pending: false,
                 pending_dropped: Arc::new(AtomicUsize::new(0)),
             }),
@@ -1547,6 +1627,58 @@ mod tests {
     }
 
     #[test]
+    fn same_poll_prepare_cancellation_propagates_abort_failure() {
+        let cancellation = CancellationToken::new();
+        let failures = Failures {
+            abort: true,
+            ..Failures::default()
+        };
+        let (supervisor, observations, _) =
+            fixture(failures, Some(cancellation.clone()), Some("prepare"), false);
+
+        let result = block_on(supervisor.start(request(), cancellation));
+
+        assert_eq!(
+            result.unwrap_err().kind(),
+            BackgroundStartErrorKind::Process
+        );
+        assert_eq!(
+            observations.events(),
+            ["admit", "reserve", "clock", "prepare", "abort"]
+        );
+        assert_eq!(observations.aborted.load(Ordering::Relaxed), 1);
+        assert_eq!(observations.executed.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn cancellation_before_publication_poll_propagates_abort_failure() {
+        let cancellation = CancellationToken::new();
+        let failures = Failures {
+            abort: true,
+            ..Failures::default()
+        };
+        let (supervisor, observations, _) =
+            fixture(failures, Some(cancellation.clone()), Some("pid"), false);
+
+        let result = block_on(supervisor.start(request(), cancellation));
+
+        assert_eq!(
+            result.unwrap_err().kind(),
+            BackgroundStartErrorKind::Process
+        );
+        assert_eq!(
+            observations.events(),
+            ["admit", "reserve", "clock", "prepare", "abort"]
+        );
+        assert_eq!(observations.aborted.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            observations.completion_publications.load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(observations.executed.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
     fn same_poll_prepare_process_failure_takes_precedence_over_cancellation() {
         let cancellation = CancellationToken::new();
         let failures = Failures {
@@ -1726,7 +1858,7 @@ mod tests {
     }
 
     #[test]
-    fn cancellation_records_dead_when_prepared_abort_cannot_prove_cleanup() {
+    fn cancellation_records_dead_and_propagates_prepared_abort_failure() {
         let cancellation = CancellationToken::new();
         let failures = Failures {
             abort: true,
@@ -1739,7 +1871,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().kind(),
-            BackgroundStartErrorKind::Cancelled
+            BackgroundStartErrorKind::Process
         );
         assert_eq!(observations.aborted.load(Ordering::Relaxed), 1);
         assert_eq!(
@@ -1747,6 +1879,43 @@ mod tests {
                 .dead_completion_publications
                 .load(Ordering::Relaxed),
             1
+        );
+        assert_eq!(observations.executed.load(Ordering::Relaxed), 0);
+        assert_eq!(observations.retained.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn proven_release_cancellation_records_stopped_and_returns_cancelled() {
+        let cancellation = CancellationToken::new();
+        let (supervisor, observations, _) = fixture(
+            Failures::default(),
+            Some(cancellation.clone()),
+            Some("release"),
+            false,
+        );
+
+        let result = block_on(supervisor.start(request(), cancellation.clone()));
+
+        assert_eq!(
+            result.unwrap_err().kind(),
+            BackgroundStartErrorKind::Cancelled
+        );
+        assert!(cancellation.is_cancelled());
+        assert_eq!(
+            observations.events(),
+            [
+                "admit", "reserve", "clock", "prepare", "publish", "release", "complete"
+            ]
+        );
+        assert_eq!(
+            observations.completion_publications.load(Ordering::Relaxed),
+            1
+        );
+        assert_eq!(
+            observations
+                .dead_completion_publications
+                .load(Ordering::Relaxed),
+            0
         );
         assert_eq!(observations.executed.load(Ordering::Relaxed), 0);
         assert_eq!(observations.retained.load(Ordering::Relaxed), 0);
