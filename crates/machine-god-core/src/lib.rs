@@ -1,6 +1,7 @@
 #![doc = include_str!("../../../docs/core-api.md")]
 #![forbid(unsafe_code)]
 
+mod background;
 mod cancel;
 mod engine;
 mod error;
@@ -13,6 +14,14 @@ mod session;
 mod subagent;
 mod tool;
 
+pub use background::{
+    BackgroundClock, BackgroundCompletionRecord, BackgroundHandle, BackgroundProcessOutcome,
+    BackgroundProcessRetainer, BackgroundProcessSpawner, BackgroundRecordLease,
+    BackgroundRetentionPermit, BackgroundRunningRecord, BackgroundStartError,
+    BackgroundStartErrorKind, BackgroundStartRequest, BackgroundStore, BackgroundSupervisor,
+    MAX_BACKGROUND_COMMAND_BYTES, MAX_BACKGROUND_CWD_BYTES, OwnedBackgroundProcess,
+    PreparedBackgroundProcess,
+};
 pub use cancel::{CancellationToken, Cancelled};
 pub use engine::{Engine, EngineBuilder, EngineLimits, MAX_SAFE_JSON_DEPTH};
 pub use error::{
