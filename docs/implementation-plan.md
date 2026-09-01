@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33455374424` (`GREEN`)
 - Main Benchmark evidence: `33455374426` (`GREEN`)
 - Active branch: `agent/m05-background-supervisor`
-- Active phase: `remediating background-supervisor adversarial cycle 01`
-- Next gate: `integrate every finding, then run the complete exact-1.94.1 replacement gate`
+- Active phase: `running the background-supervisor replacement gate`
+- Next gate: `freeze the exact green SHA and run three fresh adversarial reviews`
 <!-- canonical-live-status:end -->
 
 The recorded Actions runs succeeded for the exact delivered-main commit, and
@@ -37,13 +37,14 @@ The current bounded slice has composed the production process-local writer,
 fixed worker retainer, Linux process adapter, and safe-Rust macOS inherited-cwd
 helper without changing the read-only top-level grammar. Its first exact local
 candidate passed the complete gate but was rejected by all three product-review
-tracks. Remediation is in progress for bounded history retention, nonblocking
-allocation, canonical workspace identity, fixed primary-error precedence,
-redacted debug output, null Linux input, permission-safe group cleanup, and
-low-wakeup waiting. Persistent handles, message/relationship/configuration/
-lifecycle management, ACP, teams, and extension slash commands remain
-separate. Documentation parser maintenance remains a separate non-product
-task.
+tracks. Every reported finding is now remediated: history and locks compact
+within the reader bound, allocation is nonblocking, the canonical workspace is
+identity-bound, primary errors and debug redaction are fixed, Linux input is
+null, cleanup proves original-group membership before reap, and idle waiting
+backs off with cancellation wakeup. The complete replacement gate is running.
+Persistent handles, message/relationship/configuration/lifecycle management,
+ACP, teams, and extension slash commands remain separate. Documentation parser
+maintenance remains a separate non-product task.
 
 ## Architecture ownership
 

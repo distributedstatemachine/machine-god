@@ -110,3 +110,5 @@ product behavior; they are not penetration tests.
 - [mcp_select_tool](m05-mcp-select-tool-review-01.md)
 - [mcp_features](m05-mcp-features-review-01.md)
 - [subagent](m05-subagent-review-01.md)
+- [background CLI](m05-background-cli-review-01.md)
+- [background supervisor](m05-background-supervisor-review-01.md)
