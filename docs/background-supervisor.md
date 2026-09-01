@@ -38,11 +38,12 @@ poll has no store, process, clock, allocation-ID, thread, or task effect.
 Admission is fail-fast with no queue: the default is four active jobs and the
 hard configurable maximum is sixteen. Saturation occurs before ID reservation
 or process preparation. Polling performs no potentially blocking process
-operation on the caller's async executor. The supervisor owns one fixed-size,
-bounded blocking worker set, and offload admission fails promptly rather than
-queuing without a bound. Cancellation or drop retains cleanup ownership until
-the admitted blocking operation returns and the prepared or released process
-has been closed through the applicable lifecycle path.
+operation on the caller's async executor. In addition to its fixed retainer
+workers, the supervisor owns one fixed-size blocking-operation worker set;
+offload admission fails promptly rather than queuing without a bound.
+Cancellation or drop retains cleanup ownership until the admitted blocking
+operation returns and the prepared or released process has been closed through
+the applicable lifecycle path.
 
 ## Persist-before-release protocol
 
@@ -168,9 +169,10 @@ the owned group, waits through a fixed grace period, sends KILL if still
 present, and reaps. Before reaping the leader, a bounded platform group scan
 proves that the unreaped leader is the sole remaining member of its original
 group. Linux reads the required numeric process and group identities directly
-from a bounded `/proc` traversal and does not depend on a GNU `ps` dialect.
-macOS retains its fixed `/bin/ps` adapter. Each adapter accepts at most 64 KiB
-of evidence and has a 250 ms timeout. Permission denial is never disappearance
+from a `/proc` traversal bounded to 131,072 entries, 4 KiB per stat record,
+32 MiB of aggregate stat bytes, and 32,768 retained members; it does not depend
+on a GNU `ps` dialect. macOS retains its fixed `/bin/ps` adapter with a 64 KiB
+output bound and 250 ms timeout. Permission denial is never disappearance
 evidence; a surviving credential-changed member therefore produces a fixed
 cleanup failure. The numeric group identity is not consulted after it becomes
 reusable.

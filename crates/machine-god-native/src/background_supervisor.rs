@@ -308,13 +308,15 @@ impl NativeBackgroundSupervisor {
         request: BackgroundStartRequest,
         cancellation: CancellationToken,
     ) -> BoxFuture<'static, Result<machine_god_core::BackgroundHandle, BackgroundStartError>> {
+        let drop_cancellation = cancellation.clone();
         let start = self.supervisor.start(request, cancellation);
-        Box::pin(self.blocking.run(
+        Box::pin(self.blocking.run_cancellable(
             move || {
                 catch_unwind(AssertUnwindSafe(|| futures_executor::block_on(start)))
                     .unwrap_or_else(|_| Err(start_error(BackgroundStartErrorKind::Process)))
             },
             Err(start_error(BackgroundStartErrorKind::Capacity)),
+            drop_cancellation,
         ))
     }
 
@@ -391,6 +393,7 @@ struct BlockingTaskFuture<T> {
     admission_failure: Option<T>,
     result: Arc<Mutex<BlockingResult<T>>>,
     submitted: bool,
+    drop_cancellation: Option<CancellationToken>,
 }
 
 impl BlockingExecutor {
@@ -450,6 +453,29 @@ impl BlockingExecutor {
                 waker: None,
             })),
             submitted: false,
+            drop_cancellation: None,
+        }
+    }
+
+    fn run_cancellable<T>(
+        &self,
+        task: impl FnOnce() -> T + Send + 'static,
+        admission_failure: T,
+        drop_cancellation: CancellationToken,
+    ) -> BlockingTaskFuture<T>
+    where
+        T: Send + Unpin + 'static,
+    {
+        BlockingTaskFuture {
+            pool: Arc::clone(&self.pool),
+            task: Some(Box::new(task)),
+            admission_failure: Some(admission_failure),
+            result: Arc::new(Mutex::new(BlockingResult {
+                value: None,
+                waker: None,
+            })),
+            submitted: false,
+            drop_cancellation: Some(drop_cancellation),
         }
     }
 
@@ -531,6 +557,7 @@ where
                 }
             });
             if this.pool.try_submit(job).is_err() {
+                this.drop_cancellation = None;
                 return Poll::Ready(
                     this.admission_failure
                         .take()
@@ -546,6 +573,7 @@ where
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(value) = result.value.take() {
+            this.drop_cancellation = None;
             return Poll::Ready(value);
         }
         if result
@@ -556,6 +584,16 @@ where
             result.waker = Some(context.waker().clone());
         }
         Poll::Pending
+    }
+}
+
+impl<T> Drop for BlockingTaskFuture<T> {
+    fn drop(&mut self) {
+        if self.submitted
+            && let Some(cancellation) = self.drop_cancellation.take()
+        {
+            cancellation.cancel();
+        }
     }
 }
 
@@ -1363,24 +1401,8 @@ mod tests {
         supervisor: &NativeBackgroundSupervisor,
         request: &BackgroundStartRequest,
     ) -> machine_god_core::BackgroundHandle {
-        let deadline = Instant::now() + Duration::from_secs(1);
-        loop {
-            match futures_executor::block_on(
-                supervisor.start(request.clone(), CancellationToken::new()),
-            ) {
-                Ok(handle) => return handle,
-                Err(error)
-                    if error.kind() == BackgroundStartErrorKind::Persistence
-                        && Instant::now() < deadline =>
-                {
-                    // Parallel tests can fork while a CLOEXEC allocator lock
-                    // is live. Production admission correctly fails fast;
-                    // this unrelated integration setup retries after exec.
-                    thread::yield_now();
-                }
-                Err(error) => panic!("start background test process: {error:?}"),
-            }
-        }
+        futures_executor::block_on(supervisor.start(request.clone(), CancellationToken::new()))
+            .expect("start background test process")
     }
 
     fn test_adapter() -> SystemBackgroundProcessAdapter {
@@ -1502,13 +1524,14 @@ mod tests {
         let cancellation = CancellationToken::new();
         let worker_cancellation = cancellation.clone();
         let (finished, finished_receiver) = mpsc::sync_channel(1);
-        let mut task = Box::pin(executor.run(
+        let mut task = Box::pin(executor.run_cancellable(
             move || {
                 futures_executor::block_on(worker_cancellation.cancelled());
                 finished.send(()).expect("report cleanup");
                 Ok::<(), ()>(())
             },
             Err(()),
+            cancellation,
         ));
 
         assert!(matches!(
@@ -1516,7 +1539,6 @@ mod tests {
             Poll::Pending
         ));
         drop(task);
-        cancellation.cancel();
         finished_receiver
             .recv_timeout(Duration::from_secs(1))
             .expect("worker retained cleanup ownership");
