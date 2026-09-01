@@ -8,14 +8,20 @@
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::future::Future;
 use std::num::NonZeroU32;
 #[cfg(unix)]
 use std::path::Path;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::path::PathBuf;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::pin::Pin;
 use std::time::Duration;
 
 use machine_god_core::CancellationToken;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use machine_god_core::Cancelled;
 
 #[cfg(target_os = "linux")]
 use rustix::fd::AsRawFd;
@@ -31,6 +37,10 @@ use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::ChildStderr;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::sync::Arc;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::task::{Context, Poll, Wake, Waker};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::thread;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -848,15 +858,16 @@ fn wait_owned_with_stop(
     stop: &CancellationToken,
 ) -> Result<BackgroundProcessOutcome, BackgroundProcessError> {
     let mut observation = ObservationBackoff::new();
+    let mut cancellation = CancellationParker::new(stop);
     loop {
-        if stop.is_cancelled() {
+        if cancellation.is_cancelled() {
             stop_owned(owned)?;
             return Ok(BackgroundProcessOutcome::Stopped);
         }
         if let Some(status) = observe_leader(owned.group)? {
             return finish_observed(owned, status).map(BackgroundProcessOutcome::Completed);
         }
-        observation.sleep_and_advance();
+        observation.park_and_advance(&mut cancellation);
     }
 }
 
@@ -1159,6 +1170,67 @@ pub(crate) fn idle_observation_count_for_test(window: Duration) -> usize {
     observations
 }
 
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+pub(crate) fn cancellation_wakeup_latency_for_test(timeout: Duration) -> Duration {
+    let cancellation = CancellationToken::new();
+    let worker_cancellation = cancellation.clone();
+    let (ready_sender, ready_receiver) = std::sync::mpsc::sync_channel(0);
+    let worker = thread::spawn(move || {
+        let mut parker = CancellationParker::new(&worker_cancellation);
+        assert!(!parker.is_cancelled());
+        ready_sender.send(()).expect("signal registered waiter");
+        let started = Instant::now();
+        parker.park_timeout(timeout);
+        assert!(parker.is_cancelled());
+        started.elapsed()
+    });
+    ready_receiver.recv().expect("await registered waiter");
+    assert!(cancellation.cancel());
+    worker.join().expect("join cancellation waiter")
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct ThreadUnparker(thread::Thread);
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Wake for ThreadUnparker {
+    fn wake(self: Arc<Self>) {
+        self.0.unpark();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.unpark();
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct CancellationParker {
+    cancelled: Pin<Box<Cancelled>>,
+    waker: Waker,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl CancellationParker {
+    fn new(cancellation: &CancellationToken) -> Self {
+        Self {
+            cancelled: Box::pin(cancellation.cancelled()),
+            waker: Waker::from(Arc::new(ThreadUnparker(thread::current()))),
+        }
+    }
+
+    fn is_cancelled(&mut self) -> bool {
+        let waker = self.waker.clone();
+        let mut context = Context::from_waker(&waker);
+        matches!(self.cancelled.as_mut().poll(&mut context), Poll::Ready(()))
+    }
+
+    fn park_timeout(&mut self, timeout: Duration) {
+        if !self.is_cancelled() {
+            thread::park_timeout(timeout);
+        }
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 struct ObservationBackoff {
     current: Duration,
@@ -1180,6 +1252,15 @@ impl ObservationBackoff {
 
     fn sleep_and_advance(&mut self) {
         thread::sleep(self.current);
+        self.advance();
+    }
+
+    fn park_and_advance(&mut self, cancellation: &mut CancellationParker) {
+        cancellation.park_timeout(self.current);
+        self.advance();
+    }
+
+    fn advance(&mut self) {
         self.current = self.current.saturating_mul(2).min(self.maximum);
     }
 }

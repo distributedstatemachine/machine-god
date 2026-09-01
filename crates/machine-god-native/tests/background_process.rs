@@ -9,9 +9,9 @@ use background_process::{
     BACKGROUND_PROCESS_TERM_GRACE, BackgroundProcessErrorKind, BackgroundProcessExit,
     BackgroundProcessOutcome, BackgroundProcessRequest, MAX_BACKGROUND_PROCESS_COMMAND_BYTES,
     MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES, OwnedBackgroundProcess,
-    SystemBackgroundProcessAdapter, group_snapshot_is_quiescent_for_test,
-    idle_observation_count_for_test, permission_denied_group_signal_is_failure_for_test,
-    run_background_process_helper,
+    SystemBackgroundProcessAdapter, cancellation_wakeup_latency_for_test,
+    group_snapshot_is_quiescent_for_test, idle_observation_count_for_test,
+    permission_denied_group_signal_is_failure_for_test, run_background_process_helper,
 };
 use machine_god_core::CancellationToken;
 use std::ffi::OsString;
@@ -214,6 +214,10 @@ fn idle_wait_observation_uses_bounded_backoff_and_stays_shutdown_responsive() {
     assert!(
         observations < 40,
         "one idle process used {observations} observations per second"
+    );
+    assert!(
+        cancellation_wakeup_latency_for_test(Duration::from_secs(1)) < Duration::from_millis(250),
+        "cancellation must wake a parked observer"
     );
 
     let directory = FreshDirectory::new("backoff-cancel");

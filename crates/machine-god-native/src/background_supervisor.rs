@@ -233,6 +233,9 @@ impl NativeBackgroundSupervisor {
         environment: Vec<(OsString, OsString)>,
         limits: NativeBackgroundLimits,
     ) -> Result<Self, NativeBackgroundSupervisorError> {
+        #[cfg(target_os = "linux")]
+        let adapter = system_process_adapter();
+        #[cfg(target_os = "macos")]
         let adapter = system_process_adapter()?;
         Self::from_parts(
             workspace,
@@ -842,26 +845,25 @@ fn system_millis() -> Option<u64> {
     .ok()
 }
 
+#[cfg(target_os = "linux")]
+fn system_process_adapter() -> SystemBackgroundProcessAdapter {
+    SystemBackgroundProcessAdapter::default()
+}
+
+#[cfg(target_os = "macos")]
 fn system_process_adapter()
 -> Result<SystemBackgroundProcessAdapter, NativeBackgroundSupervisorError> {
-    #[cfg(target_os = "linux")]
-    {
-        Ok(SystemBackgroundProcessAdapter::default())
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let executable = env::current_exe().map_err(|_| {
-            NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Process)
-        })?;
-        let helper = BackgroundProcessHelper::new(
-            executable,
-            vec![OsString::from(BACKGROUND_PROCESS_HELPER_ARGUMENT)],
-        )
-        .map_err(|_| {
-            NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Process)
-        })?;
-        Ok(SystemBackgroundProcessAdapter::with_helper(helper))
-    }
+    let executable = env::current_exe().map_err(|_| {
+        NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Process)
+    })?;
+    let helper = BackgroundProcessHelper::new(
+        executable,
+        vec![OsString::from(BACKGROUND_PROCESS_HELPER_ARGUMENT)],
+    )
+    .map_err(|_| {
+        NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Process)
+    })?;
+    Ok(SystemBackgroundProcessAdapter::with_helper(helper))
 }
 
 fn validate_environment(
