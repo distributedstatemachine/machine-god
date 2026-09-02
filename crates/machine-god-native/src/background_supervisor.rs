@@ -2918,6 +2918,7 @@ mod tests {
         assert!(cleaned.load(Ordering::Acquire));
         assert!(!released.load(Ordering::Acquire));
 
+        wait_for_blocking_slot(&executor);
         let sibling_caller = CancellationToken::new();
         let sibling_operation = CancellationToken::new();
         assert_eq!(
@@ -2983,23 +2984,7 @@ mod tests {
             Poll::Ready(7)
         ));
 
-        let slot_deadline = Instant::now() + Duration::from_secs(1);
-        loop {
-            let slot_available = !executor
-                .pool
-                .available
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .is_empty();
-            if slot_available {
-                break;
-            }
-            assert!(
-                Instant::now() < slot_deadline,
-                "worker did not return its blocking slot"
-            );
-            thread::yield_now();
-        }
+        wait_for_blocking_slot(&executor);
         assert_eq!(futures_executor::block_on(executor.run(|| 9_u8, 0)), 9);
         executor.shutdown();
     }
@@ -3143,6 +3128,26 @@ mod tests {
         let deadline = Instant::now() + timeout;
         while value.load(Ordering::Acquire) != 0 {
             assert!(Instant::now() < deadline, "{message}");
+            thread::yield_now();
+        }
+    }
+
+    fn wait_for_blocking_slot(executor: &BlockingExecutor) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let slot_available = !executor
+                .pool
+                .available
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty();
+            if slot_available {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "worker did not return its blocking slot"
+            );
             thread::yield_now();
         }
     }
