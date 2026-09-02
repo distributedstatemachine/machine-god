@@ -29,25 +29,25 @@ host starts its helper with an emptied, fixed bootstrap environment; loader
 controls such as `LD_PRELOAD`, `LD_AUDIT`, and `DYLD_*` therefore cannot affect
 helper loading, cwd retention, or readiness. The already-validated command and
 environment remain inert bytes in a versioned, length-delimited frame retained
-by the parent. That frame is written only by release after the running record
-is durable. Its bounded payload remains inert until a distinct final commit
-byte is written after the last cancellation and deadline checks; closing the
-gate after any payload prefix, including the complete payload, cannot emulate
-that commit. The helper independently revalidates every bound and applies the
-requested environment only to the final post-release `/bin/sh` exec. Frame
-bytes cannot be interpreted as readiness, arguments, or shell interpolation.
+by the parent. The validated environment and its encoded frame segment are
+immutable shared allocations; starts retain that same representation instead
+of cloning or revalidating its entries. Release sends the frame through one
+fixed 16 KiB buffer, requiring at most nineteen bounded payload writes after
+the running record is durable. Its bounded payload remains inert until a
+distinct final commit byte is written separately after the last cancellation
+and deadline checks; closing the gate after any payload prefix, including the
+complete payload, cannot emulate that commit.
+The helper independently revalidates every bound and applies the requested
+environment only to the final post-release `/bin/sh` exec. Frame bytes cannot
+be interpreted as readiness, arguments, or shell interpolation.
 Environment entry, per-key, per-value, and aggregate-byte bounds are validated
 through borrowed bytes before the caller-owned vector is accepted. Valid
 caller vectors and their entry buffers move into the supervisor without a
-constructor clone. The production constructor never enumerates or snapshots
-the ambient environment. It performs one individual lookup for each name in
-this fixed allowlist and retains only values that exist: `COLORTERM`, `HOME`,
-`LANG`, `LANGUAGE`, `LC_ALL`, `LC_COLLATE`, `LC_CTYPE`, `LC_MESSAGES`,
-`LC_MONETARY`, `LC_NUMERIC`, `LC_TIME`, `LOGNAME`, `NO_COLOR`, `PATH`, `SHELL`,
-`SSH_AUTH_SOCK`, `TEMP`, `TERM`, `TMP`, `TMPDIR`, `TZ`, `USER`,
-`XDG_CACHE_HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_RUNTIME_DIR`, and
-`XDG_STATE_HOME`. Explicitly retained-root composition may still inject any
-caller-owned environment that satisfies the same bounds. Environment-key
+constructor clone. The production constructor performs no ambient environment
+lookup and always supplies exactly `LANG=C`, `LC_ALL=C`, and
+`PATH=/usr/bin:/bin`, in that order. Explicitly retained-root composition may
+still inject any caller-owned environment that satisfies the same bounds.
+Environment-key
 uniqueness is validated in one pass through a borrowed-key ordered set; the
 512-entry bound does not trigger a quadratic prefix scan. Every invalid path
 returns the same fixed environment category.

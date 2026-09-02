@@ -1,12 +1,10 @@
 //! Host-owned composition of background persistence and process supervision.
 
-use std::collections::BTreeSet;
 use std::env;
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
 use std::future::Future;
-use std::os::unix::ffi::OsStrExt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::pin::Pin;
@@ -32,10 +30,8 @@ use crate::background_inspection::{NativeBackgroundState, StoredBackgroundRecord
 use crate::background_process::BackgroundProcessHelper;
 use crate::background_process::{
     BackgroundProcessErrorKind, BackgroundProcessExit, BackgroundProcessOutcome,
-    BackgroundProcessRequest, MAX_BACKGROUND_PROCESS_ENVIRONMENT_BYTES,
-    MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES, MAX_BACKGROUND_PROCESS_ENVIRONMENT_KEY_BYTES,
-    MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES, OwnedBackgroundProcess,
-    PreparedBackgroundProcess, SystemBackgroundProcessAdapter,
+    BackgroundProcessRequest, OwnedBackgroundProcess, PreparedBackgroundProcess,
+    SystemBackgroundProcessAdapter, ValidatedBackgroundEnvironment,
 };
 use crate::background_store::{
     BackgroundReconciliation, BackgroundRecordLease as NativeRecordAuthority, BackgroundStore,
@@ -49,37 +45,8 @@ pub const NATIVE_BACKGROUND_HARD_MAX_ACTIVE: usize = 16;
 /// Exact private CLI argument used by the Linux/macOS safe launch helper.
 pub const BACKGROUND_PROCESS_HELPER_ARGUMENT: &str = "--__machine-god-background-exec-helper";
 
-// Keep production capture genuinely bounded: `env::vars_os` snapshots the
-// process environment before its iterator can be bounded by a caller.
-const PRODUCTION_BACKGROUND_ENVIRONMENT_ALLOWLIST: &[&str] = &[
-    "COLORTERM",
-    "HOME",
-    "LANG",
-    "LANGUAGE",
-    "LC_ALL",
-    "LC_COLLATE",
-    "LC_CTYPE",
-    "LC_MESSAGES",
-    "LC_MONETARY",
-    "LC_NUMERIC",
-    "LC_TIME",
-    "LOGNAME",
-    "NO_COLOR",
-    "PATH",
-    "SHELL",
-    "SSH_AUTH_SOCK",
-    "TEMP",
-    "TERM",
-    "TMP",
-    "TMPDIR",
-    "TZ",
-    "USER",
-    "XDG_CACHE_HOME",
-    "XDG_CONFIG_HOME",
-    "XDG_DATA_HOME",
-    "XDG_RUNTIME_DIR",
-    "XDG_STATE_HOME",
-];
+const PRODUCTION_BACKGROUND_PATH: &str = "/usr/bin:/bin";
+const PRODUCTION_BACKGROUND_LANGUAGE: &str = "C";
 
 /// Fixed host-owned background concurrency limits.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -209,14 +176,13 @@ pub struct NativeBackgroundSupervisor {
 }
 
 impl NativeBackgroundSupervisor {
-    /// Opens retained workspace and state-root authorities and captures the
-    /// fixed production environment allowlist.
+    /// Opens retained workspace and state-root authorities with the fixed,
+    /// host-owned production environment.
     ///
     /// # Errors
     ///
     /// Returns a fixed category if either root cannot be retained, the
-    /// environment exceeds its bounds, reconciliation fails, or workers
-    /// cannot be created.
+    /// reconciliation fails, or workers cannot be created.
     pub fn open(
         workspace_root: &Path,
         state_root: &Path,
@@ -249,10 +215,16 @@ impl NativeBackgroundSupervisor {
         let state_root = session_store.try_clone_root_descriptor().map_err(|_| {
             NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::State)
         })?;
-        let environment = capture_production_environment().map_err(|()| {
-            NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Environment)
-        })?;
-        Self::from_root_descriptors(workspace, workspace_root, state_root, environment, limits)
+        let environment = production_environment();
+        let adapter = system_process_adapter()?;
+        Self::from_validated_parts(
+            workspace,
+            workspace_root,
+            state_root,
+            environment,
+            limits,
+            adapter,
+        )
     }
 
     /// Composes already-retained exact root authorities.
@@ -302,7 +274,51 @@ impl NativeBackgroundSupervisor {
         let environment = accept_bounded_environment(environment).map_err(|()| {
             NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Environment)
         })?;
+        Self::construct_parts(
+            workspace,
+            workspace_root,
+            state_root,
+            environment,
+            limits,
+            adapter,
+        )
+    }
 
+    fn from_validated_parts(
+        workspace: String,
+        workspace_root: OwnedFd,
+        state_root: OwnedFd,
+        environment: ValidatedBackgroundEnvironment,
+        limits: NativeBackgroundLimits,
+        adapter: SystemBackgroundProcessAdapter,
+    ) -> Result<Self, NativeBackgroundSupervisorError> {
+        if !canonical_absolute_path(&workspace) || limits.max_active() == 0 {
+            return Err(NativeBackgroundSupervisorError::new(
+                NativeBackgroundSupervisorErrorKind::InvalidConfiguration,
+            ));
+        }
+        validate_directory(workspace_root.as_fd()).map_err(|()| {
+            NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Workspace)
+        })?;
+
+        Self::construct_parts(
+            workspace,
+            workspace_root,
+            state_root,
+            environment,
+            limits,
+            adapter,
+        )
+    }
+
+    fn construct_parts(
+        workspace: String,
+        workspace_root: OwnedFd,
+        state_root: OwnedFd,
+        environment: ValidatedBackgroundEnvironment,
+        limits: NativeBackgroundLimits,
+        adapter: SystemBackgroundProcessAdapter,
+    ) -> Result<Self, NativeBackgroundSupervisorError> {
         let store = Arc::new(NativeStore {
             inner: Arc::new(
                 BackgroundStore::prepare(state_root, workspace.clone()).map_err(|_| {
@@ -319,7 +335,7 @@ impl NativeBackgroundSupervisor {
         let spawner = Arc::new(NativeSpawner {
             workspace,
             workspace_root: Arc::new(workspace_root),
-            environment: Arc::new(environment),
+            environment,
             adapter,
         });
         let blocking = BlockingExecutor::new(limits.max_active())?;
@@ -1178,7 +1194,7 @@ fn completion_record(
 struct NativeSpawner {
     workspace: String,
     workspace_root: Arc<OwnedFd>,
-    environment: Arc<Vec<(OsString, OsString)>>,
+    environment: ValidatedBackgroundEnvironment,
     adapter: SystemBackgroundProcessAdapter,
 }
 
@@ -1191,10 +1207,10 @@ impl BackgroundProcessSpawner for NativeSpawner {
         Box::pin(async move {
             check_cancelled(&cancellation)?;
             let directory = self.resolve_cwd(request.cwd(), &cancellation)?;
-            let process_request = BackgroundProcessRequest::from_directory(
+            let process_request = BackgroundProcessRequest::from_directory_with_environment(
                 request.command().to_owned(),
                 request.cwd().to_owned(),
-                self.environment.as_ref().clone(),
+                self.environment.clone(),
                 directory,
             )
             .map_err(|_| start_error(BackgroundStartErrorKind::Process))?;
@@ -1632,77 +1648,37 @@ fn system_process_adapter()
     Ok(SystemBackgroundProcessAdapter::with_helper(helper))
 }
 
-fn capture_production_environment() -> Result<Vec<(OsString, OsString)>, ()> {
-    collect_allowlisted_environment(PRODUCTION_BACKGROUND_ENVIRONMENT_ALLOWLIST, |key| {
-        env::var_os(key)
-    })
+fn production_environment() -> ValidatedBackgroundEnvironment {
+    static ENVIRONMENT: OnceLock<ValidatedBackgroundEnvironment> = OnceLock::new();
+    ENVIRONMENT
+        .get_or_init(|| {
+            build_production_environment()
+                .expect("fixed production background environment is valid")
+        })
+        .clone()
 }
 
-fn collect_allowlisted_environment(
-    allowlist: &[&str],
-    mut lookup: impl FnMut(&str) -> Option<OsString>,
-) -> Result<Vec<(OsString, OsString)>, ()> {
-    if allowlist.len() > MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES {
-        return Err(());
-    }
-    let mut bounded = Vec::with_capacity(allowlist.len());
-    let mut aggregate = 0_usize;
-    for key in allowlist {
-        let Some(value) = lookup(key) else {
-            continue;
-        };
-        let key = OsString::from(key);
-        validate_environment_entry(&key, &value, &mut aggregate)?;
-        bounded.push((key, value));
-    }
-    validate_environment(&bounded)?;
-    Ok(bounded)
+fn build_production_environment() -> Result<ValidatedBackgroundEnvironment, ()> {
+    accept_bounded_environment(vec![
+        (
+            OsString::from("LANG"),
+            OsString::from(PRODUCTION_BACKGROUND_LANGUAGE),
+        ),
+        (
+            OsString::from("LC_ALL"),
+            OsString::from(PRODUCTION_BACKGROUND_LANGUAGE),
+        ),
+        (
+            OsString::from("PATH"),
+            OsString::from(PRODUCTION_BACKGROUND_PATH),
+        ),
+    ])
 }
 
 fn accept_bounded_environment(
     environment: Vec<(OsString, OsString)>,
-) -> Result<Vec<(OsString, OsString)>, ()> {
-    validate_environment(&environment)?;
-    Ok(environment)
-}
-
-fn validate_environment(environment: &[(OsString, OsString)]) -> Result<(), ()> {
-    if environment.len() > MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES {
-        return Err(());
-    }
-    let mut aggregate = 0_usize;
-    let mut keys = BTreeSet::new();
-    for (key, value) in environment {
-        validate_environment_entry(key, value, &mut aggregate)?;
-        if !keys.insert(key.as_os_str().as_bytes()) {
-            return Err(());
-        }
-    }
-    Ok(())
-}
-
-fn validate_environment_entry(
-    key: &OsString,
-    value: &OsString,
-    aggregate: &mut usize,
-) -> Result<(), ()> {
-    let key = key.as_os_str().as_bytes();
-    let value = value.as_os_str().as_bytes();
-    if key.is_empty()
-        || key.len() > MAX_BACKGROUND_PROCESS_ENVIRONMENT_KEY_BYTES
-        || value.len() > MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES
-        || key.contains(&b'=')
-        || key.contains(&0)
-        || value.contains(&0)
-    {
-        return Err(());
-    }
-    *aggregate = aggregate
-        .checked_add(key.len())
-        .and_then(|total| total.checked_add(value.len()))
-        .filter(|total| *total <= MAX_BACKGROUND_PROCESS_ENVIRONMENT_BYTES)
-        .ok_or(())?;
-    Ok(())
+) -> Result<ValidatedBackgroundEnvironment, ()> {
+    ValidatedBackgroundEnvironment::new(environment).map_err(|_| ())
 }
 
 fn open_directory(path: &Path) -> Result<OwnedFd, ()> {
@@ -1773,18 +1749,18 @@ const fn start_error(kind: BackgroundStartErrorKind) -> BackgroundStartError {
 #[cfg(test)]
 mod tests {
     use super::{
-        BlockingExecutor, BlockingResult, BlockingTaskFailure,
-        MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES, MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES,
-        NativeBackgroundLimits, NativeBackgroundSupervisor, NativeSpawner, NativeStore,
-        PRODUCTION_BACKGROUND_ENVIRONMENT_ALLOWLIST, RetainedJob, SystemBackgroundProcessAdapter,
-        SystemClock, WORKER_OWNERSHIP_CAPACITY, WorkerOwnershipRegistry, WorkerRetainer,
-        accept_bounded_environment, capture_production_environment,
-        collect_allowlisted_environment, finish_prepared_after_readiness, open_directory,
-        process_error_kind, retain_canonical_directory_with, validate_environment,
-        worker_ownership_registry,
+        BlockingExecutor, BlockingResult, BlockingTaskFailure, NativeBackgroundLimits,
+        NativeBackgroundSupervisor, NativeSpawner, NativeStore, PRODUCTION_BACKGROUND_LANGUAGE,
+        PRODUCTION_BACKGROUND_PATH, RetainedJob, SystemBackgroundProcessAdapter, SystemClock,
+        WORKER_OWNERSHIP_CAPACITY, WorkerOwnershipRegistry, WorkerRetainer,
+        accept_bounded_environment, build_production_environment, finish_prepared_after_readiness,
+        open_directory, process_error_kind, production_environment,
+        retain_canonical_directory_with, worker_ownership_registry,
     };
     use crate::background_process::{
-        BackgroundProcessErrorKind, BackgroundProcessHelper, run_background_process_helper,
+        BackgroundProcessErrorKind, BackgroundProcessHelper,
+        MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES, MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES,
+        ValidatedBackgroundEnvironment, run_background_process_helper,
     };
     use crate::{
         NativeBackgroundInspection, NativeBackgroundQuery, NativeBackgroundState,
@@ -2570,47 +2546,83 @@ mod tests {
     }
 
     #[test]
-    fn bounded_environment_acceptance_moves_the_original_buffers() {
+    fn bounded_environment_acceptance_moves_entry_buffers_into_shared_storage() {
         let environment = vec![(OsString::from("KEY"), OsString::from("value"))];
-        let vector = environment.as_ptr();
         let key = environment[0].0.as_os_str().as_bytes().as_ptr();
         let value = environment[0].1.as_os_str().as_bytes().as_ptr();
 
         let accepted = accept_bounded_environment(environment).expect("bounded environment");
 
-        assert_eq!(accepted.as_ptr(), vector);
-        assert_eq!(accepted[0].0.as_os_str().as_bytes().as_ptr(), key);
-        assert_eq!(accepted[0].1.as_os_str().as_bytes().as_ptr(), value);
+        assert_eq!(accepted.entries()[0].0.as_os_str().as_bytes().as_ptr(), key);
+        assert_eq!(
+            accepted.entries()[0].1.as_os_str().as_bytes().as_ptr(),
+            value
+        );
     }
 
     #[test]
-    fn production_environment_capture_uses_only_individual_allowlisted_lookups() {
-        let captured = capture_production_environment().expect("production environment");
-        let expected = PRODUCTION_BACKGROUND_ENVIRONMENT_ALLOWLIST
-            .iter()
-            .filter_map(|key| std::env::var_os(key).map(|value| (OsString::from(key), value)))
-            .collect::<Vec<_>>();
-
-        assert_eq!(captured, expected);
-        assert!(captured.len() <= PRODUCTION_BACKGROUND_ENVIRONMENT_ALLOWLIST.len());
-        validate_environment(&captured).expect("captured environment remains bounded");
-    }
-
-    #[test]
-    fn allowlisted_environment_stops_lookup_after_the_first_hard_bound() {
-        let lookups = Arc::new(AtomicUsize::new(0));
-        let observed_lookups = Arc::clone(&lookups);
-        let result = collect_allowlisted_environment(&["A", "B", "C"], move |_| {
-            let index = observed_lookups.fetch_add(1, Ordering::AcqRel);
-            Some(if index == 0 {
-                OsString::from("x".repeat(MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES + 1))
-            } else {
-                OsString::new()
-            })
+    fn production_environment_is_fixed_and_clone_allocation_free() {
+        let mut built = None;
+        allocation_counter::measure(|| {});
+        let build_allocations = allocation_counter::measure(|| {
+            built = Some(build_production_environment());
         });
+        let environment = built
+            .expect("measured production environment")
+            .expect("production environment");
+        assert_eq!(
+            environment.entries(),
+            &[
+                (
+                    OsString::from("LANG"),
+                    OsString::from(PRODUCTION_BACKGROUND_LANGUAGE)
+                ),
+                (
+                    OsString::from("LC_ALL"),
+                    OsString::from(PRODUCTION_BACKGROUND_LANGUAGE),
+                ),
+                (
+                    OsString::from("PATH"),
+                    OsString::from(PRODUCTION_BACKGROUND_PATH)
+                ),
+            ]
+        );
+        assert!(build_allocations.count_total <= 16, "{build_allocations:?}");
+        assert!(
+            build_allocations.bytes_total <= 2_048,
+            "{build_allocations:?}"
+        );
 
-        assert!(result.is_err());
-        assert_eq!(lookups.load(Ordering::Acquire), 1);
+        let shared = production_environment();
+        allocation_counter::measure(|| {});
+        let mut clone = None;
+        let allocations = allocation_counter::measure(|| {
+            clone = Some(production_environment());
+        });
+        let clone = clone.expect("fixed environment clone");
+        assert!(shared.shares_storage_with(&clone));
+        assert_eq!(allocations.count_total, 0, "{allocations:?}");
+        assert_eq!(allocations.bytes_total, 0, "{allocations:?}");
+    }
+
+    #[test]
+    fn validated_environment_clones_reuse_entries_and_encoded_frame() {
+        let environment = ValidatedBackgroundEnvironment::new(vec![(
+            OsString::from("KEY"),
+            OsString::from("x".repeat(16 * 1024)),
+        )])
+        .expect("validated environment");
+        allocation_counter::measure(|| {});
+        let mut first = None;
+        let mut second = None;
+        let allocations = allocation_counter::measure(|| {
+            first = Some(environment.clone());
+            second = Some(environment.clone());
+        });
+        assert!(environment.shares_storage_with(first.as_ref().expect("first clone")));
+        assert!(environment.shares_storage_with(second.as_ref().expect("second clone")));
+        assert_eq!(allocations.count_total, 0, "{allocations:?}");
+        assert_eq!(allocations.bytes_total, 0, "{allocations:?}");
     }
 
     #[test]
@@ -2619,16 +2631,14 @@ mod tests {
             (OsString::from("K"), OsString::new());
             MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES + 1
         ];
-        let vector = environment.as_ptr();
         let mut result = None;
         allocation_counter::measure(|| {});
         let allocations = allocation_counter::measure(|| {
-            result = Some(validate_environment(&environment));
+            result = Some(ValidatedBackgroundEnvironment::new(environment));
         });
-        assert_eq!(result, Some(Err(())));
+        assert!(result.is_some_and(|result| result.is_err()));
         assert_eq!(allocations.count_total, 0, "{allocations:?}");
         assert_eq!(allocations.bytes_total, 0, "{allocations:?}");
-        assert_eq!(environment.as_ptr(), vector);
     }
 
     #[test]
@@ -2644,10 +2654,10 @@ mod tests {
         let mut result = None;
         allocation_counter::measure(|| {});
         let allocations = allocation_counter::measure(|| {
-            result = Some(validate_environment(&environment));
+            result = Some(ValidatedBackgroundEnvironment::new(environment));
         });
 
-        assert_eq!(result, Some(Err(())));
+        assert!(result.is_some_and(|result| result.is_err()));
         assert!(
             allocations.bytes_total
                 < u64::try_from(MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES)
@@ -3051,7 +3061,8 @@ mod tests {
             workspace_root: Arc::new(
                 open_directory(&fixture.workspace_path).expect("workspace descriptor"),
             ),
-            environment: Arc::new(test_environment()),
+            environment: ValidatedBackgroundEnvironment::new(test_environment())
+                .expect("test environment"),
             adapter: test_adapter(),
         });
         let supervisor = BackgroundSupervisor::new(

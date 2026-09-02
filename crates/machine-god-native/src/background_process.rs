@@ -47,12 +47,14 @@ use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::ChildStderr;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
+#[cfg(unix)]
+use std::sync::Arc;
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 use std::sync::atomic::{AtomicI32, AtomicU32};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Condvar, Mutex, OnceLock};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::task::{Context, Poll, Wake, Waker};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -165,6 +167,8 @@ const CHILD_REAP_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 const RELEASE_FRAME_TIMEOUT: Duration = Duration::from_millis(500);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const RELEASE_FRAME_MAGIC: &[u8; 8] = b"MGBG\0\0\0\x01";
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const RELEASE_FRAME_WRITE_CHUNK_BYTES: usize = 16 * 1024;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const RELEASE_COMMIT_BYTE: u8 = 0x6d;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -338,11 +342,51 @@ fn quarantine_child(child: Child, permit: ChildReapPermit) {
     reaper.wake.notify_one();
 }
 
+/// Immutable validated environment shared by every request from one host.
+///
+/// Validation and environment-frame encoding happen once at the authority
+/// boundary. Clones retain the same entry and frame allocations.
+#[cfg(unix)]
+#[derive(Clone)]
+pub(crate) struct ValidatedBackgroundEnvironment {
+    entries: Arc<[(OsString, OsString)]>,
+    release_frame: Arc<Vec<u8>>,
+}
+
+#[cfg(unix)]
+impl ValidatedBackgroundEnvironment {
+    pub(crate) fn new(
+        environment: Vec<(OsString, OsString)>,
+    ) -> Result<Self, BackgroundProcessError> {
+        validate_environment(&environment)?;
+        let release_frame = encode_environment_frame(&environment)?;
+        Ok(Self {
+            entries: environment.into(),
+            release_frame: Arc::new(release_frame),
+        })
+    }
+
+    pub(crate) fn entries(&self) -> &[(OsString, OsString)] {
+        &self.entries
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn release_frame(&self) -> &[u8] {
+        self.release_frame.as_slice()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shares_storage_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.entries, &other.entries)
+            && Arc::ptr_eq(&self.release_frame, &other.release_frame)
+    }
+}
+
 /// Exact, bounded request for one prepared background command.
 pub struct BackgroundProcessRequest {
     command: String,
     cwd: String,
-    environment: Vec<(OsString, OsString)>,
+    environment: ValidatedBackgroundEnvironment,
     #[cfg(unix)]
     directory: OwnedFd,
     #[cfg(target_os = "linux")]
@@ -364,7 +408,21 @@ impl BackgroundProcessRequest {
         environment: Vec<(OsString, OsString)>,
         directory: OwnedFd,
     ) -> Result<Self, BackgroundProcessError> {
-        validate_request(&command, &cwd, &environment)?;
+        let environment = ValidatedBackgroundEnvironment::new(environment)?;
+        Self::from_directory_with_environment(command, cwd, environment, directory)
+    }
+
+    /// Retains a directory with an already-validated shared environment.
+    ///
+    /// This host-only path validates the per-command fields and descriptor but
+    /// deliberately reuses the environment validation and encoding result.
+    pub(crate) fn from_directory_with_environment(
+        command: String,
+        cwd: String,
+        environment: ValidatedBackgroundEnvironment,
+        directory: OwnedFd,
+    ) -> Result<Self, BackgroundProcessError> {
+        validate_command_and_cwd(&command, &cwd)?;
         validate_directory(directory.as_fd())?;
         #[cfg(target_os = "linux")]
         let descriptor_path = validated_descriptor_path(directory.as_fd())?;
@@ -433,7 +491,7 @@ impl BackgroundProcessRequest {
     /// Returns the exact injected environment.
     #[must_use]
     pub fn environment(&self) -> &[(OsString, OsString)] {
-        &self.environment
+        self.environment.entries()
     }
 
     /// Returns the retained directory descriptor.
@@ -711,7 +769,7 @@ pub struct PreparedBackgroundProcess {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     command: Option<String>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    environment: Option<Vec<(OsString, OsString)>>,
+    environment: Option<ValidatedBackgroundEnvironment>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     group: rustix::process::Pid,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -869,14 +927,29 @@ fn validate_request(
     cwd: &str,
     environment: &[(OsString, OsString)],
 ) -> Result<(), BackgroundProcessError> {
+    validate_command_and_cwd(command, cwd)?;
+    validate_environment(environment)
+}
+
+#[cfg(unix)]
+fn validate_command_and_cwd(command: &str, cwd: &str) -> Result<(), BackgroundProcessError> {
     if command.is_empty()
         || command.len() > MAX_BACKGROUND_PROCESS_COMMAND_BYTES
         || command.contains('\0')
         || cwd.is_empty()
         || cwd.len() > MAX_BACKGROUND_PROCESS_CWD_BYTES
         || cwd.contains('\0')
-        || environment.len() > MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES
     {
+        return Err(invalid_request());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn validate_environment(
+    environment: &[(OsString, OsString)],
+) -> Result<(), BackgroundProcessError> {
+    if environment.len() > MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES {
         return Err(invalid_request());
     }
     let mut aggregate = 0_usize;
@@ -902,6 +975,47 @@ fn validate_request(
             return Err(invalid_request());
         }
     }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn encode_environment_frame(
+    environment: &[(OsString, OsString)],
+) -> Result<Vec<u8>, BackgroundProcessError> {
+    let framing_bytes = environment
+        .len()
+        .checked_mul(8)
+        .and_then(|bytes| bytes.checked_add(4))
+        .ok_or_else(invalid_request)?;
+    let payload_bytes = environment
+        .iter()
+        .try_fold(0_usize, |total, (key, value)| {
+            total
+                .checked_add(key.as_os_str().as_bytes().len())
+                .and_then(|bytes| bytes.checked_add(value.as_os_str().as_bytes().len()))
+                .ok_or_else(invalid_request)
+        })?;
+    let mut encoded = Vec::with_capacity(
+        framing_bytes
+            .checked_add(payload_bytes)
+            .ok_or_else(invalid_request)?,
+    );
+    push_frame_length(&mut encoded, environment.len())?;
+    for (key, value) in environment {
+        let key = key.as_os_str().as_bytes();
+        let value = value.as_os_str().as_bytes();
+        push_frame_length(&mut encoded, key.len())?;
+        push_frame_length(&mut encoded, value.len())?;
+        encoded.extend_from_slice(key);
+        encoded.extend_from_slice(value);
+    }
+    Ok(encoded)
+}
+
+#[cfg(unix)]
+fn push_frame_length(output: &mut Vec<u8>, length: usize) -> Result<(), BackgroundProcessError> {
+    let length = u32::try_from(length).map_err(|_| invalid_request())?;
+    output.extend_from_slice(&length.to_be_bytes());
     Ok(())
 }
 
@@ -1450,28 +1564,70 @@ fn release_prepared(
 fn write_release_frame(
     output: &mut impl std::io::Write,
     command: &str,
-    environment: &[(OsString, OsString)],
+    environment: &ValidatedBackgroundEnvironment,
 ) -> std::io::Result<()> {
-    output.write_all(RELEASE_FRAME_MAGIC)?;
-    write_frame_length(output, command.len())?;
-    output.write_all(command.as_bytes())?;
-    write_frame_length(output, environment.len())?;
-    for (key, value) in environment {
-        let key = key.as_os_str().as_bytes();
-        let value = value.as_os_str().as_bytes();
-        write_frame_length(output, key.len())?;
-        write_frame_length(output, value.len())?;
-        output.write_all(key)?;
-        output.write_all(value)?;
+    let mut output = ReleaseFrameChunkWriter::new(output);
+    output.write_bytes(RELEASE_FRAME_MAGIC)?;
+    output.write_length(command.len())?;
+    output.write_bytes(command.as_bytes())?;
+    output.write_bytes(environment.release_frame())?;
+    output.finish()
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct ReleaseFrameChunkWriter<'a, W: std::io::Write + ?Sized> {
+    output: &'a mut W,
+    buffer: [u8; RELEASE_FRAME_WRITE_CHUNK_BYTES],
+    used: usize,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl<'a, W: std::io::Write + ?Sized> ReleaseFrameChunkWriter<'a, W> {
+    fn new(output: &'a mut W) -> Self {
+        Self {
+            output,
+            buffer: [0; RELEASE_FRAME_WRITE_CHUNK_BYTES],
+            used: 0,
+        }
     }
-    Ok(())
+
+    fn write_length(&mut self, length: usize) -> std::io::Result<()> {
+        let length = u32::try_from(length).map_err(|_| std::io::ErrorKind::InvalidInput)?;
+        self.write_bytes(&length.to_be_bytes())
+    }
+
+    fn write_bytes(&mut self, mut bytes: &[u8]) -> std::io::Result<()> {
+        while !bytes.is_empty() {
+            let available = self.buffer.len() - self.used;
+            let copied = available.min(bytes.len());
+            self.buffer[self.used..self.used + copied].copy_from_slice(&bytes[..copied]);
+            self.used += copied;
+            bytes = &bytes[copied..];
+            if self.used == self.buffer.len() {
+                self.flush_buffer()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) -> std::io::Result<()> {
+        self.flush_buffer()
+    }
+
+    fn flush_buffer(&mut self) -> std::io::Result<()> {
+        if self.used != 0 {
+            self.output.write_all(&self.buffer[..self.used])?;
+            self.used = 0;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn write_release_frame_bounded(
     output: &mut ChildStdin,
     command: &str,
-    environment: &[(OsString, OsString)],
+    environment: &ValidatedBackgroundEnvironment,
     cancellation: &CancellationToken,
     pid: NonZeroU32,
 ) -> Result<(), ReleaseWriteFailure> {
@@ -1588,12 +1744,6 @@ impl<W: std::io::Write + ?Sized> std::io::Write for BoundedGateWriter<'_, W> {
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn write_frame_length(output: &mut impl std::io::Write, length: usize) -> std::io::Result<()> {
-    let length = u32::try_from(length).map_err(|_| std::io::ErrorKind::InvalidInput)?;
-    output.write_all(&length.to_be_bytes())
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -3314,6 +3464,102 @@ mod process_regression_tests {
         )
         .expect_err("a duplicate at the exact bound is rejected");
         assert_eq!(error.kind(), BackgroundProcessErrorKind::InvalidRequest);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_environment_storage_survives_multiple_request_preparations() {
+        let directory = TestDirectory::new("shared-environment");
+        let environment = ValidatedBackgroundEnvironment::new(vec![(
+            OsString::from("PAYLOAD"),
+            OsString::from("retained"),
+        )])
+        .expect("validated environment");
+        let open = || {
+            rustix::fs::open(
+                &directory.0,
+                OFlags::RDONLY
+                    | OFlags::DIRECTORY
+                    | OFlags::NOFOLLOW
+                    | OFlags::CLOEXEC
+                    | OFlags::NONBLOCK,
+                Mode::empty(),
+            )
+            .expect("directory authority")
+        };
+        let first = BackgroundProcessRequest::from_directory_with_environment(
+            "true".to_owned(),
+            "workspace".to_owned(),
+            environment.clone(),
+            open(),
+        )
+        .expect("first request");
+        let second = BackgroundProcessRequest::from_directory_with_environment(
+            "true".to_owned(),
+            "workspace".to_owned(),
+            environment.clone(),
+            open(),
+        )
+        .expect("second request");
+
+        assert!(environment.shares_storage_with(&first.environment));
+        assert!(environment.shares_storage_with(&second.environment));
+        assert_eq!(first.environment().as_ptr(), second.environment().as_ptr());
+        assert_eq!(
+            first.environment()[0].1.as_os_str().as_bytes().as_ptr(),
+            second.environment()[0].1.as_os_str().as_bytes().as_ptr()
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn encoded_environment_keeps_release_writes_constant_and_commit_distinct() {
+        struct CountingWriter {
+            lengths: Vec<usize>,
+            bytes: Vec<u8>,
+        }
+
+        impl std::io::Write for CountingWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.lengths.push(bytes.len());
+                self.bytes.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let environment = (0..MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES)
+            .map(|index| {
+                (
+                    OsString::from(format!("K{index:03}")),
+                    OsString::from("x".repeat(508)),
+                )
+            })
+            .collect::<Vec<_>>();
+        let environment =
+            ValidatedBackgroundEnvironment::new(environment).expect("maximum environment");
+        let command = "x".repeat(MAX_BACKGROUND_PROCESS_COMMAND_BYTES);
+        let mut output = CountingWriter {
+            lengths: Vec::new(),
+            bytes: Vec::new(),
+        };
+
+        write_release_frame(&mut output, &command, &environment).expect("release frame");
+        assert_eq!(output.lengths.len(), 19);
+        assert!(
+            output.lengths[..18]
+                .iter()
+                .all(|length| *length == RELEASE_FRAME_WRITE_CHUNK_BYTES)
+        );
+        assert_eq!(output.lengths[18], 4_112);
+        assert_eq!(output.bytes.len(), 299_024);
+        std::io::Write::write_all(&mut output, &[RELEASE_COMMIT_BYTE]).expect("distinct commit");
+        assert_eq!(output.lengths.len(), 20);
+        assert_eq!(output.lengths[19], 1);
+        assert_eq!(output.bytes.last(), Some(&RELEASE_COMMIT_BYTE));
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
