@@ -39,11 +39,18 @@ bytes cannot be interpreted as readiness, arguments, or shell interpolation.
 Environment entry, per-key, per-value, and aggregate-byte bounds are validated
 through borrowed bytes before the caller-owned vector is accepted. Valid
 caller vectors and their entry buffers move into the supervisor without a
-constructor clone. Ambient environment capture consumes entries incrementally
-and stops at the first hard bound rather than first collecting an unbounded
-snapshot. Environment-key uniqueness is then validated in one pass through a
-borrowed-key ordered set; the 512-entry bound does not trigger a quadratic
-prefix scan. Every invalid path returns the same fixed environment category.
+constructor clone. The production constructor never enumerates or snapshots
+the ambient environment. It performs one individual lookup for each name in
+this fixed allowlist and retains only values that exist: `COLORTERM`, `HOME`,
+`LANG`, `LANGUAGE`, `LC_ALL`, `LC_COLLATE`, `LC_CTYPE`, `LC_MESSAGES`,
+`LC_MONETARY`, `LC_NUMERIC`, `LC_TIME`, `LOGNAME`, `NO_COLOR`, `PATH`, `SHELL`,
+`SSH_AUTH_SOCK`, `TEMP`, `TERM`, `TMP`, `TMPDIR`, `TZ`, `USER`,
+`XDG_CACHE_HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_RUNTIME_DIR`, and
+`XDG_STATE_HOME`. Explicitly retained-root composition may still inject any
+caller-owned environment that satisfies the same bounds. Environment-key
+uniqueness is validated in one pass through a borrowed-key ordered set; the
+512-entry bound does not trigger a quadratic prefix scan. Every invalid path
+returns the same fixed environment category.
 
 The public start future is inert until first poll. Dropping it before first
 poll has no store, process, clock, allocation-ID, thread, or task effect.
@@ -57,9 +64,13 @@ queuing without a bound. Every worker handle is registered at creation with a
 process-wide collector that retains at most 256 handles. One supervisor
 reserves `2 * max_active + 1` of those authorities during construction, so
 collector saturation fails construction with the fixed worker category before
-the supervisor can accept work. Each worker publishes one completion flag and
-condition notification as it leaves; the collector sleeps between registration
-or completion events and never polls or periodically scans idle handles.
+the supervisor can accept work. Each worker publishes one completion flag
+while holding the collector's predicate mutex, then sends one condition
+notification as it leaves. Shutdown publishes its predicate under that same
+mutex. The collector's predicate check and condition wait are therefore one
+atomic handoff with respect to every producer; a completion or shutdown wake
+cannot be lost between them. The collector sleeps between registration or
+completion events and never polls or periodically scans idle handles.
 Finished handles return their authorities to the collector; unresolved handles
 are never implicitly detached.
 Cancellation or drop retains cleanup ownership until the admitted blocking

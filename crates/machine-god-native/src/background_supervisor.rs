@@ -49,6 +49,38 @@ pub const NATIVE_BACKGROUND_HARD_MAX_ACTIVE: usize = 16;
 /// Exact private CLI argument used by the Linux/macOS safe launch helper.
 pub const BACKGROUND_PROCESS_HELPER_ARGUMENT: &str = "--__machine-god-background-exec-helper";
 
+// Keep production capture genuinely bounded: `env::vars_os` snapshots the
+// process environment before its iterator can be bounded by a caller.
+const PRODUCTION_BACKGROUND_ENVIRONMENT_ALLOWLIST: &[&str] = &[
+    "COLORTERM",
+    "HOME",
+    "LANG",
+    "LANGUAGE",
+    "LC_ALL",
+    "LC_COLLATE",
+    "LC_CTYPE",
+    "LC_MESSAGES",
+    "LC_MONETARY",
+    "LC_NUMERIC",
+    "LC_TIME",
+    "LOGNAME",
+    "NO_COLOR",
+    "PATH",
+    "SHELL",
+    "SSH_AUTH_SOCK",
+    "TEMP",
+    "TERM",
+    "TMP",
+    "TMPDIR",
+    "TZ",
+    "USER",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_RUNTIME_DIR",
+    "XDG_STATE_HOME",
+];
+
 /// Fixed host-owned background concurrency limits.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NativeBackgroundLimits {
@@ -177,7 +209,8 @@ pub struct NativeBackgroundSupervisor {
 }
 
 impl NativeBackgroundSupervisor {
-    /// Opens retained workspace and state-root authorities and snapshots the environment.
+    /// Opens retained workspace and state-root authorities and captures the
+    /// fixed production environment allowlist.
     ///
     /// # Errors
     ///
@@ -216,7 +249,7 @@ impl NativeBackgroundSupervisor {
         let state_root = session_store.try_clone_root_descriptor().map_err(|_| {
             NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::State)
         })?;
-        let environment = collect_bounded_environment(env::vars_os()).map_err(|()| {
+        let environment = capture_production_environment().map_err(|()| {
             NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Environment)
         })?;
         Self::from_root_descriptors(workspace, workspace_root, state_root, environment, limits)
@@ -401,6 +434,12 @@ struct WorkerOwnershipState {
     probes: AtomicUsize,
     #[cfg(test)]
     armed_handle_count: AtomicUsize,
+    #[cfg(test)]
+    pause_before_wait: AtomicBool,
+    #[cfg(test)]
+    before_wait: AtomicBool,
+    #[cfg(test)]
+    continue_wait: AtomicBool,
 }
 
 struct WorkerOwnershipReservation {
@@ -434,6 +473,12 @@ impl WorkerOwnershipRegistry {
             probes: AtomicUsize::new(0),
             #[cfg(test)]
             armed_handle_count: AtomicUsize::new(0),
+            #[cfg(test)]
+            pause_before_wait: AtomicBool::new(false),
+            #[cfg(test)]
+            before_wait: AtomicBool::new(false),
+            #[cfg(test)]
+            continue_wait: AtomicBool::new(false),
         });
         let retained = Arc::new(AtomicUsize::new(0));
         let collector_state = Arc::clone(&state);
@@ -515,7 +560,13 @@ impl WorkerOwnershipRegistry {
 
 impl Drop for WorkerOwnershipRegistry {
     fn drop(&mut self) {
+        let handles = self
+            .state
+            .handles
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         self.state.shutdown.store(true, Ordering::Release);
+        drop(handles);
         self.state.wake.notify_one();
         if let Some(collector) = self.collector.take() {
             let _ = collector.join();
@@ -540,7 +591,13 @@ impl Drop for WorkerOwnershipPermit {
 
 impl Drop for WorkerCompletionGuard {
     fn drop(&mut self) {
+        let handles = self
+            .state
+            .handles
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         self.completed.store(true, Ordering::Release);
+        drop(handles);
         self.state.wake.notify_one();
     }
 }
@@ -572,12 +629,22 @@ fn worker_collector_loop(state: &WorkerOwnershipState) {
             state
                 .armed_handle_count
                 .store(handles.len().saturating_add(1), Ordering::Release);
+            #[cfg(test)]
+            if state.pause_before_wait.load(Ordering::Acquire) {
+                state.before_wait.store(true, Ordering::Release);
+                while !state.continue_wait.load(Ordering::Acquire) {
+                    thread::yield_now();
+                }
+            }
             handles = state
                 .wake
                 .wait(handles)
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             #[cfg(test)]
-            state.armed_handle_count.store(0, Ordering::Release);
+            {
+                state.before_wait.store(false, Ordering::Release);
+                state.armed_handle_count.store(0, Ordering::Release);
+            }
             #[cfg(test)]
             state.probes.fetch_add(1, Ordering::Relaxed);
         }
@@ -1565,15 +1632,26 @@ fn system_process_adapter()
     Ok(SystemBackgroundProcessAdapter::with_helper(helper))
 }
 
-fn collect_bounded_environment(
-    environment: impl IntoIterator<Item = (OsString, OsString)>,
+fn capture_production_environment() -> Result<Vec<(OsString, OsString)>, ()> {
+    collect_allowlisted_environment(PRODUCTION_BACKGROUND_ENVIRONMENT_ALLOWLIST, |key| {
+        env::var_os(key)
+    })
+}
+
+fn collect_allowlisted_environment(
+    allowlist: &[&str],
+    mut lookup: impl FnMut(&str) -> Option<OsString>,
 ) -> Result<Vec<(OsString, OsString)>, ()> {
-    let mut bounded = Vec::new();
+    if allowlist.len() > MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES {
+        return Err(());
+    }
+    let mut bounded = Vec::with_capacity(allowlist.len());
     let mut aggregate = 0_usize;
-    for (key, value) in environment {
-        if bounded.len() == MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES {
-            return Err(());
-        }
+    for key in allowlist {
+        let Some(value) = lookup(key) else {
+            continue;
+        };
+        let key = OsString::from(key);
         validate_environment_entry(&key, &value, &mut aggregate)?;
         bounded.push((key, value));
     }
@@ -1698,9 +1776,10 @@ mod tests {
         BlockingExecutor, BlockingResult, BlockingTaskFailure,
         MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES, MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES,
         NativeBackgroundLimits, NativeBackgroundSupervisor, NativeSpawner, NativeStore,
-        RetainedJob, SystemBackgroundProcessAdapter, SystemClock, WORKER_OWNERSHIP_CAPACITY,
-        WorkerOwnershipRegistry, WorkerRetainer, accept_bounded_environment,
-        collect_bounded_environment, finish_prepared_after_readiness, open_directory,
+        PRODUCTION_BACKGROUND_ENVIRONMENT_ALLOWLIST, RetainedJob, SystemBackgroundProcessAdapter,
+        SystemClock, WORKER_OWNERSHIP_CAPACITY, WorkerOwnershipRegistry, WorkerRetainer,
+        accept_bounded_environment, capture_production_environment,
+        collect_allowlisted_environment, finish_prepared_after_readiness, open_directory,
         process_error_kind, retain_canonical_directory_with, validate_environment,
         worker_ownership_registry,
     };
@@ -2362,6 +2441,86 @@ mod tests {
     }
 
     #[test]
+    fn worker_completion_waits_through_the_collector_predicate_handoff() {
+        let registry = WorkerOwnershipRegistry::new().expect("worker registry");
+        let initial_wait_deadline = Instant::now() + Duration::from_secs(1);
+        while registry.state.armed_handle_count.load(Ordering::Acquire) != 1 {
+            assert!(
+                Instant::now() < initial_wait_deadline,
+                "collector did not enter its initial wait"
+            );
+            thread::yield_now();
+        }
+        registry
+            .state
+            .pause_before_wait
+            .store(true, Ordering::Release);
+
+        let mut ownership = registry.reserve(1).expect("worker ownership");
+        let cohort = Arc::clone(&ownership.cohort);
+        let (completion_guard, completed) = registry.completion_guard();
+        let (release, release_receiver) = mpsc::sync_channel(1);
+        let (at_transition, at_transition_receiver) = mpsc::sync_channel(1);
+        let (transitioned, transitioned_receiver) = mpsc::sync_channel(1);
+        let worker = thread::spawn(move || {
+            release_receiver.recv().expect("release worker");
+            at_transition.send(()).expect("report transition attempt");
+            drop(completion_guard);
+            transitioned.send(()).expect("report completion transition");
+        });
+        if registry
+            .register(worker, completed, ownership.take())
+            .is_err()
+        {
+            panic!("register worker");
+        }
+
+        let handoff_deadline = Instant::now() + Duration::from_secs(1);
+        while !registry.state.before_wait.load(Ordering::Acquire) {
+            assert!(
+                Instant::now() < handoff_deadline,
+                "collector did not reach its predicate-to-wait handoff"
+            );
+            thread::yield_now();
+        }
+        release.send(()).expect("complete worker at handoff");
+        at_transition_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker reached completion transition");
+        let crossed_handoff = transitioned_receiver
+            .recv_timeout(Duration::from_millis(50))
+            .is_ok();
+
+        registry
+            .state
+            .pause_before_wait
+            .store(false, Ordering::Release);
+        registry.state.continue_wait.store(true, Ordering::Release);
+        let collection_deadline = Instant::now() + Duration::from_secs(1);
+        while cohort.load(Ordering::Acquire) != 0 {
+            assert!(
+                Instant::now() < collection_deadline,
+                "handoff completion was not collected"
+            );
+            // Repeated notification lets the pre-fix implementation unwind
+            // cleanly after demonstrating that it crossed the handoff.
+            registry.state.wake.notify_one();
+            thread::yield_now();
+        }
+        if !crossed_handoff {
+            transitioned_receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("completion transition after collector wait");
+        }
+        drop(registry);
+
+        assert!(
+            !crossed_handoff,
+            "completion predicate changed while the collector owned its handoff mutex"
+        );
+    }
+
+    #[test]
     fn shutdown_dequeue_closes_a_racing_worker_admission_before_run_send() {
         for _ in 0..128 {
             let executor = BlockingExecutor::new(1).expect("blocking executor");
@@ -2425,33 +2584,33 @@ mod tests {
     }
 
     #[test]
-    fn huge_environment_iterators_stop_at_the_first_hard_bound() {
-        let entry_count = Arc::new(AtomicUsize::new(0));
-        let observed_entries = Arc::clone(&entry_count);
-        let too_many = std::iter::repeat_with(move || {
-            let index = observed_entries.fetch_add(1, Ordering::AcqRel);
-            (OsString::from(format!("K{index}")), OsString::new())
-        });
-        assert!(collect_bounded_environment(too_many).is_err());
-        assert_eq!(
-            entry_count.load(Ordering::Acquire),
-            MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES + 1
-        );
+    fn production_environment_capture_uses_only_individual_allowlisted_lookups() {
+        let captured = capture_production_environment().expect("production environment");
+        let expected = PRODUCTION_BACKGROUND_ENVIRONMENT_ALLOWLIST
+            .iter()
+            .filter_map(|key| std::env::var_os(key).map(|value| (OsString::from(key), value)))
+            .collect::<Vec<_>>();
 
-        let aggregate_count = Arc::new(AtomicUsize::new(0));
-        let observed_aggregate = Arc::clone(&aggregate_count);
-        let too_large = std::iter::repeat_with(move || {
-            let index = observed_aggregate.fetch_add(1, Ordering::AcqRel);
-            (
-                OsString::from(format!("V{index}")),
-                OsString::from("x".repeat(MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES)),
-            )
+        assert_eq!(captured, expected);
+        assert!(captured.len() <= PRODUCTION_BACKGROUND_ENVIRONMENT_ALLOWLIST.len());
+        validate_environment(&captured).expect("captured environment remains bounded");
+    }
+
+    #[test]
+    fn allowlisted_environment_stops_lookup_after_the_first_hard_bound() {
+        let lookups = Arc::new(AtomicUsize::new(0));
+        let observed_lookups = Arc::clone(&lookups);
+        let result = collect_allowlisted_environment(&["A", "B", "C"], move |_| {
+            let index = observed_lookups.fetch_add(1, Ordering::AcqRel);
+            Some(if index == 0 {
+                OsString::from("x".repeat(MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES + 1))
+            } else {
+                OsString::new()
+            })
         });
-        assert!(collect_bounded_environment(too_large).is_err());
-        assert!(
-            aggregate_count.load(Ordering::Acquire) <= 17,
-            "aggregate rejection must not consume or retain the unbounded tail"
-        );
+
+        assert!(result.is_err());
+        assert_eq!(lookups.load(Ordering::Acquire), 1);
     }
 
     #[test]
