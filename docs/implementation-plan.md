@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33455374424` (`GREEN`)
 - Main Benchmark evidence: `33455374426` (`GREEN`)
 - Active branch: `agent/m05-background-supervisor`
-- Active phase: `remediating rejected background-supervisor review cycle 15`
-- Next gate: `bound short release writes, then run the complete exact-1.94.1 replacement gate`
+- Active phase: `remediating rejected background-supervisor remote gate cycle 16`
+- Next gate: `fix cross-platform test launch and timing assumptions, then run the complete exact-1.94.1 replacement gate`
 <!-- canonical-live-status:end -->
 
 The recorded Actions runs succeeded for the exact delivered-main commit, and
@@ -116,7 +116,16 @@ repair, but cycle 15 found that positive short writes beneath the buffered
 release writer could still amplify a maximum frame into payload-sized syscall
 work. Replacement now requires an explicit short-write attempt bound and
 backoff with a deterministic one-byte-writer regression. No rejected result is
-acceptance evidence.
+acceptance evidence. Exact replacement `7e45d77` passed the complete local
+gate and all three cycle 16 product-review tracks reported zero findings, but
+feature CI `33647465751` rejected nonportable test assumptions: a wall-clock
+retry test required scheduler progress before its deadline, macOS arm64 dyld
+correctly rejected an intentionally invalid post-release loader environment,
+and Ubuntu dash reset an ignored `SIGCHLD` across `exec`. Benchmark run
+`33647466054` was green but is not delivery evidence for a CI-rejected
+candidate. Replacement requires deterministic short-write coverage, separate
+hostile pre-release and benign post-release environment cases, and a direct
+`sigaction` launcher for both incompatible child-reaping modes.
 Persistent handles, message/relationship/configuration/lifecycle management,
 ACP, teams, and extension slash commands remain separate. Documentation parser
 maintenance remains a separate non-product task.

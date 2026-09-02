@@ -346,3 +346,26 @@ and backoff for positive short writes, a contract stated in terms of actual
 underlying attempts, and deterministic one-byte short-writer coverage. The
 complete replacement gate and all three fresh review tracks restart after the
 finding is remediated.
+
+## Rejected remote-gate candidate: cycle 16
+
+Exact candidate `7e45d7781df910c578b01e36416ed9d719054262` passed the complete
+exact Rust and Cargo 1.94.1 local gate. Three fresh product-review tracks then
+reported zero correctness, lifecycle, or performance findings. Feature
+Benchmark run `33647466054` succeeded and retained both exact-SHA artifacts,
+but feature CI run `33647465751` failed, so the candidate is not delivery
+evidence.
+
+| Gate surface | Decisive failure |
+| --- | --- |
+| macOS native tests | The wall-clock short-write regression assumed at least two writes before a 20-ms deadline even when the test thread was descheduled past it. |
+| macOS arm64 process test | The inert-environment test expected `/bin/sh` to succeed after release with an intentionally missing `DYLD_INSERT_LIBRARIES`; the platform loader correctly aborted that post-release process. |
+| Linux native and workspace tests | Ubuntu `/bin/sh` is dash, which reset the test's ignored `SIGCHLD` trap across `exec`, so the nested process never entered the requested incompatible reaping mode. |
+
+Cycle 16 remains remote-gate rejection evidence. Replacement requires the
+existing deterministic attempt-budget coverage without scheduler-count
+assumptions, separate hostile-loader preparation and benign release cases, and
+a compiled `sigaction` launcher for both incompatible `SIGCHLD` modes. No
+additional product-review cycle applies to this historical documentation-only
+record; the replacement code-and-test candidate restarts the complete local,
+review, and remote gates.
