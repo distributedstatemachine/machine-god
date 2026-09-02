@@ -400,7 +400,7 @@ struct WorkerOwnershipState {
     #[cfg(test)]
     probes: AtomicUsize,
     #[cfg(test)]
-    waiting: AtomicBool,
+    armed_handle_count: AtomicUsize,
 }
 
 struct WorkerOwnershipReservation {
@@ -433,7 +433,7 @@ impl WorkerOwnershipRegistry {
             #[cfg(test)]
             probes: AtomicUsize::new(0),
             #[cfg(test)]
-            waiting: AtomicBool::new(false),
+            armed_handle_count: AtomicUsize::new(0),
         });
         let retained = Arc::new(AtomicUsize::new(0));
         let collector_state = Arc::clone(&state);
@@ -569,13 +569,15 @@ fn worker_collector_loop(state: &WorkerOwnershipState) {
                 return;
             }
             #[cfg(test)]
-            state.waiting.store(true, Ordering::Release);
+            state
+                .armed_handle_count
+                .store(handles.len().saturating_add(1), Ordering::Release);
             handles = state
                 .wake
                 .wait(handles)
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             #[cfg(test)]
-            state.waiting.store(false, Ordering::Release);
+            state.armed_handle_count.store(0, Ordering::Release);
             #[cfg(test)]
             state.probes.fetch_add(1, Ordering::Relaxed);
         }
@@ -2293,9 +2295,7 @@ mod tests {
         let worker = thread::spawn(move || {
             let _completion_guard = completion_guard;
             entered.send(()).expect("report idle worker");
-            release_receiver
-                .recv_timeout(Duration::from_secs(1))
-                .expect("release idle worker");
+            release_receiver.recv().expect("release idle worker");
         });
         if registry
             .register(worker, completed, ownership.take())
@@ -2308,17 +2308,16 @@ mod tests {
             .expect("worker entered");
 
         let wait_deadline = Instant::now() + Duration::from_secs(1);
-        while !registry.state.waiting.load(Ordering::Acquire) {
-            assert!(Instant::now() < wait_deadline, "collector did not sleep");
+        while registry.state.armed_handle_count.load(Ordering::Acquire) != 2 {
+            assert!(
+                Instant::now() < wait_deadline,
+                "collector did not observe the registered worker before sleeping"
+            );
             thread::yield_now();
         }
         let idle_probes = registry.state.probes.load(Ordering::Acquire);
         thread::sleep(Duration::from_millis(75));
-        assert_eq!(
-            registry.state.probes.load(Ordering::Acquire),
-            idle_probes,
-            "idle collector must not wake or rescan retained handles"
-        );
+        let after_idle = registry.state.probes.load(Ordering::Acquire);
 
         release.send(()).expect("complete worker");
         wait_for_zero(&cohort, "completed worker was not collected");
@@ -2332,6 +2331,10 @@ mod tests {
             "completion notification must remove the retained handle"
         );
         drop(registry);
+        assert_eq!(
+            after_idle, idle_probes,
+            "idle collector must not wake or rescan retained handles"
+        );
     }
 
     #[test]
