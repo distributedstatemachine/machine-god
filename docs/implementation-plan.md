@@ -21,114 +21,31 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `51`
-- Delivered main: `a665289da640d69ae88d0a4a336ad90ece889086`
-- Main CI: `33455374424` (`GREEN`)
-- Main Benchmark evidence: `33455374426` (`GREEN`)
-- Active branch: `agent/m05-background-supervisor`
-- Active phase: `remediating rejected background-supervisor remote gate cycle 16`
-- Next gate: `fix cross-platform test launch and timing assumptions, then run the complete exact-1.94.1 replacement gate`
+- Delivered slices: `52`
+- Delivered main: `1d8ef7b1b055d352c138628d285ac35bcc75715f`
+- Main CI: `33682877396` (`GREEN`)
+- Main Benchmark evidence: `33682877367` (`GREEN`)
+- Active branch: `agent/m03-terminal-start`
+- Active phase: `implementing bounded noninteractive terminal start through the delivered background supervisor`
+- Next gate: `freeze the terminal-start contract and implementation, run focused tests, then the complete exact-1.94.1 local gate`
 <!-- canonical-live-status:end -->
 
-The recorded Actions runs succeeded for the exact delivered-main commit, and
-the Benchmark evidence run retained both required exact-SHA artifacts.
-Bounded read-only persisted `background` inspection is delivered as slice 51.
-The current bounded slice has composed the production process-local writer,
-fixed worker retainer, Linux process adapter, and safe-Rust macOS inherited-cwd
-helper without changing the read-only top-level grammar. Two exact candidates
-passed the complete local gate and were rejected by all three fresh review
-tracks. Cycle 02 found incomplete completion debug redaction, unavoidable
-post-rename publication ambiguity missing from the contract, cleanup paths
-that could release ownership before kill and reap, incremental compaction,
-unreclaimed record temporaries, and a reconciliation/compaction disappearance
-race. Every finding is now remediated: completion debug is payload-free, the
-complete-record sync ambiguity is explicit, cleanup retains ownership through
-all termination and reap attempts, compaction preflights all victims, canonical
-temporaries are reclaimed within the scan bound, and reconciliation is
-allocator-serialized. The complete replacement gate is running; no rejected
-review result is reused as acceptance evidence. Cycle 03 then found a
-publication/control-snapshot lock race, excessive retained maintenance file
-descriptors, cancellation that could bypass stopped replacement after an
-ambiguous publication, pre-release dynamic-loader effects from the requested
-environment, and unsafe numeric group signaling after child wait authority is
-lost. Every cycle 03 finding is now remediated: post-publication cancellation
-closes the visible record, lock classification revalidates concurrent
-publication, maintenance retains at most eight authorities and progresses at
-the supported descriptor floor, both platforms use a fixed-environment helper
-with a bounded post-release frame, and lost wait authority forbids later
-numeric group operations. Exact candidate
-`f06b2d508a4dd64e2b6192ca661c27e153a00be1` then passed the complete local
-gate and was rejected by all three cycle 04 review tracks: polling could run
-blocking process operations on the async executor, Linux group discovery
-assumed GNU `ps`, and successful owned shutdown could persist `dead` instead
-of `stopped`. Remediation now requires fixed-size fail-fast blocking offload,
-bounded distro-independent Linux `/proc` discovery with the macOS adapter
-retained, and `stopped` persistence after successful owned cleanup while
-reserving `dead` for ambiguous cleanup. Exact candidate `8b78bae` passed the
-complete local gate but cycle 05 found ambiguous prepared-abort classification,
-caller-token cancellation on dropped starts, restrictive-procfs invisibility,
-waker destruction under the result lock, and a Linux test import error. Exact
-replacement `faf112b` passed the complete gate; cycle 06 correctness was green,
-but lifecycle and performance found cancellation still depended on the busy
-worker, procfs proof was not retained across cleanup, and two scan parsers
-amplified allocations. Exact replacement `6325c3b` passed the complete gate;
-cycle 07 correctness was green, while lifecycle and performance found that
-pre-submission cancellation could be misreported as capacity, helper readiness
-was not interruptible, lingering cleanup repeated whole-system scans, and
-environment uniqueness validation was quadratic. Exact replacement `4048ae9`
-passed the complete gate, but cycle 08 found that cancellation could still
-mask failed cleanup, post-readiness probe and frame I/O remained blocking,
-captured group members could escape before observation, and member polling
-could repeatedly traverse a vanished prefix. Exact replacement `0ee4150`
-passed the complete gate, but cycle 09 found an EOF release-commit ambiguity,
-prepared-cancellation paths that still ignored fallible abort, unbounded reap
-and worker joins, an uncapped quadratic member union, extra EPERM scans, and a
-per-probe stat allocation. Exact replacement `3d07a99` passed the complete
-gate, including its FreeBSD import fix, but cycle 10 found cancellation
-arbitration that could still mask a ready operation or abort failure, release
-write races with inaccurate cancellation classification, incomplete reap errno
-handling, escaped-member and macOS reader timeout gaps, synchronous shutdown
-cleanup, unbounded retainer joins, implicit detached-worker ownership, and
-per-PID decimal allocation. Those findings were remediated; no rejected
-result is acceptance evidence. Exact replacement `89ba68d` passed the complete
-gate, but cycle 11 found uncancelled admitted starts during supervisor drop,
-incorrect proven preparation-cancellation classification, persistence failure
-masked by cancellation, deadline-free readiness interruption retries, and
-high-frequency cleanup sleeps. Those findings were remediated; no rejected
-result is acceptance evidence. Exact replacement `37d60b4` passed the complete
-gate, but cycle 12 found a shutdown/admission race that could discard an
-accepted job, unbounded environment duplication, remaining high-frequency
-process polling, permanent idle worker-collector scans, and stale cancellation
-API wording. Those findings were remediated; no rejected result is acceptance
-evidence. Exact replacement `630947d` passed the complete gate, but cycle 13
-found that production ambient capture still cloned the complete environment
-before applying bounds, the event-driven collector could lose a completion
-wake during its predicate-to-wait handoff, the core cleanup contract
-overpromised containment of unobserved process-group escape, and native
-rustdocs described obsolete launch and reap protocols. Those findings are
-remediated; no rejected result is acceptance evidence. Exact replacement
-`b9ce4db` passed the complete gate, but cycle 14 found that individual ambient
-lookups still allocated an oversized value before validation, each start
-cloned and revalidated the full immutable environment, and release framing
-could issue thousands of tiny writes. Those findings are remediated. Exact
-replacement `58dd10c` passed the complete gate, including its WASI portability
-repair, but cycle 15 found that positive short writes beneath the buffered
-release writer could still amplify a maximum frame into payload-sized syscall
-work. Replacement now requires an explicit short-write attempt bound and
-backoff with a deterministic one-byte-writer regression. No rejected result is
-acceptance evidence. Exact replacement `7e45d77` passed the complete local
-gate and all three cycle 16 product-review tracks reported zero findings, but
-feature CI `33647465751` rejected nonportable test assumptions: a wall-clock
-retry test required scheduler progress before its deadline, macOS arm64 dyld
-correctly rejected an intentionally invalid post-release loader environment,
-and Ubuntu dash reset an ignored `SIGCHLD` across `exec`. Benchmark run
-`33647466054` was green but is not delivery evidence for a CI-rejected
-candidate. Replacement requires deterministic short-write coverage, separate
-hostile pre-release and benign post-release environment cases, and a direct
-`sigaction` launcher for both incompatible child-reaping modes.
-Persistent handles, message/relationship/configuration/lifecycle management,
-ACP, teams, and extension slash commands remain separate. Documentation parser
-maintenance remains a separate non-product task.
+The exact delivered-main CI and Benchmark runs are green, and the Benchmark
+run retained both required unexpired exact-SHA artifacts. Slice 52 delivers the
+bounded production background supervisor, process-local record writer,
+fixed-capacity blocking offload, and Linux/macOS process adapters. Three fresh
+cycle-20 product reviews reported zero findings. The immediately preceding
+main candidate passed feature gates but exposed a Linux scheduling race in its
+test fixture during exact-main CI; the accepted replacement synchronizes on
+actual slot reclamation and passed both feature and main gates. Detailed
+rejected-candidate, remediation, review, and workflow history is retained only
+in the linked historical review ledger.
+
+The next bounded product slice adds noninteractive `terminal` action `start`
+through the delivered supervisor. Persistent handles, read/write/wait/control
+actions, interactive terminal behavior, restart-safe control, ACP, teams, and
+extension slash commands remain separate. Documentation-tool maintenance also
+remains a separate non-product task.
 
 ## Architecture ownership
 
@@ -243,8 +160,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 49 | Bounded injected-catalog `mcp_features` | [contract](mcp-features.md) | [review](reviews/m05-mcp-features-review-01.md) | `3ba687b` |
 | 50 | Bounded foreground one-off `subagent` | [contract](subagent.md) | [review](reviews/m05-subagent-review-01.md) | `ba52dbf` |
 | 51 | Bounded read-only persisted `background` CLI | [contract](background-cli.md) | [review](reviews/m05-background-cli-review-01.md) | `a665289` |
+| 52 | Bounded production background supervisor and process lifecycle | [contract](background-supervisor.md) | [review](reviews/m05-background-supervisor-review-01.md) | `1d8ef7b` |
 
-The exact delivered-main record after slice 51 is in the canonical live-status
+The exact delivered-main record after slice 52 is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.

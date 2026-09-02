@@ -369,3 +369,47 @@ a compiled `sigaction` launcher for both incompatible `SIGCHLD` modes. No
 additional product-review cycle applies to this historical documentation-only
 record; the replacement code-and-test candidate restarts the complete local,
 review, and remote gates.
+
+## Rejected remote-gate replacements
+
+The cycle-16 portability repairs were followed by two further exact remote
+rejections. Candidate `99c7e9e32ec984ebbf10e79c877cc2b473a588e1`
+replaced the scheduler-count deadline assertion, but feature CI
+`33665770138` showed that its recursive test-harness launcher did not establish
+the requested `SIGCHLD` modes reliably across supported runners. Its Benchmark
+run `33665770036` was green but is not delivery evidence. Candidate
+`483f2295eb47bc1827da68f1652ff8da10c5e29c` moved signal-mode setup behind
+`exec` and passed feature CI `33668878409`, feature Benchmark
+`33668877686`, the complete exact local gate, and all three fresh cycle-19
+reviews with zero findings. It was fast-forwarded to `main`, where exact-main
+CI `33669666983` exposed a separate Linux fixture race: result publication
+woke the caller before the blocking worker returned its admission slot, so an
+immediate fail-fast sibling submission could legitimately report `Admission`.
+Main Benchmark `33669666635` was green but cannot accept a CI-rejected commit.
+
+Both remote failures were fixed in code or tests and rerun; neither was merely
+documented as an incompatibility, and no rejected gate contributes acceptance
+evidence.
+
+## Accepted replacement: cycle 20
+
+Exact candidate `1d8ef7b1b055d352c138628d285ac35bcc75715f`
+synchronizes the cancellation regression on the executor's authoritative slot
+availability before asserting sibling admission. It changes no production
+behavior and preserves the cancellation, cleanup, and sibling-token isolation
+assertions.
+
+The complete exact Rust and Cargo 1.94.1 local gate passed: focused native
+regressions, repeated stress coverage, formatting, warnings-denied Clippy,
+workspace tests, documentation tests, repository Python tests, and a locked
+release build and user-visible background smoke were green. Three fresh
+cycle-20 tracks then reported zero correctness/API, lifecycle/platform, or
+performance/resource findings on the same exact SHA.
+
+Feature CI `33682082415` and Benchmark `33682082396` passed. After a no-force
+fast-forward, exact-main CI `33682877396` and Benchmark `33682877367` also
+passed. The exact-main Benchmark run retained the unexpired
+`upstream-benchmark-1d8ef7b1b055d352c138628d285ac35bcc75715f-ubuntu-24.04-x86_64`
+and
+`bootstrap-benchmark-1d8ef7b1b055d352c138628d285ac35bcc75715f`
+artifacts. This exact SHA is the accepted slice-52 delivery.
