@@ -47,7 +47,6 @@ use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::ChildStderr;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
-#[cfg(unix)]
 use std::sync::Arc;
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 use std::sync::atomic::{AtomicI32, AtomicU32};
@@ -346,15 +345,14 @@ fn quarantine_child(child: Child, permit: ChildReapPermit) {
 ///
 /// Validation and environment-frame encoding happen once at the authority
 /// boundary. Clones retain the same entry and frame allocations.
-#[cfg(unix)]
 #[derive(Clone)]
 pub(crate) struct ValidatedBackgroundEnvironment {
     entries: Arc<[(OsString, OsString)]>,
     release_frame: Arc<Vec<u8>>,
 }
 
-#[cfg(unix)]
 impl ValidatedBackgroundEnvironment {
+    #[cfg(unix)]
     pub(crate) fn new(
         environment: Vec<(OsString, OsString)>,
     ) -> Result<Self, BackgroundProcessError> {
@@ -375,7 +373,7 @@ impl ValidatedBackgroundEnvironment {
         self.release_frame.as_slice()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn shares_storage_with(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.entries, &other.entries)
             && Arc::ptr_eq(&self.release_frame, &other.release_frame)
@@ -416,6 +414,7 @@ impl BackgroundProcessRequest {
     ///
     /// This host-only path validates the per-command fields and descriptor but
     /// deliberately reuses the environment validation and encoding result.
+    #[cfg(unix)]
     pub(crate) fn from_directory_with_environment(
         command: String,
         cwd: String,
