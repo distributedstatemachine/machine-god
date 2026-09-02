@@ -1997,19 +1997,37 @@ mod tests {
             }
         }
 
-        fn await_terminal(&self, id: u64) -> crate::NativeBackgroundDetail {
+        fn inspect_after_terminal_publication(
+            &self,
+            retainer: &WorkerRetainer,
+            id: u64,
+        ) -> crate::NativeBackgroundDetail {
+            // The macOS reader deliberately rejects an identity change between
+            // its metadata-only and readable opens. Wait on the retainer's
+            // actual publication-before-capacity barrier so this test does not
+            // race the atomic terminal-record replacement.
             let deadline = Instant::now() + Duration::from_secs(8);
-            loop {
-                let detail = self.detail(id);
-                if detail.state() != NativeBackgroundState::Running {
-                    return detail;
-                }
+            while retainer
+                .pool
+                .available
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .len()
+                != retainer.pool.senders.len()
+            {
                 assert!(
                     Instant::now() < deadline,
-                    "timed out waiting for completion"
+                    "timed out waiting for terminal publication"
                 );
-                thread::sleep(Duration::from_millis(5));
+                thread::yield_now();
             }
+            let detail = self.detail(id);
+            assert_ne!(
+                detail.state(),
+                NativeBackgroundState::Running,
+                "retainer capacity returned before terminal publication"
+            );
+            detail
         }
     }
 
@@ -2117,7 +2135,7 @@ mod tests {
             .expect("request");
         let handle = start_eventually(&supervisor, &request);
 
-        let detail = fixture.await_terminal(handle.id());
+        let detail = fixture.inspect_after_terminal_publication(&supervisor.retainer, handle.id());
         assert_eq!(detail.state(), NativeBackgroundState::Exited);
         assert_eq!(detail.exit_code(), Some(0));
         assert_eq!(detail.cwd(), fixture.workspace);
@@ -2154,11 +2172,17 @@ mod tests {
                 .expect_err("capacity must reject");
         assert_eq!(second.kind(), BackgroundStartErrorKind::Capacity);
 
+        let worker_cohort = Arc::clone(&supervisor.retainer.pool.worker_cohort);
         let drop_started = Instant::now();
         drop(supervisor);
         assert!(drop_started.elapsed() < Duration::from_millis(250));
+        wait_for_zero_until(
+            &worker_cohort,
+            Duration::from_secs(8),
+            "retainer workers did not finish terminal publication after shutdown",
+        );
         assert_eq!(
-            fixture.await_terminal(first.id()).state(),
+            fixture.detail(first.id()).state(),
             NativeBackgroundState::Stopped
         );
         assert!(!process_exists(pid));
@@ -2182,7 +2206,7 @@ mod tests {
             Poll::Ready(Ok(handle)) => handle,
             other => panic!("woken start must be ready: {other:?}"),
         };
-        fixture.await_terminal(handle.id());
+        fixture.inspect_after_terminal_publication(&supervisor.retainer, handle.id());
 
         wake.0.store(false, Ordering::Release);
         let mut reconcile = supervisor.reconcile();
@@ -2842,7 +2866,8 @@ mod tests {
         assert!(!shared.is_cancelled());
         let sibling = futures_executor::block_on(sibling).expect("sibling start completes");
         assert!(!shared.is_cancelled());
-        sibling_fixture.await_terminal(sibling.id());
+        sibling_fixture
+            .inspect_after_terminal_publication(&sibling_supervisor.retainer, sibling.id());
     }
 
     #[test]
@@ -2941,7 +2966,11 @@ mod tests {
     }
 
     fn wait_for_zero(value: &AtomicUsize, message: &str) {
-        let deadline = Instant::now() + Duration::from_secs(2);
+        wait_for_zero_until(value, Duration::from_secs(2), message);
+    }
+
+    fn wait_for_zero_until(value: &AtomicUsize, timeout: Duration, message: &str) {
+        let deadline = Instant::now() + timeout;
         while value.load(Ordering::Acquire) != 0 {
             assert!(Instant::now() < deadline, "{message}");
             thread::yield_now();
