@@ -406,9 +406,11 @@ pub trait OwnedBackgroundProcess: Send + 'static {
     /// Consumes ownership and waits for one terminal observation.
     ///
     /// Future construction must be inert. Cancelling `stop` requests owned
-    /// process-tree termination and reap and must resolve as `Stopped` once
-    /// cleanup completes. Dropping the wait future must perform the same
-    /// cleanup; it must never detach, leak, or transfer the owned process.
+    /// process-resource termination and reap and must resolve as `Stopped`
+    /// only once the implementation's documented bounded ownership set is
+    /// fully discharged. Dropping the wait future must perform the same
+    /// cleanup; it must never detach, leak, or transfer a resource in that
+    /// ownership set.
     fn wait(
         self: Box<Self>,
         stop: CancellationToken,

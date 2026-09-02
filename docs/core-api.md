@@ -212,8 +212,12 @@ The returned [`BackgroundHandle`](crate::BackgroundHandle) exposes only the
 durable ID and optional PID for presentation. Those numbers provide no
 liveness, lookup, or signaling authority. Retained completion waits receive a
 host-owned stop token; cancellation of that token requests cleanup and yields
-a stopped outcome only after the exact owned process tree is reaped. The full
-native persistence and lifecycle contract is in the
+a stopped outcome only after the implementation's bounded process ownership
+set is discharged. The Linux/macOS native set contains the retained direct
+child, its original process group, and members captured by the bounded cleanup
+snapshots; a descendant that changes group or session before any snapshot
+observes it is outside that set and is not covered by a successful cleanup
+result. The full native persistence and lifecycle contract is in the
 [background supervisor contract](background-supervisor.md).
 
 ## Available-model catalog boundary

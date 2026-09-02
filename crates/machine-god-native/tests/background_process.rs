@@ -313,6 +313,31 @@ fn process_exists(pid: u32) -> bool {
     rustix::process::test_kill_process(pid).is_ok()
 }
 
+#[cfg(target_os = "linux")]
+struct EscapedProcessGuard {
+    pid: rustix::process::Pid,
+}
+
+#[cfg(target_os = "linux")]
+impl EscapedProcessGuard {
+    fn new(pid: u32) -> Self {
+        Self {
+            pid: rustix::process::Pid::from_raw(i32::try_from(pid).unwrap()).unwrap(),
+        }
+    }
+
+    fn kill(&self) {
+        let _ = rustix::process::kill_process(self.pid, rustix::process::Signal::KILL);
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for EscapedProcessGuard {
+    fn drop(&mut self) {
+        self.kill();
+    }
+}
+
 fn assert_processes_absent(pids: &[u32]) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -625,6 +650,7 @@ int main(void) {
         .release()
         .unwrap();
     let escaped = wait_for_pid(&directory.path().join("escaped.pid"));
+    let escaped_guard = EscapedProcessGuard::new(escaped);
 
     let error = owned.stop().unwrap_err();
 
@@ -633,8 +659,63 @@ int main(void) {
         process_exists(escaped),
         "escaped identity was mistaken for gone"
     );
-    let escaped_pid = rustix::process::Pid::from_raw(i32::try_from(escaped).unwrap()).unwrap();
-    rustix::process::kill_process(escaped_pid, rustix::process::Signal::KILL).unwrap();
+    escaped_guard.kill();
+    assert_processes_absent(&[escaped]);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn unobserved_session_escape_is_outside_bounded_cleanup_ownership() {
+    let directory = FreshDirectory::new("unobserved-session-escape");
+    let source = directory.path().join("escape.c");
+    let executable = directory.path().join("escape");
+    fs::write(
+        &source,
+        br#"#include <signal.h>
+#include <stdio.h>
+#include <unistd.h>
+int main(void) {
+  pid_t child = fork();
+  if (child < 0) return 80;
+  if (child == 0) {
+    if (setsid() < 0) return 81;
+    FILE *marker = fopen("escaped.pid.tmp", "w");
+    if (!marker || fprintf(marker, "%d", (int)getpid()) < 1 || fclose(marker) != 0) return 82;
+    if (rename("escaped.pid.tmp", "escaped.pid") != 0) return 83;
+    for (;;) pause();
+  }
+  signal(SIGTERM, SIG_IGN);
+  for (;;) pause();
+}
+"#,
+    )
+    .unwrap();
+    assert!(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror", "-o"])
+            .arg(&executable)
+            .arg(&source)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let owned = adapter()
+        .prepare(request(directory.path(), "exec ./escape"))
+        .unwrap()
+        .release()
+        .unwrap();
+    let leader = owned.pid().get();
+    let escaped = wait_for_pid(&directory.path().join("escaped.pid"));
+    let escaped_guard = EscapedProcessGuard::new(escaped);
+
+    owned.stop().unwrap();
+
+    assert_processes_absent(&[leader]);
+    assert!(
+        process_exists(escaped),
+        "an unobserved session escape is outside the bounded ownership set"
+    );
+    escaped_guard.kill();
     assert_processes_absent(&[escaped]);
 }
 

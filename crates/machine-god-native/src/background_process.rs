@@ -457,7 +457,8 @@ impl fmt::Debug for BackgroundProcessRequest {
     }
 }
 
-/// Exit status reported only after the original process group is gone.
+/// Exit status reported only after bounded owned-member cleanup succeeds and
+/// the retained direct child is reaped.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum BackgroundProcessExit {
@@ -511,9 +512,10 @@ impl BackgroundProcessHelper {
     }
 }
 
-/// Native process adapter. Linux launches directly. macOS uses an explicitly
-/// supplied instance of this executable as a tiny inherited-directory helper.
-/// Other targets return a fixed unsupported error without spawning.
+/// Native process adapter. Linux and macOS use an explicitly supplied instance
+/// of this executable as a tiny gated helper. Linux starts it in the retained
+/// directory; macOS gives it an inherited directory descriptor. Other targets
+/// return a fixed unsupported error without spawning.
 #[derive(Clone, Debug, Default)]
 pub struct SystemBackgroundProcessAdapter {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -780,7 +782,13 @@ impl Drop for PreparedBackgroundProcess {
     }
 }
 
-/// Exclusive ownership of one released background process group.
+/// Exclusive ownership of one released background process's bounded cleanup
+/// set.
+///
+/// On Linux and macOS that set contains the retained direct child, members of
+/// its original process group, and members captured by bounded cleanup
+/// snapshots. A descendant that changes process group or session before any
+/// snapshot observes it is outside this ownership set.
 pub struct OwnedBackgroundProcess {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     child: Option<Child>,
@@ -800,9 +808,9 @@ impl OwnedBackgroundProcess {
         self.pid
     }
 
-    /// Waits for the direct child, cleans any lingering original-group
-    /// descendants, reaps the leader, and requires an ESRCH group probe before
-    /// reporting its status.
+    /// Waits for the direct child, cleans the bounded owned-member set, proves
+    /// original-group quiescence with bounded process-group snapshots while
+    /// the leader identity remains retained, and then reaps the leader.
     ///
     /// # Errors
     ///
@@ -812,8 +820,8 @@ impl OwnedBackgroundProcess {
     }
 
     /// Waits while observing a cooperative stop token. Cancellation performs
-    /// the same bounded TERM/KILL/reap/ESRCH protocol as [`Self::stop`] and
-    /// returns a distinct stopped outcome.
+    /// the same bounded signal, identity-snapshot, and reap protocol as
+    /// [`Self::stop`] and returns a distinct stopped outcome.
     ///
     /// This is the retainer-facing operation: a retainer can cancel the token
     /// during shutdown even while its worker owns this blocking wait.
@@ -829,7 +837,8 @@ impl OwnedBackgroundProcess {
     }
 
     /// Sends TERM to the original group, waits the fixed grace, sends KILL,
-    /// reaps the retained direct child, and requires an ESRCH group probe.
+    /// resolves every identity-captured member, proves original-group
+    /// quiescence with bounded snapshots, and reaps the retained direct child.
     ///
     /// # Errors
     ///
