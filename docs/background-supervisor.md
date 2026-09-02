@@ -31,12 +31,17 @@ helper loading, cwd retention, or readiness. The already-validated command and
 environment remain inert bytes in a versioned, length-delimited frame retained
 by the parent. The validated environment and its encoded frame segment are
 immutable shared allocations; starts retain that same representation instead
-of cloning or revalidating its entries. Release sends the frame through one
-fixed 16 KiB buffer, requiring at most nineteen bounded payload writes after
-the running record is durable. Its bounded payload remains inert until a
-distinct final commit byte is written separately after the last cancellation
-and deadline checks; closing the gate after any payload prefix, including the
-complete payload, cannot emulate that commit.
+of cloning or revalidating its entries. Release assembles the frame through one
+fixed 16 KiB buffer in at most nineteen payload batches after the running
+record is durable. Every physical write is capped at the platform's atomic
+pipe-write size: 4 KiB on Linux and 512 bytes on macOS. Including thirty-two
+retry or short-write allowances and the distinct commit, the nonblocking gate
+therefore caps underlying attempts at 107 on Linux and 618 on macOS, and applies
+cancellation-aware 4-to-32 ms backoff after retryable failures or any positive
+short write. Its bounded payload remains inert until a distinct final commit
+byte is written separately after the last cancellation and deadline checks;
+closing the gate after any payload prefix, including the complete payload,
+cannot emulate that commit.
 The helper independently revalidates every bound and applies the requested
 environment only to the final post-release `/bin/sh` exec. Frame bytes cannot
 be interpreted as readiness, arguments, or shell interpolation.

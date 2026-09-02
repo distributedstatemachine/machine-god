@@ -169,6 +169,26 @@ const RELEASE_FRAME_MAGIC: &[u8; 8] = b"MGBG\0\0\0\x01";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const RELEASE_FRAME_WRITE_CHUNK_BYTES: usize = 16 * 1024;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+const RELEASE_FRAME_PIPE_WRITE_BYTES: usize = if libc::PIPE_BUF < RELEASE_FRAME_WRITE_CHUNK_BYTES {
+    libc::PIPE_BUF
+} else {
+    RELEASE_FRAME_WRITE_CHUNK_BYTES
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const MAX_RELEASE_FRAME_PAYLOAD_BYTES: usize = RELEASE_FRAME_MAGIC.len()
+    + 4
+    + MAX_BACKGROUND_PROCESS_COMMAND_BYTES
+    + 4
+    + 8 * MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES
+    + MAX_BACKGROUND_PROCESS_ENVIRONMENT_BYTES;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const MAX_RELEASE_FRAME_RETRY_ATTEMPTS: usize = 32;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const MAX_RELEASE_FRAME_WRITE_ATTEMPTS: usize = MAX_RELEASE_FRAME_PAYLOAD_BYTES
+    .div_ceil(RELEASE_FRAME_PIPE_WRITE_BYTES)
+    + 1
+    + MAX_RELEASE_FRAME_RETRY_ATTEMPTS;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const RELEASE_COMMIT_BYTE: u8 = 0x6d;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_CHILD_REAP_AUTHORITIES: usize = 64;
@@ -1642,6 +1662,8 @@ fn write_release_frame_bounded(
         deadline: Instant::now() + RELEASE_FRAME_TIMEOUT,
         failure: None,
         retry: ObservationBackoff::retry(),
+        attempts: 0,
+        attempt_limit: MAX_RELEASE_FRAME_WRITE_ATTEMPTS,
     };
     if write_release_frame(&mut output, command, environment).is_err() {
         return Err(output.observed_failure());
@@ -1693,6 +1715,8 @@ struct BoundedGateWriter<'a, W: std::io::Write + ?Sized> {
     deadline: Instant,
     failure: Option<ReleaseWriteFailure>,
     retry: ObservationBackoff,
+    attempts: usize,
+    attempt_limit: usize,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1717,20 +1741,39 @@ impl<W: std::io::Write + ?Sized> std::io::Write for BoundedGateWriter<'_, W> {
                 self.failure = Some(ReleaseWriteFailure::Release);
                 return Err(std::io::ErrorKind::TimedOut.into());
             }
-            match self.output.write(bytes) {
+            if self.attempts == self.attempt_limit {
+                self.failure = Some(ReleaseWriteFailure::Release);
+                return Err(std::io::ErrorKind::TimedOut.into());
+            }
+            self.attempts += 1;
+            let attempted = &bytes[..bytes.len().min(RELEASE_FRAME_PIPE_WRITE_BYTES)];
+            match self.output.write(attempted) {
                 Ok(0) => {
                     self.failure = Some(ReleaseWriteFailure::Release);
                     return Err(std::io::ErrorKind::WriteZero.into());
                 }
-                Ok(written) => return Ok(written),
+                Ok(written) => {
+                    if written < attempted.len() && self.attempts < self.attempt_limit {
+                        // A nonblocking pipe may report positive progress as
+                        // small as one byte. Treat that as backpressure too, so
+                        // `Write::write_all` cannot turn repeated short writes
+                        // into a tight syscall loop before the hard attempt
+                        // budget or deadline is reached.
+                        self.retry
+                            .park_until_and_advance(&mut self.cancellation, self.deadline);
+                    }
+                    return Ok(written);
+                }
                 Err(error)
                     if matches!(
                         error.kind(),
                         std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
                     ) =>
                 {
-                    self.retry
-                        .park_until_and_advance(&mut self.cancellation, self.deadline);
+                    if self.attempts < self.attempt_limit {
+                        self.retry
+                            .park_until_and_advance(&mut self.cancellation, self.deadline);
+                    }
                 }
                 Err(error) => {
                     self.failure = Some(ReleaseWriteFailure::Release);
@@ -3563,6 +3606,72 @@ mod process_regression_tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
+    fn maximum_release_frame_obeys_physical_attempt_bound_and_distinct_commit() {
+        struct CountingWriter {
+            lengths: Vec<usize>,
+            bytes: usize,
+        }
+
+        impl std::io::Write for CountingWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.lengths.push(bytes.len());
+                self.bytes += bytes.len();
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let environment = (0..MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES)
+            .map(|index| {
+                (
+                    OsString::from(format!("K{index:03}")),
+                    OsString::from("x".repeat(508)),
+                )
+            })
+            .collect::<Vec<_>>();
+        let environment =
+            ValidatedBackgroundEnvironment::new(environment).expect("maximum environment");
+        let command = "x".repeat(MAX_BACKGROUND_PROCESS_COMMAND_BYTES);
+        let cancellation = CancellationToken::new();
+        let mut output = CountingWriter {
+            lengths: Vec::new(),
+            bytes: 0,
+        };
+        let mut writer = BoundedGateWriter {
+            output: &mut output,
+            cancellation_token: cancellation.clone(),
+            cancellation: CancellationParker::new(&cancellation),
+            deadline: Instant::now() + Duration::from_secs(1),
+            failure: None,
+            retry: ObservationBackoff::retry(),
+            attempts: 0,
+            attempt_limit: MAX_RELEASE_FRAME_WRITE_ATTEMPTS,
+        };
+
+        write_release_frame(&mut writer, &command, &environment).expect("release frame");
+        let payload_attempts =
+            MAX_RELEASE_FRAME_PAYLOAD_BYTES.div_ceil(RELEASE_FRAME_PIPE_WRITE_BYTES);
+        assert_eq!(writer.attempts, payload_attempts);
+        std::io::Write::write_all(&mut writer, &[RELEASE_COMMIT_BYTE]).expect("distinct commit");
+        assert_eq!(writer.attempts, payload_attempts + 1);
+        assert!(writer.attempts <= MAX_RELEASE_FRAME_WRITE_ATTEMPTS);
+        drop(writer);
+
+        assert_eq!(output.lengths.len(), payload_attempts + 1);
+        assert!(
+            output.lengths[..payload_attempts]
+                .iter()
+                .all(|length| *length <= RELEASE_FRAME_PIPE_WRITE_BYTES)
+        );
+        assert_eq!(output.lengths[payload_attempts], 1);
+        assert_eq!(output.bytes, MAX_RELEASE_FRAME_PAYLOAD_BYTES + 1);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
     fn process_retry_backoff_is_exponential_and_capped() {
         let mut retry = ObservationBackoff::retry();
         let deadline = Instant::now() + Duration::from_secs(1);
@@ -3611,31 +3720,167 @@ mod process_regression_tests {
         ] {
             let cancellation = CancellationToken::new();
             let mut output = RetryingWriter { attempts: 0, kind };
-            let timeout = Duration::from_millis(20);
-            let started = Instant::now();
             let mut writer = BoundedGateWriter {
                 output: &mut output,
                 cancellation_token: cancellation.clone(),
                 cancellation: CancellationParker::new(&cancellation),
-                deadline: started + timeout,
+                deadline: Instant::now() + Duration::from_secs(1),
                 failure: None,
                 retry: ObservationBackoff::retry(),
+                attempts: 0,
+                attempt_limit: 4,
             };
 
             let error = std::io::Write::write(&mut writer, b"x")
-                .expect_err("persistent retryable write reaches its deadline");
+                .expect_err("persistent retryable write reaches its attempt budget");
             let failure = writer.observed_failure();
+            let next_backoff = writer.retry.current;
             drop(writer);
 
             assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
             assert!(matches!(failure, ReleaseWriteFailure::Release));
-            assert!(started.elapsed() >= timeout);
-            assert!(
-                (2..=8).contains(&output.attempts),
-                "{kind:?} write made {} attempts instead of backing off",
-                output.attempts
-            );
+            assert_eq!(output.attempts, 4, "{kind:?} attempt count");
+            assert_eq!(next_backoff, Duration::from_millis(32));
         }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn release_writer_bounds_one_byte_short_writes() {
+        struct OneByteWriter {
+            attempts: usize,
+        }
+
+        impl std::io::Write for OneByteWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.attempts += 1;
+                Ok(usize::from(!bytes.is_empty()))
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let cancellation = CancellationToken::new();
+        let mut output = OneByteWriter { attempts: 0 };
+        let mut writer = BoundedGateWriter {
+            output: &mut output,
+            cancellation_token: cancellation.clone(),
+            cancellation: CancellationParker::new(&cancellation),
+            deadline: Instant::now() + Duration::from_secs(1),
+            failure: None,
+            retry: ObservationBackoff::retry(),
+            attempts: 0,
+            attempt_limit: 4,
+        };
+        let bytes = [0_u8; 5];
+
+        let error = std::io::Write::write_all(&mut writer, &bytes)
+            .expect_err("one-byte progress reaches the fixed attempt budget");
+        let failure = writer.observed_failure();
+        let next_backoff = writer.retry.current;
+        drop(writer);
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(matches!(failure, ReleaseWriteFailure::Release));
+        assert_eq!(output.attempts, 4);
+        assert_eq!(next_backoff, Duration::from_millis(32));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn release_writer_backs_off_one_byte_short_writes() {
+        struct OneByteWriter {
+            attempts: usize,
+        }
+
+        impl std::io::Write for OneByteWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.attempts += 1;
+                Ok(usize::from(!bytes.is_empty()))
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let cancellation = CancellationToken::new();
+        let mut output = OneByteWriter { attempts: 0 };
+        let timeout = Duration::from_millis(20);
+        let started = Instant::now();
+        let mut writer = BoundedGateWriter {
+            output: &mut output,
+            cancellation_token: cancellation.clone(),
+            cancellation: CancellationParker::new(&cancellation),
+            deadline: started + timeout,
+            failure: None,
+            retry: ObservationBackoff::retry(),
+            attempts: 0,
+            attempt_limit: MAX_RELEASE_FRAME_WRITE_ATTEMPTS,
+        };
+        let bytes = [0_u8; 64];
+
+        let error = std::io::Write::write_all(&mut writer, &bytes)
+            .expect_err("persistent short progress reaches the bounded deadline");
+        let failure = writer.observed_failure();
+        drop(writer);
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(matches!(failure, ReleaseWriteFailure::Release));
+        assert!(started.elapsed() >= timeout);
+        assert!(
+            (2..=8).contains(&output.attempts),
+            "short writes made {} attempts instead of backing off",
+            output.attempts
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn cancellation_after_one_byte_short_write_keeps_cancelled_precedence() {
+        struct CancellingWriter {
+            attempts: usize,
+            cancellation: CancellationToken,
+        }
+
+        impl std::io::Write for CancellingWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.attempts += 1;
+                self.cancellation.cancel();
+                Ok(usize::from(!bytes.is_empty()))
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let cancellation = CancellationToken::new();
+        let mut output = CancellingWriter {
+            attempts: 0,
+            cancellation: cancellation.clone(),
+        };
+        let mut writer = BoundedGateWriter {
+            output: &mut output,
+            cancellation_token: cancellation.clone(),
+            cancellation: CancellationParker::new(&cancellation),
+            deadline: Instant::now() + Duration::from_secs(1),
+            failure: None,
+            retry: ObservationBackoff::retry(),
+            attempts: 0,
+            attempt_limit: MAX_RELEASE_FRAME_WRITE_ATTEMPTS,
+        };
+
+        let error = std::io::Write::write_all(&mut writer, &[0_u8; 2])
+            .expect_err("cancellation wins before the second write attempt");
+        let failure = writer.observed_failure();
+        drop(writer);
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(matches!(failure, ReleaseWriteFailure::Cancelled));
+        assert_eq!(output.attempts, 1);
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
