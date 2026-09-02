@@ -201,10 +201,12 @@ process, signal, or persistence authority.
 command and absolute canonical persisted cwd. Its start future is inert until
 poll. On poll, core admits capacity fail-fast, reserves one durable nonzero ID,
 reads the injected clock, prepares a barrier-held process, durably publishes
-the complete running record, releases the barrier, and transfers the lease and
-exact owned process to the retainer. Cancellation and every pre-release error
-drop the prepared process under its no-command-executed cleanup guarantee.
-Cancellation cannot revoke a process after release begins.
+the complete running record, asks native release to open the execution barrier,
+and transfers the lease and exact owned process to the retainer. Release may do
+bounded pre-open work, during which cancellation still drops and cleans the
+prepared process under its no-command-executed guarantee. Opening the barrier
+is the irreversible commit point; cancellation cannot revoke the process after
+that point.
 
 The returned [`BackgroundHandle`](crate::BackgroundHandle) exposes only the
 durable ID and optional PID for presentation. Those numbers provide no
