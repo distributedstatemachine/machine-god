@@ -1,21 +1,21 @@
 //! Host-owned composition of background persistence and process supervision.
 
+use std::collections::BTreeSet;
 use std::env;
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
 use std::future::Future;
+use std::os::unix::ffi::OsStrExt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::mpsc::{
-    Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError, sync_channel,
-};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::task::{Context, Poll, Waker};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use machine_god_core::{
     BackgroundClock, BackgroundCompletionRecord, BackgroundProcessOutcome as CoreProcessOutcome,
@@ -32,8 +32,10 @@ use crate::background_inspection::{NativeBackgroundState, StoredBackgroundRecord
 use crate::background_process::BackgroundProcessHelper;
 use crate::background_process::{
     BackgroundProcessErrorKind, BackgroundProcessExit, BackgroundProcessOutcome,
-    BackgroundProcessRequest, OwnedBackgroundProcess, PreparedBackgroundProcess,
-    SystemBackgroundProcessAdapter,
+    BackgroundProcessRequest, MAX_BACKGROUND_PROCESS_ENVIRONMENT_BYTES,
+    MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES, MAX_BACKGROUND_PROCESS_ENVIRONMENT_KEY_BYTES,
+    MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES, OwnedBackgroundProcess,
+    PreparedBackgroundProcess, SystemBackgroundProcessAdapter,
 };
 use crate::background_store::{
     BackgroundReconciliation, BackgroundRecordLease as NativeRecordAuthority, BackgroundStore,
@@ -214,13 +216,10 @@ impl NativeBackgroundSupervisor {
         let state_root = session_store.try_clone_root_descriptor().map_err(|_| {
             NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::State)
         })?;
-        Self::from_root_descriptors(
-            workspace,
-            workspace_root,
-            state_root,
-            env::vars_os().collect(),
-            limits,
-        )
+        let environment = collect_bounded_environment(env::vars_os()).map_err(|()| {
+            NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Environment)
+        })?;
+        Self::from_root_descriptors(workspace, workspace_root, state_root, environment, limits)
     }
 
     /// Composes already-retained exact root authorities.
@@ -267,7 +266,9 @@ impl NativeBackgroundSupervisor {
         validate_directory(workspace_root.as_fd()).map_err(|()| {
             NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Workspace)
         })?;
-        validate_environment(&workspace, &workspace_root, &environment)?;
+        let environment = accept_bounded_environment(environment).map_err(|()| {
+            NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Environment)
+        })?;
 
         let store = Arc::new(NativeStore {
             inner: Arc::new(
@@ -385,12 +386,21 @@ impl Drop for NativeBackgroundSupervisor {
 type BlockingJob = Box<dyn FnOnce() + Send + 'static>;
 
 const WORKER_OWNERSHIP_CAPACITY: usize = 256;
-const WORKER_COLLECTION_INTERVAL: Duration = Duration::from_millis(10);
 
 struct WorkerOwnershipRegistry {
-    sender: SyncSender<OwnedWorkerHandle>,
+    state: Arc<WorkerOwnershipState>,
     retained: Arc<AtomicUsize>,
-    _collector: JoinHandle<()>,
+    collector: Option<JoinHandle<()>>,
+}
+
+struct WorkerOwnershipState {
+    handles: Mutex<Vec<OwnedWorkerHandle>>,
+    wake: Condvar,
+    shutdown: AtomicBool,
+    #[cfg(test)]
+    probes: AtomicUsize,
+    #[cfg(test)]
+    waiting: AtomicBool,
 }
 
 struct WorkerOwnershipReservation {
@@ -405,21 +415,36 @@ struct WorkerOwnershipPermit {
 
 struct OwnedWorkerHandle {
     handle: JoinHandle<()>,
+    completed: Arc<AtomicBool>,
     _permit: WorkerOwnershipPermit,
+}
+
+struct WorkerCompletionGuard {
+    state: Arc<WorkerOwnershipState>,
+    completed: Arc<AtomicBool>,
 }
 
 impl WorkerOwnershipRegistry {
     fn new() -> Result<Self, ()> {
-        let (sender, receiver) = sync_channel(WORKER_OWNERSHIP_CAPACITY);
+        let state = Arc::new(WorkerOwnershipState {
+            handles: Mutex::new(Vec::with_capacity(WORKER_OWNERSHIP_CAPACITY)),
+            wake: Condvar::new(),
+            shutdown: AtomicBool::new(false),
+            #[cfg(test)]
+            probes: AtomicUsize::new(0),
+            #[cfg(test)]
+            waiting: AtomicBool::new(false),
+        });
         let retained = Arc::new(AtomicUsize::new(0));
+        let collector_state = Arc::clone(&state);
         let collector = thread::Builder::new()
             .name("machine-god-bg-worker-collector".to_owned())
-            .spawn(move || worker_collector_loop(&receiver))
+            .spawn(move || worker_collector_loop(&collector_state))
             .map_err(|_| ())?;
         Ok(Self {
-            sender,
+            state,
             retained,
-            _collector: collector,
+            collector: Some(collector),
         })
     }
 
@@ -453,15 +478,47 @@ impl WorkerOwnershipRegistry {
     fn register(
         &self,
         handle: JoinHandle<()>,
+        completed: Arc<AtomicBool>,
         permit: WorkerOwnershipPermit,
     ) -> Result<(), OwnedWorkerHandle> {
         let owned = OwnedWorkerHandle {
             handle,
+            completed,
             _permit: permit,
         };
-        match self.sender.try_send(owned) {
-            Ok(()) => Ok(()),
-            Err(TrySendError::Full(owned) | TrySendError::Disconnected(owned)) => Err(owned),
+        let mut handles = self
+            .state
+            .handles
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.state.shutdown.load(Ordering::Acquire) || handles.len() >= WORKER_OWNERSHIP_CAPACITY
+        {
+            return Err(owned);
+        }
+        handles.push(owned);
+        drop(handles);
+        self.state.wake.notify_one();
+        Ok(())
+    }
+
+    fn completion_guard(&self) -> (WorkerCompletionGuard, Arc<AtomicBool>) {
+        let completed = Arc::new(AtomicBool::new(false));
+        (
+            WorkerCompletionGuard {
+                state: Arc::clone(&self.state),
+                completed: Arc::clone(&completed),
+            },
+            completed,
+        )
+    }
+}
+
+impl Drop for WorkerOwnershipRegistry {
+    fn drop(&mut self) {
+        self.state.shutdown.store(true, Ordering::Release);
+        self.state.wake.notify_one();
+        if let Some(collector) = self.collector.take() {
+            let _ = collector.join();
         }
     }
 }
@@ -481,6 +538,13 @@ impl Drop for WorkerOwnershipPermit {
     }
 }
 
+impl Drop for WorkerCompletionGuard {
+    fn drop(&mut self) {
+        self.completed.store(true, Ordering::Release);
+        self.state.wake.notify_one();
+    }
+}
+
 fn worker_ownership_registry() -> Result<&'static WorkerOwnershipRegistry, ()> {
     static REGISTRY: OnceLock<Option<WorkerOwnershipRegistry>> = OnceLock::new();
     REGISTRY
@@ -489,30 +553,39 @@ fn worker_ownership_registry() -> Result<&'static WorkerOwnershipRegistry, ()> {
         .ok_or(())
 }
 
-fn worker_collector_loop(receiver: &Receiver<OwnedWorkerHandle>) {
-    let mut retained = Vec::with_capacity(WORKER_OWNERSHIP_CAPACITY);
+fn worker_collector_loop(state: &WorkerOwnershipState) {
     loop {
-        match receiver.recv_timeout(WORKER_COLLECTION_INTERVAL) {
-            Ok(worker) => retained.push(worker),
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => break,
-        }
-        loop {
-            match receiver.try_recv() {
-                Ok(worker) => retained.push(worker),
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => return,
+        let mut handles = state
+            .handles
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        #[cfg(test)]
+        state.probes.fetch_add(1, Ordering::Relaxed);
+        while !handles
+            .iter()
+            .any(|worker| worker.completed.load(Ordering::Acquire))
+        {
+            if state.shutdown.load(Ordering::Acquire) && handles.is_empty() {
+                return;
             }
+            #[cfg(test)]
+            state.waiting.store(true, Ordering::Release);
+            handles = state
+                .wake
+                .wait(handles)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            #[cfg(test)]
+            state.waiting.store(false, Ordering::Release);
+            #[cfg(test)]
+            state.probes.fetch_add(1, Ordering::Relaxed);
         }
-        let mut index = 0;
-        while index < retained.len() {
-            if retained[index].handle.is_finished() {
-                let worker = retained.swap_remove(index);
-                let _ = worker.handle.join();
-            } else {
-                index += 1;
-            }
-        }
+        let completed = handles
+            .iter()
+            .position(|worker| worker.completed.load(Ordering::Acquire))
+            .expect("completion notification identifies one retained worker");
+        let worker = handles.swap_remove(completed);
+        drop(handles);
+        let _ = worker.handle.join();
     }
 }
 
@@ -527,10 +600,17 @@ struct BlockingExecutor {
 
 struct BlockingPool {
     senders: Vec<SyncSender<BlockingMessage>>,
+    admissions: Vec<Mutex<BlockingWorkerAdmission>>,
     available: Arc<Mutex<Vec<usize>>>,
     cancellations: Arc<Vec<Mutex<Option<CancellationToken>>>>,
     closing: Arc<AtomicBool>,
     worker_cohort: Arc<AtomicUsize>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BlockingWorkerAdmission {
+    Open,
+    Closed,
 }
 
 struct BlockingResult<T> {
@@ -571,14 +651,17 @@ impl BlockingExecutor {
         );
         let closing = Arc::new(AtomicBool::new(false));
         let mut senders: Vec<SyncSender<BlockingMessage>> = Vec::with_capacity(size);
+        let mut admissions = Vec::with_capacity(size);
         for index in 0..size {
             let (sender, receiver) = sync_channel(1);
             let worker_available = Arc::clone(&available);
             let worker_cancellations = Arc::clone(&cancellations);
             let worker_closing = Arc::clone(&closing);
+            let (completion_guard, completed) = registry.completion_guard();
             let Ok(handle) = thread::Builder::new()
                 .name(format!("machine-god-bg-blocking-{index}"))
                 .spawn(move || {
+                    let _completion_guard = completion_guard;
                     blocking_worker_loop(
                         index,
                         &receiver,
@@ -597,7 +680,8 @@ impl BlockingExecutor {
                 ));
             };
             senders.push(sender);
-            if let Err(owned) = registry.register(handle, ownership.take()) {
+            admissions.push(Mutex::new(BlockingWorkerAdmission::Open));
+            if let Err(owned) = registry.register(handle, completed, ownership.take()) {
                 closing.store(true, Ordering::Release);
                 for sender in &senders {
                     let _ = sender.try_send(BlockingMessage::Shutdown);
@@ -611,6 +695,7 @@ impl BlockingExecutor {
         Ok(Self {
             pool: Arc::new(BlockingPool {
                 senders,
+                admissions,
                 available,
                 cancellations,
                 closing,
@@ -683,6 +768,15 @@ impl BlockingPool {
         job: BlockingJob,
         cancellation: Option<CancellationToken>,
     ) -> Result<(), ()> {
+        self.try_submit_after_reservation(job, cancellation, || {})
+    }
+
+    fn try_submit_after_reservation(
+        &self,
+        job: BlockingJob,
+        cancellation: Option<CancellationToken>,
+        after_reservation: impl FnOnce(),
+    ) -> Result<(), ()> {
         if self.closing.load(Ordering::Acquire) {
             return Err(());
         }
@@ -696,7 +790,19 @@ impl BlockingPool {
             debug_assert!(registered.is_none());
             *registered = cancellation;
         }
-        if self.closing.load(Ordering::Acquire) {
+        after_reservation();
+        let Ok(admission) = self.admissions[index].try_lock() else {
+            if let Some(cancellation) = self.cancellations[index]
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+            {
+                cancellation.cancel();
+            }
+            available.push(index);
+            return Err(());
+        };
+        if self.closing.load(Ordering::Acquire) || *admission == BlockingWorkerAdmission::Closed {
             if let Some(cancellation) = self.cancellations[index]
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -725,18 +831,19 @@ impl BlockingPool {
         if self.closing.swap(true, Ordering::AcqRel) {
             return;
         }
-        for registered in self.cancellations.iter() {
-            // A contending registrar observes `closing` after installing its
-            // token and cancels it itself. A contending worker has already
-            // completed its job, so shutdown never waits on either lock.
-            if let Ok(registered) = registered.try_lock()
-                && let Some(cancellation) = registered.as_ref()
+        for (index, registered) in self.cancellations.iter().enumerate() {
+            let mut admission = self.admissions[index]
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *admission = BlockingWorkerAdmission::Closed;
+            if let Some(cancellation) = registered
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_ref()
             {
                 cancellation.cancel();
             }
-        }
-        for sender in &self.senders {
-            let _ = sender.try_send(BlockingMessage::Shutdown);
+            let _ = self.senders[index].try_send(BlockingMessage::Shutdown);
         }
     }
 }
@@ -1193,9 +1300,11 @@ impl WorkerRetainer {
             let worker_available = Arc::clone(&available);
             let worker_stops = Arc::clone(&stops);
             let worker_closing = Arc::clone(&closing);
+            let (completion_guard, completed) = registry.completion_guard();
             let Ok(handle) = thread::Builder::new()
                 .name(format!("machine-god-bg-{index}"))
                 .spawn(move || {
+                    let _completion_guard = completion_guard;
                     worker_loop(
                         index,
                         &receiver,
@@ -1211,7 +1320,7 @@ impl WorkerRetainer {
                 ));
             };
             senders.push(sender);
-            if let Err(owned) = registry.register(handle, ownership.take()) {
+            if let Err(owned) = registry.register(handle, completed, ownership.take()) {
                 closing.store(true, Ordering::Release);
                 let _ = owned.handle.join();
                 return Err(NativeBackgroundSupervisorError::new(
@@ -1220,16 +1329,20 @@ impl WorkerRetainer {
             }
         }
         let (rescue, rescue_receiver) = sync_channel(size);
+        let (completion_guard, completed) = registry.completion_guard();
         let Ok(rescue_worker) = thread::Builder::new()
             .name("machine-god-bg-rescue".to_owned())
-            .spawn(move || rescue_worker_loop(&rescue_receiver))
+            .spawn(move || {
+                let _completion_guard = completion_guard;
+                rescue_worker_loop(&rescue_receiver);
+            })
         else {
             closing.store(true, Ordering::Release);
             return Err(NativeBackgroundSupervisorError::new(
                 NativeBackgroundSupervisorErrorKind::Worker,
             ));
         };
-        if let Err(owned) = registry.register(rescue_worker, ownership.take()) {
+        if let Err(owned) = registry.register(rescue_worker, completed, ownership.take()) {
             drop(rescue);
             let _ = owned.handle.join();
             closing.store(true, Ordering::Release);
@@ -1450,24 +1563,66 @@ fn system_process_adapter()
     Ok(SystemBackgroundProcessAdapter::with_helper(helper))
 }
 
-fn validate_environment(
-    workspace: &str,
-    workspace_root: &OwnedFd,
-    environment: &[(OsString, OsString)],
-) -> Result<(), NativeBackgroundSupervisorError> {
-    let directory = workspace_root.try_clone().map_err(|_| {
-        NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Workspace)
-    })?;
-    BackgroundProcessRequest::from_directory(
-        ":".to_owned(),
-        workspace.to_owned(),
-        environment.to_vec(),
-        directory,
-    )
-    .map(drop)
-    .map_err(|_| {
-        NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Environment)
-    })
+fn collect_bounded_environment(
+    environment: impl IntoIterator<Item = (OsString, OsString)>,
+) -> Result<Vec<(OsString, OsString)>, ()> {
+    let mut bounded = Vec::new();
+    let mut aggregate = 0_usize;
+    for (key, value) in environment {
+        if bounded.len() == MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES {
+            return Err(());
+        }
+        validate_environment_entry(&key, &value, &mut aggregate)?;
+        bounded.push((key, value));
+    }
+    validate_environment(&bounded)?;
+    Ok(bounded)
+}
+
+fn accept_bounded_environment(
+    environment: Vec<(OsString, OsString)>,
+) -> Result<Vec<(OsString, OsString)>, ()> {
+    validate_environment(&environment)?;
+    Ok(environment)
+}
+
+fn validate_environment(environment: &[(OsString, OsString)]) -> Result<(), ()> {
+    if environment.len() > MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES {
+        return Err(());
+    }
+    let mut aggregate = 0_usize;
+    let mut keys = BTreeSet::new();
+    for (key, value) in environment {
+        validate_environment_entry(key, value, &mut aggregate)?;
+        if !keys.insert(key.as_os_str().as_bytes()) {
+            return Err(());
+        }
+    }
+    Ok(())
+}
+
+fn validate_environment_entry(
+    key: &OsString,
+    value: &OsString,
+    aggregate: &mut usize,
+) -> Result<(), ()> {
+    let key = key.as_os_str().as_bytes();
+    let value = value.as_os_str().as_bytes();
+    if key.is_empty()
+        || key.len() > MAX_BACKGROUND_PROCESS_ENVIRONMENT_KEY_BYTES
+        || value.len() > MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES
+        || key.contains(&b'=')
+        || key.contains(&0)
+        || value.contains(&0)
+    {
+        return Err(());
+    }
+    *aggregate = aggregate
+        .checked_add(key.len())
+        .and_then(|total| total.checked_add(value.len()))
+        .filter(|total| *total <= MAX_BACKGROUND_PROCESS_ENVIRONMENT_BYTES)
+        .ok_or(())?;
+    Ok(())
 }
 
 fn open_directory(path: &Path) -> Result<OwnedFd, ()> {
@@ -1538,11 +1693,14 @@ const fn start_error(kind: BackgroundStartErrorKind) -> BackgroundStartError {
 #[cfg(test)]
 mod tests {
     use super::{
-        BlockingExecutor, BlockingResult, BlockingTaskFailure, NativeBackgroundLimits,
-        NativeBackgroundSupervisor, NativeSpawner, NativeStore, RetainedJob,
-        SystemBackgroundProcessAdapter, SystemClock, WORKER_OWNERSHIP_CAPACITY, WorkerRetainer,
-        finish_prepared_after_readiness, open_directory, process_error_kind,
-        retain_canonical_directory_with, worker_ownership_registry,
+        BlockingExecutor, BlockingResult, BlockingTaskFailure,
+        MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES, MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES,
+        NativeBackgroundLimits, NativeBackgroundSupervisor, NativeSpawner, NativeStore,
+        RetainedJob, SystemBackgroundProcessAdapter, SystemClock, WORKER_OWNERSHIP_CAPACITY,
+        WorkerOwnershipRegistry, WorkerRetainer, accept_bounded_environment,
+        collect_bounded_environment, finish_prepared_after_readiness, open_directory,
+        process_error_kind, retain_canonical_directory_with, validate_environment,
+        worker_ownership_registry,
     };
     use crate::background_process::{
         BackgroundProcessErrorKind, BackgroundProcessHelper, run_background_process_helper,
@@ -1560,6 +1718,7 @@ mod tests {
     use std::ffi::OsString;
     use std::fs;
     use std::future::Future;
+    use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -2120,6 +2279,194 @@ mod tests {
                 .expect("worker ownership registry")
                 .reserve(WORKER_OWNERSHIP_CAPACITY + 1)
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn worker_collection_sleeps_until_an_actual_completion_notification() {
+        let registry = WorkerOwnershipRegistry::new().expect("worker registry");
+        let mut ownership = registry.reserve(1).expect("worker ownership");
+        let cohort = Arc::clone(&ownership.cohort);
+        let (completion_guard, completed) = registry.completion_guard();
+        let (entered, entered_receiver) = mpsc::sync_channel(1);
+        let (release, release_receiver) = mpsc::sync_channel(1);
+        let worker = thread::spawn(move || {
+            let _completion_guard = completion_guard;
+            entered.send(()).expect("report idle worker");
+            release_receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("release idle worker");
+        });
+        if registry
+            .register(worker, completed, ownership.take())
+            .is_err()
+        {
+            panic!("register worker");
+        }
+        entered_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker entered");
+
+        let wait_deadline = Instant::now() + Duration::from_secs(1);
+        while !registry.state.waiting.load(Ordering::Acquire) {
+            assert!(Instant::now() < wait_deadline, "collector did not sleep");
+            thread::yield_now();
+        }
+        let idle_probes = registry.state.probes.load(Ordering::Acquire);
+        thread::sleep(Duration::from_millis(75));
+        assert_eq!(
+            registry.state.probes.load(Ordering::Acquire),
+            idle_probes,
+            "idle collector must not wake or rescan retained handles"
+        );
+
+        release.send(()).expect("complete worker");
+        wait_for_zero(&cohort, "completed worker was not collected");
+        assert!(
+            registry
+                .state
+                .handles
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty(),
+            "completion notification must remove the retained handle"
+        );
+        drop(registry);
+    }
+
+    #[test]
+    fn shutdown_dequeue_closes_a_racing_worker_admission_before_run_send() {
+        for _ in 0..128 {
+            let executor = BlockingExecutor::new(1).expect("blocking executor");
+            let pool = Arc::clone(&executor.pool);
+            let worker_cohort = Arc::clone(&pool.worker_cohort);
+            let operation_cancellation = CancellationToken::new();
+            let observed_cancellation = operation_cancellation.clone();
+            let executed = Arc::new(AtomicBool::new(false));
+            let worker_executed = Arc::clone(&executed);
+            let (reserved, reserved_receiver) = mpsc::sync_channel(1);
+            let (resume, resume_receiver) = mpsc::sync_channel(1);
+            let (reported, reported_receiver) = mpsc::sync_channel(1);
+            let registrar = thread::spawn(move || {
+                let result = pool.try_submit_after_reservation(
+                    Box::new(move || worker_executed.store(true, Ordering::Release)),
+                    Some(operation_cancellation),
+                    || {
+                        reserved.send(()).expect("report reserved worker");
+                        resume_receiver
+                            .recv_timeout(Duration::from_secs(1))
+                            .expect("resume registrar");
+                    },
+                );
+                reported.send(result).expect("report admission result");
+            });
+            reserved_receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("registrar reserved idle worker");
+
+            executor.shutdown();
+            wait_for_zero(
+                &worker_cohort,
+                "worker did not dequeue shutdown before raced admission resumed",
+            );
+            assert!(observed_cancellation.is_cancelled());
+            resume.send(()).expect("resume raced registrar");
+            assert!(
+                reported_receiver
+                    .recv_timeout(Duration::from_secs(1))
+                    .expect("raced admission completes")
+                    .is_err(),
+                "a worker committed to exit must reject later admission"
+            );
+            registrar.join().expect("join raced registrar");
+            assert!(!executed.load(Ordering::Acquire));
+        }
+    }
+
+    #[test]
+    fn bounded_environment_acceptance_moves_the_original_buffers() {
+        let environment = vec![(OsString::from("KEY"), OsString::from("value"))];
+        let vector = environment.as_ptr();
+        let key = environment[0].0.as_os_str().as_bytes().as_ptr();
+        let value = environment[0].1.as_os_str().as_bytes().as_ptr();
+
+        let accepted = accept_bounded_environment(environment).expect("bounded environment");
+
+        assert_eq!(accepted.as_ptr(), vector);
+        assert_eq!(accepted[0].0.as_os_str().as_bytes().as_ptr(), key);
+        assert_eq!(accepted[0].1.as_os_str().as_bytes().as_ptr(), value);
+    }
+
+    #[test]
+    fn huge_environment_iterators_stop_at_the_first_hard_bound() {
+        let entry_count = Arc::new(AtomicUsize::new(0));
+        let observed_entries = Arc::clone(&entry_count);
+        let too_many = std::iter::repeat_with(move || {
+            let index = observed_entries.fetch_add(1, Ordering::AcqRel);
+            (OsString::from(format!("K{index}")), OsString::new())
+        });
+        assert!(collect_bounded_environment(too_many).is_err());
+        assert_eq!(
+            entry_count.load(Ordering::Acquire),
+            MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES + 1
+        );
+
+        let aggregate_count = Arc::new(AtomicUsize::new(0));
+        let observed_aggregate = Arc::clone(&aggregate_count);
+        let too_large = std::iter::repeat_with(move || {
+            let index = observed_aggregate.fetch_add(1, Ordering::AcqRel);
+            (
+                OsString::from(format!("V{index}")),
+                OsString::from("x".repeat(MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES)),
+            )
+        });
+        assert!(collect_bounded_environment(too_large).is_err());
+        assert!(
+            aggregate_count.load(Ordering::Acquire) <= 17,
+            "aggregate rejection must not consume or retain the unbounded tail"
+        );
+    }
+
+    #[test]
+    fn borrowed_environment_validation_rejects_huge_entry_counts_immediately() {
+        let environment = vec![
+            (OsString::from("K"), OsString::new());
+            MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES + 1
+        ];
+        let vector = environment.as_ptr();
+        let mut result = None;
+        allocation_counter::measure(|| {});
+        let allocations = allocation_counter::measure(|| {
+            result = Some(validate_environment(&environment));
+        });
+        assert_eq!(result, Some(Err(())));
+        assert_eq!(allocations.count_total, 0, "{allocations:?}");
+        assert_eq!(allocations.bytes_total, 0, "{allocations:?}");
+        assert_eq!(environment.as_ptr(), vector);
+    }
+
+    #[test]
+    fn aggregate_environment_rejection_never_clones_large_values() {
+        let environment = (0..17)
+            .map(|index| {
+                (
+                    OsString::from(format!("V{index}")),
+                    OsString::from("x".repeat(MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES)),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut result = None;
+        allocation_counter::measure(|| {});
+        let allocations = allocation_counter::measure(|| {
+            result = Some(validate_environment(&environment));
+        });
+
+        assert_eq!(result, Some(Err(())));
+        assert!(
+            allocations.bytes_total
+                < u64::try_from(MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES)
+                    .expect("environment value bound fits u64"),
+            "aggregate validation cloned an invalid value: {allocations:?}"
         );
     }
 

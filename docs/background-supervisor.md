@@ -36,8 +36,14 @@ gate after any payload prefix, including the complete payload, cannot emulate
 that commit. The helper independently revalidates every bound and applies the
 requested environment only to the final post-release `/bin/sh` exec. Frame
 bytes cannot be interpreted as readiness, arguments, or shell interpolation.
-Environment-key uniqueness is validated in one pass through a borrowed-key
-ordered set; the 512-entry bound does not trigger a quadratic prefix scan.
+Environment entry, per-key, per-value, and aggregate-byte bounds are validated
+through borrowed bytes before the caller-owned vector is accepted. Valid
+caller vectors and their entry buffers move into the supervisor without a
+constructor clone. Ambient environment capture consumes entries incrementally
+and stops at the first hard bound rather than first collecting an unbounded
+snapshot. Environment-key uniqueness is then validated in one pass through a
+borrowed-key ordered set; the 512-entry bound does not trigger a quadratic
+prefix scan. Every invalid path returns the same fixed environment category.
 
 The public start future is inert until first poll. Dropping it before first
 poll has no store, process, clock, allocation-ID, thread, or task effect.
@@ -51,16 +57,21 @@ queuing without a bound. Every worker handle is registered at creation with a
 process-wide collector that retains at most 256 handles. One supervisor
 reserves `2 * max_active + 1` of those authorities during construction, so
 collector saturation fails construction with the fixed worker category before
-the supervisor can accept work. Finished handles return their authorities to
-the collector; unresolved handles are never implicitly detached.
+the supervisor can accept work. Each worker publishes one completion flag and
+condition notification as it leaves; the collector sleeps between registration
+or completion events and never polls or periodically scans idle handles.
+Finished handles return their authorities to the collector; unresolved handles
+are never implicitly detached.
 Cancellation or drop retains cleanup ownership until the admitted blocking
 operation returns and the prepared or released process has been closed through
 the applicable lifecycle path. Before enqueueing each cancellable start, the
 blocking pool registers that start's private operation token with its assigned
-worker. Shutdown first closes admission and cancels every registered token.
-Registration rechecks the closed state before enqueue, so shutdown either
-observes and cancels the token or makes the registering thread cancel it; this
-also covers shutdown between the final admission check and channel send.
+worker. One per-worker admission transition serializes the `Run` enqueue with
+shutdown's close and `Shutdown` enqueue. Shutdown first closes global
+admission, then closes each worker transition and cancels its registered token.
+If `Run` wins, that worker retains the job and result and shutdown cancels it;
+if shutdown wins, registration rejects and cancels before enqueue. A worker can
+therefore never dequeue `Shutdown` and then accept a successful `Run` send.
 Workers unregister only after the submitted operation returns. Pool shutdown
 never runs cleanup inline and never waits for user work; the registered worker
 continues to own cleanup and result publication within the fixed worker and
