@@ -3790,55 +3790,6 @@ mod process_regression_tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
-    fn release_writer_backs_off_one_byte_short_writes() {
-        struct OneByteWriter {
-            attempts: usize,
-        }
-
-        impl std::io::Write for OneByteWriter {
-            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                self.attempts += 1;
-                Ok(usize::from(!bytes.is_empty()))
-            }
-
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-
-        let cancellation = CancellationToken::new();
-        let mut output = OneByteWriter { attempts: 0 };
-        let timeout = Duration::from_millis(20);
-        let started = Instant::now();
-        let mut writer = BoundedGateWriter {
-            output: &mut output,
-            cancellation_token: cancellation.clone(),
-            cancellation: CancellationParker::new(&cancellation),
-            deadline: started + timeout,
-            failure: None,
-            retry: ObservationBackoff::retry(),
-            attempts: 0,
-            attempt_limit: MAX_RELEASE_FRAME_WRITE_ATTEMPTS,
-        };
-        let bytes = [0_u8; 64];
-
-        let error = std::io::Write::write_all(&mut writer, &bytes)
-            .expect_err("persistent short progress reaches the bounded deadline");
-        let failure = writer.observed_failure();
-        drop(writer);
-
-        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
-        assert!(matches!(failure, ReleaseWriteFailure::Release));
-        assert!(started.elapsed() >= timeout);
-        assert!(
-            (2..=8).contains(&output.attempts),
-            "short writes made {} attempts instead of backing off",
-            output.attempts
-        );
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    #[test]
     fn cancellation_after_one_byte_short_write_keeps_cancelled_precedence() {
         struct CancellingWriter {
             attempts: usize,

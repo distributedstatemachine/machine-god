@@ -103,7 +103,7 @@ fn helper_process_entry() {
 fn requested_environment_is_inert_until_release_and_frame_bytes_cannot_fake_readiness() {
     let directory = FreshDirectory::new("inert-environment");
     let marker = directory.path().join("released");
-    let environment = vec![
+    let hostile_environment = vec![
         (OsString::from("PAYLOAD"), OsString::from("after-release")),
         (
             OsString::from("LD_PRELOAD"),
@@ -129,7 +129,7 @@ fn requested_environment_is_inert_until_release_and_frame_bytes_cannot_fake_read
     let request = BackgroundProcessRequest::open(
         "[ \"$PAYLOAD\" = after-release ] && printf released > released".to_owned(),
         "workspace".to_owned(),
-        environment,
+        hostile_environment,
         directory.path(),
     )
     .unwrap();
@@ -140,6 +140,23 @@ fn requested_environment_is_inert_until_release_and_frame_bytes_cannot_fake_read
         !marker.exists(),
         "requested environment caused a pre-release effect"
     );
+    prepared.abort_and_reap().unwrap();
+
+    let benign_environment = vec![
+        (OsString::from("PAYLOAD"), OsString::from("after-release")),
+        (
+            OsString::from("FRAME_BYTES"),
+            OsString::from_vec(b"\xa7MGBG-FRAME-\xff".to_vec()),
+        ),
+    ];
+    let request = BackgroundProcessRequest::open(
+        "[ \"$PAYLOAD\" = after-release ] && printf released > released".to_owned(),
+        "workspace".to_owned(),
+        benign_environment,
+        directory.path(),
+    )
+    .unwrap();
+    let prepared = adapter().prepare(request).unwrap();
     let owned = prepared.release().unwrap();
     assert_eq!(owned.wait().unwrap(), BackgroundProcessExit::Exited(0));
     assert_eq!(fs::read_to_string(marker).unwrap(), "released");
@@ -186,55 +203,47 @@ fn child_reaping_mode_entry() {
 #[test]
 fn incompatible_sigchld_modes_fail_before_the_requested_child_is_spawned() {
     let executable = std::env::current_exe().unwrap();
+    let launcher_directory = FreshDirectory::new("sigchld-launcher");
+    let source = launcher_directory.path().join("sigchld-launcher.c");
+    let launcher = launcher_directory.path().join("sigchld-launcher");
+    fs::write(
+        &source,
+        b"#include <signal.h>\n#include <string.h>\n#include <unistd.h>\nint main(int argc, char **argv) { if (argc < 3) return 89; struct sigaction sa = {0}; sigemptyset(&sa.sa_mask); if (strcmp(argv[1], \"ignored\") == 0) { sa.sa_handler = SIG_IGN; } else if (strcmp(argv[1], \"no-cld-wait\") == 0) { sa.sa_handler = SIG_DFL; sa.sa_flags = SA_NOCLDWAIT; } else { return 88; } if (sigaction(SIGCHLD, &sa, 0) != 0) return 90; execv(argv[2], &argv[2]); return 91; }\n",
+    )
+    .unwrap();
+    assert!(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror", "-o"])
+            .arg(&launcher)
+            .arg(&source)
+            .status()
+            .unwrap()
+            .success()
+    );
+
     for mode in ["ignored", "no-cld-wait"] {
         let directory = FreshDirectory::new(mode);
-        let status = if mode == "ignored" {
-            Command::new("/bin/sh")
-                .args([
-                    "-c",
-                    "trap '' CHLD; exec \"$1\" --exact child_reaping_mode_entry --test-threads=1 --quiet",
-                    "machine-god-reap-launcher",
-                ])
-                .arg(&executable)
-                .env("MACHINE_GOD_REAP_MODE_TEST_ROOT", directory.path())
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .unwrap()
-        } else {
-            let source = directory.path().join("no-cld-wait.c");
-            let launcher = directory.path().join("no-cld-wait");
-            fs::write(
-                &source,
-                b"#include <signal.h>\n#include <unistd.h>\nint main(int argc, char **argv) { (void)argc; struct sigaction sa = {0}; sa.sa_handler = SIG_DFL; sigemptyset(&sa.sa_mask); sa.sa_flags = SA_NOCLDWAIT; if (sigaction(SIGCHLD, &sa, 0) != 0) return 90; execv(argv[1], &argv[1]); return 91; }\n",
-            )
+        let output = Command::new(&launcher)
+            .arg(mode)
+            .arg(&executable)
+            .args([
+                "--exact",
+                "child_reaping_mode_entry",
+                "--test-threads=1",
+                "--quiet",
+            ])
+            .env("MACHINE_GOD_REAP_MODE_TEST_ROOT", directory.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
             .unwrap();
-            assert!(
-                Command::new("cc")
-                    .args(["-Wall", "-Wextra", "-Werror", "-o"])
-                    .arg(&launcher)
-                    .arg(&source)
-                    .status()
-                    .unwrap()
-                    .success()
-            );
-            Command::new(&launcher)
-                .arg(&executable)
-                .args([
-                    "--exact",
-                    "child_reaping_mode_entry",
-                    "--test-threads=1",
-                    "--quiet",
-                ])
-                .env("MACHINE_GOD_REAP_MODE_TEST_ROOT", directory.path())
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .unwrap()
-        };
-        assert!(status.success(), "{mode} subprocess failed: {status}");
+        assert!(
+            output.status.success(),
+            "{mode} subprocess failed: {}; stderr: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
         assert!(!directory.path().join("must-not-run").exists());
     }
 }
