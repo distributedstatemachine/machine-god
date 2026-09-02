@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33455374424` (`GREEN`)
 - Main Benchmark evidence: `33455374426` (`GREEN`)
 - Active branch: `agent/m05-background-supervisor`
-- Active phase: `remediating rejected background-supervisor review cycle 11`
-- Next gate: `integrate cycle-11 fixes, then run the complete exact-1.94.1 replacement gate`
+- Active phase: `remediating rejected background-supervisor review cycle 12`
+- Next gate: `integrate cycle-12 fixes, then run the complete exact-1.94.1 replacement gate`
 <!-- canonical-live-status:end -->
 
 The recorded Actions runs succeeded for the exact delivered-main commit, and
@@ -89,13 +89,18 @@ arbitration that could still mask a ready operation or abort failure, release
 write races with inaccurate cancellation classification, incomplete reap errno
 handling, escaped-member and macOS reader timeout gaps, synchronous shutdown
 cleanup, unbounded retainer joins, implicit detached-worker ownership, and
-per-PID decimal allocation. Those findings are being remediated; no rejected
+per-PID decimal allocation. Those findings were remediated; no rejected
 result is acceptance evidence. Exact replacement `89ba68d` passed the complete
 gate, but cycle 11 found uncancelled admitted starts during supervisor drop,
 incorrect proven preparation-cancellation classification, persistence failure
 masked by cancellation, deadline-free readiness interruption retries, and
-high-frequency cleanup sleeps. Those findings are being remediated; no
-rejected result is acceptance evidence.
+high-frequency cleanup sleeps. Those findings were remediated; no rejected
+result is acceptance evidence. Exact replacement `37d60b4` passed the complete
+gate, but cycle 12 found a shutdown/admission race that could discard an
+accepted job, unbounded environment duplication, remaining high-frequency
+process polling, permanent idle worker-collector scans, and stale cancellation
+API wording. Those findings are being remediated; no rejected result is
+acceptance evidence.
 Persistent handles, message/relationship/configuration/lifecycle management,
 ACP, teams, and extension slash commands remain separate. Documentation parser
 maintenance remains a separate non-product task.

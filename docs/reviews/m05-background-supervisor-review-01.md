@@ -267,3 +267,23 @@ owned abort and reap, a constant bounded number of global process snapshots
 during cleanup, and one-pass or linearithmic bounded environment validation.
 The complete replacement gate and all three fresh review tracks restart after
 every finding is remediated.
+
+## Rejected product candidate: cycle 12
+
+Three fresh review tracks inspected exact candidate
+`37d60b41362c5a4272f3a760764f926b9ca47cd8` after its complete exact Rust and
+Cargo 1.94.1 local gate passed. All three tracks rejected the candidate.
+
+| Track | Decisive findings |
+| --- | --- |
+| Correctness, API, and compatibility | Native preparation rustdoc still described proven cancellation as `Spawn`, and core API wording placed release irrevocability before the actual commit barrier. |
+| Lifecycle, platform, and effects | A worker could dequeue `Shutdown` before a racing registrar enqueued `Run`; submission returned success, the queued job was discarded, and its future remained pending forever. |
+| Performance and resources | Rejected environments were cloned before bounds validation; several release, reap, and macOS snapshot loops retained tight or two-millisecond polling; the global worker collector permanently scanned all retained handles every ten milliseconds. |
+
+Cycle 12 remains rejection evidence. Replacement requires one serialized
+per-worker admission/shutdown transition, borrowed bounded environment
+validation before ownership transfer or ambient collection, deadline-aware
+coarse backoff across every process polling loop, event-driven completed-worker
+collection, and exact typed-cancellation documentation. The complete
+replacement gate and all three fresh review tracks restart after every finding
+is remediated.
