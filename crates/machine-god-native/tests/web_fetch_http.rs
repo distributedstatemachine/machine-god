@@ -26,7 +26,7 @@ enum BoundedMode {
     Text(Vec<u8>),
     TextWithCompletionProbe(Vec<u8>),
     CancelThenText(CancellationToken),
-    DelayThenText {
+    PendingThenDelayThenText {
         delay: Duration,
         cancellation: Option<CancellationToken>,
     },
@@ -40,6 +40,7 @@ struct BoundedState {
     active: AtomicUsize,
     peak_active: AtomicUsize,
     drops: AtomicUsize,
+    completions: AtomicUsize,
     completion_probe_tool: Mutex<Option<Arc<WebFetchTool>>>,
     completion_probes: AtomicUsize,
 }
@@ -52,6 +53,7 @@ impl BoundedState {
             active: AtomicUsize::new(0),
             peak_active: AtomicUsize::new(0),
             drops: AtomicUsize::new(0),
+            completions: AtomicUsize::new(0),
             completion_probe_tool: Mutex::new(None),
             completion_probes: AtomicUsize::new(0),
         })
@@ -83,6 +85,7 @@ impl WebFetchTransport for BoundedTransport {
         Box::pin(BoundedFuture {
             mode,
             state: Arc::clone(&self.state),
+            first_poll_completed: false,
             completed: false,
         })
     }
@@ -91,6 +94,7 @@ impl WebFetchTransport for BoundedTransport {
 struct BoundedFuture {
     mode: BoundedMode,
     state: Arc<BoundedState>,
+    first_poll_completed: bool,
     completed: bool,
 }
 
@@ -99,6 +103,12 @@ impl Future for BoundedFuture {
 
     fn poll(mut self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
         assert!(!self.completed, "completed transport future was repolled");
+        if matches!(self.mode, BoundedMode::PendingThenDelayThenText { .. })
+            && !self.first_poll_completed
+        {
+            self.first_poll_completed = true;
+            return Poll::Pending;
+        }
         let output = match &self.mode {
             BoundedMode::Text(body) | BoundedMode::TextWithCompletionProbe(body) => Some(
                 WebFetchResponse::new(200, Some("text/plain".to_owned()), body.clone()),
@@ -111,7 +121,7 @@ impl Future for BoundedFuture {
                     b"must not escape final cancellation".to_vec(),
                 ))
             }
-            BoundedMode::DelayThenText {
+            BoundedMode::PendingThenDelayThenText {
                 delay,
                 cancellation,
             } => {
@@ -131,6 +141,7 @@ impl Future for BoundedFuture {
         let Some(output) = output else {
             return Poll::Pending;
         };
+        self.state.completions.fetch_add(1, Ordering::SeqCst);
         self.completed = true;
         Poll::Ready(output)
     }
@@ -583,14 +594,16 @@ fn bounded_transport_releases_capacity_when_cancellation_races_ready_response() 
 
 #[test]
 fn bounded_transport_rechecks_deadline_and_cancellation_after_late_same_poll_completion() {
-    let request_timeout = Duration::from_millis(1);
-    let completion_delay = Duration::from_millis(10);
+    let request_timeout = Duration::from_secs(1);
+    let completion_delay = Duration::from_millis(1_100);
+    let runtime = runtime();
+    let _runtime_guard = runtime.enter();
 
     for (cancel_at_completion, expected_code) in
         [(false, "web_fetch_timeout"), (true, "web_fetch_cancelled")]
     {
         let cancellation = CancellationToken::new();
-        let state = BoundedState::scripted([BoundedMode::DelayThenText {
+        let state = BoundedState::scripted([BoundedMode::PendingThenDelayThenText {
             delay: completion_delay,
             cancellation: cancel_at_completion.then(|| cancellation.clone()),
         }]);
@@ -599,7 +612,18 @@ fn bounded_transport_rechecks_deadline_and_cancellation_after_late_same_poll_com
         let tool = bounded_tool(&state, limits);
 
         let started = Instant::now();
-        let result = runtime().block_on(execute_bounded(&tool, cancellation));
+        let mut execution = Box::pin(execute_bounded(&tool, cancellation));
+        assert!(
+            poll_once(execution.as_mut()).is_pending(),
+            "the inner transport must be admitted before the deadline-crossing poll"
+        );
+        assert_eq!(state.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(state.active.load(Ordering::SeqCst), 1);
+        assert_eq!(state.completions.load(Ordering::SeqCst), 0);
+
+        let Poll::Ready(result) = poll_once(execution.as_mut()) else {
+            panic!("late same-poll completion must resolve at the authoritative boundary")
+        };
 
         assert!(
             started.elapsed() >= request_timeout,
@@ -607,6 +631,7 @@ fn bounded_transport_rechecks_deadline_and_cancellation_after_late_same_poll_com
         );
         assert_error_code(result, expected_code);
         assert_eq!(state.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(state.completions.load(Ordering::SeqCst), 1);
         assert_eq!(state.active.load(Ordering::SeqCst), 0);
         assert_eq!(state.drops.load(Ordering::SeqCst), 1);
     }
