@@ -327,3 +327,22 @@ environment across admitted starts, and bounded buffered framing that preserves
 the distinct release commit and deadline/cancellation semantics. The complete
 replacement gate and all three fresh review tracks restart after every finding
 is remediated.
+
+## Rejected product candidate: cycle 15
+
+Three fresh review tracks inspected exact candidate
+`58dd10c06a5dc35f631724c6cadf852cc58bc5b5` after its complete exact Rust and
+Cargo 1.94.1 local gate passed. Correctness and lifecycle reported zero
+findings; performance rejected the candidate.
+
+| Track | Decisive findings |
+| --- | --- |
+| Correctness, API, and compatibility | Zero findings. |
+| Lifecycle, platform, and effects | Zero findings. |
+| Performance and resources | The 16-KiB frame buffer called `write_all` on a nonblocking pipe, so positive one-byte short writes could bypass the documented 19-write bound and amplify a maximum frame into payload-sized syscall and deadline-check work. |
+
+Cycle 15 remains rejection evidence. Replacement requires an explicit bound
+and backoff for positive short writes, a contract stated in terms of actual
+underlying attempts, and deterministic one-byte short-writer coverage. The
+complete replacement gate and all three fresh review tracks restart after the
+finding is remediated.
