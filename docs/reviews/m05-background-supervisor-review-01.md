@@ -287,3 +287,23 @@ coarse backoff across every process polling loop, event-driven completed-worker
 collection, and exact typed-cancellation documentation. The complete
 replacement gate and all three fresh review tracks restart after every finding
 is remediated.
+
+## Rejected product candidate: cycle 13
+
+Three fresh review tracks inspected exact candidate
+`630947d15f8ecfc2d86b782c947dd84d9fc7cdc9` after its complete exact Rust and
+Cargo 1.94.1 local gate passed. All three tracks rejected the candidate.
+
+| Track | Decisive findings |
+| --- | --- |
+| Correctness, API, and compatibility | Core promised complete process-tree termination although native ownership cannot contain an unobserved descendant that escapes the original process group; native rustdocs also described obsolete direct launch and ESRCH-probe protocols. |
+| Lifecycle, platform, and effects | The event-driven worker collector changed its completion predicate and notified without the collector's predicate mutex, so a handoff notification could be lost and completed handles retained indefinitely. |
+| Performance and resources | Production ambient capture passed `std::env::vars_os()` into the bounded collector, but Rust eagerly cloned the complete environment before the collector could enforce its entry and byte limits. |
+
+Cycle 13 remains rejection evidence. Replacement requires genuinely bounded
+ambient capture without whole-environment enumeration, completion publication
+synchronized with the collector predicate mutex plus a deterministic handoff
+regression, a precise direct-child/original-group/captured-member cleanup
+contract, and rustdocs matching the shared-helper snapshot-and-reap protocol.
+The complete replacement gate and all three fresh review tracks restart after
+every finding is remediated.

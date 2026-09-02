@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33455374424` (`GREEN`)
 - Main Benchmark evidence: `33455374426` (`GREEN`)
 - Active branch: `agent/m05-background-supervisor`
-- Active phase: `remediating rejected background-supervisor review cycle 12`
-- Next gate: `integrate cycle-12 fixes, then run the complete exact-1.94.1 replacement gate`
+- Active phase: `remediating rejected background-supervisor review cycle 13`
+- Next gate: `integrate cycle-13 fixes, then run the complete exact-1.94.1 replacement gate`
 <!-- canonical-live-status:end -->
 
 The recorded Actions runs succeeded for the exact delivered-main commit, and
@@ -99,8 +99,14 @@ result is acceptance evidence. Exact replacement `37d60b4` passed the complete
 gate, but cycle 12 found a shutdown/admission race that could discard an
 accepted job, unbounded environment duplication, remaining high-frequency
 process polling, permanent idle worker-collector scans, and stale cancellation
-API wording. Those findings are being remediated; no rejected result is
-acceptance evidence.
+API wording. Those findings were remediated; no rejected result is acceptance
+evidence. Exact replacement `630947d` passed the complete gate, but cycle 13
+found that production ambient capture still cloned the complete environment
+before applying bounds, the event-driven collector could lose a completion
+wake during its predicate-to-wait handoff, the core cleanup contract
+overpromised containment of unobserved process-group escape, and native
+rustdocs described obsolete launch and reap protocols. Those findings are
+being remediated; no rejected result is acceptance evidence.
 Persistent handles, message/relationship/configuration/lifecycle management,
 ACP, teams, and extension slash commands remain separate. Documentation parser
 maintenance remains a separate non-product task.
