@@ -84,6 +84,10 @@ const OBSERVATION_INITIAL_INTERVAL: Duration = Duration::from_millis(2);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const OBSERVATION_MAX_INTERVAL: Duration = Duration::from_millis(32);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+const RETRY_INITIAL_INTERVAL: Duration = Duration::from_millis(4);
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const RETRY_MAX_INTERVAL: Duration = Duration::from_millis(32);
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const GROUP_SNAPSHOT_INITIAL_INTERVAL: Duration = Duration::from_millis(10);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const GROUP_SNAPSHOT_MAX_INTERVAL: Duration = Duration::from_millis(100);
@@ -544,9 +548,12 @@ impl SystemBackgroundProcessAdapter {
     ///
     /// # Errors
     ///
-    /// Returns a fixed spawn, invariant, or unsupported failure. Cancellation
-    /// is reported as a spawn failure at this native boundary after the helper
-    /// and its process group have been terminated and reaped.
+    /// Returns a fixed `Cancelled` failure when cancellation is observed before
+    /// helper creation, or after termination and reap prove that an already
+    /// created helper is gone. A readiness or spawn failure observed before a
+    /// racing cancellation remains `Spawn`. Failed or ambiguous cleanup is
+    /// reported as `Cleanup`, `Wait`, or `Invariant`, and an unavailable
+    /// platform adapter is reported as `Unsupported`.
     pub fn prepare_cancellable(
         &self,
         request: BackgroundProcessRequest,
@@ -947,39 +954,56 @@ fn require_exclusive_child_reaping_with(
     let mut child = Some(probe.spawn().map_err(|_| spawn_error())?);
     let deadline = Instant::now() + CHILD_REAP_PROBE_TIMEOUT;
     let mut cancellation = CancellationParker::new(cancellation);
-    let mut cancelled = false;
+    let child_handle = child.as_mut().ok_or_else(invariant_error)?;
+    let outcome =
+        poll_exclusive_child_reaping(&mut cancellation, deadline, || try_wait_child(child_handle));
+    if outcome == ExclusiveReapingOutcome::Waitable {
+        drop(child.take());
+        drop(permit.take());
+        return Ok(());
+    }
+    let cleanup_succeeded = terminate_and_reap_or_quarantine(&mut child, &mut permit);
+    Err(
+        if outcome == ExclusiveReapingOutcome::Cancelled && cleanup_succeeded {
+            cancelled_error()
+        } else {
+            spawn_error()
+        },
+    )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExclusiveReapingOutcome {
+    Waitable,
+    Failed,
+    Cancelled,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn poll_exclusive_child_reaping(
+    cancellation: &mut CancellationParker,
+    deadline: Instant,
+    mut try_wait: impl FnMut() -> Result<Option<ExitStatus>, ChildTryWaitError>,
+) -> ExclusiveReapingOutcome {
+    let mut observation = ObservationBackoff::retry();
     loop {
         if cancellation.is_cancelled() {
-            cancelled = true;
-            break;
+            return ExclusiveReapingOutcome::Cancelled;
         }
-        match try_wait_child(child.as_mut().ok_or_else(invariant_error)?) {
-            Ok(Some(status)) if status.success() => {
-                drop(child.take());
-                drop(permit.take());
-                return Ok(());
-            }
-            Ok(None) if Instant::now() < deadline => cancellation.park_timeout(std::cmp::min(
-                OBSERVATION_INITIAL_INTERVAL,
-                deadline.saturating_duration_since(Instant::now()),
-            )),
-            Err(ChildTryWaitError::Interrupted) if Instant::now() < deadline => {
-                cancellation.park_timeout(OBSERVATION_INITIAL_INTERVAL);
+        match try_wait() {
+            Ok(Some(status)) if status.success() => return ExclusiveReapingOutcome::Waitable,
+            Ok(None) | Err(ChildTryWaitError::Interrupted) if Instant::now() < deadline => {
+                observation.park_until_and_advance(cancellation, deadline);
             }
             Ok(Some(_) | None)
             | Err(
                 ChildTryWaitError::Interrupted
                 | ChildTryWaitError::LostAuthority
                 | ChildTryWaitError::Operation,
-            ) => break,
+            ) => return ExclusiveReapingOutcome::Failed,
         }
     }
-    let cleanup_succeeded = terminate_and_reap_or_quarantine(&mut child, &mut permit);
-    Err(if cancelled && cleanup_succeeded {
-        cancelled_error()
-    } else {
-        spawn_error()
-    })
 }
 
 #[cfg(target_os = "linux")]
@@ -1453,6 +1477,7 @@ fn write_release_frame_bounded(
         cancellation: CancellationParker::new(cancellation),
         deadline: Instant::now() + RELEASE_FRAME_TIMEOUT,
         failure: None,
+        retry: ObservationBackoff::retry(),
     };
     if write_release_frame(&mut output, command, environment).is_err() {
         return Err(output.observed_failure());
@@ -1497,23 +1522,24 @@ impl ReleaseWriteFailure {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-struct BoundedGateWriter<'a> {
-    output: &'a mut ChildStdin,
+struct BoundedGateWriter<'a, W: std::io::Write + ?Sized> {
+    output: &'a mut W,
     cancellation_token: CancellationToken,
     cancellation: CancellationParker,
     deadline: Instant,
     failure: Option<ReleaseWriteFailure>,
+    retry: ObservationBackoff,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-impl BoundedGateWriter<'_> {
+impl<W: std::io::Write + ?Sized> BoundedGateWriter<'_, W> {
     fn observed_failure(&self) -> ReleaseWriteFailure {
         self.failure.unwrap_or(ReleaseWriteFailure::Release)
     }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-impl std::io::Write for BoundedGateWriter<'_> {
+impl<W: std::io::Write + ?Sized> std::io::Write for BoundedGateWriter<'_, W> {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         loop {
             if self.cancellation_token.is_cancelled() {
@@ -1533,12 +1559,14 @@ impl std::io::Write for BoundedGateWriter<'_> {
                     return Err(std::io::ErrorKind::WriteZero.into());
                 }
                 Ok(written) => return Ok(written),
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    self.cancellation.park_timeout(std::cmp::min(
-                        OBSERVATION_INITIAL_INTERVAL,
-                        self.deadline.saturating_duration_since(Instant::now()),
-                    ));
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    self.retry
+                        .park_until_and_advance(&mut self.cancellation, self.deadline);
                 }
                 Err(error) => {
                     self.failure = Some(ReleaseWriteFailure::Release);
@@ -1806,19 +1834,25 @@ fn poll_child_reap(
     child: &mut Option<Child>,
     deadline: Instant,
 ) -> Result<BoundedReap, BackgroundProcessError> {
+    let child = child.as_mut().ok_or_else(invariant_error)?;
+    Ok(poll_child_reap_with(deadline, || try_wait_child(child)))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn poll_child_reap_with(
+    deadline: Instant,
+    mut try_wait: impl FnMut() -> Result<Option<ExitStatus>, ChildTryWaitError>,
+) -> BoundedReap {
+    let mut observation = ObservationBackoff::retry();
     loop {
-        let child = child.as_mut().ok_or_else(invariant_error)?;
-        match try_wait_child(child) {
-            Ok(Some(status)) => return Ok(BoundedReap::Reaped(status)),
+        match try_wait() {
+            Ok(Some(status)) => return BoundedReap::Reaped(status),
             Ok(None) | Err(ChildTryWaitError::Interrupted) if Instant::now() < deadline => {
-                thread::sleep(std::cmp::min(
-                    OBSERVATION_INITIAL_INTERVAL,
-                    deadline.saturating_duration_since(Instant::now()),
-                ));
+                observation.sleep_until_and_advance(deadline);
             }
-            Ok(None) | Err(ChildTryWaitError::Interrupted) => return Ok(BoundedReap::TimedOut),
-            Err(ChildTryWaitError::LostAuthority) => return Ok(BoundedReap::LostAuthority),
-            Err(ChildTryWaitError::Operation) => return Ok(BoundedReap::ObservationFailed),
+            Ok(None) | Err(ChildTryWaitError::Interrupted) => return BoundedReap::TimedOut,
+            Err(ChildTryWaitError::LostAuthority) => return BoundedReap::LostAuthority,
+            Err(ChildTryWaitError::Operation) => return BoundedReap::ObservationFailed,
         }
     }
 }
@@ -2222,6 +2256,8 @@ fn require_original_group_quiescent(
         }
         Err(_) => observed_failure = true,
     }
+    #[cfg(target_os = "macos")]
+    let had_captured_descendants = captured.iter().any(|member| member.pid != group);
     let mut captured = RetainedMemberWait::new(captured.into_members(), group);
     let mut observation = ObservationBackoff::with_bounds(
         GROUP_SNAPSHOT_INITIAL_INTERVAL,
@@ -2254,6 +2290,17 @@ fn require_original_group_quiescent(
         }
         observation.sleep_and_advance();
     };
+    #[cfg(target_os = "macos")]
+    if captured_resolved && had_captured_descendants && !observed_failure {
+        // Darwin can make `getpgid` report a killed descendant absent while a
+        // fresh `ps` still exposes its not-yet-reaped zombie. Give that
+        // process-table transition one coarse, deadline-bounded interval
+        // before the single final global proof; never turn it into polling.
+        sleep_through(std::cmp::min(
+            GROUP_SNAPSHOT_MAX_INTERVAL,
+            deadline.saturating_duration_since(Instant::now()),
+        ));
+    }
     let members = group_members(authority, group)?;
     require_group_quiescence_evidence(observed_failure, captured_resolved, &members, group)
 }
@@ -2450,6 +2497,7 @@ fn collect_group_snapshot_output(
     let mut buffer = [0_u8; 8 * 1024];
     let mut eof = false;
     let mut exited = None;
+    let mut observation = ObservationBackoff::retry();
     loop {
         if !eof {
             match reader.read(&mut buffer) {
@@ -2462,16 +2510,10 @@ fn collect_group_snapshot_output(
                     continue;
                 }
                 Err(error)
-                    if error.kind() == std::io::ErrorKind::Interrupted
-                        && Instant::now() < deadline =>
-                {
-                    thread::sleep(std::cmp::min(
-                        OBSERVATION_INITIAL_INTERVAL,
-                        deadline.saturating_duration_since(Instant::now()),
-                    ));
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => return Err(()),
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+                    ) => {}
                 Err(_) => return Err(()),
             }
         }
@@ -2486,10 +2528,7 @@ fn collect_group_snapshot_output(
         if Instant::now() >= deadline {
             return Err(());
         }
-        thread::sleep(std::cmp::min(
-            OBSERVATION_INITIAL_INTERVAL,
-            deadline.saturating_duration_since(Instant::now()),
-        ));
+        observation.sleep_until_and_advance(deadline);
     }
 }
 
@@ -2974,6 +3013,10 @@ impl ObservationBackoff {
         Self::with_bounds(OBSERVATION_INITIAL_INTERVAL, OBSERVATION_MAX_INTERVAL)
     }
 
+    const fn retry() -> Self {
+        Self::with_bounds(RETRY_INITIAL_INTERVAL, RETRY_MAX_INTERVAL)
+    }
+
     const fn with_bounds(initial: Duration, maximum: Duration) -> Self {
         Self {
             current: initial,
@@ -2986,17 +3029,33 @@ impl ObservationBackoff {
         self.advance();
     }
 
+    fn sleep_until_and_advance(&mut self, deadline: Instant) {
+        self.sleep_until_and_advance_with(deadline, thread::sleep);
+    }
+
+    fn sleep_until_and_advance_with(&mut self, deadline: Instant, sleep: impl FnOnce(Duration)) {
+        let interval = self.interval_until(deadline);
+        if !interval.is_zero() {
+            sleep(interval);
+        }
+        self.advance();
+    }
+
     fn park_and_advance(&mut self, cancellation: &mut CancellationParker) {
         cancellation.park_timeout(self.current);
         self.advance();
     }
 
     fn park_until_and_advance(&mut self, cancellation: &mut CancellationParker, deadline: Instant) {
-        cancellation.park_timeout(std::cmp::min(
+        cancellation.park_timeout(self.interval_until(deadline));
+        self.advance();
+    }
+
+    fn interval_until(&self, deadline: Instant) -> Duration {
+        std::cmp::min(
             self.current,
             deadline.saturating_duration_since(Instant::now()),
-        ));
-        self.advance();
+        )
     }
 
     fn advance(&mut self) {
@@ -3250,6 +3309,135 @@ mod process_regression_tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
+    fn process_retry_backoff_is_exponential_and_capped() {
+        let mut retry = ObservationBackoff::retry();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut waits = Vec::new();
+
+        for _ in 0..6 {
+            retry.sleep_until_and_advance_with(deadline, |duration| waits.push(duration));
+        }
+
+        assert_eq!(
+            waits,
+            [
+                Duration::from_millis(4),
+                Duration::from_millis(8),
+                Duration::from_millis(16),
+                Duration::from_millis(32),
+                Duration::from_millis(32),
+                Duration::from_millis(32),
+            ]
+        );
+        assert!(waits.iter().all(|wait| *wait <= RETRY_MAX_INTERVAL));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn release_writer_backs_off_persistent_interruption_and_backpressure() {
+        struct RetryingWriter {
+            attempts: usize,
+            kind: std::io::ErrorKind,
+        }
+
+        impl std::io::Write for RetryingWriter {
+            fn write(&mut self, _bytes: &[u8]) -> std::io::Result<usize> {
+                self.attempts += 1;
+                Err(self.kind.into())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        for kind in [
+            std::io::ErrorKind::Interrupted,
+            std::io::ErrorKind::WouldBlock,
+        ] {
+            let cancellation = CancellationToken::new();
+            let mut output = RetryingWriter { attempts: 0, kind };
+            let timeout = Duration::from_millis(20);
+            let started = Instant::now();
+            let mut writer = BoundedGateWriter {
+                output: &mut output,
+                cancellation_token: cancellation.clone(),
+                cancellation: CancellationParker::new(&cancellation),
+                deadline: started + timeout,
+                failure: None,
+                retry: ObservationBackoff::retry(),
+            };
+
+            let error = std::io::Write::write(&mut writer, b"x")
+                .expect_err("persistent retryable write reaches its deadline");
+            let failure = writer.observed_failure();
+            drop(writer);
+
+            assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+            assert!(matches!(failure, ReleaseWriteFailure::Release));
+            assert!(started.elapsed() >= timeout);
+            assert!(
+                (2..=8).contains(&output.attempts),
+                "{kind:?} write made {} attempts instead of backing off",
+                output.attempts
+            );
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn child_reap_poll_backs_off_persistent_eintr_and_unreaped_states() {
+        for (label, interrupted) in [("EINTR", true), ("unreaped", false)] {
+            let timeout = Duration::from_millis(20);
+            let started = Instant::now();
+            let mut attempts = 0_usize;
+            let result = poll_child_reap_with(started + timeout, || {
+                attempts += 1;
+                if interrupted {
+                    Err(ChildTryWaitError::Interrupted)
+                } else {
+                    Ok(None)
+                }
+            });
+
+            assert!(matches!(result, BoundedReap::TimedOut));
+            assert!(started.elapsed() >= timeout);
+            assert!(
+                (2..=8).contains(&attempts),
+                "{label} reap made {attempts} attempts instead of backing off"
+            );
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn exclusive_reaping_probe_backs_off_persistent_eintr_and_unreaped_states() {
+        for (label, interrupted) in [("EINTR", true), ("unreaped", false)] {
+            let cancellation = CancellationToken::new();
+            let mut cancellation = CancellationParker::new(&cancellation);
+            let timeout = Duration::from_millis(20);
+            let started = Instant::now();
+            let mut attempts = 0_usize;
+            let result = poll_exclusive_child_reaping(&mut cancellation, started + timeout, || {
+                attempts += 1;
+                if interrupted {
+                    Err(ChildTryWaitError::Interrupted)
+                } else {
+                    Ok(None)
+                }
+            });
+
+            assert_eq!(result, ExclusiveReapingOutcome::Failed);
+            assert!(started.elapsed() >= timeout);
+            assert!(
+                (2..=8).contains(&attempts),
+                "{label} exclusive-reaping probe made {attempts} attempts instead of backing off"
+            );
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
     fn release_io_failure_is_not_relabelled_by_simultaneous_cancellation() {
         let _guard = GROUP_SNAPSHOT_TEST_LOCK
             .lock()
@@ -3389,25 +3577,43 @@ mod process_regression_tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn group_snapshot_reader_timeout_has_no_join_dependency() {
-        struct WouldBlockReader;
+    fn group_snapshot_reader_retries_are_bounded_without_a_join() {
+        struct RetryingReader {
+            reads: usize,
+            kind: std::io::ErrorKind,
+        }
 
-        impl std::io::Read for WouldBlockReader {
+        impl std::io::Read for RetryingReader {
             fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
-                Err(std::io::ErrorKind::WouldBlock.into())
+                self.reads += 1;
+                Err(self.kind.into())
             }
         }
 
-        let started = Instant::now();
-        assert_eq!(
-            collect_group_snapshot_output(
-                &mut WouldBlockReader,
-                Instant::now() + Duration::from_millis(20),
-                || Ok(SnapshotChildState::Exited(true)),
-            ),
-            Err(())
-        );
-        assert!(started.elapsed() < Duration::from_millis(250));
+        for kind in [
+            std::io::ErrorKind::Interrupted,
+            std::io::ErrorKind::WouldBlock,
+        ] {
+            let mut reader = RetryingReader { reads: 0, kind };
+            let mut observations = 0_usize;
+            let timeout = Duration::from_millis(20);
+            let started = Instant::now();
+            assert_eq!(
+                collect_group_snapshot_output(&mut reader, started + timeout, || {
+                    observations += 1;
+                    Ok(SnapshotChildState::Exited(true))
+                }),
+                Err(())
+            );
+            assert!(started.elapsed() >= timeout);
+            assert!(started.elapsed() < Duration::from_millis(250));
+            assert!(
+                (2..=8).contains(&reader.reads),
+                "{kind:?} snapshot made {} reads instead of backing off",
+                reader.reads
+            );
+            assert_eq!(observations, 1, "exited child state is not repolled");
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -3446,6 +3652,7 @@ mod process_regression_tests {
             require_exclusive_child_reaping_with(command, &worker_cancellation)
         });
         let deadline = Instant::now() + Duration::from_secs(5);
+        let mut observation = ObservationBackoff::retry();
         let pid = loop {
             if let Ok(pid) = fs::read_to_string(&pid_file)
                 && let Ok(pid) = pid.parse::<i32>()
@@ -3453,7 +3660,7 @@ mod process_regression_tests {
                 break pid;
             }
             assert!(Instant::now() < deadline, "probe did not publish its PID");
-            thread::sleep(Duration::from_millis(2));
+            observation.sleep_until_and_advance(deadline);
         };
 
         let started = Instant::now();
@@ -3809,12 +4016,13 @@ mod process_regression_tests {
         let worker =
             thread::spawn(move || adapter.prepare_cancellable(request, &worker_cancellation));
         let deadline = Instant::now() + Duration::from_secs(5);
+        let mut observation = ObservationBackoff::retry();
         while !helper_pid.exists() {
             assert!(
                 Instant::now() < deadline,
                 "helper did not reach stalled readiness"
             );
-            thread::sleep(Duration::from_millis(2));
+            observation.sleep_until_and_advance(deadline);
         }
         let pid = fs::read_to_string(&helper_pid)
             .expect("read helper PID")
@@ -3866,9 +4074,10 @@ mod process_regression_tests {
         )
         .expect("positive process group");
         let deadline = Instant::now() + Duration::from_secs(5);
+        let mut observation = ObservationBackoff::retry();
         while !matches!(observe_leader(group), Ok(Some(_))) {
             assert!(Instant::now() < deadline, "leader did not exit");
-            thread::sleep(Duration::from_millis(2));
+            observation.sleep_until_and_advance(deadline);
         }
         #[cfg(target_os = "linux")]
         let authority = GroupSnapshotAuthority::open().expect("open group snapshot authority");
@@ -3925,15 +4134,25 @@ mod process_regression_tests {
             i32::try_from(leader.get()).expect("test PID fits signed range"),
         )
         .expect("positive process group");
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !marker.exists() {
-            assert!(Instant::now() < deadline, "descendant did not become ready");
-            thread::sleep(Duration::from_millis(2));
-        }
         #[cfg(target_os = "linux")]
         let authority = GroupSnapshotAuthority::open().expect("open group snapshot authority");
         #[cfg(target_os = "macos")]
         let authority = GroupSnapshotAuthority;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut observation = ObservationBackoff::retry();
+        loop {
+            let descendant_is_visible = marker.exists()
+                && group_members(&authority, group)
+                    .is_ok_and(|members| members.iter().any(|member| member.pid != group));
+            if descendant_is_visible {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "descendant did not become process-table visible"
+            );
+            observation.sleep_until_and_advance(deadline);
+        }
         let snapshot_guard = GROUP_SNAPSHOT_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
