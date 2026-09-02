@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33455374424` (`GREEN`)
 - Main Benchmark evidence: `33455374426` (`GREEN`)
 - Active branch: `agent/m05-background-supervisor`
-- Active phase: `remediating rejected background-supervisor review cycle 13`
-- Next gate: `integrate cycle-13 fixes, then run the complete exact-1.94.1 replacement gate`
+- Active phase: `remediating rejected background-supervisor review cycle 14`
+- Next gate: `integrate cycle-14 fixes, then run the complete exact-1.94.1 replacement gate`
 <!-- canonical-live-status:end -->
 
 The recorded Actions runs succeeded for the exact delivered-main commit, and
@@ -106,7 +106,12 @@ before applying bounds, the event-driven collector could lose a completion
 wake during its predicate-to-wait handoff, the core cleanup contract
 overpromised containment of unobserved process-group escape, and native
 rustdocs described obsolete launch and reap protocols. Those findings are
-being remediated; no rejected result is acceptance evidence.
+remediated; no rejected result is acceptance evidence. Exact replacement
+`b9ce4db` passed the complete gate, but cycle 14 found that individual ambient
+lookups still allocated an oversized value before validation, each start
+cloned and revalidated the full immutable environment, and release framing
+could issue thousands of tiny writes. Those findings are being remediated; no
+rejected result is acceptance evidence.
 Persistent handles, message/relationship/configuration/lifecycle management,
 ACP, teams, and extension slash commands remain separate. Documentation parser
 maintenance remains a separate non-product task.

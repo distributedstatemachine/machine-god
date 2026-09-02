@@ -307,3 +307,23 @@ regression, a precise direct-child/original-group/captured-member cleanup
 contract, and rustdocs matching the shared-helper snapshot-and-reap protocol.
 The complete replacement gate and all three fresh review tracks restart after
 every finding is remediated.
+
+## Rejected product candidate: cycle 14
+
+Three fresh review tracks inspected exact candidate
+`b9ce4db9b2a6d564ac9556c1c46cae49d5854b65` after its complete exact Rust and
+Cargo 1.94.1 local gate passed. Lifecycle reported zero findings; correctness
+and performance rejected the candidate.
+
+| Track | Decisive findings |
+| --- | --- |
+| Correctness, API, and compatibility | Each fixed-key `std::env::var_os` lookup still allocated the complete ambient value before applying the per-value and aggregate byte limits. |
+| Lifecycle, platform, and effects | Zero findings. |
+| Performance and resources | Ambient capture remained invalid-input proportional; every start cloned and revalidated the complete immutable environment; release framing could amplify a maximum environment into thousands of tiny writes. |
+
+Cycle 14 remains rejection evidence. Replacement requires a fixed host-owned
+production environment with no ambient lookup, one shared validated immutable
+environment across admitted starts, and bounded buffered framing that preserves
+the distinct release commit and deadline/cancellation semantics. The complete
+replacement gate and all three fresh review tracks restart after every finding
+is remediated.
