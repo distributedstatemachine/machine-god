@@ -22,12 +22,12 @@ input; it is not a machine-god product language or runtime dependency.
 
 <!-- canonical-live-status:start -->
 - Delivered slices: `53`
-- Delivered main: `ceed855596aed64724b9d035e63a9c166244fab0`
-- Main CI: `33785464027` (`GREEN`)
-- Main Benchmark evidence: `33785464048` (`GREEN`)
-- Active branch: `agent/m03-macos-cleanup-fixture`
-- Active phase: `validating the bounded Apple native cleanup-fixture repair exposed by the post-delivery maintenance gate`
-- Next gate: `pass the complete exact local gate and three fresh adversarial reviews, then require exact feature and main CI plus Benchmark success before returning to actual tools or CLI work`
+- Delivered main: `3bf4672e4607296c518f1c2259d51fed5bb16031`
+- Main CI: `33805243450` (`GREEN`)
+- Main Benchmark evidence: `33805243468` (`GREEN`)
+- Active branch: `main`
+- Active phase: `selecting the next bounded tools or CLI product slice`
+- Next gate: `choose one remaining M03 or M05 tool boundary, open its feature branch, and complete the local, adversarial-review, exact feature, and exact-main gates`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -44,6 +44,12 @@ The next bounded product slice returns to actual tools or CLI work. Persistent
 terminal handles, read/write/wait/control actions, interactive terminal
 behavior, restart-safe control, ACP, teams, and extension slash commands remain
 separate. Documentation-tool maintenance remains a separate non-product task.
+The post-delivery Apple maintenance repair replaced the regression fixture's
+busy process loop with a bounded passive descendant, added panic-safe group
+cleanup and explicit leader-exit synchronization, and serializes only Apple
+native test harnesses. Three fresh reviews reported zero findings, and exact
+feature and main gates passed on both Apple architectures. This maintenance did
+not increment the delivered-slice count.
 
 ## Architecture ownership
 
