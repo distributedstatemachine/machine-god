@@ -6,6 +6,7 @@
 
 use std::fs;
 use std::io;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -108,6 +109,7 @@ fn reference_host_lifecycle_engine_and_public_store_share_one_exact_store() {
     let sessions = temporary.path().join("sessions");
     fs::create_dir(&workspace).unwrap();
     fs::create_dir(&sessions).unwrap();
+    fs::set_permissions(&sessions, fs::Permissions::from_mode(0o700)).unwrap();
     let loaded = load_native_config(&NativeEnvironment::new(None, None, None)).unwrap();
     let transport: Arc<dyn AiGatewayTransport> = Arc::new(InertTransport);
     let prompter: Arc<dyn PermissionPrompter> = Arc::new(InertPrompter);
@@ -140,9 +142,15 @@ fn reference_host_lifecycle_engine_and_public_store_share_one_exact_store() {
         .unwrap();
     assert_eq!(loaded.record(), created.record());
     assert!(!created.has_active_turn());
-    assert_eq!(
-        fs::read_dir(sessions).unwrap().count(),
-        2,
-        "durable create publishes one data record and one permanent lock"
-    );
+    let mut root_entries = fs::read_dir(&sessions)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect::<Vec<_>>();
+    root_entries.sort();
+    assert_eq!(root_entries.len(), 3);
+    assert_eq!(root_entries[0], "background-v1");
+    let record_stem = root_entries[1].strip_suffix(".json").unwrap();
+    let lock_stem = root_entries[2].strip_suffix(".lock").unwrap();
+    assert_eq!(record_stem, lock_stem);
+    assert!(record_stem.starts_with("session-"));
 }

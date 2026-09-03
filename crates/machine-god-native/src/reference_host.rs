@@ -9,6 +9,7 @@ use machine_god_core::{
     SubagentAuthorityError, SubagentAuthorityErrorKind, SubagentOutcome, SubagentRequest,
     SubagentTool,
 };
+use rustix::fd::OwnedFd;
 
 use crate::workspace::{WorkspaceRoot, WorkspaceTools};
 use crate::{
@@ -17,12 +18,12 @@ use crate::{
     AskPermissionHandler, AskUserQuestionTool, FileSessionStore, LoadedNativeConfig,
     McpFeatureAuthority, McpFeatureError, McpFeatureErrorKind, McpFeaturePayload,
     McpFeatureRequest, McpFeaturesTool, McpSearchToolsTool, McpSelectTool, McpToolCatalog,
-    McpToolCatalogError, McpToolCatalogSnapshot, MemoryTool, NativeCredentialSourceKind,
-    NativeProviderKind, NativeSessionLifecycle, NativeTransportKind, PermissionMode,
-    PermissionPrompter, PreparedNativeRoots, QuestionPrompter, ReadToolResultTool, TerminalTool,
-    VisionDeadline, VisionLimits, VisionTool, VisionTransportError, VisionTransportErrorKind,
-    WebFetchTool, WebSearchDeadline, WebSearchLimits, WebSearchTool, WebSearchTransportErrorKind,
-    discover_ai_gateway_credential,
+    McpToolCatalogError, McpToolCatalogSnapshot, MemoryTool, NativeBackgroundSupervisor,
+    NativeCredentialSourceKind, NativeProviderKind, NativeSessionLifecycle, NativeTransportKind,
+    PermissionMode, PermissionPrompter, PreparedNativeRoots, QuestionPrompter, ReadToolResultTool,
+    TerminalBackgroundStarter, TerminalTool, VisionDeadline, VisionLimits, VisionTool,
+    VisionTransportError, VisionTransportErrorKind, WebFetchTool, WebSearchDeadline,
+    WebSearchLimits, WebSearchTool, WebSearchTransportErrorKind, discover_ai_gateway_credential,
 };
 
 /// Stable stage at which native reference-host composition failed.
@@ -51,6 +52,8 @@ pub enum NativeReferenceHostBuildErrorKind {
     VisionConfig,
     /// The bounded terminal tool could not snapshot its process environment.
     TerminalConfig,
+    /// The bounded background supervisor could not be composed.
+    BackgroundConfig,
     /// The selected provider could not be constructed.
     Provider,
     /// The provider-neutral engine could not be constructed.
@@ -119,6 +122,9 @@ impl fmt::Display for NativeReferenceHostBuildError {
             }
             NativeReferenceHostBuildErrorKind::TerminalConfig => {
                 "native reference-host terminal construction failed"
+            }
+            NativeReferenceHostBuildErrorKind::BackgroundConfig => {
+                "native reference-host background construction failed"
             }
             NativeReferenceHostBuildErrorKind::Provider => {
                 "native reference-host provider construction failed"
@@ -606,12 +612,6 @@ impl NativeReferenceHost {
         subagent_authority: Arc<dyn SubagentAuthority>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         let model = loaded_config.config().model().to_owned();
-        let terminal =
-            TerminalTool::from_root_descriptor(workspace_tools.terminal_root).map_err(|_| {
-                NativeReferenceHostBuildError::new(
-                    NativeReferenceHostBuildErrorKind::TerminalConfig,
-                )
-            })?;
         let vision_transport = AiGatewayVisionTransport::new(model.clone(), Arc::clone(&transport))
             .map_err(|_| {
                 NativeReferenceHostBuildError::new(
@@ -660,6 +660,12 @@ impl NativeReferenceHost {
         let web_fetch = compose_web_fetch()?;
         let permission_handler = AskPermissionHandler::shared_prompter(permission_prompter);
         let ask_user_question = AskUserQuestionTool::shared_prompter(question_prompter);
+        let terminal = compose_terminal(
+            workspace_tools.terminal_root,
+            &workspace_tools.canonical_workspace,
+            workspace_tools.background_root,
+            &session_store,
+        )?;
         let session_store = Arc::new(session_store);
         let (engine_session_store, read_tool_result) = session_store_components(&session_store);
         let engine = Engine::builder()
@@ -709,6 +715,43 @@ impl NativeReferenceHost {
             credential_source,
         })
     }
+}
+
+fn compose_terminal(
+    terminal_root: OwnedFd,
+    canonical_workspace: &Path,
+    background_root: OwnedFd,
+    session_store: &FileSessionStore,
+) -> Result<TerminalTool, NativeReferenceHostBuildError> {
+    let terminal = TerminalTool::from_root_descriptor(terminal_root).map_err(|_| {
+        NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::TerminalConfig)
+    })?;
+    let canonical_workspace = canonical_workspace
+        .to_str()
+        .ok_or_else(|| {
+            NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::BackgroundConfig)
+        })?
+        .to_owned();
+    let state_root = session_store.try_clone_root_descriptor().map_err(|_| {
+        NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::BackgroundConfig)
+    })?;
+    let background = Arc::new(
+        NativeBackgroundSupervisor::from_production_root_descriptors(
+            canonical_workspace.clone(),
+            background_root,
+            state_root,
+        )
+        .map_err(|_| {
+            NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::BackgroundConfig)
+        })?,
+    );
+    let environment = background.environment_identity();
+    let background: Arc<dyn TerminalBackgroundStarter> = background;
+    terminal
+        .with_background(canonical_workspace, environment, background)
+        .map_err(|_| {
+            NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::TerminalConfig)
+        })
 }
 
 fn compose_web_fetch() -> Result<WebFetchTool, NativeReferenceHostBuildError> {

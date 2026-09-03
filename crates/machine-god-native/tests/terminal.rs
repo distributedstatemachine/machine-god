@@ -2,6 +2,7 @@
 
 use std::ffi::OsString;
 use std::future::Future;
+use std::num::NonZeroU32;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -9,10 +10,12 @@ use std::task::{Context, Poll, Wake, Waker};
 use std::time::{Duration, Instant};
 
 use machine_god_core::{
+    BackgroundStartError, BackgroundStartErrorKind, BackgroundStartRequest, BoxFuture,
     CancellationToken, Capability, ProcessEnvironment, Tool, ToolError, ToolErrorKind, ToolOutput,
 };
 use machine_god_native::MAX_TERMINAL_PRODUCED_OUTPUT_BYTES;
 use machine_god_native::{
+    TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TerminalBackgroundOutcome, TerminalBackgroundStarter,
     TerminalCapturedOutput, TerminalConfigErrorKind, TerminalExecution, TerminalExecutionOutcome,
     TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError,
     TerminalExecutorErrorKind, TerminalLimits, TerminalTool,
@@ -143,6 +146,71 @@ impl TerminalExecutor for FakeExecutor {
             stdout_total: self.stdout_total,
             stderr: self.stderr.clone(),
             stderr_total: self.stderr_total,
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum BackgroundMode {
+    Success { cancel_before_return: bool },
+    Error(BackgroundStartErrorKind),
+}
+
+#[derive(Default)]
+struct BackgroundState {
+    calls: AtomicUsize,
+    requests: Mutex<Vec<(String, String, String)>>,
+}
+
+#[derive(Clone)]
+struct FakeBackgroundStarter {
+    mode: BackgroundMode,
+    state: Arc<BackgroundState>,
+}
+
+impl FakeBackgroundStarter {
+    fn new(mode: BackgroundMode) -> Self {
+        Self {
+            mode,
+            state: Arc::new(BackgroundState::default()),
+        }
+    }
+
+    fn calls(&self) -> usize {
+        self.state.calls.load(Ordering::SeqCst)
+    }
+
+    fn requests(&self) -> Vec<(String, String, String)> {
+        self.state.requests.lock().unwrap().clone()
+    }
+}
+
+impl TerminalBackgroundStarter for FakeBackgroundStarter {
+    fn start(
+        &self,
+        request: BackgroundStartRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundOutcome, BackgroundStartError>> {
+        let mode = self.mode;
+        let state = Arc::clone(&self.state);
+        Box::pin(async move {
+            state.calls.fetch_add(1, Ordering::SeqCst);
+            state.requests.lock().unwrap().push((
+                request.command().to_owned(),
+                request.cwd().to_owned(),
+                format!("{request:?}"),
+            ));
+            match mode {
+                BackgroundMode::Success {
+                    cancel_before_return,
+                } => {
+                    if cancel_before_return {
+                        let _ = cancellation.cancel();
+                    }
+                    TerminalBackgroundOutcome::new(7, NonZeroU32::new(1234))
+                }
+                BackgroundMode::Error(kind) => Err(BackgroundStartError::new(kind)),
+            }
         })
     }
 }
@@ -799,6 +867,31 @@ fn tool(root: &std::path::Path, executor: &FakeExecutor) -> TerminalTool {
     .unwrap()
 }
 
+fn background_tool(
+    root: &std::path::Path,
+    executor: &FakeExecutor,
+    starter: &FakeBackgroundStarter,
+) -> TerminalTool {
+    let canonical_workspace = std::fs::canonicalize(root)
+        .unwrap()
+        .to_str()
+        .expect("test workspace is Unicode")
+        .to_owned();
+    TerminalTool::with_executor_and_background(
+        root,
+        environment(),
+        Arc::new(executor.clone()),
+        limits(1),
+        canonical_workspace,
+        ProcessEnvironment {
+            profile: TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE.to_owned(),
+            sha256: "a".repeat(64),
+        },
+        Arc::new(starter.clone()),
+    )
+    .unwrap()
+}
+
 fn execute(
     tool: &TerminalTool,
     arguments: Value,
@@ -810,6 +903,15 @@ fn execute(
 fn exact_arguments(command: &str, cwd: &str) -> Value {
     json!({
         "action": "exec",
+        "command": command,
+        "cwd": cwd,
+        "profile": "clean",
+    })
+}
+
+fn exact_start_arguments(command: &str, cwd: &str) -> Value {
+    json!({
+        "action": "start",
         "command": command,
         "cwd": cwd,
         "profile": "clean",
@@ -895,6 +997,251 @@ fn spec_and_defaults_are_strict_and_prepare_exact_process_identity() {
             }
         })
     );
+}
+
+#[test]
+fn background_start_has_exact_permission_identity_and_bypasses_foreground_execution() {
+    let temporary = TemporaryDirectory::new("background-start");
+    std::fs::create_dir(temporary.path().join("nested")).unwrap();
+    let executor = FakeExecutor::new(Mode::Pending);
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: true,
+    });
+    let tool = background_tool(temporary.path(), &executor, &starter);
+    let mut occupied_foreground = Box::pin(tool.execute(
+        context(),
+        exact_arguments("occupy-foreground", "."),
+        CancellationToken::new(),
+    ));
+    assert!(
+        poll_with_waker(
+            occupied_foreground.as_mut(),
+            &futures_util::task::noop_waker()
+        )
+        .is_pending()
+    );
+
+    let spec = tool.spec();
+    assert_eq!(
+        spec.description,
+        "Run one foreground command or start one noninteractive background command"
+    );
+    assert_eq!(
+        spec.input_schema["properties"]["action"]["enum"],
+        json!(["exec", "start"])
+    );
+    let prepared = tool
+        .prepare(call(
+            "terminal",
+            json!({ "action": "start", "command": "sleep 1", "cwd": "nested" }),
+        ))
+        .unwrap();
+    assert_eq!(
+        prepared.arguments(),
+        &exact_start_arguments("sleep 1", "nested")
+    );
+    let Capability::Process {
+        program,
+        arguments,
+        working_directory,
+        environment,
+    } = prepared
+        .capability()
+        .expect("start requires process permission")
+    else {
+        panic!("start must prepare process permission")
+    };
+    assert_eq!(program, "/bin/sh");
+    assert_eq!(arguments, &["-c", "sleep 1"]);
+    assert_eq!(
+        working_directory,
+        &format!(
+            "{}/nested",
+            std::fs::canonicalize(temporary.path()).unwrap().display()
+        )
+    );
+    assert_eq!(environment.profile, TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE);
+    assert_eq!(environment.sha256, "a".repeat(64));
+    assert_eq!(starter.calls(), 0);
+
+    let mut future = Box::pin(tool.execute(
+        context(),
+        exact_start_arguments("sleep 1", "nested"),
+        CancellationToken::new(),
+    ));
+    assert_eq!(starter.calls(), 0);
+    let output = poll_ready(future.as_mut());
+    let output = output.expect("background start succeeds despite post-commit cancellation");
+    assert_eq!(
+        output.content,
+        json!({
+            "action": "start",
+            "background_id": 7,
+            "pid": 1234,
+            "status": "started"
+        })
+    );
+    assert!(!output.is_error);
+    assert_eq!(starter.calls(), 1);
+    assert_eq!(executor.calls(), 1);
+    assert_eq!(executor.polls(), 1);
+    let requests = starter.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].0, "sleep 1");
+    assert_eq!(
+        requests[0].1,
+        format!(
+            "{}/nested",
+            std::fs::canonicalize(temporary.path()).unwrap().display()
+        )
+    );
+    assert_eq!(requests[0].2, "BackgroundStartRequest { .. }");
+    drop(occupied_foreground);
+}
+
+#[test]
+fn background_configuration_binds_the_named_workspace_to_the_retained_root() {
+    let retained = TemporaryDirectory::new("background-retained-root");
+    let replacement = TemporaryDirectory::new("background-other-root");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let error = TerminalTool::with_executor_and_background(
+        retained.path(),
+        environment(),
+        Arc::new(executor.clone()),
+        TerminalLimits::default(),
+        std::fs::canonicalize(replacement.path())
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned(),
+        ProcessEnvironment {
+            profile: TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE.to_owned(),
+            sha256: "a".repeat(64),
+        },
+        Arc::new(starter.clone()),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), TerminalConfigErrorKind::InvalidRoot);
+    assert_eq!(starter.calls(), 0);
+    assert_eq!(executor.calls(), 0);
+}
+
+#[test]
+fn background_outcome_rejects_zero_and_redacts_display_identities() {
+    let error = TerminalBackgroundOutcome::new(0, NonZeroU32::new(99)).unwrap_err();
+    assert_eq!(error.kind(), BackgroundStartErrorKind::InvalidRequest);
+    let outcome = TerminalBackgroundOutcome::new(9, None).unwrap();
+    assert_eq!(outcome.id(), 9);
+    assert_eq!(outcome.pid(), None);
+    assert_eq!(format!("{outcome:?}"), "TerminalBackgroundOutcome { .. }");
+}
+
+#[test]
+fn background_start_rejects_rich_session_fields_and_pre_cancel_has_no_effects() {
+    let temporary = TemporaryDirectory::new("background-start-invalid");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let tool = background_tool(temporary.path(), &executor, &starter);
+
+    for field in [
+        "shell",
+        "backend",
+        "return_when",
+        "wait_ceiling_ms",
+        "dimensions",
+        "initial_monitors",
+        "session_id",
+    ] {
+        let mut arguments = json!({ "action": "start", "command": "true" });
+        arguments
+            .as_object_mut()
+            .unwrap()
+            .insert(field.to_owned(), json!(true));
+        assert_invalid_input(&tool.prepare(call("terminal", arguments)).unwrap_err());
+    }
+    assert_invalid_input(
+        &tool
+            .prepare(call("terminal", json!({ "action": "start" })))
+            .unwrap_err(),
+    );
+
+    let cancellation = CancellationToken::new();
+    assert!(cancellation.cancel());
+    let error = execute(
+        &tool,
+        exact_start_arguments("must-not-run", "."),
+        cancellation,
+    )
+    .unwrap_err();
+    assert_eq!(error.kind, ToolErrorKind::Cancelled);
+    assert_eq!(error.code, "terminal_cancelled");
+    assert_eq!(starter.calls(), 0);
+    assert_eq!(executor.calls(), 0);
+}
+
+#[test]
+fn every_background_start_failure_has_one_fixed_mapping() {
+    let temporary = TemporaryDirectory::new("background-start-errors");
+    let cases = [
+        (
+            BackgroundStartErrorKind::InvalidRequest,
+            ToolErrorKind::Execution,
+            "terminal_executor_failed",
+            false,
+        ),
+        (
+            BackgroundStartErrorKind::Capacity,
+            ToolErrorKind::Unavailable,
+            "terminal_busy",
+            true,
+        ),
+        (
+            BackgroundStartErrorKind::Clock,
+            ToolErrorKind::Unavailable,
+            "terminal_start_unavailable",
+            true,
+        ),
+        (
+            BackgroundStartErrorKind::Persistence,
+            ToolErrorKind::Execution,
+            "terminal_start_persistence_failed",
+            false,
+        ),
+        (
+            BackgroundStartErrorKind::Process,
+            ToolErrorKind::Execution,
+            "terminal_start_failed",
+            false,
+        ),
+        (
+            BackgroundStartErrorKind::Cancelled,
+            ToolErrorKind::Cancelled,
+            "terminal_cancelled",
+            false,
+        ),
+    ];
+    for (source, kind, code, retryable) in cases {
+        let executor = FakeExecutor::new(Mode::Exited(0));
+        let starter = FakeBackgroundStarter::new(BackgroundMode::Error(source));
+        let tool = background_tool(temporary.path(), &executor, &starter);
+        let error = execute(
+            &tool,
+            exact_start_arguments("true", "."),
+            CancellationToken::new(),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind, kind);
+        assert_eq!(error.code, code);
+        assert_eq!(error.retryable, retryable);
+        assert!(!error.message.contains("true"));
+        assert_eq!(starter.calls(), 1);
+        assert_eq!(executor.calls(), 0);
+    }
 }
 
 #[test]

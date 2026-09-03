@@ -17,11 +17,11 @@ The complete reference host is compiled when all of these are true:
 
 Individual native contracts may expose portable injected seams or narrower
 system implementations. In particular, the complete host compiles on macOS,
-but the production `semantic_search` and terminal system executors are
-Linux-only. The private host catalog retains both tools on macOS and returns
-their fixed unsupported results after strict preparation and permission.
-`semantic_search` performs no workspace lookup or content read; `terminal`
-performs no cwd lookup or process creation.
+but the production `semantic_search` and terminal foreground executor are
+Linux-only. The private host catalog retains both tools on macOS:
+`semantic_search` and terminal `exec` return their fixed unsupported results
+after strict preparation and permission, while terminal `start` uses the
+Linux/macOS background helper.
 
 ## Required selections
 
@@ -61,6 +61,11 @@ The explicit-path constructors require the trusted host to choose disjoint
 workspace and session roots; those constructors do not prove identity or
 ancestor disjointness. The prepared-root path performs the stronger
 root-selection checks defined in [native-root-selection.md](native-root-selection.md).
+Because the composed background writer shares the retained state-root identity,
+successful composition requires that root to satisfy its owner-private mode and
+ACL contract. The workspace must also have a canonical Unicode absolute path;
+composition binds that spelling to the retained descriptor before exposing
+terminal `start`.
 
 Production composition opens the workspace and session roots before credential
 discovery. A failure never causes a fallback to a different provider,
@@ -88,6 +93,10 @@ Every successful host contains:
 - one provider-neutral `SubagentTool` over an explicitly injected authority;
   ordinary constructors share an inert unavailable authority, while the
   subagent-aware seam retains the caller's exact allocation;
+- one bounded native background supervisor over identity-preserving workspace
+  and state-root descriptors, retained by `terminal` for noninteractive
+  `start`; its environment is fixed and independently identified for process
+  permission;
 - default provider-neutral `EngineLimits` and the default no-op event sink;
 - one explicit `Arc<dyn WebSearchDeadline>` for bounded web-search timing,
   reused through a fixed category-only adapter for vision's capacity wait,
@@ -139,8 +148,9 @@ Seventeen tools use one retained workspace identity. `glob_files` consumes the
 original descriptor. The other sixteen workspace tools receive
 identity-preserving clones: `copy_file`, `create_folder`, `delete_file`,
 `edit_file`, `file_info`, `grep_files`, `install_skill`, `list_files`,
-`open_file`, `read_file`, `rename_file`, `semantic_search`, `skill`, `terminal`, `vision`, and
-`write_file`.
+`open_file`, `read_file`, `rename_file`, `semantic_search`, `skill`, `terminal`,
+`vision`, and `write_file`. The terminal background supervisor receives one
+additional clone of that same identity; it is not another catalog tool.
 `ask_user_question`, `mcp_features`, `mcp_search_tools`, `mcp_select_tool`,
 `subagent`, and `web_fetch` are rootless.
 `mcp_features` uses only its explicitly injected read-only authority. It stamps
@@ -186,10 +196,9 @@ required, direct argument revalidation, and its documented platform check.
 ## Construction effects
 
 Construction is synchronous. It creates no Tokio runtime, sends no model or
-network request, polls no permission/question prompt, touches no session
-record, and starts no persistent background work. Depending on the constructor
-and enabled tools, it does perform the documented bounded setup needed to own
-later authority:
+network request, polls no permission/question prompt, and touches no session
+record. Depending on the constructor and enabled tools, it does perform the
+documented bounded setup needed to own later authority:
 
 - open and retain existing root descriptors, or consume prepared descriptors;
 - clone the retained state-root descriptor once for `memory`, without reading
@@ -197,6 +206,8 @@ later authority:
 - discover and validate the two supported credential environment sources on
   the production path;
 - snapshot the bounded process environment used by `terminal`;
+- create and reconcile the private `background-v1` namespace under the already
+  private state root, then create the supervisor's fixed-capacity worker sets;
 - construct provider, web-search, and private vision adapters over the shared
   transport;
 - construct `web_fetch`, including its bounded native resolver/entropy setup.
@@ -237,6 +248,7 @@ Construction failures are fixed, redacted stage categories:
 - vision configuration (`VisionConfig`);
 - vision transport (`VisionTransport`);
 - terminal configuration;
+- background-supervisor configuration;
 - provider; or
 - engine.
 

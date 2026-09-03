@@ -5,6 +5,7 @@ use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
 use std::future::Future;
+use std::os::unix::ffi::OsStrExt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::pin::Pin;
@@ -22,9 +23,11 @@ use machine_god_core::{
     BackgroundStartErrorKind, BackgroundStartRequest, BackgroundStore as CoreBackgroundStore,
     BackgroundSupervisor, BoxFuture, CancellationToken, Cancelled,
     OwnedBackgroundProcess as CoreOwnedProcess, PreparedBackgroundProcess as CorePreparedProcess,
+    ProcessEnvironment,
 };
 use rustix::fd::{AsFd, OwnedFd};
 use rustix::fs::{FileType, Mode, OFlags};
+use sha2::{Digest, Sha256};
 
 use crate::background_inspection::{NativeBackgroundState, StoredBackgroundRecord};
 use crate::background_process::BackgroundProcessHelper;
@@ -37,6 +40,9 @@ use crate::background_store::{
     BackgroundReconciliation, BackgroundRecordLease as NativeRecordAuthority, BackgroundStore,
 };
 use crate::session_store::FileSessionStore;
+use crate::terminal::{
+    TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TerminalBackgroundOutcome, TerminalBackgroundStarter,
+};
 
 /// Default number of concurrently retained background processes.
 pub const NATIVE_BACKGROUND_DEFAULT_MAX_ACTIVE: usize = 4;
@@ -173,6 +179,7 @@ pub struct NativeBackgroundSupervisor {
     store: Arc<NativeStore>,
     retainer: Arc<WorkerRetainer>,
     blocking: BlockingExecutor,
+    environment_identity: ProcessEnvironment,
 }
 
 impl NativeBackgroundSupervisor {
@@ -255,6 +262,22 @@ impl NativeBackgroundSupervisor {
         )
     }
 
+    pub(crate) fn from_production_root_descriptors(
+        workspace: String,
+        workspace_root: OwnedFd,
+        state_root: OwnedFd,
+    ) -> Result<Self, NativeBackgroundSupervisorError> {
+        let adapter = system_process_adapter()?;
+        Self::from_validated_parts(
+            workspace,
+            workspace_root,
+            state_root,
+            production_environment(),
+            NativeBackgroundLimits::default(),
+            adapter,
+        )
+    }
+
     fn from_parts(
         workspace: String,
         workspace_root: OwnedFd,
@@ -319,6 +342,7 @@ impl NativeBackgroundSupervisor {
         limits: NativeBackgroundLimits,
         adapter: SystemBackgroundProcessAdapter,
     ) -> Result<Self, NativeBackgroundSupervisorError> {
+        let environment_identity = background_environment_identity(&environment);
         let store = Arc::new(NativeStore {
             inner: Arc::new(
                 BackgroundStore::prepare(state_root, workspace.clone()).map_err(|_| {
@@ -351,6 +375,7 @@ impl NativeBackgroundSupervisor {
             store,
             retainer,
             blocking,
+            environment_identity,
         })
     }
 
@@ -388,6 +413,13 @@ impl NativeBackgroundSupervisor {
         })
     }
 
+    /// Returns the redacted identity of the exact environment installed for
+    /// released commands.
+    #[must_use]
+    pub fn environment_identity(&self) -> ProcessEnvironment {
+        self.environment_identity.clone()
+    }
+
     /// Reconciles persisted unlocked running records when this future is polled.
     #[must_use]
     pub fn reconcile(
@@ -414,6 +446,20 @@ impl NativeBackgroundSupervisor {
                 NativeBackgroundSupervisorErrorKind::Worker,
             )),
         ))
+    }
+}
+
+impl TerminalBackgroundStarter for NativeBackgroundSupervisor {
+    fn start(
+        &self,
+        request: BackgroundStartRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundOutcome, BackgroundStartError>> {
+        let start = NativeBackgroundSupervisor::start(self, request, cancellation);
+        Box::pin(async move {
+            let handle = start.await?;
+            TerminalBackgroundOutcome::new(handle.id(), handle.pid())
+        })
     }
 }
 
@@ -1658,6 +1704,37 @@ fn production_environment() -> ValidatedBackgroundEnvironment {
         .clone()
 }
 
+fn background_environment_identity(
+    environment: &ValidatedBackgroundEnvironment,
+) -> ProcessEnvironment {
+    let mut entries: Vec<_> = environment.entries().iter().collect();
+    entries.sort_by(|left, right| {
+        left.0
+            .as_os_str()
+            .as_bytes()
+            .cmp(right.0.as_os_str().as_bytes())
+            .then_with(|| {
+                left.1
+                    .as_os_str()
+                    .as_bytes()
+                    .cmp(right.1.as_os_str().as_bytes())
+            })
+    });
+    let mut hasher = Sha256::new();
+    for (key, value) in entries {
+        let key = key.as_os_str().as_bytes();
+        let value = value.as_os_str().as_bytes();
+        hasher.update((key.len() as u64).to_be_bytes());
+        hasher.update(key);
+        hasher.update((value.len() as u64).to_be_bytes());
+        hasher.update(value);
+    }
+    ProcessEnvironment {
+        profile: TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE.to_owned(),
+        sha256: format!("{:x}", hasher.finalize()),
+    }
+}
+
 fn build_production_environment() -> Result<ValidatedBackgroundEnvironment, ()> {
     accept_bounded_environment(vec![
         (
@@ -1753,9 +1830,9 @@ mod tests {
         NativeBackgroundSupervisor, NativeSpawner, NativeStore, PRODUCTION_BACKGROUND_LANGUAGE,
         PRODUCTION_BACKGROUND_PATH, RetainedJob, SystemBackgroundProcessAdapter, SystemClock,
         WORKER_OWNERSHIP_CAPACITY, WorkerOwnershipRegistry, WorkerRetainer,
-        accept_bounded_environment, build_production_environment, finish_prepared_after_readiness,
-        open_directory, process_error_kind, production_environment,
-        retain_canonical_directory_with, worker_ownership_registry,
+        accept_bounded_environment, background_environment_identity, build_production_environment,
+        finish_prepared_after_readiness, open_directory, process_error_kind,
+        production_environment, retain_canonical_directory_with, worker_ownership_registry,
     };
     use crate::background_process::{
         BackgroundProcessErrorKind, BackgroundProcessHelper,
@@ -2592,6 +2669,15 @@ mod tests {
             build_allocations.bytes_total <= 2_048,
             "{build_allocations:?}"
         );
+        let identity = background_environment_identity(&environment);
+        assert_eq!(
+            identity.profile,
+            crate::TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE
+        );
+        assert_eq!(
+            identity.sha256,
+            "1b141c66b290b7c7f755588dbfb36af86b3232570a58be0eeb566b90fa130adc"
+        );
 
         let shared = production_environment();
         allocation_counter::measure(|| {});
@@ -2787,6 +2873,9 @@ mod tests {
             store,
             retainer,
             blocking: BlockingExecutor::new(1).expect("blocking executor"),
+            environment_identity: background_environment_identity(
+                &ValidatedBackgroundEnvironment::new(test_environment()).expect("test environment"),
+            ),
         };
         let request =
             BackgroundStartRequest::new("must-not-execute", &fixture.workspace).expect("request");

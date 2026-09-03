@@ -133,10 +133,13 @@ Missing-root read-only CLI paths do not create a root.
 ## Process boundary
 
 The terminal tool authorizes a fixed shell, canonical starting directory,
-command, and bounded construction-time environment identity before execution.
-The retained workspace descriptor constrains the starting directory only.
-After approval, `/bin/sh -c` can exercise every authority available to that
-process account; terminal execution is explicitly not a sandbox.
+command, and bounded environment identity before execution. Foreground `exec`
+uses the construction snapshot. Noninteractive `start` uses the background
+supervisor's fixed environment digest and absolute canonical cwd, bound to the
+same retained workspace identity. The retained descriptor constrains the
+starting directory only. After approval, `/bin/sh -c` can exercise every
+authority available to that process account; terminal execution is explicitly
+not a sandbox.
 
 The Linux system executor owns bounded pipes, a process group, cleanup signals,
 and child reaping. Cancellation, timeout, output overflow, and drop attempt the

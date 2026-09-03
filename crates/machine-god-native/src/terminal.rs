@@ -1,4 +1,4 @@
-//! Bounded, permission-gated foreground shell execution.
+//! Bounded, permission-gated foreground execution and background start.
 
 use std::error::Error;
 #[cfg(unix)]
@@ -18,7 +18,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use machine_god_core::{
-    BoxFuture, CancellationToken, Capability, PreparedToolCall, ProcessEnvironment, Tool, ToolCall,
+    BackgroundStartError, BackgroundStartErrorKind, BackgroundStartRequest, BoxFuture,
+    CancellationToken, Capability, PreparedToolCall, ProcessEnvironment, Tool, ToolCall,
     ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
 };
 use serde_json::{Value, json};
@@ -72,6 +73,8 @@ pub const MAX_TERMINAL_ENVIRONMENT_BYTES: usize = 256 * 1024;
 pub const TERMINAL_PROGRAM: &str = "/bin/sh";
 /// Stable environment profile installed by this slice.
 pub const TERMINAL_ENVIRONMENT_PROFILE: &str = "construction_snapshot";
+/// Stable permission profile for the fixed background process environment.
+pub const TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE: &str = "background_fixed";
 /// Default absolute execution timeout.
 pub const TERMINAL_DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 /// Maximum test-configurable execution timeout.
@@ -81,8 +84,10 @@ pub const TERMINAL_DEFAULT_MAX_ACTIVE_EXECUTIONS: usize = 4;
 /// Hard simultaneous execution limit.
 pub const TERMINAL_MAX_ACTIVE_EXECUTIONS: usize = 16;
 
-const TERMINAL_DESCRIPTION: &str =
+const TERMINAL_EXEC_DESCRIPTION: &str =
     "Run one foreground shell command from a workspace-relative directory";
+const TERMINAL_BACKGROUND_DESCRIPTION: &str =
+    "Run one foreground command or start one noninteractive background command";
 const PIPE_RETAINED_BYTES: usize = MAX_TERMINAL_RETAINED_OUTPUT_BYTES / 2;
 #[cfg(target_os = "linux")]
 const PIPE_READ_BYTES: usize = 16 * 1024;
@@ -482,13 +487,73 @@ pub trait TerminalExecutor: Send + Sync + 'static {
     ) -> TerminalExecution;
 }
 
+/// Trusted start boundary for one durably recorded background command.
+pub trait TerminalBackgroundStarter: Send + Sync + 'static {
+    /// Returns an inert start future. The implementation owns cancellation and
+    /// cleanup until its irreversible release boundary.
+    fn start(
+        &self,
+        request: BackgroundStartRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundOutcome, BackgroundStartError>>;
+}
+
+/// Display-only identity returned by an injected background starter.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct TerminalBackgroundOutcome {
+    id: u64,
+    pid: Option<core::num::NonZeroU32>,
+}
+
+impl TerminalBackgroundOutcome {
+    /// Constructs a nonzero durable display identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidRequest` when `id` is zero.
+    pub fn new(id: u64, pid: Option<core::num::NonZeroU32>) -> Result<Self, BackgroundStartError> {
+        if id == 0 {
+            return Err(BackgroundStartError::new(
+                BackgroundStartErrorKind::InvalidRequest,
+            ));
+        }
+        Ok(Self { id, pid })
+    }
+
+    /// Returns the durable numeric display identity.
+    #[must_use]
+    pub const fn id(self) -> u64 {
+        self.id
+    }
+
+    /// Returns the display-only process ID, when available.
+    #[must_use]
+    pub const fn pid(self) -> Option<core::num::NonZeroU32> {
+        self.pid
+    }
+}
+
+impl fmt::Debug for TerminalBackgroundOutcome {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TerminalBackgroundOutcome")
+            .finish_non_exhaustive()
+    }
+}
+
 struct EnvironmentSnapshot {
     #[cfg(unix)]
     entries: Vec<(OsString, OsString)>,
     sha256: String,
 }
 
-/// Native foreground terminal tool confined to one retained workspace root.
+struct TerminalBackground {
+    workspace: Box<str>,
+    environment: ProcessEnvironment,
+    starter: Arc<dyn TerminalBackgroundStarter>,
+}
+
+/// Native terminal tool confined to one retained workspace root.
 pub struct TerminalTool {
     #[cfg(unix)]
     root: OwnedFd,
@@ -497,6 +562,7 @@ pub struct TerminalTool {
     limits: TerminalLimits,
     active: Arc<AtomicUsize>,
     system_unsupported: bool,
+    background: Option<TerminalBackground>,
 }
 
 impl TerminalTool {
@@ -561,6 +627,33 @@ impl TerminalTool {
         Self::from_parts(root, environment, executor, limits, false)
     }
 
+    /// Constructs a bounded foreground tool with an explicitly injected
+    /// background-start authority.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed configuration failure for an invalid root, environment,
+    /// canonical workspace identity, or limit configuration.
+    #[cfg(unix)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_executor_and_background(
+        root: &Path,
+        environment: Vec<(OsString, OsString)>,
+        executor: Arc<dyn TerminalExecutor>,
+        limits: TerminalLimits,
+        canonical_workspace: String,
+        background_environment: ProcessEnvironment,
+        starter: Arc<dyn TerminalBackgroundStarter>,
+    ) -> Result<Self, TerminalConfigError> {
+        let root = open_workspace_root(root)?;
+        validate_background_workspace_identity(&root, &canonical_workspace)?;
+        Self::from_parts(root, environment, executor, limits, false)?.with_background(
+            canonical_workspace,
+            background_environment,
+            starter,
+        )
+    }
+
     #[cfg(unix)]
     #[allow(dead_code)] // Used by reference-host composition on integration.
     pub(crate) fn from_root_descriptor(root: OwnedFd) -> Result<Self, TerminalConfigError> {
@@ -575,6 +668,22 @@ impl TerminalTool {
             TerminalLimits::default(),
             !cfg!(target_os = "linux"),
         )
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn with_background(
+        mut self,
+        canonical_workspace: String,
+        environment: ProcessEnvironment,
+        starter: Arc<dyn TerminalBackgroundStarter>,
+    ) -> Result<Self, TerminalConfigError> {
+        validate_background_configuration(&canonical_workspace, &environment)?;
+        self.background = Some(TerminalBackground {
+            workspace: canonical_workspace.into_boxed_str(),
+            environment,
+            starter,
+        });
+        Ok(self)
     }
 
     #[cfg(unix)]
@@ -594,6 +703,7 @@ impl TerminalTool {
             limits,
             active: Arc::new(AtomicUsize::new(0)),
             system_unsupported,
+            background: None,
         })
     }
 }
@@ -601,6 +711,50 @@ impl TerminalTool {
 #[cfg(unix)]
 fn validate_limits(limits: TerminalLimits) -> Result<(), TerminalConfigError> {
     TerminalLimits::new(limits.timeout, limits.max_active_executions).map(|_| ())
+}
+
+#[cfg(unix)]
+fn validate_background_configuration(
+    workspace: &str,
+    environment: &ProcessEnvironment,
+) -> Result<(), TerminalConfigError> {
+    BackgroundStartRequest::new(":", workspace.to_owned())
+        .map_err(|_| TerminalConfigError::new(TerminalConfigErrorKind::InvalidRoot))?;
+    if environment.profile != TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE
+        || environment.sha256.len() != 64
+        || !environment
+            .sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(TerminalConfigError::new(
+            TerminalConfigErrorKind::InvalidEnvironment,
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn validate_background_workspace_identity(
+    root: &OwnedFd,
+    workspace: &str,
+) -> Result<(), TerminalConfigError> {
+    let workspace_path = Path::new(workspace);
+    let canonical_workspace = std::fs::canonicalize(workspace_path)
+        .map_err(|_| TerminalConfigError::new(TerminalConfigErrorKind::InvalidRoot))?;
+    let retained_metadata = rustix::fs::fstat(root)
+        .map_err(|_| TerminalConfigError::new(TerminalConfigErrorKind::InvalidRoot))?;
+    let named_metadata = rustix::fs::stat(&canonical_workspace)
+        .map_err(|_| TerminalConfigError::new(TerminalConfigErrorKind::InvalidRoot))?;
+    if canonical_workspace != workspace_path
+        || retained_metadata.st_dev != named_metadata.st_dev
+        || retained_metadata.st_ino != named_metadata.st_ino
+    {
+        return Err(TerminalConfigError::new(
+            TerminalConfigErrorKind::InvalidRoot,
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -695,6 +849,7 @@ fn terminal_name() -> ToolName {
 fn parse_arguments(
     arguments: &Value,
     require_complete: bool,
+    allow_start: bool,
 ) -> Result<TerminalArguments, ToolError> {
     let Value::Object(object) = arguments else {
         return Err(invalid_arguments());
@@ -709,9 +864,11 @@ fn parse_arguments(
     {
         return Err(invalid_arguments());
     }
-    if object.get("action").and_then(Value::as_str) != Some("exec") {
-        return Err(invalid_arguments());
-    }
+    let action = match object.get("action").and_then(Value::as_str) {
+        Some("exec") => TerminalAction::Exec,
+        Some("start") if allow_start => TerminalAction::Start,
+        _ => return Err(invalid_arguments()),
+    };
     let command = object
         .get("command")
         .and_then(Value::as_str)
@@ -731,6 +888,7 @@ fn parse_arguments(
         _ => return Err(invalid_arguments()),
     }
     Ok(TerminalArguments {
+        action,
         command: command.to_owned(),
         cwd: cwd.to_owned(),
     })
@@ -738,7 +896,7 @@ fn parse_arguments(
 
 fn canonical_arguments(arguments: &TerminalArguments) -> Value {
     json!({
-        "action": "exec",
+        "action": arguments.action.as_str(),
         "command": arguments.command,
         "cwd": arguments.cwd,
         "profile": "clean"
@@ -1552,21 +1710,104 @@ fn lock_deadline(state: &Mutex<DeadlineTimerState>) -> MutexGuard<'_, DeadlineTi
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TerminalAction {
+    Exec,
+    Start,
+}
+
+impl TerminalAction {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Exec => "exec",
+            Self::Start => "start",
+        }
+    }
+}
+
 #[derive(Clone)]
 struct TerminalArguments {
+    action: TerminalAction,
     command: String,
     cwd: String,
 }
 
+impl TerminalTool {
+    fn background_request(
+        &self,
+        arguments: &TerminalArguments,
+    ) -> Result<BackgroundStartRequest, ToolError> {
+        let background = self.background.as_ref().ok_or_else(invalid_arguments)?;
+        let cwd = absolute_background_cwd(&background.workspace, &arguments.cwd)?;
+        BackgroundStartRequest::new(arguments.command.clone(), cwd).map_err(|_| invalid_cwd())
+    }
+
+    async fn execute_background(
+        &self,
+        arguments: TerminalArguments,
+        cancellation: CancellationToken,
+    ) -> Result<ToolOutput, ToolError> {
+        check_cancellation(&cancellation)?;
+        let request = self.background_request(&arguments)?;
+        check_cancellation(&cancellation)?;
+        let background = self.background.as_ref().ok_or_else(invalid_arguments)?;
+        let handle = background
+            .starter
+            .start(request, cancellation)
+            .await
+            .map_err(map_background_start_error)?;
+        Ok(ToolOutput {
+            content: json!({
+                "action": "start",
+                "background_id": handle.id(),
+                "pid": handle.pid().map(core::num::NonZeroU32::get),
+                "status": "started"
+            }),
+            is_error: false,
+        })
+    }
+}
+
+fn absolute_background_cwd(workspace: &str, cwd: &str) -> Result<String, ToolError> {
+    if cwd == "." {
+        return Ok(workspace.to_owned());
+    }
+    let separator = usize::from(workspace != "/");
+    let length = workspace
+        .len()
+        .checked_add(separator)
+        .and_then(|length| length.checked_add(cwd.len()))
+        .ok_or_else(invalid_cwd)?;
+    if length > machine_god_core::MAX_BACKGROUND_CWD_BYTES {
+        return Err(invalid_cwd());
+    }
+    let mut absolute = String::with_capacity(length);
+    absolute.push_str(workspace);
+    if workspace != "/" {
+        absolute.push('/');
+    }
+    absolute.push_str(cwd);
+    Ok(absolute)
+}
+
 impl Tool for TerminalTool {
     fn spec(&self) -> ToolSpec {
+        let actions = if self.background.is_some() {
+            json!(["exec", "start"])
+        } else {
+            json!(["exec"])
+        };
         ToolSpec {
             name: terminal_name(),
-            description: TERMINAL_DESCRIPTION.to_owned(),
+            description: if self.background.is_some() {
+                TERMINAL_BACKGROUND_DESCRIPTION.to_owned()
+            } else {
+                TERMINAL_EXEC_DESCRIPTION.to_owned()
+            },
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "action": { "type": "string", "enum": ["exec"] },
+                    "action": { "type": "string", "enum": actions },
                     "command": { "type": "string" },
                     "cwd": { "type": "string", "default": "." },
                     "profile": { "type": "string", "enum": ["clean"], "default": "clean" }
@@ -1581,17 +1822,30 @@ impl Tool for TerminalTool {
         if call.name != terminal_name() {
             return Err(invalid_arguments());
         }
-        let parsed = parse_arguments(&call.arguments, false)?;
+        let parsed = parse_arguments(&call.arguments, false, self.background.is_some())?;
+        let working_directory = match parsed.action {
+            TerminalAction::Exec => parsed.cwd.clone(),
+            TerminalAction::Start => self.background_request(&parsed)?.cwd().to_owned(),
+        };
         let canonical = canonical_arguments(&parsed);
+        let environment = match parsed.action {
+            TerminalAction::Exec => ProcessEnvironment {
+                profile: TERMINAL_ENVIRONMENT_PROFILE.to_owned(),
+                sha256: self.environment.sha256.clone(),
+            },
+            TerminalAction::Start => self
+                .background
+                .as_ref()
+                .ok_or_else(invalid_arguments)?
+                .environment
+                .clone(),
+        };
         Ok(PreparedToolCall::new(
             Capability::Process {
                 program: TERMINAL_PROGRAM.to_owned(),
                 arguments: vec!["-c".to_owned(), parsed.command],
-                working_directory: parsed.cwd,
-                environment: ProcessEnvironment {
-                    profile: TERMINAL_ENVIRONMENT_PROFILE.to_owned(),
-                    sha256: self.environment.sha256.clone(),
-                },
+                working_directory,
+                environment,
             },
             canonical,
         ))
@@ -1604,12 +1858,22 @@ impl Tool for TerminalTool {
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
+            if self.background.is_some()
+                && arguments.get("action").and_then(Value::as_str) == Some("start")
+            {
+                check_cancellation(&cancellation)?;
+                let parsed = parse_arguments(&arguments, true, true)?;
+                if canonical_arguments(&parsed) != arguments {
+                    return Err(invalid_arguments());
+                }
+                return self.execute_background(parsed, cancellation).await;
+            }
             let started = Instant::now();
             check_cancellation(&cancellation)?;
             let deadline = started
                 .checked_add(self.limits.timeout)
                 .ok_or_else(execution_unavailable)?;
-            let parsed = parse_arguments(&arguments, true)?;
+            let parsed = parse_arguments(&arguments, true, self.background.is_some())?;
             if canonical_arguments(&parsed) != arguments {
                 return Err(invalid_arguments());
             }
@@ -2535,6 +2799,32 @@ fn busy() -> ToolError {
         "terminal execution capacity is busy",
         true,
     )
+}
+
+fn map_background_start_error(error: BackgroundStartError) -> ToolError {
+    match error.kind() {
+        BackgroundStartErrorKind::Capacity => busy(),
+        BackgroundStartErrorKind::Clock => fixed_tool_error(
+            ToolErrorKind::Unavailable,
+            "terminal_start_unavailable",
+            "terminal background start is unavailable",
+            true,
+        ),
+        BackgroundStartErrorKind::Persistence => fixed_tool_error(
+            ToolErrorKind::Execution,
+            "terminal_start_persistence_failed",
+            "terminal background start could not be recorded",
+            false,
+        ),
+        BackgroundStartErrorKind::Process => fixed_tool_error(
+            ToolErrorKind::Execution,
+            "terminal_start_failed",
+            "terminal background process could not start",
+            false,
+        ),
+        BackgroundStartErrorKind::Cancelled => cancelled_error(),
+        _ => executor_invariant(),
+    }
 }
 
 fn unsupported_platform() -> ToolError {

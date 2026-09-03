@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rustix::fd::OwnedFd;
 use rustix::fs::{FileType, Mode, OFlags};
@@ -12,6 +12,8 @@ use crate::{
 
 #[cfg(feature = "ai-gateway-http")]
 pub(crate) struct WorkspaceTools {
+    pub(crate) background_root: OwnedFd,
+    pub(crate) canonical_workspace: PathBuf,
     pub(crate) copy_file: CopyFileTool,
     pub(crate) create_folder: CreateFolderTool,
     pub(crate) delete_file: DeleteFileTool,
@@ -33,6 +35,7 @@ pub(crate) struct WorkspaceTools {
 
 pub(crate) struct WorkspaceRoot {
     descriptor: OwnedFd,
+    canonical_path: PathBuf,
 }
 
 #[derive(Clone, Copy)]
@@ -60,7 +63,20 @@ impl WorkspaceRoot {
             return Err(WorkspaceRootError);
         }
 
-        Ok(Self { descriptor })
+        let canonical_path =
+            std::fs::canonicalize(&lexical_root).map_err(|_| WorkspaceRootError)?;
+        let canonical_metadata =
+            rustix::fs::stat(&canonical_path).map_err(|_| WorkspaceRootError)?;
+        if canonical_metadata.st_dev != metadata.st_dev
+            || canonical_metadata.st_ino != metadata.st_ino
+        {
+            return Err(WorkspaceRootError);
+        }
+
+        Ok(Self {
+            descriptor,
+            canonical_path,
+        })
     }
 
     #[cfg(feature = "ai-gateway-http")]
@@ -78,6 +94,7 @@ impl WorkspaceRoot {
     where
         CloneDescriptor: FnMut(&OwnedFd) -> Result<OwnedFd, WorkspaceRootError>,
     {
+        let background_root = clone_descriptor(&self.descriptor)?;
         let copy_file_root = clone_descriptor(&self.descriptor)?;
         let create_folder_root = clone_descriptor(&self.descriptor)?;
         let delete_file_root = clone_descriptor(&self.descriptor)?;
@@ -95,6 +112,8 @@ impl WorkspaceRoot {
         let vision_root = clone_descriptor(&self.descriptor)?;
         let write_file_root = clone_descriptor(&self.descriptor)?;
         Ok(WorkspaceTools {
+            background_root,
+            canonical_workspace: self.canonical_path,
             copy_file: CopyFileTool::from_root_descriptor(copy_file_root),
             create_folder: CreateFolderTool::from_root_descriptor(create_folder_root),
             delete_file: DeleteFileTool::from_root_descriptor(delete_file_root),
@@ -127,7 +146,7 @@ mod tests {
     use super::{WorkspaceRoot, WorkspaceRootError};
 
     #[test]
-    fn workspace_composition_uses_exactly_sixteen_identity_preserving_clones() {
+    fn workspace_composition_uses_exactly_seventeen_identity_preserving_clones() {
         let root = WorkspaceRoot::open(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
             .unwrap_or_else(|_| panic!("open workspace root for clone evidence"));
         let original_metadata = rustix::fs::fstat(root.descriptor()).unwrap();
@@ -149,7 +168,15 @@ mod tests {
             })
             .unwrap_or_else(|_| panic!("compose workspace tools for clone evidence"));
 
-        assert_eq!(clone_identities, vec![original_identity; 16]);
+        assert_eq!(clone_identities, vec![original_identity; 17]);
+        let background_metadata = rustix::fs::fstat(&tools.background_root).unwrap();
+        assert_eq!(
+            (
+                i128::from(background_metadata.st_dev),
+                i128::from(background_metadata.st_ino),
+            ),
+            original_identity
+        );
         let terminal_metadata = rustix::fs::fstat(&tools.terminal_root).unwrap();
         assert_eq!(
             (
@@ -170,7 +197,7 @@ mod tests {
 
     #[test]
     fn every_descriptor_clone_failure_aborts_workspace_composition() {
-        for failing_attempt in 1..=16 {
+        for failing_attempt in 1..=17 {
             let root = WorkspaceRoot::open(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
                 .unwrap_or_else(|_| panic!("open workspace root for clone failure evidence"));
             let attempts = Cell::new(0);

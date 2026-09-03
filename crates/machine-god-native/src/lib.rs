@@ -413,11 +413,13 @@ pub use terminal::{
     MAX_TERMINAL_ENVIRONMENT_KEY_BYTES, MAX_TERMINAL_ENVIRONMENT_VALUE_BYTES,
     MAX_TERMINAL_PRODUCED_OUTPUT_BYTES, MAX_TERMINAL_RETAINED_OUTPUT_BYTES,
     MAX_TERMINAL_SERIALIZED_ARGUMENT_BYTES, MAX_TERMINAL_SERIALIZED_RESULT_BYTES,
-    TERMINAL_DEFAULT_MAX_ACTIVE_EXECUTIONS, TERMINAL_DEFAULT_TIMEOUT, TERMINAL_ENVIRONMENT_PROFILE,
-    TERMINAL_MAX_ACTIVE_EXECUTIONS, TERMINAL_MAX_TIMEOUT, TERMINAL_PROGRAM, TERMINAL_TOOL_NAME,
-    TerminalCapturedOutput, TerminalConfigError, TerminalConfigErrorKind, TerminalExecution,
-    TerminalExecutionOutcome, TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor,
-    TerminalExecutorError, TerminalExecutorErrorKind, TerminalLimits, TerminalTool,
+    TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TERMINAL_DEFAULT_MAX_ACTIVE_EXECUTIONS,
+    TERMINAL_DEFAULT_TIMEOUT, TERMINAL_ENVIRONMENT_PROFILE, TERMINAL_MAX_ACTIVE_EXECUTIONS,
+    TERMINAL_MAX_TIMEOUT, TERMINAL_PROGRAM, TERMINAL_TOOL_NAME, TerminalBackgroundOutcome,
+    TerminalBackgroundStarter, TerminalCapturedOutput, TerminalConfigError,
+    TerminalConfigErrorKind, TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest,
+    TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError, TerminalExecutorErrorKind,
+    TerminalLimits, TerminalTool,
 };
 pub use terminal_tape_replay::{
     MAX_TERMINAL_TAPE_ARTIFACT_BYTES, MAX_TERMINAL_TAPE_BYTES, MAX_TERMINAL_TAPE_FRAMES_DIR_FRAMES,

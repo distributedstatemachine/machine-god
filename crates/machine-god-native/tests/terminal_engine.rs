@@ -7,11 +7,13 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use machine_god_core::{
-    Capability, ContentBlock, Engine, EngineEvent, Message, ModelEvent, PermissionDecision,
-    PermissionGrantScope, Role, SessionId, SessionIncarnationId, StopReason, Tool, ToolCall,
-    ToolCallId, ToolName, ToolOutput, TurnEvent,
+    BackgroundStartError, BackgroundStartRequest, BoxFuture, Capability, ContentBlock, Engine,
+    EngineEvent, Message, ModelEvent, PermissionDecision, PermissionGrantScope, ProcessEnvironment,
+    Role, SessionId, SessionIncarnationId, StopReason, Tool, ToolCall, ToolCallId, ToolName,
+    ToolOutput, TurnEvent,
 };
 use machine_god_native::{
+    TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TerminalBackgroundOutcome, TerminalBackgroundStarter,
     TerminalCapturedOutput, TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest,
     TerminalExecutionStatus, TerminalExecutor, TerminalLimits, TerminalTool,
 };
@@ -56,7 +58,7 @@ impl TerminalExecutor for FakeExecutor {
     }
 }
 
-fn provider(name: &str) -> ScriptedModelProvider {
+fn provider(name: &str, action: &str) -> ScriptedModelProvider {
     ScriptedModelProvider::new(
         name,
         [
@@ -66,7 +68,7 @@ fn provider(name: &str) -> ScriptedModelProvider {
                         id: ToolCallId::new("terminal-call").unwrap(),
                         name: ToolName::new("terminal").unwrap(),
                         arguments: json!({
-                            "action": "exec",
+                            "action": action,
                             "command": PRIVATE_COMMAND,
                         }),
                     },
@@ -94,6 +96,50 @@ fn terminal(root: &std::path::Path, executor: FakeExecutor) -> TerminalTool {
         ],
         Arc::new(executor),
         TerminalLimits::default(),
+    )
+    .unwrap()
+}
+
+#[derive(Clone, Default)]
+struct FakeBackgroundStarter {
+    calls: Arc<AtomicUsize>,
+}
+
+impl TerminalBackgroundStarter for FakeBackgroundStarter {
+    fn start(
+        &self,
+        request: BackgroundStartRequest,
+        _cancellation: machine_god_core::CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundOutcome, BackgroundStartError>> {
+        assert_eq!(request.command(), PRIVATE_COMMAND);
+        let calls = Arc::clone(&self.calls);
+        Box::pin(async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            TerminalBackgroundOutcome::new(17, None)
+        })
+    }
+}
+
+fn terminal_with_background(
+    root: &std::path::Path,
+    executor: FakeExecutor,
+    starter: FakeBackgroundStarter,
+) -> TerminalTool {
+    TerminalTool::with_executor_and_background(
+        root,
+        vec![(OsString::from("PATH"), OsString::from("/usr/bin:/bin"))],
+        Arc::new(executor),
+        TerminalLimits::default(),
+        std::fs::canonicalize(root)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned(),
+        ProcessEnvironment {
+            profile: TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE.to_owned(),
+            sha256: "b".repeat(64),
+        },
+        Arc::new(starter),
     )
     .unwrap()
 }
@@ -136,7 +182,7 @@ fn second_request_tool_output(provider: &ScriptedModelProvider) -> (Message, Too
 #[test]
 fn denial_authorizes_exact_process_identity_without_executor_or_tool_events() {
     let temporary = TemporaryDirectory::new("engine-denied");
-    let provider = provider("terminal-denied");
+    let provider = provider("terminal-denied", "exec");
     let store = InMemorySessionStore::new();
     let policy =
         ScriptedPermissionHandler::new([PermissionStep::Decision(PermissionDecision::Deny {
@@ -191,7 +237,7 @@ fn denial_authorizes_exact_process_identity_without_executor_or_tool_events() {
 #[test]
 fn allow_precedes_one_execution_and_persists_the_exact_bounded_output() {
     let temporary = TemporaryDirectory::new("engine-allow");
-    let provider = provider("terminal-allowed");
+    let provider = provider("terminal-allowed", "exec");
     let store = InMemorySessionStore::new();
     let policy =
         ScriptedPermissionHandler::new([PermissionStep::Decision(PermissionDecision::Allow {
@@ -252,6 +298,131 @@ fn allow_precedes_one_execution_and_persists_the_exact_bounded_output() {
                 "stdout_lossy": false,
                 "stderr_lossy": false,
                 "duration_ms": 3,
+            }),
+            is_error: false,
+        }
+    );
+    assert_eq!(store.record(&session_id).unwrap().messages[2], message);
+}
+
+#[test]
+fn background_start_denial_has_zero_starter_and_foreground_effects() {
+    let temporary = TemporaryDirectory::new("engine-start-denied");
+    let provider = provider("terminal-start-denied", "start");
+    let store = InMemorySessionStore::new();
+    let policy =
+        ScriptedPermissionHandler::new([PermissionStep::Decision(PermissionDecision::Deny {
+            reason: "denied by test policy".to_owned(),
+        })]);
+    let executor = FakeExecutor::default();
+    let starter = FakeBackgroundStarter::default();
+    let tool = terminal_with_background(temporary.path(), executor.clone(), starter.clone());
+    let expected = tool
+        .prepare(call(
+            "terminal",
+            json!({ "action": "start", "command": PRIVATE_COMMAND }),
+        ))
+        .unwrap()
+        .capability()
+        .unwrap()
+        .clone();
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store)
+        .permission_handler(policy.clone())
+        .tool(tool)
+        .build()
+        .unwrap();
+
+    let (_, events) = collect(&engine, "terminal-start-denied-session");
+
+    assert_eq!(policy.requests()[0].capability, expected);
+    assert_eq!(starter.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+    assert!(events.iter().all(|event| !matches!(
+        event.payload,
+        TurnEvent::ToolStarted { .. } | TurnEvent::ToolFinished { .. }
+    )));
+    assert_eq!(
+        second_request_tool_output(&provider).1,
+        ToolOutput {
+            content: json!({
+                "code": "permission_denied",
+                "message": "tool execution was denied by policy",
+            }),
+            is_error: true,
+        }
+    );
+}
+
+#[test]
+fn background_start_runs_once_after_permission_and_persists_display_identity() {
+    let temporary = TemporaryDirectory::new("engine-start-allowed");
+    let provider = provider("terminal-start-allowed", "start");
+    let store = InMemorySessionStore::new();
+    let policy =
+        ScriptedPermissionHandler::new([PermissionStep::Decision(PermissionDecision::Allow {
+            scope: PermissionGrantScope::Once,
+        })]);
+    let executor = FakeExecutor::default();
+    let starter = FakeBackgroundStarter::default();
+    let tool = terminal_with_background(temporary.path(), executor.clone(), starter.clone());
+    let expected = tool
+        .prepare(call(
+            "terminal",
+            json!({ "action": "start", "command": PRIVATE_COMMAND }),
+        ))
+        .unwrap()
+        .capability()
+        .unwrap()
+        .clone();
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store.clone())
+        .permission_handler(policy.clone())
+        .tool(tool)
+        .build()
+        .unwrap();
+
+    let (session_id, events) = collect(&engine, "terminal-start-allowed-session");
+
+    assert_eq!(policy.requests()[0].capability, expected);
+    let Capability::Process {
+        working_directory,
+        environment,
+        ..
+    } = expected
+    else {
+        panic!("start must request process permission")
+    };
+    assert_eq!(
+        working_directory,
+        std::fs::canonicalize(temporary.path())
+            .unwrap()
+            .to_str()
+            .unwrap()
+    );
+    assert_eq!(environment.profile, TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE);
+    assert_eq!(starter.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+    let resolved = events
+        .iter()
+        .position(|event| matches!(event.payload, TurnEvent::PermissionResolved { .. }))
+        .unwrap();
+    let tool_started_index = events
+        .iter()
+        .position(|event| matches!(event.payload, TurnEvent::ToolStarted { .. }))
+        .unwrap();
+    assert!(resolved < tool_started_index);
+    let (message, output) = second_request_tool_output(&provider);
+    assert_eq!(
+        output,
+        ToolOutput {
+            content: json!({
+                "action": "start",
+                "background_id": 17,
+                "pid": null,
+                "status": "started",
             }),
             is_error: false,
         }

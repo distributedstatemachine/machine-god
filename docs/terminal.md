@@ -1,16 +1,18 @@
-# Native `terminal` foreground-exec contract
+# Native `terminal` command contract
 
-The native tool executes one bounded foreground shell command after explicit
-process authorization. It is registered by the reference host and has no
-top-level CLI command.
+The native tool executes one bounded foreground shell command or starts one
+noninteractive background shell command after explicit process authorization.
+It is registered by the reference host and has no top-level CLI command.
 
 ## Boundary
 
-The tool implements only the foreground `exec` subset of fx's `terminal`
-tool. One approved call starts one fixed shell in one workspace-relative
-starting directory, captures bounded standard output and error separately, and
-waits for the direct child to terminate. It is a native library tool registered
-by the reference host; it adds no top-level CLI command.
+The reference-host tool implements the `exec` and bounded `start` subsets of
+fx's `terminal` tool. `exec` captures bounded standard output and error and
+waits for the direct child. `start` durably records and releases one
+noninteractive command through the native background supervisor and returns
+its display identity without waiting for command completion. Standalone public
+terminal constructors remain exec-only unless a trusted background starter is
+explicitly injected.
 
 The model-facing input is:
 
@@ -23,7 +25,8 @@ The model-facing input is:
 }
 ```
 
-`action` and `command` are required. `action` accepts only `"exec"`.
+`action` and `command` are required. The reference host accepts `"exec"` or
+`"start"`; an exec-only construction accepts only `"exec"`.
 `cwd` is optional and defaults to `"."`. `profile` is optional and accepts
 only `"clean"`; omission has the same meaning. Unknown or duplicate fields,
 mistyped values, an empty command, and a command over 32 KiB reject. The
@@ -40,17 +43,18 @@ case-folded. A literal component such as `~cache` is an ordinary valid name,
 whether leading or nested; only the exact component `~` rejects. Preparation
 performs no filesystem, environment, process, thread, or network effect.
 
-The exact tool description is:
+The reference-host tool description is:
 
 ```text
-Run one foreground shell command from a workspace-relative directory
+Run one foreground command or start one noninteractive background command
 ```
 
-The tool deliberately excludes `start`, `read`, `screen`, `write`, `wait`,
+An exec-only construction retains its earlier foreground-only description and
+schema. Both forms deliberately exclude `read`, `screen`, `write`, `wait`,
 `monitor`, `inspect`, `list`, `resize`, `signal`, and `close`; PTYs; interactive
-stdin; background or durable sessions; streaming output; artifacts; custom or
-login shells; user shell profiles; retries; external working directories; and
-benchmark workloads. It makes no fx-equivalence or product-performance claim.
+stdin; managed background output; artifacts; custom or login shells; user shell
+profiles; retries; external working directories; and benchmark workloads. They
+make no fx-equivalence or product-performance claim.
 
 ## Permission and exact execution agreement
 
@@ -61,7 +65,7 @@ immutable execution identity:
 Capability::Process {
     program: "/bin/sh",
     arguments: ["-c", canonical_command],
-    working_directory: canonical_cwd,
+    working_directory: authorized_cwd,
     environment: {
         profile: "construction_snapshot",
         sha256: lower_hex_digest,
@@ -69,11 +73,13 @@ Capability::Process {
 }
 ```
 
-The environment digest identifies the exact bounded snapshot retained when the
-tool is constructed; it never exposes raw keys or values. Construction accepts
-at most 512 entries, 1,024 bytes per key, 16 KiB per value, and 256 KiB in
-aggregate. Keys must be nonempty, contain neither `=` nor NUL, and values must
-contain no NUL. Entry validity plus individual and aggregate sizes are checked
+For `exec`, `authorized_cwd` is the canonical workspace-relative argument and
+the profile is `construction_snapshot`. The environment digest identifies the
+exact bounded snapshot retained when the tool is constructed; it never exposes
+raw keys or values. Construction accepts at most 512 entries, 1,024 bytes per
+key, 16 KiB per value, and 256 KiB in aggregate. Keys must be nonempty, contain
+neither `=` nor NUL, and values must contain no NUL. Entry validity plus
+individual and aggregate sizes are checked
 before sorting, so a rejectable snapshot cannot trigger sort work outside the
 stated construction bounds. Valid entries are then sorted by raw platform
 spelling before length-prefixed SHA-256 hashing, so insertion order cannot
@@ -81,8 +87,17 @@ change permission identity. The system executor clears its environment and
 installs exactly that snapshot. The model cannot add, remove, or replace an
 entry.
 
+For `start`, `authorized_cwd` is the absolute canonical workspace joined with
+the validated relative argument, bounded to 4,096 UTF-8 bytes. Its profile is
+`background_fixed`, and its digest identifies exactly the supervisor's fixed
+`LANG=C`, `LC_ALL=C`, and `PATH=/usr/bin:/bin` environment. The capability
+therefore authorizes the identity actually submitted to the background
+supervisor rather than the ambient foreground snapshot. The injected
+background constructor binds its canonical path to the retained workspace
+descriptor by device and inode before accepting the starter.
+
 The stable serialized capability therefore contains the fixed program, exact
-two arguments, canonical cwd, profile name, and digest. Successful preparation
+two arguments, authorized cwd, profile name, and digest. Successful preparation
 returns those same canonical model arguments. Direct `execute` reparses and
 revalidates all fields and rejects any canonical-argument, program, argument,
 cwd, profile, or digest divergence before filesystem access, worker creation,
@@ -115,17 +130,54 @@ executor is therefore Linux-only. Public `TerminalTool::open` and
 non-Linux targets fails with the fixed unsupported category before filesystem
 lookup, environment inspection, thread creation, or spawn.
 
-Reference-host composition is a deliberate private exception: it retains the
-workspace authority and advertises `terminal` as defined by the canonical
-[tool catalog](native-reference-host.md#tool-catalog). On a non-Linux host,
-strict preparation and permission still occur through the engine; an allowed
-execution strictly reparses the canonical arguments and then returns the fixed
-unsupported error before cwd lookup, worker or guardian creation, or spawn. The
-exported contracts remain portable, and a trusted injected `TerminalExecutor`
-may implement the same ownership contract for deterministic tests or a future
-separately reviewed helper.
+Reference-host composition retains the workspace authority and advertises
+`terminal` as defined by the canonical
+[tool catalog](native-reference-host.md#tool-catalog). On macOS, `exec` returns
+its fixed unsupported error after strict preparation and permission. `start`
+is supported on Linux and macOS through the background helper. On other
+platforms the complete reference host is unavailable. The exported exec
+contract remains portable through a trusted injected `TerminalExecutor`, and a
+trusted injected `TerminalBackgroundStarter` may implement the documented
+background ownership contract.
 
-## Fixed execution protocol
+## Background start protocol
+
+`start` accepts exactly the common `action`, `command`, `cwd`, and `profile`
+fields. Shell, backend, return condition, wait ceiling, dimensions, initial
+monitors, caller-selected session IDs, and every interactive or control field
+reject as unknown. Preparation is effect-free. Execution revalidates the exact
+canonical object, checks cancellation, derives the bounded absolute cwd, and
+then delegates to the one host-owned supervisor. It does not consume a
+foreground execution slot or create a foreground deadline, guardian, output
+buffer, pipe, reader, or executor call.
+
+The supervisor owns the start commit, cleanup, capacity, persistence, worker,
+and cancellation protocol defined by
+[background-supervisor.md](background-supervisor.md). Cancellation before
+delegation has zero starter effects. A supervisor-reported cancellation returns
+the fixed terminal cancellation error. Once the supervisor returns success,
+the durable running record and released process are committed; cancellation
+observed afterward cannot relabel that success.
+
+The successful output is exactly:
+
+```json
+{
+  "action": "start",
+  "background_id": 7,
+  "pid": 1234,
+  "status": "started"
+}
+```
+
+`background_id` is a nonzero durable display identifier. `pid` is a nonzero
+display-only process identifier or `null`; neither value grants process-control
+authority. Success means the supervisor completed its release contract, not
+that the shell is still running when the result is observed. Capacity and
+clock failures are retryable fixed unavailable errors. Persistence, process,
+and invariant failures are fixed redacted execution errors.
+
+## Foreground execution protocol
 
 Production launches exactly `/bin/sh` without `PATH` lookup and supplies the
 exact argument vector `[/bin/sh, -c, command]`. It is not a login shell and no
@@ -264,7 +316,7 @@ the same bounded structured object with `is_error: true`; these are command
 outcomes, not reflected operating-system diagnostics. Spawn, wait, pipe,
 invariant, and unsupported failures use fixed redacted tool-error categories.
 
-## Cancellation, timeout, and ownership
+## Foreground cancellation, timeout, and ownership
 
 Cancellation is checked before cwd acquisition, before capacity and worker
 creation, in the serialized final-spawn gate, after spawn failure, while
@@ -335,6 +387,11 @@ rendering, the final cancellation check, and public return.
 
 Focused and workspace evidence must cover strict schema and
 canonical arguments; exact capability serde and policy/execution equality;
+the injected and reference-host `start` schema; absolute background cwd and
+fixed environment identity; retained-root/path identity binding; rejection of
+interactive and control fields; zero-effect pre-cancellation; committed
+success despite later cancellation; nonzero/redacted display identities; every
+fixed supervisor-error mapping; foreground-capacity and executor bypass; and
 denial with zero effects; retained-root cwd and symlink/replacement races;
 shell quoting, newlines, fixed program/argv, null stdin, and exact environment;
 separate streams, invalid UTF-8, pipe pressure, output and serialized caps;

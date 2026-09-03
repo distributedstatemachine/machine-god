@@ -186,6 +186,14 @@ fn directory_is_empty(path: &Path) -> bool {
     fs::read_dir(path).unwrap().next().is_none()
 }
 
+fn contains_only_background_namespace(path: &Path) -> bool {
+    let mut entries = fs::read_dir(path).unwrap();
+    let Some(entry) = entries.next() else {
+        return false;
+    };
+    entry.unwrap().file_name() == "background-v1" && entries.next().is_none()
+}
+
 fn build_error<T>(
     result: Result<T, NativeReferenceHostBuildError>,
 ) -> NativeReferenceHostBuildError {
@@ -285,7 +293,7 @@ fn prepared_constructor_consumes_retained_workspace_and_state_identities() {
 
     assert!(transport.request_bodies().is_empty());
     assert_eq!(prompter.count(), 0);
-    assert!(directory_is_empty(&retained_state));
+    assert!(contains_only_background_namespace(&retained_state));
     assert!(directory_is_empty(&state_root));
     for forbidden in [
         "retained-identities",
@@ -437,7 +445,7 @@ fn prepared_production_constructor_discovers_credentials_only_after_preparation(
     );
     assert!(!format!("{host:?}").contains(token));
     assert_eq!(prompter.count(), 0);
-    assert!(directory_is_empty(&state_root));
+    assert!(contains_only_background_namespace(&state_root));
 }
 
 #[test]
@@ -463,7 +471,7 @@ fn existing_path_constructors_remain_no_create_and_keep_root_before_credential_o
     .unwrap();
     assert!(transport.request_bodies().is_empty());
     assert_eq!(prompter.count(), 0);
-    assert!(directory_is_empty(&sessions));
+    assert!(contains_only_background_namespace(&sessions));
     drop(host);
 
     let missing_workspace = temporary.path().join("MISSING_WORKSPACE_SENTINEL");
@@ -481,7 +489,7 @@ fn existing_path_constructors_remain_no_create_and_keep_root_before_credential_o
         NativeReferenceHostBuildErrorKind::WorkspaceRoot
     );
     assert!(!missing_workspace.exists());
-    assert!(directory_is_empty(&sessions));
+    assert!(contains_only_background_namespace(&sessions));
 
     let missing_sessions = temporary.path().join("MISSING_SESSION_ROOT_SENTINEL");
     let session_error = build_error(NativeReferenceHost::compose_ai_gateway_http(

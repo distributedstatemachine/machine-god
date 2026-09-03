@@ -2,8 +2,9 @@
 
 The background supervisor is the bounded producer for the persisted history
 read by the top-level [`background` command](background-cli.md). It is a
-host-owned library capability. This slice adds no public CLI grammar and does
-not turn a persisted PID into process-control authority.
+host-owned library capability. The reference host exposes it only through the
+noninteractive `terminal` action `start`; it adds no public top-level CLI
+grammar and does not turn a persisted PID into process-control authority.
 
 ## Ownership and request boundary
 
@@ -56,6 +57,12 @@ Environment-key
 uniqueness is validated in one pass through a borrowed-key ordered set; the
 512-entry bound does not trigger a quadratic prefix scan. Every invalid path
 returns the same fixed environment category.
+
+The supervisor derives one redacted `ProcessEnvironment` identity from the
+accepted environment by sorting raw entries and hashing length-prefixed key and
+value bytes. Reference-host terminal preparation uses profile
+`background_fixed` and that digest, so permission policy sees the environment
+the helper will install without receiving any raw entry.
 
 The public start future is inert until first poll. Dropping it before first
 poll has no store, process, clock, allocation-ID, thread, or task effect.
@@ -352,9 +359,9 @@ process syscall.
 
 ## Deferred surface
 
-Future slices may connect this capability to terminal `action: "start"`, add
-managed logs and read/wait operations, or design an authenticated durable
-worker protocol. Top-level `background` remains inspection-only. Interactive
+The bounded terminal `start` entrypoint is delivered. Future slices may add
+managed logs and read/wait operations or design an authenticated durable worker
+protocol. Top-level `background` remains inspection-only. Interactive
 input, output streaming, URL detection, persisted-PID signaling, detached
 survival, cross-process stop, crash adoption, setsid containment, and
 fx-equivalence or performance claims remain out of scope.
