@@ -26,7 +26,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33682877396` (`GREEN`)
 - Main Benchmark evidence: `33682877367` (`GREEN`)
 - Active branch: `agent/m03-terminal-start-ci-race`
-- Active phase: `remediating the exact-main Linux x86 terminal deadline callback admission race`
+- Active phase: `remediating the cycle-24 terminal deadline recovery retry-storm finding`
 - Next gate: `pass the complete replacement gate and fresh reviews, then require exact feature and main CI plus artifact-producing Benchmark success`
 <!-- canonical-live-status:end -->
 
@@ -50,9 +50,10 @@ remains a separate non-product task.
 The reviewed terminal-start candidate passed its exact feature gates and was
 fast-forwarded without force. Exact-main Linux x86 testing then exposed a
 scheduler race in a deadline regression: the test retried while the deadline
-wake callback still legitimately retained its admission slot. The replacement
-waits on actual slot reclamation within a fixed bound; no platform waiver or
-unsupported-status note is accepted as a substitute for a green replacement.
+wake callback still legitimately retained its admission slot. Cycle 24 then
+rejected a yield-only recovery probe that could churn work and mask slow
+reclamation. The replacement uses a fixed attempt budget and passive backoff;
+no platform waiver or unsupported-status note substitutes for a green gate.
 
 ## Architecture ownership
 

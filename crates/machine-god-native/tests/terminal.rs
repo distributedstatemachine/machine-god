@@ -1987,6 +1987,9 @@ fn completed_public_execution_releases_capacity_for_the_next_call() {
 
 #[test]
 fn absolute_deadline_drops_a_permanently_pending_executor_and_releases_capacity() {
+    const MAX_CAPACITY_RECOVERY_ATTEMPTS: usize = 256;
+    const CAPACITY_RECOVERY_BACKOFF: Duration = Duration::from_millis(1);
+
     let temporary = TemporaryDirectory::new("pending-timeout");
     let executor = FakeExecutor::new(Mode::Pending);
     let tool = TerminalTool::with_executor(
@@ -1999,7 +2002,7 @@ fn absolute_deadline_drops_a_permanently_pending_executor_and_releases_capacity(
     let started = Instant::now();
 
     for command in ["first", "second"] {
-        let recovery_deadline = Instant::now() + Duration::from_secs(2);
+        let mut busy_attempts = 0;
         let output = loop {
             match futures_executor::block_on(tool.execute(
                 context(),
@@ -2011,17 +2014,19 @@ fn absolute_deadline_drops_a_permanently_pending_executor_and_releases_capacity(
                     assert_eq!(error.kind, ToolErrorKind::Unavailable);
                     assert!(error.retryable);
                     assert!(
-                        Instant::now() < recovery_deadline,
-                        "deadline callback did not release terminal capacity"
+                        busy_attempts < MAX_CAPACITY_RECOVERY_ATTEMPTS,
+                        "deadline callback exceeded the bounded capacity recovery budget"
                     );
+                    busy_attempts += 1;
                     // The timer callback intentionally retains admission until
-                    // its wake tail returns. Wait for that authoritative
-                    // release instead of assuming the caller wins the race.
-                    std::thread::yield_now();
+                    // its wake tail returns. Back off passively with a fixed
+                    // attempt budget instead of racing it with a busy loop.
+                    std::thread::sleep(CAPACITY_RECOVERY_BACKOFF);
                 }
                 Err(error) => panic!("deadline execution failed: {error}"),
             }
         };
+        assert!(busy_attempts <= MAX_CAPACITY_RECOVERY_ATTEMPTS);
         assert!(output.is_error);
         assert_eq!(output.content["status"], "timed_out");
         assert_eq!(output.content["exit_code"], Value::Null);
