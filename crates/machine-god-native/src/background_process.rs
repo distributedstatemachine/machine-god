@@ -3475,6 +3475,24 @@ mod process_regression_tests {
         }
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    struct TestProcessGroupGuard {
+        child: Option<Child>,
+        reap_permit: Option<ChildReapPermit>,
+        group: rustix::process::Pid,
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    impl Drop for TestProcessGroupGuard {
+        fn drop(&mut self) {
+            if self.child.is_some() {
+                let _ =
+                    rustix::process::kill_process_group(self.group, rustix::process::Signal::KILL);
+                let _ = terminate_and_reap_or_quarantine(&mut self.child, &mut self.reap_permit);
+            }
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn environment_duplicate_validation_handles_exact_shared_prefix_bound() {
@@ -4563,27 +4581,29 @@ mod process_regression_tests {
     fn lingering_group_cleanup_uses_constant_global_snapshots() {
         let directory = TestDirectory::new("snapshot-count");
         let marker = directory.0.join("descendant.pid");
-        let command = "trap '' TERM; /bin/sh -c 'trap \"\" TERM; printf \"%s\" \"$$\" > descendant.pid; while :; do :; done' & while [ ! -s descendant.pid ]; do :; done; exit 7";
-        let mut reap_permit =
-            Some(reserve_child_reap_authority().expect("reserve test child reap authority"));
-        let mut child = Some(
-            Command::new("/bin/sh")
-                .args(["-c", command])
-                .current_dir(&directory.0)
-                .env_clear()
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .process_group(0)
-                .spawn()
-                .expect("spawn test process group"),
-        );
-        let leader = NonZeroU32::new(child.as_ref().expect("test child retained").id())
-            .expect("positive process-group leader");
+        let command = "trap '' TERM; /bin/sh -c 'trap \"\" TERM; printf \"%s\" \"$$\" > descendant.pid; exec /bin/sleep 30' & exit 7";
+        let reap_permit =
+            reserve_child_reap_authority().expect("reserve test child reap authority");
+        let child = Command::new("/bin/sh")
+            .args(["-c", command])
+            .current_dir(&directory.0)
+            .env_clear()
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .expect("spawn test process group");
+        let leader = NonZeroU32::new(child.id()).expect("positive process-group leader");
         let group = rustix::process::Pid::from_raw(
             i32::try_from(leader.get()).expect("test PID fits signed range"),
         )
         .expect("positive process group");
+        let mut process = TestProcessGroupGuard {
+            child: Some(child),
+            reap_permit: Some(reap_permit),
+            group,
+        };
         #[cfg(target_os = "linux")]
         let authority = GroupSnapshotAuthority::open().expect("open group snapshot authority");
         #[cfg(target_os = "macos")]
@@ -4591,15 +4611,18 @@ mod process_regression_tests {
         let deadline = Instant::now() + Duration::from_secs(5);
         let mut observation = ObservationBackoff::retry();
         loop {
-            let descendant_is_visible = marker.exists()
+            let fixture_is_ready = matches!(
+                observe_leader(group),
+                Ok(Some(BackgroundProcessExit::Exited(7)))
+            ) && marker.exists()
                 && group_members(&authority, group)
                     .is_ok_and(|members| members.iter().any(|member| member.pid != group));
-            if descendant_is_visible {
+            if fixture_is_ready {
                 break;
             }
             assert!(
                 Instant::now() < deadline,
-                "descendant did not become process-table visible"
+                "exited leader and descendant did not become process-table visible"
             );
             observation.sleep_until_and_advance(deadline);
         }
@@ -4609,8 +4632,8 @@ mod process_regression_tests {
         reset_group_snapshots_for_test(leader);
 
         cleanup_child_with_expected(
-            &mut child,
-            &mut reap_permit,
+            &mut process.child,
+            &mut process.reap_permit,
             group,
             Duration::ZERO,
             Some(BackgroundProcessExit::Exited(7)),

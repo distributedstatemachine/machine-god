@@ -217,6 +217,32 @@ class CiChangeClassificationTests(unittest.TestCase):
         self.assertIn('expected="skipped"', gate)
         self.assertIn('expected="success"', gate)
 
+    def test_apple_native_tests_serialize_only_test_threads(self) -> None:
+        native_tests = job(self.ci, "native-target-tests")
+        apple_condition = "if: ${{ endsWith(matrix.target, '-apple-darwin') }}"
+        non_apple_condition = (
+            "if: ${{ !endsWith(matrix.target, '-apple-darwin') }}"
+        )
+        serial_suffix = '--target "${{ matrix.target }}" -- --test-threads=1'
+
+        self.assertEqual(native_tests.count(apple_condition), 1)
+        self.assertEqual(native_tests.count(non_apple_condition), 1)
+        self.assertEqual(native_tests.count(serial_suffix), 1)
+        self.assertIn(
+            "Test Apple target natively without shared process-table contention",
+            native_tests,
+        )
+
+        non_apple_step = re.search(
+            r"(?ms)^      - name: Test target natively\n(?P<body>.*?)"
+            r"(?=^      - name:|\Z)",
+            native_tests,
+        )
+        self.assertIsNotNone(non_apple_step)
+        assert non_apple_step is not None
+        self.assertIn(non_apple_condition, non_apple_step.group("body"))
+        self.assertNotIn("--test-threads=1", non_apple_step.group("body"))
+
     def test_release_smoke_canonicalizes_its_temporary_workspace(self) -> None:
         release_smoke = step_script(self.ci, "Release smoke test")
         self.assertIn(

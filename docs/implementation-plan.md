@@ -21,43 +21,29 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `52`
-- Delivered main: `1d8ef7b1b055d352c138628d285ac35bcc75715f`
-- Main CI: `33682877396` (`GREEN`)
-- Main Benchmark evidence: `33682877367` (`GREEN`)
-- Active branch: `agent/m03-terminal-start-ci-race`
-- Active phase: `sealing the cycle-25 review after exact feature-branch remote success`
-- Next gate: `push the documentation-only review seal, then fast-forward main without force and require exact full CI plus artifact-producing Benchmark success`
+- Delivered slices: `53`
+- Delivered main: `ceed855596aed64724b9d035e63a9c166244fab0`
+- Main CI: `33785464027` (`GREEN`)
+- Main Benchmark evidence: `33785464048` (`GREEN`)
+- Active branch: `agent/m03-macos-cleanup-fixture`
+- Active phase: `validating the bounded Apple native cleanup-fixture repair exposed by the post-delivery maintenance gate`
+- Next gate: `pass the complete exact local gate and three fresh adversarial reviews, then require exact feature and main CI plus Benchmark success before returning to actual tools or CLI work`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
-run retained both required unexpired exact-SHA artifacts. Slice 52 delivers the
-bounded production background supervisor, process-local record writer,
-fixed-capacity blocking offload, and Linux/macOS process adapters. Three fresh
-cycle-20 product reviews reported zero findings. The immediately preceding
-main candidate passed feature gates but exposed a Linux scheduling race in its
-test fixture during exact-main CI; the accepted replacement synchronizes on
-actual slot reclamation and passed both feature and main gates. Detailed
-rejected-candidate, remediation, review, and workflow history is retained only
-in the linked historical review ledger.
+run retains both required unexpired exact-SHA artifacts. Slice 53 delivers
+bounded noninteractive `terminal` action `start` through the slice-52
+background supervisor. The replacement fixed the Linux deadline regression by
+observing actual callback-tail slot reclamation with a hard retry ceiling and
+passive backoff; three fresh cycle-25 reviews reported zero findings before
+exact feature and main gates passed. Detailed rejected-candidate, remediation,
+review, and workflow history is retained only in the linked historical review
+ledger.
 
-The next bounded product slice adds noninteractive `terminal` action `start`
-through the delivered supervisor. Persistent handles, read/write/wait/control
-actions, interactive terminal behavior, restart-safe control, ACP, teams, and
-extension slash commands remain separate. Documentation-tool maintenance also
-remains a separate non-product task.
-
-The reviewed terminal-start candidate passed its exact feature gates and was
-fast-forwarded without force. Exact-main Linux x86 testing then exposed a
-scheduler race in a deadline regression: the test retried while the deadline
-wake callback still legitimately retained its admission slot. Cycle 24 then
-rejected a yield-only recovery probe that could churn work and mask slow
-reclamation. The cycle-25 replacement uses a fixed attempt budget and passive
-backoff and passed the complete exact local gate plus three fresh zero-finding
-reviews; no platform waiver or unsupported-status note substitutes for the
-remaining exact-main gates. Exact replacement feature CI `33784417264` and
-Benchmark evidence `33784417259` are green at `7433cc0`; the Benchmark run
-retains both required unexpired exact-SHA artifacts.
+The next bounded product slice returns to actual tools or CLI work. Persistent
+terminal handles, read/write/wait/control actions, interactive terminal
+behavior, restart-safe control, ACP, teams, and extension slash commands remain
+separate. Documentation-tool maintenance remains a separate non-product task.
 
 ## Architecture ownership
 
@@ -173,8 +159,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 50 | Bounded foreground one-off `subagent` | [contract](subagent.md) | [review](reviews/m05-subagent-review-01.md) | `ba52dbf` |
 | 51 | Bounded read-only persisted `background` CLI | [contract](background-cli.md) | [review](reviews/m05-background-cli-review-01.md) | `a665289` |
 | 52 | Bounded production background supervisor and process lifecycle | [contract](background-supervisor.md) | [review](reviews/m05-background-supervisor-review-01.md) | `1d8ef7b` |
+| 53 | Bounded noninteractive `terminal` background start | [terminal](terminal.md), [supervisor](background-supervisor.md) | [review](reviews/m03-terminal-start-review-01.md) | `ceed855` |
 
-The exact delivered-main record after slice 52 is in the canonical live-status
+The exact delivered-main record after slice 53 is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.

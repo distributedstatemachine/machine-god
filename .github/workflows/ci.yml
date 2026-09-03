@@ -908,7 +908,11 @@ jobs:
       - name: Install exact Rust target
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target "${{ matrix.target }}"
       - name: Test target natively
+        if: ${{ !endsWith(matrix.target, '-apple-darwin') }}
         run: cargo +"${RUST_TOOLCHAIN}" test --locked --workspace --all-targets --all-features --target "${{ matrix.target }}"
+      - name: Test Apple target natively without shared process-table contention
+        if: ${{ endsWith(matrix.target, '-apple-darwin') }}
+        run: cargo +"${RUST_TOOLCHAIN}" test --locked --workspace --all-targets --all-features --target "${{ matrix.target }}" -- --test-threads=1
 
   unsupported-native-tools:
     name: Unsupported native tools (FreeBSD/WASI)
