@@ -1999,12 +1999,29 @@ fn absolute_deadline_drops_a_permanently_pending_executor_and_releases_capacity(
     let started = Instant::now();
 
     for command in ["first", "second"] {
-        let output = futures_executor::block_on(tool.execute(
-            context(),
-            exact_arguments(command, "."),
-            CancellationToken::new(),
-        ))
-        .unwrap();
+        let recovery_deadline = Instant::now() + Duration::from_secs(2);
+        let output = loop {
+            match futures_executor::block_on(tool.execute(
+                context(),
+                exact_arguments(command, "."),
+                CancellationToken::new(),
+            )) {
+                Ok(output) => break output,
+                Err(error) if error.code == "terminal_busy" => {
+                    assert_eq!(error.kind, ToolErrorKind::Unavailable);
+                    assert!(error.retryable);
+                    assert!(
+                        Instant::now() < recovery_deadline,
+                        "deadline callback did not release terminal capacity"
+                    );
+                    // The timer callback intentionally retains admission until
+                    // its wake tail returns. Wait for that authoritative
+                    // release instead of assuming the caller wins the race.
+                    std::thread::yield_now();
+                }
+                Err(error) => panic!("deadline execution failed: {error}"),
+            }
+        };
         assert!(output.is_error);
         assert_eq!(output.content["status"], "timed_out");
         assert_eq!(output.content["exit_code"], Value::Null);

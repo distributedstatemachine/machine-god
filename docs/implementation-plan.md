@@ -25,9 +25,9 @@ input; it is not a machine-god product language or runtime dependency.
 - Delivered main: `1d8ef7b1b055d352c138628d285ac35bcc75715f`
 - Main CI: `33682877396` (`GREEN`)
 - Main Benchmark evidence: `33682877367` (`GREEN`)
-- Active branch: `agent/m03-terminal-start`
-- Active phase: `preparing exact feature-branch remote gates for reviewed bounded noninteractive terminal start`
-- Next gate: `push the reviewed feature branch, require exact CI and artifact-producing Benchmark success, then fast-forward main without force`
+- Active branch: `agent/m03-terminal-start-ci-race`
+- Active phase: `remediating the exact-main Linux x86 terminal deadline callback admission race`
+- Next gate: `pass the complete replacement gate and fresh reviews, then require exact feature and main CI plus artifact-producing Benchmark success`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -46,6 +46,13 @@ through the delivered supervisor. Persistent handles, read/write/wait/control
 actions, interactive terminal behavior, restart-safe control, ACP, teams, and
 extension slash commands remain separate. Documentation-tool maintenance also
 remains a separate non-product task.
+
+The reviewed terminal-start candidate passed its exact feature gates and was
+fast-forwarded without force. Exact-main Linux x86 testing then exposed a
+scheduler race in a deadline regression: the test retried while the deadline
+wake callback still legitimately retained its admission slot. The replacement
+waits on actual slot reclamation within a fixed bound; no platform waiver or
+unsupported-status note is accepted as a substitute for a green replacement.
 
 ## Architecture ownership
 
