@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33682877396` (`GREEN`)
 - Main Benchmark evidence: `33682877367` (`GREEN`)
 - Active branch: `agent/m03-terminal-start-ci-race`
-- Active phase: `remediating the cycle-24 terminal deadline recovery retry-storm finding`
-- Next gate: `pass the complete replacement gate and fresh reviews, then require exact feature and main CI plus artifact-producing Benchmark success`
+- Active phase: `sealing the cycle-25 review after exact feature-branch remote success`
+- Next gate: `push the documentation-only review seal, then fast-forward main without force and require exact full CI plus artifact-producing Benchmark success`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -52,8 +52,12 @@ fast-forwarded without force. Exact-main Linux x86 testing then exposed a
 scheduler race in a deadline regression: the test retried while the deadline
 wake callback still legitimately retained its admission slot. Cycle 24 then
 rejected a yield-only recovery probe that could churn work and mask slow
-reclamation. The replacement uses a fixed attempt budget and passive backoff;
-no platform waiver or unsupported-status note substitutes for a green gate.
+reclamation. The cycle-25 replacement uses a fixed attempt budget and passive
+backoff and passed the complete exact local gate plus three fresh zero-finding
+reviews; no platform waiver or unsupported-status note substitutes for the
+remaining exact-main gates. Exact replacement feature CI `33784417264` and
+Benchmark evidence `33784417259` are green at `7433cc0`; the Benchmark run
+retains both required unexpired exact-SHA artifacts.
 
 ## Architecture ownership
 
