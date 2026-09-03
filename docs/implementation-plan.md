@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33682877396` (`GREEN`)
 - Main Benchmark evidence: `33682877367` (`GREEN`)
 - Active branch: `agent/m03-terminal-start`
-- Active phase: `validating second-cycle adversarial-review remediations for bounded noninteractive terminal start`
-- Next gate: `pass the complete exact-1.94.1 replacement gate, freeze a new behavior SHA, and restart all three product-review tracks`
+- Active phase: `reviewing the complete second-cycle replacement for bounded noninteractive terminal start`
+- Next gate: `freeze this exact candidate and restart all three product-review tracks; fix every finding and repeat the complete replacement gate until all tracks are green`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
