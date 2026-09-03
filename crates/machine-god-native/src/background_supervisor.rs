@@ -327,6 +327,27 @@ impl NativeBackgroundSupervisor {
         limits: NativeBackgroundLimits,
         adapter: SystemBackgroundProcessAdapter,
     ) -> Result<Self, NativeBackgroundSupervisorError> {
+        let ownership = SupervisorWorkerOwnership::reserve(limits.max_active())?;
+        Self::construct_parts_with_ownership(
+            workspace,
+            workspace_root,
+            state_root,
+            environment,
+            limits,
+            adapter,
+            ownership,
+        )
+    }
+
+    fn construct_parts_with_ownership(
+        workspace: String,
+        workspace_root: OwnedFd,
+        state_root: OwnedFd,
+        environment: ValidatedBackgroundEnvironment,
+        limits: NativeBackgroundLimits,
+        adapter: SystemBackgroundProcessAdapter,
+        ownership: SupervisorWorkerOwnership,
+    ) -> Result<Self, NativeBackgroundSupervisorError> {
         let environment_identity = background_environment_identity(&environment);
         let store = Arc::new(NativeStore {
             inner: Arc::new(
@@ -347,8 +368,11 @@ impl NativeBackgroundSupervisor {
             environment,
             adapter,
         });
-        let blocking = BlockingExecutor::new(limits.max_active())?;
-        let retainer = Arc::new(WorkerRetainer::new(limits.max_active())?);
+        let blocking = BlockingExecutor::with_ownership(limits.max_active(), ownership.blocking)?;
+        let retainer = Arc::new(WorkerRetainer::with_ownership(
+            limits.max_active(),
+            ownership.retainer,
+        )?);
         let supervisor = BackgroundSupervisor::new(
             Arc::new(SystemClock),
             Arc::clone(&store) as Arc<dyn CoreBackgroundStore>,
@@ -464,7 +488,10 @@ impl Drop for NativeBackgroundSupervisor {
 }
 
 type LazyTerminalInitializer = Box<
-    dyn FnOnce() -> Result<Arc<dyn TerminalBackgroundStarter>, NativeBackgroundSupervisorError>
+    dyn FnOnce(
+            SupervisorWorkerOwnership,
+        )
+            -> Result<Arc<dyn TerminalBackgroundStarter>, NativeBackgroundSupervisorError>
         + Send
         + 'static,
 >;
@@ -518,17 +545,21 @@ impl LazyProductionBackgroundStarter {
         validate_directory(workspace_root.as_fd()).map_err(|()| {
             NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Workspace)
         })?;
+        BackgroundStore::validate_state_root(&state_root).map_err(|_| {
+            NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::State)
+        })?;
         let environment = production_environment();
         let environment_identity = production_environment_identity();
-        let initializer: LazyTerminalInitializer = Box::new(move || {
+        let initializer: LazyTerminalInitializer = Box::new(move |ownership| {
             let adapter = system_process_adapter()?;
-            NativeBackgroundSupervisor::from_validated_parts(
+            NativeBackgroundSupervisor::construct_parts_with_ownership(
                 workspace,
                 workspace_root,
                 state_root,
                 environment,
                 NativeBackgroundLimits::default(),
                 adapter,
+                ownership,
             )
             .map(|supervisor| Arc::new(supervisor) as Arc<dyn TerminalBackgroundStarter>)
         });
@@ -699,7 +730,9 @@ fn spawn_lazy_background_initializer(
         );
         return;
     };
-    let Ok(mut ownership) = registry.reserve(1) else {
+    let Ok((mut initializer_ownership, supervisor_ownership)) =
+        SupervisorWorkerOwnership::reserve_lazy_default(registry)
+    else {
         publish_lazy_background_initialization(
             shared,
             Err(start_error(BackgroundStartErrorKind::Process)),
@@ -716,7 +749,7 @@ fn spawn_lazy_background_initializer(
             if release_receiver.recv().is_err() {
                 return;
             }
-            let result = catch_unwind(AssertUnwindSafe(initializer))
+            let result = catch_unwind(AssertUnwindSafe(|| initializer(supervisor_ownership)))
                 .unwrap_or_else(|_| {
                     Err(NativeBackgroundSupervisorError::new(
                         NativeBackgroundSupervisorErrorKind::Process,
@@ -732,7 +765,7 @@ fn spawn_lazy_background_initializer(
         );
         return;
     };
-    if let Err(owned) = registry.register(handle, completed, ownership.take()) {
+    if let Err(owned) = registry.register(handle, completed, initializer_ownership.take()) {
         drop(release_sender);
         let _ = owned.handle.join();
         publish_lazy_background_initialization(
@@ -818,6 +851,11 @@ struct WorkerOwnershipReservation {
     cohort: Arc<AtomicUsize>,
 }
 
+struct SupervisorWorkerOwnership {
+    blocking: WorkerOwnershipReservation,
+    retainer: WorkerOwnershipReservation,
+}
+
 struct WorkerOwnershipPermit {
     retained: Arc<AtomicUsize>,
     cohort: Arc<AtomicUsize>,
@@ -864,10 +902,19 @@ impl WorkerOwnershipRegistry {
         })
     }
 
+    #[cfg(test)]
     fn reserve(&self, count: usize) -> Result<WorkerOwnershipReservation, ()> {
+        self.reserve_partitioned(&[count])?.pop().ok_or(())
+    }
+
+    fn reserve_partitioned(&self, counts: &[usize]) -> Result<Vec<WorkerOwnershipReservation>, ()> {
+        let total = counts
+            .iter()
+            .try_fold(0_usize, |total, count| total.checked_add(*count))
+            .ok_or(())?;
         let mut retained = self.retained.load(Ordering::Acquire);
         loop {
-            let next = retained.checked_add(count).ok_or(())?;
+            let next = retained.checked_add(total).ok_or(())?;
             if next > WORKER_OWNERSHIP_CAPACITY {
                 return Err(());
             }
@@ -881,14 +928,19 @@ impl WorkerOwnershipRegistry {
                 Err(observed) => retained = observed,
             }
         }
-        let cohort = Arc::new(AtomicUsize::new(count));
-        let permits = (0..count)
-            .map(|_| WorkerOwnershipPermit {
-                retained: Arc::clone(&self.retained),
-                cohort: Arc::clone(&cohort),
+        Ok(counts
+            .iter()
+            .map(|count| {
+                let cohort = Arc::new(AtomicUsize::new(*count));
+                let permits = (0..*count)
+                    .map(|_| WorkerOwnershipPermit {
+                        retained: Arc::clone(&self.retained),
+                        cohort: Arc::clone(&cohort),
+                    })
+                    .collect();
+                WorkerOwnershipReservation { permits, cohort }
             })
-            .collect();
-        Ok(WorkerOwnershipReservation { permits, cohort })
+            .collect())
     }
 
     fn register(
@@ -950,6 +1002,41 @@ impl WorkerOwnershipReservation {
         self.permits
             .pop()
             .expect("worker ownership was reserved before spawning")
+    }
+}
+
+impl SupervisorWorkerOwnership {
+    fn reserve(size: usize) -> Result<Self, NativeBackgroundSupervisorError> {
+        let registry = worker_ownership_registry().map_err(|()| {
+            NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Worker)
+        })?;
+        Self::reserve_from(registry, size).map_err(|()| {
+            NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Worker)
+        })
+    }
+
+    fn reserve_from(registry: &WorkerOwnershipRegistry, size: usize) -> Result<Self, ()> {
+        let retainer_size = size.checked_add(1).ok_or(())?;
+        let mut reservations = registry
+            .reserve_partitioned(&[size, retainer_size])?
+            .into_iter();
+        let blocking = reservations.next().ok_or(())?;
+        let retainer = reservations.next().ok_or(())?;
+        Ok(Self { blocking, retainer })
+    }
+
+    fn reserve_lazy_default(
+        registry: &WorkerOwnershipRegistry,
+    ) -> Result<(WorkerOwnershipReservation, Self), ()> {
+        let size = NATIVE_BACKGROUND_DEFAULT_MAX_ACTIVE;
+        let retainer_size = size.checked_add(1).ok_or(())?;
+        let mut reservations = registry
+            .reserve_partitioned(&[1, size, retainer_size])?
+            .into_iter();
+        let initializer = reservations.next().ok_or(())?;
+        let blocking = reservations.next().ok_or(())?;
+        let retainer = reservations.next().ok_or(())?;
+        Ok((initializer, Self { blocking, retainer }))
     }
 }
 
@@ -1076,11 +1163,27 @@ enum BlockingTaskFailure {
 }
 
 impl BlockingExecutor {
+    #[cfg(test)]
     fn new(size: usize) -> Result<Self, NativeBackgroundSupervisorError> {
         let registry = worker_ownership_registry().map_err(|()| {
             NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Worker)
         })?;
-        let mut ownership = registry.reserve(size).map_err(|()| {
+        let ownership = registry.reserve(size).map_err(|()| {
+            NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Worker)
+        })?;
+        Self::with_ownership(size, ownership)
+    }
+
+    fn with_ownership(
+        size: usize,
+        mut ownership: WorkerOwnershipReservation,
+    ) -> Result<Self, NativeBackgroundSupervisorError> {
+        if ownership.permits.len() != size {
+            return Err(NativeBackgroundSupervisorError::new(
+                NativeBackgroundSupervisorErrorKind::Worker,
+            ));
+        }
+        let registry = worker_ownership_registry().map_err(|()| {
             NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Worker)
         })?;
         let available = Arc::new(Mutex::new((0..size).rev().collect()));
@@ -1724,11 +1827,27 @@ struct WorkerPool {
 }
 
 impl WorkerRetainer {
+    #[cfg(test)]
     fn new(size: usize) -> Result<Self, NativeBackgroundSupervisorError> {
         let registry = worker_ownership_registry().map_err(|()| {
             NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Worker)
         })?;
-        let mut ownership = registry.reserve(size.saturating_add(1)).map_err(|()| {
+        let ownership = registry.reserve(size.saturating_add(1)).map_err(|()| {
+            NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Worker)
+        })?;
+        Self::with_ownership(size, ownership)
+    }
+
+    fn with_ownership(
+        size: usize,
+        mut ownership: WorkerOwnershipReservation,
+    ) -> Result<Self, NativeBackgroundSupervisorError> {
+        if ownership.permits.len() != size.saturating_add(1) {
+            return Err(NativeBackgroundSupervisorError::new(
+                NativeBackgroundSupervisorErrorKind::Worker,
+            ));
+        }
+        let registry = worker_ownership_registry().map_err(|()| {
             NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Worker)
         })?;
         let available = Arc::new(Mutex::new((0..size).rev().collect()));
@@ -2142,13 +2261,15 @@ const fn start_error(kind: BackgroundStartErrorKind) -> BackgroundStartError {
 #[cfg(test)]
 mod tests {
     use super::{
-        BlockingExecutor, BlockingResult, BlockingTaskFailure, LazyProductionBackgroundStarter,
+        BlockingExecutor, BlockingResult, BlockingTaskFailure,
+        LAZY_BACKGROUND_INITIALIZATION_WAITERS, LazyBackgroundInitializationPhase,
+        LazyProductionBackgroundStarter, NATIVE_BACKGROUND_DEFAULT_MAX_ACTIVE,
         NativeBackgroundLimits, NativeBackgroundSupervisor, NativeBackgroundSupervisorError,
         NativeBackgroundSupervisorErrorKind, NativeSpawner, NativeStore,
         PRODUCTION_BACKGROUND_LANGUAGE, PRODUCTION_BACKGROUND_PATH, RetainedJob,
-        SystemBackgroundProcessAdapter, SystemClock, WORKER_OWNERSHIP_CAPACITY,
-        WorkerOwnershipRegistry, WorkerRetainer, accept_bounded_environment,
-        background_environment_identity, build_production_environment,
+        SupervisorWorkerOwnership, SystemBackgroundProcessAdapter, SystemClock,
+        WORKER_OWNERSHIP_CAPACITY, WorkerOwnershipRegistry, WorkerRetainer,
+        accept_bounded_environment, background_environment_identity, build_production_environment,
         finish_prepared_after_readiness, open_directory, process_error_kind,
         production_environment, production_environment_identity, retain_canonical_directory_with,
         worker_ownership_registry,
@@ -2637,7 +2758,7 @@ mod tests {
                 profile: "lazy_test".to_owned(),
                 sha256: "0".repeat(64),
             },
-            Box::new(move || {
+            Box::new(move |_ownership| {
                 initializer_initializations.fetch_add(1, Ordering::AcqRel);
                 entered_sender.send(()).expect("report initialization");
                 release_receiver.recv().expect("release initialization");
@@ -2684,7 +2805,7 @@ mod tests {
                 profile: "lazy_test".to_owned(),
                 sha256: "0".repeat(64),
             },
-            Box::new(move || {
+            Box::new(move |_ownership| {
                 initializer_initializations.fetch_add(1, Ordering::AcqRel);
                 Err(NativeBackgroundSupervisorError::new(
                     NativeBackgroundSupervisorErrorKind::Worker,
@@ -2712,7 +2833,7 @@ mod tests {
                 profile: "lazy_test".to_owned(),
                 sha256: "0".repeat(64),
             },
-            Box::new(move || {
+            Box::new(move |_ownership| {
                 initializer_initializations.fetch_add(1, Ordering::AcqRel);
                 Err(NativeBackgroundSupervisorError::new(
                     NativeBackgroundSupervisorErrorKind::Worker,
@@ -2727,6 +2848,57 @@ mod tests {
             .expect_err("pre-cancelled start");
         assert_eq!(error.kind(), BackgroundStartErrorKind::Cancelled);
         assert_eq!(initializations.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn lazy_terminal_background_admits_exactly_sixteen_initialization_waiters() {
+        let starter = LazyProductionBackgroundStarter::with_initializer(
+            ProcessEnvironment {
+                profile: "lazy_test".to_owned(),
+                sha256: "0".repeat(64),
+            },
+            Box::new(|_ownership| unreachable!("the test holds initialization in progress")),
+        );
+        {
+            let mut state = starter
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.phase = LazyBackgroundInitializationPhase::Initializing;
+        }
+        let request = BackgroundStartRequest::new(":", "/tmp").expect("request");
+        let mut waiters: Vec<_> = (0..LAZY_BACKGROUND_INITIALIZATION_WAITERS)
+            .map(|_| starter.start(request.clone(), CancellationToken::new()))
+            .collect();
+
+        for waiter in &mut waiters {
+            assert!(matches!(
+                waiter
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Pending
+            ));
+        }
+        let mut rejected = starter.start(request, CancellationToken::new());
+        let Poll::Ready(Err(error)) = rejected
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+        else {
+            panic!("the seventeenth waiter must be rejected immediately")
+        };
+        assert_eq!(error.kind(), BackgroundStartErrorKind::Capacity);
+
+        drop(waiters);
+        assert!(
+            starter
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .waiters
+                .is_empty()
+        );
     }
 
     #[test]
@@ -2879,6 +3051,97 @@ mod tests {
                 .reserve(WORKER_OWNERSHIP_CAPACITY + 1)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn worker_ownership_admits_only_complete_default_lazy_cohorts_and_recovers() {
+        const LAZY_COHORT: usize = 1 + NATIVE_BACKGROUND_DEFAULT_MAX_ACTIVE * 2 + 1;
+        let registry = WorkerOwnershipRegistry::new().expect("worker registry");
+        let mut cohorts = Vec::new();
+
+        for _ in 0..WORKER_OWNERSHIP_CAPACITY / LAZY_COHORT {
+            let (initializer, supervisor) =
+                SupervisorWorkerOwnership::reserve_lazy_default(&registry)
+                    .expect("complete lazy cohort");
+            assert_eq!(initializer.cohort.load(Ordering::Acquire), 1);
+            assert_eq!(
+                supervisor.blocking.cohort.load(Ordering::Acquire),
+                NATIVE_BACKGROUND_DEFAULT_MAX_ACTIVE
+            );
+            assert_eq!(
+                supervisor.retainer.cohort.load(Ordering::Acquire),
+                NATIVE_BACKGROUND_DEFAULT_MAX_ACTIVE + 1
+            );
+            cohorts.push((initializer, supervisor));
+        }
+
+        assert_eq!(
+            registry.retained.load(Ordering::Acquire),
+            (WORKER_OWNERSHIP_CAPACITY / LAZY_COHORT) * LAZY_COHORT
+        );
+        assert!(
+            SupervisorWorkerOwnership::reserve_lazy_default(&registry).is_err(),
+            "capacity below ten must not admit a partial cohort"
+        );
+        assert_eq!(
+            registry.retained.load(Ordering::Acquire),
+            (WORKER_OWNERSHIP_CAPACITY / LAZY_COHORT) * LAZY_COHORT
+        );
+        assert!(
+            registry
+                .state
+                .handles
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty(),
+            "reservation admission must not create workers"
+        );
+
+        drop(cohorts.pop());
+        cohorts.push(
+            SupervisorWorkerOwnership::reserve_lazy_default(&registry)
+                .expect("one released cohort is reusable"),
+        );
+        drop(cohorts);
+        assert_eq!(registry.retained.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn direct_supervisor_aggregate_admission_is_all_or_none() {
+        let registry = WorkerOwnershipRegistry::new().expect("worker registry");
+        let held_count =
+            WORKER_OWNERSHIP_CAPACITY - (NATIVE_BACKGROUND_DEFAULT_MAX_ACTIVE * 2 + 1) + 1;
+        let held = registry.reserve(held_count).expect("near-capacity hold");
+
+        assert!(
+            SupervisorWorkerOwnership::reserve_from(
+                &registry,
+                NATIVE_BACKGROUND_DEFAULT_MAX_ACTIVE,
+            )
+            .is_err()
+        );
+        assert_eq!(registry.retained.load(Ordering::Acquire), held_count);
+        assert!(
+            registry
+                .state
+                .handles
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty()
+        );
+
+        drop(held);
+        let admitted = SupervisorWorkerOwnership::reserve_from(
+            &registry,
+            NATIVE_BACKGROUND_DEFAULT_MAX_ACTIVE,
+        )
+        .expect("released aggregate capacity");
+        assert_eq!(
+            registry.retained.load(Ordering::Acquire),
+            NATIVE_BACKGROUND_DEFAULT_MAX_ACTIVE * 2 + 1
+        );
+        drop(admitted);
+        assert_eq!(registry.retained.load(Ordering::Acquire), 0);
     }
 
     #[test]

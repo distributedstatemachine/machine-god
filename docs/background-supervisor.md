@@ -66,10 +66,13 @@ the helper will install without receiving any raw entry.
 
 Reference-host composition retains the exact verified workspace and state-root
 descriptors, canonical workspace identity, and fixed environment identity in a
-lazy starter. It does not prepare or reconcile `background-v1`, resolve the
-process helper, or create supervisor workers. The first permitted `start`
-future that is actually polled starts one process-wide-owned initialization
-worker. At most sixteen start futures may wait for that shared initialization;
+lazy starter. Construction read-only validates that the retained state root is
+still an owned private directory with the supported macOS ACL shape. It does
+not prepare or reconcile `background-v1`, resolve the process helper, or create
+supervisor workers. The first permitted `start` future that is actually polled
+atomically reserves the full default ten-authority cohort before it starts one
+process-wide-owned initialization worker. At most sixteen start futures may
+wait for that shared initialization;
 further callers fail immediately with `capacity`. All concurrent first callers
 observe the same result, and success installs one supervisor reused by every
 later start. Initialization is attempted exactly once per composed host. A
@@ -90,12 +93,15 @@ workers and one retainer rescue worker, the supervisor owns one fixed-size
 blocking-operation worker set; offload admission fails promptly rather than
 queuing without a bound. Every worker handle is registered at creation with a
 process-wide collector that retains at most 256 handles. One supervisor
-reserves `2 * max_active + 1` of those authorities during construction. Lazy
-reference-host initialization temporarily owns one additional initializer
-authority, so the default cohort peaks at ten authorities and retains nine
-after initialization. Collector saturation fixes the lazy result as `process`
-before that host can accept work; direct supervisor construction instead fails
-with the fixed worker category. Each worker publishes one completion flag
+atomically reserves `2 * max_active + 1` of those authorities before creating
+any worker. Lazy reference-host initialization atomically reserves that whole
+default nine-authority supervisor cohort together with one initializer
+authority, so it peaks at ten authorities and retains nine after
+initialization. At most 25 complete default lazy cohorts fit in the registry;
+the remaining six authorities cannot admit a partial cohort. Aggregate
+admission failure creates no worker and fixes the lazy result as `process`;
+direct supervisor construction instead fails with the fixed worker category.
+Each worker publishes one completion flag
 while holding the collector's predicate mutex, then sends one condition
 notification as it leaves. Shutdown publishes its predicate under that same
 mutex. The collector's predicate check and condition wait are therefore one

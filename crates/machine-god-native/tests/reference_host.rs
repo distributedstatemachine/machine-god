@@ -11,6 +11,8 @@ use std::io;
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -2163,6 +2165,76 @@ fn missing_or_invalid_selected_credential_fails_after_valid_roots_without_fallba
     assert_redacted(invalid_environment, &[invalid_os_marker, valid_fallback]);
     assert!(prompter.requests().is_empty());
     assert!(directory_is_empty(&sessions));
+}
+
+#[test]
+fn public_session_root_is_rejected_as_background_configuration_without_effects() {
+    let temporary = TemporaryDirectory::new("public-background-root");
+    let (workspace, sessions) = roots(temporary.path());
+    fs::set_permissions(&sessions, fs::Permissions::from_mode(0o755)).unwrap();
+    let transport = ScriptedTransport::new(
+        "PUBLIC_BACKGROUND_ROOT_TRANSPORT_SENTINEL",
+        Vec::<Vec<u8>>::new(),
+    );
+    let prompter = AllowingPrompter::default();
+
+    let error = build_error(compose_with_transport(
+        built_in_config(),
+        transport.clone(),
+        &workspace,
+        &sessions,
+        prompter.clone(),
+    ));
+
+    assert_eq!(
+        error.kind(),
+        NativeReferenceHostBuildErrorKind::BackgroundConfig
+    );
+    assert_stage_debug(error, NativeReferenceHostBuildErrorKind::BackgroundConfig);
+    assert!(transport.requests().is_empty());
+    assert!(prompter.requests().is_empty());
+    assert!(directory_is_empty(&sessions));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn session_root_acl_is_rejected_as_background_configuration_without_effects() {
+    let temporary = TemporaryDirectory::new("acl-background-root");
+    let (workspace, sessions) = roots(temporary.path());
+    let status = Command::new("/bin/chmod")
+        .args(["+a", "everyone allow search"])
+        .arg(&sessions)
+        .status()
+        .expect("macOS chmod executable is available");
+    assert!(status.success(), "failed to install ACL fixture: {status}");
+    let transport = ScriptedTransport::new(
+        "ACL_BACKGROUND_ROOT_TRANSPORT_SENTINEL",
+        Vec::<Vec<u8>>::new(),
+    );
+    let prompter = AllowingPrompter::default();
+
+    let error = build_error(compose_with_transport(
+        built_in_config(),
+        transport.clone(),
+        &workspace,
+        &sessions,
+        prompter.clone(),
+    ));
+
+    assert_eq!(
+        error.kind(),
+        NativeReferenceHostBuildErrorKind::BackgroundConfig
+    );
+    assert_stage_debug(error, NativeReferenceHostBuildErrorKind::BackgroundConfig);
+    assert!(transport.requests().is_empty());
+    assert!(prompter.requests().is_empty());
+    assert!(directory_is_empty(&sessions));
+    let cleanup = Command::new("/bin/chmod")
+        .arg("-N")
+        .arg(&sessions)
+        .status()
+        .expect("macOS chmod executable is available");
+    assert!(cleanup.success(), "failed to clear ACL fixture: {cleanup}");
 }
 
 #[test]

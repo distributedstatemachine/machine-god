@@ -125,10 +125,14 @@ still receive descriptor-relative work. Mutation contracts identify their
 irreversible syscall, post-commit ambiguity, durability steps, cleanup limits,
 and remaining race windows.
 
-Root selection and the session store separately validate existing directories,
-ownership, modes, no-follow acquisition, and supported macOS ACL conditions.
-They create only documented fixed suffixes or per-record lock artifacts.
-Missing-root read-only CLI paths do not create a root.
+Root selection validates its existing directory chain's ownership, private
+mode, no-follow acquisition, and supported macOS ACL conditions. The session
+store's path seam retains an existing no-follow directory; before that same
+descriptor is granted to the background writer, reference-host composition
+read-only applies the background store's owner-private mode and supported macOS
+ACL validation. These components create only documented fixed suffixes or
+per-record lock artifacts. Missing-root read-only CLI paths do not create a
+root.
 
 ## Process boundary
 

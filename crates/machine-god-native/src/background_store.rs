@@ -153,7 +153,7 @@ impl BackgroundStore {
         {
             return Err(error(BackgroundStoreErrorKind::InvalidWorkspace));
         }
-        validate_private_directory(&state_root)?;
+        Self::validate_state_root(&state_root)?;
         let background = prepare_private_directory(state_root.as_fd(), BACKGROUND_DIRECTORY)?;
         let workspace_name = background_workspace_name(&workspace);
         let root = prepare_private_directory(background.as_fd(), &workspace_name)?;
@@ -173,6 +173,12 @@ impl BackgroundStore {
         };
         store.prepare_allocator()?;
         Ok(store)
+    }
+
+    /// Validates an already-retained state-root descriptor without creating or
+    /// reconciling any background namespace entries.
+    pub(crate) fn validate_state_root(state_root: &OwnedFd) -> Result<(), BackgroundStoreError> {
+        validate_private_directory(state_root).map(|_| ())
     }
 
     pub(crate) fn workspace(&self) -> &str {
@@ -1247,6 +1253,15 @@ fn read_counter_optional(root: BorrowedFd<'_>) -> Result<Option<u64>, Background
 
 fn validate_private_directory(file: &OwnedFd) -> Result<rustix::fs::Stat, BackgroundStoreError> {
     let metadata = rustix::fs::fstat(file).map_err(|_| unavailable())?;
+    validate_private_directory_metadata(&metadata)?;
+    #[cfg(target_os = "macos")]
+    validate_acl(file)?;
+    Ok(metadata)
+}
+
+fn validate_private_directory_metadata(
+    metadata: &rustix::fs::Stat,
+) -> Result<(), BackgroundStoreError> {
     if !FileType::from_raw_mode(metadata.st_mode).is_dir()
         || metadata.st_uid != rustix::process::geteuid().as_raw()
         || u64::from(metadata.st_mode) & GROUP_OR_OTHER_PERMISSIONS != 0
@@ -1254,9 +1269,7 @@ fn validate_private_directory(file: &OwnedFd) -> Result<rustix::fs::Stat, Backgr
     {
         return Err(corrupt());
     }
-    #[cfg(target_os = "macos")]
-    validate_acl(file)?;
-    Ok(metadata)
+    Ok(())
 }
 
 fn validate_private_file(file: &OwnedFd) -> Result<rustix::fs::Stat, BackgroundStoreError> {
@@ -1484,6 +1497,54 @@ mod tests {
 
     fn private_directory(path: &Path) {
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[test]
+    fn read_only_state_root_validation_rejects_a_wrong_owner_when_privileged() {
+        if rustix::process::geteuid().as_raw() != 0 {
+            return;
+        }
+        let fixture = Fixture::new();
+        let descriptor =
+            rustix::fs::open(&fixture.state_root, directory_open_flags(), Mode::empty()).unwrap();
+        let status = Command::new("chown")
+            .arg("1")
+            .arg(&fixture.state_root)
+            .status()
+            .expect("chown executable is available");
+        assert!(status.success(), "failed to install wrong-owner fixture");
+
+        let error = BackgroundStore::validate_state_root(&descriptor).unwrap_err();
+        assert_eq!(error.kind(), BackgroundStoreErrorKind::Corrupt);
+    }
+
+    #[test]
+    fn private_directory_metadata_rejects_a_wrong_owner() {
+        let fixture = Fixture::new();
+        let descriptor =
+            rustix::fs::open(&fixture.state_root, directory_open_flags(), Mode::empty()).unwrap();
+        let mut metadata = rustix::fs::fstat(&descriptor).unwrap();
+        metadata.st_uid = metadata.st_uid.wrapping_add(1);
+
+        let error = validate_private_directory_metadata(&metadata).unwrap_err();
+        assert_eq!(error.kind(), BackgroundStoreErrorKind::Corrupt);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn read_only_state_root_validation_rejects_an_access_granting_acl() {
+        let fixture = Fixture::new();
+        let status = Command::new("/bin/chmod")
+            .args(["+a", "everyone allow search"])
+            .arg(&fixture.state_root)
+            .status()
+            .expect("macOS chmod executable is available");
+        assert!(status.success(), "failed to install ACL fixture: {status}");
+        let descriptor =
+            rustix::fs::open(&fixture.state_root, directory_open_flags(), Mode::empty()).unwrap();
+
+        let error = BackgroundStore::validate_state_root(&descriptor).unwrap_err();
+        assert_eq!(error.kind(), BackgroundStoreErrorKind::Corrupt);
     }
 
     fn running(store: &BackgroundStore, id: u64, updated_at_ms: u64) -> StoredBackgroundRecord {

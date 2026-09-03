@@ -62,10 +62,11 @@ workspace and session roots; those constructors do not prove identity or
 ancestor disjointness. The prepared-root path performs the stronger
 root-selection checks defined in [native-root-selection.md](native-root-selection.md).
 Because the composed background writer shares the retained state-root identity,
-successful composition requires that root to satisfy its owner-private mode and
-ACL contract. The workspace must also have a canonical Unicode absolute path;
-composition binds that spelling to the retained descriptor before exposing
-terminal `start`.
+successful composition read-only checks that root against the background
+store's owner-private mode and supported macOS ACL contract. That check creates
+no namespace and starts no worker. The workspace must also have a canonical
+Unicode absolute path; composition binds that spelling to the retained
+descriptor before exposing terminal `start`.
 
 Production composition opens the workspace and session roots before credential
 discovery. A failure never causes a fallback to a different provider,
@@ -208,7 +209,8 @@ documented bounded setup needed to own later authority:
   the production path;
 - snapshot the bounded process environment used by `terminal`;
 - retain the exact workspace and state-root descriptors plus the fixed
-  background environment identity; background namespace reconciliation and
+  background environment identity after a read-only owner/mode/ACL suitability
+  check; background namespace reconciliation and atomically admitted
   fixed-capacity worker creation are deferred to one shared, single-shot
   initialization on the first permitted `start` poll;
 - construct provider, web-search, and private vision adapters over the shared
