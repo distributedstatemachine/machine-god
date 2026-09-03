@@ -49,9 +49,11 @@ and no-Waker native thread tails keep the same slot, so later admissions fail
 fast at capacity. Public system foreground-executor construction is Linux-only;
 private non-Linux reference-host foreground `exec` retains the advertised tool
 and returns fixed unsupported only after strict preparation, permission, and
-execution argument validation, before cwd lookup or spawn. Background `start`
-uses a separate Linux/macOS process adapter and is fixed unsupported on other
-targets.
+execution argument validation, before cwd lookup or spawn. Production
+reference-host background `start` uses a separate Linux/macOS process adapter;
+the complete reference host is unavailable on other targets. The public Unix
+injected seam can instead use a trusted `TerminalBackgroundStarter` that owns
+the documented platform behavior.
 
 ## `web_search` boundary
 
