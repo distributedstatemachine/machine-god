@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33682877396` (`GREEN`)
 - Main Benchmark evidence: `33682877367` (`GREEN`)
 - Active branch: `agent/m03-terminal-start`
-- Active phase: `reviewing the cycle-23 replacement candidate for bounded noninteractive terminal start`
-- Next gate: `obtain zero findings from all three fresh cycle-23 product-review tracks; fix every finding and repeat the complete gate and all reviews otherwise`
+- Active phase: `preparing exact feature-branch remote gates for reviewed bounded noninteractive terminal start`
+- Next gate: `push the reviewed feature branch, require exact CI and artifact-producing Benchmark success, then fast-forward main without force`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
