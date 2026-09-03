@@ -138,16 +138,17 @@ root.
 
 The terminal tool authorizes a fixed shell, canonical starting directory,
 command, and bounded environment identity before execution. Foreground `exec`
-uses the construction snapshot. Noninteractive `start` uses the background
-supervisor's fixed environment digest and absolute canonical cwd, bound to the
-same retained workspace identity. Reference-host construction retains those
-identities but creates no background namespace or worker cohort. The first
-permitted, polled `start` performs one shared initialization; its fixed,
-redacted success or failure is reused, and cancelled waiters cannot trigger a
-second reconciliation or cohort. The retained descriptor constrains the
-starting directory only. After approval, `/bin/sh -c` can exercise every
-authority available to that process account; terminal execution is explicitly
-not a sandbox.
+uses the construction snapshot. Noninteractive `start` authorizes the validated
+workspace-relative cwd bound to the retained workspace identity and uses the
+background supervisor's fixed environment digest. Only after approval does
+execution privately derive the absolute canonical cwd used for persistence and
+process launch. Reference-host construction retains those identities but
+creates no background namespace or worker cohort. The first permitted, polled
+`start` performs one shared initialization; its fixed, redacted success or
+failure is reused, and cancelled waiters cannot trigger a second reconciliation
+or cohort. The retained descriptor constrains the starting directory only.
+After approval, `/bin/sh -c` can exercise every authority available to that
+process account; terminal execution is explicitly not a sandbox.
 
 The Linux system executor owns bounded pipes, a process group, cleanup signals,
 and child reaping. Cancellation, timeout, output overflow, and drop attempt the

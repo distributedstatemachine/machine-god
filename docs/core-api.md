@@ -46,10 +46,12 @@ TerminalTool-wrapped task-Waker family, callbacks, and native worker/deadline
 threads through actual return. The wrapper is supplied even to public injected
 executors, which need no private counter authority. Retained requests or Wakers
 and no-Waker native thread tails keep the same slot, so later admissions fail
-fast at capacity. Public system construction is Linux-only; private non-Linux
-reference-host composition retains the advertised tool and returns fixed
-unsupported only after strict preparation, permission, and execution argument
-validation, before cwd lookup or spawn.
+fast at capacity. Public system foreground-executor construction is Linux-only;
+private non-Linux reference-host foreground `exec` retains the advertised tool
+and returns fixed unsupported only after strict preparation, permission, and
+execution argument validation, before cwd lookup or spawn. Background `start`
+uses a separate Linux/macOS process adapter and is fixed unsupported on other
+targets.
 
 ## `web_search` boundary
 
