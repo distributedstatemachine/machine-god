@@ -11,6 +11,7 @@ use machine_god_core::{
 };
 use rustix::fd::OwnedFd;
 
+use crate::background_inspection::NativeBackgroundRecordInspector;
 use crate::background_supervisor::LazyProductionBackgroundStarter;
 use crate::workspace::{WorkspaceRoot, WorkspaceTools};
 use crate::{
@@ -736,6 +737,18 @@ fn compose_terminal(
     let state_root = session_store.try_clone_root_descriptor().map_err(|_| {
         NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::BackgroundConfig)
     })?;
+    let inspector_root = session_store.try_clone_root_descriptor().map_err(|_| {
+        NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::BackgroundConfig)
+    })?;
+    let inspector = Arc::new(
+        NativeBackgroundRecordInspector::from_root_descriptor(
+            inspector_root,
+            canonical_workspace.clone(),
+        )
+        .map_err(|_| {
+            NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::BackgroundConfig)
+        })?,
+    );
     let background = Arc::new(
         LazyProductionBackgroundStarter::from_root_descriptors(
             canonical_workspace.clone(),
@@ -750,6 +763,7 @@ fn compose_terminal(
     let background: Arc<dyn TerminalBackgroundStarter> = background;
     terminal
         .with_background(canonical_workspace, environment, background)
+        .and_then(|terminal| terminal.with_inspector(inspector))
         .map_err(|_| {
             NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::TerminalConfig)
         })

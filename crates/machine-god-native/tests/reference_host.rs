@@ -43,6 +43,7 @@ use machine_god_native::{
     WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME, WRITE_FILE_TOOL_NAME, load_native_config,
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
 
 mod web_search_support;
@@ -387,6 +388,85 @@ fn skill_round_responses() -> [Vec<u8>; 2] {
     .as_bytes()
     .to_vec();
     [tool_call, finish]
+}
+
+fn terminal_inspect_round_responses() -> [Vec<u8>; 2] {
+    let tool_call = concat!(
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"terminal-inspect-call\",\"toolName\":\"terminal\",\"input\":{\"action\":\"inspect\",\"background_id\":17}}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    let finish = concat!(
+        "data: {\"type\":\"text-delta\",\"id\":\"answer\",\"delta\":\"inspection complete\"}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    [tool_call, finish]
+}
+
+fn digest_name(prefix: &str, domain: &[u8], value: &[u8], suffix: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    hasher.update(value);
+    format!("{prefix}{:x}{suffix}", hasher.finalize())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_background_record(
+    state_root: &Path,
+    workspace: &Path,
+    id: u64,
+    updated_at_ms: u64,
+    state: &str,
+    pid: Option<u32>,
+    exit_code: Option<i32>,
+    command: &str,
+) {
+    let workspace_text = workspace.to_str().unwrap();
+    let workspace_name = digest_name(
+        "workspace-",
+        b"machine-god:background-workspace:v1:",
+        workspace_text.as_bytes(),
+        "",
+    );
+    let record_name = digest_name(
+        "record-",
+        b"machine-god:background-record:v1:",
+        &id.to_be_bytes(),
+        ".json",
+    );
+    let record_root = state_root.join("background-v1").join(workspace_name);
+    fs::create_dir_all(&record_root).unwrap();
+    for directory in [
+        state_root.to_owned(),
+        state_root.join("background-v1"),
+        record_root.clone(),
+    ] {
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let record_path = record_root.join(record_name);
+    fs::write(
+        &record_path,
+        serde_json::to_vec(&json!({
+            "version": 1,
+            "workspace": workspace_text,
+            "id": id,
+            "started_at_ms": 10,
+            "updated_at_ms": updated_at_ms,
+            "command": command,
+            "cwd": workspace_text,
+            "state": state,
+            "pid": pid,
+            "exit_code": exit_code,
+            "server_url": null,
+            "diagnostic": null
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::set_permissions(record_path, fs::Permissions::from_mode(0o600)).unwrap();
 }
 
 #[cfg(target_os = "linux")]
@@ -894,10 +974,12 @@ fn assert_exact_native_tool_catalog(request: &Value) {
         .iter()
         .find(|tool| tool["name"] == TERMINAL_TOOL_NAME)
         .expect("terminal tool is registered");
-    assert_eq!(
-        terminal["inputSchema"]["properties"]["action"]["enum"],
-        json!(["exec", "start"])
-    );
+    let forms = terminal["inputSchema"]["oneOf"].as_array().unwrap();
+    assert_eq!(forms.len(), 3);
+    assert_eq!(forms[0]["properties"]["action"]["const"], "exec");
+    assert_eq!(forms[1]["properties"]["action"]["const"], "start");
+    assert_eq!(forms[2]["properties"]["action"]["const"], "inspect");
+    assert_eq!(forms[2]["required"], json!(["action", "background_id"]));
 }
 
 fn assert_exact_native_tool_permissions(prompter: &AllowingPrompter) {
@@ -2042,6 +2124,77 @@ fn v1_projection_composes_without_migrating_observable_loaded_schema() {
     assert_eq!(host.engine().provider().name(), "vercel_ai_gateway");
     let engine = host.into_engine();
     assert_eq!(engine.provider().name(), "vercel_ai_gateway");
+}
+
+#[test]
+fn composed_terminal_inspect_reads_exact_record_without_permission_or_supervisor_start() {
+    let temporary = TemporaryDirectory::new("terminal-inspect");
+    let (workspace, sessions) = roots(temporary.path());
+    let workspace = fs::canonicalize(workspace).unwrap();
+    write_background_record(
+        &sessions,
+        &workspace,
+        17,
+        20,
+        "exited",
+        None,
+        Some(0),
+        "PRIVATE_REFERENCE_HOST_COMMAND",
+    );
+
+    let transport = ScriptedTransport::new(
+        "TERMINAL_INSPECT_FACTORY_SENTINEL",
+        terminal_inspect_round_responses(),
+    );
+    let prompter = AllowingPrompter::default();
+    let host = compose_with_transport(
+        built_in_config(),
+        transport.clone(),
+        &workspace,
+        &sessions,
+        prompter.clone(),
+    )
+    .unwrap();
+    let retained_sessions = temporary.path().join("retained-sessions");
+    fs::rename(&sessions, &retained_sessions).unwrap();
+    fs::create_dir(&sessions).unwrap();
+    fs::set_permissions(&sessions, fs::Permissions::from_mode(0o700)).unwrap();
+    write_background_record(
+        &sessions,
+        &workspace,
+        17,
+        30,
+        "failed",
+        Some(999),
+        Some(7),
+        "REPLACEMENT_COMMAND",
+    );
+    let (_, events) = collect_turn(&host, "composed-terminal-inspect");
+
+    assert_completed(&events);
+    assert!(prompter.requests().is_empty());
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        decoded_tool_output(&body(&requests[1]), 2),
+        json!({
+            "content": {
+                "action": "inspect",
+                "background_id": 17,
+                "recorded_state": "exited",
+                "started_at_ms": 10,
+                "updated_at_ms": 20,
+                "pid": null,
+                "exit_code": 0
+            },
+            "is_error": false
+        })
+    );
+    assert!(
+        !body(&requests[1])
+            .to_string()
+            .contains("PRIVATE_REFERENCE_HOST_COMMAND")
+    );
 }
 
 #[test]

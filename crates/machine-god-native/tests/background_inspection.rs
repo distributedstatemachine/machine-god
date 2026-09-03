@@ -3,7 +3,9 @@
 use std::ffi::OsString;
 use std::fs;
 #[cfg(target_os = "linux")]
-use std::fs::{File, FileTimes};
+use std::fs::File;
+#[cfg(target_os = "linux")]
+use std::fs::FileTimes;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::MetadataExt;

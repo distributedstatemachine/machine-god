@@ -25,9 +25,9 @@ input; it is not a machine-god product language or runtime dependency.
 - Delivered main: `3bf4672e4607296c518f1c2259d51fed5bb16031`
 - Main CI: `33805243450` (`GREEN`)
 - Main Benchmark evidence: `33805243468` (`GREEN`)
-- Active branch: `main`
-- Active phase: `selecting the next bounded tools or CLI product slice`
-- Next gate: `choose one remaining M03 or M05 tool boundary, open its feature branch, and complete the local, adversarial-review, exact feature, and exact-main gates`
+- Active branch: `agent/m03-terminal-inspect`
+- Active phase: `implementing slice 54 bounded terminal persisted-record inspect`
+- Next gate: `complete the focused and full local gates for the slice-54 candidate, then freeze one exact SHA for three fresh adversarial reviews`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -40,10 +40,12 @@ exact feature and main gates passed. Detailed rejected-candidate, remediation,
 review, and workflow history is retained only in the linked historical review
 ledger.
 
-The next bounded product slice returns to actual tools or CLI work. Persistent
-terminal handles, read/write/wait/control actions, interactive terminal
-behavior, restart-safe control, ACP, teams, and extension slash commands remain
-separate. Documentation-tool maintenance remains a separate non-product task.
+Slice 54 is the active bounded product slice. It adds only no-authority exact
+persisted-record inspection for an explicitly injected terminal inspector;
+output streaming, persistent interactive handles, read/write/wait/control
+actions, interactive terminal behavior, restart-safe control, ACP, teams, and
+extension slash commands remain separate. Documentation-tool maintenance
+remains a separate non-product task.
 The post-delivery Apple maintenance repair replaced the regression fixture's
 busy process loop with a bounded passive descendant, added panic-safe group
 cleanup and explicit leader-exit synchronization, and serializes only Apple

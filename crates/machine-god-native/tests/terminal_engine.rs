@@ -13,10 +13,12 @@ use machine_god_core::{
     Tool, ToolCall, ToolCallId, ToolName, ToolOutput, TurnEvent,
 };
 use machine_god_native::{
-    MAX_TERMINAL_CWD_COMPONENT_BYTES, MAX_TERMINAL_CWD_COMPONENTS,
-    TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TerminalBackgroundOutcome, TerminalBackgroundStarter,
-    TerminalCapturedOutput, TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest,
-    TerminalExecutionStatus, TerminalExecutor, TerminalLimits, TerminalTool,
+    MAX_TERMINAL_CWD_COMPONENT_BYTES, MAX_TERMINAL_CWD_COMPONENTS, NativeBackgroundDetail,
+    NativeBackgroundInspectionError, NativeBackgroundState,
+    TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TerminalBackgroundInspector,
+    TerminalBackgroundOutcome, TerminalBackgroundStarter, TerminalCapturedOutput,
+    TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest, TerminalExecutionStatus,
+    TerminalExecutor, TerminalLimits, TerminalTool,
 };
 use machine_god_testkit::{
     InMemorySessionStore, ModelProviderStep, PermissionStep, ScriptedModelProvider,
@@ -142,6 +144,36 @@ impl TerminalBackgroundStarter for FakeBackgroundStarter {
     }
 }
 
+#[derive(Clone, Default)]
+struct FakeBackgroundInspector {
+    calls: Arc<AtomicUsize>,
+}
+
+impl TerminalBackgroundInspector for FakeBackgroundInspector {
+    fn inspect(
+        &self,
+        background_id: u64,
+        _cancellation: machine_god_core::CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeBackgroundDetail, NativeBackgroundInspectionError>> {
+        let calls = Arc::clone(&self.calls);
+        Box::pin(async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            NativeBackgroundDetail::new(
+                background_id,
+                NativeBackgroundState::Exited,
+                10,
+                20,
+                None,
+                PRIVATE_COMMAND.to_owned(),
+                "/private/workspace".to_owned(),
+                Some(0),
+                None,
+                None,
+            )
+        })
+    }
+}
+
 fn terminal_with_background(
     root: &std::path::Path,
     executor: FakeExecutor,
@@ -162,6 +194,32 @@ fn terminal_with_background(
             sha256: "b".repeat(64),
         },
         Arc::new(starter),
+    )
+    .unwrap()
+}
+
+fn terminal_with_inspector(
+    root: &std::path::Path,
+    executor: FakeExecutor,
+    starter: FakeBackgroundStarter,
+    inspector: FakeBackgroundInspector,
+) -> TerminalTool {
+    TerminalTool::with_executor_background_and_inspector(
+        root,
+        vec![(OsString::from("PATH"), OsString::from("/usr/bin:/bin"))],
+        Arc::new(executor),
+        TerminalLimits::default(),
+        std::fs::canonicalize(root)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned(),
+        ProcessEnvironment {
+            profile: TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE.to_owned(),
+            sha256: "b".repeat(64),
+        },
+        Arc::new(starter),
+        Arc::new(inspector),
     )
     .unwrap()
 }
@@ -495,6 +553,71 @@ fn background_start_runs_once_after_permission_and_persists_display_identity() {
                 "background_id": 17,
                 "pid": null,
                 "status": "started",
+            }),
+            is_error: false,
+        }
+    );
+    assert_eq!(store.record(&session_id).unwrap().messages[2], message);
+}
+
+#[test]
+fn background_inspect_bypasses_permission_and_persists_compact_record() {
+    let temporary = TemporaryDirectory::new("engine-inspect");
+    let provider = provider_with_arguments(
+        "terminal-inspect",
+        json!({ "action": "inspect", "background_id": 17 }),
+    );
+    let store = InMemorySessionStore::new();
+    let policy = ScriptedPermissionHandler::new([]);
+    let executor = FakeExecutor::default();
+    let starter = FakeBackgroundStarter::default();
+    let inspector = FakeBackgroundInspector::default();
+    let tool = terminal_with_inspector(
+        temporary.path(),
+        executor.clone(),
+        starter.clone(),
+        inspector.clone(),
+    );
+    assert!(
+        tool.prepare(call(
+            "terminal",
+            json!({ "action": "inspect", "background_id": 17 }),
+        ))
+        .unwrap()
+        .capability()
+        .is_none()
+    );
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store.clone())
+        .permission_handler(policy.clone())
+        .tool(tool)
+        .build()
+        .unwrap();
+
+    let (session_id, events) = collect(&engine, "terminal-inspect-session");
+
+    assert!(policy.requests().is_empty());
+    assert_eq!(inspector.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(starter.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event.payload, TurnEvent::ToolStarted { .. }))
+    );
+    let (message, output) = second_request_tool_output(&provider);
+    assert_eq!(
+        output,
+        ToolOutput {
+            content: json!({
+                "action": "inspect",
+                "background_id": 17,
+                "recorded_state": "exited",
+                "started_at_ms": 10,
+                "updated_at_ms": 20,
+                "pid": null,
+                "exit_code": 0
             }),
             is_error: false,
         }

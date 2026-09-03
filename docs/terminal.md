@@ -1,18 +1,22 @@
 # Native `terminal` command contract
 
-The native tool executes one bounded foreground shell command or starts one
-noninteractive background shell command after explicit process authorization.
-It is registered by the reference host and has no top-level CLI command.
+The native tool executes one bounded foreground shell command, starts one
+noninteractive background shell command after explicit process authorization,
+or reads one exact persisted background record without process authority. It is
+registered by the reference host and has no top-level CLI command.
 
 ## Boundary
 
-The reference-host tool implements the `exec` and bounded `start` subsets of
+The reference-host tool implements the `exec`, bounded `start`, and bounded
+persisted-record `inspect` subsets of
 fx's `terminal` tool. `exec` captures bounded standard output and error and
 waits for the direct child. `start` durably records and releases one
 noninteractive command through the native background supervisor and returns
-its display identity without waiting for command completion. Standalone public
-terminal constructors remain exec-only unless a trusted background starter is
-explicitly injected.
+its display identity without waiting for command completion. `inspect` reads
+the validated record for that display identity without claiming current
+liveness. Standalone public terminal constructors remain exec-only; injecting
+only a trusted background starter adds only `start`, while `inspect` appears
+only when a trusted inspector is also explicitly injected.
 
 The model-facing input is:
 
@@ -25,8 +29,11 @@ The model-facing input is:
 }
 ```
 
-`action` and `command` are required. The reference host accepts `"exec"` or
-`"start"`; an exec-only construction accepts only `"exec"`.
+`action` and `command` are required for the closed `exec` and `start` forms.
+The reference host also accepts the separate closed form
+`{"action":"inspect","background_id":7}`, where `background_id` is a
+nonzero JSON `u64`. An exec-only construction accepts only `exec`; a
+starter-only construction accepts `exec` and `start`.
 `cwd` is optional and defaults to `"."`. `profile` is optional and accepts
 only `"clean"`; omission has the same meaning. Unknown or duplicate fields,
 mistyped values, an empty command, and a command over 32 KiB reject. The
@@ -51,12 +58,12 @@ without constructing the absolute path or a background request.
 The reference-host tool description is:
 
 ```text
-Run one foreground command or start one noninteractive background command
+Run a foreground command, start a background command, or inspect one persisted background record
 ```
 
 An exec-only construction retains its earlier foreground-only description and
-schema. Both forms deliberately exclude `read`, `screen`, `write`, `wait`,
-`monitor`, `inspect`, `list`, `resize`, `signal`, and `close`; PTYs; interactive
+schema. All forms deliberately exclude `read`, `screen`, `write`, `wait`,
+`monitor`, `list`, `resize`, `signal`, and `close`; PTYs; interactive
 stdin; managed background output; artifacts; custom or login shells; user shell
 profiles; retries; external working directories; and benchmark workloads. They
 make no fx-equivalence or product-performance claim.
@@ -111,7 +118,9 @@ returns those same canonical model arguments. Direct `execute` reparses and
 revalidates all fields and rejects any canonical-argument, program, argument,
 cwd, profile, or digest divergence before filesystem access, worker creation,
 or process spawn. The existing engine presents terminal execution as critical
-risk. Denial has zero terminal-owned effects.
+risk. Denial has zero terminal-owned effects. `inspect` instead prepares with
+no authority because it can read only through the explicitly injected
+persisted-history boundary; it never requests process permission.
 
 The capability authorizes a process, not a sandbox. The retained workspace
 descriptor constrains only the child's starting-directory identity. Once
@@ -143,11 +152,13 @@ Reference-host composition retains the workspace authority and advertises
 `terminal` as defined by the canonical
 [tool catalog](native-reference-host.md#tool-catalog). On macOS, `exec` returns
 its fixed unsupported error after strict preparation and permission. `start`
-is supported on Linux and macOS through the background helper. On other
+and descriptor-confined `inspect` are supported on Linux and macOS. On other
 platforms the complete reference host is unavailable. The exported exec
 contract remains portable through a trusted injected `TerminalExecutor`, and a
 trusted injected `TerminalBackgroundStarter` may implement the documented
-background ownership contract.
+background ownership contract. A trusted injected
+`TerminalBackgroundInspector` may implement the exact persisted-record read
+contract.
 
 ## Background start protocol
 
@@ -188,6 +199,47 @@ authority. Success means the supervisor completed its release contract, not
 that the shell is still running when the result is observed. Capacity and
 clock failures are retryable fixed unavailable errors. Persistence, process,
 and invariant failures are fixed redacted execution errors.
+
+## Persisted background inspection
+
+`inspect` accepts exactly `action` and `background_id`; command, cwd, profile,
+session, control, and list fields reject. Preparation canonicalizes to the same
+two-key object and uses no authority. The execution future is inert until first
+poll. Pre-cancellation has zero inspector effects, and cancellation is checked
+again after the one injected read before any result is published. The tool
+also registers its own cancellation wake, so cancellation resolves and drops
+a pending inspector future even when the injected inspector does not observe
+the supplied token.
+
+The inspector performs exact `NativeBackgroundQuery::Id(background_id)`
+semantics over the frozen workspace identity. It does not scan a listing,
+probe a PID, reconcile or initialize the supervisor, claim liveness, or signal,
+wait for, restart, or otherwise control a process. Every decoded recorded state
+is a successful historical result. The compact output is:
+
+```json
+{
+  "action": "inspect",
+  "background_id": 7,
+  "recorded_state": "exited",
+  "started_at_ms": 1000,
+  "updated_at_ms": 1200,
+  "pid": 1234,
+  "exit_code": 0
+}
+```
+
+The result is checked against the terminal 48 KiB serialized-result ceiling.
+Record-not-found, corrupt, resource-limit, unavailable, and unsupported
+failures have fixed redacted mappings. The reference adapter retains the
+injected state-root descriptor and canonical workspace spelling, so ambient
+cwd/environment changes or replacement of the original state-root pathname
+cannot redirect a read.
+
+This is intentionally not equivalent to upstream fx interactive-session
+inspection. machine-god's `background_id` identifies one persisted start
+record; it is not a session authority and grants no access to interactive
+terminal state or control.
 
 ## Foreground execution protocol
 

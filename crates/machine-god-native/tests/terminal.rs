@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::future::Future;
 use std::num::NonZeroU32;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
 use std::time::{Duration, Instant};
@@ -19,11 +19,14 @@ use machine_god_native::{
     MAX_TERMINAL_PRODUCED_OUTPUT_BYTES,
 };
 use machine_god_native::{
-    TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TerminalBackgroundOutcome, TerminalBackgroundStarter,
-    TerminalCapturedOutput, TerminalConfigErrorKind, TerminalExecution, TerminalExecutionOutcome,
-    TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError,
-    TerminalExecutorErrorKind, TerminalLimits, TerminalTool,
+    NativeBackgroundDetail, NativeBackgroundInspectionError, NativeBackgroundInspectionErrorKind,
+    NativeBackgroundState, TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TerminalBackgroundInspector,
+    TerminalBackgroundOutcome, TerminalBackgroundStarter, TerminalCapturedOutput,
+    TerminalConfigErrorKind, TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest,
+    TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError, TerminalExecutorErrorKind,
+    TerminalLimits, TerminalTool,
 };
+use machine_god_reentrant_waker_test::{Callback, new as reentrant_waker};
 use serde_json::{Value, json};
 
 mod terminal_test_support;
@@ -215,6 +218,168 @@ impl TerminalBackgroundStarter for FakeBackgroundStarter {
                 }
                 BackgroundMode::Error(kind) => Err(BackgroundStartError::new(kind)),
             }
+        })
+    }
+}
+
+#[derive(Clone)]
+struct FakeBackgroundInspector {
+    state: Arc<BackgroundInspectorState>,
+    cancel_before_return: bool,
+    error: Option<NativeBackgroundInspectionErrorKind>,
+}
+
+#[derive(Default)]
+struct BackgroundInspectorState {
+    calls: AtomicUsize,
+    ids: Mutex<Vec<u64>>,
+}
+
+impl FakeBackgroundInspector {
+    fn new(cancel_before_return: bool) -> Self {
+        Self {
+            state: Arc::new(BackgroundInspectorState::default()),
+            cancel_before_return,
+            error: None,
+        }
+    }
+
+    fn with_error(error: NativeBackgroundInspectionErrorKind) -> Self {
+        Self {
+            state: Arc::new(BackgroundInspectorState::default()),
+            cancel_before_return: false,
+            error: Some(error),
+        }
+    }
+
+    fn calls(&self) -> usize {
+        self.state.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl TerminalBackgroundInspector for FakeBackgroundInspector {
+    fn inspect(
+        &self,
+        background_id: u64,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeBackgroundDetail, NativeBackgroundInspectionError>> {
+        let state = Arc::clone(&self.state);
+        let cancel_before_return = self.cancel_before_return;
+        let error = self.error;
+        Box::pin(async move {
+            state.calls.fetch_add(1, Ordering::SeqCst);
+            state.ids.lock().unwrap().push(background_id);
+            if cancel_before_return {
+                let _ = cancellation.cancel();
+            }
+            if let Some(error) = error {
+                return Err(NativeBackgroundInspectionError::new(error));
+            }
+            NativeBackgroundDetail::new(
+                background_id,
+                NativeBackgroundState::Running,
+                10,
+                20,
+                Some(1234),
+                "private command".to_owned(),
+                "/private/workspace".to_owned(),
+                None,
+                Some("https://private.invalid".to_owned()),
+                Some("private diagnostic".to_owned()),
+            )
+        })
+    }
+}
+
+#[derive(Clone)]
+struct PendingBackgroundInspector {
+    polls: Arc<AtomicUsize>,
+    dropped: Arc<AtomicBool>,
+}
+
+struct PendingInspection {
+    polls: Arc<AtomicUsize>,
+    dropped: Arc<AtomicBool>,
+}
+
+#[derive(Clone)]
+struct DropCancellingBackgroundInspector {
+    dropped: Arc<AtomicBool>,
+}
+
+struct DropCancellingInspection {
+    cancellation: CancellationToken,
+    dropped: Arc<AtomicBool>,
+    detail: Option<NativeBackgroundDetail>,
+}
+
+impl Future for DropCancellingInspection {
+    type Output = Result<NativeBackgroundDetail, NativeBackgroundInspectionError>;
+
+    fn poll(mut self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+        Poll::Ready(Ok(self.detail.take().expect("inspection is polled once")))
+    }
+}
+
+impl Drop for DropCancellingInspection {
+    fn drop(&mut self) {
+        let _ = self.cancellation.cancel();
+        self.dropped.store(true, Ordering::SeqCst);
+    }
+}
+
+impl TerminalBackgroundInspector for DropCancellingBackgroundInspector {
+    fn inspect(
+        &self,
+        background_id: u64,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeBackgroundDetail, NativeBackgroundInspectionError>> {
+        Box::pin(DropCancellingInspection {
+            cancellation,
+            dropped: Arc::clone(&self.dropped),
+            detail: Some(
+                NativeBackgroundDetail::new(
+                    background_id,
+                    NativeBackgroundState::Running,
+                    10,
+                    20,
+                    Some(1234),
+                    "private command".to_owned(),
+                    "/private/workspace".to_owned(),
+                    None,
+                    None,
+                    None,
+                )
+                .expect("valid detail"),
+            ),
+        })
+    }
+}
+
+impl Future for PendingInspection {
+    type Output = Result<NativeBackgroundDetail, NativeBackgroundInspectionError>;
+
+    fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+        self.polls.fetch_add(1, Ordering::SeqCst);
+        Poll::Pending
+    }
+}
+
+impl Drop for PendingInspection {
+    fn drop(&mut self) {
+        self.dropped.store(true, Ordering::SeqCst);
+    }
+}
+
+impl TerminalBackgroundInspector for PendingBackgroundInspector {
+    fn inspect(
+        &self,
+        _background_id: u64,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeBackgroundDetail, NativeBackgroundInspectionError>> {
+        Box::pin(PendingInspection {
+            polls: Arc::clone(&self.polls),
+            dropped: Arc::clone(&self.dropped),
         })
     }
 }
@@ -896,6 +1061,36 @@ fn background_tool(
     .unwrap()
 }
 
+fn inspecting_tool<I>(
+    root: &std::path::Path,
+    executor: &FakeExecutor,
+    starter: &FakeBackgroundStarter,
+    inspector: &I,
+) -> TerminalTool
+where
+    I: TerminalBackgroundInspector + Clone,
+{
+    let canonical_workspace = std::fs::canonicalize(root)
+        .unwrap()
+        .to_str()
+        .expect("test workspace is Unicode")
+        .to_owned();
+    TerminalTool::with_executor_background_and_inspector(
+        root,
+        environment(),
+        Arc::new(executor.clone()),
+        limits(1),
+        canonical_workspace,
+        ProcessEnvironment {
+            profile: TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE.to_owned(),
+            sha256: "a".repeat(64),
+        },
+        Arc::new(starter.clone()),
+        Arc::new(inspector.clone()),
+    )
+    .unwrap()
+}
+
 fn execute(
     tool: &TerminalTool,
     arguments: Value,
@@ -979,17 +1174,20 @@ fn spec_and_defaults_are_strict_and_prepare_exact_process_identity() {
         spec.description,
         "Run one foreground shell command from a workspace-relative directory"
     );
-    assert_eq!(spec.input_schema["type"], "object");
-    assert_eq!(spec.input_schema["required"], json!(["action", "command"]));
-    assert_eq!(spec.input_schema["additionalProperties"], false);
-    let properties = spec.input_schema["properties"].as_object().unwrap();
-    assert_eq!(properties.len(), 4);
-    assert_eq!(properties["action"]["type"], "string");
-    assert_eq!(properties["action"]["enum"], json!(["exec"]));
-    assert_eq!(properties["command"]["type"], "string");
-    assert_eq!(properties["cwd"]["type"], "string");
-    assert_eq!(properties["profile"]["type"], "string");
-    assert_eq!(properties["profile"]["enum"], json!(["clean"]));
+    assert_eq!(
+        spec.input_schema,
+        json!({
+            "type": "object",
+            "properties": {
+                "action": { "type": "string", "enum": ["exec"] },
+                "command": { "type": "string" },
+                "cwd": { "type": "string", "default": "." },
+                "profile": { "type": "string", "enum": ["clean"], "default": "clean" }
+            },
+            "required": ["action", "command"],
+            "additionalProperties": false
+        })
+    );
 
     let prepared = tool
         .prepare(call(
@@ -1072,8 +1270,18 @@ fn background_start_has_exact_permission_identity_and_bypasses_foreground_execut
         "Run one foreground command or start one noninteractive background command"
     );
     assert_eq!(
-        spec.input_schema["properties"]["action"]["enum"],
-        json!(["exec", "start"])
+        spec.input_schema,
+        json!({
+            "type": "object",
+            "properties": {
+                "action": { "type": "string", "enum": ["exec", "start"] },
+                "command": { "type": "string" },
+                "cwd": { "type": "string", "default": "." },
+                "profile": { "type": "string", "enum": ["clean"], "default": "clean" }
+            },
+            "required": ["action", "command"],
+            "additionalProperties": false
+        })
     );
     let prepared = tool
         .prepare(call(
@@ -1137,6 +1345,291 @@ fn background_start_has_exact_permission_identity_and_bypasses_foreground_execut
     assert_eq!(requests[0].2, "BackgroundStartRequest { .. }");
     drop(occupied_foreground);
     assert_foreground_capacity_recovers(&tool, &executor);
+}
+
+#[test]
+fn background_inspect_is_exact_inert_and_requires_no_authority() {
+    let temporary = TemporaryDirectory::new("background-inspect");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let inspector = FakeBackgroundInspector::new(false);
+    let tool = inspecting_tool(temporary.path(), &executor, &starter, &inspector);
+
+    let forms = tool.spec().input_schema["oneOf"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(forms.len(), 3);
+    assert_eq!(forms[2]["properties"]["action"]["const"], "inspect");
+    assert_eq!(forms[2]["required"], json!(["action", "background_id"]));
+    let prepared = tool
+        .prepare(call(
+            "terminal",
+            json!({ "action": "inspect", "background_id": 41 }),
+        ))
+        .unwrap();
+    assert!(prepared.capability().is_none());
+    assert_eq!(
+        prepared.arguments(),
+        &json!({ "action": "inspect", "background_id": 41 })
+    );
+    assert_eq!(inspector.calls(), 0);
+
+    let mut future = Box::pin(tool.execute(
+        context(),
+        prepared.arguments().clone(),
+        CancellationToken::new(),
+    ));
+    assert_eq!(inspector.calls(), 0);
+    let output = poll_ready(future.as_mut()).unwrap();
+    assert_eq!(inspector.calls(), 1);
+    assert_eq!(starter.calls(), 0);
+    assert_eq!(executor.calls(), 0);
+    assert_eq!(
+        output.content,
+        json!({
+            "action": "inspect",
+            "background_id": 41,
+            "recorded_state": "running",
+            "started_at_ms": 10,
+            "updated_at_ms": 20,
+            "pid": 1234,
+            "exit_code": null
+        })
+    );
+    let encoded = serde_json::to_vec(&output.content).unwrap();
+    assert!(encoded.len() <= machine_god_native::MAX_TERMINAL_SERIALIZED_RESULT_BYTES);
+    let rendered = output.content.to_string();
+    assert!(!rendered.contains("private command"));
+    assert!(!rendered.contains("private/workspace"));
+    assert!(!rendered.contains("private.invalid"));
+    assert!(!rendered.contains("private diagnostic"));
+}
+
+#[test]
+fn background_inspect_cancellation_and_strict_forms_bound_effects() {
+    let temporary = TemporaryDirectory::new("background-inspect-cancel");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let inspector = FakeBackgroundInspector::new(false);
+    let tool = inspecting_tool(temporary.path(), &executor, &starter, &inspector);
+    for invalid in [
+        json!({ "action": "inspect", "background_id": 0 }),
+        json!({ "action": "inspect", "background_id": 1, "command": ":" }),
+        json!({ "action": "inspect" }),
+        json!({ "action": "inspect", "background_id": "1" }),
+    ] {
+        assert_invalid_input(&tool.prepare(call("terminal", invalid)).unwrap_err());
+    }
+    assert_eq!(inspector.calls(), 0);
+
+    let cancellation = CancellationToken::new();
+    assert!(cancellation.cancel());
+    let error = execute(
+        &tool,
+        json!({ "action": "inspect", "background_id": 7 }),
+        cancellation,
+    )
+    .unwrap_err();
+    assert_eq!(error.kind, ToolErrorKind::Cancelled);
+    assert_eq!(inspector.calls(), 0);
+
+    let cancelling = FakeBackgroundInspector::new(true);
+    let tool = inspecting_tool(temporary.path(), &executor, &starter, &cancelling);
+    let error = execute(
+        &tool,
+        json!({ "action": "inspect", "background_id": 8 }),
+        CancellationToken::new(),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind, ToolErrorKind::Cancelled);
+    assert_eq!(cancelling.calls(), 1);
+    assert_eq!(starter.calls(), 0);
+    assert_eq!(executor.calls(), 0);
+}
+
+#[test]
+fn dropping_pending_background_inspect_drops_the_injected_future() {
+    let temporary = TemporaryDirectory::new("background-inspect-drop");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let inspector = PendingBackgroundInspector {
+        polls: Arc::new(AtomicUsize::new(0)),
+        dropped: Arc::new(AtomicBool::new(false)),
+    };
+    let tool = inspecting_tool(temporary.path(), &executor, &starter, &inspector);
+    let mut future = Box::pin(tool.execute(
+        context(),
+        json!({ "action": "inspect", "background_id": 9 }),
+        CancellationToken::new(),
+    ));
+    assert!(poll_once(future.as_mut()).is_pending());
+    assert_eq!(inspector.polls.load(Ordering::SeqCst), 1);
+    assert!(!inspector.dropped.load(Ordering::SeqCst));
+    drop(future);
+    assert!(inspector.dropped.load(Ordering::SeqCst));
+    assert_eq!(starter.calls(), 0);
+    assert_eq!(executor.calls(), 0);
+}
+
+#[test]
+fn cancellation_wakes_and_drops_a_pending_background_inspect() {
+    let temporary = TemporaryDirectory::new("background-inspect-pending-cancel");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let inspector = PendingBackgroundInspector {
+        polls: Arc::new(AtomicUsize::new(0)),
+        dropped: Arc::new(AtomicBool::new(false)),
+    };
+    let tool = inspecting_tool(temporary.path(), &executor, &starter, &inspector);
+    let cancellation = CancellationToken::new();
+    let observed = Arc::new(ObservedWake::default());
+    let waker = Waker::from(Arc::clone(&observed));
+    let mut future = Box::pin(tool.execute(
+        context(),
+        json!({ "action": "inspect", "background_id": 9 }),
+        cancellation.clone(),
+    ));
+
+    assert!(poll_with_waker(future.as_mut(), &waker).is_pending());
+    assert_eq!(inspector.polls.load(Ordering::SeqCst), 1);
+    assert!(cancellation.cancel());
+    observed.wait_for_calls(1);
+    let error = match poll_with_waker(future.as_mut(), &waker) {
+        Poll::Ready(Err(error)) => error,
+        Poll::Ready(Ok(_)) => panic!("cancelled inspection returned output"),
+        Poll::Pending => panic!("cancelled inspection remained pending"),
+    };
+    assert_eq!(error.kind, ToolErrorKind::Cancelled);
+    assert_eq!(error.code, "terminal_cancelled");
+    assert!(inspector.dropped.load(Ordering::SeqCst));
+    assert_eq!(starter.calls(), 0);
+    assert_eq!(executor.calls(), 0);
+}
+
+#[test]
+fn cancellation_from_ready_inspector_drop_wins_before_output_publication() {
+    let temporary = TemporaryDirectory::new("background-inspect-drop-cancel");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let dropped = Arc::new(AtomicBool::new(false));
+    let inspector = DropCancellingBackgroundInspector {
+        dropped: Arc::clone(&dropped),
+    };
+    let tool = inspecting_tool(temporary.path(), &executor, &starter, &inspector);
+
+    let error = execute(
+        &tool,
+        json!({ "action": "inspect", "background_id": 9 }),
+        CancellationToken::new(),
+    )
+    .unwrap_err();
+
+    assert_eq!(error.kind, ToolErrorKind::Cancelled);
+    assert_eq!(error.code, "terminal_cancelled");
+    assert_eq!(error.message, "terminal execution was cancelled");
+    assert!(!error.retryable);
+    assert!(dropped.load(Ordering::SeqCst));
+    assert_eq!(starter.calls(), 0);
+    assert_eq!(executor.calls(), 0);
+}
+
+#[test]
+fn cancellation_from_waiter_waker_drop_wins_before_output_publication() {
+    let temporary = TemporaryDirectory::new("background-inspect-waker-drop-cancel");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let inspector = FakeBackgroundInspector::new(false);
+    let tool = inspecting_tool(temporary.path(), &executor, &starter, &inspector);
+    let cancellation = CancellationToken::new();
+    let reentrant_cancellation = cancellation.clone();
+    let (waker, handle) = reentrant_waker(Callback::Drop, move || {
+        let _ = reentrant_cancellation.cancel();
+    });
+    let mut future = Box::pin(tool.execute(
+        context(),
+        json!({ "action": "inspect", "background_id": 9 }),
+        cancellation,
+    ));
+
+    let error = match poll_with_waker(future.as_mut(), &waker) {
+        Poll::Ready(Err(error)) => error,
+        Poll::Ready(Ok(_)) => panic!("waiter teardown cancellation published output"),
+        Poll::Pending => panic!("ready inspection remained pending"),
+    };
+
+    assert_eq!(error.kind, ToolErrorKind::Cancelled);
+    assert_eq!(error.code, "terminal_cancelled");
+    assert_eq!(error.message, "terminal execution was cancelled");
+    assert!(!error.retryable);
+    assert!(handle.calls() >= 1);
+    assert_eq!(inspector.calls(), 1);
+    assert_eq!(starter.calls(), 0);
+    assert_eq!(executor.calls(), 0);
+}
+
+#[test]
+fn background_inspect_native_failures_have_fixed_redacted_mappings() {
+    let temporary = TemporaryDirectory::new("background-inspect-errors");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let cases = [
+        (
+            NativeBackgroundInspectionErrorKind::NotFound,
+            "terminal_background_not_found",
+            false,
+        ),
+        (
+            NativeBackgroundInspectionErrorKind::Corrupt,
+            "terminal_background_corrupt",
+            false,
+        ),
+        (
+            NativeBackgroundInspectionErrorKind::ResourceLimit,
+            "terminal_inspect_resource_limit",
+            false,
+        ),
+        (
+            NativeBackgroundInspectionErrorKind::Unavailable,
+            "terminal_inspect_unavailable",
+            true,
+        ),
+        (
+            NativeBackgroundInspectionErrorKind::UnsupportedPlatform,
+            "terminal_unsupported",
+            false,
+        ),
+    ];
+    for (kind, code, retryable) in cases {
+        let inspector = FakeBackgroundInspector::with_error(kind);
+        let tool = inspecting_tool(temporary.path(), &executor, &starter, &inspector);
+        let error = execute(
+            &tool,
+            json!({ "action": "inspect", "background_id": 9 }),
+            CancellationToken::new(),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, code);
+        assert_eq!(error.retryable, retryable);
+        assert!(!format!("{error:?}").contains("private"));
+        assert_eq!(inspector.calls(), 1);
+    }
+    assert_eq!(starter.calls(), 0);
+    assert_eq!(executor.calls(), 0);
 }
 
 #[test]

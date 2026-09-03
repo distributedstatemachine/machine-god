@@ -17,6 +17,9 @@ use std::task::{Context, Poll, Wake, Waker};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crate::background_inspection::{
+    NativeBackgroundDetail, NativeBackgroundInspectionError, NativeBackgroundInspectionErrorKind,
+};
 use machine_god_core::{
     BackgroundStartError, BackgroundStartErrorKind, BackgroundStartRequest, BoxFuture,
     CancellationToken, Capability, PreparedToolCall, ProcessEnvironment, Tool, ToolCall,
@@ -88,6 +91,7 @@ const TERMINAL_EXEC_DESCRIPTION: &str =
     "Run one foreground shell command from a workspace-relative directory";
 const TERMINAL_BACKGROUND_DESCRIPTION: &str =
     "Run one foreground command or start one noninteractive background command";
+const TERMINAL_INSPECT_DESCRIPTION: &str = "Run a foreground command, start a background command, or inspect one persisted background record";
 const PIPE_RETAINED_BYTES: usize = MAX_TERMINAL_RETAINED_OUTPUT_BYTES / 2;
 #[cfg(target_os = "linux")]
 const PIPE_READ_BYTES: usize = 16 * 1024;
@@ -498,6 +502,17 @@ pub trait TerminalBackgroundStarter: Send + Sync + 'static {
     ) -> BoxFuture<'static, Result<TerminalBackgroundOutcome, BackgroundStartError>>;
 }
 
+/// Trusted read-only boundary for one exact persisted background record.
+pub trait TerminalBackgroundInspector: Send + Sync + 'static {
+    /// Returns an inert inspection future. Implementations must perform an
+    /// exact-ID read and must not infer process liveness or control a process.
+    fn inspect(
+        &self,
+        background_id: u64,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeBackgroundDetail, NativeBackgroundInspectionError>>;
+}
+
 /// Display-only identity returned by an injected background starter.
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct TerminalBackgroundOutcome {
@@ -563,6 +578,7 @@ pub struct TerminalTool {
     active: Arc<AtomicUsize>,
     system_unsupported: bool,
     background: Option<TerminalBackground>,
+    inspector: Option<Arc<dyn TerminalBackgroundInspector>>,
 }
 
 impl TerminalTool {
@@ -654,6 +670,31 @@ impl TerminalTool {
         )
     }
 
+    /// Constructs a bounded terminal with explicitly injected start and exact
+    /// persisted-record inspection boundaries.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed configuration failure for invalid injected inputs.
+    #[cfg(unix)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_executor_background_and_inspector(
+        root: &Path,
+        environment: Vec<(OsString, OsString)>,
+        executor: Arc<dyn TerminalExecutor>,
+        limits: TerminalLimits,
+        canonical_workspace: String,
+        background_environment: ProcessEnvironment,
+        starter: Arc<dyn TerminalBackgroundStarter>,
+        inspector: Arc<dyn TerminalBackgroundInspector>,
+    ) -> Result<Self, TerminalConfigError> {
+        let root = open_workspace_root(root)?;
+        validate_background_workspace_identity(&root, &canonical_workspace)?;
+        Self::from_parts(root, environment, executor, limits, false)?
+            .with_background(canonical_workspace, background_environment, starter)?
+            .with_inspector(inspector)
+    }
+
     #[cfg(unix)]
     #[allow(dead_code)] // Used by reference-host composition on integration.
     pub(crate) fn from_root_descriptor(root: OwnedFd) -> Result<Self, TerminalConfigError> {
@@ -687,6 +728,20 @@ impl TerminalTool {
     }
 
     #[cfg(unix)]
+    pub(crate) fn with_inspector(
+        mut self,
+        inspector: Arc<dyn TerminalBackgroundInspector>,
+    ) -> Result<Self, TerminalConfigError> {
+        if self.background.is_none() {
+            return Err(TerminalConfigError::new(
+                TerminalConfigErrorKind::InvalidRoot,
+            ));
+        }
+        self.inspector = Some(inspector);
+        Ok(self)
+    }
+
+    #[cfg(unix)]
     fn from_parts(
         root: OwnedFd,
         environment: Vec<(OsString, OsString)>,
@@ -704,6 +759,7 @@ impl TerminalTool {
             active: Arc::new(AtomicUsize::new(0)),
             system_unsupported,
             background: None,
+            inspector: None,
         })
     }
 }
@@ -850,25 +906,44 @@ fn parse_arguments(
     arguments: &Value,
     require_complete: bool,
     allow_start: bool,
+    allow_inspect: bool,
 ) -> Result<TerminalArguments, ToolError> {
     let Value::Object(object) = arguments else {
         return Err(invalid_arguments());
     };
+    if !serialized_value_fits(arguments, MAX_TERMINAL_SERIALIZED_ARGUMENT_BYTES) {
+        return Err(invalid_arguments());
+    }
+    let action = match object.get("action").and_then(Value::as_str) {
+        Some("exec") => TerminalAction::Exec,
+        Some("start") if allow_start => TerminalAction::Start,
+        Some("inspect") if allow_inspect => TerminalAction::Inspect,
+        _ => return Err(invalid_arguments()),
+    };
+    if action == TerminalAction::Inspect {
+        if object.len() != 2
+            || object
+                .keys()
+                .any(|key| !matches!(key.as_str(), "action" | "background_id"))
+        {
+            return Err(invalid_arguments());
+        }
+        let background_id = object
+            .get("background_id")
+            .and_then(Value::as_u64)
+            .filter(|id| *id != 0)
+            .ok_or_else(invalid_arguments)?;
+        return Ok(TerminalArguments::Inspect { background_id });
+    }
     let expected_len = if require_complete { 4 } else { object.len() };
     if (require_complete && expected_len != 4)
         || (!require_complete && !(2..=4).contains(&expected_len))
         || object
             .keys()
             .any(|key| !matches!(key.as_str(), "action" | "command" | "cwd" | "profile"))
-        || !serialized_value_fits(arguments, MAX_TERMINAL_SERIALIZED_ARGUMENT_BYTES)
     {
         return Err(invalid_arguments());
     }
-    let action = match object.get("action").and_then(Value::as_str) {
-        Some("exec") => TerminalAction::Exec,
-        Some("start") if allow_start => TerminalAction::Start,
-        _ => return Err(invalid_arguments()),
-    };
     let command = object
         .get("command")
         .and_then(Value::as_str)
@@ -887,20 +962,26 @@ fn parse_arguments(
         None if !require_complete => {}
         _ => return Err(invalid_arguments()),
     }
-    Ok(TerminalArguments {
+    Ok(TerminalArguments::Command(TerminalCommandArguments {
         action,
         command: command.to_owned(),
         cwd: cwd.to_owned(),
-    })
+    }))
 }
 
 fn canonical_arguments(arguments: &TerminalArguments) -> Value {
-    json!({
-        "action": arguments.action.as_str(),
-        "command": arguments.command,
-        "cwd": arguments.cwd,
-        "profile": "clean"
-    })
+    match arguments {
+        TerminalArguments::Command(arguments) => json!({
+            "action": arguments.action.as_str(),
+            "command": arguments.command,
+            "cwd": arguments.cwd,
+            "profile": "clean"
+        }),
+        TerminalArguments::Inspect { background_id } => json!({
+            "action": "inspect",
+            "background_id": background_id
+        }),
+    }
 }
 
 fn validate_cwd(cwd: &str) -> Result<(), ToolError> {
@@ -952,7 +1033,7 @@ fn is_forbidden_path_character(character: char) -> bool {
 impl TerminalTool {
     fn execution_request(
         &self,
-        arguments: TerminalArguments,
+        arguments: TerminalCommandArguments,
         started: Instant,
         deadline: Instant,
         activity: Arc<ExecutionActivity>,
@@ -1009,7 +1090,7 @@ impl TerminalTool {
 impl TerminalTool {
     fn execution_request(
         &self,
-        _arguments: TerminalArguments,
+        _arguments: TerminalCommandArguments,
         _started: Instant,
         _deadline: Instant,
         _activity: Arc<ExecutionActivity>,
@@ -1714,6 +1795,7 @@ fn lock_deadline(state: &Mutex<DeadlineTimerState>) -> MutexGuard<'_, DeadlineTi
 enum TerminalAction {
     Exec,
     Start,
+    Inspect,
 }
 
 impl TerminalAction {
@@ -1721,21 +1803,28 @@ impl TerminalAction {
         match self {
             Self::Exec => "exec",
             Self::Start => "start",
+            Self::Inspect => "inspect",
         }
     }
 }
 
 #[derive(Clone)]
-struct TerminalArguments {
+struct TerminalCommandArguments {
     action: TerminalAction,
     command: String,
     cwd: String,
 }
 
+#[derive(Clone)]
+enum TerminalArguments {
+    Command(TerminalCommandArguments),
+    Inspect { background_id: u64 },
+}
+
 impl TerminalTool {
     fn background_request(
         &self,
-        arguments: TerminalArguments,
+        arguments: TerminalCommandArguments,
     ) -> Result<BackgroundStartRequest, ToolError> {
         let background = self.background.as_ref().ok_or_else(invalid_arguments)?;
         let cwd = absolute_background_cwd(&background.workspace, &arguments.cwd)?;
@@ -1744,7 +1833,7 @@ impl TerminalTool {
 
     async fn execute_background(
         &self,
-        arguments: TerminalArguments,
+        arguments: TerminalCommandArguments,
         cancellation: CancellationToken,
     ) -> Result<ToolOutput, ToolError> {
         check_cancellation(&cancellation)?;
@@ -1766,6 +1855,67 @@ impl TerminalTool {
             is_error: false,
         })
     }
+
+    async fn execute_inspect(
+        &self,
+        background_id: u64,
+        cancellation: CancellationToken,
+    ) -> Result<ToolOutput, ToolError> {
+        check_cancellation(&cancellation)?;
+        let inspector = self.inspector.as_ref().ok_or_else(invalid_arguments)?;
+        let inspected = await_background_inspection(
+            inspector.inspect(background_id, cancellation.clone()),
+            &cancellation,
+        )
+        .await?;
+        check_cancellation(&cancellation)?;
+        let detail = inspected.map_err(map_background_inspection_error)?;
+        if detail.id() != background_id {
+            return Err(background_inspection_invariant());
+        }
+        let output = ToolOutput {
+            content: json!({
+                "action": "inspect",
+                "background_id": detail.id(),
+                "recorded_state": detail.state().as_str(),
+                "started_at_ms": detail.started_at_ms(),
+                "updated_at_ms": detail.updated_at_ms(),
+                "pid": detail.pid(),
+                "exit_code": detail.exit_code()
+            }),
+            is_error: false,
+        };
+        if !serialized_value_fits(&output.content, MAX_TERMINAL_SERIALIZED_RESULT_BYTES) {
+            return Err(background_inspection_resource_limit());
+        }
+        check_cancellation(&cancellation)?;
+        Ok(output)
+    }
+}
+
+async fn await_background_inspection(
+    mut future: BoxFuture<'static, Result<NativeBackgroundDetail, NativeBackgroundInspectionError>>,
+    cancellation: &CancellationToken,
+) -> Result<Result<NativeBackgroundDetail, NativeBackgroundInspectionError>, ToolError> {
+    let mut cancelled = Box::pin(cancellation.cancelled());
+    let inspected = poll_fn(|context| {
+        if cancelled.as_mut().poll(context).is_ready() || cancellation.is_cancelled() {
+            return Poll::Ready(Err(cancelled_error()));
+        }
+        let inspected = Pin::new(&mut future).poll(context);
+        if cancellation.is_cancelled() {
+            return Poll::Ready(Err(cancelled_error()));
+        }
+        match inspected {
+            Poll::Ready(result) => Poll::Ready(Ok(result)),
+            Poll::Pending => Poll::Pending,
+        }
+    })
+    .await?;
+    drop(future);
+    drop(cancelled);
+    check_cancellation(cancellation)?;
+    Ok(inspected)
 }
 
 fn absolute_background_cwd(workspace: &str, cwd: &str) -> Result<String, ToolError> {
@@ -1804,28 +1954,71 @@ fn checked_background_cwd_length(workspace: &str, cwd: &str) -> Result<usize, To
 
 impl Tool for TerminalTool {
     fn spec(&self) -> ToolSpec {
-        let actions = if self.background.is_some() {
-            json!(["exec", "start"])
-        } else {
-            json!(["exec"])
+        if self.inspector.is_none() {
+            let actions = if self.background.is_some() {
+                json!(["exec", "start"])
+            } else {
+                json!(["exec"])
+            };
+            return ToolSpec {
+                name: terminal_name(),
+                description: if self.background.is_some() {
+                    TERMINAL_BACKGROUND_DESCRIPTION.to_owned()
+                } else {
+                    TERMINAL_EXEC_DESCRIPTION.to_owned()
+                },
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "action": { "type": "string", "enum": actions },
+                        "command": { "type": "string" },
+                        "cwd": { "type": "string", "default": "." },
+                        "profile": { "type": "string", "enum": ["clean"], "default": "clean" }
+                    },
+                    "required": ["action", "command"],
+                    "additionalProperties": false
+                }),
+            };
+        }
+        let command_schema = |action: &str| {
+            json!({
+                "type": "object",
+                "properties": {
+                    "action": { "const": action },
+                    "command": { "type": "string" },
+                    "cwd": { "type": "string", "default": "." },
+                    "profile": { "type": "string", "const": "clean", "default": "clean" }
+                },
+                "required": ["action", "command"],
+                "additionalProperties": false
+            })
         };
+        let mut forms = vec![command_schema("exec")];
+        if self.background.is_some() {
+            forms.push(command_schema("start"));
+        }
+        if self.inspector.is_some() {
+            forms.push(json!({
+                "type": "object",
+                "properties": {
+                    "action": { "const": "inspect" },
+                    "background_id": { "type": "integer", "minimum": 1 }
+                },
+                "required": ["action", "background_id"],
+                "additionalProperties": false
+            }));
+        }
         ToolSpec {
             name: terminal_name(),
-            description: if self.background.is_some() {
+            description: if self.inspector.is_some() {
+                TERMINAL_INSPECT_DESCRIPTION.to_owned()
+            } else if self.background.is_some() {
                 TERMINAL_BACKGROUND_DESCRIPTION.to_owned()
             } else {
                 TERMINAL_EXEC_DESCRIPTION.to_owned()
             },
             input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "action": { "type": "string", "enum": actions },
-                    "command": { "type": "string" },
-                    "cwd": { "type": "string", "default": "." },
-                    "profile": { "type": "string", "enum": ["clean"], "default": "clean" }
-                },
-                "required": ["action", "command"],
-                "additionalProperties": false
+                "oneOf": forms
             }),
         }
     }
@@ -1834,29 +2027,39 @@ impl Tool for TerminalTool {
         if call.name != terminal_name() {
             return Err(invalid_arguments());
         }
-        let parsed = parse_arguments(&call.arguments, false, self.background.is_some())?;
-        let environment = match parsed.action {
-            TerminalAction::Exec => ProcessEnvironment {
-                profile: TERMINAL_ENVIRONMENT_PROFILE.to_owned(),
-                sha256: self.environment.sha256.clone(),
-            },
-            TerminalAction::Start => {
-                let background = self.background.as_ref().ok_or_else(invalid_arguments)?;
-                checked_background_cwd_length(&background.workspace, &parsed.cwd)?;
-                background.environment.clone()
-            }
-        };
-        let working_directory = parsed.cwd.clone();
+        let parsed = parse_arguments(
+            &call.arguments,
+            false,
+            self.background.is_some(),
+            self.inspector.is_some(),
+        )?;
         let canonical = canonical_arguments(&parsed);
-        Ok(PreparedToolCall::new(
-            Capability::Process {
-                program: TERMINAL_PROGRAM.to_owned(),
-                arguments: vec!["-c".to_owned(), parsed.command],
-                working_directory,
-                environment,
-            },
-            canonical,
-        ))
+        match parsed {
+            TerminalArguments::Inspect { .. } => Ok(PreparedToolCall::without_authority(canonical)),
+            TerminalArguments::Command(parsed) => {
+                let environment = match parsed.action {
+                    TerminalAction::Exec => ProcessEnvironment {
+                        profile: TERMINAL_ENVIRONMENT_PROFILE.to_owned(),
+                        sha256: self.environment.sha256.clone(),
+                    },
+                    TerminalAction::Start => {
+                        let background = self.background.as_ref().ok_or_else(invalid_arguments)?;
+                        checked_background_cwd_length(&background.workspace, &parsed.cwd)?;
+                        background.environment.clone()
+                    }
+                    TerminalAction::Inspect => return Err(invalid_arguments()),
+                };
+                Ok(PreparedToolCall::new(
+                    Capability::Process {
+                        program: TERMINAL_PROGRAM.to_owned(),
+                        arguments: vec!["-c".to_owned(), parsed.command],
+                        working_directory: parsed.cwd,
+                        environment,
+                    },
+                    canonical,
+                ))
+            }
+        }
     }
 
     fn execute(
@@ -1866,25 +2069,29 @@ impl Tool for TerminalTool {
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
-            if self.background.is_some()
-                && arguments.get("action").and_then(Value::as_str) == Some("start")
-            {
-                check_cancellation(&cancellation)?;
-                let parsed = parse_arguments(&arguments, true, true)?;
-                if canonical_arguments(&parsed) != arguments {
-                    return Err(invalid_arguments());
-                }
-                return self.execute_background(parsed, cancellation).await;
-            }
             let started = Instant::now();
             check_cancellation(&cancellation)?;
-            let deadline = started
-                .checked_add(self.limits.timeout)
-                .ok_or_else(execution_unavailable)?;
-            let parsed = parse_arguments(&arguments, true, self.background.is_some())?;
+            let parsed = parse_arguments(
+                &arguments,
+                true,
+                self.background.is_some(),
+                self.inspector.is_some(),
+            )?;
             if canonical_arguments(&parsed) != arguments {
                 return Err(invalid_arguments());
             }
+            let parsed = match parsed {
+                TerminalArguments::Inspect { background_id } => {
+                    return self.execute_inspect(background_id, cancellation).await;
+                }
+                TerminalArguments::Command(parsed) if parsed.action == TerminalAction::Start => {
+                    return self.execute_background(parsed, cancellation).await;
+                }
+                TerminalArguments::Command(parsed) => parsed,
+            };
+            let deadline = started
+                .checked_add(self.limits.timeout)
+                .ok_or_else(execution_unavailable)?;
             if self.system_unsupported {
                 return Err(unsupported_platform());
             }
@@ -2833,6 +3040,51 @@ fn map_background_start_error(error: BackgroundStartError) -> ToolError {
         BackgroundStartErrorKind::Cancelled => cancelled_error(),
         _ => executor_invariant(),
     }
+}
+
+fn map_background_inspection_error(error: NativeBackgroundInspectionError) -> ToolError {
+    match error.kind() {
+        NativeBackgroundInspectionErrorKind::NotFound => fixed_tool_error(
+            ToolErrorKind::InvalidInput,
+            "terminal_background_not_found",
+            "terminal background record was not found",
+            false,
+        ),
+        NativeBackgroundInspectionErrorKind::Corrupt => fixed_tool_error(
+            ToolErrorKind::Execution,
+            "terminal_background_corrupt",
+            "terminal background record is corrupt",
+            false,
+        ),
+        NativeBackgroundInspectionErrorKind::ResourceLimit => {
+            background_inspection_resource_limit()
+        }
+        NativeBackgroundInspectionErrorKind::Unavailable => fixed_tool_error(
+            ToolErrorKind::Unavailable,
+            "terminal_inspect_unavailable",
+            "terminal background inspection is unavailable",
+            true,
+        ),
+        NativeBackgroundInspectionErrorKind::UnsupportedPlatform => unsupported_platform(),
+    }
+}
+
+fn background_inspection_resource_limit() -> ToolError {
+    fixed_tool_error(
+        ToolErrorKind::Unavailable,
+        "terminal_inspect_resource_limit",
+        "terminal background inspection reached a resource limit",
+        false,
+    )
+}
+
+fn background_inspection_invariant() -> ToolError {
+    fixed_tool_error(
+        ToolErrorKind::Execution,
+        "terminal_inspector_failed",
+        "terminal background inspector failed",
+        false,
+    )
 }
 
 fn unsupported_platform() -> ToolError {

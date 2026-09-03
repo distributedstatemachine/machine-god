@@ -390,7 +390,9 @@ process syscall.
 
 ## Deferred surface
 
-The bounded terminal `start` entrypoint is delivered. Future slices may add
+The bounded terminal `start` entrypoint and a separate exact persisted-record
+`inspect` entrypoint are delivered. `inspect` does not initialize, call, or
+control this supervisor and makes no liveness claim. Future slices may add
 managed logs and read/wait operations or design an authenticated durable worker
 protocol. Top-level `background` remains inspection-only. Interactive
 input, output streaming, URL detection, persisted-PID signaling, detached

@@ -21,7 +21,8 @@ but the production `semantic_search` and terminal foreground executor are
 Linux-only. The private host catalog retains both tools on macOS:
 `semantic_search` and terminal `exec` return their fixed unsupported results
 after strict preparation and permission, while terminal `start` uses the
-Linux/macOS background helper.
+Linux/macOS background helper and terminal `inspect` uses its separately
+injected descriptor-confined persisted-record reader without process authority.
 
 ## Required selections
 
@@ -99,6 +100,11 @@ Every successful host contains:
   its environment is fixed and independently identified for process
   permission, while one supervisor is initialized and reused only after the
   first permitted start is polled;
+- one exact-ID background inspector over a separate clone of the same retained
+  state-root descriptor and frozen canonical workspace identity. It creates no
+  namespace or worker during composition or inspection, never initializes the
+  lazy supervisor, and exposes only terminal's compact recorded-state
+  projection;
 - default provider-neutral `EngineLimits` and the default no-op event sink;
 - one explicit `Arc<dyn WebSearchDeadline>` for bounded web-search timing,
   reused through a fixed category-only adapter for vision's capacity wait,
@@ -152,7 +158,9 @@ identity-preserving clones: `copy_file`, `create_folder`, `delete_file`,
 `edit_file`, `file_info`, `grep_files`, `install_skill`, `list_files`,
 `open_file`, `read_file`, `rename_file`, `semantic_search`, `skill`, `terminal`,
 `vision`, and `write_file`. The terminal lazy background starter receives one
-additional clone of that same identity; it is not another catalog tool.
+additional clone of that same workspace identity; it is not another catalog
+tool. Terminal inspection receives a separate retained state-root clone, not
+ambient cwd or environment discovery.
 `ask_user_question`, `mcp_features`, `mcp_search_tools`, `mcp_select_tool`,
 `subagent`, and `web_fetch` are rootless.
 `mcp_features` uses only its explicitly injected read-only authority. It stamps

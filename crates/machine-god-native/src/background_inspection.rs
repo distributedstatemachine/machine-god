@@ -1,8 +1,14 @@
 use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::sync::Arc;
 
 use machine_god_core::BoxFuture;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use machine_god_core::CancellationToken;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use rustix::fd::OwnedFd;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use sha2::{Digest, Sha256};
 
@@ -209,6 +215,58 @@ pub struct NativeBackgroundDetail {
 }
 
 impl NativeBackgroundDetail {
+    /// Constructs one validated persisted-record detail value.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed error when a field violates the persisted-record bounds
+    /// or state invariants.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        id: u64,
+        state: NativeBackgroundState,
+        started_at_ms: u64,
+        updated_at_ms: u64,
+        pid: Option<u32>,
+        command: String,
+        cwd: String,
+        exit_code: Option<i32>,
+        server_url: Option<String>,
+        diagnostic: Option<String>,
+    ) -> Result<Self, NativeBackgroundInspectionError> {
+        let detail = Self {
+            id,
+            state,
+            started_at_ms,
+            updated_at_ms,
+            pid,
+            command,
+            cwd,
+            exit_code,
+            server_url,
+            diagnostic,
+        };
+        if detail.id == 0
+            || detail.updated_at_ms < detail.started_at_ms
+            || detail.command.is_empty()
+            || invalid_background_string(&detail.command, MAX_BACKGROUND_COMMAND_BYTES)
+            || !valid_background_path(&detail.cwd)
+            || detail.pid == Some(0)
+            || detail.server_url.as_deref().is_some_and(|value| {
+                invalid_background_string(value, MAX_BACKGROUND_SERVER_URL_BYTES)
+            })
+            || detail.diagnostic.as_deref().is_some_and(|value| {
+                invalid_background_string(value, MAX_BACKGROUND_DIAGNOSTIC_BYTES)
+            })
+            || !valid_background_exit_code(detail.state, detail.exit_code)
+        {
+            return Err(NativeBackgroundInspectionError::new(
+                NativeBackgroundInspectionErrorKind::Corrupt,
+            ));
+        }
+        Ok(detail)
+    }
+
     #[must_use]
     pub const fn id(&self) -> u64 {
         self.id
@@ -269,6 +327,79 @@ impl NativeBackgroundDetail {
             command_preview: self.command[..boundary].to_owned(),
             preview_truncated: boundary < self.command.len(),
         }
+    }
+}
+
+/// Descriptor-confined reader for exact persisted background records.
+///
+/// The retained descriptor is the injected machine-god state namespace and
+/// `workspace` is its injected canonical workspace identity. Inspection never
+/// discovers either value from ambient process state.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone)]
+pub(crate) struct NativeBackgroundRecordInspector {
+    state_root: Arc<OwnedFd>,
+    workspace: Arc<str>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl fmt::Debug for NativeBackgroundRecordInspector {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NativeBackgroundRecordInspector")
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl NativeBackgroundRecordInspector {
+    /// Retains an already-open state namespace and canonical workspace identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed error when the descriptor or workspace identity is invalid.
+    pub(crate) fn from_root_descriptor(
+        state_root: OwnedFd,
+        workspace: String,
+    ) -> Result<Self, NativeBackgroundInspectionError> {
+        if !valid_background_path(&workspace) {
+            return Err(unavailable());
+        }
+        supported::validate_retained_state_root(&state_root)?;
+        Ok(Self {
+            state_root: Arc::new(state_root),
+            workspace: Arc::from(workspace),
+        })
+    }
+
+    /// Returns an inert future that reads exactly `id` when first polled.
+    #[must_use]
+    pub(crate) fn inspect(
+        &self,
+        id: u64,
+    ) -> BoxFuture<'static, Result<NativeBackgroundDetail, NativeBackgroundInspectionError>> {
+        let state_root = Arc::clone(&self.state_root);
+        let workspace = self.workspace.clone();
+        Box::pin(async move {
+            if id == 0 {
+                return Err(NativeBackgroundInspectionError::new(
+                    NativeBackgroundInspectionErrorKind::NotFound,
+                ));
+            }
+            supported::inspect_retained(state_root.as_ref(), &workspace, id)
+        })
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl crate::terminal::TerminalBackgroundInspector for NativeBackgroundRecordInspector {
+    fn inspect(
+        &self,
+        background_id: u64,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeBackgroundDetail, NativeBackgroundInspectionError>> {
+        let _ = cancellation;
+        NativeBackgroundRecordInspector::inspect(self, background_id)
     }
 }
 
@@ -340,7 +471,9 @@ impl NativeBackgroundInspectionError {
         self.kind
     }
 
-    const fn new(kind: NativeBackgroundInspectionErrorKind) -> Self {
+    /// Constructs a fixed, data-free failure in the supplied stable category.
+    #[must_use]
+    pub const fn new(kind: NativeBackgroundInspectionErrorKind) -> Self {
         Self { kind }
     }
 }
@@ -492,13 +625,11 @@ pub(crate) fn valid_background_record(record: &StoredBackgroundRecord, workspace
         && valid_background_exit_code(record.state, record.exit_code)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn valid_background_path(value: &str) -> bool {
     !invalid_background_string(value, MAX_BACKGROUND_PATH_BYTES)
         && is_canonical_absolute_background_path(value)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn is_canonical_absolute_background_path(value: &str) -> bool {
     if !value.starts_with('/') {
         return false;
@@ -513,12 +644,10 @@ pub(crate) fn is_canonical_absolute_background_path(value: &str) -> bool {
             .all(|component| !component.is_empty() && component != "." && component != "..")
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn invalid_background_string(value: &str, maximum: usize) -> bool {
     value.len() > maximum || value.contains('\0')
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn valid_background_exit_code(state: NativeBackgroundState, code: Option<i32>) -> bool {
     match state {
         NativeBackgroundState::Running => code.is_none(),
@@ -618,6 +747,34 @@ pub(crate) mod supported {
                 Ok(NativeBackgroundInspection::Detail(detail))
             }
         }
+    }
+
+    pub(super) fn validate_retained_state_root(
+        state_root: &OwnedFd,
+    ) -> Result<(), NativeBackgroundInspectionError> {
+        validate_directory(state_root, true)
+    }
+
+    pub(super) fn inspect_retained(
+        state_root: &OwnedFd,
+        workspace: &str,
+        id: u64,
+    ) -> Result<NativeBackgroundDetail, NativeBackgroundInspectionError> {
+        validate_directory(state_root, true)?;
+        let background = open_child_directory(state_root.as_fd(), BACKGROUND_DIRECTORY)?
+            .ok_or_else(|| {
+                NativeBackgroundInspectionError::new(NativeBackgroundInspectionErrorKind::NotFound)
+            })?;
+        validate_directory(&background, true)?;
+        let workspace_name = background_workspace_name(workspace);
+        let workspace_root = open_child_directory(background.as_fd(), &workspace_name)?
+            .ok_or_else(|| {
+                NativeBackgroundInspectionError::new(NativeBackgroundInspectionErrorKind::NotFound)
+            })?;
+        validate_directory(&workspace_root, true)?;
+        read_record(workspace_root.as_fd(), workspace, id)?.ok_or_else(|| {
+            NativeBackgroundInspectionError::new(NativeBackgroundInspectionErrorKind::NotFound)
+        })
     }
 
     fn state_base_and_suffix(

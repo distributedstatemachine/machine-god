@@ -156,6 +156,10 @@ stop or liveness authority. None of those capabilities, terminal background
 input, arbitrary log paths, URL probing, `/proc` inspection, repair, or
 migration is part of this read-only command.
 
+The separately injected terminal `inspect` action reuses the same exact-ID
+persisted-record validation but returns only a compact recorded-state
+projection. It does not broaden this top-level CLI or add supervisor authority.
+
 The compatibility scenario moves only from unimplemented to
 implemented-but-non-equivalent and remains not measured and claim-ineligible.
 No sample, threshold, performance result, or upstream-equivalence claim is
