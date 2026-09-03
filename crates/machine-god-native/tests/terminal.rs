@@ -11,9 +11,13 @@ use std::time::{Duration, Instant};
 
 use machine_god_core::{
     BackgroundStartError, BackgroundStartErrorKind, BackgroundStartRequest, BoxFuture,
-    CancellationToken, Capability, ProcessEnvironment, Tool, ToolError, ToolErrorKind, ToolOutput,
+    CancellationToken, Capability, MAX_BACKGROUND_CWD_BYTES, ProcessEnvironment, Tool, ToolError,
+    ToolErrorKind, ToolOutput,
 };
-use machine_god_native::{MAX_TERMINAL_COMMAND_BYTES, MAX_TERMINAL_PRODUCED_OUTPUT_BYTES};
+use machine_god_native::{
+    MAX_TERMINAL_COMMAND_BYTES, MAX_TERMINAL_CWD_COMPONENT_BYTES, MAX_TERMINAL_CWD_COMPONENTS,
+    MAX_TERMINAL_PRODUCED_OUTPUT_BYTES,
+};
 use machine_god_native::{
     TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TerminalBackgroundOutcome, TerminalBackgroundStarter,
     TerminalCapturedOutput, TerminalConfigErrorKind, TerminalExecution, TerminalExecutionOutcome,
@@ -944,6 +948,20 @@ fn exact_start_arguments(command: &str, cwd: &str) -> Value {
     })
 }
 
+fn canonical_relative_cwd_with_length(length: usize) -> String {
+    assert!(length > 0);
+    let component_count =
+        (length + MAX_TERMINAL_CWD_COMPONENT_BYTES + 1) / (MAX_TERMINAL_CWD_COMPONENT_BYTES + 1);
+    assert!(component_count <= MAX_TERMINAL_CWD_COMPONENTS);
+    let component_bytes = length - (component_count - 1);
+    let minimum_component_bytes = component_bytes / component_count;
+    let longer_components = component_bytes % component_count;
+    (0..component_count)
+        .map(|index| "x".repeat(minimum_component_bytes + usize::from(index < longer_components)))
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 fn assert_invalid_input(error: &ToolError) {
     assert_eq!(error.kind, ToolErrorKind::InvalidInput);
     assert!(!error.retryable);
@@ -1458,6 +1476,72 @@ fn exact_background_command_boundary_moves_intact_into_the_start_request() {
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].0.len(), MAX_TERMINAL_COMMAND_BYTES);
     assert!(requests[0].0.bytes().all(|byte| byte == b'x'));
+}
+
+#[test]
+fn background_cwd_combined_bound_rejects_before_permission_and_executes_at_exact_limit() {
+    let temporary = TemporaryDirectory::new("background-cwd-combined-boundary");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let tool = background_tool(temporary.path(), &executor, &starter);
+    let workspace = std::fs::canonicalize(temporary.path()).unwrap();
+    let workspace = workspace.to_str().expect("test workspace is Unicode");
+    let prefix_bytes = workspace.len() + usize::from(workspace != "/");
+    let exact_relative_bytes = MAX_BACKGROUND_CWD_BYTES
+        .checked_sub(prefix_bytes)
+        .expect("temporary workspace leaves room for a relative cwd");
+    let exact_cwd = canonical_relative_cwd_with_length(exact_relative_bytes);
+    let over_cwd = canonical_relative_cwd_with_length(exact_relative_bytes + 1);
+
+    let over_error = tool
+        .prepare(call(
+            "terminal",
+            json!({ "action": "start", "command": ":", "cwd": over_cwd }),
+        ))
+        .unwrap_err();
+    assert_eq!(over_error.kind, ToolErrorKind::InvalidInput);
+    assert_eq!(over_error.code, "terminal_invalid_cwd");
+    let direct_error = execute(
+        &tool,
+        exact_start_arguments(":", &over_cwd),
+        CancellationToken::new(),
+    )
+    .unwrap_err();
+    assert_eq!(direct_error.kind, ToolErrorKind::InvalidInput);
+    assert_eq!(direct_error.code, "terminal_invalid_cwd");
+    assert_eq!(starter.calls(), 0);
+    assert_eq!(executor.calls(), 0);
+
+    let prepared = tool
+        .prepare(call(
+            "terminal",
+            json!({ "action": "start", "command": ":", "cwd": exact_cwd }),
+        ))
+        .unwrap();
+    let Capability::Process {
+        working_directory, ..
+    } = prepared
+        .capability()
+        .expect("exact-bound start requires process permission")
+    else {
+        panic!("exact-bound start must prepare process permission")
+    };
+    assert_eq!(working_directory, &exact_cwd);
+
+    let output = execute(
+        &tool,
+        prepared.arguments().clone(),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    assert!(!output.is_error);
+    let requests = starter.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].1.len(), MAX_BACKGROUND_CWD_BYTES);
+    assert_eq!(requests[0].1, format!("{workspace}/{exact_cwd}"));
+    assert_eq!(executor.calls(), 0);
 }
 
 #[test]

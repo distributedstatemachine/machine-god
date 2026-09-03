@@ -24,8 +24,11 @@ critical-risk authorization. Both foreground `exec` and noninteractive `start`
 authorize the canonical workspace-relative cwd against the terminal's retained
 workspace identity. `exec` uses the construction-snapshot digest; `start` uses
 the native supervisor's fixed-environment digest and privately derives its
-absolute persisted cwd only after authorization. Allowed execution reparses the
-canonical arguments and derives the same immutable authority from tool state.
+absolute persisted cwd only after authorization. Effect-free preparation first
+checks, without allocating that path, that the captured workspace plus relative
+cwd fits the background request's 4,096-byte absolute-cwd bound. Allowed
+execution reparses the canonical arguments and derives the same immutable
+authority from tool state.
 The environment values, retained descriptors, absolute background record path,
 background persistence, process group, pipes, deadline guardian, threads, and
 cleanup remain wholly native.
@@ -203,8 +206,9 @@ Core receives no ambient clock, filesystem, environment, task, thread,
 process, signal, or persistence authority.
 
 [`BackgroundStartRequest`](crate::BackgroundStartRequest) owns one bounded
-command and absolute canonical persisted cwd. Its start future is inert until
-poll. On poll, core admits capacity fail-fast, reserves one durable nonzero ID,
+command and an absolute canonical persisted cwd of at most 4,096 UTF-8 bytes.
+Its start future is inert until poll. On poll, core admits capacity fail-fast,
+reserves one durable nonzero ID,
 reads the injected clock, prepares a barrier-held process, durably publishes
 the complete running record, asks native release to open the execution barrier,
 and transfers the lease and exact owned process to the retainer. Release may do

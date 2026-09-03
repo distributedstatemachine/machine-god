@@ -1769,25 +1769,37 @@ impl TerminalTool {
 }
 
 fn absolute_background_cwd(workspace: &str, cwd: &str) -> Result<String, ToolError> {
+    let length = checked_background_cwd_length(workspace, cwd)?;
     if cwd == "." {
         return Ok(workspace.to_owned());
     }
     let separator = usize::from(workspace != "/");
-    let length = workspace
-        .len()
-        .checked_add(separator)
-        .and_then(|length| length.checked_add(cwd.len()))
-        .ok_or_else(invalid_cwd)?;
-    if length > machine_god_core::MAX_BACKGROUND_CWD_BYTES {
-        return Err(invalid_cwd());
-    }
     let mut absolute = String::with_capacity(length);
     absolute.push_str(workspace);
-    if workspace != "/" {
+    if separator != 0 {
         absolute.push('/');
     }
     absolute.push_str(cwd);
     Ok(absolute)
+}
+
+fn checked_background_cwd_length(workspace: &str, cwd: &str) -> Result<usize, ToolError> {
+    // Both callers hold a `TerminalArguments` value produced by `parse_arguments`,
+    // so this needs only the remaining combined absolute-path bound.
+    let length = if cwd == "." {
+        workspace.len()
+    } else {
+        let separator = usize::from(workspace != "/");
+        workspace
+            .len()
+            .checked_add(separator)
+            .and_then(|length| length.checked_add(cwd.len()))
+            .ok_or_else(invalid_cwd)?
+    };
+    if length > machine_god_core::MAX_BACKGROUND_CWD_BYTES {
+        return Err(invalid_cwd());
+    }
+    Ok(length)
 }
 
 impl Tool for TerminalTool {
@@ -1823,20 +1835,19 @@ impl Tool for TerminalTool {
             return Err(invalid_arguments());
         }
         let parsed = parse_arguments(&call.arguments, false, self.background.is_some())?;
-        let working_directory = parsed.cwd.clone();
-        let canonical = canonical_arguments(&parsed);
         let environment = match parsed.action {
             TerminalAction::Exec => ProcessEnvironment {
                 profile: TERMINAL_ENVIRONMENT_PROFILE.to_owned(),
                 sha256: self.environment.sha256.clone(),
             },
-            TerminalAction::Start => self
-                .background
-                .as_ref()
-                .ok_or_else(invalid_arguments)?
-                .environment
-                .clone(),
+            TerminalAction::Start => {
+                let background = self.background.as_ref().ok_or_else(invalid_arguments)?;
+                checked_background_cwd_length(&background.workspace, &parsed.cwd)?;
+                background.environment.clone()
+            }
         };
+        let working_directory = parsed.cwd.clone();
+        let canonical = canonical_arguments(&parsed);
         Ok(PreparedToolCall::new(
             Capability::Process {
                 program: TERMINAL_PROGRAM.to_owned(),

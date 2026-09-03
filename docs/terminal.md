@@ -41,7 +41,12 @@ controls, U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR, and bidi-control
 characters reject rather than normalize. Unicode is not normalized or
 case-folded. A literal component such as `~cache` is an ordinary valid name,
 whether leading or nested; only the exact component `~` rejects. Preparation
-performs no filesystem, environment, process, thread, or network effect.
+performs no filesystem, environment, process, thread, or network effect. For
+`start`, the captured canonical workspace, one separator when needed, and a
+non-`.` relative `cwd` must additionally fit the background request's 4,096-byte
+absolute-cwd limit. This can make the accepted relative limit smaller than the
+common 4,096-byte parser limit; preparation checks the combined byte length
+without constructing the absolute path or a background request.
 
 The reference-host tool description is:
 
@@ -91,12 +96,14 @@ For `start`, `authorized_cwd` is the same validated workspace-relative argument
 used by `exec`, interpreted against the terminal's retained workspace identity.
 Its profile is `background_fixed`, and its digest identifies exactly the
 supervisor's fixed `LANG=C`, `LC_ALL=C`, and `PATH=/usr/bin:/bin` environment.
-The absolute canonical workspace/cwd used by background persistence is derived
-privately only during allowed execution. The injected background constructor
-binds its canonical path to the retained workspace descriptor by device and
-inode before accepting the starter. Renaming that retained directory or
-placing a replacement at its former pathname therefore cannot make the process
-permission describe the replacement directory.
+Preparation verifies without allocation that the eventual absolute canonical
+workspace/cwd fits the background request bound. The absolute string used by
+background persistence is derived privately only during allowed execution. The
+injected background constructor binds its canonical path to the retained
+workspace descriptor by device and inode before accepting the starter. Renaming
+that retained directory or placing a replacement at its former pathname
+therefore cannot make the process permission describe the replacement
+directory.
 
 The stable serialized capability therefore contains the fixed program, exact
 two arguments, authorized cwd, profile name, and digest. Successful preparation
@@ -147,12 +154,14 @@ background ownership contract.
 `start` accepts exactly the common `action`, `command`, `cwd`, and `profile`
 fields. Shell, backend, return condition, wait ceiling, dimensions, initial
 monitors, caller-selected session IDs, and every interactive or control field
-reject as unknown. Preparation is effect-free and does not build a background
+reject as unknown. Preparation is effect-free, checks the eventual combined
+absolute-cwd byte length without allocation, and does not build a background
 request or clone the command for one. Execution revalidates the exact canonical
-object, checks cancellation, moves the owned command into a request with the
-privately derived bounded absolute cwd, and then delegates to the one host-owned
-supervisor. It does not consume a foreground execution slot or create a
-foreground deadline, guardian, output buffer, pipe, reader, or executor call.
+object, reuses that checked length, checks cancellation, moves the owned command
+into a request with the privately derived bounded absolute cwd, and then
+delegates to the one host-owned supervisor. It does not consume a foreground
+execution slot or create a foreground deadline, guardian, output buffer, pipe,
+reader, or executor call.
 
 The supervisor owns the start commit, cleanup, capacity, persistence, worker,
 and cancellation protocol defined by
@@ -392,6 +401,7 @@ Focused and workspace evidence must cover strict schema and
 canonical arguments; exact capability serde and policy/execution equality;
 the injected and reference-host `start` schema; workspace-relative permission,
 private absolute background cwd, and fixed environment identity;
+exact and over-limit combined workspace/cwd preflight before authorization;
 post-construction retained-root rename/replacement behavior; rejection of
 interactive and control fields; zero-effect pre-cancellation; committed
 success despite later cancellation; nonzero/redacted display identities; every

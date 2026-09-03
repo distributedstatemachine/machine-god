@@ -8,11 +8,12 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use machine_god_core::{
     BackgroundStartError, BackgroundStartRequest, BoxFuture, Capability, ContentBlock, Engine,
-    EngineEvent, Message, ModelEvent, PermissionDecision, PermissionGrantScope, ProcessEnvironment,
-    Role, SessionId, SessionIncarnationId, StopReason, Tool, ToolCall, ToolCallId, ToolName,
-    ToolOutput, TurnEvent,
+    EngineEvent, MAX_BACKGROUND_CWD_BYTES, Message, ModelEvent, PermissionDecision,
+    PermissionGrantScope, ProcessEnvironment, Role, SessionId, SessionIncarnationId, StopReason,
+    Tool, ToolCall, ToolCallId, ToolName, ToolOutput, TurnEvent,
 };
 use machine_god_native::{
+    MAX_TERMINAL_CWD_COMPONENT_BYTES, MAX_TERMINAL_CWD_COMPONENTS,
     TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TerminalBackgroundOutcome, TerminalBackgroundStarter,
     TerminalCapturedOutput, TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest,
     TerminalExecutionStatus, TerminalExecutor, TerminalLimits, TerminalTool,
@@ -21,7 +22,7 @@ use machine_god_testkit::{
     InMemorySessionStore, ModelProviderStep, PermissionStep, ScriptedModelProvider,
     ScriptedPermissionHandler,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 
 mod terminal_test_support;
 
@@ -59,6 +60,16 @@ impl TerminalExecutor for FakeExecutor {
 }
 
 fn provider(name: &str, action: &str) -> ScriptedModelProvider {
+    provider_with_arguments(
+        name,
+        json!({
+            "action": action,
+            "command": PRIVATE_COMMAND,
+        }),
+    )
+}
+
+fn provider_with_arguments(name: &str, arguments: Value) -> ScriptedModelProvider {
     ScriptedModelProvider::new(
         name,
         [
@@ -67,10 +78,7 @@ fn provider(name: &str, action: &str) -> ScriptedModelProvider {
                     call: ToolCall {
                         id: ToolCallId::new("terminal-call").unwrap(),
                         name: ToolName::new("terminal").unwrap(),
-                        arguments: json!({
-                            "action": action,
-                            "command": PRIVATE_COMMAND,
-                        }),
+                        arguments,
                     },
                 },
                 ModelEvent::Stop {
@@ -82,6 +90,20 @@ fn provider(name: &str, action: &str) -> ScriptedModelProvider {
             }]),
         ],
     )
+}
+
+fn canonical_relative_cwd_with_length(length: usize) -> String {
+    assert!(length > 0);
+    let component_count =
+        (length + MAX_TERMINAL_CWD_COMPONENT_BYTES + 1) / (MAX_TERMINAL_CWD_COMPONENT_BYTES + 1);
+    assert!(component_count <= MAX_TERMINAL_CWD_COMPONENTS);
+    let component_bytes = length - (component_count - 1);
+    let minimum_component_bytes = component_bytes / component_count;
+    let longer_components = component_bytes % component_count;
+    (0..component_count)
+        .map(|index| "x".repeat(minimum_component_bytes + usize::from(index < longer_components)))
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn terminal(root: &std::path::Path, executor: FakeExecutor) -> TerminalTool {
@@ -349,6 +371,62 @@ fn background_start_denial_has_zero_starter_and_foreground_effects() {
             content: json!({
                 "code": "permission_denied",
                 "message": "tool execution was denied by policy",
+            }),
+            is_error: true,
+        }
+    );
+}
+
+#[test]
+fn over_combined_background_cwd_bound_fails_before_permission_or_starter_effects() {
+    let temporary = TemporaryDirectory::new("engine-start-cwd-over-bound");
+    let workspace = std::fs::canonicalize(temporary.path()).unwrap();
+    let workspace = workspace.to_str().expect("test workspace is Unicode");
+    let prefix_bytes = workspace.len() + usize::from(workspace != "/");
+    let exact_relative_bytes = MAX_BACKGROUND_CWD_BYTES
+        .checked_sub(prefix_bytes)
+        .expect("temporary workspace leaves room for a relative cwd");
+    let over_cwd = canonical_relative_cwd_with_length(exact_relative_bytes + 1);
+    let provider = provider_with_arguments(
+        "terminal-start-cwd-over-bound",
+        json!({
+            "action": "start",
+            "command": PRIVATE_COMMAND,
+            "cwd": over_cwd,
+        }),
+    );
+    let store = InMemorySessionStore::new();
+    let policy = ScriptedPermissionHandler::new([]);
+    let executor = FakeExecutor::default();
+    let starter = FakeBackgroundStarter::default();
+    let tool = terminal_with_background(temporary.path(), executor.clone(), starter.clone());
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store)
+        .permission_handler(policy.clone())
+        .tool(tool)
+        .build()
+        .unwrap();
+
+    let (_, events) = collect(&engine, "terminal-start-cwd-over-bound-session");
+
+    assert!(policy.requests().is_empty());
+    assert_eq!(starter.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+    assert!(events.iter().all(|event| !matches!(
+        event.payload,
+        TurnEvent::PermissionRequested { .. }
+            | TurnEvent::PermissionResolved { .. }
+            | TurnEvent::ToolStarted { .. }
+            | TurnEvent::ToolFinished { .. }
+    )));
+    assert_eq!(
+        second_request_tool_output(&provider).1,
+        ToolOutput {
+            content: json!({
+                "code": "tool_error",
+                "message": "tool execution failed",
+                "retryable": false,
             }),
             is_error: true,
         }
