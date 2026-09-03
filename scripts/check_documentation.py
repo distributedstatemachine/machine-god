@@ -38,7 +38,7 @@ REQUIRED_LIVE_FIELDS = {
     "Delivered main": re.compile(r"`[0-9a-f]{40}`"),
     "Main CI": re.compile(r"`[0-9]+` \(`GREEN`\)"),
     "Main Benchmark evidence": re.compile(r"`[0-9]+` \(`GREEN`\)"),
-    "Active branch": re.compile(r"`agent/m[0-9]{2}-[a-z0-9-]+`"),
+    "Active branch": re.compile(r"`(?:main|agent/m[0-9]{2}-[a-z0-9-]+)`"),
     "Active phase": re.compile(r"`[^`]+`"),
     "Next gate": re.compile(r"`[^`]+`"),
 }

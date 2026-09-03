@@ -29,6 +29,32 @@ class DocumentationPolicyTests(unittest.TestCase):
             self.assertEqual(1, stats.relative_links)
             self.assertNotIn("markdown=", (root / "docs/implementation-plan.md").read_text())
 
+    def test_active_branch_accepts_main_but_rejects_other_non_feature_branches(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_minimal_repository(root)
+            plan = root / check_documentation.PLAN_PATH
+            feature_value = "`agent/m03-docs-policy`"
+            original = plan.read_text(encoding="utf-8")
+
+            plan.write_text(
+                original.replace(feature_value, "`main`"), encoding="utf-8"
+            )
+            errors, _ = check_documentation.validate_repository(root)
+            self.assertEqual([], errors)
+
+            plan.write_text(
+                original.replace(feature_value, "`develop`"), encoding="utf-8"
+            )
+            errors, _ = check_documentation.validate_repository(root)
+            self.assertIn(
+                "docs/implementation-plan.md: live field 'Active branch' has invalid "
+                "value '`develop`'",
+                errors,
+            )
+
     def test_duplicate_marker_and_broken_markdown_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
