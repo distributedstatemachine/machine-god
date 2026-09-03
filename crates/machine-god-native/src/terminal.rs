@@ -1735,11 +1735,11 @@ struct TerminalArguments {
 impl TerminalTool {
     fn background_request(
         &self,
-        arguments: &TerminalArguments,
+        arguments: TerminalArguments,
     ) -> Result<BackgroundStartRequest, ToolError> {
         let background = self.background.as_ref().ok_or_else(invalid_arguments)?;
         let cwd = absolute_background_cwd(&background.workspace, &arguments.cwd)?;
-        BackgroundStartRequest::new(arguments.command.clone(), cwd).map_err(|_| invalid_cwd())
+        BackgroundStartRequest::new(arguments.command, cwd).map_err(|_| invalid_cwd())
     }
 
     async fn execute_background(
@@ -1748,7 +1748,7 @@ impl TerminalTool {
         cancellation: CancellationToken,
     ) -> Result<ToolOutput, ToolError> {
         check_cancellation(&cancellation)?;
-        let request = self.background_request(&arguments)?;
+        let request = self.background_request(arguments)?;
         check_cancellation(&cancellation)?;
         let background = self.background.as_ref().ok_or_else(invalid_arguments)?;
         let handle = background
@@ -1823,10 +1823,7 @@ impl Tool for TerminalTool {
             return Err(invalid_arguments());
         }
         let parsed = parse_arguments(&call.arguments, false, self.background.is_some())?;
-        let working_directory = match parsed.action {
-            TerminalAction::Exec => parsed.cwd.clone(),
-            TerminalAction::Start => self.background_request(&parsed)?.cwd().to_owned(),
-        };
+        let working_directory = parsed.cwd.clone();
         let canonical = canonical_arguments(&parsed);
         let environment = match parsed.action {
             TerminalAction::Exec => ProcessEnvironment {

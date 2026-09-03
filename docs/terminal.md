@@ -87,14 +87,16 @@ change permission identity. The system executor clears its environment and
 installs exactly that snapshot. The model cannot add, remove, or replace an
 entry.
 
-For `start`, `authorized_cwd` is the absolute canonical workspace joined with
-the validated relative argument, bounded to 4,096 UTF-8 bytes. Its profile is
-`background_fixed`, and its digest identifies exactly the supervisor's fixed
-`LANG=C`, `LC_ALL=C`, and `PATH=/usr/bin:/bin` environment. The capability
-therefore authorizes the identity actually submitted to the background
-supervisor rather than the ambient foreground snapshot. The injected
-background constructor binds its canonical path to the retained workspace
-descriptor by device and inode before accepting the starter.
+For `start`, `authorized_cwd` is the same validated workspace-relative argument
+used by `exec`, interpreted against the terminal's retained workspace identity.
+Its profile is `background_fixed`, and its digest identifies exactly the
+supervisor's fixed `LANG=C`, `LC_ALL=C`, and `PATH=/usr/bin:/bin` environment.
+The absolute canonical workspace/cwd used by background persistence is derived
+privately only during allowed execution. The injected background constructor
+binds its canonical path to the retained workspace descriptor by device and
+inode before accepting the starter. Renaming that retained directory or
+placing a replacement at its former pathname therefore cannot make the process
+permission describe the replacement directory.
 
 The stable serialized capability therefore contains the fixed program, exact
 two arguments, authorized cwd, profile name, and digest. Successful preparation
@@ -145,11 +147,12 @@ background ownership contract.
 `start` accepts exactly the common `action`, `command`, `cwd`, and `profile`
 fields. Shell, backend, return condition, wait ceiling, dimensions, initial
 monitors, caller-selected session IDs, and every interactive or control field
-reject as unknown. Preparation is effect-free. Execution revalidates the exact
-canonical object, checks cancellation, derives the bounded absolute cwd, and
-then delegates to the one host-owned supervisor. It does not consume a
-foreground execution slot or create a foreground deadline, guardian, output
-buffer, pipe, reader, or executor call.
+reject as unknown. Preparation is effect-free and does not build a background
+request or clone the command for one. Execution revalidates the exact canonical
+object, checks cancellation, moves the owned command into a request with the
+privately derived bounded absolute cwd, and then delegates to the one host-owned
+supervisor. It does not consume a foreground execution slot or create a
+foreground deadline, guardian, output buffer, pipe, reader, or executor call.
 
 The supervisor owns the start commit, cleanup, capacity, persistence, worker,
 and cancellation protocol defined by
@@ -387,8 +390,9 @@ rendering, the final cancellation check, and public return.
 
 Focused and workspace evidence must cover strict schema and
 canonical arguments; exact capability serde and policy/execution equality;
-the injected and reference-host `start` schema; absolute background cwd and
-fixed environment identity; retained-root/path identity binding; rejection of
+the injected and reference-host `start` schema; workspace-relative permission,
+private absolute background cwd, and fixed environment identity;
+post-construction retained-root rename/replacement behavior; rejection of
 interactive and control fields; zero-effect pre-cancellation; committed
 success despite later cancellation; nonzero/redacted display identities; every
 fixed supervisor-error mapping; foreground-capacity and executor bypass; and

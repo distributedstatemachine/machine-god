@@ -13,7 +13,7 @@ use machine_god_core::{
     BackgroundStartError, BackgroundStartErrorKind, BackgroundStartRequest, BoxFuture,
     CancellationToken, Capability, ProcessEnvironment, Tool, ToolError, ToolErrorKind, ToolOutput,
 };
-use machine_god_native::MAX_TERMINAL_PRODUCED_OUTPUT_BYTES;
+use machine_god_native::{MAX_TERMINAL_COMMAND_BYTES, MAX_TERMINAL_PRODUCED_OUTPUT_BYTES};
 use machine_god_native::{
     TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TerminalBackgroundOutcome, TerminalBackgroundStarter,
     TerminalCapturedOutput, TerminalConfigErrorKind, TerminalExecution, TerminalExecutionOutcome,
@@ -900,6 +900,32 @@ fn execute(
     poll_ready(tool.execute(context(), arguments, cancellation))
 }
 
+fn assert_foreground_capacity_is_busy(tool: &TerminalTool) {
+    let blocked = execute(
+        tool,
+        exact_arguments("blocked-foreground", "."),
+        CancellationToken::new(),
+    )
+    .expect_err("the occupied max-active-one foreground slot must reject another exec");
+    assert_eq!(blocked.kind, ToolErrorKind::Unavailable);
+    assert_eq!(blocked.code, "terminal_busy");
+    assert!(blocked.retryable);
+}
+
+fn assert_foreground_capacity_recovers(tool: &TerminalTool, executor: &FakeExecutor) {
+    let mut recovered = Box::pin(tool.execute(
+        context(),
+        exact_arguments("recovered-foreground", "."),
+        CancellationToken::new(),
+    ));
+    assert!(
+        poll_with_waker(recovered.as_mut(), &futures_util::task::noop_waker()).is_pending(),
+        "foreground capacity must recover after the original execution is dropped"
+    );
+    assert_eq!(executor.calls(), 2);
+    assert_eq!(executor.polls(), 2);
+}
+
 fn exact_arguments(command: &str, cwd: &str) -> Value {
     json!({
         "action": "exec",
@@ -1020,6 +1046,7 @@ fn background_start_has_exact_permission_identity_and_bypasses_foreground_execut
         )
         .is_pending()
     );
+    assert_foreground_capacity_is_busy(&tool);
 
     let spec = tool.spec();
     assert_eq!(
@@ -1053,13 +1080,7 @@ fn background_start_has_exact_permission_identity_and_bypasses_foreground_execut
     };
     assert_eq!(program, "/bin/sh");
     assert_eq!(arguments, &["-c", "sleep 1"]);
-    assert_eq!(
-        working_directory,
-        &format!(
-            "{}/nested",
-            std::fs::canonicalize(temporary.path()).unwrap().display()
-        )
-    );
+    assert_eq!(working_directory, "nested");
     assert_eq!(environment.profile, TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE);
     assert_eq!(environment.sha256, "a".repeat(64));
     assert_eq!(starter.calls(), 0);
@@ -1097,6 +1118,7 @@ fn background_start_has_exact_permission_identity_and_bypasses_foreground_execut
     );
     assert_eq!(requests[0].2, "BackgroundStartRequest { .. }");
     drop(occupied_foreground);
+    assert_foreground_capacity_recovers(&tool, &executor);
 }
 
 #[test]
@@ -1127,6 +1149,67 @@ fn background_configuration_binds_the_named_workspace_to_the_retained_root() {
     assert_eq!(error.kind(), TerminalConfigErrorKind::InvalidRoot);
     assert_eq!(starter.calls(), 0);
     assert_eq!(executor.calls(), 0);
+}
+
+#[test]
+fn background_permission_stays_relative_after_workspace_rename_and_replacement() {
+    let temporary = TemporaryDirectory::new("background-renamed-root");
+    let workspace = temporary.path().join("workspace");
+    let retained = temporary.path().join("retained-workspace");
+    std::fs::create_dir_all(workspace.join("nested")).unwrap();
+    std::fs::write(workspace.join("nested/identity"), b"retained").unwrap();
+    let canonical_workspace = std::fs::canonicalize(&workspace)
+        .unwrap()
+        .to_str()
+        .expect("test workspace is Unicode")
+        .to_owned();
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let tool = background_tool(&workspace, &executor, &starter);
+
+    std::fs::rename(&workspace, &retained).unwrap();
+    std::fs::create_dir_all(workspace.join("nested")).unwrap();
+    std::fs::write(workspace.join("nested/identity"), b"replacement").unwrap();
+
+    let arguments = json!({
+        "action": "start",
+        "command": ":",
+        "cwd": "nested",
+    });
+    let prepared = tool.prepare(call("terminal", arguments)).unwrap();
+    let Capability::Process {
+        working_directory, ..
+    } = prepared
+        .capability()
+        .expect("background start requires process permission")
+    else {
+        panic!("background start must prepare process permission")
+    };
+    assert_eq!(working_directory, "nested");
+
+    let output = execute(
+        &tool,
+        prepared.arguments().clone(),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    assert!(!output.is_error);
+    assert_eq!(starter.calls(), 1);
+    assert_eq!(executor.calls(), 0);
+    let requests = starter.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].0, ":");
+    assert_eq!(requests[0].1, format!("{canonical_workspace}/nested"));
+    assert_eq!(
+        std::fs::read(retained.join("nested/identity")).unwrap(),
+        b"retained"
+    );
+    assert_eq!(
+        std::fs::read(workspace.join("nested/identity")).unwrap(),
+        b"replacement"
+    );
 }
 
 #[test]
@@ -1332,6 +1415,49 @@ fn exact_command_and_cwd_boundaries_prepare_successfully() {
         assert_eq!(prepared.arguments(), &exact_arguments(command, cwd));
     }
     assert_eq!(executor.calls(), 0);
+}
+
+#[test]
+fn exact_background_command_boundary_moves_intact_into_the_start_request() {
+    let temporary = TemporaryDirectory::new("background-command-boundary");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let tool = background_tool(temporary.path(), &executor, &starter);
+    let command = "x".repeat(MAX_TERMINAL_COMMAND_BYTES);
+    let prepared = tool
+        .prepare(call(
+            "terminal",
+            json!({ "action": "start", "command": command }),
+        ))
+        .unwrap();
+    let Capability::Process {
+        arguments,
+        working_directory,
+        ..
+    } = prepared
+        .capability()
+        .expect("background start requires process permission")
+    else {
+        panic!("background start must prepare process permission")
+    };
+    assert_eq!(arguments[0], "-c");
+    assert_eq!(arguments[1].len(), MAX_TERMINAL_COMMAND_BYTES);
+    assert_eq!(working_directory, ".");
+
+    let output = execute(
+        &tool,
+        prepared.arguments().clone(),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    assert!(!output.is_error);
+    assert_eq!(executor.calls(), 0);
+    let requests = starter.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].0.len(), MAX_TERMINAL_COMMAND_BYTES);
+    assert!(requests[0].0.bytes().all(|byte| byte == b'x'));
 }
 
 #[test]

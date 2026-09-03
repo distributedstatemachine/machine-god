@@ -395,13 +395,7 @@ fn background_start_runs_once_after_permission_and_persists_display_identity() {
     else {
         panic!("start must request process permission")
     };
-    assert_eq!(
-        working_directory,
-        std::fs::canonicalize(temporary.path())
-            .unwrap()
-            .to_str()
-            .unwrap()
-    );
+    assert_eq!(working_directory, ".");
     assert_eq!(environment.profile, TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE);
     assert_eq!(starter.calls.load(Ordering::SeqCst), 1);
     assert_eq!(executor.calls.load(Ordering::SeqCst), 0);

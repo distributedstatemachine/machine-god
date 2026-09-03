@@ -20,13 +20,15 @@ provider-neutral `Capability::Process` with exact `working_directory` and a
 digest only; it gains no process, filesystem, environment, timer, or executor
 authority. Native effect-free preparation fixes `/bin/sh`, `[-c, command]`, the
 authorized cwd, and a bounded environment digest before the existing
-critical-risk authorization. Foreground `exec` uses the canonical
-workspace-relative cwd and construction-snapshot digest. Noninteractive
-`start` uses the absolute canonical workspace/cwd and the native supervisor's
-fixed-environment digest. Allowed execution reparses the canonical arguments
-and derives the same immutable identity from tool state. The environment
-values, retained descriptors, background persistence, process group, pipes,
-deadline guardian, threads, and cleanup remain wholly native.
+critical-risk authorization. Both foreground `exec` and noninteractive `start`
+authorize the canonical workspace-relative cwd against the terminal's retained
+workspace identity. `exec` uses the construction-snapshot digest; `start` uses
+the native supervisor's fixed-environment digest and privately derives its
+absolute persisted cwd only after authorization. Allowed execution reparses the
+canonical arguments and derives the same immutable authority from tool state.
+The environment values, retained descriptors, absolute background record path,
+background persistence, process group, pipes, deadline guardian, threads, and
+cleanup remain wholly native.
 
 Native rechecks cancellation after executor/guardian destruction and directly
 before returning `ToolOutput`. Its timeout starts at first poll and is
