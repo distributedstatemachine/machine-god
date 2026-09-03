@@ -93,10 +93,11 @@ Every successful host contains:
 - one provider-neutral `SubagentTool` over an explicitly injected authority;
   ordinary constructors share an inert unavailable authority, while the
   subagent-aware seam retains the caller's exact allocation;
-- one bounded native background supervisor over identity-preserving workspace
-  and state-root descriptors, retained by `terminal` for noninteractive
-  `start`; its environment is fixed and independently identified for process
-  permission;
+- one bounded lazy background starter over identity-preserving workspace and
+  state-root descriptors, retained by `terminal` for noninteractive `start`;
+  its environment is fixed and independently identified for process
+  permission, while one supervisor is initialized and reused only after the
+  first permitted start is polled;
 - default provider-neutral `EngineLimits` and the default no-op event sink;
 - one explicit `Arc<dyn WebSearchDeadline>` for bounded web-search timing,
   reused through a fixed category-only adapter for vision's capacity wait,
@@ -149,7 +150,7 @@ original descriptor. The other sixteen workspace tools receive
 identity-preserving clones: `copy_file`, `create_folder`, `delete_file`,
 `edit_file`, `file_info`, `grep_files`, `install_skill`, `list_files`,
 `open_file`, `read_file`, `rename_file`, `semantic_search`, `skill`, `terminal`,
-`vision`, and `write_file`. The terminal background supervisor receives one
+`vision`, and `write_file`. The terminal lazy background starter receives one
 additional clone of that same identity; it is not another catalog tool.
 `ask_user_question`, `mcp_features`, `mcp_search_tools`, `mcp_select_tool`,
 `subagent`, and `web_fetch` are rootless.
@@ -206,8 +207,10 @@ documented bounded setup needed to own later authority:
 - discover and validate the two supported credential environment sources on
   the production path;
 - snapshot the bounded process environment used by `terminal`;
-- create and reconcile the private `background-v1` namespace under the already
-  private state root, then create the supervisor's fixed-capacity worker sets;
+- retain the exact workspace and state-root descriptors plus the fixed
+  background environment identity; background namespace reconciliation and
+  fixed-capacity worker creation are deferred to one shared, single-shot
+  initialization on the first permitted `start` poll;
 - construct provider, web-search, and private vision adapters over the shared
   transport;
 - construct `web_fetch`, including its bounded native resolver/entropy setup.

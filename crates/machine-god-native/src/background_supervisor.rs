@@ -53,6 +53,7 @@ pub const BACKGROUND_PROCESS_HELPER_ARGUMENT: &str = "--__machine-god-background
 
 const PRODUCTION_BACKGROUND_PATH: &str = "/usr/bin:/bin";
 const PRODUCTION_BACKGROUND_LANGUAGE: &str = "C";
+const LAZY_BACKGROUND_INITIALIZATION_WAITERS: usize = NATIVE_BACKGROUND_HARD_MAX_ACTIVE;
 
 /// Fixed host-owned background concurrency limits.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -262,22 +263,6 @@ impl NativeBackgroundSupervisor {
         )
     }
 
-    pub(crate) fn from_production_root_descriptors(
-        workspace: String,
-        workspace_root: OwnedFd,
-        state_root: OwnedFd,
-    ) -> Result<Self, NativeBackgroundSupervisorError> {
-        let adapter = system_process_adapter()?;
-        Self::from_validated_parts(
-            workspace,
-            workspace_root,
-            state_root,
-            production_environment(),
-            NativeBackgroundLimits::default(),
-            adapter,
-        )
-    }
-
     fn from_parts(
         workspace: String,
         workspace_root: OwnedFd,
@@ -475,6 +460,330 @@ impl Drop for NativeBackgroundSupervisor {
     fn drop(&mut self) {
         self.retainer.shutdown();
         self.blocking.shutdown();
+    }
+}
+
+type LazyTerminalInitializer = Box<
+    dyn FnOnce() -> Result<Arc<dyn TerminalBackgroundStarter>, NativeBackgroundSupervisorError>
+        + Send
+        + 'static,
+>;
+
+/// Production terminal adapter that defers the worker-owning supervisor until
+/// the first permitted start future is polled.
+pub(crate) struct LazyProductionBackgroundStarter {
+    environment_identity: ProcessEnvironment,
+    shared: Arc<LazyBackgroundInitialization>,
+}
+
+struct LazyBackgroundInitialization {
+    state: Mutex<LazyBackgroundInitializationState>,
+}
+
+struct LazyBackgroundInitializationState {
+    phase: LazyBackgroundInitializationPhase,
+    waiters: Vec<LazyBackgroundInitializationWaiter>,
+    next_waiter_id: u64,
+}
+
+enum LazyBackgroundInitializationPhase {
+    Uninitialized(LazyTerminalInitializer),
+    Initializing,
+    Ready(Arc<dyn TerminalBackgroundStarter>),
+    Failed(BackgroundStartError),
+}
+
+struct LazyBackgroundInitializationWaiter {
+    id: u64,
+    waker: Waker,
+}
+
+struct LazyBackgroundInitializationFuture {
+    shared: Arc<LazyBackgroundInitialization>,
+    cancelled: Cancelled,
+    waiter_id: Option<u64>,
+}
+
+impl LazyProductionBackgroundStarter {
+    pub(crate) fn from_root_descriptors(
+        workspace: String,
+        workspace_root: OwnedFd,
+        state_root: OwnedFd,
+    ) -> Result<Self, NativeBackgroundSupervisorError> {
+        if !canonical_absolute_path(&workspace) {
+            return Err(NativeBackgroundSupervisorError::new(
+                NativeBackgroundSupervisorErrorKind::InvalidConfiguration,
+            ));
+        }
+        validate_directory(workspace_root.as_fd()).map_err(|()| {
+            NativeBackgroundSupervisorError::new(NativeBackgroundSupervisorErrorKind::Workspace)
+        })?;
+        let environment = production_environment();
+        let environment_identity = production_environment_identity();
+        let initializer: LazyTerminalInitializer = Box::new(move || {
+            let adapter = system_process_adapter()?;
+            NativeBackgroundSupervisor::from_validated_parts(
+                workspace,
+                workspace_root,
+                state_root,
+                environment,
+                NativeBackgroundLimits::default(),
+                adapter,
+            )
+            .map(|supervisor| Arc::new(supervisor) as Arc<dyn TerminalBackgroundStarter>)
+        });
+        Ok(Self::with_initializer(environment_identity, initializer))
+    }
+
+    fn with_initializer(
+        environment_identity: ProcessEnvironment,
+        initializer: LazyTerminalInitializer,
+    ) -> Self {
+        Self {
+            environment_identity,
+            shared: Arc::new(LazyBackgroundInitialization {
+                state: Mutex::new(LazyBackgroundInitializationState {
+                    phase: LazyBackgroundInitializationPhase::Uninitialized(initializer),
+                    waiters: Vec::with_capacity(LAZY_BACKGROUND_INITIALIZATION_WAITERS),
+                    next_waiter_id: 0,
+                }),
+            }),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn environment_identity(&self) -> ProcessEnvironment {
+        self.environment_identity.clone()
+    }
+}
+
+impl TerminalBackgroundStarter for LazyProductionBackgroundStarter {
+    fn start(
+        &self,
+        request: BackgroundStartRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundOutcome, BackgroundStartError>> {
+        let initialization = LazyBackgroundInitializationFuture {
+            shared: Arc::clone(&self.shared),
+            cancelled: cancellation.cancelled(),
+            waiter_id: None,
+        };
+        Box::pin(async move {
+            let starter = initialization.await?;
+            starter.start(request, cancellation).await
+        })
+    }
+}
+
+impl fmt::Debug for LazyProductionBackgroundStarter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LazyProductionBackgroundStarter")
+            .finish_non_exhaustive()
+    }
+}
+
+impl Future for LazyBackgroundInitializationFuture {
+    type Output = Result<Arc<dyn TerminalBackgroundStarter>, BackgroundStartError>;
+
+    fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        if Pin::new(&mut self.cancelled).poll(context).is_ready() {
+            self.remove_waiter();
+            return Poll::Ready(Err(start_error(BackgroundStartErrorKind::Cancelled)));
+        }
+
+        let incoming_waker = context.waker().clone();
+        let mut replaced_waker = None;
+        let mut initializer = None;
+        let shared = Arc::clone(&self.shared);
+        let result = {
+            let mut state = shared
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match &state.phase {
+                LazyBackgroundInitializationPhase::Ready(starter) => Some(Ok(Arc::clone(starter))),
+                LazyBackgroundInitializationPhase::Failed(error) => Some(Err(*error)),
+                LazyBackgroundInitializationPhase::Uninitialized(_)
+                | LazyBackgroundInitializationPhase::Initializing => {
+                    if let Some(waiter_id) = self.waiter_id {
+                        let waiter = state
+                            .waiters
+                            .iter_mut()
+                            .find(|waiter| waiter.id == waiter_id)
+                            .expect("a pending lazy initialization future retains its waiter");
+                        replaced_waker = Some(std::mem::replace(&mut waiter.waker, incoming_waker));
+                    } else if state.waiters.len() >= LAZY_BACKGROUND_INITIALIZATION_WAITERS {
+                        return Poll::Ready(Err(start_error(BackgroundStartErrorKind::Capacity)));
+                    } else {
+                        let waiter_id = state.next_waiter_id;
+                        let Some(next_waiter_id) = waiter_id.checked_add(1) else {
+                            return Poll::Ready(Err(start_error(
+                                BackgroundStartErrorKind::Capacity,
+                            )));
+                        };
+                        state.next_waiter_id = next_waiter_id;
+                        state.waiters.push(LazyBackgroundInitializationWaiter {
+                            id: waiter_id,
+                            waker: incoming_waker,
+                        });
+                        self.waiter_id = Some(waiter_id);
+                    }
+
+                    if matches!(
+                        state.phase,
+                        LazyBackgroundInitializationPhase::Uninitialized(_)
+                    ) {
+                        let previous = std::mem::replace(
+                            &mut state.phase,
+                            LazyBackgroundInitializationPhase::Initializing,
+                        );
+                        let LazyBackgroundInitializationPhase::Uninitialized(pending) = previous
+                        else {
+                            unreachable!("the lazy initializer phase was checked while locked")
+                        };
+                        initializer = Some(pending);
+                    }
+                    None
+                }
+            }
+        };
+        drop(replaced_waker);
+
+        if let Some(result) = result {
+            self.remove_waiter();
+            return Poll::Ready(result);
+        }
+        if let Some(initializer) = initializer {
+            spawn_lazy_background_initializer(&self.shared, initializer);
+        }
+        Poll::Pending
+    }
+}
+
+impl LazyBackgroundInitializationFuture {
+    fn remove_waiter(&mut self) {
+        let Some(waiter_id) = self.waiter_id.take() else {
+            return;
+        };
+        let removed = {
+            let mut state = self
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state
+                .waiters
+                .iter()
+                .position(|waiter| waiter.id == waiter_id)
+                .map(|index| state.waiters.swap_remove(index).waker)
+        };
+        drop(removed);
+    }
+}
+
+impl Drop for LazyBackgroundInitializationFuture {
+    fn drop(&mut self) {
+        self.remove_waiter();
+    }
+}
+
+fn spawn_lazy_background_initializer(
+    shared: &Arc<LazyBackgroundInitialization>,
+    initializer: LazyTerminalInitializer,
+) {
+    let Ok(registry) = worker_ownership_registry() else {
+        publish_lazy_background_initialization(
+            shared,
+            Err(start_error(BackgroundStartErrorKind::Process)),
+        );
+        return;
+    };
+    let Ok(mut ownership) = registry.reserve(1) else {
+        publish_lazy_background_initialization(
+            shared,
+            Err(start_error(BackgroundStartErrorKind::Process)),
+        );
+        return;
+    };
+    let (release_sender, release_receiver) = sync_channel(1);
+    let (completion_guard, completed) = registry.completion_guard();
+    let worker_shared = Arc::clone(shared);
+    let Ok(handle) = thread::Builder::new()
+        .name("machine-god-bg-initialize".to_owned())
+        .spawn(move || {
+            let _completion_guard = completion_guard;
+            if release_receiver.recv().is_err() {
+                return;
+            }
+            let result = catch_unwind(AssertUnwindSafe(initializer))
+                .unwrap_or_else(|_| {
+                    Err(NativeBackgroundSupervisorError::new(
+                        NativeBackgroundSupervisorErrorKind::Process,
+                    ))
+                })
+                .map_err(lazy_initialization_error);
+            publish_lazy_background_initialization(&worker_shared, result);
+        })
+    else {
+        publish_lazy_background_initialization(
+            shared,
+            Err(start_error(BackgroundStartErrorKind::Process)),
+        );
+        return;
+    };
+    if let Err(owned) = registry.register(handle, completed, ownership.take()) {
+        drop(release_sender);
+        let _ = owned.handle.join();
+        publish_lazy_background_initialization(
+            shared,
+            Err(start_error(BackgroundStartErrorKind::Process)),
+        );
+        return;
+    }
+    if release_sender.try_send(()).is_err() {
+        publish_lazy_background_initialization(
+            shared,
+            Err(start_error(BackgroundStartErrorKind::Process)),
+        );
+    }
+}
+
+fn lazy_initialization_error(error: NativeBackgroundSupervisorError) -> BackgroundStartError {
+    let kind = match error.kind() {
+        NativeBackgroundSupervisorErrorKind::State
+        | NativeBackgroundSupervisorErrorKind::Reconciliation => {
+            BackgroundStartErrorKind::Persistence
+        }
+        NativeBackgroundSupervisorErrorKind::InvalidConfiguration
+        | NativeBackgroundSupervisorErrorKind::Workspace
+        | NativeBackgroundSupervisorErrorKind::Environment
+        | NativeBackgroundSupervisorErrorKind::Process
+        | NativeBackgroundSupervisorErrorKind::Worker => BackgroundStartErrorKind::Process,
+    };
+    start_error(kind)
+}
+
+fn publish_lazy_background_initialization(
+    shared: &LazyBackgroundInitialization,
+    result: Result<Arc<dyn TerminalBackgroundStarter>, BackgroundStartError>,
+) {
+    let waiters = {
+        let mut state = shared
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !matches!(state.phase, LazyBackgroundInitializationPhase::Initializing) {
+            return;
+        }
+        state.phase = match result {
+            Ok(starter) => LazyBackgroundInitializationPhase::Ready(starter),
+            Err(error) => LazyBackgroundInitializationPhase::Failed(error),
+        };
+        std::mem::take(&mut state.waiters)
+    };
+    for waiter in waiters {
+        waiter.waker.wake();
     }
 }
 
@@ -1704,6 +2013,13 @@ fn production_environment() -> ValidatedBackgroundEnvironment {
         .clone()
 }
 
+fn production_environment_identity() -> ProcessEnvironment {
+    static IDENTITY: OnceLock<ProcessEnvironment> = OnceLock::new();
+    IDENTITY
+        .get_or_init(|| background_environment_identity(&production_environment()))
+        .clone()
+}
+
 fn background_environment_identity(
     environment: &ValidatedBackgroundEnvironment,
 ) -> ProcessEnvironment {
@@ -1826,13 +2142,16 @@ const fn start_error(kind: BackgroundStartErrorKind) -> BackgroundStartError {
 #[cfg(test)]
 mod tests {
     use super::{
-        BlockingExecutor, BlockingResult, BlockingTaskFailure, NativeBackgroundLimits,
-        NativeBackgroundSupervisor, NativeSpawner, NativeStore, PRODUCTION_BACKGROUND_LANGUAGE,
-        PRODUCTION_BACKGROUND_PATH, RetainedJob, SystemBackgroundProcessAdapter, SystemClock,
-        WORKER_OWNERSHIP_CAPACITY, WorkerOwnershipRegistry, WorkerRetainer,
-        accept_bounded_environment, background_environment_identity, build_production_environment,
+        BlockingExecutor, BlockingResult, BlockingTaskFailure, LazyProductionBackgroundStarter,
+        NativeBackgroundLimits, NativeBackgroundSupervisor, NativeBackgroundSupervisorError,
+        NativeBackgroundSupervisorErrorKind, NativeSpawner, NativeStore,
+        PRODUCTION_BACKGROUND_LANGUAGE, PRODUCTION_BACKGROUND_PATH, RetainedJob,
+        SystemBackgroundProcessAdapter, SystemClock, WORKER_OWNERSHIP_CAPACITY,
+        WorkerOwnershipRegistry, WorkerRetainer, accept_bounded_environment,
+        background_environment_identity, build_production_environment,
         finish_prepared_after_readiness, open_directory, process_error_kind,
-        production_environment, retain_canonical_directory_with, worker_ownership_registry,
+        production_environment, production_environment_identity, retain_canonical_directory_with,
+        worker_ownership_registry,
     };
     use crate::background_process::{
         BackgroundProcessErrorKind, BackgroundProcessHelper,
@@ -1847,7 +2166,7 @@ mod tests {
         BackgroundProcessOutcome, BackgroundProcessRetainer, BackgroundProcessSpawner,
         BackgroundRetentionPermit, BackgroundStartError, BackgroundStartErrorKind,
         BackgroundStartRequest, BackgroundSupervisor, BoxFuture, CancellationToken,
-        OwnedBackgroundProcess, PreparedBackgroundProcess,
+        OwnedBackgroundProcess, PreparedBackgroundProcess, ProcessEnvironment,
     };
     use std::ffi::OsString;
     use std::fs;
@@ -1861,6 +2180,8 @@ mod tests {
     use std::thread;
     use std::time::{Duration, Instant};
 
+    use crate::terminal::{TerminalBackgroundOutcome, TerminalBackgroundStarter};
+
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
     struct WakeFlag(AtomicBool);
@@ -1868,6 +2189,21 @@ mod tests {
     impl Wake for WakeFlag {
         fn wake(self: Arc<Self>) {
             self.0.store(true, Ordering::Release);
+        }
+    }
+
+    struct CountingTerminalBackgroundStarter {
+        starts: Arc<AtomicUsize>,
+    }
+
+    impl TerminalBackgroundStarter for CountingTerminalBackgroundStarter {
+        fn start(
+            &self,
+            _request: BackgroundStartRequest,
+            _cancellation: CancellationToken,
+        ) -> BoxFuture<'static, Result<TerminalBackgroundOutcome, BackgroundStartError>> {
+            self.starts.fetch_add(1, Ordering::AcqRel);
+            Box::pin(async { TerminalBackgroundOutcome::new(7, None) })
         }
     }
 
@@ -2289,6 +2625,111 @@ mod tests {
     }
 
     #[test]
+    fn lazy_terminal_background_initializes_once_and_reuses_one_starter() {
+        let initializations = Arc::new(AtomicUsize::new(0));
+        let starts = Arc::new(AtomicUsize::new(0));
+        let (entered_sender, entered_receiver) = mpsc::sync_channel(1);
+        let (release_sender, release_receiver) = mpsc::sync_channel(1);
+        let initializer_initializations = Arc::clone(&initializations);
+        let initializer_starts = Arc::clone(&starts);
+        let starter = LazyProductionBackgroundStarter::with_initializer(
+            ProcessEnvironment {
+                profile: "lazy_test".to_owned(),
+                sha256: "0".repeat(64),
+            },
+            Box::new(move || {
+                initializer_initializations.fetch_add(1, Ordering::AcqRel);
+                entered_sender.send(()).expect("report initialization");
+                release_receiver.recv().expect("release initialization");
+                Ok(Arc::new(CountingTerminalBackgroundStarter {
+                    starts: initializer_starts,
+                }) as Arc<dyn TerminalBackgroundStarter>)
+            }),
+        );
+        let request = BackgroundStartRequest::new(":", "/tmp").expect("request");
+        let mut first = starter.start(request.clone(), CancellationToken::new());
+        let mut second = starter.start(request, CancellationToken::new());
+
+        assert_eq!(initializations.load(Ordering::Acquire), 0);
+        assert!(matches!(
+            first.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        entered_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("initializer entered");
+        assert!(matches!(
+            second
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        assert_eq!(initializations.load(Ordering::Acquire), 1);
+
+        release_sender.send(()).expect("release initializer");
+        let (first, second) =
+            futures_executor::block_on(async { futures_util::future::join(first, second).await });
+        assert_eq!(first.expect("first start").id(), 7);
+        assert_eq!(second.expect("second start").id(), 7);
+        assert_eq!(initializations.load(Ordering::Acquire), 1);
+        assert_eq!(starts.load(Ordering::Acquire), 2);
+    }
+
+    #[test]
+    fn lazy_terminal_background_failure_is_redacted_and_sticky() {
+        let initializations = Arc::new(AtomicUsize::new(0));
+        let initializer_initializations = Arc::clone(&initializations);
+        let starter = LazyProductionBackgroundStarter::with_initializer(
+            ProcessEnvironment {
+                profile: "lazy_test".to_owned(),
+                sha256: "0".repeat(64),
+            },
+            Box::new(move || {
+                initializer_initializations.fetch_add(1, Ordering::AcqRel);
+                Err(NativeBackgroundSupervisorError::new(
+                    NativeBackgroundSupervisorErrorKind::Worker,
+                ))
+            }),
+        );
+
+        for _ in 0..2 {
+            let request = BackgroundStartRequest::new(":", "/tmp").expect("request");
+            let error =
+                futures_executor::block_on(starter.start(request, CancellationToken::new()))
+                    .expect_err("sticky initialization failure");
+            assert_eq!(error.kind(), BackgroundStartErrorKind::Process);
+            assert_eq!(error.to_string(), "background process could not start");
+        }
+        assert_eq!(initializations.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn pre_cancelled_lazy_terminal_background_start_does_not_initialize() {
+        let initializations = Arc::new(AtomicUsize::new(0));
+        let initializer_initializations = Arc::clone(&initializations);
+        let starter = LazyProductionBackgroundStarter::with_initializer(
+            ProcessEnvironment {
+                profile: "lazy_test".to_owned(),
+                sha256: "0".repeat(64),
+            },
+            Box::new(move || {
+                initializer_initializations.fetch_add(1, Ordering::AcqRel);
+                Err(NativeBackgroundSupervisorError::new(
+                    NativeBackgroundSupervisorErrorKind::Worker,
+                ))
+            }),
+        );
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let request = BackgroundStartRequest::new(":", "/tmp").expect("request");
+
+        let error = futures_executor::block_on(starter.start(request, cancellation))
+            .expect_err("pre-cancelled start");
+        assert_eq!(error.kind(), BackgroundStartErrorKind::Cancelled);
+        assert_eq!(initializations.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
     fn capacity_is_fail_fast_and_drop_stops_the_exact_owned_process() {
         let fixture = Fixture::new();
         let supervisor = fixture.supervisor(1);
@@ -2678,6 +3119,7 @@ mod tests {
             identity.sha256,
             "1b141c66b290b7c7f755588dbfb36af86b3232570a58be0eeb566b90fa130adc"
         );
+        assert_eq!(production_environment_identity(), identity);
 
         let shared = production_environment();
         allocation_counter::measure(|| {});

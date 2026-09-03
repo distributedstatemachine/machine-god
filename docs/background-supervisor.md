@@ -64,6 +64,22 @@ value bytes. Reference-host terminal preparation uses profile
 `background_fixed` and that digest, so permission policy sees the environment
 the helper will install without receiving any raw entry.
 
+Reference-host composition retains the exact verified workspace and state-root
+descriptors, canonical workspace identity, and fixed environment identity in a
+lazy starter. It does not prepare or reconcile `background-v1`, resolve the
+process helper, or create supervisor workers. The first permitted `start`
+future that is actually polled starts one process-wide-owned initialization
+worker. At most sixteen start futures may wait for that shared initialization;
+further callers fail immediately with `capacity`. All concurrent first callers
+observe the same result, and success installs one supervisor reused by every
+later start. Initialization is attempted exactly once per composed host. A
+state or reconciliation failure is retained as fixed `persistence`; every
+other construction failure is retained as fixed `process`. Neither category
+contains native details, and a new host must be composed to retry. Cancelling
+or dropping one waiting start removes only that bounded waiter: an initializer
+already started continues so another caller cannot create a competing worker
+cohort or reconciliation pass.
+
 The public start future is inert until first poll. Dropping it before first
 poll has no store, process, clock, allocation-ID, thread, or task effect.
 Admission is fail-fast with no queue: the default is four active jobs and the
@@ -74,9 +90,12 @@ workers and one retainer rescue worker, the supervisor owns one fixed-size
 blocking-operation worker set; offload admission fails promptly rather than
 queuing without a bound. Every worker handle is registered at creation with a
 process-wide collector that retains at most 256 handles. One supervisor
-reserves `2 * max_active + 1` of those authorities during construction, so
-collector saturation fails construction with the fixed worker category before
-the supervisor can accept work. Each worker publishes one completion flag
+reserves `2 * max_active + 1` of those authorities during construction. Lazy
+reference-host initialization temporarily owns one additional initializer
+authority, so the default cohort peaks at ten authorities and retains nine
+after initialization. Collector saturation fixes the lazy result as `process`
+before that host can accept work; direct supervisor construction instead fails
+with the fixed worker category. Each worker publishes one completion flag
 while holding the collector's predicate mutex, then sends one condition
 notification as it leaves. Shutdown publishes its predicate under that same
 mutex. The collector's predicate check and condition wait are therefore one
@@ -338,8 +357,14 @@ the parked observation instead of waiting for that timeout. Completion may be
 observed within the bounded backoff interval; explicit stop still includes its
 fixed TERM grace.
 
-Dropping the native supervisor closes both pools, cancels active process waits,
-and returns without joining a worker or running process cleanup on the caller.
+Dropping an unpolled lazy reference-host starter closes its retained root
+descriptors without creating a worker or namespace. If initialization has
+started, its registered worker owns the initializer and exact descriptors to
+completion; a successfully constructed supervisor is then either retained by
+the shared starter or immediately dropped under the same rules when no owner
+remains. Dropping the native supervisor closes both pools, cancels active
+process waits, and returns without joining a worker or running process cleanup
+on the caller.
 The process-wide fixed-capacity collector already owns every worker handle;
 retainer workers continue the bounded stop, reap, and terminal-publication
 protocol, while blocking workers finish any acquired prepared-process cleanup.

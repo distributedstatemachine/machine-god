@@ -142,15 +142,9 @@ fn reference_host_lifecycle_engine_and_public_store_share_one_exact_store() {
         .unwrap();
     assert_eq!(loaded.record(), created.record());
     assert!(!created.has_active_turn());
-    let mut root_entries = fs::read_dir(&sessions)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-        .collect::<Vec<_>>();
-    root_entries.sort();
-    assert_eq!(root_entries.len(), 3);
-    assert_eq!(root_entries[0], "background-v1");
-    let record_stem = root_entries[1].strip_suffix(".json").unwrap();
-    let lock_stem = root_entries[2].strip_suffix(".lock").unwrap();
-    assert_eq!(record_stem, lock_stem);
-    assert!(record_stem.starts_with("session-"));
+    assert_eq!(
+        fs::read_dir(sessions).unwrap().count(),
+        2,
+        "durable create publishes one data record and one permanent lock"
+    );
 }

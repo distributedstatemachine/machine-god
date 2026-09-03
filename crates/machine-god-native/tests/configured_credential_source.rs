@@ -503,12 +503,10 @@ mod composition {
         (workspace, sessions)
     }
 
-    fn assert_private_background_namespace(sessions: &Path) {
-        let entries = fs::read_dir(sessions)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .collect::<Vec<_>>();
-        assert_eq!(entries, ["background-v1"]);
+    fn assert_inert(transport: &InertTransport, prompter: &InertPrompter, sessions: &Path) {
+        assert_eq!(transport.calls.load(Ordering::Relaxed), 0);
+        assert_eq!(prompter.calls.load(Ordering::Relaxed), 0);
+        assert_eq!(fs::read_dir(sessions).unwrap().count(), 0);
     }
 
     fn load_fixture(
@@ -561,7 +559,7 @@ mod composition {
             );
             assert_eq!(host.credential_source(), Some(expected));
             assert_eq!(prompter.calls.load(Ordering::Relaxed), 0);
-            assert_private_background_namespace(&sessions);
+            assert_eq!(fs::read_dir(&sessions).unwrap().count(), 0);
         }
     }
 
@@ -626,7 +624,7 @@ mod composition {
                 Some(AiGatewayCredentialSource::AiGatewayApiKey)
             );
             assert_eq!(prompter.calls.load(Ordering::Relaxed), 0);
-            assert_private_background_namespace(&sessions);
+            assert_eq!(fs::read_dir(&sessions).unwrap().count(), 0);
         }
     }
 
@@ -656,8 +654,7 @@ mod composition {
             .unwrap();
 
             assert_eq!(host.credential_source(), None);
-            assert_eq!(transport.calls.load(Ordering::Relaxed), 0);
-            assert_private_background_namespace(&sessions);
+            assert_inert(&transport, &prompter, &sessions);
         }
     }
 }

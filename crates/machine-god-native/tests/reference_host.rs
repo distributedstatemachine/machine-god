@@ -850,14 +850,6 @@ fn directory_is_empty(path: &Path) -> bool {
     fs::read_dir(path).unwrap().next().is_none()
 }
 
-fn contains_only_background_namespace(path: &Path) -> bool {
-    let mut entries = fs::read_dir(path).unwrap();
-    let Some(entry) = entries.next() else {
-        return false;
-    };
-    entry.unwrap().file_name() == "background-v1" && entries.next().is_none()
-}
-
 fn assert_exact_native_tool_catalog(request: &Value) {
     let tools = request["tools"].as_array().unwrap();
     assert_eq!(tools.len(), 26);
@@ -2044,7 +2036,7 @@ fn v1_projection_composes_without_migrating_observable_loaded_schema() {
     assert_eq!(host.credential_source(), None);
     assert!(transport.requests().is_empty());
     assert!(prompter.requests().is_empty());
-    assert!(contains_only_background_namespace(&sessions));
+    assert!(directory_is_empty(&sessions));
     assert_eq!(host.engine().provider().name(), "vercel_ai_gateway");
     let engine = host.into_engine();
     assert_eq!(engine.provider().name(), "vercel_ai_gateway");
@@ -2078,7 +2070,7 @@ fn production_http_constructor_selects_oidc_then_api_key_without_runtime_effects
     assert!(!debug.contains(oidc));
     assert!(!debug.contains(ignored_api_key));
     assert!(prompter.requests().is_empty());
-    assert!(contains_only_background_namespace(&sessions));
+    assert!(directory_is_empty(&sessions));
     drop(host);
 
     let fallback = "FALLBACK_API_KEY_TOKEN_SENTINEL";
@@ -2098,7 +2090,7 @@ fn production_http_constructor_selects_oidc_then_api_key_without_runtime_effects
     );
     assert!(!format!("{host:?}").contains(fallback));
     assert!(prompter.requests().is_empty());
-    assert!(contains_only_background_namespace(&sessions));
+    assert!(directory_is_empty(&sessions));
 }
 
 #[test]
@@ -2274,7 +2266,7 @@ fn injected_construction_is_inert_and_host_debug_redacts_owned_inputs() {
 
     assert!(transport.requests().is_empty());
     assert!(prompter.requests().is_empty());
-    assert!(contains_only_background_namespace(&sessions));
+    assert!(directory_is_empty(&sessions));
     let debug = format!("{host:?}");
     for sentinel in ["CONSTRUCTION_ROOT_SENTINEL", model, factory] {
         assert!(

@@ -11,6 +11,7 @@ use machine_god_core::{
 };
 use rustix::fd::OwnedFd;
 
+use crate::background_supervisor::LazyProductionBackgroundStarter;
 use crate::workspace::{WorkspaceRoot, WorkspaceTools};
 use crate::{
     AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayHttpTransport,
@@ -18,9 +19,9 @@ use crate::{
     AskPermissionHandler, AskUserQuestionTool, FileSessionStore, LoadedNativeConfig,
     McpFeatureAuthority, McpFeatureError, McpFeatureErrorKind, McpFeaturePayload,
     McpFeatureRequest, McpFeaturesTool, McpSearchToolsTool, McpSelectTool, McpToolCatalog,
-    McpToolCatalogError, McpToolCatalogSnapshot, MemoryTool, NativeBackgroundSupervisor,
-    NativeCredentialSourceKind, NativeProviderKind, NativeSessionLifecycle, NativeTransportKind,
-    PermissionMode, PermissionPrompter, PreparedNativeRoots, QuestionPrompter, ReadToolResultTool,
+    McpToolCatalogError, McpToolCatalogSnapshot, MemoryTool, NativeCredentialSourceKind,
+    NativeProviderKind, NativeSessionLifecycle, NativeTransportKind, PermissionMode,
+    PermissionPrompter, PreparedNativeRoots, QuestionPrompter, ReadToolResultTool,
     TerminalBackgroundStarter, TerminalTool, VisionDeadline, VisionLimits, VisionTool,
     VisionTransportError, VisionTransportErrorKind, WebFetchTool, WebSearchDeadline,
     WebSearchLimits, WebSearchTool, WebSearchTransportErrorKind, discover_ai_gateway_credential,
@@ -736,7 +737,7 @@ fn compose_terminal(
         NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::BackgroundConfig)
     })?;
     let background = Arc::new(
-        NativeBackgroundSupervisor::from_production_root_descriptors(
+        LazyProductionBackgroundStarter::from_root_descriptors(
             canonical_workspace.clone(),
             background_root,
             state_root,
