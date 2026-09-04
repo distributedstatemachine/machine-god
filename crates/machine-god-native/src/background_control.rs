@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::num::NonZeroU64;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 
 use machine_god_core::BackgroundOutputOwner;
 
@@ -119,7 +119,15 @@ impl BackgroundControlRegistry {
         signal: BackgroundSignal,
     ) -> Result<(), BackgroundControlError> {
         let target = {
-            let state = self.lock()?;
+            let state = match self.state.try_lock() {
+                Ok(state) => state,
+                Err(TryLockError::WouldBlock) => {
+                    return Err(error(BackgroundControlErrorKind::Busy));
+                }
+                Err(TryLockError::Poisoned(_)) => {
+                    return Err(error(BackgroundControlErrorKind::Process));
+                }
+            };
             let entry = state
                 .entries
                 .get(&id)
@@ -347,6 +355,24 @@ mod tests {
     }
 
     #[test]
+    fn held_registry_lock_returns_busy_without_waiting() {
+        let registry = BackgroundControlRegistry::new();
+        let owner = owner("held-lock");
+        let target = Arc::new(CountingTarget::new());
+        let _lease = registry.register(id(1), &owner, target.clone()).unwrap();
+        let _held = registry.state.lock().unwrap();
+
+        assert_eq!(
+            registry
+                .signal(id(1), &owner, BackgroundSignal::Terminate)
+                .unwrap_err()
+                .kind(),
+            BackgroundControlErrorKind::Busy
+        );
+        assert_eq!(target.calls.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
     fn stale_lease_does_not_remove_a_replacement_entry() {
         let registry = BackgroundControlRegistry::new();
         let owner = owner("replacement");
@@ -382,28 +408,31 @@ mod tests {
         let target = Arc::new(CountingTarget::new());
         let _lease = registry.register(id(1), &owner, target.clone()).unwrap();
         let barrier = Arc::new(Barrier::new(THREADS));
+        let successful_calls = Arc::new(AtomicUsize::new(0));
         let mut threads = Vec::new();
         for _ in 0..THREADS {
             let registry = registry.clone();
             let owner = owner.clone();
             let barrier = Arc::clone(&barrier);
+            let successful_calls = Arc::clone(&successful_calls);
             threads.push(thread::spawn(move || {
                 barrier.wait();
                 for _ in 0..CALLS_PER_THREAD {
-                    registry
-                        .signal(id(1), &owner, BackgroundSignal::Terminate)
-                        .unwrap();
+                    match registry.signal(id(1), &owner, BackgroundSignal::Terminate) {
+                        Ok(()) => {
+                            successful_calls.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(error) => assert_eq!(error.kind(), BackgroundControlErrorKind::Busy),
+                    }
                 }
             }));
         }
         for thread in threads {
             thread.join().unwrap();
         }
-
-        assert_eq!(
-            target.calls.load(Ordering::Relaxed),
-            THREADS * CALLS_PER_THREAD
-        );
+        let successful_calls = successful_calls.load(Ordering::Relaxed);
+        assert!(successful_calls > 0);
+        assert_eq!(target.calls.load(Ordering::Relaxed), successful_calls);
     }
 
     #[test]

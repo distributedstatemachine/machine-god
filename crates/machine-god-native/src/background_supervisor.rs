@@ -781,7 +781,14 @@ fn signal_background_process(
     let delivery = blocking.run_cancellable(
         move || {
             let _completion = completion;
-            control.signal(id, &owner, native_background_signal(signal))
+            catch_unwind(AssertUnwindSafe(|| {
+                control.signal(id, &owner, native_background_signal(signal))
+            }))
+            .unwrap_or_else(|_| {
+                Err(BackgroundControlError::new(
+                    BackgroundControlErrorKind::Process,
+                ))
+            })
         },
         caller_cancellation,
         operation_cancellation,
@@ -3392,6 +3399,77 @@ mod tests {
                 .expect("release committed delivery");
             Ok(())
         }
+    }
+
+    struct PanickingSignalTarget;
+
+    impl BackgroundControlTarget for PanickingSignalTarget {
+        fn signal(&self, _signal: BackgroundSignal) -> Result<(), BackgroundControlError> {
+            panic!("panic inside committed signal target");
+        }
+    }
+
+    struct SuccessfulSignalTarget;
+
+    impl BackgroundControlTarget for SuccessfulSignalTarget {
+        fn signal(&self, _signal: BackgroundSignal) -> Result<(), BackgroundControlError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn panicking_signal_target_completes_and_releases_blocking_capacity() {
+        let executor = BlockingExecutor::new(1).expect("blocking executor");
+        let registry = BackgroundControlRegistry::new();
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("signal-panic-session").unwrap(),
+            SessionIncarnationId::new("signal-panic-incarnation").unwrap(),
+        );
+        let panic_lease = registry
+            .register(
+                NonZeroU64::new(1).unwrap(),
+                &owner,
+                Arc::new(PanickingSignalTarget),
+            )
+            .expect("register panicking signal target");
+        let successful_lease = registry
+            .register(
+                NonZeroU64::new(2).unwrap(),
+                &owner,
+                Arc::new(SuccessfulSignalTarget),
+            )
+            .expect("register successful signal target");
+        let active = Arc::new(AtomicUsize::new(1));
+
+        let error = futures_executor::block_on(signal_background_process(
+            registry.clone(),
+            Some(executor.handle()),
+            owner.clone(),
+            1,
+            TerminalBackgroundSignal::Terminate,
+            TerminalBackgroundSignalCompletion::for_test_with_active(Arc::clone(&active)),
+            CancellationToken::new(),
+        ))
+        .expect_err("panicking target must become a fixed terminal failure");
+        assert_eq!(error.kind(), TerminalBackgroundSignalErrorKind::Unavailable);
+        assert_eq!(active.load(Ordering::Acquire), 0);
+
+        wait_for_blocking_slot(&executor);
+        let outcome = futures_executor::block_on(signal_background_process(
+            registry,
+            Some(executor.handle()),
+            owner,
+            2,
+            TerminalBackgroundSignal::Interrupt,
+            TerminalBackgroundSignalCompletion::for_test(),
+            CancellationToken::new(),
+        ))
+        .expect("the released worker accepts a subsequent signal");
+        assert_eq!(outcome.background_id(), 2);
+        assert_eq!(outcome.signal(), TerminalBackgroundSignal::Interrupt);
+
+        drop(successful_lease);
+        drop(panic_lease);
     }
 
     #[test]

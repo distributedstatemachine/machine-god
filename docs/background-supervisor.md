@@ -461,7 +461,10 @@ four. Cancellation before blocking admission has no process effect; admission
 commits the ordered mutation, so later cancellation cannot abandon or relabel
 an already dispatched tree delivery. The committed blocking closure retains
 the terminal admission even if its caller future is dropped and releases it
-only when native delivery actually returns. Linux reuses one preallocated,
+only when native delivery actually returns. An unexpected unwind from the
+registered native target is contained at that delivery boundary, returns the
+same fixed process failure, and still publishes completion and releases the
+worker and terminal admissions. Linux reuses one preallocated,
 bounded proc-stat scratch buffer across snapshot, identity revalidation, and
 individual delivery observations. The lazy reference adapter shares the
 same registry and blocking handle but does not initialize a supervisor merely
