@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/machine-god-core",
+    "crates/machine-god-darwin-proc",
     "crates/machine-god-native",
     "crates/machine-god-cli",
     "crates/machine-god-testkit",
@@ -29,6 +30,7 @@ hyper = { version = "=1.11.0", default-features = false }
 libc = "0.2.189"
 libproc = "=0.14.11"
 machine-god-core = { version = "0.1.0", path = "crates/machine-god-core" }
+machine-god-darwin-proc = { version = "0.1.0", path = "crates/machine-god-darwin-proc" }
 machine-god-native = { version = "0.1.0", path = "crates/machine-god-native" }
 memchr = "2.8.3"
 reqwest = { version = "=0.13.4", default-features = false, features = ["rustls"] }

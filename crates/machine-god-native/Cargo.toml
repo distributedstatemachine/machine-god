@@ -48,6 +48,7 @@ sha2.workspace = true
 calcifer-macos-acl.workspace = true
 errno.workspace = true
 libproc.workspace = true
+machine-god-darwin-proc.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 bytes = { workspace = true, optional = true }

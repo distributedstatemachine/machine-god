@@ -1,0 +1,21 @@
+[package]
+name = "machine-god-darwin-proc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc.workspace = true
+
+# This crate is safe by default. Its only unsafe code is the small, reviewed
+# Darwin FFI module, which carries a module-local reason for its exception.
+[lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

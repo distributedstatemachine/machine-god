@@ -919,6 +919,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "machine-god-darwin-proc"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "machine-god-native"
 version = "0.1.0"
 dependencies = [
@@ -937,6 +944,7 @@ dependencies = [
  "libc",
  "libproc",
  "machine-god-core",
+ "machine-god-darwin-proc",
  "machine-god-reentrant-waker-test",
  "machine-god-testkit",
  "memchr",
