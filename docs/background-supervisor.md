@@ -488,7 +488,9 @@ the process-wide ceiling as the minimum of that hard cap, half the current soft
 `RLIMIT_NOFILE`, and the soft limit minus 128 reserved descriptors. Transient
 mount/status/stat/task/children descriptors, queued proc directories, and all
 retained pidfds acquire before their syscall and release only after the owned
-descriptor closes. Exhaustion therefore suppresses the next syscall, fails
+descriptor closes. A reduction tightens the very next admission, while a
+later increase restores capacity without rebuilding a controller. Exhaustion
+therefore suppresses the next syscall, fails
 with the fixed resource-limit category, and cannot leak capacity through
 errors, unwinds, or abandoned prepared deliveries.
 

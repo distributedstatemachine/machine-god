@@ -410,14 +410,16 @@ capacity. Linux additionally limits retained signal-preparation descriptors to
 256 per operation and 1,024 process-wide. The process-wide ceiling is reduced
 on every admission to at most half the current soft `RLIMIT_NOFILE` and at most
 that limit minus 128 descriptors, preserving capacity for unrelated process
-work. Every transient proc traversal descriptor, queued proc directory, and
-retained pidfd acquires a permit before its open syscall; descriptors close
-before their permits return on success, error, unwind, or drop. On Linux, one
-per-process reservation rejects overlapping signals
-while read-only traversal runs outside the lifecycle lock. Before the first
-Linux signal, delivery reacquires that lock and rechecks both close admission
-and the exact controller target. A close can therefore finish and reap while a
-proc read is stalled, and the stalled preparation performs no later effect.
+work. Reductions tighten the next admission and later increases restore
+capacity without reconstructing the host. Every transient proc traversal
+descriptor, queued proc directory, and retained pidfd acquires a permit before
+its open syscall; descriptors close before their permits return on success,
+error, unwind, or drop. On Linux, one per-process reservation rejects
+overlapping signals while read-only traversal runs outside the lifecycle lock.
+Before the first Linux signal, delivery reacquires that lock and rechecks both
+close admission and the exact controller target. A close can therefore finish
+and reap while a proc read is stalled, and the stalled preparation performs no
+later effect.
 macOS performs no preparation and holds the lifecycle lock across its only
 group syscall. Registry and per-process lifecycle lock contention fail fast as
 retryable `terminal_signal_busy`. An unknown, completed, or wrong-owner ID is

@@ -724,8 +724,15 @@ impl SignalProcessScratch {
 #[derive(Clone)]
 struct LinuxSignalDescriptorPool {
     in_use: Arc<AtomicUsize>,
-    maximum: usize,
-    tracks_soft_limit: bool,
+    maximum: LinuxSignalDescriptorPoolMaximum,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy)]
+enum LinuxSignalDescriptorPoolMaximum {
+    CurrentNofile,
+    #[cfg(test)]
+    Fixed(usize),
 }
 
 #[cfg(target_os = "linux")]
@@ -737,10 +744,7 @@ impl LinuxSignalDescriptorPool {
             in_use: Arc::clone(
                 LINUX_SIGNAL_DESCRIPTOR_COUNT.get_or_init(|| Arc::new(AtomicUsize::new(0))),
             ),
-            maximum: linux_signal_descriptor_pool_limit(
-                rustix::process::getrlimit(rustix::process::Resource::Nofile).current,
-            ),
-            tracks_soft_limit: true,
+            maximum: LinuxSignalDescriptorPoolMaximum::CurrentNofile,
         }
     }
 
@@ -748,18 +752,35 @@ impl LinuxSignalDescriptorPool {
     fn for_test(maximum: usize) -> Self {
         Self {
             in_use: Arc::new(AtomicUsize::new(0)),
-            maximum,
-            tracks_soft_limit: false,
+            maximum: LinuxSignalDescriptorPoolMaximum::Fixed(maximum),
+        }
+    }
+
+    #[cfg(test)]
+    fn tracking_for_test() -> Self {
+        Self {
+            in_use: Arc::new(AtomicUsize::new(0)),
+            maximum: LinuxSignalDescriptorPoolMaximum::CurrentNofile,
         }
     }
 
     fn current_maximum(&self) -> usize {
-        if self.tracks_soft_limit {
-            self.maximum.min(linux_signal_descriptor_pool_limit(
+        match self.maximum {
+            LinuxSignalDescriptorPoolMaximum::CurrentNofile => linux_signal_descriptor_pool_limit(
                 rustix::process::getrlimit(rustix::process::Resource::Nofile).current,
-            ))
-        } else {
-            self.maximum
+            ),
+            #[cfg(test)]
+            LinuxSignalDescriptorPoolMaximum::Fixed(maximum) => maximum,
+        }
+    }
+
+    #[cfg(test)]
+    fn maximum_for_soft_limit(&self, soft_limit: Option<u64>) -> usize {
+        match self.maximum {
+            LinuxSignalDescriptorPoolMaximum::CurrentNofile => {
+                linux_signal_descriptor_pool_limit(soft_limit)
+            }
+            LinuxSignalDescriptorPoolMaximum::Fixed(maximum) => maximum,
         }
     }
 }
@@ -800,10 +821,17 @@ impl LinuxSignalDescriptorBudget {
     }
 
     fn acquire(&self) -> Result<LinuxSignalDescriptorPermit, BackgroundProcessSignalError> {
+        self.acquire_with_pool_maximum(self.pool.current_maximum())
+    }
+
+    fn acquire_with_pool_maximum(
+        &self,
+        pool_maximum: usize,
+    ) -> Result<LinuxSignalDescriptorPermit, BackgroundProcessSignalError> {
         if !increment_below(&self.operation_in_use, self.operation_maximum) {
             return Err(signal_resource_limit_error());
         }
-        if !increment_below(&self.pool.in_use, self.pool.current_maximum()) {
+        if !increment_below(&self.pool.in_use, pool_maximum) {
             self.operation_in_use.fetch_sub(1, Ordering::AcqRel);
             return Err(signal_resource_limit_error());
         }
@@ -811,6 +839,14 @@ impl LinuxSignalDescriptorBudget {
             operation_in_use: Arc::clone(&self.operation_in_use),
             global_in_use: Arc::clone(&self.pool.in_use),
         })
+    }
+
+    #[cfg(test)]
+    fn acquire_for_soft_limit(
+        &self,
+        soft_limit: Option<u64>,
+    ) -> Result<LinuxSignalDescriptorPermit, BackgroundProcessSignalError> {
+        self.acquire_with_pool_maximum(self.pool.maximum_for_soft_limit(soft_limit))
     }
 }
 
@@ -5804,6 +5840,47 @@ mod linux_proc_tests {
         assert_eq!(linux_signal_descriptor_pool_limit(Some(130)), 2);
         assert_eq!(linux_signal_descriptor_pool_limit(Some(256)), 128);
         assert_eq!(linux_signal_descriptor_pool_limit(Some(u64::MAX)), 1024);
+    }
+
+    #[test]
+    fn signal_descriptor_admission_tracks_soft_limit_reduction_and_restoration() {
+        let pool = LinuxSignalDescriptorPool::tracking_for_test();
+        let budget = LinuxSignalDescriptorBudget::new(pool.clone(), 16);
+        let mut permits = Vec::new();
+
+        for _ in 0..4 {
+            permits.push(
+                budget
+                    .acquire_for_soft_limit(Some(132))
+                    .expect("initial four-descriptor ceiling"),
+            );
+        }
+        assert_eq!(pool.in_use.load(Ordering::Acquire), 4);
+        assert!(
+            budget.acquire_for_soft_limit(Some(130)).is_err(),
+            "lowering the soft limit tightens the next admission immediately"
+        );
+
+        permits.truncate(1);
+        permits.push(
+            budget
+                .acquire_for_soft_limit(Some(130))
+                .expect("one slot remains under the reduced ceiling"),
+        );
+        assert!(budget.acquire_for_soft_limit(Some(130)).is_err());
+
+        for _ in 0..6 {
+            permits.push(
+                budget
+                    .acquire_for_soft_limit(Some(136))
+                    .expect("raising the soft limit restores admission capacity"),
+            );
+        }
+        assert_eq!(pool.in_use.load(Ordering::Acquire), 8);
+        assert!(budget.acquire_for_soft_limit(Some(136)).is_err());
+
+        drop(permits);
+        assert_eq!(pool.in_use.load(Ordering::Acquire), 0);
     }
 
     #[test]
