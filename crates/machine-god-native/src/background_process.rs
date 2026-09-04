@@ -115,6 +115,8 @@ const MAX_LINUX_PROC_READ_ATTEMPTS: usize = 512 * 1024;
 #[cfg(target_os = "linux")]
 const MAX_LINUX_MOUNTINFO_BYTES: usize = 1024 * 1024;
 #[cfg(target_os = "linux")]
+const LINUX_PROC_INITIAL_RECORD_CAPACITY: usize = 1024;
+#[cfg(target_os = "linux")]
 const MAX_LINUX_MOUNTINFO_ENTRIES: usize = 4 * 1024;
 #[cfg(target_os = "linux")]
 const MAX_LINUX_PROC_STATUS_BYTES: usize = 64 * 1024;
@@ -694,7 +696,7 @@ struct SignalProcessScratch {
 impl SignalProcessScratch {
     fn new() -> Self {
         Self {
-            stat_bytes: Vec::with_capacity(MAX_LINUX_PROC_STAT_BYTES + 1),
+            stat_bytes: linux_proc_record_buffer(MAX_LINUX_PROC_STAT_BYTES),
             budget: LinuxProcIoBudget::signal_operation(),
         }
     }
@@ -806,7 +808,7 @@ fn same_signal_process(expected: &SignalProcessSnapshot, current: &SignalProcess
 #[cfg(target_os = "linux")]
 struct PreparedSignalProcessTree {
     descendants: Vec<SignalProcessSnapshot>,
-    pinned_processes: HashMap<rustix::process::Pid, LinuxPinnedSignalProcess>,
+    pinned_processes: HashMap<rustix::process::Pid, OwnedFd>,
 }
 
 #[cfg(target_os = "linux")]
@@ -834,7 +836,6 @@ fn deliver_signal_process_tree(
         let process = prepared
             .pinned_processes
             .get(&descendant.pid)
-            .and_then(|process| process.process.as_ref())
             .ok_or_else(signal_process_error)?;
         signal_pinned_linux_process(process.as_fd(), signal)
     });
@@ -2227,7 +2228,7 @@ fn validate_linux_proc_mountinfo(
     expected_mount_id: u64,
     budget: &mut LinuxProcIoBudget,
 ) -> Result<(), ()> {
-    let mut bytes = Vec::with_capacity(MAX_LINUX_MOUNTINFO_BYTES + 1);
+    let mut bytes = linux_proc_record_buffer(MAX_LINUX_MOUNTINFO_BYTES);
     read_linux_proc_record(reader, &mut bytes, MAX_LINUX_MOUNTINFO_BYTES, budget)
         .map_err(|_| ())?;
     validate_linux_proc_mountinfo_bytes(&bytes, expected_mount_id, Some(budget))
@@ -2239,7 +2240,7 @@ fn validate_linux_proc_status(
     expected_pid: rustix::process::Pid,
     budget: &mut LinuxProcIoBudget,
 ) -> Result<(), ()> {
-    let mut bytes = Vec::new();
+    let mut bytes = linux_proc_record_buffer(MAX_LINUX_PROC_STATUS_BYTES);
     read_linux_proc_record(reader, &mut bytes, MAX_LINUX_PROC_STATUS_BYTES, budget)
         .map_err(|_| ())?;
     validate_linux_proc_status_bytes(&bytes, expected_pid)
@@ -3721,7 +3722,7 @@ fn require_original_group_quiescent(
         GROUP_SNAPSHOT_MAX_INTERVAL,
     );
     #[cfg(target_os = "linux")]
-    let mut stat_bytes = Vec::with_capacity(MAX_LINUX_PROC_STAT_BYTES + 1);
+    let mut stat_bytes = linux_proc_record_buffer(MAX_LINUX_PROC_STAT_BYTES);
     let captured_resolved = loop {
         match observe_leader(group) {
             Err(LeaderObservationFailure::LostAuthority) => return Err(wait_error()),
@@ -3948,7 +3949,7 @@ fn read_linux_signal_process_at(
 }
 
 #[cfg(target_os = "linux")]
-struct LinuxPinnedSignalProcess {
+struct LinuxPendingSignalProcess {
     directory: OwnedFd,
     process: Option<OwnedFd>,
 }
@@ -3961,7 +3962,7 @@ fn signal_process_snapshot(
 ) -> Result<
     (
         Vec<SignalProcessSnapshot>,
-        HashMap<rustix::process::Pid, LinuxPinnedSignalProcess>,
+        HashMap<rustix::process::Pid, OwnedFd>,
     ),
     BackgroundProcessSignalError,
 > {
@@ -3979,23 +3980,25 @@ fn signal_process_snapshot(
     )?
     .ok_or_else(signal_not_found_error)?;
     let mut snapshot = vec![root];
-    let mut pinned_processes = HashMap::from([(
+    let mut pending_processes = HashMap::from([(
         root_pid,
-        LinuxPinnedSignalProcess {
+        LinuxPendingSignalProcess {
             directory: root_directory,
             process: None,
         },
     )]);
-    let mut child_bytes = Vec::with_capacity(MAX_GROUP_SNAPSHOT_BYTES + 1);
+    let mut pinned_processes = HashMap::new();
+    let mut admitted_pids = HashSet::from([root_pid]);
+    let mut root_directory = None;
+    let mut child_bytes = linux_proc_record_buffer(MAX_GROUP_SNAPSHOT_BYTES);
     let mut cursor = 0_usize;
     while cursor < snapshot.len() {
         let parent = snapshot[cursor];
         cursor += 1;
-        let parent_directory = pinned_processes
-            .get(&parent.pid)
-            .ok_or_else(signal_process_error)?
-            .directory
-            .as_fd();
+        let pending = pending_processes
+            .remove(&parent.pid)
+            .ok_or_else(signal_process_error)?;
+        let parent_directory = pending.directory.as_fd();
         require_linux_signal_parent_at(parent_directory, &parent, scratch)?;
         let children = read_linux_signal_children(
             authority,
@@ -4006,22 +4009,34 @@ fn signal_process_snapshot(
             scratch,
         )?;
         require_linux_signal_parent_at(parent_directory, &parent, scratch)?;
+        // The retained proc directory is needed only until this exact node's
+        // task children have been enumerated and its identity revalidated.
+        // A pidfd is the continuing exact-process signal authority, but cannot
+        // itself be used for descriptor-relative procfs traversal.
+        if parent.pid == root_pid {
+            root_directory = Some(pending.directory);
+        }
+        if let Some(process) = pending.process
+            && pinned_processes.insert(parent.pid, process).is_some()
+        {
+            return Err(signal_process_error());
+        }
         for (process, pinned) in children {
-            if pinned_processes.insert(process.pid, pinned).is_some() {
+            if !admitted_pids.insert(process.pid) {
                 return Err(signal_process_error());
             }
+            pending_processes.insert(process.pid, pinned);
             snapshot.push(process);
         }
     }
     authority
         .validate_with_budget(&mut scratch.budget)
         .map_err(|()| signal_process_error())?;
-    let root_directory = pinned_processes
-        .get(&root_pid)
-        .ok_or_else(signal_process_error)?
-        .directory
-        .as_fd();
-    require_linux_signal_parent_at(root_directory, &root, scratch)?;
+    let root_directory = root_directory.ok_or_else(signal_process_error)?;
+    require_linux_signal_parent_at(root_directory.as_fd(), &root, scratch)?;
+    if !pending_processes.is_empty() {
+        return Err(signal_process_error());
+    }
     Ok((snapshot, pinned_processes))
 }
 
@@ -4073,7 +4088,7 @@ fn read_linux_signal_children(
     remaining_processes: usize,
     child_bytes: &mut Vec<u8>,
     scratch: &mut SignalProcessScratch,
-) -> Result<Vec<(SignalProcessSnapshot, LinuxPinnedSignalProcess)>, BackgroundProcessSignalError> {
+) -> Result<Vec<(SignalProcessSnapshot, LinuxPendingSignalProcess)>, BackgroundProcessSignalError> {
     scratch
         .budget
         .preflight()
@@ -4145,7 +4160,7 @@ fn read_linux_signal_children(
 fn append_linux_signal_children_record(
     children: OwnedFd,
     bytes: &mut Vec<u8>,
-    discovered: &mut Vec<(SignalProcessSnapshot, LinuxPinnedSignalProcess)>,
+    discovered: &mut Vec<(SignalProcessSnapshot, LinuxPendingSignalProcess)>,
     authority: &GroupSnapshotAuthority,
     parent: SignalProcessSnapshot,
     remaining_processes: usize,
@@ -4194,7 +4209,7 @@ fn append_linux_signal_children_record(
         }
         discovered.push((
             process,
-            LinuxPinnedSignalProcess {
+            LinuxPendingSignalProcess {
                 directory,
                 process: Some(process_handle),
             },
@@ -4382,7 +4397,7 @@ fn group_members(
     let mut inspected_entries = 0_usize;
     let mut inspected_bytes = 0_usize;
     let mut members = Vec::new();
-    let mut stat_bytes = Vec::with_capacity(MAX_LINUX_PROC_STAT_BYTES + 1);
+    let mut stat_bytes = linux_proc_record_buffer(MAX_LINUX_PROC_STAT_BYTES);
     let mut read_budget = LinuxProcIoBudget::new(
         Instant::now() + GROUP_SNAPSHOT_TIMEOUT,
         MAX_LINUX_PROC_READ_ATTEMPTS,
@@ -4604,6 +4619,15 @@ fn read_linux_proc_record(
             Err(error) => return Err(error),
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_proc_record_buffer(record_limit: usize) -> Vec<u8> {
+    Vec::with_capacity(
+        record_limit
+            .saturating_add(1)
+            .min(LINUX_PROC_INITIAL_RECORD_CAPACITY),
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -5076,6 +5100,53 @@ mod linux_proc_tests {
     }
 
     #[test]
+    fn large_proc_records_allocate_incrementally_without_weakening_the_bound() {
+        let mut bytes = linux_proc_record_buffer(MAX_LINUX_MOUNTINFO_BYTES);
+        assert_eq!(bytes.capacity(), LINUX_PROC_INITIAL_RECORD_CAPACITY);
+
+        let record = vec![b'x'; 3 * LINUX_PROC_INITIAL_RECORD_CAPACITY];
+        let mut reader = std::io::Cursor::new(record.as_slice());
+        let mut budget = LinuxProcIoBudget::new(
+            Instant::now() + Duration::from_secs(1),
+            8,
+            MAX_LINUX_MOUNTINFO_BYTES + 1,
+            0,
+        );
+        assert_eq!(
+            read_linux_proc_record(
+                &mut reader,
+                &mut bytes,
+                MAX_LINUX_MOUNTINFO_BYTES,
+                &mut budget,
+            )
+            .expect("bounded record read succeeds"),
+            record.len()
+        );
+        assert_eq!(bytes, record);
+        assert!(bytes.capacity() > LINUX_PROC_INITIAL_RECORD_CAPACITY);
+        assert!(bytes.capacity() < MAX_LINUX_MOUNTINFO_BYTES);
+
+        let oversized = vec![b'x'; MAX_LINUX_MOUNTINFO_BYTES + 1];
+        let mut reader = std::io::Cursor::new(oversized);
+        let mut budget = LinuxProcIoBudget::new(
+            Instant::now() + Duration::from_secs(1),
+            MAX_LINUX_PROC_READ_ATTEMPTS,
+            MAX_LINUX_MOUNTINFO_BYTES + 1,
+            0,
+        );
+        assert!(
+            read_linux_proc_record(
+                &mut reader,
+                &mut bytes,
+                MAX_LINUX_MOUNTINFO_BYTES,
+                &mut budget,
+            )
+            .is_err(),
+            "incremental growth still rejects the one-byte overflow sentinel"
+        );
+    }
+
+    #[test]
     fn proc_stat_uses_the_final_parenthesis_after_a_hostile_comm() {
         let stat =
             b"321 (worker ) name (with parentheses)) S 12 77 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 4242";
@@ -5481,6 +5552,39 @@ mod linux_proc_tests {
             None,
             "queued-parent validation never reopens a numeric PID"
         );
+    }
+
+    #[test]
+    fn completed_signal_snapshot_retains_pidfds_without_descendant_proc_directories() {
+        let authority = GroupSnapshotAuthority::open().expect("open proc authority");
+        let mut child = Command::new("/bin/sleep")
+            .arg("30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn signal-snapshot fixture");
+        let child_pid = pid(i32::try_from(child.id()).expect("child PID fits signed range"));
+        let root = rustix::process::getpid();
+        let mut scratch = SignalProcessScratch::new();
+
+        let result = signal_process_snapshot(&authority, root, &mut scratch);
+        child.kill().expect("kill signal-snapshot fixture");
+        child.wait().expect("reap signal-snapshot fixture");
+        let (_, pinned) = result.expect("capture the current process descendants");
+        assert!(
+            pinned.contains_key(&child_pid),
+            "the direct child receives an exact signal handle"
+        );
+        for process in pinned.values() {
+            let target = std::fs::read_link(format!("/proc/self/fd/{}", process.as_raw_fd()))
+                .expect("inspect retained signal descriptor");
+            assert_eq!(
+                target.as_os_str().as_bytes(),
+                b"anon_inode:[pidfd]",
+                "completed preparation must not retain a descendant proc directory"
+            );
+        }
     }
 
     #[test]
