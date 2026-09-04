@@ -194,7 +194,7 @@ fn classify_errno(error_number: i32) -> Error {
     match error_number {
         0 | libc::ESRCH => Error::NotFound,
         libc::EACCES | libc::EPERM => Error::PermissionDenied,
-        other => Error::System(other),
+        _ => Error::System,
     }
 }
 
@@ -256,5 +256,6 @@ mod tests {
         assert_eq!(pid_count(5, 0, 4), Err(Error::UnexpectedResult));
         assert_eq!(pid_count(0, libc::ESRCH, 4), Err(Error::NotFound));
         assert_eq!(pid_count(-1, libc::EPERM, 4), Err(Error::PermissionDenied));
+        assert_eq!(pid_count(-1, libc::EIO, 4), Err(Error::System));
     }
 }

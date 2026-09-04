@@ -52,7 +52,7 @@ pub enum Error {
     /// Darwin returned a count or record inconsistent with its ABI.
     UnexpectedResult,
     /// Darwin reported another operating-system error.
-    System(i32),
+    System,
 }
 
 impl fmt::Display for Error {
@@ -66,7 +66,7 @@ impl fmt::Display for Error {
             Self::PermissionDenied => "permission to inspect the process was denied",
             Self::InconsistentSnapshot => "the process changed while it was inspected",
             Self::UnexpectedResult => "Darwin returned an unexpected process-query result",
-            Self::System(_) => "Darwin reported a process-query error",
+            Self::System => "Darwin reported a process-query error",
         };
         formatter.write_str(message)
     }
@@ -158,6 +158,31 @@ pub fn process_info(pid: i32) -> Result<ProcessInfo, Error> {
 #[cfg(test)]
 mod tests {
     use super::{Error, list_all_pids, list_child_pids, process_info};
+
+    #[test]
+    fn error_taxonomy_and_rendering_are_data_free() {
+        let expected = [
+            (Error::Unsupported, "Unsupported"),
+            (Error::InvalidPid, "InvalidPid"),
+            (Error::BufferTooSmall, "BufferTooSmall"),
+            (Error::Truncated, "Truncated"),
+            (Error::NotFound, "NotFound"),
+            (Error::PermissionDenied, "PermissionDenied"),
+            (Error::InconsistentSnapshot, "InconsistentSnapshot"),
+            (Error::UnexpectedResult, "UnexpectedResult"),
+            (Error::System, "System"),
+        ];
+
+        for (error, expected_debug) in expected {
+            assert_eq!(format!("{error:?}"), expected_debug);
+            assert!(
+                !error
+                    .to_string()
+                    .chars()
+                    .any(|character| character.is_ascii_digit())
+            );
+        }
+    }
 
     #[test]
     fn rejects_empty_pid_buffer_without_calling_the_platform() {
