@@ -22,16 +22,21 @@ input; it is not a machine-god product language or runtime dependency.
 
 <!-- canonical-live-status:start -->
 - Delivered slices: `55`
-- Delivered main: `f16f099b73c2f1ab2513f9bc7d9c41630e2cb439`
-- Main CI: `33854100684` (`GREEN`)
-- Main Benchmark evidence: `33854100687` (`GREEN`)
-- Active branch: `agent/m01-exact-toolchain-policy`
-- Active phase: `repairing the exact-toolchain policy and instruction-only CI routing before slice 56`
-- Next gate: `prove exact 1.94.1 locally, review the routing boundary, and pass exact remote gates`
+- Delivered main: `3779d71da81e7a25bae2381e7b44d9761fd15b40`
+- Main CI: `33864252989` (`GREEN`)
+- Main Benchmark evidence: `33864253020` (`GREEN`)
+- Active branch: `main`
+- Active phase: `selecting slice 56 from unfinished tool or CLI behavior`
+- Next gate: `bound terminal list and create its isolated feature branch`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
-run retains both required unexpired exact-SHA artifacts. Slice 55 adds
+run retains both required unexpired exact-SHA artifacts. Non-product
+maintenance after slice 55 repaired the local Rust 1.94.1 installation,
+removed the floating-toolchain fallback, and made `AGENTS.md`-only changes use
+the lightweight documentation gate. This did not increment the delivered-slice
+count. Main CI passed on attempt 2 after one nondeterministic native test timing
+assertion failed despite the same SHA passing on its feature branch. Slice 55 adds
 authority-free waiting for one exact persisted background record to reach its
 recorded exit state, with a caller-supplied absolute ceiling, fixed observation
 backoff, a 128-observation cap, and four fail-fast wait slots. One persistent
