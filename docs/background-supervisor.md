@@ -449,17 +449,17 @@ controller has synchronously closed under the same lifecycle gate before the
 leader is reaped. Unknown IDs, completed entries, and wrong session or
 incarnation owners are deliberately indistinguishable.
 
-One explicit signal operation revalidates the retained leader, captures a
-bounded ancestry tree, signals every identity-checked descendant deepest-first,
-and signals the original process group last. Descendants still inside that
-group may receive the requested signal twice; individual delivery deliberately
-closes an inside-group-to-escaped-group race before the final group syscall.
-Linux traversal uses the retained procfs descriptor and mount identity, caps
-inspected entries, metadata bytes, read attempts, and retained members, and
-opens and retains each descendant's proc directory and pidfd while its verified
-parent is still pinned. Delivery uses only those retained pidfds, so a
-same-clock-tick numeric PID replacement cannot inherit signal authority. Every
-signal traversal shares one 250 ms
+On Linux, one explicit signal operation revalidates the retained leader,
+captures a bounded ancestry tree, signals every identity-pinned descendant
+deepest-first, and signals the original process group last. Descendants still
+inside that group may receive the requested signal twice; individual delivery
+deliberately closes an inside-group-to-escaped-group race before the final
+group syscall. Linux traversal uses the retained procfs descriptor and mount
+identity, caps inspected entries, metadata bytes, read attempts, and retained
+members, and opens and retains each descendant's proc directory and pidfd while
+its verified parent is still pinned. Delivery uses only those retained pidfds,
+so a same-clock-tick numeric PID replacement cannot inherit signal authority.
+Every signal traversal shares one 250 ms
 monotonic deadline, 524,288-attempt cap, 131,072-entry cap, and 32 MiB byte
 budget across mount-authority and namespace-status records, task-children
 records, and every
@@ -470,29 +470,41 @@ rather than extending the operation, and terminal budget exhaustion prevents
 later proc opens or pidfd probes;
 deadline or budget exhaustion fails with the fixed process category. The
 pre-release root-identity capture uses the same bounded reader with a fresh
-operation budget, so constructing retained signal authority is bounded too.
-macOS traversal uses ADR 0003's safe fixed-buffer wrapper with kernel
-unique-process and parent identities. A vanished descendant does not fail the
-operation; incomplete
-inspection, capacity exhaustion, identity ambiguity, a non-vanished
-descendant-delivery failure, or original-group failure does. The operation is
-non-escalating and acknowledges completed delivery rather than process exit.
-One descendant failure does not suppress later descendant attempts or the
-original-group attempt, but the combined operation still fails. After a
-descendant attempt begins, later leader or group disappearance is reported as
-a process failure; not-found remains limited to absence before any delivery.
-The registry lock is released before target dispatch. A separate per-process
-reservation excludes concurrent signals while read-only process-table
-preparation runs outside the lifecycle lock. Delivery reacquires that lock and
-rechecks close plus the exact controller target before its first effect. Close
-can therefore revoke a stalled preparation and reap without waiting for a proc
-read; an already admitted delivery remains serialized against close and reap.
+operation budget, so constructing retained signal authority is bounded too. A
+vanished Linux descendant does not fail the operation; incomplete inspection,
+capacity exhaustion, identity ambiguity, a non-vanished descendant-delivery
+failure, or original-group failure does. One descendant failure does not
+suppress later descendant attempts or the original-group attempt, but the
+combined operation still fails. After a descendant attempt begins, later
+leader or group disappearance is reported as a process failure; not-found
+remains limited to absence before any delivery.
 
-Process-table traversal runs through the supervisor's existing bounded
-blocking pool. The terminal layer separately caps active signal operations at
-four. Cancellation before blocking admission has no process effect; admission
-commits the ordered mutation, so later cancellation cannot abandon or relabel
-an already dispatched tree delivery. The committed blocking closure retains
+macOS deliberately performs no signal ancestry traversal or per-descendant
+numeric PID delivery because it has no public incarnation-pinned process
+handle equivalent to Linux pidfd. The retained, unreaped direct child pins its
+original PID and process-group identity (`PGID == PID`) through the
+close-before-reap lifecycle gate. An admitted signal therefore performs
+exactly one atomic `killpg` syscall against that original group while holding
+the gate, without a preceding `getpgid` or process-table query. Descendants
+that leave the original group are outside the supported macOS signal scope.
+Success acknowledges that single group delivery, not descendant coverage or
+process exit.
+
+The registry lock is released before target dispatch. On Linux, a separate
+per-process reservation excludes concurrent signals while read-only
+process-table preparation runs outside the lifecycle lock. Delivery reacquires
+that lock and rechecks close plus the exact controller target before its first
+effect. Close can therefore revoke a stalled preparation and reap without
+waiting for a proc read. macOS has no preparation reservation and holds the
+lifecycle lock across its sole group syscall. On both platforms an already
+admitted delivery remains serialized against close and reap.
+
+Native signal dispatch runs through the supervisor's existing bounded blocking
+pool; only Linux performs process-table traversal. The terminal layer
+separately caps active signal operations at four. Cancellation before blocking
+admission has no process effect; admission commits the ordered mutation, so
+later cancellation cannot abandon or relabel an already dispatched delivery.
+The committed blocking closure retains
 the terminal admission even if its caller future is dropped and releases it
 only when native delivery actually returns. An unexpected unwind from the
 registered native target is contained at that delivery boundary, returns the

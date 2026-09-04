@@ -22,6 +22,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
 use std::process::Command;
 #[cfg(target_os = "linux")]
 use std::process::Stdio;
@@ -980,7 +981,7 @@ fn attached_signal_controller_is_hidden_until_owned_activation_and_closes_after_
     );
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 #[test]
 fn signal_controller_delivers_to_a_descendant_that_escaped_with_setsid() {
     let directory = FreshDirectory::new("signal-escaped-descendant");
@@ -1036,7 +1037,6 @@ int main(void) {
     let mut owned = prepared.release().unwrap();
     owned.activate_signal_controller().unwrap();
     let escaped = wait_for_pid(&directory.path().join("escaped.pid"));
-    #[cfg(target_os = "linux")]
     let escaped_guard = EscapedProcessGuard::new(escaped);
 
     controller
@@ -1045,7 +1045,6 @@ int main(void) {
     wait_for(&directory.path().join("escaped.signaled"));
     wait_for(&directory.path().join("leader.signaled"));
     assert_eq!(owned.wait().unwrap(), BackgroundProcessExit::Exited(23));
-    #[cfg(target_os = "linux")]
     escaped_guard.kill_and_reap_if_adopted();
     assert_processes_absent(&[escaped]);
 }

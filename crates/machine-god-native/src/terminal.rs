@@ -3527,7 +3527,7 @@ impl TerminalTool {
             actions.push("read bounded same-session background output");
         }
         if self.signaler.is_some() {
-            actions.push("signal one live same-session background process tree");
+            actions.push("signal one live same-session background process scope");
         }
         if self.catalog.is_some() {
             actions.push("list persisted background records");

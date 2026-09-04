@@ -3,10 +3,10 @@
 The native tool executes one bounded foreground shell command, starts one
 noninteractive background shell command after explicit process authorization,
 reads bounded process-local output from a command started by the same session
-incarnation, sends one explicit signal to that exact live process tree after
-separate authorization, or lists, inspects, or boundedly waits on persisted
-background records without process authority. It is registered by the
-reference host and has no top-level CLI command.
+incarnation, sends one explicit signal to that live process's supported native
+control scope after separate authorization, or lists, inspects, or boundedly
+waits on persisted background records without process authority. It is
+registered by the reference host and has no top-level CLI command.
 
 ## Boundary
 
@@ -21,9 +21,10 @@ returns its display identity without waiting for command completion. `read`
 pages that captured output only for the exact session incarnation that started
 it. `list` returns a compact bounded catalog of recorded history.
 `signal` delivers exactly one of `hangup`, `interrupt`, `quit`, `terminate`, or
-`kill` to the identity-checked live process tree owned by the exact session
-incarnation, then acknowledges delivery without waiting for exit or escalating
-to another signal. It does not derive authority from the displayed PID.
+`kill` to the live Linux process tree or macOS original process group owned by
+the exact session incarnation, then acknowledges delivery without waiting for
+exit or escalating to another signal. It does not derive authority from the
+displayed PID.
 `inspect` reads the validated record for one display identity without claiming
 current liveness. `wait` observes bounded atomic replacements of that exact
 record until it contains a supported recorded exit or reaches the requested
@@ -119,7 +120,7 @@ without constructing the absolute path or a background request.
 The reference-host tool description is:
 
 ```text
-Run a foreground command, start a background command, read bounded same-session background output, signal one live same-session background process tree, list persisted background records, inspect one persisted background record, or wait for its recorded exit
+Run a foreground command, start a background command, read bounded same-session background output, signal one live same-session background process scope, list persisted background records, inspect one persisted background record, or wait for its recorded exit
 ```
 
 An exec-only construction retains its earlier foreground-only description and
@@ -361,15 +362,15 @@ lease stays with retained process ownership and is removed only after the
 signal gate has closed before terminal reap, so a completed or reused numeric
 identity cannot regain control.
 
-The Linux/macOS controller validates the retained root identity, takes one
+On Linux the controller validates the retained root identity, takes one
 bounded process ancestry snapshot, delivers the selected signal deepest-first
-to every identity-revalidated descendant, and then signals the original group.
-An inside-group descendant can therefore receive the requested signal twice;
-that deliberate duplicate closes the race in which it could call `setsid`
-after its group was observed but before the final group signal. Linux uses the
-retained procfs mount authority and opens a retained proc directory plus pidfd
-for every descendant while its queued parent remains pinned. Individual
-delivery uses those pidfds without resolving the numeric PID again. Before
+to every identity-pinned descendant, and then signals the original group. An
+inside-group descendant can therefore receive the requested signal twice; that
+deliberate duplicate closes the race in which it could call `setsid` after its
+group was observed but before the final group signal. Linux uses the retained
+procfs mount authority and opens a retained proc directory plus pidfd for every
+descendant while its queued parent remains pinned. Individual delivery uses
+those pidfds without resolving the numeric PID again. Before
 capturing signal authority and on every later authority validation, Linux also
 requires descriptor-relative `self/status` to have the retained mount ID and
 exactly one `NSpid` equal to the current process PID. Ancestor procfs namespace
@@ -382,26 +383,36 @@ consumes the same finite attempt
 budget, including mountinfo, and terminal exhaustion suppresses later proc and
 pidfd probes.
 The retained root-identity capture is independently subject to the same finite
-reader limits. macOS uses the safe fixed-buffer Darwin wrapper's kernel
-unique-process and parent identities. A
-vanished descendant is harmless, but an incomplete snapshot, identity
-ambiguity, bound overflow, non-vanished delivery failure, or original-group
-delivery failure rejects the operation; partial delivery is never reported as
-success. One descendant failure does not suppress later descendant attempts or
-the original-group attempt. Once descendant delivery starts, later root or
-group disappearance is a process failure rather than a pre-effect not-found
-result. One request never waits for exit, repeats, or escalates its chosen
-signal.
+reader limits. A vanished Linux descendant is harmless, but an incomplete
+snapshot, identity ambiguity, bound overflow, non-vanished descendant-delivery
+failure, or original-group delivery failure rejects the operation; partial
+delivery is never reported as success. One descendant failure does not
+suppress later descendant attempts or the original-group attempt. Once
+descendant delivery starts, later root or group disappearance is a process
+failure rather than a pre-effect not-found result.
 
-Traversal runs on the supervisor's existing fixed worker pool rather than the
-engine poll thread. Terminal admits at most four signal actions independently
-of foreground executions, output reads, record reads, and supervisor process
-capacity. One per-process reservation rejects overlapping signals while
-read-only traversal runs outside the lifecycle lock. Before the first signal,
-delivery reacquires that lock and rechecks both close admission and the exact
-controller target. A close can therefore finish and reap while a proc read is
-stalled, and the stalled preparation performs no later effect. Registry and
-per-process lifecycle lock contention fail fast as
+macOS deliberately does not enumerate or individually signal descendants:
+there is no public incarnation-pinned per-process signal handle equivalent to
+Linux pidfd. The retained, unreaped direct child pins its original PID and
+process-group identity because the child is launched with `PGID == PID`.
+While holding the same close-before-reap lifecycle gate, one request therefore
+makes exactly one atomic `killpg` delivery to that original group, with no
+separate `getpgid` check and no process-table read. A descendant that leaves
+the original group is outside the supported macOS signal scope. Success
+acknowledges that single group delivery only. One request never waits for exit,
+repeats, or escalates its chosen signal.
+
+Native signal dispatch runs on the supervisor's existing fixed worker pool
+rather than the engine poll thread; only Linux performs process-table
+traversal. Terminal admits at most four signal actions independently of
+foreground executions, output reads, record reads, and supervisor process
+capacity. On Linux, one per-process reservation rejects overlapping signals
+while read-only traversal runs outside the lifecycle lock. Before the first
+Linux signal, delivery reacquires that lock and rechecks both close admission
+and the exact controller target. A close can therefore finish and reap while a
+proc read is stalled, and the stalled preparation performs no later effect.
+macOS performs no preparation and holds the lifecycle lock across its only
+group syscall. Registry and per-process lifecycle lock contention fail fast as
 retryable `terminal_signal_busy`. An unknown, completed, or wrong-owner ID is
 indistinguishable as `terminal_signal_not_found`; a process-table or delivery
 failure is the fixed non-retryable `terminal_signal_failed` error. Signal
@@ -893,11 +904,12 @@ recorded states and exit-code ranges; four-active-list, 128-observation,
 four-active-wait, serialized-result, and live-memory bounds; no PID probe,
 process, foreground executor, supervisor initialization, or permission effects
 for read-only actions; four-signal admission, wrong-owner and completed-process
-rejection, identity-revalidated all-descendant delivery, root-group
-delivery, incomplete-delivery failure, close-before-reap serialization, and
-off-poll-thread traversal; pre-poll cancellation, same-first-poll and
-post-submission result precedence, caller-drop admission retention through
-native completion, and Linux proc-stat scratch reuse;
+rejection, Linux identity-pinned all-descendant delivery, original-group
+delivery, Linux incomplete-delivery failure, macOS group-only delivery,
+close-before-reap serialization, and off-poll-thread native dispatch; pre-poll
+cancellation, same-first-poll and post-submission result precedence,
+caller-drop admission retention through native completion, and Linux proc-stat
+scratch reuse;
 pending listing, observation, and timer cancellation, destructor-triggered
 cancellation, outer-future drop, and exact-once list- and wait-slot recovery;
 workspace-relative permission,

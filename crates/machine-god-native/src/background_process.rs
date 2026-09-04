@@ -7,8 +7,10 @@
 
 #[cfg(unix)]
 use std::collections::BTreeSet;
+#[cfg(target_os = "linux")]
+use std::collections::HashMap;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::error::Error;
 #[cfg(target_os = "linux")]
 use std::ffi::OsStr;
@@ -285,7 +287,7 @@ impl BackgroundProcessSignalError {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct ProcessIdentity {
     primary: u64,
@@ -296,12 +298,15 @@ struct ProcessIdentity {
 #[derive(Clone)]
 struct ProcessSignalTarget {
     group: rustix::process::Pid,
+    #[cfg(target_os = "linux")]
     root_identity: ProcessIdentity,
+    #[cfg(target_os = "linux")]
     authority: Option<Arc<GroupSnapshotAuthority>>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl ProcessSignalTarget {
+    #[cfg(target_os = "linux")]
     fn capture(
         group: rustix::process::Pid,
         authority: Arc<GroupSnapshotAuthority>,
@@ -310,6 +315,16 @@ impl ProcessSignalTarget {
         Self::capture_with_scratch(group, authority, &mut scratch)
     }
 
+    #[cfg(target_os = "macos")]
+    const fn capture(group: rustix::process::Pid) -> Self {
+        // The retained, unreaped direct child pins both its PID and the
+        // original PGID (PGID == PID). macOS has no public incarnation-pinned
+        // per-process signal handle, so process-table observations must not
+        // participate in signal authority.
+        Self { group }
+    }
+
+    #[cfg(target_os = "linux")]
     fn capture_with_scratch(
         group: rustix::process::Pid,
         authority: Arc<GroupSnapshotAuthority>,
@@ -327,10 +342,12 @@ impl ProcessSignalTarget {
     const fn fake(group: rustix::process::Pid) -> Self {
         Self {
             group,
+            #[cfg(target_os = "linux")]
             root_identity: ProcessIdentity {
                 primary: 1,
                 secondary: 0,
             },
+            #[cfg(target_os = "linux")]
             authority: None,
         }
     }
@@ -344,27 +361,28 @@ enum BackgroundProcessSignalState {
     Closed,
 }
 
-/// Cloneable identity-pinned authority for one managed process tree.
+/// Cloneable identity-pinned authority for one managed process control scope.
 ///
 /// The controller starts hidden, becomes active only through its owning
 /// released process, and is synchronously closed by that owner's lifecycle
-/// gate before the retained leader can be reaped or released. It retains the
-/// admitted root incarnation and process-table authority, and never derives
-/// signal authority from the display PID.
+/// gate before the retained leader can be reaped or released. Linux retains
+/// the admitted root incarnation and process-table authority; macOS relies on
+/// the retained child to pin its original process group. Neither platform
+/// derives signal authority from the display PID.
 #[derive(Clone)]
 pub(crate) struct BackgroundProcessSignalController {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     inner: Arc<Mutex<BackgroundProcessSignalState>>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     close_requested: Arc<AtomicBool>,
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     signal_reserved: Arc<AtomicBool>,
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     unsupported: (),
 }
 
 impl BackgroundProcessSignalController {
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     fn hidden(
         group: rustix::process::Pid,
         authority: Arc<GroupSnapshotAuthority>,
@@ -373,8 +391,19 @@ impl BackgroundProcessSignalController {
         Ok(Self {
             inner: Arc::new(Mutex::new(BackgroundProcessSignalState::Hidden(target))),
             close_requested: Arc::new(AtomicBool::new(false)),
+            #[cfg(target_os = "linux")]
             signal_reserved: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    #[cfg(target_os = "macos")]
+    fn hidden(group: rustix::process::Pid) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(BackgroundProcessSignalState::Hidden(
+                ProcessSignalTarget::capture(group),
+            ))),
+            close_requested: Arc::new(AtomicBool::new(false)),
+        }
     }
 
     #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
@@ -384,6 +413,7 @@ impl BackgroundProcessSignalController {
                 ProcessSignalTarget::fake(group),
             ))),
             close_requested: Arc::new(AtomicBool::new(false)),
+            #[cfg(target_os = "linux")]
             signal_reserved: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -392,10 +422,20 @@ impl BackgroundProcessSignalController {
         &self,
         signal: BackgroundProcessSignal,
     ) -> Result<(), BackgroundProcessSignalError> {
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(target_os = "linux")]
         {
             self.signal_operation_with(prepare_signal_process_tree, |target, prepared| {
                 deliver_signal_process_tree(target, process_signal(signal), &prepared)
+            })
+        }
+        #[cfg(target_os = "macos")]
+        {
+            self.with_active_target(|target| {
+                signal_macos_process_group_with(
+                    target,
+                    process_signal(signal),
+                    rustix::process::kill_process_group,
+                )
             })
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -417,7 +457,14 @@ impl BackgroundProcessSignalController {
         ) -> Result<(), rustix::io::Errno>,
     ) -> Result<(), BackgroundProcessSignalError> {
         self.with_active_target(|target| {
-            classify_process_signal(send(target.group, process_signal(signal)))
+            #[cfg(target_os = "macos")]
+            {
+                signal_macos_process_group_with(target, process_signal(signal), send)
+            }
+            #[cfg(target_os = "linux")]
+            {
+                classify_process_signal(send(target.group, process_signal(signal)))
+            }
         })
     }
 
@@ -445,7 +492,7 @@ impl BackgroundProcessSignalController {
         operation(target)
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     fn signal_operation_with<Prepared>(
         &self,
         prepare: impl FnOnce(&ProcessSignalTarget) -> Result<Prepared, BackgroundProcessSignalError>,
@@ -473,7 +520,7 @@ impl BackgroundProcessSignalController {
         })
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     fn active_target(&self) -> Result<ProcessSignalTarget, BackgroundProcessSignalError> {
         use std::sync::TryLockError;
 
@@ -494,7 +541,7 @@ impl BackgroundProcessSignalController {
         Ok(target.clone())
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     fn reserve_signal(&self) -> Result<SignalReservation<'_>, BackgroundProcessSignalError> {
         if self.close_requested.load(Ordering::Acquire) {
             return Err(signal_not_found_error());
@@ -565,19 +612,19 @@ impl BackgroundProcessSignalController {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 struct SignalReservation<'a> {
     reserved: &'a AtomicBool,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 impl Drop for SignalReservation<'_> {
     fn drop(&mut self) {
         self.reserved.store(false, Ordering::Release);
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn same_signal_target(left: &ProcessSignalTarget, right: &ProcessSignalTarget) -> bool {
     left.group == right.group
         && left.root_identity == right.root_identity
@@ -612,7 +659,22 @@ fn classify_process_signal(
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "macos")]
+fn signal_macos_process_group_with(
+    target: &ProcessSignalTarget,
+    signal: rustix::process::Signal,
+    send_group: impl FnOnce(
+        rustix::process::Pid,
+        rustix::process::Signal,
+    ) -> Result<(), rustix::io::Errno>,
+) -> Result<(), BackgroundProcessSignalError> {
+    // The lifecycle mutex is held by the caller. The retained direct child
+    // pins the original process-group identity until close-before-reap, so a
+    // single atomic group delivery is the complete supported macOS operation.
+    classify_process_signal(send_group(target.group, signal))
+}
+
+#[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SignalProcessSnapshot {
     pid: rustix::process::Pid,
@@ -736,77 +798,45 @@ impl LinuxProcIoBudget {
     }
 }
 
-#[cfg(target_os = "macos")]
-struct SignalProcessScratch;
-
-#[cfg(target_os = "macos")]
-impl SignalProcessScratch {
-    const fn new() -> Self {
-        Self
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn same_signal_process(expected: &SignalProcessSnapshot, current: &SignalProcessSnapshot) -> bool {
     expected.pid == current.pid && expected.identity == current.identity
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 struct PreparedSignalProcessTree {
     descendants: Vec<SignalProcessSnapshot>,
-    #[cfg(target_os = "linux")]
     pinned_processes: HashMap<rustix::process::Pid, LinuxPinnedSignalProcess>,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn prepare_signal_process_tree(
     target: &ProcessSignalTarget,
 ) -> Result<PreparedSignalProcessTree, BackgroundProcessSignalError> {
     let authority = target.authority.as_ref().ok_or_else(signal_process_error)?;
     let mut scratch = SignalProcessScratch::new();
-    #[cfg(target_os = "linux")]
     let (snapshot, pinned_processes) =
         signal_process_snapshot(authority, target.group, &mut scratch)?;
-    #[cfg(target_os = "macos")]
-    let snapshot = signal_process_snapshot(authority, target.group, &mut scratch)?;
     let descendants = derive_signal_descendants(&snapshot, target.group, target.root_identity)?;
-
-    // The retained, unreaped direct child pins the root PID and original PGID.
-    // Re-reading its admitted start identity after the bounded ancestry snapshot
-    // rejects a substituted or incomplete process-table view before any signal.
-    #[cfg(target_os = "macos")]
-    require_signal_root_snapshot(authority, target, &mut scratch)?;
     Ok(PreparedSignalProcessTree {
         descendants,
-        #[cfg(target_os = "linux")]
         pinned_processes,
     })
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn deliver_signal_process_tree(
     target: &ProcessSignalTarget,
     signal: rustix::process::Signal,
     prepared: &PreparedSignalProcessTree,
 ) -> Result<(), BackgroundProcessSignalError> {
-    #[cfg(target_os = "macos")]
-    let authority = target.authority.as_ref().ok_or_else(signal_process_error)?;
-    #[cfg(target_os = "macos")]
-    let mut scratch = SignalProcessScratch::new();
     let descendant_delivery = signal_descendants_with(&prepared.descendants, |descendant| {
-        #[cfg(target_os = "linux")]
-        {
-            let process = prepared
-                .pinned_processes
-                .get(&descendant.pid)
-                .and_then(|process| process.process.as_ref())
-                .ok_or_else(signal_process_error)?;
-            signal_pinned_linux_process(process.as_fd(), signal)
-        }
-        #[cfg(target_os = "macos")]
-        {
-            signal_exact_process(authority, descendant, signal, &mut scratch)
-        }
+        let process = prepared
+            .pinned_processes
+            .get(&descendant.pid)
+            .and_then(|process| process.process.as_ref())
+            .ok_or_else(signal_process_error)?;
+        signal_pinned_linux_process(process.as_fd(), signal)
     });
     // Keep the individual-to-group order deterministic. Once any descendant
     // attempt begins, neither a later root observation nor the final group
@@ -818,14 +848,14 @@ fn deliver_signal_process_tree(
     )
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct DescendantSignalDelivery {
     attempted: bool,
     incomplete: bool,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn finish_signal_delivery(
     descendant: DescendantSignalDelivery,
     validate_root: impl FnOnce() -> Result<(), BackgroundProcessSignalError>,
@@ -847,7 +877,7 @@ fn finish_signal_delivery(
     Ok(())
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn signal_descendants_with(
     descendants: &[SignalProcessSnapshot],
     mut send: impl FnMut(&SignalProcessSnapshot) -> Result<(), BackgroundProcessSignalError>,
@@ -862,7 +892,7 @@ fn signal_descendants_with(
     delivery
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn signal_identity_checked_descendant_with(
     expected: &SignalProcessSnapshot,
     current: Option<SignalProcessSnapshot>,
@@ -880,13 +910,12 @@ fn signal_identity_checked_descendant_with(
     send()
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn require_signal_root_snapshot(
     authority: &GroupSnapshotAuthority,
     target: &ProcessSignalTarget,
     scratch: &mut SignalProcessScratch,
 ) -> Result<(), BackgroundProcessSignalError> {
-    #[cfg(target_os = "linux")]
     authority
         .validate_with_budget(&mut scratch.budget)
         .map_err(|()| signal_process_error())?;
@@ -899,7 +928,7 @@ fn require_signal_root_snapshot(
     Ok(())
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn require_retained_signal_root(
     target: &ProcessSignalTarget,
 ) -> Result<(), BackgroundProcessSignalError> {
@@ -910,7 +939,7 @@ fn require_retained_signal_root(
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn derive_signal_descendants(
     snapshot: &[SignalProcessSnapshot],
     root: rustix::process::Pid,
@@ -1644,7 +1673,7 @@ impl PreparedBackgroundProcess {
                 BackgroundProcessSignalErrorKind::AlreadyAttached,
             ));
         }
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(target_os = "linux")]
         {
             let authority = self
                 .snapshot_authority
@@ -1654,6 +1683,12 @@ impl PreparedBackgroundProcess {
                 })?
                 .clone();
             let controller = BackgroundProcessSignalController::hidden(self.group, authority)?;
+            self.signal_controller = Some(controller.clone());
+            Ok(controller)
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let controller = BackgroundProcessSignalController::hidden(self.group);
             self.signal_controller = Some(controller.clone());
             Ok(controller)
         }
@@ -3816,130 +3851,6 @@ impl RetainedMemberWait {
     }
 }
 
-#[cfg(target_os = "macos")]
-fn signal_process_identity(
-    authority: &GroupSnapshotAuthority,
-    pid: rustix::process::Pid,
-    scratch: &mut SignalProcessScratch,
-) -> Result<ProcessIdentity, BackgroundProcessSignalError> {
-    read_signal_process(authority, pid, scratch)?
-        .map(|process| process.identity)
-        .ok_or_else(signal_not_found_error)
-}
-
-#[cfg(target_os = "macos")]
-fn read_signal_process(
-    _authority: &GroupSnapshotAuthority,
-    pid: rustix::process::Pid,
-    _scratch: &mut SignalProcessScratch,
-) -> Result<Option<SignalProcessSnapshot>, BackgroundProcessSignalError> {
-    let raw = pid.as_raw_nonzero().get();
-    match machine_god_darwin_proc::process_info(raw) {
-        Ok(info) => Ok(Some(SignalProcessSnapshot {
-            pid,
-            parent: rustix::process::Pid::from_raw(info.parent_pid),
-            parent_identity: (info.parent_unique_id != 0).then_some(ProcessIdentity {
-                primary: info.parent_unique_id,
-                secondary: 0,
-            }),
-            group: rustix::process::Pid::from_raw(info.process_group_id),
-            identity: ProcessIdentity {
-                primary: info.unique_id,
-                secondary: 0,
-            },
-        })),
-        Err(machine_god_darwin_proc::Error::NotFound) => Ok(None),
-        Err(_) => Err(signal_process_error()),
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn require_darwin_signal_parent(
-    expected: &SignalProcessSnapshot,
-    current: Option<SignalProcessSnapshot>,
-) -> Result<(), BackgroundProcessSignalError> {
-    let Some(current) = current else {
-        return Err(signal_process_error());
-    };
-    if !same_signal_process(expected, &current) {
-        return Err(signal_process_error());
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn classify_darwin_signal_child(
-    parent: &SignalProcessSnapshot,
-    current: Option<SignalProcessSnapshot>,
-) -> Result<Option<SignalProcessSnapshot>, BackgroundProcessSignalError> {
-    let Some(current) = current else {
-        return Ok(None);
-    };
-    if current.parent != Some(parent.pid) || current.parent_identity != Some(parent.identity) {
-        return Err(signal_process_error());
-    }
-    Ok(Some(current))
-}
-
-#[cfg(target_os = "macos")]
-fn signal_process_snapshot(
-    authority: &GroupSnapshotAuthority,
-    root: rustix::process::Pid,
-    scratch: &mut SignalProcessScratch,
-) -> Result<Vec<SignalProcessSnapshot>, BackgroundProcessSignalError> {
-    let root = read_signal_process(authority, root, scratch)?.ok_or_else(signal_not_found_error)?;
-    let mut snapshot = vec![root];
-    let mut child_buffer = vec![0_i32; MAX_SIGNAL_TREE_PROCESSES + 1];
-    let mut cursor = 0_usize;
-    while cursor < snapshot.len() {
-        let parent = snapshot[cursor];
-        cursor += 1;
-        require_darwin_signal_parent(
-            &parent,
-            read_signal_process(authority, parent.pid, scratch)?,
-        )?;
-        let Ok(children) = machine_god_darwin_proc::list_child_pids(
-            parent.pid.as_raw_nonzero().get(),
-            &mut child_buffer,
-        ) else {
-            return Err(signal_process_error());
-        };
-        require_darwin_signal_parent(
-            &parent,
-            read_signal_process(authority, parent.pid, scratch)?,
-        )?;
-        for &raw in children {
-            if snapshot.len() == MAX_SIGNAL_TREE_PROCESSES {
-                return Err(signal_process_error());
-            }
-            let pid = rustix::process::Pid::from_raw(raw).ok_or_else(signal_process_error)?;
-            if let Some(process) = classify_darwin_signal_child(
-                &parent,
-                read_signal_process(authority, pid, scratch)?,
-            )? {
-                snapshot.push(process);
-            }
-        }
-    }
-    Ok(snapshot)
-}
-
-#[cfg(target_os = "macos")]
-fn signal_exact_process(
-    authority: &GroupSnapshotAuthority,
-    expected: &SignalProcessSnapshot,
-    signal: rustix::process::Signal,
-    scratch: &mut SignalProcessScratch,
-) -> Result<(), BackgroundProcessSignalError> {
-    let current = read_signal_process(authority, expected.pid, scratch)?;
-    signal_identity_checked_descendant_with(expected, current, || {
-        match rustix::process::kill_process(expected.pid, signal) {
-            Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
-            Err(_) => Err(signal_process_error()),
-        }
-    })
-}
-
 #[cfg(target_os = "linux")]
 fn signal_process_identity(
     authority: &GroupSnapshotAuthority,
@@ -5737,7 +5648,7 @@ mod process_regression_tests {
         );
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     fn signal_snapshot(
         raw: i32,
         parent: Option<i32>,
@@ -5756,7 +5667,7 @@ mod process_regression_tests {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     fn signal_snapshot_with_parent_identity(
         raw: i32,
         parent: i32,
@@ -5772,7 +5683,7 @@ mod process_regression_tests {
         snapshot
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn signal_tree_derivation_is_identity_checked_and_deepest_first() {
         let root = rustix::process::Pid::from_raw(100).expect("positive root PID");
@@ -5811,7 +5722,7 @@ mod process_regression_tests {
         );
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn signal_tree_derivation_rejects_duplicate_pid_and_parent_cycles() {
         let root = rustix::process::Pid::from_raw(100).expect("positive root PID");
@@ -5843,7 +5754,7 @@ mod process_regression_tests {
         );
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn signal_tree_derivation_uses_parent_identity_when_available() {
         let root = rustix::process::Pid::from_raw(100).expect("positive root PID");
@@ -5868,59 +5779,7 @@ mod process_regression_tests {
         );
     }
 
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn darwin_signal_parent_revalidation_fails_closed() {
-        let expected = signal_snapshot(100, Some(1), 100, 1000);
-        require_darwin_signal_parent(&expected, Some(expected))
-            .expect("the exact queued parent remains admissible");
-
-        assert_eq!(
-            require_darwin_signal_parent(&expected, None)
-                .expect_err("a vanished queued parent invalidates the snapshot")
-                .kind(),
-            BackgroundProcessSignalErrorKind::Process
-        );
-        let reused = signal_snapshot(100, Some(1), 100, 1001);
-        assert_eq!(
-            require_darwin_signal_parent(&expected, Some(reused))
-                .expect_err("a changed parent incarnation invalidates the snapshot")
-                .kind(),
-            BackgroundProcessSignalErrorKind::Process
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn darwin_listed_child_omits_only_actual_disappearance() {
-        let parent = signal_snapshot(100, Some(1), 100, 1000);
-        assert_eq!(
-            classify_darwin_signal_child(&parent, None)
-                .expect("an actually vanished listed child may be omitted"),
-            None
-        );
-
-        let exact = signal_snapshot_with_parent_identity(101, 100, 1000, 101, 1001);
-        assert_eq!(
-            classify_darwin_signal_child(&parent, Some(exact))
-                .expect("exact parent PID and identity are retained"),
-            Some(exact)
-        );
-        for changed in [
-            signal_snapshot_with_parent_identity(101, 99, 1000, 101, 1001),
-            signal_snapshot_with_parent_identity(101, 100, 9999, 101, 1001),
-            signal_snapshot(101, Some(100), 101, 1001),
-        ] {
-            assert_eq!(
-                classify_darwin_signal_child(&parent, Some(changed))
-                    .expect_err("an existing listed child with changed lineage is ambiguous")
-                    .kind(),
-                BackgroundProcessSignalErrorKind::Process
-            );
-        }
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn signal_delivery_attempts_every_descendant_and_aggregates_failures() {
         let descendants = [
@@ -5969,7 +5828,7 @@ mod process_regression_tests {
         assert!(group_attempted, "the original group is still attempted");
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn individually_signals_descendant_that_escapes_after_observation() {
         let expected = signal_snapshot(101, Some(100), 100, 1001);
@@ -5997,7 +5856,7 @@ mod process_regression_tests {
         );
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn post_descendant_root_and_group_disappearance_is_process_failure() {
         let delivery = DescendantSignalDelivery {
@@ -6022,7 +5881,7 @@ mod process_regression_tests {
         );
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn pre_effect_root_disappearance_remains_not_found() {
         let mut group_attempted = false;
@@ -6043,7 +5902,7 @@ mod process_regression_tests {
         );
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn signal_tree_bounds_and_incarnation_comparison_fail_closed() {
         let root = rustix::process::Pid::from_raw(100).expect("positive root PID");
@@ -6150,6 +6009,32 @@ mod process_regression_tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_signal_path_performs_one_original_group_call_only() {
+        let controller = test_signal_controller();
+        controller.activate().expect("activate controller");
+        let mut calls = Vec::new();
+
+        controller
+            .signal_with(BackgroundProcessSignal::Terminate, |group, signal| {
+                calls.push((group, signal));
+                Ok(())
+            })
+            .expect("one process-group signal succeeds");
+
+        assert_eq!(calls.len(), 1, "macOS performs exactly one signal syscall");
+        assert_eq!(calls[0].0.as_raw_nonzero().get(), 4242);
+        assert_eq!(calls[0].1, rustix::process::Signal::TERM);
+
+        let error = controller
+            .signal_with(BackgroundProcessSignal::Kill, |_, _| {
+                Err(rustix::io::Errno::PERM)
+            })
+            .expect_err("group permission failure is a process failure");
+        assert_eq!(error.kind(), BackgroundProcessSignalErrorKind::Process);
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn exhausted_signal_proc_read_releases_lifecycle_gate_for_close() {
@@ -6192,7 +6077,7 @@ mod process_regression_tests {
         assert!(controller.is_closed_for_test());
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn close_normalizes_and_does_not_wait_for_failed_blocked_signal_preparation() {
         let controller = test_signal_controller();
