@@ -454,7 +454,15 @@ impl BackgroundProcessSignalController {
         // Process-table reads may enter the kernel. They deliberately run
         // without the lifecycle mutex so close can revoke admission and reap
         // the retained child even if one observation stalls.
-        let prepared = prepare(&target)?;
+        let prepared = match prepare(&target) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                if self.close_requested.load(Ordering::Acquire) {
+                    return Err(signal_not_found_error());
+                }
+                return Err(error);
+            }
+        };
         self.with_active_target(|current| {
             if !same_signal_target(&target, current) {
                 return Err(signal_not_found_error());
@@ -6031,7 +6039,7 @@ mod process_regression_tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
-    fn close_does_not_wait_for_blocked_signal_preparation() {
+    fn close_normalizes_and_does_not_wait_for_failed_blocked_signal_preparation() {
         let controller = test_signal_controller();
         controller.activate().expect("activate controller");
         let signal_controller = controller.clone();
@@ -6044,7 +6052,7 @@ mod process_regression_tests {
                 |_| {
                     entered_sender.send(()).expect("report blocked preparation");
                     release_receiver.recv().expect("release preparation");
-                    Ok(())
+                    Err::<(), _>(signal_process_error())
                 },
                 |_, ()| {
                     worker_delivered.store(true, Ordering::Release);
