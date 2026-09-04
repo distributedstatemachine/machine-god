@@ -22,8 +22,9 @@ use std::ffi::OsString;
 use std::fs;
 use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 #[cfg(target_os = "linux")]
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 #[cfg(target_os = "linux")]
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -977,6 +978,76 @@ fn attached_signal_controller_is_hidden_until_owned_activation_and_closes_after_
         BackgroundProcessSignalErrorKind::NotFound,
         "normal exit synchronously closes retained signal clones"
     );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn signal_controller_delivers_to_a_descendant_that_escaped_with_setsid() {
+    let directory = FreshDirectory::new("signal-escaped-descendant");
+    let source = directory.path().join("signal-tree.c");
+    let executable = directory.path().join("signal-tree");
+    fs::write(
+        &source,
+        br#"#include <signal.h>
+#include <stdio.h>
+#include <unistd.h>
+static volatile sig_atomic_t terminated = 0;
+static void on_term(int signal) { (void)signal; terminated = 1; }
+static int write_marker(const char *path, const char *value) {
+  FILE *marker = fopen(path, "w");
+  if (!marker || fputs(value, marker) < 0 || fclose(marker) != 0) return 1;
+  return 0;
+}
+int main(void) {
+  pid_t child = fork();
+  if (child < 0) return 80;
+  struct sigaction action = {0};
+  action.sa_handler = on_term;
+  sigemptyset(&action.sa_mask);
+  if (sigaction(SIGTERM, &action, 0) != 0) return 81;
+  if (child == 0) {
+    if (setsid() < 0) return 82;
+    char pid[32];
+    if (snprintf(pid, sizeof(pid), "%d", (int)getpid()) < 1) return 83;
+    if (write_marker("escaped.pid", pid) != 0) return 84;
+    while (!terminated) pause();
+    return write_marker("escaped.signaled", "yes") == 0 ? 24 : 85;
+  }
+  while (!terminated) pause();
+  return write_marker("leader.signaled", "yes") == 0 ? 23 : 86;
+}
+"#,
+    )
+    .unwrap();
+    assert!(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror", "-o"])
+            .arg(&executable)
+            .arg(&source)
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let mut prepared = adapter()
+        .prepare(request(directory.path(), "exec ./signal-tree"))
+        .unwrap();
+    let controller = prepared.attach_signal_controller().unwrap();
+    let mut owned = prepared.release().unwrap();
+    owned.activate_signal_controller().unwrap();
+    let escaped = wait_for_pid(&directory.path().join("escaped.pid"));
+    #[cfg(target_os = "linux")]
+    let escaped_guard = EscapedProcessGuard::new(escaped);
+
+    controller
+        .signal(BackgroundProcessSignal::Terminate)
+        .expect("identity-safe tree signal is delivered");
+    wait_for(&directory.path().join("escaped.signaled"));
+    wait_for(&directory.path().join("leader.signaled"));
+    assert_eq!(owned.wait().unwrap(), BackgroundProcessExit::Exited(23));
+    #[cfg(target_os = "linux")]
+    escaped_guard.kill_and_reap_if_adopted();
+    assert_processes_absent(&[escaped]);
 }
 
 #[test]

@@ -46,6 +46,8 @@ sha2.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 calcifer-macos-acl.workspace = true
+errno.workspace = true
+libproc.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 bytes = { workspace = true, optional = true }
