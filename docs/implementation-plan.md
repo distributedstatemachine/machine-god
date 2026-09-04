@@ -25,9 +25,9 @@ input; it is not a machine-god product language or runtime dependency.
 - Delivered main: `bd4e97d5dd1db3a02bad9938adf8c086ee1a5d8f`
 - Main CI: `33837103631` (`GREEN`)
 - Main Benchmark evidence: `33837103715` (`GREEN`)
-- Active branch: `main`
-- Active phase: `selecting slice 55 from the remaining bounded terminal tool work`
-- Next gate: `define one bounded managed-output or read/wait terminal slice without adding durable process control, then create its feature branch`
+- Active branch: `agent/m03-terminal-wait`
+- Active phase: `validating and reviewing the replacement slice 55 bounded terminal persisted-record wait`
+- Next gate: `complete the exact replacement local gate, then three fresh adversarial reviews; replace and regate the candidate if any finding remains`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -39,12 +39,15 @@ probe, wait for, or control a process. Three fresh final reviews reported zero
 findings after two rejected candidates closed schema and cancellation-teardown
 races. Detailed history is retained only in the linked review ledger.
 
-The next product slice returns directly to bounded terminal/tool work. Managed
-background output or read/wait behavior may be selected next, but output
-streaming, persistent interactive handles, write/control actions, interactive
-terminal behavior, restart-safe control, ACP, teams, and extension slash
-commands remain separate until explicitly bounded. Documentation-tool
-maintenance remains a separate non-product task.
+Slice 55 is the active bounded product slice. It adds only authority-free
+waiting for one exact persisted background record to reach its recorded exit
+state, with a caller-supplied safety ceiling, fixed observation backoff, and
+fail-fast wait capacity. It neither infers liveness nor initializes, waits on,
+or controls the process supervisor. Managed background output and read,
+persistent interactive handles, write/control actions, interactive terminal
+behavior, restart-safe control, ACP, teams, and extension slash commands remain
+separate until explicitly bounded. Documentation-tool maintenance remains a
+separate non-product task.
 
 ## Architecture ownership
 

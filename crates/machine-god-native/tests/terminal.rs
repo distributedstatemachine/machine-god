@@ -21,10 +21,11 @@ use machine_god_native::{
 use machine_god_native::{
     NativeBackgroundDetail, NativeBackgroundInspectionError, NativeBackgroundInspectionErrorKind,
     NativeBackgroundState, TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TerminalBackgroundInspector,
-    TerminalBackgroundOutcome, TerminalBackgroundStarter, TerminalCapturedOutput,
-    TerminalConfigErrorKind, TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest,
-    TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError, TerminalExecutorErrorKind,
-    TerminalLimits, TerminalTool,
+    TerminalBackgroundOutcome, TerminalBackgroundStarter, TerminalBackgroundWaitDelay,
+    TerminalBackgroundWaitDelayError, TerminalCapturedOutput, TerminalConfigErrorKind,
+    TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest, TerminalExecutionStatus,
+    TerminalExecutor, TerminalExecutorError, TerminalExecutorErrorKind, TerminalLimits,
+    TerminalTool,
 };
 use machine_god_reentrant_waker_test::{Callback, new as reentrant_waker};
 use serde_json::{Value, json};
@@ -287,6 +288,237 @@ impl TerminalBackgroundInspector for FakeBackgroundInspector {
                 Some("https://private.invalid".to_owned()),
                 Some("private diagnostic".to_owned()),
             )
+        })
+    }
+}
+
+#[derive(Clone)]
+struct SequenceBackgroundInspector {
+    states: Arc<Vec<(NativeBackgroundState, Option<i32>)>>,
+    calls: Arc<AtomicUsize>,
+}
+
+impl SequenceBackgroundInspector {
+    fn new(states: Vec<(NativeBackgroundState, Option<i32>)>) -> Self {
+        assert!(!states.is_empty());
+        Self {
+            states: Arc::new(states),
+            calls: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl TerminalBackgroundInspector for SequenceBackgroundInspector {
+    fn inspect(
+        &self,
+        background_id: u64,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeBackgroundDetail, NativeBackgroundInspectionError>> {
+        let states = Arc::clone(&self.states);
+        let calls = Arc::clone(&self.calls);
+        Box::pin(async move {
+            let index = calls.fetch_add(1, Ordering::SeqCst);
+            let (state, exit_code) = states[index.min(states.len() - 1)];
+            NativeBackgroundDetail::new(
+                background_id,
+                state,
+                10,
+                20 + u64::try_from(index).unwrap(),
+                Some(1234),
+                "private command".to_owned(),
+                "/private/workspace".to_owned(),
+                exit_code,
+                None,
+                None,
+            )
+        })
+    }
+}
+
+#[derive(Clone)]
+struct DelayedSequenceBackgroundInspector {
+    observations: Arc<Vec<(NativeBackgroundState, Option<i32>, Duration)>>,
+    calls: Arc<AtomicUsize>,
+}
+
+impl DelayedSequenceBackgroundInspector {
+    fn new(observations: Vec<(NativeBackgroundState, Option<i32>, Duration)>) -> Self {
+        assert!(!observations.is_empty());
+        Self {
+            observations: Arc::new(observations),
+            calls: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl TerminalBackgroundInspector for DelayedSequenceBackgroundInspector {
+    fn inspect(
+        &self,
+        background_id: u64,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeBackgroundDetail, NativeBackgroundInspectionError>> {
+        let observations = Arc::clone(&self.observations);
+        let calls = Arc::clone(&self.calls);
+        Box::pin(async move {
+            let index = calls.fetch_add(1, Ordering::SeqCst);
+            let (state, exit_code, delay) = observations[index.min(observations.len() - 1)];
+            std::thread::sleep(delay);
+            NativeBackgroundDetail::new(
+                background_id,
+                state,
+                10,
+                20 + u64::try_from(index).unwrap(),
+                Some(1234),
+                "private command".to_owned(),
+                "/private/workspace".to_owned(),
+                exit_code,
+                None,
+                None,
+            )
+        })
+    }
+}
+
+#[derive(Clone, Default)]
+struct SleepingWaitDelay {
+    polls: Arc<AtomicUsize>,
+    deadlines: Arc<Mutex<Vec<Instant>>>,
+}
+
+impl TerminalBackgroundWaitDelay for SleepingWaitDelay {
+    fn wait_until(
+        &self,
+        deadline: Instant,
+    ) -> BoxFuture<'_, Result<(), TerminalBackgroundWaitDelayError>> {
+        let polls = Arc::clone(&self.polls);
+        let deadlines = Arc::clone(&self.deadlines);
+        Box::pin(async move {
+            polls.fetch_add(1, Ordering::SeqCst);
+            deadlines.lock().unwrap().push(deadline);
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if !remaining.is_zero() {
+                std::thread::sleep(remaining);
+            }
+            Ok(())
+        })
+    }
+}
+
+#[derive(Clone, Default)]
+struct EarlyWaitDelay {
+    polls: Arc<AtomicUsize>,
+}
+
+impl TerminalBackgroundWaitDelay for EarlyWaitDelay {
+    fn wait_until(
+        &self,
+        _deadline: Instant,
+    ) -> BoxFuture<'_, Result<(), TerminalBackgroundWaitDelayError>> {
+        let polls = Arc::clone(&self.polls);
+        Box::pin(async move {
+            polls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+    }
+}
+
+#[derive(Clone, Default)]
+struct ErrorWaitDelay;
+
+impl TerminalBackgroundWaitDelay for ErrorWaitDelay {
+    fn wait_until(
+        &self,
+        _deadline: Instant,
+    ) -> BoxFuture<'_, Result<(), TerminalBackgroundWaitDelayError>> {
+        Box::pin(async { Err(TerminalBackgroundWaitDelayError::new()) })
+    }
+}
+
+#[derive(Clone)]
+struct DropCancellingWaitDelay {
+    cancellation: CancellationToken,
+    dropped: Arc<AtomicBool>,
+}
+
+struct DropCancellingWaitDelayFuture {
+    cancellation: CancellationToken,
+    dropped: Arc<AtomicBool>,
+}
+
+impl Future for DropCancellingWaitDelayFuture {
+    type Output = Result<(), TerminalBackgroundWaitDelayError>;
+
+    fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+        let remaining = Instant::now()
+            .checked_add(Duration::from_millis(1))
+            .expect("short test deadline")
+            .saturating_duration_since(Instant::now());
+        std::thread::sleep(remaining);
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl Drop for DropCancellingWaitDelayFuture {
+    fn drop(&mut self) {
+        let _ = self.cancellation.cancel();
+        self.dropped.store(true, Ordering::SeqCst);
+    }
+}
+
+impl TerminalBackgroundWaitDelay for DropCancellingWaitDelay {
+    fn wait_until(
+        &self,
+        _deadline: Instant,
+    ) -> BoxFuture<'_, Result<(), TerminalBackgroundWaitDelayError>> {
+        Box::pin(DropCancellingWaitDelayFuture {
+            cancellation: self.cancellation.clone(),
+            dropped: Arc::clone(&self.dropped),
+        })
+    }
+}
+
+#[derive(Clone, Default)]
+struct PendingWaitDelay {
+    polls: Arc<AtomicUsize>,
+    drops: Arc<AtomicUsize>,
+}
+
+struct PendingWaitDelayFuture {
+    polls: Arc<AtomicUsize>,
+    drops: Arc<AtomicUsize>,
+}
+
+impl Future for PendingWaitDelayFuture {
+    type Output = Result<(), TerminalBackgroundWaitDelayError>;
+
+    fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+        self.polls.fetch_add(1, Ordering::SeqCst);
+        Poll::Pending
+    }
+}
+
+impl Drop for PendingWaitDelayFuture {
+    fn drop(&mut self) {
+        self.drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl TerminalBackgroundWaitDelay for PendingWaitDelay {
+    fn wait_until(
+        &self,
+        _deadline: Instant,
+    ) -> BoxFuture<'_, Result<(), TerminalBackgroundWaitDelayError>> {
+        Box::pin(PendingWaitDelayFuture {
+            polls: Arc::clone(&self.polls),
+            drops: Arc::clone(&self.drops),
         })
     }
 }
@@ -1091,6 +1323,48 @@ where
     .unwrap()
 }
 
+fn waiting_tool<I, D>(
+    root: &std::path::Path,
+    executor: &FakeExecutor,
+    starter: &FakeBackgroundStarter,
+    inspector: &I,
+    delay: &D,
+) -> TerminalTool
+where
+    I: TerminalBackgroundInspector + Clone,
+    D: TerminalBackgroundWaitDelay + Clone,
+{
+    let canonical_workspace = std::fs::canonicalize(root)
+        .unwrap()
+        .to_str()
+        .expect("test workspace is Unicode")
+        .to_owned();
+    TerminalTool::with_executor_background_inspector_and_wait_delay(
+        root,
+        environment(),
+        Arc::new(executor.clone()),
+        limits(1),
+        canonical_workspace,
+        ProcessEnvironment {
+            profile: TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE.to_owned(),
+            sha256: "a".repeat(64),
+        },
+        Arc::new(starter.clone()),
+        Arc::new(inspector.clone()),
+        Arc::new(delay.clone()),
+    )
+    .unwrap()
+}
+
+fn exact_wait_arguments(background_id: u64, wait_ceiling_ms: u64) -> Value {
+    json!({
+        "action": "wait",
+        "background_id": background_id,
+        "return_when": { "kind": "exit" },
+        "wait_ceiling_ms": wait_ceiling_ms
+    })
+}
+
 fn execute(
     tool: &TerminalTool,
     arguments: Value,
@@ -1630,6 +1904,446 @@ fn background_inspect_native_failures_have_fixed_redacted_mappings() {
     }
     assert_eq!(starter.calls(), 0);
     assert_eq!(executor.calls(), 0);
+}
+
+#[test]
+fn background_wait_has_one_strict_closed_no_authority_form() {
+    let temporary = TemporaryDirectory::new("background-wait-schema");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let inspector =
+        SequenceBackgroundInspector::new(vec![(NativeBackgroundState::Exited, Some(0))]);
+    let delay = SleepingWaitDelay::default();
+    let tool = waiting_tool(temporary.path(), &executor, &starter, &inspector, &delay);
+
+    let spec = tool.spec();
+    assert_eq!(
+        spec.description,
+        "Run a foreground command, start a background command, inspect one persisted background record, or wait for its recorded exit"
+    );
+    let forms = spec.input_schema["oneOf"].as_array().unwrap();
+    assert_eq!(forms.len(), 4);
+    assert_eq!(forms[3]["properties"]["action"]["const"], "wait");
+    assert_eq!(forms[3]["properties"]["wait_ceiling_ms"]["maximum"], 30_000);
+    assert_eq!(
+        forms[3]["required"],
+        json!(["action", "background_id", "return_when", "wait_ceiling_ms"])
+    );
+    assert_eq!(forms[3]["additionalProperties"], false);
+
+    let prepared = tool
+        .prepare(call("terminal", exact_wait_arguments(7, 30_000)))
+        .unwrap();
+    assert!(prepared.capability().is_none());
+    assert_eq!(prepared.arguments(), &exact_wait_arguments(7, 30_000));
+    assert_eq!(inspector.calls(), 0);
+    assert_eq!(executor.calls(), 0);
+    assert_eq!(starter.calls(), 0);
+
+    for invalid in [
+        json!({"action":"wait","background_id":7,"return_when":{"kind":"exit"}}),
+        json!({"action":"wait","background_id":0,"return_when":{"kind":"exit"},"wait_ceiling_ms":1}),
+        json!({"action":"wait","background_id":7,"return_when":{"kind":"match"},"wait_ceiling_ms":1}),
+        json!({"action":"wait","background_id":7,"return_when":{"kind":"exit","pattern":"x"},"wait_ceiling_ms":1}),
+        json!({"action":"wait","background_id":7,"return_when":{"kind":"exit"},"wait_ceiling_ms":0}),
+        json!({"action":"wait","background_id":7,"return_when":{"kind":"exit"},"wait_ceiling_ms":30_001}),
+        json!({"action":"wait","background_id":7,"return_when":{"kind":"exit"},"wait_ceiling_ms":1,"extra":true}),
+    ] {
+        assert_invalid_input(&tool.prepare(call("terminal", invalid)).unwrap_err());
+    }
+    assert_eq!(inspector.calls(), 0);
+}
+
+#[test]
+fn background_wait_immediate_exit_transition_and_ceiling_are_exact() {
+    let temporary = TemporaryDirectory::new("background-wait-outcomes");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let delay = SleepingWaitDelay::default();
+
+    let immediate =
+        SequenceBackgroundInspector::new(vec![(NativeBackgroundState::Failed, Some(23))]);
+    let tool = waiting_tool(temporary.path(), &executor, &starter, &immediate, &delay);
+    let output = execute(
+        &tool,
+        exact_wait_arguments(7, 30_000),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    assert_eq!(
+        output.content,
+        json!({
+            "action": "wait",
+            "background_id": 7,
+            "outcome": { "exited": 23 },
+            "recorded_state": "failed",
+            "started_at_ms": 10,
+            "updated_at_ms": 20,
+            "pid": 1234,
+            "exit_code": 23
+        })
+    );
+    assert_eq!(immediate.calls(), 1);
+    assert_eq!(delay.polls.load(Ordering::SeqCst), 0);
+
+    let transition = SequenceBackgroundInspector::new(vec![
+        (NativeBackgroundState::Running, None),
+        (NativeBackgroundState::Exited, Some(0)),
+    ]);
+    let tool = waiting_tool(temporary.path(), &executor, &starter, &transition, &delay);
+    let output = execute(
+        &tool,
+        exact_wait_arguments(8, 30_000),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    assert_eq!(output.content["outcome"], json!({"exited": 0}));
+    assert_eq!(output.content["recorded_state"], "exited");
+    assert_eq!(transition.calls(), 2);
+
+    let running = SequenceBackgroundInspector::new(vec![(NativeBackgroundState::Running, None)]);
+    let tool = waiting_tool(temporary.path(), &executor, &starter, &running, &delay);
+    let output = execute(&tool, exact_wait_arguments(9, 1), CancellationToken::new()).unwrap();
+    assert_eq!(output.content["outcome"], json!({"safety_ceiling": {}}));
+    assert_eq!(output.content["recorded_state"], "running");
+    assert_eq!(running.calls(), 1);
+    assert_eq!(starter.calls(), 0);
+    assert_eq!(executor.calls(), 0);
+}
+
+#[test]
+fn background_wait_ceiling_wins_after_overlong_inspection_without_a_post_ceiling_observation() {
+    let temporary = TemporaryDirectory::new("background-wait-inspection-ceiling");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let delay = SleepingWaitDelay::default();
+
+    let first_overruns = DelayedSequenceBackgroundInspector::new(vec![(
+        NativeBackgroundState::Exited,
+        Some(0),
+        Duration::from_millis(5),
+    )]);
+    let tool = waiting_tool(
+        temporary.path(),
+        &executor,
+        &starter,
+        &first_overruns,
+        &delay,
+    );
+    let output = execute(&tool, exact_wait_arguments(10, 1), CancellationToken::new()).unwrap();
+    assert_eq!(output.content["outcome"], json!({"safety_ceiling": {}}));
+    assert_eq!(output.content["recorded_state"], "exited");
+    assert_eq!(output.content["exit_code"], 0);
+    assert_eq!(first_overruns.calls(), 1);
+
+    let transition_overruns = DelayedSequenceBackgroundInspector::new(vec![
+        (NativeBackgroundState::Running, None, Duration::ZERO),
+        (
+            NativeBackgroundState::Exited,
+            Some(0),
+            Duration::from_millis(500),
+        ),
+    ]);
+    let tool = waiting_tool(
+        temporary.path(),
+        &executor,
+        &starter,
+        &transition_overruns,
+        &delay,
+    );
+    let output = execute(
+        &tool,
+        exact_wait_arguments(11, 500),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    assert_eq!(output.content["outcome"], json!({"safety_ceiling": {}}));
+    assert_eq!(output.content["recorded_state"], "exited");
+    assert_eq!(output.content["updated_at_ms"], 21);
+    assert_eq!(output.content["exit_code"], 0);
+    assert_eq!(transition_overruns.calls(), 2);
+}
+
+#[test]
+fn background_wait_uses_the_frozen_monotonic_backoff_schedule() {
+    let temporary = TemporaryDirectory::new("background-wait-backoff");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let inspector = SequenceBackgroundInspector::new(vec![
+        (NativeBackgroundState::Running, None),
+        (NativeBackgroundState::Running, None),
+        (NativeBackgroundState::Running, None),
+        (NativeBackgroundState::Running, None),
+        (NativeBackgroundState::Running, None),
+        (NativeBackgroundState::Exited, Some(0)),
+    ]);
+    let delay = SleepingWaitDelay::default();
+    let before_wait = Instant::now();
+    let tool = waiting_tool(temporary.path(), &executor, &starter, &inspector, &delay);
+
+    let output = execute(
+        &tool,
+        exact_wait_arguments(7, 2_000),
+        CancellationToken::new(),
+    )
+    .unwrap();
+
+    assert_eq!(output.content["outcome"], json!({"exited": 0}));
+    assert_eq!(inspector.calls(), 6);
+    let deadlines = delay.deadlines.lock().unwrap();
+    assert_eq!(deadlines.len(), 5);
+    assert!(deadlines[0].duration_since(before_wait) >= Duration::from_millis(16));
+    for (observed, minimum) in deadlines.windows(2).zip([32_u64, 64, 128, 250].into_iter()) {
+        assert!(observed[1].duration_since(observed[0]) >= Duration::from_millis(minimum));
+    }
+}
+
+#[test]
+fn background_wait_lost_delay_and_cancellation_fail_redacted() {
+    let temporary = TemporaryDirectory::new("background-wait-errors");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    for (state, code) in [
+        (NativeBackgroundState::Stopped, None),
+        (NativeBackgroundState::Dead, None),
+        (NativeBackgroundState::Stale, None),
+        (NativeBackgroundState::Failed, Some(256)),
+        (NativeBackgroundState::Failed, Some(-1)),
+    ] {
+        let inspector = SequenceBackgroundInspector::new(vec![(state, code)]);
+        let delay = SleepingWaitDelay::default();
+        let tool = waiting_tool(temporary.path(), &executor, &starter, &inspector, &delay);
+        let error =
+            execute(&tool, exact_wait_arguments(7, 1), CancellationToken::new()).unwrap_err();
+        assert_eq!(error.kind, ToolErrorKind::Execution);
+        assert_eq!(error.code, "terminal_background_lost");
+        assert_eq!(
+            error.message,
+            "terminal background process outcome is unavailable"
+        );
+        assert!(!error.retryable);
+    }
+
+    let running = SequenceBackgroundInspector::new(vec![(NativeBackgroundState::Running, None)]);
+    for delay in [
+        Arc::new(EarlyWaitDelay::default()) as Arc<dyn TerminalBackgroundWaitDelay>,
+        Arc::new(ErrorWaitDelay) as Arc<dyn TerminalBackgroundWaitDelay>,
+    ] {
+        let tool = inspecting_tool(temporary.path(), &executor, &starter, &running)
+            .with_wait_delay(delay)
+            .unwrap();
+        let error = execute(
+            &tool,
+            exact_wait_arguments(7, 30_000),
+            CancellationToken::new(),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind, ToolErrorKind::Unavailable);
+        assert_eq!(error.code, "terminal_wait_unavailable");
+        assert_eq!(error.message, "terminal background wait is unavailable");
+        assert!(error.retryable);
+    }
+
+    let delay = SleepingWaitDelay::default();
+    let tool = waiting_tool(temporary.path(), &executor, &starter, &running, &delay);
+    let cancellation = CancellationToken::new();
+    assert!(cancellation.cancel());
+    let before = running.calls();
+    let error = execute(&tool, exact_wait_arguments(7, 1), cancellation).unwrap_err();
+    assert_eq!(error.kind, ToolErrorKind::Cancelled);
+    assert_eq!(running.calls(), before);
+}
+
+#[test]
+fn background_wait_capacity_drop_and_cancellation_are_bounded() {
+    let temporary = TemporaryDirectory::new("background-wait-capacity");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let inspector = SequenceBackgroundInspector::new(vec![(NativeBackgroundState::Running, None)]);
+    let delay = PendingWaitDelay::default();
+    let tool = waiting_tool(temporary.path(), &executor, &starter, &inspector, &delay);
+    let mut active = Vec::new();
+    for id in 1..=4 {
+        let mut future = Box::pin(tool.execute(
+            context(),
+            exact_wait_arguments(id, 30_000),
+            CancellationToken::new(),
+        ));
+        assert!(poll_once(future.as_mut()).is_pending());
+        active.push(future);
+    }
+    let error = execute(
+        &tool,
+        exact_wait_arguments(5, 30_000),
+        CancellationToken::new(),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "terminal_wait_busy");
+    assert!(error.retryable);
+    assert_eq!(inspector.calls(), 4);
+    assert_eq!(delay.polls.load(Ordering::SeqCst), 8);
+
+    drop(active.pop());
+    assert_eq!(delay.drops.load(Ordering::SeqCst), 2);
+    let cancellation = CancellationToken::new();
+    let observed = Arc::new(ObservedWake::default());
+    let waker = Waker::from(Arc::clone(&observed));
+    let mut replacement = Box::pin(tool.execute(
+        context(),
+        exact_wait_arguments(6, 30_000),
+        cancellation.clone(),
+    ));
+    assert!(poll_with_waker(replacement.as_mut(), &waker).is_pending());
+    assert!(cancellation.cancel());
+    observed.wait_for_calls(1);
+    let error = match poll_with_waker(replacement.as_mut(), &waker) {
+        Poll::Ready(Err(error)) => error,
+        Poll::Ready(Ok(_)) => panic!("cancelled wait returned output"),
+        Poll::Pending => panic!("cancelled wait remained pending"),
+    };
+    assert_eq!(error.code, "terminal_cancelled");
+    assert_eq!(delay.polls.load(Ordering::SeqCst), 10);
+    assert_eq!(delay.drops.load(Ordering::SeqCst), 4);
+    drop(active);
+    assert_eq!(delay.drops.load(Ordering::SeqCst), 10);
+}
+
+#[test]
+fn background_wait_cancels_pending_inspection_and_recovers_exact_wait_capacity() {
+    let temporary = TemporaryDirectory::new("background-wait-pending-inspection");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let inspector = PendingBackgroundInspector {
+        polls: Arc::new(AtomicUsize::new(0)),
+        dropped: Arc::new(AtomicBool::new(false)),
+    };
+    let delay = PendingWaitDelay::default();
+    let tool = waiting_tool(temporary.path(), &executor, &starter, &inspector, &delay);
+    let cancellation = CancellationToken::new();
+    let observed = Arc::new(ObservedWake::default());
+    let waker = Waker::from(Arc::clone(&observed));
+    let mut cancelled = Box::pin(tool.execute(
+        context(),
+        exact_wait_arguments(1, 30_000),
+        cancellation.clone(),
+    ));
+    assert!(poll_with_waker(cancelled.as_mut(), &waker).is_pending());
+    assert_eq!(inspector.polls.load(Ordering::SeqCst), 1);
+    assert!(cancellation.cancel());
+    observed.wait_for_calls(1);
+    let error = match poll_with_waker(cancelled.as_mut(), &waker) {
+        Poll::Ready(Err(error)) => error,
+        Poll::Ready(Ok(_)) => panic!("cancelled wait returned output"),
+        Poll::Pending => panic!("cancelled wait remained pending"),
+    };
+    assert_eq!(error.code, "terminal_cancelled");
+    assert!(inspector.dropped.load(Ordering::SeqCst));
+
+    let mut recovered = Vec::new();
+    for id in 2..=5 {
+        let mut future = Box::pin(tool.execute(
+            context(),
+            exact_wait_arguments(id, 30_000),
+            CancellationToken::new(),
+        ));
+        assert!(poll_once(future.as_mut()).is_pending());
+        recovered.push(future);
+    }
+    let busy = execute(
+        &tool,
+        exact_wait_arguments(6, 30_000),
+        CancellationToken::new(),
+    )
+    .unwrap_err();
+    assert_eq!(busy.code, "terminal_wait_busy");
+    assert_eq!(inspector.polls.load(Ordering::SeqCst), 5);
+    assert_eq!(delay.polls.load(Ordering::SeqCst), 5);
+    drop(recovered);
+    assert_eq!(delay.drops.load(Ordering::SeqCst), 5);
+    assert_eq!(starter.calls(), 0);
+    assert_eq!(executor.calls(), 0);
+}
+
+#[test]
+fn background_wait_pending_inspections_expire_and_release_all_wait_capacity() {
+    let temporary = TemporaryDirectory::new("background-wait-pending-expiry");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let inspector = PendingBackgroundInspector {
+        polls: Arc::new(AtomicUsize::new(0)),
+        dropped: Arc::new(AtomicBool::new(false)),
+    };
+    let delay = SleepingWaitDelay::default();
+    let tool = waiting_tool(temporary.path(), &executor, &starter, &inspector, &delay);
+
+    std::thread::scope(|scope| {
+        let mut waits = Vec::new();
+        for background_id in 1..=4 {
+            let tool = &tool;
+            waits.push(scope.spawn(move || {
+                execute(
+                    tool,
+                    exact_wait_arguments(background_id, 25),
+                    CancellationToken::new(),
+                )
+                .unwrap_err()
+            }));
+        }
+        for wait in waits {
+            let error = wait.join().unwrap();
+            assert_eq!(error.code, "terminal_wait_unavailable");
+            assert!(error.retryable);
+        }
+    });
+
+    assert_eq!(inspector.polls.load(Ordering::SeqCst), 4);
+    assert_eq!(delay.polls.load(Ordering::SeqCst), 4);
+    let replacement =
+        execute(&tool, exact_wait_arguments(5, 1), CancellationToken::new()).unwrap_err();
+    assert_eq!(replacement.code, "terminal_wait_unavailable");
+    assert_ne!(replacement.code, "terminal_wait_busy");
+    assert_eq!(inspector.polls.load(Ordering::SeqCst), 5);
+    assert_eq!(delay.polls.load(Ordering::SeqCst), 5);
+    assert!(inspector.dropped.load(Ordering::SeqCst));
+    assert_eq!(starter.calls(), 0);
+    assert_eq!(executor.calls(), 0);
+}
+
+#[test]
+fn background_wait_provider_drop_cancellation_wins_before_error_mapping() {
+    let temporary = TemporaryDirectory::new("background-wait-drop-cancel");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let inspector = SequenceBackgroundInspector::new(vec![(NativeBackgroundState::Running, None)]);
+    let cancellation = CancellationToken::new();
+    let dropped = Arc::new(AtomicBool::new(false));
+    let delay = DropCancellingWaitDelay {
+        cancellation: cancellation.clone(),
+        dropped: Arc::clone(&dropped),
+    };
+    let tool = waiting_tool(temporary.path(), &executor, &starter, &inspector, &delay);
+    let error = execute(&tool, exact_wait_arguments(7, 30_000), cancellation).unwrap_err();
+    assert_eq!(error.kind, ToolErrorKind::Cancelled);
+    assert_eq!(error.code, "terminal_cancelled");
+    assert!(dropped.load(Ordering::SeqCst));
 }
 
 #[test]

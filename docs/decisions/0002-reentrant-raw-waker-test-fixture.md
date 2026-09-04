@@ -15,8 +15,14 @@ forbids unsafe Rust.
 Keep `unsafe_code = "forbid"` unchanged for the workspace and every production
 target. Isolate the minimum `RawWaker` construction in the excluded,
 non-publishable `test-support/reentrant-waker` helper crate, referenced only as a
-`machine-god-core` dev-dependency. Its public API is safe and accepts a callback
-used solely by bounded lock-reentrancy unit tests.
+development dependency by crates that exercise the callback boundary. Its
+public API is safe and accepts a callback used solely by bounded
+lock-reentrancy unit tests.
+
+The helper declares its own empty workspace. That boundary prevents Cargo's
+ancestor discovery from attaching a nested Git worktree copy to the primary
+checkout's workspace while retaining the helper as an ordinary path-based
+development dependency.
 
 The fixture's pointer ownership follows the `RawWakerVTable` contract:
 

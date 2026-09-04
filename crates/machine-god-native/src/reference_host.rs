@@ -23,9 +23,10 @@ use crate::{
     McpToolCatalogError, McpToolCatalogSnapshot, MemoryTool, NativeCredentialSourceKind,
     NativeProviderKind, NativeSessionLifecycle, NativeTransportKind, PermissionMode,
     PermissionPrompter, PreparedNativeRoots, QuestionPrompter, ReadToolResultTool,
-    TerminalBackgroundStarter, TerminalTool, VisionDeadline, VisionLimits, VisionTool,
-    VisionTransportError, VisionTransportErrorKind, WebFetchTool, WebSearchDeadline,
-    WebSearchLimits, WebSearchTool, WebSearchTransportErrorKind, discover_ai_gateway_credential,
+    TerminalBackgroundStarter, TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError,
+    TerminalTool, VisionDeadline, VisionLimits, VisionTool, VisionTransportError,
+    VisionTransportErrorKind, WebFetchTool, WebSearchDeadline, WebSearchLimits, WebSearchTool,
+    WebSearchTransportErrorKind, discover_ai_gateway_credential,
 };
 
 /// Stable stage at which native reference-host composition failed.
@@ -620,13 +621,8 @@ impl NativeReferenceHost {
                     NativeReferenceHostBuildErrorKind::VisionTransport,
                 )
             })?;
-        // The public host requires one inert, absolute deadline authority for
-        // both web-search and vision. This private adapter translates only
-        // fixed error categories; it never retains or exposes diagnostics from
-        // the shared boundary.
-        let vision_deadline: Arc<dyn VisionDeadline> = Arc::new(VisionDeadlineAdapter {
-            inner: Arc::clone(&web_search_deadline),
-        });
+        let (vision_deadline, terminal_wait_delay) =
+            compose_deadline_adapters(&web_search_deadline);
         let vision = VisionTool::from_root_descriptor(
             workspace_tools.vision_root,
             network_target.clone(),
@@ -667,6 +663,7 @@ impl NativeReferenceHost {
             &workspace_tools.canonical_workspace,
             workspace_tools.background_root,
             &session_store,
+            terminal_wait_delay,
         )?;
         let session_store = Arc::new(session_store);
         let (engine_session_store, read_tool_result) = session_store_components(&session_store);
@@ -724,6 +721,7 @@ fn compose_terminal(
     canonical_workspace: &Path,
     background_root: OwnedFd,
     session_store: &FileSessionStore,
+    wait_delay: Arc<dyn TerminalBackgroundWaitDelay>,
 ) -> Result<TerminalTool, NativeReferenceHostBuildError> {
     let terminal = TerminalTool::from_root_descriptor(terminal_root).map_err(|_| {
         NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::TerminalConfig)
@@ -764,6 +762,7 @@ fn compose_terminal(
     terminal
         .with_background(canonical_workspace, environment, background)
         .and_then(|terminal| terminal.with_inspector(inspector))
+        .and_then(|terminal| terminal.with_wait_delay(wait_delay))
         .map_err(|_| {
             NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::TerminalConfig)
         })
@@ -830,6 +829,42 @@ impl SubagentAuthority for EmptySubagentAuthority {
 
 struct VisionDeadlineAdapter {
     inner: Arc<dyn WebSearchDeadline>,
+}
+
+struct TerminalBackgroundWaitDelayAdapter {
+    inner: Arc<dyn WebSearchDeadline>,
+}
+
+fn compose_deadline_adapters(
+    deadline: &Arc<dyn WebSearchDeadline>,
+) -> (
+    Arc<dyn VisionDeadline>,
+    Arc<dyn TerminalBackgroundWaitDelay>,
+) {
+    // The public host requires one inert absolute deadline authority for web
+    // search, vision, and persisted background waits. These private adapters
+    // translate only fixed error categories and never expose diagnostics.
+    (
+        Arc::new(VisionDeadlineAdapter {
+            inner: Arc::clone(deadline),
+        }),
+        Arc::new(TerminalBackgroundWaitDelayAdapter {
+            inner: Arc::clone(deadline),
+        }),
+    )
+}
+
+impl TerminalBackgroundWaitDelay for TerminalBackgroundWaitDelayAdapter {
+    fn wait_until(
+        &self,
+        deadline: Instant,
+    ) -> BoxFuture<'_, Result<(), TerminalBackgroundWaitDelayError>> {
+        let wait = self.inner.wait_until(deadline);
+        Box::pin(async move {
+            wait.await
+                .map_err(|_| TerminalBackgroundWaitDelayError::new())
+        })
+    }
 }
 
 impl VisionDeadline for VisionDeadlineAdapter {

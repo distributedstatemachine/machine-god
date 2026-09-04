@@ -21,8 +21,10 @@ but the production `semantic_search` and terminal foreground executor are
 Linux-only. The private host catalog retains both tools on macOS:
 `semantic_search` and terminal `exec` return their fixed unsupported results
 after strict preparation and permission, while terminal `start` uses the
-Linux/macOS background helper and terminal `inspect` uses its separately
-injected descriptor-confined persisted-record reader without process authority.
+Linux/macOS background helper and terminal `inspect` and `wait` use its
+separately injected descriptor-confined persisted-record reader without
+process authority. `wait` receives its monotonic delays through the same
+runtime-paired deadline authority used by web search and vision.
 
 ## Required selections
 
@@ -104,12 +106,14 @@ Every successful host contains:
   state-root descriptor and frozen canonical workspace identity. It creates no
   namespace or worker during composition or inspection, never initializes the
   lazy supervisor, and exposes only terminal's compact recorded-state
-  projection;
+  projection. A separately injected delay adapter adds bounded record-only
+  `wait` without process authority;
 - default provider-neutral `EngineLimits` and the default no-op event sink;
 - one explicit `Arc<dyn WebSearchDeadline>` for bounded web-search timing,
-  reused through a fixed category-only adapter for vision's capacity wait,
-  cooperative filesystem checkpoints, and Gateway operation, subject to the
-  synchronous-system-call caveat in the [vision contract](vision.md); and
+  reused through fixed category-only adapters for terminal's persisted-record
+  wait and vision's capacity wait, cooperative filesystem checkpoints, and
+  Gateway operation, subject to each tool's documented synchronous-system-call
+  caveat; and
 - the fixed tool catalog below.
 
 The production AI Gateway target is `https://ai-gateway.vercel.sh` with the
@@ -160,7 +164,8 @@ identity-preserving clones: `copy_file`, `create_folder`, `delete_file`,
 `vision`, and `write_file`. The terminal lazy background starter receives one
 additional clone of that same workspace identity; it is not another catalog
 tool. Terminal inspection receives a separate retained state-root clone, not
-ambient cwd or environment discovery.
+ambient cwd or environment discovery. Terminal wait reuses that exact reader
+and the shared deadline authority; it does not initialize or call the starter.
 `ask_user_question`, `mcp_features`, `mcp_search_tools`, `mcp_select_tool`,
 `subagent`, and `web_fetch` are rootless.
 `mcp_features` uses only its explicitly injected read-only authority. It stamps
@@ -221,8 +226,8 @@ documented bounded setup needed to own later authority:
   check; background namespace reconciliation and atomically admitted
   fixed-capacity worker creation are deferred to one shared, single-shot
   initialization on the first permitted `start` poll;
-- construct provider, web-search, and private vision adapters over the shared
-  transport;
+- construct provider, web-search, terminal-wait, and private vision adapters
+  over the shared transport and deadline authority;
 - construct `web_fetch`, including its bounded native resolver/entropy setup.
 
 Composition does not poll or snapshot the MCP catalog and does not call the MCP

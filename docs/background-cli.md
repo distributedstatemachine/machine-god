@@ -156,9 +156,11 @@ stop or liveness authority. None of those capabilities, terminal background
 input, arbitrary log paths, URL probing, `/proc` inspection, repair, or
 migration is part of this read-only command.
 
-The separately injected terminal `inspect` action reuses the same exact-ID
-persisted-record validation but returns only a compact recorded-state
-projection. It does not broaden this top-level CLI or add supervisor authority.
+The separately injected terminal `inspect` and bounded exit-only `wait` actions
+reuse the same exact-ID persisted-record validation but return only compact
+recorded-state projections. `wait` observes atomic record replacements through
+an independently injected monotonic delay boundary; neither action broadens
+this top-level CLI or adds supervisor authority.
 
 The compatibility scenario moves only from unimplemented to
 implemented-but-non-equivalent and remains not measured and claim-ineligible.

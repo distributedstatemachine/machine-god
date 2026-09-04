@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use crate::background_inspection::{
     NativeBackgroundDetail, NativeBackgroundInspectionError, NativeBackgroundInspectionErrorKind,
+    NativeBackgroundState,
 };
 use machine_god_core::{
     BackgroundStartError, BackgroundStartErrorKind, BackgroundStartRequest, BoxFuture,
@@ -86,12 +87,20 @@ pub const TERMINAL_MAX_TIMEOUT: Duration = Duration::from_secs(600);
 pub const TERMINAL_DEFAULT_MAX_ACTIVE_EXECUTIONS: usize = 4;
 /// Hard simultaneous execution limit.
 pub const TERMINAL_MAX_ACTIVE_EXECUTIONS: usize = 16;
+/// Maximum model-selected persisted-background wait ceiling in milliseconds.
+pub const TERMINAL_MAX_WAIT_CEILING_MS: u64 = 30_000;
+/// Maximum simultaneous persisted-background waits.
+pub const TERMINAL_MAX_ACTIVE_WAITS: usize = 4;
+/// Maximum exact record observations made by one persisted-background wait.
+pub const TERMINAL_MAX_WAIT_OBSERVATIONS: usize = 128;
 
 const TERMINAL_EXEC_DESCRIPTION: &str =
     "Run one foreground shell command from a workspace-relative directory";
 const TERMINAL_BACKGROUND_DESCRIPTION: &str =
     "Run one foreground command or start one noninteractive background command";
 const TERMINAL_INSPECT_DESCRIPTION: &str = "Run a foreground command, start a background command, or inspect one persisted background record";
+const TERMINAL_WAIT_DESCRIPTION: &str = "Run a foreground command, start a background command, inspect one persisted background record, or wait for its recorded exit";
+const TERMINAL_WAIT_DELAYS_MS: [u64; 5] = [16, 32, 64, 128, 250];
 const PIPE_RETAINED_BYTES: usize = MAX_TERMINAL_RETAINED_OUTPUT_BYTES / 2;
 #[cfg(target_os = "linux")]
 const PIPE_READ_BYTES: usize = 16 * 1024;
@@ -101,6 +110,18 @@ const POST_STOP_READ_LIMIT: u8 = 64;
 const PROCESS_GROUP_TERM_GRACE: Duration = Duration::from_millis(250);
 #[cfg(target_os = "linux")]
 const PROCESS_GROUP_KILL_OBSERVATION_GRACE: Duration = Duration::from_millis(250);
+
+trait TerminalWaitClock: Sync {
+    fn now(&self) -> Instant;
+}
+
+struct MonotonicTerminalWaitClock;
+
+impl TerminalWaitClock for MonotonicTerminalWaitClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
 
 /// Stable terminal construction-error category.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -513,6 +534,59 @@ pub trait TerminalBackgroundInspector: Send + Sync + 'static {
     ) -> BoxFuture<'static, Result<NativeBackgroundDetail, NativeBackgroundInspectionError>>;
 }
 
+/// Explicit monotonic delay boundary for persisted-background waits.
+///
+/// The same boundary supplies one persistent absolute-ceiling wake and the
+/// shorter backoff waits between observations. Each returned future must
+/// arrange a wake so the polling task can make progress once its requested
+/// instant is reached; it must not depend on an unrelated wake.
+///
+/// Implementations must remain inert until the returned future is polled and
+/// must not complete successfully before `deadline` according to
+/// [`Instant::now`]. The returned future must own all pending delay work:
+/// dropping it must cancel that work and synchronously release its retained
+/// Waker and resources, without leaving a detached timer, thread, or callback
+/// that can outlive the future.
+pub trait TerminalBackgroundWaitDelay: Send + Sync + 'static {
+    /// Waits until at least the requested monotonic instant.
+    fn wait_until(
+        &self,
+        deadline: Instant,
+    ) -> BoxFuture<'_, Result<(), TerminalBackgroundWaitDelayError>>;
+}
+
+/// Fixed, data-free failure from an injected background-wait delay.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct TerminalBackgroundWaitDelayError;
+
+impl TerminalBackgroundWaitDelayError {
+    /// Constructs the fixed redacted delay failure.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for TerminalBackgroundWaitDelayError {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Debug for TerminalBackgroundWaitDelayError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("TerminalBackgroundWaitDelayError")
+    }
+}
+
+impl fmt::Display for TerminalBackgroundWaitDelayError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("terminal background wait delay is unavailable")
+    }
+}
+
+impl Error for TerminalBackgroundWaitDelayError {}
+
 /// Display-only identity returned by an injected background starter.
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct TerminalBackgroundOutcome {
@@ -579,6 +653,8 @@ pub struct TerminalTool {
     system_unsupported: bool,
     background: Option<TerminalBackground>,
     inspector: Option<Arc<dyn TerminalBackgroundInspector>>,
+    wait_delay: Option<Arc<dyn TerminalBackgroundWaitDelay>>,
+    active_waits: Arc<AtomicUsize>,
 }
 
 impl TerminalTool {
@@ -695,6 +771,38 @@ impl TerminalTool {
             .with_inspector(inspector)
     }
 
+    /// Constructs a bounded terminal with explicitly injected start, exact
+    /// persisted-record inspection, and monotonic wait-delay boundaries.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed configuration failure for invalid injected inputs.
+    #[cfg(unix)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_executor_background_inspector_and_wait_delay(
+        root: &Path,
+        environment: Vec<(OsString, OsString)>,
+        executor: Arc<dyn TerminalExecutor>,
+        limits: TerminalLimits,
+        canonical_workspace: String,
+        background_environment: ProcessEnvironment,
+        starter: Arc<dyn TerminalBackgroundStarter>,
+        inspector: Arc<dyn TerminalBackgroundInspector>,
+        wait_delay: Arc<dyn TerminalBackgroundWaitDelay>,
+    ) -> Result<Self, TerminalConfigError> {
+        Self::with_executor_background_and_inspector(
+            root,
+            environment,
+            executor,
+            limits,
+            canonical_workspace,
+            background_environment,
+            starter,
+            inspector,
+        )?
+        .with_wait_delay(wait_delay)
+    }
+
     #[cfg(unix)]
     #[allow(dead_code)] // Used by reference-host composition on integration.
     pub(crate) fn from_root_descriptor(root: OwnedFd) -> Result<Self, TerminalConfigError> {
@@ -741,6 +849,26 @@ impl TerminalTool {
         Ok(self)
     }
 
+    /// Adds bounded persisted-background wait support to a terminal that
+    /// already owns an exact-record inspector.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed configuration failure when no inspector is installed.
+    #[cfg(unix)]
+    pub fn with_wait_delay(
+        mut self,
+        wait_delay: Arc<dyn TerminalBackgroundWaitDelay>,
+    ) -> Result<Self, TerminalConfigError> {
+        if self.inspector.is_none() {
+            return Err(TerminalConfigError::new(
+                TerminalConfigErrorKind::InvalidRoot,
+            ));
+        }
+        self.wait_delay = Some(wait_delay);
+        Ok(self)
+    }
+
     #[cfg(unix)]
     fn from_parts(
         root: OwnedFd,
@@ -760,6 +888,8 @@ impl TerminalTool {
             system_unsupported,
             background: None,
             inspector: None,
+            wait_delay: None,
+            active_waits: Arc::new(AtomicUsize::new(0)),
         })
     }
 }
@@ -902,11 +1032,17 @@ fn terminal_name() -> ToolName {
     ToolName::new(TERMINAL_TOOL_NAME).expect("terminal is a valid tool name")
 }
 
+#[derive(Clone, Copy)]
+struct TerminalActionAvailability {
+    start: bool,
+    inspect: bool,
+    wait: bool,
+}
+
 fn parse_arguments(
     arguments: &Value,
     require_complete: bool,
-    allow_start: bool,
-    allow_inspect: bool,
+    available: TerminalActionAvailability,
 ) -> Result<TerminalArguments, ToolError> {
     let Value::Object(object) = arguments else {
         return Err(invalid_arguments());
@@ -916,8 +1052,9 @@ fn parse_arguments(
     }
     let action = match object.get("action").and_then(Value::as_str) {
         Some("exec") => TerminalAction::Exec,
-        Some("start") if allow_start => TerminalAction::Start,
-        Some("inspect") if allow_inspect => TerminalAction::Inspect,
+        Some("start") if available.start => TerminalAction::Start,
+        Some("inspect") if available.inspect => TerminalAction::Inspect,
+        Some("wait") if available.wait => TerminalAction::Wait,
         _ => return Err(invalid_arguments()),
     };
     if action == TerminalAction::Inspect {
@@ -934,6 +1071,40 @@ fn parse_arguments(
             .filter(|id| *id != 0)
             .ok_or_else(invalid_arguments)?;
         return Ok(TerminalArguments::Inspect { background_id });
+    }
+    if action == TerminalAction::Wait {
+        if object.len() != 4
+            || object.keys().any(|key| {
+                !matches!(
+                    key.as_str(),
+                    "action" | "background_id" | "return_when" | "wait_ceiling_ms"
+                )
+            })
+        {
+            return Err(invalid_arguments());
+        }
+        let background_id = object
+            .get("background_id")
+            .and_then(Value::as_u64)
+            .filter(|id| *id != 0)
+            .ok_or_else(invalid_arguments)?;
+        let return_when = object
+            .get("return_when")
+            .and_then(Value::as_object)
+            .filter(|value| {
+                value.len() == 1 && value.get("kind").and_then(Value::as_str) == Some("exit")
+            })
+            .ok_or_else(invalid_arguments)?;
+        let _ = return_when;
+        let wait_ceiling_ms = object
+            .get("wait_ceiling_ms")
+            .and_then(Value::as_u64)
+            .filter(|value| (1..=TERMINAL_MAX_WAIT_CEILING_MS).contains(value))
+            .ok_or_else(invalid_arguments)?;
+        return Ok(TerminalArguments::Wait {
+            background_id,
+            wait_ceiling_ms,
+        });
     }
     let expected_len = if require_complete { 4 } else { object.len() };
     if (require_complete && expected_len != 4)
@@ -980,6 +1151,15 @@ fn canonical_arguments(arguments: &TerminalArguments) -> Value {
         TerminalArguments::Inspect { background_id } => json!({
             "action": "inspect",
             "background_id": background_id
+        }),
+        TerminalArguments::Wait {
+            background_id,
+            wait_ceiling_ms,
+        } => json!({
+            "action": "wait",
+            "background_id": background_id,
+            "return_when": { "kind": "exit" },
+            "wait_ceiling_ms": wait_ceiling_ms
         }),
     }
 }
@@ -1796,6 +1976,7 @@ enum TerminalAction {
     Exec,
     Start,
     Inspect,
+    Wait,
 }
 
 impl TerminalAction {
@@ -1804,6 +1985,7 @@ impl TerminalAction {
             Self::Exec => "exec",
             Self::Start => "start",
             Self::Inspect => "inspect",
+            Self::Wait => "wait",
         }
     }
 }
@@ -1818,7 +2000,13 @@ struct TerminalCommandArguments {
 #[derive(Clone)]
 enum TerminalArguments {
     Command(TerminalCommandArguments),
-    Inspect { background_id: u64 },
+    Inspect {
+        background_id: u64,
+    },
+    Wait {
+        background_id: u64,
+        wait_ceiling_ms: u64,
+    },
 }
 
 impl TerminalTool {
@@ -1891,6 +2079,229 @@ impl TerminalTool {
         check_cancellation(&cancellation)?;
         Ok(output)
     }
+
+    async fn execute_wait<C: TerminalWaitClock + ?Sized>(
+        &self,
+        background_id: u64,
+        wait_ceiling_ms: u64,
+        cancellation: CancellationToken,
+        clock: &C,
+    ) -> Result<ToolOutput, ToolError> {
+        check_cancellation(&cancellation)?;
+        let _permit = ActiveWaitPermit::try_acquire(&self.active_waits)?;
+        let inspector = self.inspector.as_ref().ok_or_else(invalid_arguments)?;
+        let wait_delay = self.wait_delay.as_ref().ok_or_else(invalid_arguments)?;
+        let deadline = clock
+            .now()
+            .checked_add(Duration::from_millis(wait_ceiling_ms))
+            .ok_or_else(wait_unavailable)?;
+        let mut ceiling = wait_delay.wait_until(deadline);
+        let result = execute_background_wait_loop(
+            inspector.as_ref(),
+            wait_delay.as_ref(),
+            &mut ceiling,
+            background_id,
+            deadline,
+            &cancellation,
+            clock,
+        )
+        .await;
+        drop(ceiling);
+        check_cancellation(&cancellation)?;
+        result
+    }
+}
+
+async fn execute_background_wait_loop<C: TerminalWaitClock + ?Sized>(
+    inspector: &dyn TerminalBackgroundInspector,
+    wait_delay: &dyn TerminalBackgroundWaitDelay,
+    ceiling: &mut BoxFuture<'_, Result<(), TerminalBackgroundWaitDelayError>>,
+    background_id: u64,
+    deadline: Instant,
+    cancellation: &CancellationToken,
+    clock: &C,
+) -> Result<ToolOutput, ToolError> {
+    let mut observation_count = 0_usize;
+    let mut delay_index = 0_usize;
+    let mut latest_running = None;
+
+    loop {
+        check_cancellation(cancellation)?;
+        if background_wait_boundary_reached(observation_count, clock.now(), deadline) {
+            return complete_background_wait_boundary(latest_running.as_ref(), cancellation);
+        }
+        observation_count += 1;
+        let inspected = await_background_wait_inspection(
+            inspector.inspect(background_id, cancellation.clone()),
+            ceiling,
+            deadline,
+            cancellation,
+            clock,
+        )
+        .await?;
+        let BackgroundWaitPoll::Ready((inspected, observation_ended)) = inspected else {
+            return complete_background_wait_boundary(latest_running.as_ref(), cancellation);
+        };
+        check_cancellation(cancellation)?;
+        let detail = inspected.map_err(map_background_inspection_error)?;
+        if detail.id() != background_id {
+            return Err(background_inspection_invariant());
+        }
+        let snapshot = BackgroundWaitSnapshot::from(&detail);
+
+        match detail.state() {
+            NativeBackgroundState::Exited | NativeBackgroundState::Failed => {
+                let exit_code = detail
+                    .exit_code()
+                    .filter(|code| (0..=i32::from(u8::MAX)).contains(code))
+                    .ok_or_else(background_wait_lost)?;
+                if observation_ended >= deadline {
+                    return render_background_wait(
+                        &snapshot,
+                        &json!({ "safety_ceiling": {} }),
+                        cancellation,
+                    );
+                }
+                return render_background_wait(
+                    &snapshot,
+                    &json!({ "exited": exit_code }),
+                    cancellation,
+                );
+            }
+            NativeBackgroundState::Stopped
+            | NativeBackgroundState::Dead
+            | NativeBackgroundState::Stale => return Err(background_wait_lost()),
+            NativeBackgroundState::Running => {
+                if observation_ended >= deadline {
+                    return render_background_wait(
+                        &snapshot,
+                        &json!({ "safety_ceiling": {} }),
+                        cancellation,
+                    );
+                }
+                drop(detail);
+                latest_running = Some(snapshot);
+            }
+        }
+
+        let now = clock.now();
+        let detail = latest_running
+            .as_ref()
+            .expect("running wait observations retain their latest detail");
+        if background_wait_boundary_reached(observation_count, now, deadline) {
+            return render_background_wait(detail, &json!({ "safety_ceiling": {} }), cancellation);
+        }
+        let delay_ms = TERMINAL_WAIT_DELAYS_MS[delay_index];
+        delay_index = delay_index
+            .saturating_add(1)
+            .min(TERMINAL_WAIT_DELAYS_MS.len() - 1);
+        let requested = now
+            .checked_add(Duration::from_millis(delay_ms))
+            .map_or(deadline, |next| next.min(deadline));
+        let delayed = await_background_wait_delay(
+            wait_delay.wait_until(requested),
+            ceiling,
+            requested,
+            deadline,
+            cancellation,
+            clock,
+        )
+        .await?;
+        if delayed == BackgroundWaitPoll::Ceiling {
+            return complete_background_wait_boundary(latest_running.as_ref(), cancellation);
+        }
+    }
+}
+
+fn background_wait_boundary_reached(
+    observation_count: usize,
+    now: Instant,
+    deadline: Instant,
+) -> bool {
+    observation_count >= TERMINAL_MAX_WAIT_OBSERVATIONS || now >= deadline
+}
+
+#[derive(Clone, Copy)]
+struct BackgroundWaitSnapshot {
+    id: u64,
+    state: NativeBackgroundState,
+    started_at_ms: u64,
+    updated_at_ms: u64,
+    pid: Option<u32>,
+    exit_code: Option<i32>,
+}
+
+impl From<&NativeBackgroundDetail> for BackgroundWaitSnapshot {
+    fn from(detail: &NativeBackgroundDetail) -> Self {
+        Self {
+            id: detail.id(),
+            state: detail.state(),
+            started_at_ms: detail.started_at_ms(),
+            updated_at_ms: detail.updated_at_ms(),
+            pid: detail.pid(),
+            exit_code: detail.exit_code(),
+        }
+    }
+}
+
+fn render_background_wait(
+    detail: &BackgroundWaitSnapshot,
+    outcome: &Value,
+    cancellation: &CancellationToken,
+) -> Result<ToolOutput, ToolError> {
+    check_cancellation(cancellation)?;
+    let output = ToolOutput {
+        content: json!({
+            "action": "wait",
+            "background_id": detail.id,
+            "outcome": outcome,
+            "recorded_state": detail.state.as_str(),
+            "started_at_ms": detail.started_at_ms,
+            "updated_at_ms": detail.updated_at_ms,
+            "pid": detail.pid,
+            "exit_code": detail.exit_code
+        }),
+        is_error: false,
+    };
+    if !serialized_value_fits(&output.content, MAX_TERMINAL_SERIALIZED_RESULT_BYTES) {
+        return Err(background_inspection_resource_limit());
+    }
+    check_cancellation(cancellation)?;
+    Ok(output)
+}
+
+fn complete_background_wait_boundary(
+    detail: Option<&BackgroundWaitSnapshot>,
+    cancellation: &CancellationToken,
+) -> Result<ToolOutput, ToolError> {
+    check_cancellation(cancellation)?;
+    let Some(detail) = detail else {
+        return Err(wait_unavailable());
+    };
+    render_background_wait(detail, &json!({ "safety_ceiling": {} }), cancellation)
+}
+
+struct ActiveWaitPermit {
+    active: Arc<AtomicUsize>,
+}
+
+impl ActiveWaitPermit {
+    fn try_acquire(active: &Arc<AtomicUsize>) -> Result<Self, ToolError> {
+        active
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current < TERMINAL_MAX_ACTIVE_WAITS).then_some(current + 1)
+            })
+            .map_err(|_| wait_busy())?;
+        Ok(Self {
+            active: Arc::clone(active),
+        })
+    }
+}
+
+impl Drop for ActiveWaitPermit {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 async fn await_background_inspection(
@@ -1916,6 +2327,148 @@ async fn await_background_inspection(
     drop(cancelled);
     check_cancellation(cancellation)?;
     Ok(inspected)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BackgroundWaitPoll<T> {
+    Ready(T),
+    Ceiling,
+}
+
+async fn await_background_wait_inspection<C: TerminalWaitClock + ?Sized>(
+    mut future: BoxFuture<'static, Result<NativeBackgroundDetail, NativeBackgroundInspectionError>>,
+    ceiling: &mut BoxFuture<'_, Result<(), TerminalBackgroundWaitDelayError>>,
+    deadline: Instant,
+    cancellation: &CancellationToken,
+    clock: &C,
+) -> Result<
+    BackgroundWaitPoll<(
+        Result<NativeBackgroundDetail, NativeBackgroundInspectionError>,
+        Instant,
+    )>,
+    ToolError,
+> {
+    check_cancellation(cancellation)?;
+    if clock.now() >= deadline {
+        drop(future);
+        check_cancellation(cancellation)?;
+        return Ok(BackgroundWaitPoll::Ceiling);
+    }
+    let inspected = {
+        let mut cancelled = Box::pin(cancellation.cancelled());
+        let inspected = poll_fn(|context| {
+            if cancelled.as_mut().poll(context).is_ready() || cancellation.is_cancelled() {
+                return Poll::Ready(Err(cancelled_error()));
+            }
+            if clock.now() >= deadline {
+                return Poll::Ready(Ok(BackgroundWaitPoll::Ceiling));
+            }
+            let inspected = Pin::new(&mut future).poll(context);
+            if cancellation.is_cancelled() {
+                return Poll::Ready(Err(cancelled_error()));
+            }
+            if let Poll::Ready(result) = inspected {
+                let completed_at = clock.now();
+                return Poll::Ready(Ok(BackgroundWaitPoll::Ready((result, completed_at))));
+            }
+            if clock.now() >= deadline {
+                return Poll::Ready(Ok(BackgroundWaitPoll::Ceiling));
+            }
+            let elapsed = Pin::new(&mut *ceiling).poll(context);
+            if cancellation.is_cancelled() {
+                return Poll::Ready(Err(cancelled_error()));
+            }
+            match elapsed {
+                Poll::Ready(Err(_)) => Poll::Ready(Err(wait_unavailable())),
+                Poll::Ready(Ok(())) => {
+                    if clock.now() < deadline {
+                        Poll::Ready(Err(wait_unavailable()))
+                    } else {
+                        Poll::Ready(Ok(BackgroundWaitPoll::Ceiling))
+                    }
+                }
+                Poll::Pending if clock.now() >= deadline => {
+                    Poll::Ready(Ok(BackgroundWaitPoll::Ceiling))
+                }
+                Poll::Pending => Poll::Pending,
+            }
+        })
+        .await;
+        drop(future);
+        drop(cancelled);
+        inspected
+    };
+    check_cancellation(cancellation)?;
+    inspected
+}
+
+async fn await_background_wait_delay<C: TerminalWaitClock + ?Sized>(
+    mut future: BoxFuture<'_, Result<(), TerminalBackgroundWaitDelayError>>,
+    ceiling: &mut BoxFuture<'_, Result<(), TerminalBackgroundWaitDelayError>>,
+    requested: Instant,
+    deadline: Instant,
+    cancellation: &CancellationToken,
+    clock: &C,
+) -> Result<BackgroundWaitPoll<()>, ToolError> {
+    let delayed = {
+        let mut cancelled = Box::pin(cancellation.cancelled());
+        let delayed = poll_fn(|context| {
+            if cancelled.as_mut().poll(context).is_ready() || cancellation.is_cancelled() {
+                return Poll::Ready(Err(cancelled_error()));
+            }
+            if clock.now() >= deadline {
+                return Poll::Ready(Ok(BackgroundWaitPoll::Ceiling));
+            }
+            let delayed = Pin::new(&mut future).poll(context);
+            if cancellation.is_cancelled() {
+                return Poll::Ready(Err(cancelled_error()));
+            }
+            match delayed {
+                Poll::Ready(result) => {
+                    let completed_at = clock.now();
+                    Poll::Ready(Ok(BackgroundWaitPoll::Ready((result, completed_at))))
+                }
+                Poll::Pending if clock.now() >= deadline => {
+                    Poll::Ready(Ok(BackgroundWaitPoll::Ceiling))
+                }
+                Poll::Pending => {
+                    let elapsed = Pin::new(&mut *ceiling).poll(context);
+                    if cancellation.is_cancelled() {
+                        return Poll::Ready(Err(cancelled_error()));
+                    }
+                    match elapsed {
+                        Poll::Ready(Err(_)) => Poll::Ready(Err(wait_unavailable())),
+                        Poll::Ready(Ok(())) => {
+                            if clock.now() < deadline {
+                                Poll::Ready(Err(wait_unavailable()))
+                            } else {
+                                Poll::Ready(Ok(BackgroundWaitPoll::Ceiling))
+                            }
+                        }
+                        Poll::Pending if clock.now() >= deadline => {
+                            Poll::Ready(Ok(BackgroundWaitPoll::Ceiling))
+                        }
+                        Poll::Pending => Poll::Pending,
+                    }
+                }
+            }
+        })
+        .await;
+        drop(future);
+        drop(cancelled);
+        delayed
+    };
+    check_cancellation(cancellation)?;
+    match delayed? {
+        BackgroundWaitPoll::Ceiling => Ok(BackgroundWaitPoll::Ceiling),
+        BackgroundWaitPoll::Ready((delayed, completed_at)) => {
+            delayed.map_err(|_| wait_unavailable())?;
+            if completed_at < requested {
+                return Err(wait_unavailable());
+            }
+            Ok(BackgroundWaitPoll::Ready(()))
+        }
+    }
 }
 
 fn absolute_background_cwd(workspace: &str, cwd: &str) -> Result<String, ToolError> {
@@ -2008,9 +2561,35 @@ impl Tool for TerminalTool {
                 "additionalProperties": false
             }));
         }
+        if self.inspector.is_some() && self.wait_delay.is_some() {
+            forms.push(json!({
+                "type": "object",
+                "properties": {
+                    "action": { "const": "wait" },
+                    "background_id": { "type": "integer", "minimum": 1 },
+                    "return_when": {
+                        "type": "object",
+                        "properties": {
+                            "kind": { "const": "exit" }
+                        },
+                        "required": ["kind"],
+                        "additionalProperties": false
+                    },
+                    "wait_ceiling_ms": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": TERMINAL_MAX_WAIT_CEILING_MS
+                    }
+                },
+                "required": ["action", "background_id", "return_when", "wait_ceiling_ms"],
+                "additionalProperties": false
+            }));
+        }
         ToolSpec {
             name: terminal_name(),
-            description: if self.inspector.is_some() {
+            description: if self.inspector.is_some() && self.wait_delay.is_some() {
+                TERMINAL_WAIT_DESCRIPTION.to_owned()
+            } else if self.inspector.is_some() {
                 TERMINAL_INSPECT_DESCRIPTION.to_owned()
             } else if self.background.is_some() {
                 TERMINAL_BACKGROUND_DESCRIPTION.to_owned()
@@ -2030,12 +2609,17 @@ impl Tool for TerminalTool {
         let parsed = parse_arguments(
             &call.arguments,
             false,
-            self.background.is_some(),
-            self.inspector.is_some(),
+            TerminalActionAvailability {
+                start: self.background.is_some(),
+                inspect: self.inspector.is_some(),
+                wait: self.inspector.is_some() && self.wait_delay.is_some(),
+            },
         )?;
         let canonical = canonical_arguments(&parsed);
         match parsed {
-            TerminalArguments::Inspect { .. } => Ok(PreparedToolCall::without_authority(canonical)),
+            TerminalArguments::Inspect { .. } | TerminalArguments::Wait { .. } => {
+                Ok(PreparedToolCall::without_authority(canonical))
+            }
             TerminalArguments::Command(parsed) => {
                 let environment = match parsed.action {
                     TerminalAction::Exec => ProcessEnvironment {
@@ -2047,7 +2631,9 @@ impl Tool for TerminalTool {
                         checked_background_cwd_length(&background.workspace, &parsed.cwd)?;
                         background.environment.clone()
                     }
-                    TerminalAction::Inspect => return Err(invalid_arguments()),
+                    TerminalAction::Inspect | TerminalAction::Wait => {
+                        return Err(invalid_arguments());
+                    }
                 };
                 Ok(PreparedToolCall::new(
                     Capability::Process {
@@ -2074,8 +2660,11 @@ impl Tool for TerminalTool {
             let parsed = parse_arguments(
                 &arguments,
                 true,
-                self.background.is_some(),
-                self.inspector.is_some(),
+                TerminalActionAvailability {
+                    start: self.background.is_some(),
+                    inspect: self.inspector.is_some(),
+                    wait: self.inspector.is_some() && self.wait_delay.is_some(),
+                },
             )?;
             if canonical_arguments(&parsed) != arguments {
                 return Err(invalid_arguments());
@@ -2083,6 +2672,19 @@ impl Tool for TerminalTool {
             let parsed = match parsed {
                 TerminalArguments::Inspect { background_id } => {
                     return self.execute_inspect(background_id, cancellation).await;
+                }
+                TerminalArguments::Wait {
+                    background_id,
+                    wait_ceiling_ms,
+                } => {
+                    return self
+                        .execute_wait(
+                            background_id,
+                            wait_ceiling_ms,
+                            cancellation,
+                            &MonotonicTerminalWaitClock,
+                        )
+                        .await;
                 }
                 TerminalArguments::Command(parsed) if parsed.action == TerminalAction::Start => {
                     return self.execute_background(parsed, cancellation).await;
@@ -3087,6 +3689,33 @@ fn background_inspection_invariant() -> ToolError {
     )
 }
 
+fn wait_busy() -> ToolError {
+    fixed_tool_error(
+        ToolErrorKind::Unavailable,
+        "terminal_wait_busy",
+        "terminal background wait capacity is busy",
+        true,
+    )
+}
+
+fn wait_unavailable() -> ToolError {
+    fixed_tool_error(
+        ToolErrorKind::Unavailable,
+        "terminal_wait_unavailable",
+        "terminal background wait is unavailable",
+        true,
+    )
+}
+
+fn background_wait_lost() -> ToolError {
+    fixed_tool_error(
+        ToolErrorKind::Execution,
+        "terminal_background_lost",
+        "terminal background process outcome is unavailable",
+        false,
+    )
+}
+
 fn unsupported_platform() -> ToolError {
     fixed_tool_error(
         ToolErrorKind::Unavailable,
@@ -3135,16 +3764,22 @@ fn fixed_tool_error(
 #[cfg(test)]
 mod tests {
     use super::{
-        ActivityNotifier, DeadlineTimer, ExecutionActivity, ExecutionCause,
+        ActivityNotifier, BackgroundWaitPoll, DeadlineTimer, ExecutionActivity, ExecutionCause,
         MAX_TERMINAL_PRODUCED_OUTPUT_BYTES, TERMINAL_DEFAULT_MAX_ACTIVE_EXECUTIONS,
         TERMINAL_DEFAULT_TIMEOUT, TERMINAL_MAX_ACTIVE_EXECUTIONS, TERMINAL_MAX_TIMEOUT,
-        TerminalCapturedOutput, TerminalExecution, TerminalExecutionOutcome,
-        TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError,
-        TerminalExecutorErrorKind, TerminalLimits, TerminalTool, await_executor, validate_cwd,
+        TERMINAL_MAX_WAIT_OBSERVATIONS, TerminalBackgroundInspector, TerminalBackgroundWaitDelay,
+        TerminalBackgroundWaitDelayError, TerminalCapturedOutput, TerminalExecution,
+        TerminalExecutionOutcome, TerminalExecutionRequest, TerminalExecutionStatus,
+        TerminalExecutor, TerminalExecutorError, TerminalExecutorErrorKind, TerminalLimits,
+        TerminalTool, TerminalWaitClock, await_background_wait_delay,
+        await_background_wait_inspection, await_executor, validate_cwd,
+    };
+    use crate::background_inspection::{
+        NativeBackgroundDetail, NativeBackgroundInspectionError, NativeBackgroundState,
     };
     use machine_god_core::{
-        CancellationToken, SessionId, SessionIncarnationId, Tool, ToolCallId, ToolContext,
-        ToolErrorKind, TurnId,
+        BoxFuture, CancellationToken, SessionId, SessionIncarnationId, Tool, ToolCallId,
+        ToolContext, ToolErrorKind, TurnId,
     };
     use serde_json::json;
     use std::future::Future;
@@ -3156,6 +3791,1349 @@ mod tests {
 
     fn empty_capture() -> TerminalCapturedOutput {
         TerminalCapturedOutput::new(Vec::new(), 0).unwrap()
+    }
+
+    struct AdvancingTerminalWaitClock {
+        now: Mutex<Instant>,
+    }
+
+    impl AdvancingTerminalWaitClock {
+        fn new(now: Instant) -> Self {
+            Self {
+                now: Mutex::new(now),
+            }
+        }
+
+        fn advance_to(&self, deadline: Instant) {
+            let mut now = self
+                .now
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            assert!(deadline >= *now, "test clock must remain monotonic");
+            *now = deadline;
+        }
+
+        fn advance_by(&self, duration: Duration) {
+            let mut now = self
+                .now
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *now = now.checked_add(duration).expect("test clock remains valid");
+        }
+    }
+
+    impl TerminalWaitClock for AdvancingTerminalWaitClock {
+        fn now(&self) -> Instant {
+            *self
+                .now
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        }
+    }
+
+    struct ImmediateAdvancingWaitDelay {
+        clock: Arc<AdvancingTerminalWaitClock>,
+        constructions: AtomicUsize,
+        calls: AtomicUsize,
+    }
+
+    impl TerminalBackgroundWaitDelay for ImmediateAdvancingWaitDelay {
+        fn wait_until(
+            &self,
+            deadline: Instant,
+        ) -> BoxFuture<'_, Result<(), TerminalBackgroundWaitDelayError>> {
+            self.constructions.fetch_add(1, Ordering::AcqRel);
+            let clock = Arc::clone(&self.clock);
+            let calls = &self.calls;
+            Box::pin(async move {
+                calls.fetch_add(1, Ordering::AcqRel);
+                clock.advance_to(deadline);
+                Ok(())
+            })
+        }
+    }
+
+    struct DeadlineOnSecondReadClock {
+        base: Instant,
+        reads: AtomicUsize,
+    }
+
+    impl TerminalWaitClock for DeadlineOnSecondReadClock {
+        fn now(&self) -> Instant {
+            if self.reads.fetch_add(1, Ordering::AcqRel) == 0 {
+                self.base
+            } else {
+                self.base + Duration::from_millis(1)
+            }
+        }
+    }
+
+    struct ProbeInspection {
+        background_id: u64,
+        state: NativeBackgroundState,
+        exit_code: Option<i32>,
+        polls: Arc<AtomicUsize>,
+        drops: Arc<AtomicUsize>,
+    }
+
+    impl Future for ProbeInspection {
+        type Output = Result<NativeBackgroundDetail, NativeBackgroundInspectionError>;
+
+        fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+            self.polls.fetch_add(1, Ordering::AcqRel);
+            Poll::Ready(NativeBackgroundDetail::new(
+                self.background_id,
+                self.state,
+                10,
+                20,
+                Some(1_234),
+                "private command".to_owned(),
+                "/private/workspace".to_owned(),
+                self.exit_code,
+                None,
+                None,
+            ))
+        }
+    }
+
+    impl Drop for ProbeInspection {
+        fn drop(&mut self) {
+            self.drops.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    struct PendingProbeInspection {
+        clock: Option<Arc<AdvancingTerminalWaitClock>>,
+        advance_to: Option<Instant>,
+        polls: Arc<AtomicUsize>,
+        drops: Arc<AtomicUsize>,
+    }
+
+    impl Future for PendingProbeInspection {
+        type Output = Result<NativeBackgroundDetail, NativeBackgroundInspectionError>;
+
+        fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+            self.polls.fetch_add(1, Ordering::AcqRel);
+            if let (Some(clock), Some(advance_to)) = (&self.clock, self.advance_to) {
+                clock.advance_to(advance_to);
+            }
+            Poll::Pending
+        }
+    }
+
+    impl Drop for PendingProbeInspection {
+        fn drop(&mut self) {
+            self.drops.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    struct CancellingReadyInspection {
+        cancellation: CancellationToken,
+        detail: Option<NativeBackgroundDetail>,
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl Future for CancellingReadyInspection {
+        type Output = Result<NativeBackgroundDetail, NativeBackgroundInspectionError>;
+
+        fn poll(mut self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+            Poll::Ready(Ok(self.detail.take().expect("inspection is polled once")))
+        }
+    }
+
+    impl Drop for CancellingReadyInspection {
+        fn drop(&mut self) {
+            let _ = self.cancellation.cancel();
+            self.dropped.store(true, Ordering::Release);
+        }
+    }
+
+    struct ProbeInspector {
+        clock: Option<Arc<AdvancingTerminalWaitClock>>,
+        advance_once: AtomicBool,
+        advance_by: Duration,
+        state: NativeBackgroundState,
+        exit_code: Option<i32>,
+        constructions: Arc<AtomicUsize>,
+        polls: Arc<AtomicUsize>,
+        drops: Arc<AtomicUsize>,
+    }
+
+    impl ProbeInspector {
+        fn exited() -> Self {
+            Self {
+                clock: None,
+                advance_once: AtomicBool::new(false),
+                advance_by: Duration::ZERO,
+                state: NativeBackgroundState::Exited,
+                exit_code: Some(0),
+                constructions: Arc::new(AtomicUsize::new(0)),
+                polls: Arc::new(AtomicUsize::new(0)),
+                drops: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+    }
+
+    impl TerminalBackgroundInspector for ProbeInspector {
+        fn inspect(
+            &self,
+            background_id: u64,
+            _cancellation: CancellationToken,
+        ) -> BoxFuture<'static, Result<NativeBackgroundDetail, NativeBackgroundInspectionError>>
+        {
+            self.constructions.fetch_add(1, Ordering::AcqRel);
+            if self.advance_once.swap(false, Ordering::AcqRel) {
+                self.clock
+                    .as_ref()
+                    .expect("advancing probe has a clock")
+                    .advance_by(self.advance_by);
+            }
+            Box::pin(ProbeInspection {
+                background_id,
+                state: self.state,
+                exit_code: self.exit_code,
+                polls: Arc::clone(&self.polls),
+                drops: Arc::clone(&self.drops),
+            })
+        }
+    }
+
+    struct ProbeDelayFuture {
+        result: Result<(), TerminalBackgroundWaitDelayError>,
+        polls: Arc<AtomicUsize>,
+        drops: Arc<AtomicUsize>,
+        cancel_on_drop: Option<CancellationToken>,
+    }
+
+    impl Future for ProbeDelayFuture {
+        type Output = Result<(), TerminalBackgroundWaitDelayError>;
+
+        fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+            self.polls.fetch_add(1, Ordering::AcqRel);
+            Poll::Ready(self.result)
+        }
+    }
+
+    impl Drop for ProbeDelayFuture {
+        fn drop(&mut self) {
+            if let Some(cancellation) = self.cancel_on_drop.as_ref() {
+                let _ = cancellation.cancel();
+            }
+            self.drops.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    struct ConstructionAdvancingDelay {
+        clock: Arc<AdvancingTerminalWaitClock>,
+        advance_to: Instant,
+        constructions: AtomicUsize,
+        advance_on_construction: usize,
+        polls: Arc<AtomicUsize>,
+        drops: Arc<AtomicUsize>,
+    }
+
+    struct ProbeWaitDelay {
+        result: Result<(), TerminalBackgroundWaitDelayError>,
+        polls: Arc<AtomicUsize>,
+        drops: Arc<AtomicUsize>,
+        cancel_on_drop: Option<CancellationToken>,
+    }
+
+    impl TerminalBackgroundWaitDelay for ProbeWaitDelay {
+        fn wait_until(
+            &self,
+            _deadline: Instant,
+        ) -> BoxFuture<'_, Result<(), TerminalBackgroundWaitDelayError>> {
+            Box::pin(ProbeDelayFuture {
+                result: self.result,
+                polls: Arc::clone(&self.polls),
+                drops: Arc::clone(&self.drops),
+                cancel_on_drop: self.cancel_on_drop.clone(),
+            })
+        }
+    }
+
+    struct SequencedWaitDelay {
+        clock: Arc<AdvancingTerminalWaitClock>,
+        constructions: Arc<AtomicUsize>,
+        polls: Arc<AtomicUsize>,
+        drops: Arc<AtomicUsize>,
+        live: Arc<AtomicUsize>,
+        maximum_live: Arc<AtomicUsize>,
+    }
+
+    struct SequencedWaitFuture {
+        ordinal: usize,
+        requested: Instant,
+        clock: Arc<AdvancingTerminalWaitClock>,
+        polls: Arc<AtomicUsize>,
+        drops: Arc<AtomicUsize>,
+        live: Arc<AtomicUsize>,
+    }
+
+    impl Future for SequencedWaitFuture {
+        type Output = Result<(), TerminalBackgroundWaitDelayError>;
+
+        fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+            self.polls.fetch_add(1, Ordering::AcqRel);
+            if self.ordinal == 0 {
+                self.clock.advance_to(self.requested);
+                Poll::Ready(Ok(()))
+            } else {
+                Poll::Pending
+            }
+        }
+    }
+
+    impl Drop for SequencedWaitFuture {
+        fn drop(&mut self) {
+            self.drops.fetch_add(1, Ordering::AcqRel);
+            self.live.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+
+    impl TerminalBackgroundWaitDelay for SequencedWaitDelay {
+        fn wait_until(
+            &self,
+            requested: Instant,
+        ) -> BoxFuture<'_, Result<(), TerminalBackgroundWaitDelayError>> {
+            let ordinal = self.constructions.fetch_add(1, Ordering::AcqRel);
+            let live = self.live.fetch_add(1, Ordering::AcqRel) + 1;
+            self.maximum_live.fetch_max(live, Ordering::AcqRel);
+            Box::pin(SequencedWaitFuture {
+                ordinal,
+                requested,
+                clock: Arc::clone(&self.clock),
+                polls: Arc::clone(&self.polls),
+                drops: Arc::clone(&self.drops),
+                live: Arc::clone(&self.live),
+            })
+        }
+    }
+
+    struct ManualWakeWaitDelay {
+        state: Arc<Mutex<ManualWakeWaitState>>,
+        clock: Arc<AdvancingTerminalWaitClock>,
+        constructions: Arc<AtomicUsize>,
+    }
+
+    struct ManualWakeWaitState {
+        requested: Option<Instant>,
+        ready: bool,
+        waker: Option<Waker>,
+        polls: usize,
+        dropped: bool,
+    }
+
+    struct ManualWakeWaitFuture {
+        state: Arc<Mutex<ManualWakeWaitState>>,
+    }
+
+    impl ManualWakeWaitDelay {
+        fn fire(&self) -> bool {
+            let (requested, waker) = {
+                let mut state = self
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                state.ready = true;
+                (state.requested, state.waker.take())
+            };
+            self.clock
+                .advance_to(requested.expect("the absolute timer was constructed"));
+            let Some(waker) = waker else {
+                return false;
+            };
+            waker.wake();
+            true
+        }
+    }
+
+    impl Future for ManualWakeWaitFuture {
+        type Output = Result<(), TerminalBackgroundWaitDelayError>;
+
+        fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+            let replacement = context.waker().clone();
+            let replaced = {
+                let mut state = self
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                state.polls += 1;
+                if state.ready {
+                    return Poll::Ready(Ok(()));
+                }
+                state.waker.replace(replacement)
+            };
+            drop(replaced);
+            Poll::Pending
+        }
+    }
+
+    impl Drop for ManualWakeWaitFuture {
+        fn drop(&mut self) {
+            let retained_waker = {
+                let mut state = self
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                state.dropped = true;
+                state.waker.take()
+            };
+            drop(retained_waker);
+        }
+    }
+
+    impl TerminalBackgroundWaitDelay for ManualWakeWaitDelay {
+        fn wait_until(
+            &self,
+            requested: Instant,
+        ) -> BoxFuture<'_, Result<(), TerminalBackgroundWaitDelayError>> {
+            self.constructions.fetch_add(1, Ordering::AcqRel);
+            self.state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .requested = Some(requested);
+            Box::pin(ManualWakeWaitFuture {
+                state: Arc::clone(&self.state),
+            })
+        }
+    }
+
+    struct PendingProbeInspector {
+        polls: Arc<AtomicUsize>,
+        drops: Arc<AtomicUsize>,
+    }
+
+    impl TerminalBackgroundInspector for PendingProbeInspector {
+        fn inspect(
+            &self,
+            _background_id: u64,
+            _cancellation: CancellationToken,
+        ) -> BoxFuture<'static, Result<NativeBackgroundDetail, NativeBackgroundInspectionError>>
+        {
+            Box::pin(PendingProbeInspection {
+                clock: None,
+                advance_to: None,
+                polls: Arc::clone(&self.polls),
+                drops: Arc::clone(&self.drops),
+            })
+        }
+    }
+
+    struct WakeCounter(AtomicUsize);
+
+    impl Wake for WakeCounter {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::AcqRel);
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    impl TerminalBackgroundWaitDelay for ConstructionAdvancingDelay {
+        fn wait_until(
+            &self,
+            _deadline: Instant,
+        ) -> BoxFuture<'_, Result<(), TerminalBackgroundWaitDelayError>> {
+            if self.constructions.fetch_add(1, Ordering::AcqRel) == self.advance_on_construction {
+                self.clock.advance_to(self.advance_to);
+            }
+            Box::pin(ProbeDelayFuture {
+                result: Ok(()),
+                polls: Arc::clone(&self.polls),
+                drops: Arc::clone(&self.drops),
+                cancel_on_drop: None,
+            })
+        }
+    }
+
+    struct ReadyBeforeDropDelay {
+        polls: Arc<AtomicUsize>,
+        drops: Arc<AtomicUsize>,
+        drop_gate: Arc<BlockingDropGate>,
+    }
+
+    struct BlockingDropGate {
+        state: Mutex<BlockingDropState>,
+        changed: Condvar,
+    }
+
+    struct BlockingDropState {
+        entered: bool,
+        released: bool,
+    }
+
+    impl BlockingDropGate {
+        fn new() -> Self {
+            Self {
+                state: Mutex::new(BlockingDropState {
+                    entered: false,
+                    released: false,
+                }),
+                changed: Condvar::new(),
+            }
+        }
+
+        fn block(&self) {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.entered = true;
+            self.changed.notify_all();
+            while !state.released {
+                state = self
+                    .changed
+                    .wait(state)
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+            }
+        }
+
+        fn wait_until_entered(&self) {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            while !state.entered {
+                state = self
+                    .changed
+                    .wait(state)
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+            }
+        }
+
+        fn release(&self) {
+            self.state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .released = true;
+            self.changed.notify_all();
+        }
+    }
+
+    struct BlockingReadyDelayFuture {
+        polls: Arc<AtomicUsize>,
+        drops: Arc<AtomicUsize>,
+        drop_gate: Arc<BlockingDropGate>,
+    }
+
+    impl Future for BlockingReadyDelayFuture {
+        type Output = Result<(), TerminalBackgroundWaitDelayError>;
+
+        fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+            self.polls.fetch_add(1, Ordering::AcqRel);
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    impl Drop for BlockingReadyDelayFuture {
+        fn drop(&mut self) {
+            self.drop_gate.block();
+            self.drops.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    impl TerminalBackgroundWaitDelay for ReadyBeforeDropDelay {
+        fn wait_until(
+            &self,
+            _deadline: Instant,
+        ) -> BoxFuture<'_, Result<(), TerminalBackgroundWaitDelayError>> {
+            Box::pin(BlockingReadyDelayFuture {
+                polls: Arc::clone(&self.polls),
+                drops: Arc::clone(&self.drops),
+                drop_gate: Arc::clone(&self.drop_gate),
+            })
+        }
+    }
+
+    #[cfg(unix)]
+    fn wait_probe_tool(
+        inspector: Arc<dyn TerminalBackgroundInspector>,
+        delay: Arc<dyn TerminalBackgroundWaitDelay>,
+    ) -> TerminalTool {
+        let root = std::env::current_dir().unwrap();
+        let mut tool = TerminalTool::with_executor(
+            &root,
+            Vec::new(),
+            Arc::new(PendingExecutor {
+                dropped: Arc::new(AtomicBool::new(false)),
+            }),
+            TerminalLimits::default(),
+        )
+        .unwrap();
+        tool.inspector = Some(inspector);
+        tool.wait_delay = Some(delay);
+        tool
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn background_wait_checks_first_ceiling_before_constructing_an_observation() {
+        let base = Instant::now();
+        let clock = DeadlineOnSecondReadClock {
+            base,
+            reads: AtomicUsize::new(0),
+        };
+        let inspector = Arc::new(ProbeInspector::exited());
+        let delay = Arc::new(ImmediateAdvancingWaitDelay {
+            clock: Arc::new(AdvancingTerminalWaitClock::new(base)),
+            constructions: AtomicUsize::new(0),
+            calls: AtomicUsize::new(0),
+        });
+        let tool = wait_probe_tool(
+            Arc::clone(&inspector) as Arc<dyn TerminalBackgroundInspector>,
+            delay,
+        );
+
+        let error =
+            futures_executor::block_on(tool.execute_wait(7, 1, CancellationToken::new(), &clock))
+                .unwrap_err();
+
+        assert_eq!(error.code, "terminal_wait_unavailable");
+        assert!(error.retryable);
+        assert_eq!(inspector.constructions.load(Ordering::Acquire), 0);
+        assert_eq!(inspector.polls.load(Ordering::Acquire), 0);
+        assert_eq!(tool.active_waits.load(Ordering::Acquire), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn background_wait_preempts_an_unpolled_first_inspection_and_recovers_its_permit() {
+        let clock = Arc::new(AdvancingTerminalWaitClock::new(Instant::now()));
+        let inspector = Arc::new(ProbeInspector {
+            clock: Some(Arc::clone(&clock)),
+            advance_once: AtomicBool::new(true),
+            advance_by: Duration::from_millis(1),
+            ..ProbeInspector::exited()
+        });
+        let delay = Arc::new(ImmediateAdvancingWaitDelay {
+            clock: Arc::clone(&clock),
+            constructions: AtomicUsize::new(0),
+            calls: AtomicUsize::new(0),
+        });
+        let tool = wait_probe_tool(
+            Arc::clone(&inspector) as Arc<dyn TerminalBackgroundInspector>,
+            delay,
+        );
+
+        let error = futures_executor::block_on(tool.execute_wait(
+            7,
+            1,
+            CancellationToken::new(),
+            clock.as_ref(),
+        ))
+        .unwrap_err();
+        assert_eq!(error.code, "terminal_wait_unavailable");
+        assert!(error.retryable);
+        assert_eq!(inspector.constructions.load(Ordering::Acquire), 1);
+        assert_eq!(inspector.polls.load(Ordering::Acquire), 0);
+        assert_eq!(inspector.drops.load(Ordering::Acquire), 1);
+        assert_eq!(tool.active_waits.load(Ordering::Acquire), 0);
+
+        let recovered = futures_executor::block_on(tool.execute_wait(
+            7,
+            1_000,
+            CancellationToken::new(),
+            clock.as_ref(),
+        ))
+        .unwrap();
+        assert_eq!(recovered.content["outcome"], json!({ "exited": 0 }));
+        assert_eq!(inspector.polls.load(Ordering::Acquire), 1);
+        assert_eq!(inspector.drops.load(Ordering::Acquire), 2);
+        assert_eq!(tool.active_waits.load(Ordering::Acquire), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn background_wait_ceiling_timer_construction_can_expire_before_first_observation() {
+        let base = Instant::now();
+        let clock = Arc::new(AdvancingTerminalWaitClock::new(base));
+        let inspector = Arc::new(ProbeInspector::exited());
+        let delay = Arc::new(ConstructionAdvancingDelay {
+            clock: Arc::clone(&clock),
+            advance_to: base + Duration::from_secs(1),
+            constructions: AtomicUsize::new(0),
+            advance_on_construction: 0,
+            polls: Arc::new(AtomicUsize::new(0)),
+            drops: Arc::new(AtomicUsize::new(0)),
+        });
+        let tool = wait_probe_tool(
+            Arc::clone(&inspector) as Arc<dyn TerminalBackgroundInspector>,
+            Arc::clone(&delay) as Arc<dyn TerminalBackgroundWaitDelay>,
+        );
+
+        let error = futures_executor::block_on(tool.execute_wait(
+            7,
+            1_000,
+            CancellationToken::new(),
+            clock.as_ref(),
+        ))
+        .unwrap_err();
+
+        assert_eq!(error.code, "terminal_wait_unavailable");
+        assert!(error.retryable);
+        assert_eq!(inspector.constructions.load(Ordering::Acquire), 0);
+        assert_eq!(delay.constructions.load(Ordering::Acquire), 1);
+        assert_eq!(delay.polls.load(Ordering::Acquire), 0);
+        assert_eq!(delay.drops.load(Ordering::Acquire), 1);
+        assert_eq!(tool.active_waits.load(Ordering::Acquire), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn background_wait_ceiling_timer_drop_cancellation_overrides_ready_exit() {
+        let clock = Arc::new(AdvancingTerminalWaitClock::new(Instant::now()));
+        let cancellation = CancellationToken::new();
+        let timer_drops = Arc::new(AtomicUsize::new(0));
+        let delay = Arc::new(ProbeWaitDelay {
+            result: Ok(()),
+            polls: Arc::new(AtomicUsize::new(0)),
+            drops: Arc::clone(&timer_drops),
+            cancel_on_drop: Some(cancellation.clone()),
+        });
+        let tool = wait_probe_tool(
+            Arc::new(ProbeInspector::exited()),
+            delay as Arc<dyn TerminalBackgroundWaitDelay>,
+        );
+
+        let error =
+            futures_executor::block_on(tool.execute_wait(7, 1_000, cancellation, clock.as_ref()))
+                .unwrap_err();
+
+        assert_eq!(error.code, "terminal_cancelled");
+        assert_eq!(timer_drops.load(Ordering::Acquire), 1);
+        assert_eq!(tool.active_waits.load(Ordering::Acquire), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn background_wait_preempts_an_unpolled_delay_with_the_prior_snapshot() {
+        let base = Instant::now();
+        let clock = Arc::new(AdvancingTerminalWaitClock::new(base));
+        let mut inspector = ProbeInspector::exited();
+        inspector.state = NativeBackgroundState::Running;
+        inspector.exit_code = None;
+        let inspector = Arc::new(inspector);
+        let delay = Arc::new(ConstructionAdvancingDelay {
+            clock: Arc::clone(&clock),
+            advance_to: base + Duration::from_secs(1),
+            constructions: AtomicUsize::new(0),
+            advance_on_construction: 1,
+            polls: Arc::new(AtomicUsize::new(0)),
+            drops: Arc::new(AtomicUsize::new(0)),
+        });
+        let tool = wait_probe_tool(
+            inspector,
+            Arc::clone(&delay) as Arc<dyn TerminalBackgroundWaitDelay>,
+        );
+
+        let output = futures_executor::block_on(tool.execute_wait(
+            7,
+            1_000,
+            CancellationToken::new(),
+            clock.as_ref(),
+        ))
+        .unwrap();
+
+        assert_eq!(output.content["outcome"], json!({ "safety_ceiling": {} }));
+        assert_eq!(output.content["recorded_state"], "running");
+        assert_eq!(delay.polls.load(Ordering::Acquire), 0);
+        assert_eq!(delay.drops.load(Ordering::Acquire), 2);
+        assert_eq!(tool.active_waits.load(Ordering::Acquire), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn background_wait_absolute_timer_wakes_a_pending_backoff_with_two_timers_maximum() {
+        let base = Instant::now();
+        let clock = Arc::new(AdvancingTerminalWaitClock::new(base));
+        let mut inspector = ProbeInspector::exited();
+        inspector.state = NativeBackgroundState::Running;
+        inspector.exit_code = None;
+        let delay = Arc::new(SequencedWaitDelay {
+            clock: Arc::clone(&clock),
+            constructions: Arc::new(AtomicUsize::new(0)),
+            polls: Arc::new(AtomicUsize::new(0)),
+            drops: Arc::new(AtomicUsize::new(0)),
+            live: Arc::new(AtomicUsize::new(0)),
+            maximum_live: Arc::new(AtomicUsize::new(0)),
+        });
+        let tool = wait_probe_tool(
+            Arc::new(inspector),
+            Arc::clone(&delay) as Arc<dyn TerminalBackgroundWaitDelay>,
+        );
+
+        let output = futures_executor::block_on(tool.execute_wait(
+            7,
+            1_000,
+            CancellationToken::new(),
+            clock.as_ref(),
+        ))
+        .unwrap();
+
+        assert_eq!(output.content["outcome"], json!({ "safety_ceiling": {} }));
+        assert_eq!(output.content["recorded_state"], "running");
+        assert_eq!(delay.constructions.load(Ordering::Acquire), 2);
+        assert_eq!(delay.polls.load(Ordering::Acquire), 2);
+        assert_eq!(delay.drops.load(Ordering::Acquire), 2);
+        assert_eq!(delay.maximum_live.load(Ordering::Acquire), 2);
+        assert_eq!(delay.live.load(Ordering::Acquire), 0);
+        assert_eq!(tool.active_waits.load(Ordering::Acquire), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn background_wait_samples_ready_delay_before_its_blocking_drop() {
+        let base = Instant::now();
+        let clock = Arc::new(AdvancingTerminalWaitClock::new(base));
+        let mut inspector = ProbeInspector::exited();
+        inspector.state = NativeBackgroundState::Running;
+        inspector.exit_code = None;
+        let drop_gate = Arc::new(BlockingDropGate::new());
+        let delay = Arc::new(ReadyBeforeDropDelay {
+            polls: Arc::new(AtomicUsize::new(0)),
+            drops: Arc::new(AtomicUsize::new(0)),
+            drop_gate: Arc::clone(&drop_gate),
+        });
+        let tool = wait_probe_tool(
+            Arc::new(inspector),
+            Arc::clone(&delay) as Arc<dyn TerminalBackgroundWaitDelay>,
+        );
+        let release_clock = Arc::clone(&clock);
+        let release_gate = Arc::clone(&drop_gate);
+        let release = std::thread::spawn(move || {
+            release_gate.wait_until_entered();
+            release_clock.advance_to(base + Duration::from_millis(16));
+            release_gate.release();
+        });
+
+        let error = futures_executor::block_on(tool.execute_wait(
+            7,
+            1_000,
+            CancellationToken::new(),
+            clock.as_ref(),
+        ))
+        .unwrap_err();
+        release.join().unwrap();
+
+        assert_eq!(error.code, "terminal_wait_unavailable");
+        assert!(error.retryable);
+        assert_eq!(delay.polls.load(Ordering::Acquire), 1);
+        assert_eq!(delay.drops.load(Ordering::Acquire), 2);
+        assert_eq!(tool.active_waits.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn background_wait_delay_teardown_cancellation_precedes_delay_error() {
+        let clock = Arc::new(AdvancingTerminalWaitClock::new(Instant::now()));
+        let requested = clock.now() + Duration::from_millis(16);
+        let deadline = clock.now() + Duration::from_secs(1);
+        let cancellation = CancellationToken::new();
+        let drops = Arc::new(AtomicUsize::new(0));
+        let future = Box::pin(ProbeDelayFuture {
+            result: Err(TerminalBackgroundWaitDelayError::new()),
+            polls: Arc::new(AtomicUsize::new(0)),
+            drops: Arc::clone(&drops),
+            cancel_on_drop: Some(cancellation.clone()),
+        });
+        let mut ceiling: BoxFuture<'_, Result<(), TerminalBackgroundWaitDelayError>> =
+            Box::pin(ProbeDelayFuture {
+                result: Ok(()),
+                polls: Arc::new(AtomicUsize::new(0)),
+                drops: Arc::new(AtomicUsize::new(0)),
+                cancel_on_drop: None,
+            });
+
+        let error = futures_executor::block_on(await_background_wait_delay(
+            future,
+            &mut ceiling,
+            requested,
+            deadline,
+            &cancellation,
+            clock.as_ref(),
+        ))
+        .unwrap_err();
+
+        assert_eq!(error.code, "terminal_cancelled");
+        assert_eq!(drops.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn background_wait_inspection_teardown_cancellation_precedes_ready_detail() {
+        let clock = Arc::new(AdvancingTerminalWaitClock::new(Instant::now()));
+        let deadline = clock.now() + Duration::from_secs(1);
+        let cancellation = CancellationToken::new();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let delay = ImmediateAdvancingWaitDelay {
+            clock: Arc::clone(&clock),
+            constructions: AtomicUsize::new(0),
+            calls: AtomicUsize::new(0),
+        };
+        let mut ceiling = delay.wait_until(deadline);
+        let future = Box::pin(CancellingReadyInspection {
+            cancellation: cancellation.clone(),
+            detail: Some(
+                NativeBackgroundDetail::new(
+                    7,
+                    NativeBackgroundState::Exited,
+                    10,
+                    20,
+                    Some(1_234),
+                    "private command".to_owned(),
+                    "/private/workspace".to_owned(),
+                    Some(0),
+                    None,
+                    None,
+                )
+                .unwrap(),
+            ),
+            dropped: Arc::clone(&dropped),
+        });
+
+        let error = futures_executor::block_on(await_background_wait_inspection(
+            future,
+            &mut ceiling,
+            deadline,
+            &cancellation,
+            clock.as_ref(),
+        ))
+        .unwrap_err();
+
+        assert_eq!(error.code, "terminal_cancelled");
+        assert!(dropped.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn background_wait_pending_inspection_is_woken_by_its_ceiling_timer() {
+        let base = Instant::now();
+        let clock = Arc::new(AdvancingTerminalWaitClock::new(base));
+        let deadline = base + Duration::from_secs(1);
+        let cancellation = CancellationToken::new();
+        let inspection_polls = Arc::new(AtomicUsize::new(0));
+        let inspection_drops = Arc::new(AtomicUsize::new(0));
+        let delay = ImmediateAdvancingWaitDelay {
+            clock: Arc::clone(&clock),
+            constructions: AtomicUsize::new(0),
+            calls: AtomicUsize::new(0),
+        };
+        let mut ceiling = delay.wait_until(deadline);
+
+        let outcome = futures_executor::block_on(await_background_wait_inspection(
+            Box::pin(PendingProbeInspection {
+                clock: None,
+                advance_to: None,
+                polls: Arc::clone(&inspection_polls),
+                drops: Arc::clone(&inspection_drops),
+            }),
+            &mut ceiling,
+            deadline,
+            &cancellation,
+            clock.as_ref(),
+        ))
+        .unwrap();
+
+        assert_eq!(outcome, BackgroundWaitPoll::Ceiling);
+        assert_eq!(inspection_polls.load(Ordering::Acquire), 1);
+        assert_eq!(inspection_drops.load(Ordering::Acquire), 1);
+        assert_eq!(delay.calls.load(Ordering::Acquire), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn background_wait_absolute_timer_replaces_and_delivers_its_async_waker() {
+        let base = Instant::now();
+        let clock = Arc::new(AdvancingTerminalWaitClock::new(base));
+        let timer_state = Arc::new(Mutex::new(ManualWakeWaitState {
+            requested: None,
+            ready: false,
+            waker: None,
+            polls: 0,
+            dropped: false,
+        }));
+        let delay = Arc::new(ManualWakeWaitDelay {
+            state: Arc::clone(&timer_state),
+            clock: Arc::clone(&clock),
+            constructions: Arc::new(AtomicUsize::new(0)),
+        });
+        let inspection_polls = Arc::new(AtomicUsize::new(0));
+        let inspection_drops = Arc::new(AtomicUsize::new(0));
+        let tool = wait_probe_tool(
+            Arc::new(PendingProbeInspector {
+                polls: Arc::clone(&inspection_polls),
+                drops: Arc::clone(&inspection_drops),
+            }),
+            Arc::clone(&delay) as Arc<dyn TerminalBackgroundWaitDelay>,
+        );
+        let mut waiting =
+            Box::pin(tool.execute_wait(7, 1_000, CancellationToken::new(), clock.as_ref()));
+        let first_target = Arc::new(WakeCounter(AtomicUsize::new(0)));
+        let first_waker = Waker::from(Arc::clone(&first_target));
+        let mut first_context = Context::from_waker(&first_waker);
+        assert!(waiting.as_mut().poll(&mut first_context).is_pending());
+
+        let replacement_target = Arc::new(WakeCounter(AtomicUsize::new(0)));
+        let replacement_waker = Waker::from(Arc::clone(&replacement_target));
+        let mut replacement_context = Context::from_waker(&replacement_waker);
+        assert!(waiting.as_mut().poll(&mut replacement_context).is_pending());
+        assert_eq!(delay.constructions.load(Ordering::Acquire), 1);
+        assert_eq!(inspection_polls.load(Ordering::Acquire), 2);
+        {
+            let state = timer_state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            assert_eq!(state.polls, 2);
+            assert!(state.waker.is_some());
+            assert!(!state.dropped);
+        }
+
+        assert!(delay.fire());
+        assert_eq!(first_target.0.load(Ordering::Acquire), 0);
+        assert_eq!(replacement_target.0.load(Ordering::Acquire), 1);
+        let error = match waiting.as_mut().poll(&mut replacement_context) {
+            Poll::Ready(Err(error)) => error,
+            Poll::Ready(Ok(_)) => panic!("a first-observation ceiling returned output"),
+            Poll::Pending => panic!("the absolute-ceiling wake did not complete the wait"),
+        };
+        assert_eq!(error.code, "terminal_wait_unavailable");
+        assert!(error.retryable);
+        assert_eq!(inspection_drops.load(Ordering::Acquire), 1);
+        {
+            let state = timer_state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            assert!(state.dropped);
+            assert!(state.waker.is_none());
+        }
+        assert!(!delay.fire());
+        assert_eq!(replacement_target.0.load(Ordering::Acquire), 1);
+        assert_eq!(tool.active_waits.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn background_wait_never_polls_ceiling_timer_after_inspection_reaches_deadline() {
+        let base = Instant::now();
+        let clock = Arc::new(AdvancingTerminalWaitClock::new(base));
+        let deadline = base + Duration::from_secs(1);
+        let cancellation = CancellationToken::new();
+        let inspection_polls = Arc::new(AtomicUsize::new(0));
+        let inspection_drops = Arc::new(AtomicUsize::new(0));
+        let timer_polls = Arc::new(AtomicUsize::new(0));
+        let timer_drops = Arc::new(AtomicUsize::new(0));
+        let delay = ProbeWaitDelay {
+            result: Ok(()),
+            polls: Arc::clone(&timer_polls),
+            drops: Arc::clone(&timer_drops),
+            cancel_on_drop: None,
+        };
+        let mut ceiling = delay.wait_until(deadline);
+
+        let outcome = futures_executor::block_on(await_background_wait_inspection(
+            Box::pin(PendingProbeInspection {
+                clock: Some(Arc::clone(&clock)),
+                advance_to: Some(deadline),
+                polls: Arc::clone(&inspection_polls),
+                drops: Arc::clone(&inspection_drops),
+            }),
+            &mut ceiling,
+            deadline,
+            &cancellation,
+            clock.as_ref(),
+        ))
+        .unwrap();
+
+        assert_eq!(outcome, BackgroundWaitPoll::Ceiling);
+        assert_eq!(inspection_polls.load(Ordering::Acquire), 1);
+        assert_eq!(inspection_drops.load(Ordering::Acquire), 1);
+        assert_eq!(timer_polls.load(Ordering::Acquire), 0);
+        drop(ceiling);
+        assert_eq!(timer_drops.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn background_wait_rejects_early_or_failed_inspection_ceiling_timers() {
+        for result in [Ok(()), Err(TerminalBackgroundWaitDelayError::new())] {
+            let clock = Arc::new(AdvancingTerminalWaitClock::new(Instant::now()));
+            let deadline = clock.now() + Duration::from_secs(1);
+            let cancellation = CancellationToken::new();
+            let inspection_drops = Arc::new(AtomicUsize::new(0));
+            let timer_polls = Arc::new(AtomicUsize::new(0));
+            let timer_drops = Arc::new(AtomicUsize::new(0));
+            let delay = ProbeWaitDelay {
+                result,
+                polls: Arc::clone(&timer_polls),
+                drops: Arc::clone(&timer_drops),
+                cancel_on_drop: None,
+            };
+            let mut ceiling = delay.wait_until(deadline);
+
+            let error = futures_executor::block_on(await_background_wait_inspection(
+                Box::pin(PendingProbeInspection {
+                    clock: None,
+                    advance_to: None,
+                    polls: Arc::new(AtomicUsize::new(0)),
+                    drops: Arc::clone(&inspection_drops),
+                }),
+                &mut ceiling,
+                deadline,
+                &cancellation,
+                clock.as_ref(),
+            ))
+            .unwrap_err();
+
+            assert_eq!(error.code, "terminal_wait_unavailable");
+            assert!(error.retryable);
+            drop(ceiling);
+            assert_eq!(inspection_drops.load(Ordering::Acquire), 1);
+            assert_eq!(timer_polls.load(Ordering::Acquire), 1);
+            assert_eq!(timer_drops.load(Ordering::Acquire), 1);
+        }
+    }
+
+    #[test]
+    fn background_wait_ceiling_timer_teardown_cancellation_wins() {
+        let clock = Arc::new(AdvancingTerminalWaitClock::new(Instant::now()));
+        let deadline = clock.now() + Duration::from_secs(1);
+        let cancellation = CancellationToken::new();
+        let inspection_drops = Arc::new(AtomicUsize::new(0));
+        let timer_drops = Arc::new(AtomicUsize::new(0));
+        let delay = ProbeWaitDelay {
+            result: Err(TerminalBackgroundWaitDelayError::new()),
+            polls: Arc::new(AtomicUsize::new(0)),
+            drops: Arc::clone(&timer_drops),
+            cancel_on_drop: Some(cancellation.clone()),
+        };
+        let mut ceiling = delay.wait_until(deadline);
+
+        let result = futures_executor::block_on(await_background_wait_inspection(
+            Box::pin(PendingProbeInspection {
+                clock: None,
+                advance_to: None,
+                polls: Arc::new(AtomicUsize::new(0)),
+                drops: Arc::clone(&inspection_drops),
+            }),
+            &mut ceiling,
+            deadline,
+            &cancellation,
+            clock.as_ref(),
+        ));
+        drop(ceiling);
+        assert!(result.is_err());
+        let error = super::check_cancellation(&cancellation).unwrap_err();
+
+        assert_eq!(error.code, "terminal_cancelled");
+        assert_eq!(inspection_drops.load(Ordering::Acquire), 1);
+        assert_eq!(timer_drops.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn background_wait_samples_early_ceiling_timer_before_blocking_teardown() {
+        let base = Instant::now();
+        let clock = Arc::new(AdvancingTerminalWaitClock::new(base));
+        let deadline = base + Duration::from_secs(1);
+        let cancellation = CancellationToken::new();
+        let drop_gate = Arc::new(BlockingDropGate::new());
+        let delay = ReadyBeforeDropDelay {
+            polls: Arc::new(AtomicUsize::new(0)),
+            drops: Arc::new(AtomicUsize::new(0)),
+            drop_gate: Arc::clone(&drop_gate),
+        };
+        let mut ceiling = delay.wait_until(deadline);
+        let release_clock = Arc::clone(&clock);
+        let release_gate = Arc::clone(&drop_gate);
+        let release = std::thread::spawn(move || {
+            release_gate.wait_until_entered();
+            release_clock.advance_to(deadline);
+            release_gate.release();
+        });
+
+        let error = futures_executor::block_on(await_background_wait_inspection(
+            Box::pin(PendingProbeInspection {
+                clock: None,
+                advance_to: None,
+                polls: Arc::new(AtomicUsize::new(0)),
+                drops: Arc::new(AtomicUsize::new(0)),
+            }),
+            &mut ceiling,
+            deadline,
+            &cancellation,
+            clock.as_ref(),
+        ))
+        .unwrap_err();
+        drop(ceiling);
+        release.join().unwrap();
+
+        assert_eq!(error.code, "terminal_wait_unavailable");
+        assert!(error.retryable);
+        assert_eq!(delay.polls.load(Ordering::Acquire), 1);
+        assert_eq!(delay.drops.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn background_wait_samples_ready_inspection_before_blocking_timer_teardown() {
+        let base = Instant::now();
+        let clock = Arc::new(AdvancingTerminalWaitClock::new(base));
+        let deadline = base + Duration::from_secs(1);
+        let cancellation = CancellationToken::new();
+        let inspection_drops = Arc::new(AtomicUsize::new(0));
+        let drop_gate = Arc::new(BlockingDropGate::new());
+        let delay = ReadyBeforeDropDelay {
+            polls: Arc::new(AtomicUsize::new(0)),
+            drops: Arc::new(AtomicUsize::new(0)),
+            drop_gate: Arc::clone(&drop_gate),
+        };
+        let mut ceiling = delay.wait_until(deadline);
+        let release_clock = Arc::clone(&clock);
+        let release_gate = Arc::clone(&drop_gate);
+        let release = std::thread::spawn(move || {
+            release_gate.wait_until_entered();
+            release_clock.advance_to(deadline);
+            release_gate.release();
+        });
+
+        let outcome = futures_executor::block_on(await_background_wait_inspection(
+            Box::pin(ProbeInspection {
+                background_id: 7,
+                state: NativeBackgroundState::Exited,
+                exit_code: Some(0),
+                polls: Arc::new(AtomicUsize::new(0)),
+                drops: Arc::clone(&inspection_drops),
+            }),
+            &mut ceiling,
+            deadline,
+            &cancellation,
+            clock.as_ref(),
+        ))
+        .unwrap();
+        drop(ceiling);
+        release.join().unwrap();
+
+        let BackgroundWaitPoll::Ready((detail, completed_at)) = outcome else {
+            panic!("ready inspection was replaced by its teardown time");
+        };
+        assert_eq!(detail.unwrap().id(), 7);
+        assert_eq!(completed_at, base);
+        assert_eq!(inspection_drops.load(Ordering::Acquire), 1);
+        assert_eq!(delay.polls.load(Ordering::Acquire), 0);
+        assert_eq!(delay.drops.load(Ordering::Acquire), 1);
+    }
+
+    struct CappedRunningInspector {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl TerminalBackgroundInspector for CappedRunningInspector {
+        fn inspect(
+            &self,
+            background_id: u64,
+            _cancellation: CancellationToken,
+        ) -> BoxFuture<'static, Result<NativeBackgroundDetail, NativeBackgroundInspectionError>>
+        {
+            let calls = Arc::clone(&self.calls);
+            Box::pin(async move {
+                let observation = calls.fetch_add(1, Ordering::AcqRel);
+                let (state, exit_code) = if observation < TERMINAL_MAX_WAIT_OBSERVATIONS {
+                    (NativeBackgroundState::Running, None)
+                } else {
+                    (NativeBackgroundState::Exited, Some(0))
+                };
+                NativeBackgroundDetail::new(
+                    background_id,
+                    state,
+                    10,
+                    20 + u64::try_from(observation).unwrap(),
+                    Some(1_234),
+                    "x".repeat(32 * 1_024),
+                    "/".to_owned(),
+                    exit_code,
+                    None,
+                    Some("d".repeat(4 * 1_024)),
+                )
+            })
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn background_wait_cap_is_end_to_end_bounded_and_retains_only_a_compact_snapshot() {
+        let clock = Arc::new(AdvancingTerminalWaitClock::new(Instant::now()));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let inspector = Arc::new(CappedRunningInspector {
+            calls: Arc::clone(&calls),
+        });
+        let delay = Arc::new(ImmediateAdvancingWaitDelay {
+            clock: Arc::clone(&clock),
+            constructions: AtomicUsize::new(0),
+            calls: AtomicUsize::new(0),
+        });
+        let root = std::env::current_dir().unwrap();
+        let mut tool = TerminalTool::with_executor(
+            &root,
+            Vec::new(),
+            Arc::new(PendingExecutor {
+                dropped: Arc::new(AtomicBool::new(false)),
+            }),
+            TerminalLimits::default(),
+        )
+        .unwrap();
+        tool.inspector = Some(inspector);
+        tool.wait_delay = Some(Arc::clone(&delay) as Arc<dyn TerminalBackgroundWaitDelay>);
+
+        let mut capped = None;
+        let allocations = allocation_counter::measure(|| {
+            capped = Some(futures_executor::block_on(tool.execute_wait(
+                7,
+                60_000,
+                CancellationToken::new(),
+                clock.as_ref(),
+            )));
+        });
+        let capped = capped.unwrap().unwrap();
+        assert_eq!(
+            capped.content,
+            json!({
+                "action": "wait",
+                "background_id": 7,
+                "outcome": { "safety_ceiling": {} },
+                "recorded_state": "running",
+                "started_at_ms": 10,
+                "updated_at_ms": 147,
+                "pid": 1234,
+                "exit_code": null
+            })
+        );
+        assert_eq!(
+            calls.load(Ordering::Acquire),
+            TERMINAL_MAX_WAIT_OBSERVATIONS
+        );
+        assert_eq!(delay.constructions.load(Ordering::Acquire), 128);
+        assert_eq!(delay.calls.load(Ordering::Acquire), 127);
+        assert_eq!(tool.active_waits.load(Ordering::Acquire), 0);
+
+        let minimum_detail_bytes = TERMINAL_MAX_WAIT_OBSERVATIONS * (32 * 1_024 + 4 * 1_024);
+        assert!(allocations.bytes_total >= u64::try_from(minimum_detail_bytes).unwrap());
+        assert!(
+            allocations.bytes_max < 512 * 1_024,
+            "large persisted details accumulated across observations: {allocations:?}"
+        );
+
+        let recovered = futures_executor::block_on(tool.execute_wait(
+            7,
+            60_000,
+            CancellationToken::new(),
+            clock.as_ref(),
+        ))
+        .unwrap();
+        assert_eq!(recovered.content["outcome"], json!({ "exited": 0 }));
+        assert_eq!(
+            calls.load(Ordering::Acquire),
+            TERMINAL_MAX_WAIT_OBSERVATIONS + 1
+        );
+        assert_eq!(delay.constructions.load(Ordering::Acquire), 129);
+        assert_eq!(delay.calls.load(Ordering::Acquire), 127);
+        assert_eq!(tool.active_waits.load(Ordering::Acquire), 0);
     }
 
     struct BlockingNotifierTarget {

@@ -407,36 +407,54 @@ SSE record.
 
 `TokioWebSearchDeadline` is the native fallible deadline authority used by the
 reference host, including one-shot `ask`. Its sole constructor,
-`build_runtime_pair`, returns an owned `tokio::runtime::Runtime` together with
-an adapter privately bound to that exact runtime. Construction enables the
-current-thread runtime's I/O and time drivers. Construction returns the fixed
-redacted `WebSearchTransportErrorKind::RuntimeRequired` category if runtime
-construction fails; callers cannot bind the adapter to an arbitrary or
+`build_runtime_pair`, returns one lifecycle-aware owner for an exact Tokio
+current-thread runtime together with an adapter privately bound to that owner.
+Construction enables the runtime's I/O and time drivers. Construction returns
+the fixed redacted `WebSearchTransportErrorKind::RuntimeRequired` category if
+runtime construction fails; callers cannot bind the adapter to an arbitrary or
 driverless runtime.
 
-The host owns and drives the returned runtime. The adapter retains that
-runtime's handle and identity but does not own or retain the runtime itself.
-`wait_until` only captures the requested absolute `std::time::Instant`; it reads
-no current handle, registers no timer, and remains inert until first poll. On
-first poll it requires the exact paired runtime to be current, then schedules
-one task on that retained handle. The task captures only the absolute instant;
-Tokio constructs and polls its sleep only when the proven time-enabled runtime
-drives the task. Runtime shutdown racing task submission either cancels the
-task before timer construction or shuts down a timer already owned by that
-runtime. The join failure maps to the same fixed `RuntimeRequired` category.
-Polling without a runtime, through a shut-down paired handle, on a driverless
-runtime, or on any other time-enabled runtime therefore returns
-`RuntimeRequired` without invoking a timer API on that polling executor. This
-path does not catch or otherwise use panic as control flow.
+The host owns and drives the returned runtime owner. Dropping that wrapper is
+the explicit closure boundary: it first closes the shared lifecycle state to
+new timer construction and polling. A poll already admitted to its bounded
+timer critical section may finish, but no later poll is admitted after wrapper
+drop. Only after that admitted poll leaves does the shared lifecycle consume
+the Tokio runtime with its context-safe, zero-duration `shutdown_background`
+path, so runtime shutdown cannot race direct Tokio `Sleep` construction or
+poll and does not block waiting for Tokio's blocking pool. Tokio documents
+that an independently spawned blocking task may continue after this form of
+shutdown; the deadline authority creates no task, blocking work, or such tail.
+The adapter retains only the fixed runtime identity and a weak reference to
+the paired lifecycle state; it cannot keep the runtime open after its owner
+closes.
 
-The returned wait future owns the task's `JoinHandle`. Completing the wait joins
-the task; dropping the wait first aborts it, so the timer is never intentionally
-detached. Cancellation cleanup is completed when the paired runtime is next
-driven or shut down. There is at most one small runtime-owned task per polled
-active wait, and it owns only the Tokio sleep and absolute instant. It captures
-neither the adapter nor the runtime, avoiding a
-runtime-to-task-to-adapter-to-runtime ownership cycle. The adapter spawns no
-thread or independent timer worker.
+`wait_until` captures only the requested absolute `std::time::Instant`; it reads
+no current handle, registers no timer, and remains inert until first poll. On
+first poll it requires the exact paired runtime to be current and live, then
+constructs and polls one Tokio `Sleep` directly inside the lifecycle boundary.
+Every pending poll, including every poll after timer construction, revalidates
+both the open lifecycle and exact current-runtime identity before polling that
+same sleep. Polling without a runtime, after paired-owner closure, on a
+driverless runtime, or on any foreign time-enabled runtime therefore drops any
+owned sleep and returns the fixed `RuntimeRequired` category. No timer poll is
+admitted after the wrapper closes.
+
+When the Tokio sleep reports ready, the waiter captures `std::time::Instant`
+before dropping or replacing the sleep and its retained Waker. That captured
+observation alone decides whether the requested absolute instant was reached;
+time spent in timer or Waker teardown cannot turn an early completion into
+success. An early completion instead returns the same fixed `RuntimeRequired`
+category. These expected failure paths do not panic, invoke the process panic
+hook, or use panic handling as control flow.
+
+The returned wait future directly owns the one Tokio `Sleep`. Successful
+completion consumes that sleep. Dropping a pending or failed wait synchronously
+drops the sleep, deregisters its timer and retained Waker, and returns with no
+cleanup deferred to a later runtime turn. A wait creates no per-wait spawned
+task, detached callback, thread, or timer tail. Runtime closure uses the same
+bounded, context-safe shutdown path whether the wrapper itself or the last
+already-admitted poll performs it. The adapter itself spawns no thread or
+independent timer worker.
 
 ## Deferred scope
 

@@ -1,4 +1,5 @@
 /target/
+/test-support/reentrant-waker/target/
 /.bench/
 /benchmarks/results/
 *.profraw

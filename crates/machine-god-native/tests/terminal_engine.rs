@@ -4,6 +4,7 @@ use std::ffi::OsString;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+use std::time::Instant;
 
 use futures_util::StreamExt;
 use machine_god_core::{
@@ -16,9 +17,10 @@ use machine_god_native::{
     MAX_TERMINAL_CWD_COMPONENT_BYTES, MAX_TERMINAL_CWD_COMPONENTS, NativeBackgroundDetail,
     NativeBackgroundInspectionError, NativeBackgroundState,
     TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TerminalBackgroundInspector,
-    TerminalBackgroundOutcome, TerminalBackgroundStarter, TerminalCapturedOutput,
-    TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest, TerminalExecutionStatus,
-    TerminalExecutor, TerminalLimits, TerminalTool,
+    TerminalBackgroundOutcome, TerminalBackgroundStarter, TerminalBackgroundWaitDelay,
+    TerminalBackgroundWaitDelayError, TerminalCapturedOutput, TerminalExecution,
+    TerminalExecutionOutcome, TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor,
+    TerminalLimits, TerminalTool,
 };
 use machine_god_testkit::{
     InMemorySessionStore, ModelProviderStep, PermissionStep, ScriptedModelProvider,
@@ -174,6 +176,24 @@ impl TerminalBackgroundInspector for FakeBackgroundInspector {
     }
 }
 
+#[derive(Clone, Default)]
+struct UnusedWaitDelay {
+    calls: Arc<AtomicUsize>,
+}
+
+impl TerminalBackgroundWaitDelay for UnusedWaitDelay {
+    fn wait_until(
+        &self,
+        _deadline: Instant,
+    ) -> BoxFuture<'_, Result<(), TerminalBackgroundWaitDelayError>> {
+        let calls = Arc::clone(&self.calls);
+        Box::pin(async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Err(TerminalBackgroundWaitDelayError::new())
+        })
+    }
+}
+
 fn terminal_with_background(
     root: &std::path::Path,
     executor: FakeExecutor,
@@ -220,6 +240,34 @@ fn terminal_with_inspector(
         },
         Arc::new(starter),
         Arc::new(inspector),
+    )
+    .unwrap()
+}
+
+fn terminal_with_wait(
+    root: &std::path::Path,
+    executor: FakeExecutor,
+    starter: FakeBackgroundStarter,
+    inspector: FakeBackgroundInspector,
+    delay: UnusedWaitDelay,
+) -> TerminalTool {
+    TerminalTool::with_executor_background_inspector_and_wait_delay(
+        root,
+        vec![(OsString::from("PATH"), OsString::from("/usr/bin:/bin"))],
+        Arc::new(executor),
+        TerminalLimits::default(),
+        std::fs::canonicalize(root)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned(),
+        ProcessEnvironment {
+            profile: TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE.to_owned(),
+            sha256: "b".repeat(64),
+        },
+        Arc::new(starter),
+        Arc::new(inspector),
+        Arc::new(delay),
     )
     .unwrap()
 }
@@ -613,6 +661,71 @@ fn background_inspect_bypasses_permission_and_persists_compact_record() {
             content: json!({
                 "action": "inspect",
                 "background_id": 17,
+                "recorded_state": "exited",
+                "started_at_ms": 10,
+                "updated_at_ms": 20,
+                "pid": null,
+                "exit_code": 0
+            }),
+            is_error: false,
+        }
+    );
+    assert_eq!(store.record(&session_id).unwrap().messages[2], message);
+}
+
+#[test]
+fn background_wait_bypasses_permission_and_persists_exact_exit_outcome() {
+    let temporary = TemporaryDirectory::new("engine-wait");
+    let arguments = json!({
+        "action": "wait",
+        "background_id": 17,
+        "return_when": { "kind": "exit" },
+        "wait_ceiling_ms": 30_000
+    });
+    let provider = provider_with_arguments("terminal-wait", arguments.clone());
+    let store = InMemorySessionStore::new();
+    let policy = ScriptedPermissionHandler::new([]);
+    let executor = FakeExecutor::default();
+    let starter = FakeBackgroundStarter::default();
+    let inspector = FakeBackgroundInspector::default();
+    let delay = UnusedWaitDelay::default();
+    let tool = terminal_with_wait(
+        temporary.path(),
+        executor.clone(),
+        starter.clone(),
+        inspector.clone(),
+        delay.clone(),
+    );
+    let prepared = tool.prepare(call("terminal", arguments)).unwrap();
+    assert!(prepared.capability().is_none());
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store.clone())
+        .permission_handler(policy.clone())
+        .tool(tool)
+        .build()
+        .unwrap();
+
+    let (session_id, events) = collect(&engine, "terminal-wait-session");
+
+    assert!(policy.requests().is_empty());
+    assert_eq!(inspector.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(delay.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(starter.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event.payload, TurnEvent::ToolStarted { .. }))
+    );
+    let (message, output) = second_request_tool_output(&provider);
+    assert_eq!(
+        output,
+        ToolOutput {
+            content: json!({
+                "action": "wait",
+                "background_id": 17,
+                "outcome": { "exited": 0 },
                 "recorded_state": "exited",
                 "started_at_ms": 10,
                 "updated_at_ms": 20,

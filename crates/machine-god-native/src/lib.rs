@@ -415,8 +415,10 @@ pub use terminal::{
     MAX_TERMINAL_SERIALIZED_ARGUMENT_BYTES, MAX_TERMINAL_SERIALIZED_RESULT_BYTES,
     TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TERMINAL_DEFAULT_MAX_ACTIVE_EXECUTIONS,
     TERMINAL_DEFAULT_TIMEOUT, TERMINAL_ENVIRONMENT_PROFILE, TERMINAL_MAX_ACTIVE_EXECUTIONS,
-    TERMINAL_MAX_TIMEOUT, TERMINAL_PROGRAM, TERMINAL_TOOL_NAME, TerminalBackgroundInspector,
-    TerminalBackgroundOutcome, TerminalBackgroundStarter, TerminalCapturedOutput,
+    TERMINAL_MAX_ACTIVE_WAITS, TERMINAL_MAX_TIMEOUT, TERMINAL_MAX_WAIT_CEILING_MS,
+    TERMINAL_MAX_WAIT_OBSERVATIONS, TERMINAL_PROGRAM, TERMINAL_TOOL_NAME,
+    TerminalBackgroundInspector, TerminalBackgroundOutcome, TerminalBackgroundStarter,
+    TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError, TerminalCapturedOutput,
     TerminalConfigError, TerminalConfigErrorKind, TerminalExecution, TerminalExecutionOutcome,
     TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError,
     TerminalExecutorErrorKind, TerminalLimits, TerminalTool,
@@ -427,7 +429,7 @@ pub use terminal_tape_replay::{
     TerminalTapeReplayOutput, TerminalTapeReplayRequest, replay_terminal_tape,
 };
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
-pub use tokio_web_search_deadline::TokioWebSearchDeadline;
+pub use tokio_web_search_deadline::{TokioWebSearchDeadline, TokioWebSearchRuntime};
 #[cfg(all(feature = "web-fetch-http", not(target_family = "wasm")))]
 pub use web_fetch::{
     MAX_WEB_FETCH_BODY_BYTES, MAX_WEB_FETCH_DNS_ADDRESSES, MAX_WEB_FETCH_MIME_TYPE_BYTES,

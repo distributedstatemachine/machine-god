@@ -6,6 +6,8 @@ rust-version = "1.94.1"
 license = "Apache-2.0"
 publish = false
 
+[workspace]
+
 [lib]
 path = "src/lib.rs"
 

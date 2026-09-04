@@ -390,11 +390,13 @@ process syscall.
 
 ## Deferred surface
 
-The bounded terminal `start` entrypoint and a separate exact persisted-record
-`inspect` entrypoint are delivered. `inspect` does not initialize, call, or
-control this supervisor and makes no liveness claim. Future slices may add
-managed logs and read/wait operations or design an authenticated durable worker
-protocol. Top-level `background` remains inspection-only. Interactive
-input, output streaming, URL detection, persisted-PID signaling, detached
-survival, cross-process stop, crash adoption, setsid containment, and
-fx-equivalence or performance claims remain out of scope.
+The bounded terminal `start` entrypoint and separate exact persisted-record
+`inspect` and `wait` entrypoints are delivered. `inspect` and `wait` do not
+initialize, call, or control this supervisor and make no PID or liveness claim;
+`wait` observes only bounded atomic record replacements through its separately
+injected persisted-history boundary. Future slices may add managed logs and
+read operations or design an authenticated durable worker protocol. Top-level
+`background` remains inspection-only. Interactive input, output streaming, URL
+detection, persisted-PID signaling, detached survival, cross-process stop,
+crash adoption, setsid containment, and fx-equivalence or performance claims
+remain out of scope.

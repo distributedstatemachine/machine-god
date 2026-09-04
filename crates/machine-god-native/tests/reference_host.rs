@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -40,7 +40,8 @@ use machine_god_native::{
     QuestionPromptAnswers, QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest,
     QuestionPrompter, READ_FILE_TOOL_NAME, READ_TOOL_RESULT_TOOL_NAME, RENAME_FILE_TOOL_NAME,
     SEMANTIC_SEARCH_TOOL_NAME, SKILL_TOOL_NAME, TERMINAL_TOOL_NAME, VISION_TOOL_NAME,
-    WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME, WRITE_FILE_TOOL_NAME, load_native_config,
+    WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME, WRITE_FILE_TOOL_NAME, WebSearchDeadline,
+    WebSearchTransportError, load_native_config,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -406,6 +407,28 @@ fn terminal_inspect_round_responses() -> [Vec<u8>; 2] {
     [tool_call, finish]
 }
 
+fn terminal_wait_round_responses(background_id: u64, wait_ceiling_ms: u64) -> [Vec<u8>; 2] {
+    let tool_call = format!(
+        concat!(
+            "data: {{\"type\":\"tool-call\",\"toolCallId\":\"terminal-wait-call\",",
+            "\"toolName\":\"terminal\",\"input\":{{\"action\":\"wait\",",
+            "\"background_id\":{background_id},\"return_when\":{{\"kind\":\"exit\"}},",
+            "\"wait_ceiling_ms\":{wait_ceiling_ms}}}}}\n\n",
+            "data: {{\"type\":\"finish\",\"finishReason\":{{\"unified\":\"tool-calls\"}}}}\n\n"
+        ),
+        background_id = background_id,
+        wait_ceiling_ms = wait_ceiling_ms,
+    )
+    .into_bytes();
+    let finish = concat!(
+        "data: {\"type\":\"text-delta\",\"id\":\"answer\",\"delta\":\"wait complete\"}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    [tool_call, finish]
+}
+
 fn digest_name(prefix: &str, domain: &[u8], value: &[u8], suffix: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(domain);
@@ -467,6 +490,33 @@ fn write_background_record(
     )
     .unwrap();
     fs::set_permissions(record_path, fs::Permissions::from_mode(0o600)).unwrap();
+}
+
+fn read_background_state(state_root: &Path, workspace: &Path, id: u64) -> String {
+    let workspace_text = workspace.to_str().unwrap();
+    let workspace_name = digest_name(
+        "workspace-",
+        b"machine-god:background-workspace:v1:",
+        workspace_text.as_bytes(),
+        "",
+    );
+    let record_name = digest_name(
+        "record-",
+        b"machine-god:background-record:v1:",
+        &id.to_be_bytes(),
+        ".json",
+    );
+    let bytes = fs::read(
+        state_root
+            .join("background-v1")
+            .join(workspace_name)
+            .join(record_name),
+    )
+    .unwrap();
+    serde_json::from_slice::<Value>(&bytes).unwrap()["state"]
+        .as_str()
+        .unwrap()
+        .to_owned()
 }
 
 #[cfg(target_os = "linux")]
@@ -758,6 +808,24 @@ fn compose_with_transport(
     sessions: &Path,
     prompter: AllowingPrompter,
 ) -> Result<NativeReferenceHost, NativeReferenceHostBuildError> {
+    compose_with_transport_and_deadline(
+        loaded,
+        transport,
+        workspace,
+        sessions,
+        prompter,
+        never_deadline(),
+    )
+}
+
+fn compose_with_transport_and_deadline(
+    loaded: LoadedNativeConfig,
+    transport: ScriptedTransport,
+    workspace: &Path,
+    sessions: &Path,
+    prompter: AllowingPrompter,
+    deadline: Arc<dyn WebSearchDeadline>,
+) -> Result<NativeReferenceHost, NativeReferenceHostBuildError> {
     let transport: Arc<dyn AiGatewayTransport> = Arc::new(transport);
     let prompter: Arc<dyn PermissionPrompter> = Arc::new(prompter);
     NativeReferenceHost::compose_with_ai_gateway_transport(
@@ -768,8 +836,30 @@ fn compose_with_transport(
         sessions,
         prompter,
         inert_question_prompter(),
-        never_deadline(),
+        deadline,
     )
+}
+
+#[derive(Clone, Default)]
+struct SleepingDeadline {
+    calls: Arc<AtomicU64>,
+}
+
+impl SleepingDeadline {
+    fn calls(&self) -> u64 {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl WebSearchDeadline for SleepingDeadline {
+    fn wait_until(&self, deadline: Instant) -> BoxFuture<'_, Result<(), WebSearchTransportError>> {
+        let calls = Arc::clone(&self.calls);
+        Box::pin(async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+            Ok(())
+        })
+    }
 }
 
 fn compose_with_transport_and_mcp_catalog(
@@ -975,11 +1065,16 @@ fn assert_exact_native_tool_catalog(request: &Value) {
         .find(|tool| tool["name"] == TERMINAL_TOOL_NAME)
         .expect("terminal tool is registered");
     let forms = terminal["inputSchema"]["oneOf"].as_array().unwrap();
-    assert_eq!(forms.len(), 3);
+    assert_eq!(forms.len(), 4);
     assert_eq!(forms[0]["properties"]["action"]["const"], "exec");
     assert_eq!(forms[1]["properties"]["action"]["const"], "start");
     assert_eq!(forms[2]["properties"]["action"]["const"], "inspect");
     assert_eq!(forms[2]["required"], json!(["action", "background_id"]));
+    assert_eq!(forms[3]["properties"]["action"]["const"], "wait");
+    assert_eq!(
+        forms[3]["required"],
+        json!(["action", "background_id", "return_when", "wait_ceiling_ms"])
+    );
 }
 
 fn assert_exact_native_tool_permissions(prompter: &AllowingPrompter) {
@@ -2194,6 +2289,141 @@ fn composed_terminal_inspect_reads_exact_record_without_permission_or_supervisor
         !body(&requests[1])
             .to_string()
             .contains("PRIVATE_REFERENCE_HOST_COMMAND")
+    );
+}
+
+#[test]
+fn composed_terminal_wait_reads_retained_terminal_record_without_permission_or_supervisor_start() {
+    let temporary = TemporaryDirectory::new("terminal-wait-complete");
+    let (workspace, sessions) = roots(temporary.path());
+    let workspace = fs::canonicalize(workspace).unwrap();
+    write_background_record(
+        &sessions,
+        &workspace,
+        17,
+        20,
+        "exited",
+        None,
+        Some(0),
+        "PRIVATE_WAIT_COMMAND",
+    );
+
+    let transport = ScriptedTransport::new(
+        "TERMINAL_WAIT_FACTORY_SENTINEL",
+        terminal_wait_round_responses(17, 5_000),
+    );
+    let prompter = AllowingPrompter::default();
+    let host = compose_with_transport(
+        built_in_config(),
+        transport.clone(),
+        &workspace,
+        &sessions,
+        prompter.clone(),
+    )
+    .unwrap();
+    let retained_sessions = temporary.path().join("retained-wait-sessions");
+    fs::rename(&sessions, &retained_sessions).unwrap();
+    fs::create_dir(&sessions).unwrap();
+    fs::set_permissions(&sessions, fs::Permissions::from_mode(0o700)).unwrap();
+    write_background_record(
+        &sessions,
+        &workspace,
+        17,
+        30,
+        "failed",
+        Some(999),
+        Some(7),
+        "REPLACEMENT_WAIT_COMMAND",
+    );
+
+    let (_, events) = collect_turn(&host, "composed-terminal-wait-complete");
+
+    assert_completed(&events);
+    assert!(prompter.requests().is_empty());
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    assert_exact_native_tool_catalog(&body(&requests[0]));
+    assert_eq!(
+        decoded_tool_output(&body(&requests[1]), 2),
+        json!({
+            "content": {
+                "action": "wait",
+                "background_id": 17,
+                "outcome": {"exited": 0},
+                "recorded_state": "exited",
+                "started_at_ms": 10,
+                "updated_at_ms": 20,
+                "pid": null,
+                "exit_code": 0
+            },
+            "is_error": false
+        })
+    );
+    let request = body(&requests[1]).to_string();
+    assert!(!request.contains("PRIVATE_WAIT_COMMAND"));
+    assert!(!request.contains("REPLACEMENT_WAIT_COMMAND"));
+}
+
+#[test]
+fn composed_terminal_wait_reaches_safety_ceiling_without_reconciling_running_record() {
+    let temporary = TemporaryDirectory::new("terminal-wait-ceiling");
+    let (workspace, sessions) = roots(temporary.path());
+    let workspace = fs::canonicalize(workspace).unwrap();
+    write_background_record(
+        &sessions,
+        &workspace,
+        18,
+        20,
+        "running",
+        Some(1234),
+        None,
+        "PRIVATE_RUNNING_COMMAND",
+    );
+
+    let transport = ScriptedTransport::new(
+        "TERMINAL_WAIT_CEILING_FACTORY_SENTINEL",
+        terminal_wait_round_responses(18, 50),
+    );
+    let prompter = AllowingPrompter::default();
+    let deadline = SleepingDeadline::default();
+    let host = compose_with_transport_and_deadline(
+        built_in_config(),
+        transport.clone(),
+        &workspace,
+        &sessions,
+        prompter.clone(),
+        Arc::new(deadline.clone()),
+    )
+    .unwrap();
+
+    let (_, events) = collect_turn(&host, "composed-terminal-wait-ceiling");
+
+    assert_completed(&events);
+    assert!(prompter.requests().is_empty());
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        decoded_tool_output(&body(&requests[1]), 2),
+        json!({
+            "content": {
+                "action": "wait",
+                "background_id": 18,
+                "outcome": {"safety_ceiling": {}},
+                "recorded_state": "running",
+                "started_at_ms": 10,
+                "updated_at_ms": 20,
+                "pid": 1234,
+                "exit_code": null
+            },
+            "is_error": false
+        })
+    );
+    assert_eq!(read_background_state(&sessions, &workspace, 18), "running");
+    assert!(deadline.calls() >= 1);
+    assert!(
+        !body(&requests[1])
+            .to_string()
+            .contains("PRIVATE_RUNNING_COMMAND")
     );
 }
 

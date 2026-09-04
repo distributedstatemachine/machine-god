@@ -2,21 +2,25 @@
 
 The native tool executes one bounded foreground shell command, starts one
 noninteractive background shell command after explicit process authorization,
-or reads one exact persisted background record without process authority. It is
-registered by the reference host and has no top-level CLI command.
+or inspects or boundedly waits on one exact persisted background record without
+process authority. It is registered by the reference host and has no top-level
+CLI command.
 
 ## Boundary
 
-The reference-host tool implements the `exec`, bounded `start`, and bounded
-persisted-record `inspect` subsets of
+The reference-host tool implements the `exec`, bounded `start`, bounded
+persisted-record `inspect`, and bounded persisted-record `wait` subsets of
 fx's `terminal` tool. `exec` captures bounded standard output and error and
 waits for the direct child. `start` durably records and releases one
 noninteractive command through the native background supervisor and returns
 its display identity without waiting for command completion. `inspect` reads
 the validated record for that display identity without claiming current
-liveness. Standalone public terminal constructors remain exec-only; injecting
-only a trusted background starter adds only `start`, while `inspect` appears
-only when a trusted inspector is also explicitly injected.
+liveness. `wait` observes bounded atomic replacements of that exact record
+until it contains a supported recorded exit or reaches the requested safety
+ceiling. Standalone public terminal constructors remain exec-only; injecting
+only a trusted background starter adds only `start`, `inspect` appears only
+when a trusted inspector is explicitly injected, and `wait` appears only when
+its separately bounded waiter is also injected.
 
 The model-facing input is:
 
@@ -32,8 +36,21 @@ The model-facing input is:
 `action` and `command` are required for the closed `exec` and `start` forms.
 The reference host also accepts the separate closed form
 `{"action":"inspect","background_id":7}`, where `background_id` is a
-nonzero JSON `u64`. An exec-only construction accepts only `exec`; a
-starter-only construction accepts `exec` and `start`.
+nonzero JSON `u64`, and this exact wait form:
+
+```json
+{
+  "action": "wait",
+  "background_id": 7,
+  "return_when": { "kind": "exit" },
+  "wait_ceiling_ms": 30000
+}
+```
+
+All four wait fields are required. `return_when` accepts exactly the closed
+object shown above, and `wait_ceiling_ms` is an integer from 1 through 30,000.
+An exec-only construction accepts only `exec`; a starter-only construction
+accepts `exec` and `start`.
 `cwd` is optional and defaults to `"."`. `profile` is optional and accepts
 only `"clean"`; omission has the same meaning. Unknown or duplicate fields,
 mistyped values, an empty command, and a command over 32 KiB reject. The
@@ -58,12 +75,12 @@ without constructing the absolute path or a background request.
 The reference-host tool description is:
 
 ```text
-Run a foreground command, start a background command, or inspect one persisted background record
+Run a foreground command, start a background command, inspect one persisted background record, or wait for its recorded exit
 ```
 
 An exec-only construction retains its earlier foreground-only description and
-schema. All forms deliberately exclude `read`, `screen`, `write`, `wait`,
-`monitor`, `list`, `resize`, `signal`, and `close`; PTYs; interactive
+schema. All forms deliberately exclude `read`, `screen`, `write`, `monitor`,
+`list`, `resize`, `signal`, and `close`; PTYs; interactive
 stdin; managed background output; artifacts; custom or login shells; user shell
 profiles; retries; external working directories; and benchmark workloads. They
 make no fx-equivalence or product-performance claim.
@@ -118,9 +135,9 @@ returns those same canonical model arguments. Direct `execute` reparses and
 revalidates all fields and rejects any canonical-argument, program, argument,
 cwd, profile, or digest divergence before filesystem access, worker creation,
 or process spawn. The existing engine presents terminal execution as critical
-risk. Denial has zero terminal-owned effects. `inspect` instead prepares with
-no authority because it can read only through the explicitly injected
-persisted-history boundary; it never requests process permission.
+risk. Denial has zero terminal-owned effects. `inspect` and `wait` instead
+prepare with no authority because they can read only through explicitly
+injected persisted-history boundaries; neither requests process permission.
 
 The capability authorizes a process, not a sandbox. The retained workspace
 descriptor constrains only the child's starting-directory identity. Once
@@ -151,14 +168,16 @@ lookup, environment inspection, thread creation, or spawn.
 Reference-host composition retains the workspace authority and advertises
 `terminal` as defined by the canonical
 [tool catalog](native-reference-host.md#tool-catalog). On macOS, `exec` returns
-its fixed unsupported error after strict preparation and permission. `start`
-and descriptor-confined `inspect` are supported on Linux and macOS. On other
-platforms the complete reference host is unavailable. The exported exec
+its fixed unsupported error after strict preparation and permission. `start`,
+descriptor-confined `inspect`, and persisted-record `wait` are supported on
+Linux and macOS. On other platforms the complete reference host is unavailable.
+The exported exec
 contract remains portable through a trusted injected `TerminalExecutor`, and a
 trusted injected `TerminalBackgroundStarter` may implement the documented
 background ownership contract. A trusted injected
 `TerminalBackgroundInspector` may implement the exact persisted-record read
-contract.
+contract, while a separately injected waiter may implement the bounded
+persisted-record wait contract.
 
 ## Background start protocol
 
@@ -240,6 +259,120 @@ This is intentionally not equivalent to upstream fx interactive-session
 inspection. machine-god's `background_id` identifies one persisted start
 record; it is not a session authority and grants no access to interactive
 terminal state or control.
+
+## Persisted background wait
+
+`wait` accepts exactly `action`, `background_id`, `return_when`, and
+`wait_ceiling_ms` in the closed form shown above. Unknown, omitted, mistyped,
+zero, negative, fractional, or out-of-range values reject. Preparation
+canonicalizes that same object and requests no authority. The action is an
+intentional persisted-background subset: it does not wait on an interactive
+session or an owned process handle and makes no fx-equivalence or performance
+claim.
+
+Execution observes only the exact persisted record selected by
+`background_id`. The first observation is immediate when the ceiling still
+permits it. The ceiling is checked immediately before every observation or
+delay poll, and no such work begins after it has elapsed. If the ceiling
+expires before the first observation begins, there is no snapshot and
+execution returns the fixed retryable `terminal_wait_unavailable` error. While
+an observation is pending, it is raced against one persistent injected timer
+for the absolute ceiling, so an inspector that does not wake itself is still
+dropped when that timer expires. The same absolute timer races a pending
+backoff delay. While the record remains `running`, subsequent observations are
+separated by delays
+of 16, 32, 64, and 128 milliseconds, then 250 milliseconds, always clipped to
+the caller's absolute `wait_ceiling_ms`. After an in-flight observation
+returns, elapsed-ceiling and cancellation checks win before any newly observed
+exit is published. Whenever the ceiling wins after a snapshot has been
+accepted—including a snapshot returned by an observation that raced the
+ceiling—that snapshot produces the bounded ceiling result without another
+observation. One call
+performs at most 128 exact observations, never scans a listing, and retains
+only the latest running snapshot between attempts. If that observation cap is
+reached first, the same latest snapshot produces the bounded ceiling result.
+Four wait calls may be active; further calls fail immediately without an
+observation, timer, queue, thread, process, or supervisor effect. Repeated
+polling neither probes a PID nor initializes, reconciles, calls, or controls
+the background supervisor. The numeric PID in a record remains display-only
+and is never used as liveness evidence.
+
+A validated `exited` record with exit code 0, or a validated `failed` record
+with an exit code from 1 through 255, succeeds with the upstream-compatible
+tagged-object outcome union:
+
+```json
+{
+  "action": "wait",
+  "background_id": 7,
+  "outcome": { "exited": 0 },
+  "recorded_state": "exited",
+  "started_at_ms": 1000,
+  "updated_at_ms": 1200,
+  "pid": 1234,
+  "exit_code": 0
+}
+```
+
+The same complete shape is returned for a validated `failed` record, with
+`recorded_state` equal to `failed` and both `outcome.exited` and `exit_code`
+equal to the recorded code from 1 through 255.
+
+If an observation that began before the ceiling returns only after it, the
+ceiling wins even when that returned record is `exited` or `failed`. The
+response uses `outcome: { "safety_ceiling": {} }` while `recorded_state`, both
+timestamps, `pid`, and `exit_code` remain the exact projection of that returned
+record; the newly observed exit is not published as `outcome.exited`.
+
+If the latest accepted snapshot is still `running` when the absolute ceiling
+or observation cap wins, the successful bounded result is:
+
+```json
+{
+  "action": "wait",
+  "background_id": 7,
+  "outcome": { "safety_ceiling": {} },
+  "recorded_state": "running",
+  "started_at_ms": 1000,
+  "updated_at_ms": 1100,
+  "pid": 1234,
+  "exit_code": null
+}
+```
+
+Recorded `stopped`, `dead`, or `stale` states, and recorded exit codes outside
+the supported ranges, return the fixed redacted lost-wait result rather than an
+exit or liveness claim. Missing, corrupt, resource-limit, unavailable, and
+unsupported observations retain the exact fixed inspection mappings; timer and
+capacity failures use fixed redacted wait-unavailable categories. No record
+contents or native diagnostics are reflected. Every successful output is
+checked against the terminal 48 KiB serialized-result ceiling.
+
+The wait future is inert until first poll. Pre-cancellation performs no waiter
+effect. Once active, cancellation has its own wake path and drops any pending
+observation and timers before releasing the wait slot. Inspector, timer, and
+caller-Waker destruction occur before the final cancellation check, and
+cancellation is checked again after bounded rendering and immediately before
+publication. Cancellation raised by any of those destructors therefore wins
+instead of publishing an exit or safety-ceiling result. Dropping the outer
+future performs the same deregistration and releases the slot exactly once; no
+timer, waiter, or retained record may outlive its owning wait future.
+
+Inspection and timer readiness times are captured before their futures and the
+caller Waker are torn down. Time spent in that teardown cannot turn an early
+timer into a valid one or a timely observation into an overrun. Cancellation
+raised during teardown retains precedence over the captured readiness result.
+
+The absolute ceiling bounds controllable userspace waiting, not an
+uninterruptible filesystem syscall, arbitrary trusted future poll or drop, or
+Waker callback. Once such work returns, cancellation and the elapsed ceiling
+are checked before publishing a newly observed exit or any other output. The
+wait does not initiate another controllable operation after either the ceiling
+or observation cap wins. At most one 64 KiB record, one bounded decoded detail,
+and one persistent absolute-ceiling timer are live per admitted wait. During a
+backoff, its shorter delay is the only second timer; aggregate decoded input is
+at most 8 MiB across 128 maximum-size observations and does not accumulate in
+memory.
 
 ## Foreground execution protocol
 
@@ -451,7 +584,14 @@ rendering, the final cancellation check, and public return.
 
 Focused and workspace evidence must cover strict schema and
 canonical arguments; exact capability serde and policy/execution equality;
-the injected and reference-host `start` schema; workspace-relative permission,
+the injected and reference-host `start`, `inspect`, and `wait` schemas;
+authority-free exact wait preparation; immediate exit, bounded running-state
+backoff and safety-ceiling outcomes; all supported and rejected recorded states
+and exit-code ranges; 128-observation, four-active-wait, serialized-result, and
+live-memory bounds; no listing, PID probe, process, foreground executor,
+supervisor initialization, or permission effects; pending observation and
+timer cancellation, destructor-triggered cancellation, outer-future drop, and
+exact-once wait-slot recovery; workspace-relative permission,
 private absolute background cwd, and fixed environment identity;
 exact and over-limit combined workspace/cwd preflight before authorization;
 post-construction retained-root rename/replacement behavior; rejection of
