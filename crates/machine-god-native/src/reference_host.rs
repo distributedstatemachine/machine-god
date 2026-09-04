@@ -23,11 +23,11 @@ use crate::{
     McpToolCatalogError, McpToolCatalogSnapshot, MemoryTool, NativeCredentialSourceKind,
     NativeProviderKind, NativeSessionLifecycle, NativeTransportKind, PermissionMode,
     PermissionPrompter, PreparedNativeRoots, QuestionPrompter, ReadToolResultTool,
-    TerminalBackgroundCatalog, TerminalBackgroundInspector, TerminalBackgroundStarter,
-    TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError, TerminalTool, VisionDeadline,
-    VisionLimits, VisionTool, VisionTransportError, VisionTransportErrorKind, WebFetchTool,
-    WebSearchDeadline, WebSearchLimits, WebSearchTool, WebSearchTransportErrorKind,
-    discover_ai_gateway_credential,
+    TerminalBackgroundCatalog, TerminalBackgroundInspector, TerminalBackgroundOutputReader,
+    TerminalBackgroundStarter, TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError,
+    TerminalTool, VisionDeadline, VisionLimits, VisionTool, VisionTransportError,
+    VisionTransportErrorKind, WebFetchTool, WebSearchDeadline, WebSearchLimits, WebSearchTool,
+    WebSearchTransportErrorKind, discover_ai_gateway_credential,
 };
 
 /// Stable stage at which native reference-host composition failed.
@@ -759,11 +759,13 @@ fn compose_terminal(
         })?,
     );
     let environment = background.environment_identity();
+    let output_reader: Arc<dyn TerminalBackgroundOutputReader> = background.clone();
     let background: Arc<dyn TerminalBackgroundStarter> = background;
     let catalog: Arc<dyn TerminalBackgroundCatalog> = inspector.clone();
     let inspector: Arc<dyn TerminalBackgroundInspector> = inspector;
     terminal
         .with_background(canonical_workspace, environment, background)
+        .and_then(|terminal| terminal.with_output_reader(output_reader))
         .and_then(|terminal| terminal.with_catalog(catalog))
         .and_then(|terminal| terminal.with_inspector(inspector))
         .and_then(|terminal| terminal.with_wait_delay(wait_delay))

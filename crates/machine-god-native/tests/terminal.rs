@@ -10,23 +10,25 @@ use std::task::{Context, Poll, Wake, Waker};
 use std::time::{Duration, Instant};
 
 use machine_god_core::{
-    BackgroundStartError, BackgroundStartErrorKind, BackgroundStartRequest, BoxFuture,
-    CancellationToken, Capability, MAX_BACKGROUND_CWD_BYTES, ProcessEnvironment, Tool, ToolError,
-    ToolErrorKind, ToolOutput,
+    BackgroundOutputOwner, BackgroundStartError, BackgroundStartErrorKind, BackgroundStartRequest,
+    BoxFuture, CancellationToken, Capability, MAX_BACKGROUND_CWD_BYTES, ProcessEnvironment, Tool,
+    ToolError, ToolErrorKind, ToolOutput,
 };
 use machine_god_native::{
-    MAX_TERMINAL_COMMAND_BYTES, MAX_TERMINAL_CWD_COMPONENT_BYTES, MAX_TERMINAL_CWD_COMPONENTS,
+    MAX_TERMINAL_BACKGROUND_READ_BYTES, MAX_TERMINAL_COMMAND_BYTES,
+    MAX_TERMINAL_CWD_COMPONENT_BYTES, MAX_TERMINAL_CWD_COMPONENTS,
     MAX_TERMINAL_PRODUCED_OUTPUT_BYTES,
 };
 use machine_god_native::{
     NativeBackgroundDetail, NativeBackgroundInspectionError, NativeBackgroundInspectionErrorKind,
     NativeBackgroundList, NativeBackgroundRecordSummary, NativeBackgroundState,
     TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TERMINAL_MAX_ACTIVE_LISTS, TerminalBackgroundCatalog,
-    TerminalBackgroundInspector, TerminalBackgroundOutcome, TerminalBackgroundStarter,
-    TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError, TerminalCapturedOutput,
-    TerminalConfigErrorKind, TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest,
-    TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError, TerminalExecutorErrorKind,
-    TerminalLimits, TerminalTool,
+    TerminalBackgroundInspector, TerminalBackgroundOutcome, TerminalBackgroundOutputReader,
+    TerminalBackgroundReadError, TerminalBackgroundReadErrorKind, TerminalBackgroundReadSnapshot,
+    TerminalBackgroundStarter, TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError,
+    TerminalCapturedOutput, TerminalConfigErrorKind, TerminalExecution, TerminalExecutionOutcome,
+    TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError,
+    TerminalExecutorErrorKind, TerminalLimits, TerminalTool,
 };
 use machine_god_reentrant_waker_test::{Callback, new as reentrant_waker};
 use serde_json::{Value, json};
@@ -169,6 +171,7 @@ enum BackgroundMode {
 struct BackgroundState {
     calls: AtomicUsize,
     requests: Mutex<Vec<(String, String, String)>>,
+    owners: Mutex<Vec<Option<(String, String)>>>,
 }
 
 #[derive(Clone)]
@@ -192,6 +195,10 @@ impl FakeBackgroundStarter {
     fn requests(&self) -> Vec<(String, String, String)> {
         self.state.requests.lock().unwrap().clone()
     }
+
+    fn owners(&self) -> Vec<Option<(String, String)>> {
+        self.state.owners.lock().unwrap().clone()
+    }
 }
 
 impl TerminalBackgroundStarter for FakeBackgroundStarter {
@@ -209,6 +216,16 @@ impl TerminalBackgroundStarter for FakeBackgroundStarter {
                 request.cwd().to_owned(),
                 format!("{request:?}"),
             ));
+            state
+                .owners
+                .lock()
+                .unwrap()
+                .push(request.output_owner().map(|owner| {
+                    (
+                        owner.session_id().to_string(),
+                        owner.session_incarnation_id().to_string(),
+                    )
+                }));
             match mode {
                 BackgroundMode::Success {
                     cancel_before_return,
@@ -221,6 +238,66 @@ impl TerminalBackgroundStarter for FakeBackgroundStarter {
                 BackgroundMode::Error(kind) => Err(BackgroundStartError::new(kind)),
             }
         })
+    }
+}
+
+#[derive(Clone)]
+struct FakeBackgroundOutputReader {
+    result: Result<TerminalBackgroundReadSnapshot, TerminalBackgroundReadError>,
+    requests: Arc<Mutex<Vec<(String, String, u64, u64, u64)>>>,
+    pending: bool,
+}
+
+impl FakeBackgroundOutputReader {
+    fn success(bytes: Vec<u8>, closed: bool) -> Self {
+        let length = u64::try_from(bytes.len()).unwrap();
+        Self {
+            result: TerminalBackgroundReadSnapshot::new(
+                bytes, length, length, length, false, closed,
+            ),
+            requests: Arc::new(Mutex::new(Vec::new())),
+            pending: false,
+        }
+    }
+
+    fn error(kind: TerminalBackgroundReadErrorKind) -> Self {
+        Self {
+            result: Err(TerminalBackgroundReadError::new(kind)),
+            requests: Arc::new(Mutex::new(Vec::new())),
+            pending: false,
+        }
+    }
+
+    fn pending() -> Self {
+        let mut reader = Self::success(Vec::new(), false);
+        reader.pending = true;
+        reader
+    }
+}
+
+impl TerminalBackgroundOutputReader for FakeBackgroundOutputReader {
+    fn read(
+        &self,
+        owner: BackgroundOutputOwner,
+        background_id: u64,
+        cursor_segment: u64,
+        cursor_offset: u64,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundReadSnapshot, TerminalBackgroundReadError>>
+    {
+        self.requests.lock().unwrap().push((
+            owner.session_id().to_string(),
+            owner.session_incarnation_id().to_string(),
+            background_id,
+            cursor_segment,
+            cursor_offset,
+        ));
+        let result = self.result.clone();
+        if self.pending {
+            Box::pin(std::future::pending())
+        } else {
+            Box::pin(async move { result })
+        }
     }
 }
 
@@ -1415,6 +1492,17 @@ fn background_tool(
     .unwrap()
 }
 
+fn reading_tool(
+    root: &std::path::Path,
+    executor: &FakeExecutor,
+    starter: &FakeBackgroundStarter,
+    reader: &FakeBackgroundOutputReader,
+) -> TerminalTool {
+    background_tool(root, executor, starter)
+        .with_output_reader(Arc::new(reader.clone()))
+        .unwrap()
+}
+
 fn inspecting_tool<I>(
     root: &std::path::Path,
     executor: &FakeExecutor,
@@ -1781,8 +1869,218 @@ fn background_start_has_exact_permission_identity_and_bypasses_foreground_execut
         )
     );
     assert_eq!(requests[0].2, "BackgroundStartRequest { .. }");
+    assert_eq!(
+        starter.owners(),
+        vec![Some((
+            "terminal-session".to_owned(),
+            "terminal-incarnation".to_owned()
+        ))]
+    );
     drop(occupied_foreground);
     assert_foreground_capacity_recovers(&tool, &executor);
+}
+
+#[test]
+fn background_read_has_one_closed_same_incarnation_no_authority_form() {
+    let temporary = TemporaryDirectory::new("background-read");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let reader = FakeBackgroundOutputReader::success(vec![b'a', 0xff, b'b'], true);
+    let tool = reading_tool(temporary.path(), &executor, &starter, &reader);
+
+    let spec = tool.spec();
+    assert_eq!(
+        spec.description,
+        "Run a foreground command, start a background command, or read bounded same-session background output"
+    );
+    let forms = spec.input_schema["oneOf"].as_array().unwrap();
+    assert_eq!(forms.len(), 3);
+    assert_eq!(forms[2]["properties"]["action"]["const"], "read");
+    assert_eq!(
+        forms[2]["required"],
+        json!(["action", "background_id", "cursor_segment"])
+    );
+    assert_eq!(forms[2]["properties"]["cursor_segment"]["const"], 1);
+    assert_eq!(forms[2]["properties"]["cursor_offset"]["default"], 0);
+
+    let prepared = tool
+        .prepare(call(
+            "terminal",
+            json!({
+                "action": "read",
+                "background_id": 7,
+                "cursor_segment": 1
+            }),
+        ))
+        .unwrap();
+    assert!(prepared.capability().is_none());
+    assert_eq!(
+        prepared.arguments(),
+        &json!({
+            "action": "read",
+            "background_id": 7,
+            "cursor_segment": 1,
+            "cursor_offset": 0
+        })
+    );
+    let output = poll_ready(tool.execute(
+        context(),
+        prepared.arguments().clone(),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+    assert_eq!(
+        output.content,
+        json!({
+            "action": "read",
+            "background_id": 7,
+            "cursor_segment": 1,
+            "cursor_offset": 3,
+            "output": "a�b",
+            "output_bytes": 3,
+            "retained_bytes": 3,
+            "truncated": false,
+            "lossy": true,
+            "stream_closed": true
+        })
+    );
+    assert_eq!(
+        *reader.requests.lock().unwrap(),
+        vec![(
+            "terminal-session".to_owned(),
+            "terminal-incarnation".to_owned(),
+            7,
+            1,
+            0
+        )]
+    );
+    assert_eq!(starter.calls(), 0);
+    assert_eq!(executor.calls(), 0);
+}
+
+#[test]
+fn background_read_rejects_bad_shape_and_maps_fixed_reader_failures() {
+    let temporary = TemporaryDirectory::new("background-read-errors");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    for arguments in [
+        json!({ "action": "read", "background_id": 7 }),
+        json!({ "action": "read", "background_id": 0, "cursor_segment": 1 }),
+        json!({ "action": "read", "background_id": 7, "cursor_segment": 2 }),
+        json!({ "action": "read", "background_id": 7, "cursor_segment": 1, "cursor_offset": -1 }),
+        json!({ "action": "read", "background_id": 7, "cursor_segment": 1, "extra": true }),
+    ] {
+        let reader = FakeBackgroundOutputReader::success(Vec::new(), false);
+        let tool = reading_tool(temporary.path(), &executor, &starter, &reader);
+        assert_eq!(
+            tool.prepare(call("terminal", arguments)).unwrap_err().code,
+            "terminal_invalid_arguments"
+        );
+    }
+
+    let cases = [
+        (
+            TerminalBackgroundReadErrorKind::NotFound,
+            "terminal_read_not_found",
+            false,
+        ),
+        (
+            TerminalBackgroundReadErrorKind::InvalidCursor,
+            "terminal_read_invalid_cursor",
+            false,
+        ),
+        (
+            TerminalBackgroundReadErrorKind::Unavailable,
+            "terminal_read_unavailable",
+            true,
+        ),
+    ];
+    for (kind, code, retryable) in cases {
+        let reader = FakeBackgroundOutputReader::error(kind);
+        let tool = reading_tool(temporary.path(), &executor, &starter, &reader);
+        let error = poll_ready(tool.execute(
+            context(),
+            json!({
+                "action": "read",
+                "background_id": 7,
+                "cursor_segment": 1,
+                "cursor_offset": 0
+            }),
+            CancellationToken::new(),
+        ))
+        .unwrap_err();
+        assert_eq!(error.code, code);
+        assert_eq!(error.retryable, retryable);
+    }
+}
+
+#[test]
+fn background_read_worst_case_json_page_stays_within_result_limit() {
+    let temporary = TemporaryDirectory::new("background-read-json-bound");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let bytes = vec![0; MAX_TERMINAL_BACKGROUND_READ_BYTES];
+    let reader = FakeBackgroundOutputReader::success(bytes, true);
+    let tool = reading_tool(temporary.path(), &executor, &starter, &reader);
+
+    let output = poll_ready(tool.execute(
+        context(),
+        json!({
+            "action": "read",
+            "background_id": 7,
+            "cursor_segment": 1,
+            "cursor_offset": 0
+        }),
+        CancellationToken::new(),
+    ))
+    .expect("the maximum all-control-byte page fits the serialized result bound");
+    assert_eq!(
+        output.content["output"].as_str().unwrap().len(),
+        MAX_TERMINAL_BACKGROUND_READ_BYTES
+    );
+    assert_eq!(
+        output.content["cursor_offset"],
+        u64::try_from(MAX_TERMINAL_BACKGROUND_READ_BYTES).unwrap()
+    );
+}
+
+#[test]
+fn background_read_capacity_is_fail_fast_and_recovers_on_future_drop() {
+    let temporary = TemporaryDirectory::new("background-read-capacity");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let reader = FakeBackgroundOutputReader::pending();
+    let tool = reading_tool(temporary.path(), &executor, &starter, &reader);
+    let arguments = json!({
+        "action": "read",
+        "background_id": 7,
+        "cursor_segment": 1,
+        "cursor_offset": 0
+    });
+    let mut active = (0..4)
+        .map(|_| tool.execute(context(), arguments.clone(), CancellationToken::new()))
+        .collect::<Vec<_>>();
+    for future in &mut active {
+        assert!(poll_once(future.as_mut()).is_pending());
+    }
+    let busy = poll_ready(tool.execute(context(), arguments.clone(), CancellationToken::new()))
+        .unwrap_err();
+    assert_eq!(busy.code, "terminal_read_busy");
+    assert!(busy.retryable);
+
+    drop(active.pop());
+    let mut replacement = tool.execute(context(), arguments, CancellationToken::new());
+    assert!(poll_once(replacement.as_mut()).is_pending());
+    drop(replacement);
+    drop(active);
 }
 
 #[test]

@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33881680992` (`GREEN`)
 - Main Benchmark evidence: `33881680813` (`GREEN`)
 - Active branch: `agent/m57-terminal-read`
-- Active phase: `bounded process-local terminal background-output read`
-- Next gate: `rebase onto delivered main, pass the complete exact local gate, then close three fresh product-review tracks`
+- Active phase: `validating bounded same-incarnation terminal background output read`
+- Next gate: `freeze the exact candidate after full local checks, then run three fresh adversarial product reviews`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -50,12 +50,12 @@ delivered-slice count. Documentation-only descendants now exercise only the
 bounded documentation checks and aggregate gates, without Rust, platform,
 audit, compatibility, or benchmark-artifact jobs.
 
-The active product slice has returned to unfinished tool behavior: bounded
-process-local background-output reads for `terminal`. Persistent interactive
-handles, write/control actions, interactive terminal behavior, restart-safe
-control, ACP, teams, and extension slash commands remain separate until
-explicitly bounded. Documentation-tool maintenance remains a separate
-non-product task.
+The active product slice adds bounded process-local merged output capture and
+same-session-incarnation cursor reads to managed terminal starts. Durable or
+restart-safe logs, persistent interactive handles, write/control actions,
+interactive terminal behavior, restart-safe control, ACP, teams, and extension
+slash commands remain separate until explicitly bounded.
+Documentation-tool maintenance remains a separate non-product task.
 
 ## Architecture ownership
 

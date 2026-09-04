@@ -8,16 +8,17 @@ use std::time::Instant;
 
 use futures_util::StreamExt;
 use machine_god_core::{
-    BackgroundStartError, BackgroundStartRequest, BoxFuture, Capability, ContentBlock, Engine,
-    EngineEvent, MAX_BACKGROUND_CWD_BYTES, Message, ModelEvent, PermissionDecision,
-    PermissionGrantScope, ProcessEnvironment, Role, SessionId, SessionIncarnationId, StopReason,
-    Tool, ToolCall, ToolCallId, ToolName, ToolOutput, TurnEvent,
+    BackgroundOutputOwner, BackgroundStartError, BackgroundStartRequest, BoxFuture, Capability,
+    ContentBlock, Engine, EngineEvent, MAX_BACKGROUND_CWD_BYTES, Message, ModelEvent,
+    PermissionDecision, PermissionGrantScope, ProcessEnvironment, Role, SessionId,
+    SessionIncarnationId, StopReason, Tool, ToolCall, ToolCallId, ToolName, ToolOutput, TurnEvent,
 };
 use machine_god_native::{
     MAX_TERMINAL_CWD_COMPONENT_BYTES, MAX_TERMINAL_CWD_COMPONENTS, NativeBackgroundDetail,
     NativeBackgroundInspectionError, NativeBackgroundList, NativeBackgroundRecordSummary,
     NativeBackgroundState, TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TerminalBackgroundCatalog,
-    TerminalBackgroundInspector, TerminalBackgroundOutcome, TerminalBackgroundStarter,
+    TerminalBackgroundInspector, TerminalBackgroundOutcome, TerminalBackgroundOutputReader,
+    TerminalBackgroundReadError, TerminalBackgroundReadSnapshot, TerminalBackgroundStarter,
     TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError, TerminalCapturedOutput,
     TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest, TerminalExecutionStatus,
     TerminalExecutor, TerminalLimits, TerminalTool,
@@ -147,6 +148,42 @@ impl TerminalBackgroundStarter for FakeBackgroundStarter {
 }
 
 #[derive(Clone, Default)]
+struct FakeBackgroundOutputReader {
+    calls: Arc<AtomicUsize>,
+}
+
+impl TerminalBackgroundOutputReader for FakeBackgroundOutputReader {
+    fn read(
+        &self,
+        owner: BackgroundOutputOwner,
+        background_id: u64,
+        cursor_segment: u64,
+        cursor_offset: u64,
+        _cancellation: machine_god_core::CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundReadSnapshot, TerminalBackgroundReadError>>
+    {
+        assert_eq!(owner.session_id().as_str(), "terminal-read-session");
+        assert_eq!(
+            owner.session_incarnation_id().as_str(),
+            "incarnation-terminal-read-session"
+        );
+        assert_eq!((background_id, cursor_segment, cursor_offset), (17, 1, 0));
+        let calls = Arc::clone(&self.calls);
+        Box::pin(async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            TerminalBackgroundReadSnapshot::new(
+                b"managed output\n".to_vec(),
+                15,
+                15,
+                15,
+                false,
+                true,
+            )
+        })
+    }
+}
+
+#[derive(Clone, Default)]
 struct FakeBackgroundInspector {
     calls: Arc<AtomicUsize>,
 }
@@ -252,6 +289,17 @@ fn terminal_with_background(
         Arc::new(starter),
     )
     .unwrap()
+}
+
+fn terminal_with_reader(
+    root: &std::path::Path,
+    executor: FakeExecutor,
+    starter: FakeBackgroundStarter,
+    reader: FakeBackgroundOutputReader,
+) -> TerminalTool {
+    terminal_with_background(root, executor, starter)
+        .with_output_reader(Arc::new(reader))
+        .unwrap()
 }
 
 fn terminal_with_inspector(
@@ -648,6 +696,73 @@ fn background_start_runs_once_after_permission_and_persists_display_identity() {
                 "background_id": 17,
                 "pid": null,
                 "status": "started",
+            }),
+            is_error: false,
+        }
+    );
+    assert_eq!(store.record(&session_id).unwrap().messages[2], message);
+}
+
+#[test]
+fn background_read_bypasses_permission_and_persists_same_incarnation_output() {
+    let temporary = TemporaryDirectory::new("engine-read");
+    let arguments = json!({
+        "action": "read",
+        "background_id": 17,
+        "cursor_segment": 1
+    });
+    let provider = provider_with_arguments("terminal-read", arguments.clone());
+    let store = InMemorySessionStore::new();
+    let policy = ScriptedPermissionHandler::new([]);
+    let executor = FakeExecutor::default();
+    let starter = FakeBackgroundStarter::default();
+    let reader = FakeBackgroundOutputReader::default();
+    let tool = terminal_with_reader(
+        temporary.path(),
+        executor.clone(),
+        starter.clone(),
+        reader.clone(),
+    );
+    assert!(
+        tool.prepare(call("terminal", arguments))
+            .unwrap()
+            .capability()
+            .is_none()
+    );
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store.clone())
+        .permission_handler(policy.clone())
+        .tool(tool)
+        .build()
+        .unwrap();
+
+    let (session_id, events) = collect(&engine, "terminal-read-session");
+
+    assert!(policy.requests().is_empty());
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(starter.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event.payload, TurnEvent::ToolStarted { .. }))
+    );
+    let (message, output) = second_request_tool_output(&provider);
+    assert_eq!(
+        output,
+        ToolOutput {
+            content: json!({
+                "action": "read",
+                "background_id": 17,
+                "cursor_segment": 1,
+                "cursor_offset": 15,
+                "output": "managed output\n",
+                "output_bytes": 15,
+                "retained_bytes": 15,
+                "truncated": false,
+                "lossy": false,
+                "stream_closed": true
             }),
             is_error: false,
         }

@@ -21,10 +21,11 @@ but the production `semantic_search` and terminal foreground executor are
 Linux-only. The private host catalog retains both tools on macOS:
 `semantic_search` and terminal `exec` return their fixed unsupported results
 after strict preparation and permission, while terminal `start` uses the
-Linux/macOS background helper and terminal `list`, `inspect`, and `wait` use
-its separately injected descriptor-confined persisted-record reader without
-process authority. `wait` receives its monotonic delays through the same
-runtime-paired deadline authority used by web search and vision.
+Linux/macOS background helper, terminal `read` uses the lazy starter's shared
+process-local same-incarnation output registry, and terminal `list`, `inspect`,
+and `wait` use its separately injected descriptor-confined persisted-record
+reader without process authority. `wait` receives its monotonic delays through
+the same runtime-paired deadline authority used by web search and vision.
 
 ## Required selections
 
@@ -102,6 +103,10 @@ Every successful host contains:
   its environment is fixed and independently identified for process
   permission, while one supervisor is initialized and reused only after the
   first permitted start is polled;
+- one process-local output reader sharing that exact lazy starter allocation and
+  therefore its exact capture registry. Reading does not initialize the
+  supervisor, and exact session plus session-incarnation ownership prevents a
+  display ID from granting output authority;
 - one background-history reader over a separate clone of the same retained
   state-root descriptor and frozen canonical workspace identity. It creates no
   namespace or worker during composition, listing, or inspection, never
@@ -166,8 +171,10 @@ additional clone of that same workspace identity; it is not another catalog
 tool. Terminal listing and inspection receive a separate retained state-root
 clone, not ambient cwd or environment discovery. Terminal wait reuses that
 exact reader and the shared deadline authority; none initializes or calls the
-starter. At most four terminal lists may be active, independently of terminal's
-foreground-execution and wait admission limits.
+starter. Terminal output read reuses the starter allocation itself without
+initializing it and has a separate four-read limit. At most four terminal lists
+may be active, independently of terminal's foreground-execution, read, and wait
+admission limits.
 `ask_user_question`, `mcp_features`, `mcp_search_tools`, `mcp_select_tool`,
 `subagent`, and `web_fetch` are rootless.
 `mcp_features` uses only its explicitly injected read-only authority. It stamps

@@ -20,10 +20,15 @@ One start request contains a nonempty command of at most 32 KiB and one
 absolute canonical Unicode cwd of at most 4,096 bytes. Both reject NUL. The
 fixed program is `/bin/sh` with arguments `[-c, command]`; the command is an
 argument and is never interpolated into a machine-god wrapper script.
-Standard input, output, and error are null after release. This slice captures
-no output, detects no URL, accepts no interactive input, and creates no PTY.
-Linux and macOS use the same private helper protocol. The helper consumes only
-its bounded release frame and gives the user shell input from `/dev/null`.
+Standard input is null after release. The helper duplicates one retained pipe
+onto the final shell's standard output and error, producing a single merged
+byte stream; their relative ordering is only the order observed by that pipe.
+The readiness byte is consumed before the pipe becomes captured output. The
+supervisor drains continuously and retains a bounded process-local prefix only
+when the start request carries an output owner. It detects no URL, accepts no
+interactive input, and creates no PTY. Linux and macOS use the same private
+helper protocol. The helper consumes only its bounded release frame and gives
+the user shell input from `/dev/null`.
 
 The requested environment is never installed in the pre-release process. The
 host starts its helper with an emptied, fixed bootstrap environment; loader
@@ -382,6 +387,19 @@ supervision: cleanup continues only while the host process exists, and jobs do
 not promise survival after host exit, cross-process control, crash adoption, or
 control by a later machine-god invocation.
 
+Captured output follows that same process-local lifetime. One registry shared
+by the lazy starter and reader admits at most 16 live streams, retains at most
+100 closed streams, and evicts only the oldest closed entry. Registration is
+hidden before release, activation occurs only after the process release commit,
+and failed or dropped preparation removes the hidden entry. The retainer worker
+drains through fixed nonblocking chunks while waiting and continues discarding
+after the 64 KiB retained prefix is full, so pipe pressure cannot turn the
+retention bound into a child deadlock. It marks the entry closed on every owned
+wait return or active-capture drop. Each read is capped at 7 KiB and requires
+the exact session and session-incarnation owner carried by the original start.
+The registry, bytes, and ownership disappear on host exit and are deliberately
+independent of the durable background record.
+
 All public errors and debug output use closed fixed categories and do not
 reflect commands, paths, environment values, record contents, helper details,
 PIDs, IDs, or operating-system diagnostics. Worker-side host syscalls retain
@@ -390,12 +408,14 @@ process syscall.
 
 ## Deferred surface
 
-The bounded terminal `start` entrypoint and separate exact persisted-record
-`inspect` and `wait` entrypoints are delivered. `inspect` and `wait` do not
+The bounded terminal `start` and same-incarnation process-local `read`
+entrypoints and separate exact persisted-record `inspect` and `wait` entrypoints
+are delivered. `read`, `inspect`, and `wait` do not
 initialize, call, or control this supervisor and make no PID or liveness claim;
-`wait` observes only bounded atomic record replacements through its separately
-injected persisted-history boundary. Future slices may add managed logs and
-read operations or design an authenticated durable worker protocol. Top-level
+`read` observes only the in-memory capture registry, while `wait` observes only
+bounded atomic record replacements through its separately injected
+persisted-history boundary. Future slices may add durable or restart-safe logs
+or design an authenticated durable worker protocol. Top-level
 `background` remains inspection-only. Interactive input, output streaming, URL
 detection, persisted-PID signaling, detached survival, cross-process stop,
 crash adoption, setsid containment, and fx-equivalence or performance claims

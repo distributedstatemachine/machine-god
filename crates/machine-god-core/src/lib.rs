@@ -15,9 +15,9 @@ mod subagent;
 mod tool;
 
 pub use background::{
-    BackgroundClock, BackgroundCompletionRecord, BackgroundHandle, BackgroundProcessOutcome,
-    BackgroundProcessRetainer, BackgroundProcessSpawner, BackgroundRecordLease,
-    BackgroundOutputOwner, BackgroundRetentionPermit, BackgroundRunningRecord,
+    BackgroundClock, BackgroundCompletionRecord, BackgroundHandle, BackgroundOutputOwner,
+    BackgroundProcessOutcome, BackgroundProcessRetainer, BackgroundProcessSpawner,
+    BackgroundRecordLease, BackgroundRetentionPermit, BackgroundRunningRecord,
     BackgroundStartError, BackgroundStartErrorKind, BackgroundStartRequest, BackgroundStore,
     BackgroundSupervisor, MAX_BACKGROUND_COMMAND_BYTES, MAX_BACKGROUND_CWD_BYTES,
     OwnedBackgroundProcess, PreparedBackgroundProcess,

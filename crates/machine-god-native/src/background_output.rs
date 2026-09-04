@@ -9,7 +9,10 @@ use machine_god_core::BackgroundOutputOwner;
 /// Maximum prefix retained for one background command.
 pub(crate) const MAX_BACKGROUND_OUTPUT_RETAINED_BYTES: usize = 64 * 1024;
 /// Maximum bytes returned by one output read.
-pub(crate) const MAX_BACKGROUND_OUTPUT_READ_BYTES: usize = 16 * 1024;
+///
+/// Seven KiB leaves room beneath terminal's 48 KiB serialized-result ceiling
+/// even when every retained byte requires a six-byte JSON control escape.
+pub(crate) const MAX_BACKGROUND_OUTPUT_READ_BYTES: usize = 7 * 1024;
 /// Maximum concurrently registered, non-closed output streams.
 pub(crate) const MAX_BACKGROUND_OUTPUT_LIVE_STREAMS: usize = 16;
 /// Maximum closed streams retained for later reads.
@@ -451,7 +454,7 @@ mod tests {
     fn cursor_segment_owner_and_presence_fail_closed() {
         let registry = BackgroundOutputRegistry::new();
         let owner = owner("right");
-        let wrong = owner("WRONG_PRIVATE_OWNER");
+        let wrong = self::owner("WRONG_PRIVATE_OWNER");
         visible(&registry, 7, owner.clone());
         registry.append(7, b"output").unwrap();
         for (id, supplied_owner) in [(8, &owner), (7, &wrong)] {

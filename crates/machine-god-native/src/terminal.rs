@@ -22,8 +22,8 @@ use crate::background_inspection::{
     NativeBackgroundInspectionErrorKind, NativeBackgroundList, NativeBackgroundState,
 };
 use machine_god_core::{
-    BackgroundStartError, BackgroundStartErrorKind, BackgroundStartRequest, BoxFuture,
-    CancellationToken, Capability, PreparedToolCall, ProcessEnvironment, Tool, ToolCall,
+    BackgroundOutputOwner, BackgroundStartError, BackgroundStartErrorKind, BackgroundStartRequest,
+    BoxFuture, CancellationToken, Capability, PreparedToolCall, ProcessEnvironment, Tool, ToolCall,
     ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
 };
 use serde_json::{Map, Value, json};
@@ -65,6 +65,9 @@ pub const MAX_TERMINAL_RETAINED_OUTPUT_BYTES: usize = 64 * 1024;
 pub const MAX_TERMINAL_PRODUCED_OUTPUT_BYTES: u64 = 1024 * 1024;
 /// Maximum complete serialized tool output.
 pub const MAX_TERMINAL_SERIALIZED_RESULT_BYTES: usize = 48 * 1024;
+/// Maximum raw bytes returned by one process-local background-output read.
+/// This preserves the serialized-result ceiling under worst-case JSON escaping.
+pub const MAX_TERMINAL_BACKGROUND_READ_BYTES: usize = 7 * 1024;
 /// Maximum environment entries retained at construction.
 pub const MAX_TERMINAL_ENVIRONMENT_ENTRIES: usize = 512;
 /// Maximum bytes in one environment key.
@@ -104,6 +107,8 @@ const TERMINAL_INSPECT_DESCRIPTION: &str = "Run a foreground command, start a ba
 const TERMINAL_WAIT_DESCRIPTION: &str = "Run a foreground command, start a background command, inspect one persisted background record, or wait for its recorded exit";
 const TERMINAL_LIST_INSPECT_DESCRIPTION: &str = "Run a foreground command, start a background command, list persisted background records, or inspect one persisted background record";
 const TERMINAL_LIST_DESCRIPTION: &str = "Run a foreground command, start a background command, list persisted background records, inspect one persisted background record, or wait for its recorded exit";
+const TERMINAL_READ_DESCRIPTION: &str = "Run a foreground command, start a background command, read bounded same-session background output, list persisted background records, inspect one persisted background record, or wait for its recorded exit";
+const TERMINAL_MAX_ACTIVE_READS: usize = 4;
 const TERMINAL_WAIT_DELAYS_MS: [u64; 5] = [16, 32, 64, 128, 250];
 const PIPE_RETAINED_BYTES: usize = MAX_TERMINAL_RETAINED_OUTPUT_BYTES / 2;
 #[cfg(target_os = "linux")]
@@ -527,6 +532,147 @@ pub trait TerminalBackgroundStarter: Send + Sync + 'static {
     ) -> BoxFuture<'static, Result<TerminalBackgroundOutcome, BackgroundStartError>>;
 }
 
+/// Stable category returned by an injected process-local output reader.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum TerminalBackgroundReadErrorKind {
+    NotFound,
+    InvalidCursor,
+    Unavailable,
+}
+
+/// Fixed, data-free failure from an injected background-output reader.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct TerminalBackgroundReadError {
+    kind: TerminalBackgroundReadErrorKind,
+}
+
+impl TerminalBackgroundReadError {
+    #[must_use]
+    pub const fn new(kind: TerminalBackgroundReadErrorKind) -> Self {
+        Self { kind }
+    }
+
+    #[must_use]
+    pub const fn kind(self) -> TerminalBackgroundReadErrorKind {
+        self.kind
+    }
+}
+
+impl fmt::Debug for TerminalBackgroundReadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TerminalBackgroundReadError")
+            .field("kind", &self.kind)
+            .finish()
+    }
+}
+
+impl fmt::Display for TerminalBackgroundReadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("terminal background output is unavailable")
+    }
+}
+
+impl Error for TerminalBackgroundReadError {}
+
+/// One bounded page from a same-session process-local output stream.
+#[derive(Clone, Eq, PartialEq)]
+pub struct TerminalBackgroundReadSnapshot {
+    bytes: Vec<u8>,
+    next_offset: u64,
+    produced_bytes: u64,
+    retained_bytes: u64,
+    truncated: bool,
+    closed: bool,
+}
+
+impl TerminalBackgroundReadSnapshot {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        bytes: Vec<u8>,
+        next_offset: u64,
+        produced_bytes: u64,
+        retained_bytes: u64,
+        truncated: bool,
+        closed: bool,
+    ) -> Result<Self, TerminalBackgroundReadError> {
+        if bytes.len() > MAX_TERMINAL_BACKGROUND_READ_BYTES
+            || retained_bytes > MAX_TERMINAL_RETAINED_OUTPUT_BYTES as u64
+            || retained_bytes > produced_bytes
+            || truncated != (retained_bytes < produced_bytes)
+            || next_offset > produced_bytes
+        {
+            return Err(TerminalBackgroundReadError::new(
+                TerminalBackgroundReadErrorKind::Unavailable,
+            ));
+        }
+        Ok(Self {
+            bytes,
+            next_offset,
+            produced_bytes,
+            retained_bytes,
+            truncated,
+            closed,
+        })
+    }
+
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    #[must_use]
+    pub const fn next_offset(&self) -> u64 {
+        self.next_offset
+    }
+
+    #[must_use]
+    pub const fn produced_bytes(&self) -> u64 {
+        self.produced_bytes
+    }
+
+    #[must_use]
+    pub const fn retained_bytes(&self) -> u64 {
+        self.retained_bytes
+    }
+
+    #[must_use]
+    pub const fn truncated(&self) -> bool {
+        self.truncated
+    }
+
+    #[must_use]
+    pub const fn closed(&self) -> bool {
+        self.closed
+    }
+}
+
+impl fmt::Debug for TerminalBackgroundReadSnapshot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TerminalBackgroundReadSnapshot")
+            .field("byte_count", &self.bytes.len())
+            .field("produced_bytes", &self.produced_bytes)
+            .field("retained_bytes", &self.retained_bytes)
+            .field("truncated", &self.truncated)
+            .field("closed", &self.closed)
+            .finish()
+    }
+}
+
+/// Trusted process-local read boundary scoped to one session incarnation.
+pub trait TerminalBackgroundOutputReader: Send + Sync + 'static {
+    fn read(
+        &self,
+        owner: BackgroundOutputOwner,
+        background_id: u64,
+        cursor_segment: u64,
+        cursor_offset: u64,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundReadSnapshot, TerminalBackgroundReadError>>;
+}
+
 /// Trusted read-only boundary for one exact persisted background record.
 pub trait TerminalBackgroundInspector: Send + Sync + 'static {
     /// Returns an inert inspection future. Implementations must perform an
@@ -667,6 +813,8 @@ pub struct TerminalTool {
     active: Arc<AtomicUsize>,
     system_unsupported: bool,
     background: Option<TerminalBackground>,
+    output_reader: Option<Arc<dyn TerminalBackgroundOutputReader>>,
+    active_reads: Arc<AtomicUsize>,
     catalog: Option<Arc<dyn TerminalBackgroundCatalog>>,
     active_lists: Arc<AtomicUsize>,
     inspector: Option<Arc<dyn TerminalBackgroundInspector>>,
@@ -866,6 +1014,25 @@ impl TerminalTool {
         Ok(self)
     }
 
+    /// Adds bounded same-session process-local background-output reads.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed configuration failure when background start is absent.
+    #[cfg(unix)]
+    pub fn with_output_reader(
+        mut self,
+        output_reader: Arc<dyn TerminalBackgroundOutputReader>,
+    ) -> Result<Self, TerminalConfigError> {
+        if self.background.is_none() {
+            return Err(TerminalConfigError::new(
+                TerminalConfigErrorKind::InvalidRoot,
+            ));
+        }
+        self.output_reader = Some(output_reader);
+        Ok(self)
+    }
+
     /// Adds bounded persisted-background listing support.
     ///
     /// # Errors
@@ -924,6 +1091,8 @@ impl TerminalTool {
             active: Arc::new(AtomicUsize::new(0)),
             system_unsupported,
             background: None,
+            output_reader: None,
+            active_reads: Arc::new(AtomicUsize::new(0)),
             catalog: None,
             active_lists: Arc::new(AtomicUsize::new(0)),
             inspector: None,
@@ -1079,6 +1248,7 @@ impl TerminalActionAvailability {
     const LIST: u8 = 1 << 1;
     const INSPECT: u8 = 1 << 2;
     const WAIT: u8 = 1 << 3;
+    const READ: u8 = 1 << 4;
 
     fn for_tool(tool: &TerminalTool) -> Self {
         let mut flags = 0;
@@ -1093,6 +1263,9 @@ impl TerminalActionAvailability {
         }
         if tool.inspector.is_some() && tool.wait_delay.is_some() {
             flags |= Self::WAIT;
+        }
+        if tool.output_reader.is_some() {
+            flags |= Self::READ;
         }
         Self(flags)
     }
@@ -1127,16 +1300,52 @@ fn parse_arguments(
         Some("wait") if available.contains(TerminalActionAvailability::WAIT) => {
             TerminalAction::Wait
         }
+        Some("read") if available.contains(TerminalActionAvailability::READ) => {
+            TerminalAction::Read
+        }
         _ => return Err(invalid_arguments()),
     };
     match action {
         TerminalAction::List => parse_list_arguments(object),
         TerminalAction::Inspect => parse_inspect_arguments(object),
         TerminalAction::Wait => parse_wait_arguments(object),
+        TerminalAction::Read => parse_read_arguments(object),
         TerminalAction::Exec | TerminalAction::Start => {
             parse_command_arguments(object, action, require_complete)
         }
     }
+}
+
+fn parse_read_arguments(object: &Map<String, Value>) -> Result<TerminalArguments, ToolError> {
+    if !(3..=4).contains(&object.len())
+        || object.keys().any(|key| {
+            !matches!(
+                key.as_str(),
+                "action" | "background_id" | "cursor_segment" | "cursor_offset"
+            )
+        })
+    {
+        return Err(invalid_arguments());
+    }
+    let background_id = object
+        .get("background_id")
+        .and_then(Value::as_u64)
+        .filter(|id| *id != 0)
+        .ok_or_else(invalid_arguments)?;
+    let cursor_segment = object
+        .get("cursor_segment")
+        .and_then(Value::as_u64)
+        .filter(|segment| *segment == 1)
+        .ok_or_else(invalid_arguments)?;
+    let cursor_offset = match object.get("cursor_offset") {
+        Some(value) => value.as_u64().ok_or_else(invalid_arguments)?,
+        None => 0,
+    };
+    Ok(TerminalArguments::Read {
+        background_id,
+        cursor_segment,
+        cursor_offset,
+    })
 }
 
 fn parse_list_arguments(object: &Map<String, Value>) -> Result<TerminalArguments, ToolError> {
@@ -1242,6 +1451,16 @@ fn canonical_arguments(arguments: &TerminalArguments) -> Value {
             "command": arguments.command,
             "cwd": arguments.cwd,
             "profile": "clean"
+        }),
+        TerminalArguments::Read {
+            background_id,
+            cursor_segment,
+            cursor_offset,
+        } => json!({
+            "action": "read",
+            "background_id": background_id,
+            "cursor_segment": cursor_segment,
+            "cursor_offset": cursor_offset
         }),
         TerminalArguments::List => json!({
             "action": "list"
@@ -2073,6 +2292,7 @@ fn lock_deadline(state: &Mutex<DeadlineTimerState>) -> MutexGuard<'_, DeadlineTi
 enum TerminalAction {
     Exec,
     Start,
+    Read,
     List,
     Inspect,
     Wait,
@@ -2083,6 +2303,7 @@ impl TerminalAction {
         match self {
             Self::Exec => "exec",
             Self::Start => "start",
+            Self::Read => "read",
             Self::List => "list",
             Self::Inspect => "inspect",
             Self::Wait => "wait",
@@ -2100,6 +2321,11 @@ struct TerminalCommandArguments {
 #[derive(Clone)]
 enum TerminalArguments {
     Command(TerminalCommandArguments),
+    Read {
+        background_id: u64,
+        cursor_segment: u64,
+        cursor_offset: u64,
+    },
     List,
     Inspect {
         background_id: u64,
@@ -2114,19 +2340,23 @@ impl TerminalTool {
     fn background_request(
         &self,
         arguments: TerminalCommandArguments,
+        owner: BackgroundOutputOwner,
     ) -> Result<BackgroundStartRequest, ToolError> {
         let background = self.background.as_ref().ok_or_else(invalid_arguments)?;
         let cwd = absolute_background_cwd(&background.workspace, &arguments.cwd)?;
-        BackgroundStartRequest::new(arguments.command, cwd).map_err(|_| invalid_cwd())
+        BackgroundStartRequest::new(arguments.command, cwd)
+            .map(|request| request.with_output_owner(owner))
+            .map_err(|_| invalid_cwd())
     }
 
     async fn execute_background(
         &self,
         arguments: TerminalCommandArguments,
+        owner: BackgroundOutputOwner,
         cancellation: CancellationToken,
     ) -> Result<ToolOutput, ToolError> {
         check_cancellation(&cancellation)?;
-        let request = self.background_request(arguments)?;
+        let request = self.background_request(arguments, owner)?;
         check_cancellation(&cancellation)?;
         let background = self.background.as_ref().ok_or_else(invalid_arguments)?;
         let handle = background
@@ -2143,6 +2373,69 @@ impl TerminalTool {
             }),
             is_error: false,
         })
+    }
+
+    async fn execute_read(
+        &self,
+        owner: BackgroundOutputOwner,
+        background_id: u64,
+        cursor_segment: u64,
+        cursor_offset: u64,
+        cancellation: CancellationToken,
+    ) -> Result<ToolOutput, ToolError> {
+        check_cancellation(&cancellation)?;
+        let _permit = ActiveReadPermit::try_acquire(&self.active_reads)?;
+        let reader = self.output_reader.as_ref().ok_or_else(invalid_arguments)?;
+        let read = await_background_read(
+            reader.read(
+                owner,
+                background_id,
+                cursor_segment,
+                cursor_offset,
+                cancellation.clone(),
+            ),
+            &cancellation,
+        )
+        .await?;
+        check_cancellation(&cancellation)?;
+        let snapshot = read.map_err(map_background_read_error)?;
+        let page_bytes =
+            u64::try_from(snapshot.bytes().len()).map_err(|_| background_read_resource_limit())?;
+        let expected_next = cursor_offset
+            .checked_add(page_bytes)
+            .ok_or_else(background_read_resource_limit)?;
+        let skipped_truncated_suffix = snapshot.bytes().is_empty()
+            && snapshot.truncated()
+            && cursor_offset >= snapshot.retained_bytes()
+            && snapshot.next_offset() == snapshot.produced_bytes();
+        if cursor_offset > snapshot.produced_bytes()
+            || snapshot.next_offset() < cursor_offset
+            || (snapshot.next_offset() != expected_next && !skipped_truncated_suffix)
+        {
+            return Err(background_read_resource_limit());
+        }
+        let output_lossy = std::str::from_utf8(snapshot.bytes()).is_err();
+        let output_text = String::from_utf8_lossy(snapshot.bytes()).into_owned();
+        let output = ToolOutput {
+            content: json!({
+                "action": "read",
+                "background_id": background_id,
+                "cursor_segment": 1,
+                "cursor_offset": snapshot.next_offset(),
+                "output": output_text,
+                "output_bytes": snapshot.produced_bytes(),
+                "retained_bytes": snapshot.retained_bytes(),
+                "truncated": snapshot.truncated(),
+                "lossy": output_lossy,
+                "stream_closed": snapshot.closed()
+            }),
+            is_error: false,
+        };
+        if !serialized_value_fits(&output.content, MAX_TERMINAL_SERIALIZED_RESULT_BYTES) {
+            return Err(background_read_resource_limit());
+        }
+        check_cancellation(&cancellation)?;
+        Ok(output)
     }
 
     async fn execute_inspect(
@@ -2464,6 +2757,50 @@ impl Drop for ActiveListPermit {
     }
 }
 
+struct ActiveReadPermit {
+    active: Arc<AtomicUsize>,
+}
+
+impl ActiveReadPermit {
+    fn try_acquire(active: &Arc<AtomicUsize>) -> Result<Self, ToolError> {
+        active
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current < TERMINAL_MAX_ACTIVE_READS).then_some(current + 1)
+            })
+            .map_err(|_| read_busy())?;
+        Ok(Self {
+            active: Arc::clone(active),
+        })
+    }
+}
+
+impl Drop for ActiveReadPermit {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+async fn await_background_read(
+    mut future: BoxFuture<
+        'static,
+        Result<TerminalBackgroundReadSnapshot, TerminalBackgroundReadError>,
+    >,
+    cancellation: &CancellationToken,
+) -> Result<Result<TerminalBackgroundReadSnapshot, TerminalBackgroundReadError>, ToolError> {
+    let mut cancelled = Box::pin(cancellation.cancelled());
+    poll_fn(|context| {
+        if cancelled.as_mut().poll(context).is_ready() || cancellation.is_cancelled() {
+            return Poll::Ready(Err(cancelled_error()));
+        }
+        let result = Pin::new(&mut future).poll(context);
+        if cancellation.is_cancelled() {
+            return Poll::Ready(Err(cancelled_error()));
+        }
+        result.map(Ok)
+    })
+    .await
+}
+
 async fn await_background_inspection<T>(
     mut future: BoxFuture<'static, Result<T, NativeBackgroundInspectionError>>,
     cancellation: &CancellationToken,
@@ -2691,6 +3028,20 @@ fn terminal_inspect_schema() -> Value {
     })
 }
 
+fn terminal_read_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "action": { "const": "read" },
+            "background_id": { "type": "integer", "minimum": 1 },
+            "cursor_segment": { "type": "integer", "const": 1 },
+            "cursor_offset": { "type": "integer", "minimum": 0, "default": 0 }
+        },
+        "required": ["action", "background_id", "cursor_segment"],
+        "additionalProperties": false
+    })
+}
+
 fn terminal_wait_schema() -> Value {
     json!({
         "type": "object",
@@ -2725,7 +3076,7 @@ fn terminal_list_schema() -> Value {
 
 impl Tool for TerminalTool {
     fn spec(&self) -> ToolSpec {
-        if self.catalog.is_none() && self.inspector.is_none() {
+        if self.catalog.is_none() && self.inspector.is_none() && self.output_reader.is_none() {
             let actions = if self.background.is_some() {
                 json!(["exec", "start"])
             } else {
@@ -2755,6 +3106,9 @@ impl Tool for TerminalTool {
         if self.background.is_some() {
             forms.push(terminal_command_schema("start"));
         }
+        if self.output_reader.is_some() {
+            forms.push(terminal_read_schema());
+        }
         if self.inspector.is_some() {
             forms.push(terminal_inspect_schema());
         }
@@ -2766,7 +3120,15 @@ impl Tool for TerminalTool {
         }
         ToolSpec {
             name: terminal_name(),
-            description: if self.catalog.is_some()
+            description: if self.output_reader.is_some()
+                && self.catalog.is_some()
+                && self.inspector.is_some()
+                && self.wait_delay.is_some()
+            {
+                TERMINAL_READ_DESCRIPTION.to_owned()
+            } else if self.output_reader.is_some() {
+                "Run a foreground command, start a background command, or read bounded same-session background output".to_owned()
+            } else if self.catalog.is_some()
                 && self.inspector.is_some()
                 && self.wait_delay.is_some()
             {
@@ -2802,6 +3164,7 @@ impl Tool for TerminalTool {
         let canonical = canonical_arguments(&parsed);
         match parsed {
             TerminalArguments::List
+            | TerminalArguments::Read { .. }
             | TerminalArguments::Inspect { .. }
             | TerminalArguments::Wait { .. } => Ok(PreparedToolCall::without_authority(canonical)),
             TerminalArguments::Command(parsed) => {
@@ -2818,6 +3181,7 @@ impl Tool for TerminalTool {
                     TerminalAction::List | TerminalAction::Inspect | TerminalAction::Wait => {
                         return Err(invalid_arguments());
                     }
+                    TerminalAction::Read => return Err(invalid_arguments()),
                 };
                 Ok(PreparedToolCall::new(
                     Capability::Process {
@@ -2834,7 +3198,7 @@ impl Tool for TerminalTool {
 
     fn execute(
         &self,
-        _context: ToolContext,
+        context: ToolContext,
         arguments: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
@@ -2847,6 +3211,25 @@ impl Tool for TerminalTool {
                 return Err(invalid_arguments());
             }
             let parsed = match parsed {
+                TerminalArguments::Read {
+                    background_id,
+                    cursor_segment,
+                    cursor_offset,
+                } => {
+                    let owner = BackgroundOutputOwner::new(
+                        context.session_id.clone(),
+                        context.session_incarnation_id.clone(),
+                    );
+                    return self
+                        .execute_read(
+                            owner,
+                            background_id,
+                            cursor_segment,
+                            cursor_offset,
+                            cancellation,
+                        )
+                        .await;
+                }
                 TerminalArguments::List => {
                     return self.execute_list(cancellation).await;
                 }
@@ -2867,7 +3250,11 @@ impl Tool for TerminalTool {
                         .await;
                 }
                 TerminalArguments::Command(parsed) if parsed.action == TerminalAction::Start => {
-                    return self.execute_background(parsed, cancellation).await;
+                    let owner = BackgroundOutputOwner::new(
+                        context.session_id,
+                        context.session_incarnation_id,
+                    );
+                    return self.execute_background(parsed, owner, cancellation).await;
                 }
                 TerminalArguments::Command(parsed) => parsed,
             };
@@ -3849,6 +4236,47 @@ fn map_background_inspection_error(error: NativeBackgroundInspectionError) -> To
         ),
         NativeBackgroundInspectionErrorKind::UnsupportedPlatform => unsupported_platform(),
     }
+}
+
+fn map_background_read_error(error: TerminalBackgroundReadError) -> ToolError {
+    match error.kind() {
+        TerminalBackgroundReadErrorKind::NotFound => fixed_tool_error(
+            ToolErrorKind::InvalidInput,
+            "terminal_read_not_found",
+            "terminal background output was not found",
+            false,
+        ),
+        TerminalBackgroundReadErrorKind::InvalidCursor => fixed_tool_error(
+            ToolErrorKind::InvalidInput,
+            "terminal_read_invalid_cursor",
+            "terminal background output cursor is invalid",
+            false,
+        ),
+        TerminalBackgroundReadErrorKind::Unavailable => fixed_tool_error(
+            ToolErrorKind::Unavailable,
+            "terminal_read_unavailable",
+            "terminal background output is unavailable",
+            true,
+        ),
+    }
+}
+
+fn background_read_resource_limit() -> ToolError {
+    fixed_tool_error(
+        ToolErrorKind::Unavailable,
+        "terminal_read_resource_limit",
+        "terminal background output reached a resource limit",
+        false,
+    )
+}
+
+fn read_busy() -> ToolError {
+    fixed_tool_error(
+        ToolErrorKind::Unavailable,
+        "terminal_read_busy",
+        "terminal background output read capacity is busy",
+        true,
+    )
 }
 
 fn map_background_list_error(error: NativeBackgroundInspectionError) -> ToolError {

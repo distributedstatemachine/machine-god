@@ -2,19 +2,22 @@
 
 The native tool executes one bounded foreground shell command, starts one
 noninteractive background shell command after explicit process authorization,
-or lists, inspects, or boundedly waits on persisted background records without
-process authority. It is registered by the reference host and has no top-level
-CLI command.
+reads bounded process-local output from a command started by the same session
+incarnation, or lists, inspects, or boundedly waits on persisted background
+records without process authority. It is registered by the reference host and
+has no top-level CLI command.
 
 ## Boundary
 
 The reference-host tool implements the `exec`, bounded `start`, bounded
-persisted-record `list`, bounded persisted-record `inspect`, and bounded
-persisted-record `wait` subsets of fx's `terminal` tool. `exec` captures bounded
-standard output and error and waits for the direct child. `start` durably
-records and releases one noninteractive command through the native background
-supervisor and returns its display identity without waiting for command
-completion. `list` returns a compact bounded catalog of recorded history.
+process-local `read`, bounded persisted-record `list`, bounded persisted-record
+`inspect`, and bounded persisted-record `wait` subsets of fx's `terminal` tool.
+`exec` captures bounded standard output and error and waits for the direct
+child. `start` durably records and releases one noninteractive command through
+the native background supervisor, starts capturing its merged output, and
+returns its display identity without waiting for command completion. `read`
+pages that captured output only for the exact session incarnation that started
+it. `list` returns a compact bounded catalog of recorded history.
 `inspect` reads the validated record for one display identity without claiming
 current liveness. `wait` observes bounded atomic replacements of that exact
 record until it contains a supported recorded exit or reaches the requested
@@ -22,7 +25,8 @@ safety ceiling. Standalone public terminal constructors remain exec-only;
 injecting only a trusted background starter adds only `start`, `list` appears
 only when a trusted lister is explicitly injected, `inspect` appears only when
 a trusted inspector is explicitly injected, and `wait` appears only when its
-separately bounded waiter is also injected.
+separately bounded waiter is also injected. `read` appears only when a trusted
+process-local output reader is explicitly injected alongside a starter.
 
 The model-facing input is:
 
@@ -51,6 +55,22 @@ nonzero JSON `u64`, plus this exact wait form:
 
 All four wait fields are required. `return_when` accepts exactly the closed
 object shown above, and `wait_ceiling_ms` is an integer from 1 through 30,000.
+The separate read form is:
+
+```json
+{
+  "action": "read",
+  "background_id": 7,
+  "cursor_segment": 1,
+  "cursor_offset": 0
+}
+```
+
+`action`, nonzero `background_id`, and `cursor_segment` are required.
+`cursor_segment` is exactly `1`. `cursor_offset` is an optional JSON `u64` and
+canonicalizes to zero when omitted. The numeric background ID is only a display
+and lookup value; the host additionally binds every read to the caller's exact
+session ID and session-incarnation ID.
 An exec-only construction accepts only `exec`; a starter-only construction
 accepts `exec` and `start`.
 `cwd` is optional and defaults to `"."`. `profile` is optional and accepts
@@ -77,15 +97,16 @@ without constructing the absolute path or a background request.
 The reference-host tool description is:
 
 ```text
-Run a foreground command, start a background command, list persisted background records, inspect one persisted background record, or wait for its recorded exit
+Run a foreground command, start a background command, read bounded same-session background output, list persisted background records, inspect one persisted background record, or wait for its recorded exit
 ```
 
 An exec-only construction retains its earlier foreground-only description and
-schema. All forms deliberately exclude `read`, `screen`, `write`, `monitor`,
-`resize`, `signal`, and `close`; list filters, cursors, and pagination; PTYs;
-interactive stdin; managed background output; artifacts; custom or login
-shells; user shell profiles; retries; external working directories; and
-benchmark workloads. They make no fx-equivalence or product-performance claim.
+schema. All forms deliberately exclude `screen`, `write`, `monitor`, `resize`,
+`signal`, and `close`; list filters and pagination; PTYs; interactive stdin;
+durable or restart-safe output; output tail retention; separate background
+stdout/stderr channels; artifacts; custom or login shells; user shell profiles;
+retries; external working directories; and benchmark workloads. They make no
+fx-equivalence or product-performance claim.
 
 ## Permission and exact execution agreement
 
@@ -137,9 +158,10 @@ returns those same canonical model arguments. Direct `execute` reparses and
 revalidates all fields and rejects any canonical-argument, program, argument,
 cwd, profile, or digest divergence before filesystem access, worker creation,
 or process spawn. The existing engine presents terminal execution as critical
-risk. Denial has zero terminal-owned effects. `list`, `inspect`, and `wait`
-instead prepare with no authority because they can read only through explicitly
-injected persisted-history boundaries; none requests process permission.
+risk. Denial has zero terminal-owned effects. `read`, `list`, `inspect`, and
+`wait` instead prepare with no authority because they can read only through
+explicitly injected owner-scoped output or persisted-history boundaries; none
+requests process permission.
 
 The capability authorizes a process, not a sandbox. The retained workspace
 descriptor constrains only the child's starting-directory identity. Once
@@ -172,7 +194,9 @@ Reference-host composition retains the workspace authority and advertises
 [tool catalog](native-reference-host.md#tool-catalog). On macOS, `exec` returns
 its fixed unsupported error after strict preparation and permission. `start`,
 descriptor-confined `list` and `inspect`, and persisted-record `wait` are
-supported on Linux and macOS. On other platforms the complete reference host
+supported on Linux and macOS. Process-local `read` is supported there for
+commands started through that same composed host and session incarnation. On
+other platforms the complete reference host
 is unavailable. The exported exec contract remains portable through a trusted
 injected `TerminalExecutor`, and a trusted injected
 `TerminalBackgroundStarter` may implement the documented background ownership
@@ -181,7 +205,9 @@ contract. A trusted injected
 contract, a trusted injected `TerminalBackgroundCatalog` may implement the
 bounded persisted-record catalog contract, and a separately injected waiter
 may implement the bounded
-persisted-record wait contract.
+persisted-record wait contract. A trusted injected
+`TerminalBackgroundOutputReader` may implement the owner-scoped process-local
+read contract.
 
 ## Background start protocol
 
@@ -222,6 +248,67 @@ authority. Success means the supervisor completed its release contract, not
 that the shell is still running when the result is observed. Capacity and
 clock failures are retryable fixed unavailable errors. Persistence, process,
 and invariant failures are fixed redacted execution errors.
+
+## Process-local background output read
+
+For a start carrying output ownership, the helper keeps one pipe whose bytes
+combine the final shell's standard output and standard error. The private
+readiness marker is consumed before capture begins and can never appear in the
+stream. Standard input remains `/dev/null`. The supervisor continuously drains
+the pipe while the command runs, including after the retained prefix is full,
+so an output flood cannot block command completion.
+
+The process-local registry admits at most 16 live captured streams and retains
+at most 100 closed streams, evicting only the oldest closed stream. It retains
+the first 64 KiB per stream and counts all produced bytes with saturation. One
+read returns at most 7 KiB. That page bound keeps the complete result below the
+48 KiB serialized-result limit even when every byte needs a six-byte JSON
+control escape. Invalid UTF-8 is replaced lossily and reported. Captured bytes,
+owner identities, commands, paths, and native errors are absent from Debug and
+error values.
+
+The registry entry is hidden until process release commits. A failed or dropped
+pre-release start removes it. After release, reads require the exact
+`(session_id, session_incarnation_id, background_id)` tuple; a wrong owner and
+an evicted or unknown ID all fail identically as `terminal_read_not_found`.
+Cursor segment other than one, or an offset beyond produced bytes, returns
+`terminal_read_invalid_cursor`. Registry or adapter failure returns retryable
+`terminal_read_unavailable`; four reads may be pending concurrently and further
+reads fail retryably as `terminal_read_busy`.
+
+The successful result is exactly:
+
+```json
+{
+  "action": "read",
+  "background_id": 7,
+  "cursor_segment": 1,
+  "cursor_offset": 12,
+  "output": "hello\nworld\n",
+  "output_bytes": 12,
+  "retained_bytes": 12,
+  "truncated": false,
+  "lossy": false,
+  "stream_closed": true
+}
+```
+
+`cursor_offset` is the next offset. `output_bytes` counts all bytes produced,
+whereas `retained_bytes` reports the readable prefix. Once output exceeds the
+prefix, `truncated` stays true. Reading from within the prefix advances by the
+returned page. Reading at or beyond the retained boundary of a truncated
+stream returns an empty page and advances directly to `output_bytes`, making
+the discarded suffix explicit without creating a retry loop. `stream_closed`
+means this process-local producer closed; it is not a persisted process-state
+or liveness claim.
+
+The read future is inert until poll. Pre-cancellation has no reader effect; a
+registered cancellation wake resolves and drops a pending injected reader even
+if it ignores the token. Cancellation is rechecked after the reader and before
+publication. The four-slot permit is released on success, error, cancellation,
+drop, or unwind. Output exists only in this host process: restart, host exit,
+closed-entry eviction, or use from another composed host loses it. Persisted
+records remain independently inspectable but cannot reconstruct these bytes.
 
 ## Persisted background inspection
 
@@ -673,8 +760,13 @@ rendering, the final cancellation check, and public return.
 
 Focused and workspace evidence must cover strict schema and
 canonical arguments; exact capability serde and policy/execution equality;
-the injected and reference-host `start`, `list`, `inspect`, and `wait` schemas;
-authority-free list and exact-wait preparation; empty, ordered, truncated, and
+the injected and reference-host `start`, `read`, `list`, `inspect`, and `wait`
+schemas; authority-free read, list, and exact-wait preparation; same-incarnation
+output ownership, wrong-owner indistinguishability, hidden-before-release
+registration, merged-stream marker exclusion, live and closed reads, prefix
+truncation and cursor advance, closed-entry eviction, invalid UTF-8, worst-case
+JSON escaping, output-flood draining, four-read/16-live/100-closed admission,
+pending-read cancellation and permit recovery; empty, ordered, truncated, and
 100-row list results without sensitive detail; immediate exit, bounded
 running-state backoff and safety-ceiling outcomes; all supported and rejected
 recorded states and exit-code ranges; four-active-list, 128-observation,
