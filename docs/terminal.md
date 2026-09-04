@@ -275,8 +275,10 @@ The registry entry is hidden until process release commits. A failed or dropped
 pre-release start removes it. After release, reads require the exact
 `(session_id, session_incarnation_id, background_id)` tuple; a wrong owner and
 an evicted or unknown ID all fail identically as `terminal_read_not_found`.
-Cursor segment other than one, or an offset beyond produced bytes, returns
-`terminal_read_invalid_cursor`. Registry or adapter failure returns retryable
+The strict tool schema accepts only cursor segment one; another segment is a
+`terminal_invalid_arguments` error before reader dispatch. An offset beyond
+observed output bytes returns `terminal_read_invalid_cursor`. Registry or
+adapter failure returns retryable
 `terminal_read_unavailable`; four reads may be pending concurrently and further
 reads fail retryably as `terminal_read_busy`.
 

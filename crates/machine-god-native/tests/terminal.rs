@@ -311,6 +311,72 @@ impl TerminalBackgroundOutputReader for FakeBackgroundOutputReader {
     }
 }
 
+#[derive(Clone, Default)]
+struct PendingBackgroundOutputReader {
+    polls: Arc<AtomicUsize>,
+    drops: Arc<AtomicUsize>,
+}
+
+struct PendingBackgroundOutputRead {
+    polls: Arc<AtomicUsize>,
+    drops: Arc<AtomicUsize>,
+}
+
+impl Future for PendingBackgroundOutputRead {
+    type Output = Result<TerminalBackgroundReadSnapshot, TerminalBackgroundReadError>;
+
+    fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+        self.polls.fetch_add(1, Ordering::SeqCst);
+        Poll::Pending
+    }
+}
+
+impl Drop for PendingBackgroundOutputRead {
+    fn drop(&mut self) {
+        self.drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl TerminalBackgroundOutputReader for PendingBackgroundOutputReader {
+    fn read(
+        &self,
+        _owner: BackgroundOutputOwner,
+        _background_id: u64,
+        _cursor_segment: u64,
+        _cursor_offset: u64,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundReadSnapshot, TerminalBackgroundReadError>>
+    {
+        Box::pin(PendingBackgroundOutputRead {
+            polls: Arc::clone(&self.polls),
+            drops: Arc::clone(&self.drops),
+        })
+    }
+}
+
+#[derive(Clone)]
+struct ReadyCancellingBackgroundOutputReader {
+    snapshot: TerminalBackgroundReadSnapshot,
+}
+
+impl TerminalBackgroundOutputReader for ReadyCancellingBackgroundOutputReader {
+    fn read(
+        &self,
+        _owner: BackgroundOutputOwner,
+        _background_id: u64,
+        _cursor_segment: u64,
+        _cursor_offset: u64,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundReadSnapshot, TerminalBackgroundReadError>>
+    {
+        let snapshot = self.snapshot.clone();
+        Box::pin(async move {
+            cancellation.cancel();
+            Ok(snapshot)
+        })
+    }
+}
+
 #[derive(Clone)]
 struct FakeBackgroundInspector {
     state: Arc<BackgroundInspectorState>,
@@ -1502,12 +1568,15 @@ fn background_tool(
     .unwrap()
 }
 
-fn reading_tool(
+fn reading_tool<R>(
     root: &std::path::Path,
     executor: &FakeExecutor,
     starter: &FakeBackgroundStarter,
-    reader: &FakeBackgroundOutputReader,
-) -> TerminalTool {
+    reader: &R,
+) -> TerminalTool
+where
+    R: TerminalBackgroundOutputReader + Clone,
+{
     background_tool(root, executor, starter)
         .with_output_reader(Arc::new(reader.clone()))
         .unwrap()
@@ -2085,6 +2154,7 @@ fn background_read_rejects_malformed_reader_pages() {
         TerminalBackgroundReadSnapshot::new(Vec::new(), 0, 1, 1, 1, false, true),
         TerminalBackgroundReadSnapshot::new(vec![0xc3], 1, 2, 2, 0, false, false),
         TerminalBackgroundReadSnapshot::new(vec![0xc3], 1, 1, 1, 0, false, false),
+        TerminalBackgroundReadSnapshot::new(vec![0xc3], 1, 1, 1, 0, true, false),
     ] {
         assert_eq!(
             malformed.unwrap_err().kind(),
@@ -2268,6 +2338,92 @@ fn background_read_capacity_is_fail_fast_and_recovers_on_future_drop() {
     assert!(poll_once(replacement.as_mut()).is_pending());
     drop(replacement);
     drop(active);
+}
+
+#[test]
+fn background_read_cancellation_wakes_drops_and_recovers_exact_capacity() {
+    let temporary = TemporaryDirectory::new("background-read-cancel");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let reader = PendingBackgroundOutputReader::default();
+    let tool = reading_tool(temporary.path(), &executor, &starter, &reader);
+    let arguments = json!({
+        "action": "read",
+        "background_id": 7,
+        "cursor_segment": 1,
+        "cursor_offset": 0
+    });
+    let cancellation = CancellationToken::new();
+    let observed = Arc::new(ObservedWake::default());
+    let waker = Waker::from(Arc::clone(&observed));
+    let mut cancelled = tool.execute(context(), arguments.clone(), cancellation.clone());
+    assert!(poll_with_waker(cancelled.as_mut(), &waker).is_pending());
+    let mut active = (0..3)
+        .map(|_| tool.execute(context(), arguments.clone(), CancellationToken::new()))
+        .collect::<Vec<_>>();
+    for future in &mut active {
+        assert!(poll_once(future.as_mut()).is_pending());
+    }
+    assert_eq!(reader.polls.load(Ordering::SeqCst), 4);
+    let busy = poll_ready(tool.execute(context(), arguments.clone(), CancellationToken::new()))
+        .unwrap_err();
+    assert_eq!(busy.code, "terminal_read_busy");
+
+    assert!(cancellation.cancel());
+    observed.wait_for_calls(1);
+    let error = match poll_with_waker(cancelled.as_mut(), &waker) {
+        Poll::Ready(Err(error)) => error,
+        Poll::Ready(Ok(_)) => panic!("cancelled read returned output"),
+        Poll::Pending => panic!("cancelled read remained pending"),
+    };
+    assert_eq!(error.kind, ToolErrorKind::Cancelled);
+    assert_eq!(error.code, "terminal_cancelled");
+    assert_eq!(reader.drops.load(Ordering::SeqCst), 1);
+
+    let mut replacement = tool.execute(context(), arguments, CancellationToken::new());
+    assert!(poll_once(replacement.as_mut()).is_pending());
+    drop(replacement);
+    drop(active);
+    assert_eq!(reader.drops.load(Ordering::SeqCst), 5);
+}
+
+#[test]
+fn background_read_same_poll_cancellation_wins_ready_snapshot() {
+    let temporary = TemporaryDirectory::new("background-read-ready-cancel");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let reader = ReadyCancellingBackgroundOutputReader {
+        snapshot: TerminalBackgroundReadSnapshot::new(
+            b"must-not-publish".to_vec(),
+            16,
+            16,
+            16,
+            0,
+            false,
+            true,
+        )
+        .unwrap(),
+    };
+    let tool = reading_tool(temporary.path(), &executor, &starter, &reader);
+
+    let error = poll_ready(tool.execute(
+        context(),
+        json!({
+            "action": "read",
+            "background_id": 7,
+            "cursor_segment": 1,
+            "cursor_offset": 0
+        }),
+        CancellationToken::new(),
+    ))
+    .unwrap_err();
+
+    assert_eq!(error.kind, ToolErrorKind::Cancelled);
+    assert_eq!(error.code, "terminal_cancelled");
 }
 
 #[test]

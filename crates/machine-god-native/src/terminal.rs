@@ -616,7 +616,7 @@ impl TerminalBackgroundReadSnapshot {
             && next_offset < retained_bytes
             && next_offset.checked_add(u64::from(pending_utf8_bytes)) == Some(retained_bytes);
         let visible_incomplete_utf8 = incomplete_utf8_suffix_len(&bytes) > 0
-            && (next_offset < retained_bytes || (!closed && !truncated));
+            && (next_offset < retained_bytes || (!closed && produced_bytes == retained_bytes));
         if bytes.len() > MAX_TERMINAL_BACKGROUND_READ_BYTES
             || retained_bytes > MAX_TERMINAL_RETAINED_OUTPUT_BYTES as u64
             || retained_bytes > produced_bytes
