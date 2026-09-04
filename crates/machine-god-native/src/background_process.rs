@@ -50,10 +50,10 @@ use std::process::ChildStderr;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::Arc;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 use std::sync::atomic::{AtomicI32, AtomicU32};
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::sync::{Condvar, Mutex, OnceLock};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -343,6 +343,8 @@ enum BackgroundProcessSignalState {
 pub(crate) struct BackgroundProcessSignalController {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     inner: Arc<Mutex<BackgroundProcessSignalState>>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    close_requested: Arc<AtomicBool>,
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     unsupported: (),
 }
@@ -356,6 +358,7 @@ impl BackgroundProcessSignalController {
         let target = ProcessSignalTarget::capture(group, authority)?;
         Ok(Self {
             inner: Arc::new(Mutex::new(BackgroundProcessSignalState::Hidden(target))),
+            close_requested: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -365,6 +368,7 @@ impl BackgroundProcessSignalController {
             inner: Arc::new(Mutex::new(BackgroundProcessSignalState::Hidden(
                 ProcessSignalTarget::fake(group),
             ))),
+            close_requested: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -406,11 +410,17 @@ impl BackgroundProcessSignalController {
     ) -> Result<(), BackgroundProcessSignalError> {
         use std::sync::TryLockError;
 
+        if self.close_requested.load(Ordering::Acquire) {
+            return Err(signal_not_found_error());
+        }
         let state = match self.inner.try_lock() {
             Ok(state) => state,
             Err(TryLockError::WouldBlock) => return Err(signal_busy_error()),
             Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
         };
+        if self.close_requested.load(Ordering::Acquire) {
+            return Err(signal_not_found_error());
+        }
         let BackgroundProcessSignalState::Active(target) = &*state else {
             return Err(signal_not_found_error());
         };
@@ -421,11 +431,17 @@ impl BackgroundProcessSignalController {
     fn activate(&self) -> Result<(), BackgroundProcessSignalError> {
         use std::sync::TryLockError;
 
+        if self.close_requested.load(Ordering::Acquire) {
+            return Err(signal_not_found_error());
+        }
         let mut state = match self.inner.try_lock() {
             Ok(state) => state,
             Err(TryLockError::WouldBlock) => return Err(signal_busy_error()),
             Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
         };
+        if self.close_requested.load(Ordering::Acquire) {
+            return Err(signal_not_found_error());
+        }
         match &*state {
             BackgroundProcessSignalState::Hidden(target) => {
                 *state = BackgroundProcessSignalState::Active(target.clone());
@@ -438,6 +454,7 @@ impl BackgroundProcessSignalController {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn close(&self) {
+        self.close_requested.store(true, Ordering::Release);
         let mut state = self
             .inner
             .lock()
@@ -3462,6 +3479,34 @@ fn read_signal_process(
 }
 
 #[cfg(target_os = "macos")]
+fn require_darwin_signal_parent(
+    expected: &SignalProcessSnapshot,
+    current: Option<SignalProcessSnapshot>,
+) -> Result<(), BackgroundProcessSignalError> {
+    let Some(current) = current else {
+        return Err(signal_process_error());
+    };
+    if !same_signal_process(expected, &current) {
+        return Err(signal_process_error());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn classify_darwin_signal_child(
+    parent: &SignalProcessSnapshot,
+    current: Option<SignalProcessSnapshot>,
+) -> Result<Option<SignalProcessSnapshot>, BackgroundProcessSignalError> {
+    let Some(current) = current else {
+        return Ok(None);
+    };
+    if current.parent != Some(parent.pid) || current.parent_identity != Some(parent.identity) {
+        return Err(signal_process_error());
+    }
+    Ok(Some(current))
+}
+
+#[cfg(target_os = "macos")]
 fn signal_process_snapshot(
     authority: &GroupSnapshotAuthority,
     root: rustix::process::Pid,
@@ -3472,38 +3517,31 @@ fn signal_process_snapshot(
     let mut child_buffer = vec![0_i32; MAX_SIGNAL_TREE_PROCESSES + 1];
     let mut cursor = 0_usize;
     while cursor < snapshot.len() {
-        let parent = snapshot[cursor].pid;
-        let parent_identity = snapshot[cursor].identity;
+        let parent = snapshot[cursor];
         cursor += 1;
-        let Some(current_parent) = read_signal_process(authority, parent, scratch)? else {
-            continue;
-        };
-        if current_parent.identity != parent_identity {
-            continue;
-        }
-        let children = match machine_god_darwin_proc::list_child_pids(
-            parent.as_raw_nonzero().get(),
+        require_darwin_signal_parent(
+            &parent,
+            read_signal_process(authority, parent.pid, scratch)?,
+        )?;
+        let Ok(children) = machine_god_darwin_proc::list_child_pids(
+            parent.pid.as_raw_nonzero().get(),
             &mut child_buffer,
-        ) {
-            Ok(children) => children,
-            Err(machine_god_darwin_proc::Error::NotFound) => continue,
-            Err(_) => return Err(signal_process_error()),
+        ) else {
+            return Err(signal_process_error());
         };
-        let Some(revalidated_parent) = read_signal_process(authority, parent, scratch)? else {
-            continue;
-        };
-        if revalidated_parent.identity != parent_identity {
-            continue;
-        }
+        require_darwin_signal_parent(
+            &parent,
+            read_signal_process(authority, parent.pid, scratch)?,
+        )?;
         for &raw in children {
             if snapshot.len() == MAX_SIGNAL_TREE_PROCESSES {
                 return Err(signal_process_error());
             }
             let pid = rustix::process::Pid::from_raw(raw).ok_or_else(signal_process_error)?;
-            if let Some(process) = read_signal_process(authority, pid, scratch)?
-                && process.parent == Some(parent)
-                && process.parent_identity == Some(parent_identity)
-            {
+            if let Some(process) = classify_darwin_signal_child(
+                &parent,
+                read_signal_process(authority, pid, scratch)?,
+            )? {
                 snapshot.push(process);
             }
         }
@@ -3644,6 +3682,23 @@ fn require_linux_signal_parent(
 }
 
 #[cfg(target_os = "linux")]
+fn open_linux_signal_task(
+    task_directory: BorrowedFd<'_>,
+    task_name: &std::ffi::CStr,
+) -> Result<Option<OwnedFd>, BackgroundProcessSignalError> {
+    match rustix::fs::openat(
+        task_directory,
+        task_name,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    ) {
+        Ok(task) => Ok(Some(task)),
+        Err(rustix::io::Errno::NOENT | rustix::io::Errno::SRCH) => Ok(None),
+        Err(_) => Err(signal_process_error()),
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn append_linux_signal_children(
     authority: &GroupSnapshotAuthority,
     parent: SignalProcessSnapshot,
@@ -3670,7 +3725,7 @@ fn append_linux_signal_children(
     )
     .map_err(|_| signal_process_error())?;
     let mut directory_buffer = [MaybeUninit::<u8>::uninit(); 8 * 1024];
-    let mut tasks = rustix::fs::RawDir::new(task_directory, &mut directory_buffer);
+    let mut tasks = rustix::fs::RawDir::new(task_directory.as_fd(), &mut directory_buffer);
     while let Some(entry) = tasks.next() {
         *inspected_entries = inspected_entries
             .checked_add(1)
@@ -3684,15 +3739,8 @@ fn append_linux_signal_children(
         {
             continue;
         }
-        let task = match rustix::fs::openat(
-            parent_directory.as_fd(),
-            Path::new("task").join(OsStr::from_bytes(task_name.to_bytes())),
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::empty(),
-        ) {
-            Ok(task) => task,
-            Err(rustix::io::Errno::NOENT | rustix::io::Errno::SRCH) => continue,
-            Err(_) => return Err(signal_process_error()),
+        let Some(task) = open_linux_signal_task(task_directory.as_fd(), task_name)? else {
+            continue;
         };
         let children = match rustix::fs::openat(
             task.as_fd(),
@@ -4735,6 +4783,36 @@ mod linux_proc_tests {
     }
 
     #[test]
+    fn signal_task_entries_open_relative_to_the_borrowed_task_directory() {
+        let task_directory = rustix::fs::openat(
+            rustix::fs::CWD,
+            "/proc/self/task",
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .expect("open current process task directory");
+        let mut directory_buffer = [MaybeUninit::<u8>::uninit(); 8 * 1024];
+        let mut tasks = rustix::fs::RawDir::new(task_directory.as_fd(), &mut directory_buffer);
+        let mut opened = 0_usize;
+        while let Some(entry) = tasks.next() {
+            let entry = entry.expect("read current process task entry");
+            if parse_linux_proc_directory_pid(entry.file_name().to_bytes())
+                .expect("task entry is unambiguous")
+                .is_none()
+            {
+                continue;
+            }
+            assert!(
+                open_linux_signal_task(task_directory.as_fd(), entry.file_name())
+                    .expect("open task entry without constructing a joined path")
+                    .is_some()
+            );
+            opened = opened.saturating_add(1);
+        }
+        assert!(opened > 0, "the current process exposes at least one task");
+    }
+
+    #[test]
     fn proc_mount_authority_requires_one_unrestricted_root_procfs() {
         assert!(parse_linux_proc_mount_authority(UNRESTRICTED_PROC, 36).is_ok());
         assert!(
@@ -4979,6 +5057,58 @@ mod process_regression_tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn darwin_signal_parent_revalidation_fails_closed() {
+        let expected = signal_snapshot(100, Some(1), 100, 1000);
+        require_darwin_signal_parent(&expected, Some(expected))
+            .expect("the exact queued parent remains admissible");
+
+        assert_eq!(
+            require_darwin_signal_parent(&expected, None)
+                .expect_err("a vanished queued parent invalidates the snapshot")
+                .kind(),
+            BackgroundProcessSignalErrorKind::Process
+        );
+        let reused = signal_snapshot(100, Some(1), 100, 1001);
+        assert_eq!(
+            require_darwin_signal_parent(&expected, Some(reused))
+                .expect_err("a changed parent incarnation invalidates the snapshot")
+                .kind(),
+            BackgroundProcessSignalErrorKind::Process
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn darwin_listed_child_omits_only_actual_disappearance() {
+        let parent = signal_snapshot(100, Some(1), 100, 1000);
+        assert_eq!(
+            classify_darwin_signal_child(&parent, None)
+                .expect("an actually vanished listed child may be omitted"),
+            None
+        );
+
+        let exact = signal_snapshot_with_parent_identity(101, 100, 1000, 101, 1001);
+        assert_eq!(
+            classify_darwin_signal_child(&parent, Some(exact))
+                .expect("exact parent PID and identity are retained"),
+            Some(exact)
+        );
+        for changed in [
+            signal_snapshot_with_parent_identity(101, 99, 1000, 101, 1001),
+            signal_snapshot_with_parent_identity(101, 100, 9999, 101, 1001),
+            signal_snapshot(101, Some(100), 101, 1001),
+        ] {
+            assert_eq!(
+                classify_darwin_signal_child(&parent, Some(changed))
+                    .expect_err("an existing listed child with changed lineage is ambiguous")
+                    .kind(),
+                BackgroundProcessSignalErrorKind::Process
+            );
+        }
+    }
+
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn signal_delivery_rechecks_groups_and_attempts_every_descendant() {
@@ -5160,6 +5290,66 @@ mod process_regression_tests {
         assert_eq!(error.kind(), BackgroundProcessSignalErrorKind::Busy);
         assert!(!sent);
         drop(held);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn signal_controller_close_request_prevents_later_gate_admission() {
+        let controller = test_signal_controller();
+        controller.activate().expect("activate controller");
+        let signal_controller = controller.clone();
+        let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+        let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+        let signal_worker = thread::spawn(move || {
+            signal_controller.signal_with(BackgroundProcessSignal::Terminate, |_, _| {
+                entered_sender.send(()).expect("report in-flight signal");
+                release_receiver.recv().expect("release in-flight signal");
+                Ok(())
+            })
+        });
+        entered_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the first signal owns the lifecycle gate");
+
+        let close_controller = controller.clone();
+        let close_worker = thread::spawn(move || close_controller.close());
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !controller.close_requested.load(Ordering::Acquire) && Instant::now() < deadline {
+            thread::yield_now();
+        }
+        let close_was_requested = controller.close_requested.load(Ordering::Acquire);
+        let mut later_send_entered = false;
+        let later_signal = controller.signal_with(BackgroundProcessSignal::Kill, |_, _| {
+            later_send_entered = true;
+            Ok(())
+        });
+        let later_activation = controller.activate();
+
+        release_sender.send(()).expect("release first signal");
+        assert!(
+            signal_worker.join().expect("join signal worker").is_ok(),
+            "the already-admitted signal completes"
+        );
+        close_worker.join().expect("join close worker");
+
+        assert!(
+            close_was_requested,
+            "close publishes admission closure first"
+        );
+        assert_eq!(
+            later_signal
+                .expect_err("later signal cannot barge ahead of close")
+                .kind(),
+            BackgroundProcessSignalErrorKind::NotFound
+        );
+        assert!(!later_send_entered);
+        assert_eq!(
+            later_activation
+                .expect_err("activation cannot reopen after close is requested")
+                .kind(),
+            BackgroundProcessSignalErrorKind::NotFound
+        );
+        assert!(controller.is_closed_for_test());
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
