@@ -1081,7 +1081,7 @@ fn assert_exact_native_tool_catalog(request: &Value) {
         .find(|tool| tool["name"] == TERMINAL_TOOL_NAME)
         .expect("terminal tool is registered");
     let forms = terminal["inputSchema"]["oneOf"].as_array().unwrap();
-    assert_eq!(forms.len(), 6);
+    assert_eq!(forms.len(), 7);
     assert_eq!(forms[0]["properties"]["action"]["const"], "exec");
     assert_eq!(forms[1]["properties"]["action"]["const"], "start");
     assert_eq!(forms[2]["properties"]["action"]["const"], "read");
@@ -1089,16 +1089,21 @@ fn assert_exact_native_tool_catalog(request: &Value) {
         forms[2]["required"],
         json!(["action", "background_id", "cursor_segment"])
     );
-    assert_eq!(forms[3]["properties"]["action"]["const"], "inspect");
-    assert_eq!(forms[3]["required"], json!(["action", "background_id"]));
-    assert_eq!(forms[4]["properties"]["action"]["const"], "wait");
+    assert_eq!(forms[3]["properties"]["action"]["const"], "signal");
     assert_eq!(
-        forms[4]["required"],
+        forms[3]["required"],
+        json!(["action", "background_id", "signal"])
+    );
+    assert_eq!(forms[4]["properties"]["action"]["const"], "inspect");
+    assert_eq!(forms[4]["required"], json!(["action", "background_id"]));
+    assert_eq!(forms[5]["properties"]["action"]["const"], "wait");
+    assert_eq!(
+        forms[5]["required"],
         json!(["action", "background_id", "return_when", "wait_ceiling_ms"])
     );
-    assert_eq!(forms[5]["properties"]["action"]["const"], "list");
-    assert_eq!(forms[5]["required"], json!(["action"]));
-    assert_eq!(forms[5]["additionalProperties"], false);
+    assert_eq!(forms[6]["properties"]["action"]["const"], "list");
+    assert_eq!(forms[6]["required"], json!(["action"]));
+    assert_eq!(forms[6]["additionalProperties"], false);
 }
 
 fn assert_exact_native_tool_permissions(prompter: &AllowingPrompter) {

@@ -21,19 +21,6 @@ pub(crate) enum BackgroundSignal {
     Kill,
 }
 
-impl BackgroundSignal {
-    /// Returns the stable lowercase signal name.
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Hangup => "hangup",
-            Self::Interrupt => "interrupt",
-            Self::Quit => "quit",
-            Self::Terminate => "terminate",
-            Self::Kill => "kill",
-        }
-    }
-}
-
 /// Stable category for a process-local background-control failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BackgroundControlErrorKind {
@@ -331,7 +318,7 @@ mod tests {
     }
 
     #[test]
-    fn error_rendering_and_signal_names_are_fixed_and_data_free() {
+    fn error_rendering_is_fixed_and_data_free() {
         for kind in [
             BackgroundControlErrorKind::NotFound,
             BackgroundControlErrorKind::Busy,
@@ -343,11 +330,6 @@ mod tests {
             assert_eq!(error.to_string(), "background control operation failed");
             assert!(error.source().is_none());
         }
-        assert_eq!(BackgroundSignal::Hangup.as_str(), "hangup");
-        assert_eq!(BackgroundSignal::Interrupt.as_str(), "interrupt");
-        assert_eq!(BackgroundSignal::Quit.as_str(), "quit");
-        assert_eq!(BackgroundSignal::Terminate.as_str(), "terminate");
-        assert_eq!(BackgroundSignal::Kill.as_str(), "kill");
     }
 
     #[test]

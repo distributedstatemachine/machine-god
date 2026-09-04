@@ -18,10 +18,11 @@ use machine_god_native::{
     NativeBackgroundInspectionError, NativeBackgroundList, NativeBackgroundRecordSummary,
     NativeBackgroundState, TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TerminalBackgroundCatalog,
     TerminalBackgroundInspector, TerminalBackgroundOutcome, TerminalBackgroundOutputReader,
-    TerminalBackgroundReadError, TerminalBackgroundReadSnapshot, TerminalBackgroundStarter,
-    TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError, TerminalCapturedOutput,
-    TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest, TerminalExecutionStatus,
-    TerminalExecutor, TerminalLimits, TerminalTool,
+    TerminalBackgroundReadError, TerminalBackgroundReadSnapshot, TerminalBackgroundSignal,
+    TerminalBackgroundSignalError, TerminalBackgroundSignalOutcome, TerminalBackgroundSignaler,
+    TerminalBackgroundStarter, TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError,
+    TerminalCapturedOutput, TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest,
+    TerminalExecutionStatus, TerminalExecutor, TerminalLimits, TerminalTool,
 };
 use machine_god_testkit::{
     InMemorySessionStore, ModelProviderStep, PermissionStep, ScriptedModelProvider,
@@ -185,6 +186,33 @@ impl TerminalBackgroundOutputReader for FakeBackgroundOutputReader {
 }
 
 #[derive(Clone, Default)]
+struct FakeBackgroundSignaler {
+    calls: Arc<AtomicUsize>,
+}
+
+impl TerminalBackgroundSignaler for FakeBackgroundSignaler {
+    fn signal(
+        &self,
+        owner: BackgroundOutputOwner,
+        background_id: u64,
+        signal: TerminalBackgroundSignal,
+        _cancellation: machine_god_core::CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundSignalOutcome, TerminalBackgroundSignalError>>
+    {
+        assert_eq!(owner.session_id().as_str(), "terminal-signal-session");
+        assert_eq!(
+            owner.session_incarnation_id().as_str(),
+            "incarnation-terminal-signal-session"
+        );
+        let calls = Arc::clone(&self.calls);
+        Box::pin(async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            TerminalBackgroundSignalOutcome::new(background_id, signal)
+        })
+    }
+}
+
+#[derive(Clone, Default)]
 struct FakeBackgroundInspector {
     calls: Arc<AtomicUsize>,
 }
@@ -300,6 +328,17 @@ fn terminal_with_reader(
 ) -> TerminalTool {
     terminal_with_background(root, executor, starter)
         .with_output_reader(Arc::new(reader))
+        .unwrap()
+}
+
+fn terminal_with_signaler(
+    root: &std::path::Path,
+    executor: FakeExecutor,
+    starter: FakeBackgroundStarter,
+    signaler: FakeBackgroundSignaler,
+) -> TerminalTool {
+    terminal_with_background(root, executor, starter)
+        .with_signaler(Arc::new(signaler))
         .unwrap()
 }
 
@@ -769,6 +808,128 @@ fn background_read_bypasses_permission_and_persists_same_incarnation_output() {
         }
     );
     assert_eq!(store.record(&session_id).unwrap().messages[2], message);
+}
+
+#[test]
+fn background_signal_requires_exact_custom_permission_before_delivery() {
+    let temporary = TemporaryDirectory::new("engine-signal");
+    let arguments = json!({
+        "action": "signal",
+        "background_id": 17,
+        "signal": "terminate"
+    });
+    let provider = provider_with_arguments("terminal-signal", arguments.clone());
+    let store = InMemorySessionStore::new();
+    let policy =
+        ScriptedPermissionHandler::new([PermissionStep::Decision(PermissionDecision::Allow {
+            scope: PermissionGrantScope::Once,
+        })]);
+    let executor = FakeExecutor::default();
+    let starter = FakeBackgroundStarter::default();
+    let signaler = FakeBackgroundSignaler::default();
+    let tool = terminal_with_signaler(
+        temporary.path(),
+        executor.clone(),
+        starter.clone(),
+        signaler.clone(),
+    );
+    let expected = tool
+        .prepare(call("terminal", arguments))
+        .unwrap()
+        .capability()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        expected,
+        Capability::Custom {
+            name: "terminal_signal".to_owned(),
+            details: json!({ "background_id": 17, "signal": "terminate" }),
+        }
+    );
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store.clone())
+        .permission_handler(policy.clone())
+        .tool(tool)
+        .build()
+        .unwrap();
+
+    let (session_id, events) = collect(&engine, "terminal-signal-session");
+
+    assert_eq!(policy.requests()[0].capability, expected);
+    assert_eq!(signaler.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(starter.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+    let resolved = events
+        .iter()
+        .position(|event| matches!(event.payload, TurnEvent::PermissionResolved { .. }))
+        .unwrap();
+    let tool_started_index = events
+        .iter()
+        .position(|event| matches!(event.payload, TurnEvent::ToolStarted { .. }))
+        .unwrap();
+    assert!(resolved < tool_started_index);
+    let (message, output) = second_request_tool_output(&provider);
+    assert_eq!(
+        output,
+        ToolOutput {
+            content: json!({
+                "action": "signal",
+                "background_id": 17,
+                "signal": "terminate",
+                "status": "signaled"
+            }),
+            is_error: false,
+        }
+    );
+    assert_eq!(store.record(&session_id).unwrap().messages[2], message);
+}
+
+#[test]
+fn background_signal_denial_has_no_control_or_process_effect() {
+    let temporary = TemporaryDirectory::new("engine-signal-denied");
+    let provider = provider_with_arguments(
+        "terminal-signal-denied",
+        json!({ "action": "signal", "background_id": 17, "signal": "kill" }),
+    );
+    let policy =
+        ScriptedPermissionHandler::new([PermissionStep::Decision(PermissionDecision::Deny {
+            reason: "denied by test policy".to_owned(),
+        })]);
+    let executor = FakeExecutor::default();
+    let starter = FakeBackgroundStarter::default();
+    let signaler = FakeBackgroundSignaler::default();
+    let tool = terminal_with_signaler(
+        temporary.path(),
+        executor.clone(),
+        starter.clone(),
+        signaler.clone(),
+    );
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(InMemorySessionStore::new())
+        .permission_handler(policy.clone())
+        .tool(tool)
+        .build()
+        .unwrap();
+
+    let (_, events) = collect(&engine, "terminal-signal-denied-session");
+
+    assert_eq!(policy.requests().len(), 1);
+    assert_eq!(signaler.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(starter.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+    assert!(events.iter().all(|event| !matches!(
+        event.payload,
+        TurnEvent::ToolStarted { .. } | TurnEvent::ToolFinished { .. }
+    )));
+    assert_eq!(
+        second_request_tool_output(&provider).1.content,
+        json!({
+            "code": "permission_denied",
+            "message": "tool execution was denied by policy"
+        })
+    );
 }
 
 #[test]

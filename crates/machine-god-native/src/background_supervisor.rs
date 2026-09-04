@@ -5,6 +5,7 @@ use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
 use std::future::Future;
+use std::num::NonZeroU64;
 use std::os::unix::ffi::OsStrExt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
@@ -29,12 +30,17 @@ use rustix::fd::{AsFd, OwnedFd};
 use rustix::fs::{FileType, Mode, OFlags};
 use sha2::{Digest, Sha256};
 
+use crate::background_control::{
+    BackgroundControlError, BackgroundControlErrorKind, BackgroundControlLease,
+    BackgroundControlRegistry, BackgroundControlTarget, BackgroundSignal,
+};
 use crate::background_inspection::{NativeBackgroundState, StoredBackgroundRecord};
 use crate::background_output::{BackgroundOutputErrorKind, BackgroundOutputRegistry};
 use crate::background_process::BackgroundProcessHelper;
 use crate::background_process::{
     BackgroundProcessErrorKind, BackgroundProcessExit, BackgroundProcessOutcome,
-    BackgroundProcessRequest, OwnedBackgroundProcess, PreparedBackgroundProcess,
+    BackgroundProcessRequest, BackgroundProcessSignal, BackgroundProcessSignalController,
+    BackgroundProcessSignalErrorKind, OwnedBackgroundProcess, PreparedBackgroundProcess,
     SystemBackgroundProcessAdapter, ValidatedBackgroundEnvironment,
 };
 use crate::background_store::{
@@ -44,7 +50,9 @@ use crate::session_store::FileSessionStore;
 use crate::terminal::{
     TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TerminalBackgroundOutcome,
     TerminalBackgroundOutputReader, TerminalBackgroundReadError, TerminalBackgroundReadErrorKind,
-    TerminalBackgroundReadSnapshot, TerminalBackgroundStarter,
+    TerminalBackgroundReadSnapshot, TerminalBackgroundSignal, TerminalBackgroundSignalError,
+    TerminalBackgroundSignalErrorKind, TerminalBackgroundSignalOutcome, TerminalBackgroundSignaler,
+    TerminalBackgroundStarter,
 };
 
 /// Default number of concurrently retained background processes.
@@ -185,6 +193,7 @@ pub struct NativeBackgroundSupervisor {
     blocking: BlockingExecutor,
     environment_identity: ProcessEnvironment,
     output: BackgroundOutputRegistry,
+    control: BackgroundControlRegistry,
 }
 
 impl NativeBackgroundSupervisor {
@@ -342,6 +351,7 @@ impl NativeBackgroundSupervisor {
             SupervisorConstructionResources {
                 ownership,
                 output: BackgroundOutputRegistry::new(),
+                control: BackgroundControlRegistry::new(),
             },
         )
     }
@@ -355,7 +365,11 @@ impl NativeBackgroundSupervisor {
         adapter: SystemBackgroundProcessAdapter,
         resources: SupervisorConstructionResources,
     ) -> Result<Self, NativeBackgroundSupervisorError> {
-        let SupervisorConstructionResources { ownership, output } = resources;
+        let SupervisorConstructionResources {
+            ownership,
+            output,
+            control,
+        } = resources;
         let environment_identity = background_environment_identity(&environment);
         let store = Arc::new(NativeStore {
             inner: Arc::new(
@@ -376,6 +390,7 @@ impl NativeBackgroundSupervisor {
             environment,
             adapter,
             output: output.clone(),
+            control: control.clone(),
         });
         let blocking = BlockingExecutor::with_ownership(limits.max_active(), ownership.blocking)?;
         let retainer = Arc::new(WorkerRetainer::with_ownership(
@@ -395,6 +410,7 @@ impl NativeBackgroundSupervisor {
             blocking,
             environment_identity,
             output,
+            control,
         })
     }
 
@@ -503,6 +519,25 @@ impl TerminalBackgroundOutputReader for NativeBackgroundSupervisor {
     }
 }
 
+impl TerminalBackgroundSignaler for NativeBackgroundSupervisor {
+    fn signal(
+        &self,
+        owner: machine_god_core::BackgroundOutputOwner,
+        background_id: u64,
+        signal: TerminalBackgroundSignal,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundSignalOutcome, TerminalBackgroundSignalError>>
+    {
+        signal_background_process(
+            self.control.clone(),
+            owner,
+            background_id,
+            signal,
+            cancellation,
+        )
+    }
+}
+
 impl fmt::Debug for NativeBackgroundSupervisor {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -533,6 +568,7 @@ pub(crate) struct LazyProductionBackgroundStarter {
     environment_identity: ProcessEnvironment,
     shared: Arc<LazyBackgroundInitialization>,
     output: BackgroundOutputRegistry,
+    control: BackgroundControlRegistry,
 }
 
 struct LazyBackgroundInitialization {
@@ -583,7 +619,9 @@ impl LazyProductionBackgroundStarter {
         let environment = production_environment();
         let environment_identity = production_environment_identity();
         let output = BackgroundOutputRegistry::new();
+        let control = BackgroundControlRegistry::new();
         let initializer_output = output.clone();
+        let initializer_control = control.clone();
         let initializer: LazyTerminalInitializer = Box::new(move |ownership| {
             let adapter = system_process_adapter()?;
             NativeBackgroundSupervisor::construct_parts_with_ownership(
@@ -596,6 +634,7 @@ impl LazyProductionBackgroundStarter {
                 SupervisorConstructionResources {
                     ownership,
                     output: initializer_output,
+                    control: initializer_control,
                 },
             )
             .map(|supervisor| Arc::new(supervisor) as Arc<dyn TerminalBackgroundStarter>)
@@ -604,6 +643,7 @@ impl LazyProductionBackgroundStarter {
             environment_identity,
             initializer,
             output,
+            control,
         ))
     }
 
@@ -611,10 +651,12 @@ impl LazyProductionBackgroundStarter {
         environment_identity: ProcessEnvironment,
         initializer: LazyTerminalInitializer,
         output: BackgroundOutputRegistry,
+        control: BackgroundControlRegistry,
     ) -> Self {
         Self {
             environment_identity,
             output,
+            control,
             shared: Arc::new(LazyBackgroundInitialization {
                 state: Mutex::new(LazyBackgroundInitializationState {
                     phase: LazyBackgroundInitializationPhase::Uninitialized(initializer),
@@ -668,6 +710,69 @@ impl TerminalBackgroundOutputReader for LazyProductionBackgroundStarter {
             cancellation,
         )
     }
+}
+
+impl TerminalBackgroundSignaler for LazyProductionBackgroundStarter {
+    fn signal(
+        &self,
+        owner: machine_god_core::BackgroundOutputOwner,
+        background_id: u64,
+        signal: TerminalBackgroundSignal,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundSignalOutcome, TerminalBackgroundSignalError>>
+    {
+        signal_background_process(
+            self.control.clone(),
+            owner,
+            background_id,
+            signal,
+            cancellation,
+        )
+    }
+}
+
+fn signal_background_process(
+    control: BackgroundControlRegistry,
+    owner: machine_god_core::BackgroundOutputOwner,
+    background_id: u64,
+    signal: TerminalBackgroundSignal,
+    cancellation: CancellationToken,
+) -> BoxFuture<'static, Result<TerminalBackgroundSignalOutcome, TerminalBackgroundSignalError>> {
+    Box::pin(async move {
+        if cancellation.is_cancelled() {
+            return Err(TerminalBackgroundSignalError::new(
+                TerminalBackgroundSignalErrorKind::Cancelled,
+            ));
+        }
+        let id = NonZeroU64::new(background_id).ok_or_else(|| {
+            TerminalBackgroundSignalError::new(TerminalBackgroundSignalErrorKind::NotFound)
+        })?;
+        control
+            .signal(id, &owner, native_background_signal(signal))
+            .map_err(map_control_signal_error)?;
+        TerminalBackgroundSignalOutcome::new(background_id, signal)
+    })
+}
+
+const fn native_background_signal(signal: TerminalBackgroundSignal) -> BackgroundSignal {
+    match signal {
+        TerminalBackgroundSignal::Hangup => BackgroundSignal::Hangup,
+        TerminalBackgroundSignal::Interrupt => BackgroundSignal::Interrupt,
+        TerminalBackgroundSignal::Quit => BackgroundSignal::Quit,
+        TerminalBackgroundSignal::Terminate => BackgroundSignal::Terminate,
+        TerminalBackgroundSignal::Kill => BackgroundSignal::Kill,
+    }
+}
+
+const fn map_control_signal_error(error: BackgroundControlError) -> TerminalBackgroundSignalError {
+    let kind = match error.kind() {
+        BackgroundControlErrorKind::NotFound => TerminalBackgroundSignalErrorKind::NotFound,
+        BackgroundControlErrorKind::Busy => TerminalBackgroundSignalErrorKind::Busy,
+        BackgroundControlErrorKind::Process
+        | BackgroundControlErrorKind::Capacity
+        | BackgroundControlErrorKind::Conflict => TerminalBackgroundSignalErrorKind::Unavailable,
+    };
+    TerminalBackgroundSignalError::new(kind)
 }
 
 fn read_output_snapshot(
@@ -976,6 +1081,7 @@ struct SupervisorWorkerOwnership {
 struct SupervisorConstructionResources {
     ownership: SupervisorWorkerOwnership,
     output: BackgroundOutputRegistry,
+    control: BackgroundControlRegistry,
 }
 
 struct WorkerOwnershipPermit {
@@ -1771,12 +1877,43 @@ fn completion_record(
     }
 }
 
+impl BackgroundControlTarget for BackgroundProcessSignalController {
+    fn signal(&self, signal: BackgroundSignal) -> Result<(), BackgroundControlError> {
+        BackgroundProcessSignalController::signal(self, process_background_signal(signal))
+            .map_err(map_process_signal_error)
+    }
+}
+
+const fn process_background_signal(signal: BackgroundSignal) -> BackgroundProcessSignal {
+    match signal {
+        BackgroundSignal::Hangup => BackgroundProcessSignal::Hangup,
+        BackgroundSignal::Interrupt => BackgroundProcessSignal::Interrupt,
+        BackgroundSignal::Quit => BackgroundProcessSignal::Quit,
+        BackgroundSignal::Terminate => BackgroundProcessSignal::Terminate,
+        BackgroundSignal::Kill => BackgroundProcessSignal::Kill,
+    }
+}
+
+const fn map_process_signal_error(
+    error: crate::background_process::BackgroundProcessSignalError,
+) -> BackgroundControlError {
+    let kind = match error.kind() {
+        BackgroundProcessSignalErrorKind::NotFound => BackgroundControlErrorKind::NotFound,
+        BackgroundProcessSignalErrorKind::Busy => BackgroundControlErrorKind::Busy,
+        BackgroundProcessSignalErrorKind::Process
+        | BackgroundProcessSignalErrorKind::AlreadyAttached
+        | BackgroundProcessSignalErrorKind::Unsupported => BackgroundControlErrorKind::Process,
+    };
+    BackgroundControlError::new(kind)
+}
+
 struct NativeSpawner {
     workspace: String,
     workspace_root: Arc<OwnedFd>,
     environment: ValidatedBackgroundEnvironment,
     adapter: SystemBackgroundProcessAdapter,
     output: BackgroundOutputRegistry,
+    control: BackgroundControlRegistry,
 }
 
 impl BackgroundProcessSpawner for NativeSpawner {
@@ -1823,31 +1960,56 @@ impl NativeSpawner {
                 .adapter
                 .prepare_cancellable(process_request, &cancellation)
                 .map_err(|error| start_error(process_error_kind(error.kind())))?;
-            let process = finish_prepared_after_readiness(
+            let mut process = finish_prepared_after_readiness(
                 process,
                 &cancellation,
                 PreparedBackgroundProcess::abort_and_reap,
             )?;
-            let capture = if let Some(owner) = request.output_owner() {
+            let (capture, control) = if let Some(owner) = request.output_owner() {
                 let background_id = background_id
                     .filter(|background_id| *background_id != 0)
                     .ok_or_else(|| start_error(BackgroundStartErrorKind::Process))?;
+                let id = NonZeroU64::new(background_id)
+                    .ok_or_else(|| start_error(BackgroundStartErrorKind::Process))?;
+                let controller = process
+                    .attach_signal_controller()
+                    .map_err(|_| start_error(BackgroundStartErrorKind::Process))?;
+                let control = self
+                    .control
+                    .register(id, owner, Arc::new(controller))
+                    .map_err(|error| start_error(control_registration_error_kind(error.kind())))?;
                 self.output
                     .register(background_id, owner.clone())
                     .map_err(|error| start_error(output_registration_error_kind(error.kind())))?;
-                Some(NativeCapture {
-                    registry: self.output.clone(),
-                    id: background_id,
-                    phase: NativeCapturePhase::Hidden,
-                })
+                (
+                    Some(NativeCapture {
+                        registry: self.output.clone(),
+                        id: background_id,
+                        phase: NativeCapturePhase::Hidden,
+                    }),
+                    Some(control),
+                )
             } else {
-                None
+                (None, None)
             };
             Ok(Box::new(NativePrepared {
                 process: Some(process),
                 capture,
+                control,
             }) as Box<dyn CorePreparedProcess>)
         })
+    }
+}
+
+const fn control_registration_error_kind(
+    kind: BackgroundControlErrorKind,
+) -> BackgroundStartErrorKind {
+    match kind {
+        BackgroundControlErrorKind::Capacity => BackgroundStartErrorKind::Capacity,
+        BackgroundControlErrorKind::NotFound
+        | BackgroundControlErrorKind::Busy
+        | BackgroundControlErrorKind::Process
+        | BackgroundControlErrorKind::Conflict => BackgroundStartErrorKind::Process,
     }
 }
 
@@ -1964,6 +2126,7 @@ impl Drop for NativeCapture {
 struct NativePrepared {
     process: Option<PreparedBackgroundProcess>,
     capture: Option<NativeCapture>,
+    control: Option<BackgroundControlLease>,
 }
 
 impl CorePreparedProcess for NativePrepared {
@@ -1991,6 +2154,7 @@ impl CorePreparedProcess for NativePrepared {
         Ok(Box::new(NativeOwned {
             process: Some(owned),
             capture: self.capture.take(),
+            control: self.control.take(),
         }))
     }
 
@@ -2015,6 +2179,7 @@ const fn process_error_kind(kind: BackgroundProcessErrorKind) -> BackgroundStart
 struct NativeOwned {
     process: Option<OwnedBackgroundProcess>,
     capture: Option<NativeCapture>,
+    control: Option<BackgroundControlLease>,
 }
 
 fn core_process_outcome(
@@ -2037,13 +2202,26 @@ impl CoreOwnedProcess for NativeOwned {
         self.process.as_ref().map(OwnedBackgroundProcess::pid)
     }
 
+    fn activate_retention(&mut self) -> Result<(), BackgroundStartError> {
+        if self.control.is_none() {
+            return Ok(());
+        }
+        self.process
+            .as_mut()
+            .ok_or_else(|| start_error(BackgroundStartErrorKind::Process))?
+            .activate_signal_controller()
+            .map_err(|_| start_error(BackgroundStartErrorKind::Process))
+    }
+
     fn wait(
         mut self: Box<Self>,
         stop: CancellationToken,
     ) -> BoxFuture<'static, Result<CoreProcessOutcome, BackgroundStartError>> {
         let process = self.process.take();
         let mut capture = self.capture.take();
+        let control = self.control.take();
         Box::pin(async move {
+            let _control = control;
             let process = process.ok_or_else(|| start_error(BackgroundStartErrorKind::Process))?;
             let result = if let Some(capture) = capture.as_ref() {
                 process.wait_with_stop_and_captured_output(&stop, |bytes| capture.append(bytes))
@@ -2522,15 +2700,16 @@ const fn start_error(kind: BackgroundStartErrorKind) -> BackgroundStartError {
 #[cfg(test)]
 mod tests {
     use super::{
-        BackgroundOutputRegistry, BlockingExecutor, BlockingResult, BlockingTaskFailure,
-        LAZY_BACKGROUND_INITIALIZATION_WAITERS, LazyBackgroundInitializationPhase,
-        LazyProductionBackgroundStarter, NATIVE_BACKGROUND_DEFAULT_MAX_ACTIVE,
-        NativeBackgroundLimits, NativeBackgroundSupervisor, NativeBackgroundSupervisorError,
-        NativeBackgroundSupervisorErrorKind, NativeCapture, NativeCapturePhase, NativeSpawner,
-        NativeStore, PRODUCTION_BACKGROUND_LANGUAGE, PRODUCTION_BACKGROUND_PATH, RetainedJob,
-        SupervisorWorkerOwnership, SystemBackgroundProcessAdapter, SystemClock,
-        WORKER_OWNERSHIP_CAPACITY, WorkerOwnershipRegistry, WorkerRetainer,
-        accept_bounded_environment, background_environment_identity, build_production_environment,
+        BackgroundControlRegistry, BackgroundOutputRegistry, BlockingExecutor, BlockingResult,
+        BlockingTaskFailure, LAZY_BACKGROUND_INITIALIZATION_WAITERS,
+        LazyBackgroundInitializationPhase, LazyProductionBackgroundStarter,
+        NATIVE_BACKGROUND_DEFAULT_MAX_ACTIVE, NativeBackgroundLimits, NativeBackgroundSupervisor,
+        NativeBackgroundSupervisorError, NativeBackgroundSupervisorErrorKind, NativeCapture,
+        NativeCapturePhase, NativeSpawner, NativeStore, PRODUCTION_BACKGROUND_LANGUAGE,
+        PRODUCTION_BACKGROUND_PATH, RetainedJob, SupervisorWorkerOwnership,
+        SystemBackgroundProcessAdapter, SystemClock, WORKER_OWNERSHIP_CAPACITY,
+        WorkerOwnershipRegistry, WorkerRetainer, accept_bounded_environment,
+        background_environment_identity, build_production_environment,
         finish_prepared_after_readiness, open_directory, process_error_kind,
         production_environment, production_environment_identity, retain_canonical_directory_with,
         worker_ownership_registry,
@@ -2565,6 +2744,7 @@ mod tests {
 
     use crate::terminal::{
         TerminalBackgroundOutcome, TerminalBackgroundOutputReader, TerminalBackgroundReadErrorKind,
+        TerminalBackgroundSignal, TerminalBackgroundSignalErrorKind, TerminalBackgroundSignaler,
         TerminalBackgroundStarter,
     };
 
@@ -3051,6 +3231,63 @@ mod tests {
     }
 
     #[test]
+    fn production_supervisor_signals_only_the_exact_live_owner() {
+        let fixture = Fixture::new();
+        let supervisor = fixture.supervisor(2);
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("background-signal-session").unwrap(),
+            SessionIncarnationId::new("background-signal-incarnation").unwrap(),
+        );
+        let request =
+            BackgroundStartRequest::new("while :; do /bin/sleep 1; done", &fixture.workspace)
+                .expect("request")
+                .with_output_owner(owner.clone());
+        let handle = start_eventually(&supervisor, &request);
+        let other_owner = BackgroundOutputOwner::new(
+            SessionId::new("other-signal-session").unwrap(),
+            SessionIncarnationId::new("other-signal-incarnation").unwrap(),
+        );
+
+        let error = futures_executor::block_on(TerminalBackgroundSignaler::signal(
+            &supervisor,
+            other_owner,
+            handle.id(),
+            TerminalBackgroundSignal::Terminate,
+            CancellationToken::new(),
+        ))
+        .expect_err("cross-incarnation signal must fail closed");
+        assert_eq!(error.kind(), TerminalBackgroundSignalErrorKind::NotFound);
+
+        let outcome = futures_executor::block_on(TerminalBackgroundSignaler::signal(
+            &supervisor,
+            owner,
+            handle.id(),
+            TerminalBackgroundSignal::Terminate,
+            CancellationToken::new(),
+        ))
+        .expect("same-owner signal delivery");
+        assert_eq!(outcome.background_id(), handle.id());
+        assert_eq!(outcome.signal(), TerminalBackgroundSignal::Terminate);
+
+        let detail = fixture.inspect_after_terminal_publication(&supervisor.retainer, handle.id());
+        assert_eq!(detail.state(), NativeBackgroundState::Failed);
+        assert_eq!(detail.exit_code(), Some(143));
+
+        let error = futures_executor::block_on(TerminalBackgroundSignaler::signal(
+            &supervisor,
+            BackgroundOutputOwner::new(
+                SessionId::new("background-signal-session").unwrap(),
+                SessionIncarnationId::new("background-signal-incarnation").unwrap(),
+            ),
+            handle.id(),
+            TerminalBackgroundSignal::Kill,
+            CancellationToken::new(),
+        ))
+        .expect_err("reaped background signal must fail closed");
+        assert_eq!(error.kind(), TerminalBackgroundSignalErrorKind::NotFound);
+    }
+
+    #[test]
     fn incomplete_native_capture_closes_with_conservative_truncation() {
         let registry = BackgroundOutputRegistry::new();
         let owner = BackgroundOutputOwner::new(
@@ -3111,6 +3348,7 @@ mod tests {
                 }) as Arc<dyn TerminalBackgroundStarter>)
             }),
             BackgroundOutputRegistry::new(),
+            BackgroundControlRegistry::new(),
         );
         let request = BackgroundStartRequest::new(":", "/tmp").expect("request");
         let mut first = starter.start(request.clone(), CancellationToken::new());
@@ -3157,6 +3395,7 @@ mod tests {
                 ))
             }),
             BackgroundOutputRegistry::new(),
+            BackgroundControlRegistry::new(),
         );
 
         for _ in 0..2 {
@@ -3186,6 +3425,7 @@ mod tests {
                 ))
             }),
             BackgroundOutputRegistry::new(),
+            BackgroundControlRegistry::new(),
         );
         let cancellation = CancellationToken::new();
         cancellation.cancel();
@@ -3206,6 +3446,7 @@ mod tests {
             },
             Box::new(|_ownership| unreachable!("the test holds initialization in progress")),
             BackgroundOutputRegistry::new(),
+            BackgroundControlRegistry::new(),
         );
         {
             let mut state = starter
@@ -3930,6 +4171,7 @@ mod tests {
                 &ValidatedBackgroundEnvironment::new(test_environment()).expect("test environment"),
             ),
             output: BackgroundOutputRegistry::new(),
+            control: BackgroundControlRegistry::new(),
         };
         let request =
             BackgroundStartRequest::new("must-not-execute", &fixture.workspace).expect("request");
@@ -4193,6 +4435,7 @@ mod tests {
                 .expect("test environment"),
             adapter: test_adapter(),
             output: BackgroundOutputRegistry::new(),
+            control: BackgroundControlRegistry::new(),
         });
         let supervisor = BackgroundSupervisor::new(
             Arc::new(SystemClock),
