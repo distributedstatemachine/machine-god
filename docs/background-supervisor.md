@@ -296,10 +296,16 @@ present, and reaps. Before reaping the leader, a bounded platform group scan
 proves that the unreaped leader is the sole remaining member of its original
 group. Before creating any Linux helper, the adapter opens and retains the
 procfs root and binds it to the exact mount ID reported by both
-`statx(STATX_MNT_ID)` and its descriptor-relative `self/mountinfo`. Linux
+`statx(STATX_MNT_ID)` and its descriptor-relative `self/mountinfo`. The same
+bounded validation opens descriptor-relative `self/status`, requires that file
+to have the retained mount ID, and requires exactly one `NSpid` value equal to
+the host process's current PID. An absent, malformed, duplicated, mismatched,
+or multi-level namespace projection fails closed, so numeric PIDs passed to
+`pidfd_open` cannot be interpreted in an ancestor procfs PID namespace. Linux
 therefore requires mount-ID reporting support and fails closed when it is
 unavailable. Mount metadata is read incrementally without a 1 MiB reserve,
-while still accepting at most 1 MiB and 4,096 complete entries. The adapter
+while still accepting at most 1 MiB, a 64 KiB status record, and 4,096 complete
+mount entries. The adapter
 requires exactly that retained mount ID to identify one procfs mounted at
 `/proc` from the procfs root, accepts only absent or explicit `hidepid=0`, and
 rejects malformed, truncated, duplicated, unknown-`hidepid`, restricted,
@@ -455,7 +461,8 @@ parent is still pinned. Delivery uses only those retained pidfds, so a
 same-clock-tick numeric PID replacement cannot inherit signal authority. Every
 signal traversal shares one 250 ms
 monotonic deadline, 524,288-attempt cap, 131,072-entry cap, and 32 MiB byte
-budget across mount-authority records, task-children records, and every
+budget across mount-authority and namespace-status records, task-children
+records, and every
 proc-stat identity read. Each
 record remains independently capped at 64 KiB for task children or 4 KiB for
 proc stat. Mountinfo uses the same explicit reader; `EINTR` consumes an attempt

@@ -115,6 +115,8 @@ const MAX_LINUX_MOUNTINFO_BYTES: usize = 1024 * 1024;
 #[cfg(target_os = "linux")]
 const MAX_LINUX_MOUNTINFO_ENTRIES: usize = 4 * 1024;
 #[cfg(target_os = "linux")]
+const MAX_LINUX_PROC_STATUS_BYTES: usize = 64 * 1024;
+#[cfg(target_os = "linux")]
 const LINUX_PROC_SUPER_MAGIC: u64 = 0x9fa0;
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 static OBSERVED_LEADER: AtomicU32 = AtomicU32::new(0);
@@ -664,11 +666,11 @@ impl LinuxProcIoBudget {
         )
     }
 
-    fn mountinfo() -> Self {
+    fn authority_validation() -> Self {
         Self::new(
             Instant::now() + GROUP_SNAPSHOT_TIMEOUT,
             MAX_LINUX_PROC_READ_ATTEMPTS,
-            MAX_LINUX_MOUNTINFO_BYTES + 1,
+            MAX_LINUX_MOUNTINFO_BYTES + MAX_LINUX_PROC_STATUS_BYTES + 2,
             MAX_LINUX_MOUNTINFO_ENTRIES,
         )
     }
@@ -2101,35 +2103,52 @@ struct GroupSnapshotAuthority;
 #[cfg(target_os = "linux")]
 impl GroupSnapshotAuthority {
     fn open() -> Result<Self, BackgroundProcessError> {
+        let mut budget = LinuxProcIoBudget::authority_validation();
+        budget.preflight().map_err(|_| spawn_error())?;
         let proc_root = rustix::fs::open(
             "/proc",
             OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
             Mode::empty(),
         )
         .map_err(|_| spawn_error())?;
-        let mount_id = linux_fd_mount_id(proc_root.as_fd()).map_err(|()| spawn_error())?;
+        let mount_id = linux_fd_mount_id_with_budget(proc_root.as_fd(), &budget)
+            .map_err(|()| spawn_error())?;
         let authority = Self {
             proc_root,
             mount_id,
         };
-        authority.validate().map_err(|()| spawn_error())?;
+        authority
+            .validate_with_budget(&mut budget)
+            .map_err(|()| spawn_error())?;
         Ok(authority)
     }
 
     fn validate(&self) -> Result<(), ()> {
-        let mut budget = LinuxProcIoBudget::mountinfo();
+        let mut budget = LinuxProcIoBudget::authority_validation();
         self.validate_with_budget(&mut budget)
     }
 
     fn validate_with_budget(&self, budget: &mut LinuxProcIoBudget) -> Result<(), ()> {
         budget.preflight().map_err(|_| ())?;
         let filesystem = rustix::fs::fstatfs(self.proc_root.as_fd()).map_err(|_| ())?;
-        budget.preflight().map_err(|_| ())?;
         if u64::try_from(filesystem.f_type).ok() != Some(LINUX_PROC_SUPER_MAGIC)
-            || linux_fd_mount_id(self.proc_root.as_fd())? != self.mount_id
+            || linux_fd_mount_id_with_budget(self.proc_root.as_fd(), budget)? != self.mount_id
         {
             return Err(());
         }
+        budget.preflight().map_err(|_| ())?;
+        let status_fd = rustix::fs::openat(
+            self.proc_root.as_fd(),
+            "self/status",
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|_| ())?;
+        if linux_fd_mount_id_with_budget(status_fd.as_fd(), budget)? != self.mount_id {
+            return Err(());
+        }
+        let mut status = std::fs::File::from(status_fd);
+        validate_linux_proc_status(&mut status, rustix::process::getpid(), budget)?;
         budget.preflight().map_err(|_| ())?;
         let mountinfo_fd = rustix::fs::openat(
             self.proc_root.as_fd(),
@@ -2138,13 +2157,21 @@ impl GroupSnapshotAuthority {
             Mode::empty(),
         )
         .map_err(|_| ())?;
-        budget.preflight().map_err(|_| ())?;
-        if linux_fd_mount_id(mountinfo_fd.as_fd())? != self.mount_id {
+        if linux_fd_mount_id_with_budget(mountinfo_fd.as_fd(), budget)? != self.mount_id {
             return Err(());
         }
         let mut mountinfo = std::fs::File::from(mountinfo_fd);
         validate_linux_proc_mountinfo(&mut mountinfo, self.mount_id, budget)
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_fd_mount_id_with_budget(
+    fd: BorrowedFd<'_>,
+    budget: &LinuxProcIoBudget,
+) -> Result<u64, ()> {
+    budget.preflight().map_err(|_| ())?;
+    linux_fd_mount_id(fd)
 }
 
 #[cfg(target_os = "linux")]
@@ -2169,6 +2196,52 @@ fn validate_linux_proc_mountinfo(
     read_linux_proc_record(reader, &mut bytes, MAX_LINUX_MOUNTINFO_BYTES, budget)
         .map_err(|_| ())?;
     validate_linux_proc_mountinfo_bytes(&bytes, expected_mount_id, Some(budget))
+}
+
+#[cfg(target_os = "linux")]
+fn validate_linux_proc_status(
+    reader: &mut impl Read,
+    expected_pid: rustix::process::Pid,
+    budget: &mut LinuxProcIoBudget,
+) -> Result<(), ()> {
+    let mut bytes = Vec::new();
+    read_linux_proc_record(reader, &mut bytes, MAX_LINUX_PROC_STATUS_BYTES, budget)
+        .map_err(|_| ())?;
+    validate_linux_proc_status_bytes(&bytes, expected_pid)
+}
+
+#[cfg(target_os = "linux")]
+fn validate_linux_proc_status_bytes(
+    bytes: &[u8],
+    expected_pid: rustix::process::Pid,
+) -> Result<(), ()> {
+    if bytes.is_empty() || bytes.len() > MAX_LINUX_PROC_STATUS_BYTES {
+        return Err(());
+    }
+    let mut namespace_pid = None;
+    for line in bytes.split_inclusive(|byte| *byte == b'\n') {
+        let content = line.strip_suffix(b"\n").ok_or(())?;
+        if !content.starts_with(b"NSpid") {
+            continue;
+        }
+        let value = content.strip_prefix(b"NSpid:").ok_or(())?;
+        if namespace_pid.is_some() {
+            return Err(());
+        }
+        let mut values = value
+            .split(u8::is_ascii_whitespace)
+            .filter(|field| !field.is_empty());
+        let parsed = values
+            .next()
+            .and_then(parse_linux_positive_i32)
+            .and_then(rustix::process::Pid::from_raw)
+            .ok_or(())?;
+        if values.next().is_some() || parsed != expected_pid {
+            return Err(());
+        }
+        namespace_pid = Some(parsed);
+    }
+    namespace_pid.map(|_| ()).ok_or(())
 }
 
 #[cfg(target_os = "linux")]
@@ -2284,8 +2357,10 @@ fn linux_proc_authority_overmount(mountpoint: &[u8]) -> bool {
             mountpoint,
             b"/proc/self"
                 | b"/proc/self/mountinfo"
+                | b"/proc/self/status"
                 | b"/proc/thread-self"
                 | b"/proc/thread-self/mountinfo"
+                | b"/proc/thread-self/status"
         )
 }
 
@@ -3871,6 +3946,9 @@ fn signal_process_identity(
     pid: rustix::process::Pid,
     scratch: &mut SignalProcessScratch,
 ) -> Result<ProcessIdentity, BackgroundProcessSignalError> {
+    authority
+        .validate_with_budget(&mut scratch.budget)
+        .map_err(|()| signal_process_error())?;
     read_signal_process(authority, pid, scratch)?
         .map(|process| process.identity)
         .ok_or_else(signal_not_found_error)
@@ -5377,6 +5455,75 @@ mod linux_proc_tests {
     }
 
     #[test]
+    fn proc_status_permanent_eintr_exhausts_the_shared_attempt_budget() {
+        struct AlwaysInterrupted {
+            reads: usize,
+        }
+
+        impl Read for AlwaysInterrupted {
+            fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+                self.reads += 1;
+                Err(std::io::ErrorKind::Interrupted.into())
+            }
+        }
+
+        let mut reader = AlwaysInterrupted { reads: 0 };
+        let mut budget = LinuxProcIoBudget::new(
+            Instant::now() + Duration::from_secs(1),
+            3,
+            MAX_LINUX_PROC_STATUS_BYTES + 1,
+            0,
+        );
+        assert!(validate_linux_proc_status(&mut reader, pid(321), &mut budget).is_err());
+        assert_eq!(reader.reads, 3, "status has no hidden EINTR retry loop");
+    }
+
+    #[test]
+    fn proc_status_requires_one_current_namespace_pid() {
+        assert!(
+            validate_linux_proc_status_bytes(b"Name:\tmachine-god\nNSpid:\t321\n", pid(321))
+                .is_ok()
+        );
+
+        for rejected in [
+            b"Name:\tmachine-god\n".as_slice(),
+            b"NSpid:\t321\nNSpid:\t321\n".as_slice(),
+            b"NSpid:\t8123\t321\n".as_slice(),
+            b"NSpid:\t322\n".as_slice(),
+            b"NSpid\t321\n".as_slice(),
+            b"NSpid:\n".as_slice(),
+            b"NSpid:\t+321\n".as_slice(),
+            b"NSpid:\t0\n".as_slice(),
+            b"NSpid:\t321".as_slice(),
+        ] {
+            assert!(validate_linux_proc_status_bytes(rejected, pid(321)).is_err());
+        }
+
+        let oversized = vec![b'x'; MAX_LINUX_PROC_STATUS_BYTES + 1];
+        assert!(validate_linux_proc_status_bytes(&oversized, pid(321)).is_err());
+    }
+
+    #[test]
+    fn proc_status_and_mountinfo_share_one_byte_budget() {
+        let status = b"NSpid:\t321\n";
+        let mut status_reader = std::io::Cursor::new(status.as_slice());
+        let mut mountinfo_reader = std::io::Cursor::new(UNRESTRICTED_PROC);
+        let mut budget = LinuxProcIoBudget::new(
+            Instant::now() + Duration::from_secs(1),
+            8,
+            status.len() + UNRESTRICTED_PROC.len() - 1,
+            MAX_LINUX_MOUNTINFO_ENTRIES,
+        );
+
+        validate_linux_proc_status(&mut status_reader, pid(321), &mut budget)
+            .expect("status fits the shared validation budget");
+        assert!(
+            validate_linux_proc_mountinfo(&mut mountinfo_reader, 36, &mut budget).is_err(),
+            "mountinfo cannot reuse bytes already consumed by namespace status"
+        );
+    }
+
+    #[test]
     fn expired_signal_budget_prevents_the_wrapped_proc_probe() {
         let budget = LinuxProcIoBudget::new(Instant::now(), 8, 64, 1);
         let mut probes = 0_usize;
@@ -5507,12 +5654,20 @@ mod linux_proc_tests {
         .concat();
         assert!(parse_linux_proc_mount_authority(&mountinfo_overmount, 36).is_err());
 
+        let status_overmount = [
+            UNRESTRICTED_PROC,
+            b"37 36 0:33 / /proc/self/status rw - tmpfs tmpfs rw\n",
+        ]
+        .concat();
+        assert!(parse_linux_proc_mount_authority(&status_overmount, 36).is_err());
+
         let duplicate = [UNRESTRICTED_PROC, UNRESTRICTED_PROC].concat();
         assert!(parse_linux_proc_mount_authority(&duplicate, 36).is_err());
         assert!(linux_numeric_proc_mountpoint(b"/proc/321/stat"));
         assert!(!linux_numeric_proc_mountpoint(b"/proc/self"));
         assert!(!linux_numeric_proc_mountpoint(b"/proc/321x"));
         assert!(linux_proc_authority_overmount(b"/proc/self/mountinfo"));
+        assert!(linux_proc_authority_overmount(b"/proc/self/status"));
     }
 
     #[test]

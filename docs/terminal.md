@@ -369,10 +369,16 @@ that deliberate duplicate closes the race in which it could call `setsid`
 after its group was observed but before the final group signal. Linux uses the
 retained procfs mount authority and opens a retained proc directory plus pidfd
 for every descendant while its queued parent remains pinned. Individual
-delivery uses those pidfds without resolving the numeric PID again. One Linux
+delivery uses those pidfds without resolving the numeric PID again. Before
+capturing signal authority and on every later authority validation, Linux also
+requires descriptor-relative `self/status` to have the retained mount ID and
+exactly one `NSpid` equal to the current process PID. Ancestor procfs namespace
+views and absent, duplicated, multi-level, mismatched, or malformed namespace
+identity fail closed before numeric PIDs reach `pidfd_open`. One Linux
 traversal shares a 250 ms monotonic deadline, 524,288 read attempts, 131,072
-entries, and 32 MiB across mountinfo, all 64 KiB task-children records, and 4
-KiB proc-stat identity records; `EINTR` consumes the same finite attempt
+entries, and 32 MiB across mountinfo, the 64 KiB namespace-status record, all
+64 KiB task-children records, and 4 KiB proc-stat identity records; `EINTR`
+consumes the same finite attempt
 budget, including mountinfo, and terminal exhaustion suppresses later proc and
 pidfd probes.
 The retained root-identity capture is independently subject to the same finite
