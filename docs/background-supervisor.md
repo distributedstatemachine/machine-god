@@ -299,6 +299,10 @@ Linux retains one proc-root descriptor for that authority through both prepared
 and released process ownership. Every group snapshot opens the proc root,
 numeric PID directories, and each `stat` file descriptor-relatively; it does
 not reopen ambient `/proc`.
+An unrelated task that disappears while its retained `stat` descriptor is
+being read is omitted when Linux reports `ENOENT`, `ESRCH`, or an empty
+record; every other I/O failure and every nonempty malformed record still
+fails cleanup closed.
 It revalidates the retained filesystem type, exact mount identity, options,
 and topology before and after every scan, so a remount, bind overmount, or
 post-admission topology change fails cleanup before the leader is reaped. The

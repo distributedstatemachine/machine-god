@@ -37,6 +37,8 @@ use rustix::fd::AsRawFd;
 use rustix::fd::{AsFd, BorrowedFd, OwnedFd};
 #[cfg(unix)]
 use rustix::fs::{FileType, Mode, OFlags};
+#[cfg(target_os = "linux")]
+use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -2967,8 +2969,6 @@ fn group_members(
     authority: &GroupSnapshotAuthority,
     group: rustix::process::Pid,
 ) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
-    use std::io::Read;
-
     #[cfg(test)]
     record_group_snapshot_for_test(group);
 
@@ -3012,7 +3012,7 @@ fn group_members(
             Mode::empty(),
         ) {
             Ok(fd) => fd,
-            Err(rustix::io::Errno::NOENT) => continue,
+            Err(rustix::io::Errno::NOENT | rustix::io::Errno::SRCH) => continue,
             Err(_) => return Err(cleanup_error()),
         };
         let stat_fd = match rustix::fs::openat(
@@ -3022,23 +3022,17 @@ fn group_members(
             Mode::empty(),
         ) {
             Ok(fd) => fd,
-            Err(rustix::io::Errno::NOENT) => continue,
+            Err(rustix::io::Errno::NOENT | rustix::io::Errno::SRCH) => continue,
             Err(_) => return Err(cleanup_error()),
         };
         let mut stat = std::fs::File::from(stat_fd);
-        stat_bytes.clear();
-        stat.by_ref()
-            .take((MAX_LINUX_PROC_STAT_BYTES + 1) as u64)
-            .read_to_end(&mut stat_bytes)
-            .map_err(|_| cleanup_error())?;
-        if stat_bytes.len() > MAX_LINUX_PROC_STAT_BYTES {
-            return Err(cleanup_error());
-        }
+        let Some(parsed) = read_linux_proc_stat(&mut stat, &mut stat_bytes, pid)? else {
+            continue;
+        };
         inspected_bytes = inspected_bytes
             .checked_add(stat_bytes.len())
             .filter(|bytes| *bytes <= MAX_LINUX_PROC_SNAPSHOT_BYTES)
             .ok_or_else(cleanup_error)?;
-        let parsed = parse_linux_proc_stat(&stat_bytes, pid)?;
         if parsed.group == Some(group) {
             if members.len() == MAX_CAPTURED_GROUP_MEMBERS {
                 return Err(cleanup_error());
@@ -3141,13 +3135,36 @@ struct LinuxProcStat {
 }
 
 #[cfg(target_os = "linux")]
+fn read_linux_proc_stat(
+    reader: &mut impl Read,
+    bytes: &mut Vec<u8>,
+    expected_pid: rustix::process::Pid,
+) -> Result<Option<LinuxProcStat>, BackgroundProcessError> {
+    bytes.clear();
+    match reader
+        .take((MAX_LINUX_PROC_STAT_BYTES + 1) as u64)
+        .read_to_end(bytes)
+    {
+        Ok(0) => return Ok(None),
+        Ok(_) => {}
+        Err(error) if error.raw_os_error() == Some(libc::ESRCH) => {
+            bytes.clear();
+            return Ok(None);
+        }
+        Err(_) => return Err(cleanup_error()),
+    }
+    if bytes.len() > MAX_LINUX_PROC_STAT_BYTES {
+        return Err(cleanup_error());
+    }
+    parse_linux_proc_stat(bytes, expected_pid).map(Some)
+}
+
+#[cfg(target_os = "linux")]
 fn captured_group_member_exists(
     authority: &GroupSnapshotAuthority,
     member: &CapturedGroupMember,
     bytes: &mut Vec<u8>,
 ) -> Result<bool, BackgroundProcessError> {
-    use std::io::Read;
-
     let mut name_bytes = [0_u8; 10];
     let name = linux_pid_path(member.pid, &mut name_bytes);
     let pid_fd = match rustix::fs::openat(
@@ -3157,7 +3174,7 @@ fn captured_group_member_exists(
         Mode::empty(),
     ) {
         Ok(fd) => fd,
-        Err(rustix::io::Errno::NOENT) => return Ok(false),
+        Err(rustix::io::Errno::NOENT | rustix::io::Errno::SRCH) => return Ok(false),
         Err(_) => return Err(cleanup_error()),
     };
     let stat_fd = match rustix::fs::openat(
@@ -3167,18 +3184,13 @@ fn captured_group_member_exists(
         Mode::empty(),
     ) {
         Ok(fd) => fd,
-        Err(rustix::io::Errno::NOENT) => return Ok(false),
+        Err(rustix::io::Errno::NOENT | rustix::io::Errno::SRCH) => return Ok(false),
         Err(_) => return Err(cleanup_error()),
     };
-    bytes.clear();
-    std::fs::File::from(stat_fd)
-        .take((MAX_LINUX_PROC_STAT_BYTES + 1) as u64)
-        .read_to_end(bytes)
-        .map_err(|_| cleanup_error())?;
-    if bytes.len() > MAX_LINUX_PROC_STAT_BYTES {
-        return Err(cleanup_error());
-    }
-    let parsed = parse_linux_proc_stat(bytes, member.pid)?;
+    let mut stat = std::fs::File::from(stat_fd);
+    let Some(parsed) = read_linux_proc_stat(&mut stat, bytes, member.pid)? else {
+        return Ok(false);
+    };
     Ok(member.identity == Some(parsed.start_time))
 }
 
@@ -3589,6 +3601,30 @@ mod linux_proc_tests {
         let oversized = vec![b'x'; MAX_LINUX_PROC_STAT_BYTES + 1];
 
         assert!(parse_linux_proc_stat(&oversized, pid(321)).is_err());
+    }
+
+    #[test]
+    fn retained_proc_stat_fd_treats_a_reaped_task_as_vanished() {
+        let mut child = Command::new("/bin/sleep")
+            .arg("30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn proc-stat fixture");
+        let child_pid = pid(i32::try_from(child.id()).expect("child PID fits signed range"));
+        let mut stat = std::fs::File::open(format!("/proc/{}/stat", child.id()))
+            .expect("retain live proc-stat descriptor");
+        child.kill().expect("kill proc-stat fixture");
+        child.wait().expect("reap proc-stat fixture");
+
+        let mut bytes = Vec::new();
+        assert_eq!(
+            read_linux_proc_stat(&mut stat, &mut bytes, child_pid)
+                .expect("a reaped task is an ordinary disappearance"),
+            None
+        );
+        assert!(bytes.is_empty());
     }
 
     #[test]
