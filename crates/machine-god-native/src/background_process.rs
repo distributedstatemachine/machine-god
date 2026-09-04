@@ -2054,8 +2054,8 @@ impl BackgroundOutputDrain {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn drain_background_output(
-    output: &mut Option<ChildStderr>,
+fn drain_background_output<R: std::io::Read>(
+    output: &mut Option<R>,
     maximum_reads: usize,
     sink: &mut impl FnMut(&[u8]),
 ) -> Result<BackgroundOutputDrain, BackgroundProcessError> {
@@ -2097,11 +2097,20 @@ fn finish_background_output(
     owned: &mut OwnedBackgroundProcess,
     sink: &mut impl FnMut(&[u8]),
 ) -> Result<(), BackgroundProcessError> {
-    let drained = drain_background_output(&mut owned.output, BACKGROUND_OUTPUT_FINAL_READS, sink)?;
-    drop(owned.output.take());
-    if drained == BackgroundOutputDrain::Exhausted {
-        return Err(wait_error());
-    }
+    finish_background_output_bounded(&mut owned.output, sink)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn finish_background_output_bounded<R: std::io::Read>(
+    output: &mut Option<R>,
+    sink: &mut impl FnMut(&[u8]),
+) -> Result<(), BackgroundProcessError> {
+    let _ = drain_background_output(output, BACKGROUND_OUTPUT_FINAL_READS, sink)?;
+    // The leader outcome and owned-process cleanup are already final here.
+    // A writer outside the bounded cleanup set may keep this pipe readable or
+    // open indefinitely, so reaching the drain budget is truncation rather
+    // than evidence that the observed process outcome failed.
+    drop(output.take());
     Ok(())
 }
 
@@ -3647,6 +3656,27 @@ mod process_regression_tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn final_output_drain_exhaustion_closes_the_pipe_without_overriding_completion() {
+        let mut output = Some(std::io::repeat(b'x'));
+        let mut captured = 0_usize;
+
+        finish_background_output_bounded(&mut output, &mut |bytes| {
+            captured = captured.saturating_add(bytes.len());
+        })
+        .expect("a bounded readable suffix is truncated after process completion");
+
+        assert_eq!(
+            captured,
+            BACKGROUND_OUTPUT_FINAL_READS * BACKGROUND_OUTPUT_READ_BYTES
+        );
+        assert!(
+            output.is_none(),
+            "the final drain closes its read authority"
+        );
+    }
 
     struct TestDirectory(PathBuf);
 
