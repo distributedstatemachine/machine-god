@@ -32,6 +32,7 @@ mod ai_gateway_web_search;
 mod ask_permission;
 mod ask_user_question;
 mod background_inspection;
+pub(crate) mod background_output;
 mod background_process;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod background_store;
