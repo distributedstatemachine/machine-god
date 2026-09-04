@@ -21,7 +21,6 @@ CI_ROUTE_INPUTS = (
     "DOCUMENTATION",
     "NON_DOCUMENTATION",
     "UNCLASSIFIED",
-    "WORKSPACE_FALLBACK",
     "CI_INFRASTRUCTURE",
     "RUST_GLOBAL",
     "RUST_FORMAT",
@@ -221,12 +220,11 @@ class CiChangeClassificationTests(unittest.TestCase):
             "!.github/workflows/**",
             "!benchmarks/**",
             "!compatibility/**",
-            "!crates/**",
             "!crates/machine-god-cli/**",
             "!crates/machine-god-core/**",
             "!crates/machine-god-native/**",
             "!crates/machine-god-testkit/**",
-            "!test-support/**",
+            "!test-support/reentrant-waker/**",
         ):
             self.assertIn(f"              - '{admitted}'", classifier)
         for unsafe_exclusion in (
@@ -242,7 +240,14 @@ class CiChangeClassificationTests(unittest.TestCase):
             "              - '!scripts/generate_terminal_unicode_data.py'",
             classifier,
         )
-        self.assertIn("            workspace_fallback:\n", classifier)
+        self.assertNotIn("            workspace_fallback:\n", classifier)
+        self.assertNotIn("              - '!crates/**'", classifier)
+        self.assertNotIn("              - '!test-support/**'", classifier)
+        self.assertIn(
+            "            test_support:\n"
+            "              - 'test-support/reentrant-waker/**'",
+            classifier,
+        )
         for path in (
             "scripts/check_documentation.py",
             "scripts/generate_compatibility.py",
@@ -258,6 +263,13 @@ class CiChangeClassificationTests(unittest.TestCase):
             "              - 'compatibility/**'\n"
             "              - 'benchmarks/upstream.lock'\n"
             "              - 'scripts/generate_compatibility.py'",
+            classifier,
+        )
+        self.assertIn(
+            "            provision_zig_test_inputs:\n"
+            "              - 'benchmarks/with_zig.py'\n"
+            "              - 'scripts/provision_zig.py'\n"
+            "              - 'tests/test_provision_zig.py'",
             classifier,
         )
 
@@ -441,7 +453,6 @@ class CiChangeClassificationTests(unittest.TestCase):
                     **false,
                     "format": "true",
                     "quality": "true",
-                    "test_support": "true",
                 },
             ),
             (
@@ -528,11 +539,6 @@ class CiChangeClassificationTests(unittest.TestCase):
                 },
                 {**false, **all_concerns, **dict.fromkeys(FOCUSED_FILTERS, "true")},
             ),
-            (
-                "new crate uses actual workspace fallback",
-                {"NON_DOCUMENTATION": "true", "WORKSPACE_FALLBACK": "true"},
-                {**false, **all_concerns, **dict.fromkeys(FOCUSED_FILTERS, "true")},
-            ),
         )
         for name, inputs, expected in cases:
             with self.subTest(name=name):
@@ -542,6 +548,10 @@ class CiChangeClassificationTests(unittest.TestCase):
 
         for name, inputs in (
             ("unknown path", {"NON_DOCUMENTATION": "true", "UNCLASSIFIED": "true"}),
+            (
+                "new crate or unsupported test helper",
+                {"NON_DOCUMENTATION": "true", "UNCLASSIFIED": "true"},
+            ),
             (
                 "known and unknown paths",
                 {
@@ -637,11 +647,27 @@ class CiChangeClassificationTests(unittest.TestCase):
         self.assertIn("--workspace", documentation_tests.group("body"))
         self.assertIn("native_manifest_tests == 'true'", quality)
         self.assertIn('cargo +"${RUST_TOOLCHAIN}" fetch --locked', quality)
+        affected_format = re.search(
+            r"(?ms)- name: Formatting\n(?P<body>.*?)(?=      - name:)", quality
+        )
+        self.assertIsNotNone(affected_format)
+        assert affected_format is not None
+        self.assertIn('[[ "${FULL_WORKSPACE}" == "true" ]]', affected_format.group("body"))
+        self.assertIn("packages+=(--all)", affected_format.group("body"))
         helper_manifest = "test-support/reentrant-waker/Cargo.toml"
         self.assertEqual(quality.count(f"--manifest-path {helper_manifest}"), 3)
         self.assertIn("fmt --manifest-path", quality)
         self.assertIn("clippy --locked --manifest-path", quality)
         self.assertIn("test --locked --manifest-path", quality)
+        helper_format = re.search(
+            r"(?ms)- name: Format standalone reentrant-waker test support\n"
+            r"(?P<body>.*?)(?=      - name:)",
+            quality,
+        )
+        self.assertIsNotNone(helper_format)
+        assert helper_format is not None
+        self.assertIn("outputs.format == 'true'", helper_format.group("body"))
+        self.assertIn("outputs.test_support == 'true'", helper_format.group("body"))
 
     def test_ci_gate_requires_each_selected_job_independently(self) -> None:
         base = {

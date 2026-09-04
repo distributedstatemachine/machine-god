@@ -115,7 +115,6 @@ jobs:
               - '!NOTICE'
               - '!benchmarks/**'
               - '!compatibility/**'
-              - '!crates/**'
               - '!crates/machine-god-cli/**'
               - '!crates/machine-god-core/**'
               - '!crates/machine-god-native/**'
@@ -123,7 +122,7 @@ jobs:
               - '!deny.toml'
               - '!rust-toolchain.toml'
               - '!rustfmt.toml'
-              - '!test-support/**'
+              - '!test-support/reentrant-waker/**'
               - '!benchmarks/test_benchmarks.py'
               - '!compatibility/test_generate_compatibility.py'
               - '!scripts/check_documentation.py'
@@ -133,12 +132,6 @@ jobs:
               - '!tests/test_documentation_policy.py'
               - '!tests/test_native_manifest.py'
               - '!tests/test_provision_zig.py'
-            workspace_fallback:
-              - 'crates/**'
-              - '!crates/machine-god-cli/**'
-              - '!crates/machine-god-core/**'
-              - '!crates/machine-god-native/**'
-              - '!crates/machine-god-testkit/**'
             ci_infrastructure:
               - '.github/workflows/**'
               - 'tests/test_ci_change_classification.py'
@@ -177,7 +170,7 @@ jobs:
               - '!crates/machine-god-cli/examples/**'
               - '!crates/machine-god-cli/tests/**'
             test_support:
-              - 'test-support/**'
+              - 'test-support/reentrant-waker/**'
             benchmark_test_inputs:
               - 'benchmarks/**'
             compatibility_test_inputs:
@@ -202,6 +195,7 @@ jobs:
               - 'rust-toolchain.toml'
               - 'tests/test_native_manifest.py'
             provision_zig_test_inputs:
+              - 'benchmarks/with_zig.py'
               - 'scripts/provision_zig.py'
               - 'tests/test_provision_zig.py'
             compatibility_inputs:
@@ -233,7 +227,6 @@ jobs:
           DOCUMENTATION: ${{ steps.paths.outputs.documentation }}
           NON_DOCUMENTATION: ${{ steps.paths.outputs.non_documentation }}
           UNCLASSIFIED: ${{ steps.paths.outputs.unclassified }}
-          WORKSPACE_FALLBACK: ${{ steps.paths.outputs.workspace_fallback }}
           CI_INFRASTRUCTURE: ${{ steps.paths.outputs.ci_infrastructure }}
           RUST_GLOBAL: ${{ steps.paths.outputs.rust_global }}
           RUST_FORMAT: ${{ steps.paths.outputs.rust_format }}
@@ -291,7 +284,6 @@ jobs:
             "${DOCUMENTATION}" \
             "${NON_DOCUMENTATION}" \
             "${UNCLASSIFIED}" \
-            "${WORKSPACE_FALLBACK}" \
             "${CI_INFRASTRUCTURE}" \
             "${RUST_GLOBAL}" \
             "${RUST_FORMAT}" \
@@ -356,7 +348,7 @@ jobs:
             fi
 
             fallback=false
-            if [[ "${CI_INFRASTRUCTURE}" == "true" || "${WORKSPACE_FALLBACK}" == "true" ]]; then
+            if [[ "${CI_INFRASTRUCTURE}" == "true" ]]; then
               fallback=true
             fi
 
@@ -404,9 +396,6 @@ jobs:
                 release_smoke=true
               fi
               dependency_audit="${DEPENDENCY_INPUTS}"
-              if [[ "${RUST_FORMAT}" == "true" ]]; then
-                test_support=true
-              fi
               core_api_docs="${CORE_API_DOCS}"
               testkit_docs="${TESTKIT_DOCS}"
               compatibility_docs="${COMPATIBILITY_DOCS}"
@@ -510,10 +499,14 @@ jobs:
         run: |
           set -euo pipefail
           packages=()
-          [[ "${CORE}" == "true" ]] && packages+=(--package machine-god-core)
-          [[ "${TESTKIT}" == "true" ]] && packages+=(--package machine-god-testkit)
-          [[ "${NATIVE}" == "true" ]] && packages+=(--package machine-god-native)
-          [[ "${CLI}" == "true" ]] && packages+=(--package machine-god-cli)
+          if [[ "${FULL_WORKSPACE}" == "true" ]]; then
+            packages+=(--all)
+          else
+            [[ "${CORE}" == "true" ]] && packages+=(--package machine-god-core)
+            [[ "${TESTKIT}" == "true" ]] && packages+=(--package machine-god-testkit)
+            [[ "${NATIVE}" == "true" ]] && packages+=(--package machine-god-native)
+            [[ "${CLI}" == "true" ]] && packages+=(--package machine-god-cli)
+          fi
           cargo +"${RUST_TOOLCHAIN}" fmt "${packages[@]}" -- --check
       - name: Clippy
         if: ${{ needs.change-classification.outputs.core == 'true' || needs.change-classification.outputs.testkit == 'true' || needs.change-classification.outputs.native == 'true' || needs.change-classification.outputs.cli == 'true' }}
@@ -560,7 +553,7 @@ jobs:
           fi
           cargo +"${RUST_TOOLCHAIN}" test --locked --doc "${packages[@]}"
       - name: Format standalone reentrant-waker test support
-        if: ${{ needs.change-classification.outputs.test_support == 'true' }}
+        if: ${{ needs.change-classification.outputs.format == 'true' || needs.change-classification.outputs.test_support == 'true' }}
         run: cargo +"${RUST_TOOLCHAIN}" fmt --manifest-path test-support/reentrant-waker/Cargo.toml -- --check
       - name: Clippy standalone reentrant-waker test support
         if: ${{ needs.change-classification.outputs.test_support == 'true' }}

@@ -51,9 +51,10 @@ not run product tests, while shipped core/native/CLI source selects release
 smoke. Compatibility inputs include the policy, inventory, generator,
 fixtures, and pinned upstream lock.
 
-New crate paths select a complete actual-workspace fallback, so a simultaneous
-root-manifest addition cannot be hidden by the current four package names. Any
-other unclassified non-documentation path fails classification, including when
+Root build-input changes use Cargo's complete actual-workspace selection. A new
+crate path or unsupported test-support fixture remains unclassified and fails
+classification until its dependency and test ownership are explicit. Any other
+unclassified non-documentation path also fails classification, including when
 an otherwise known path changes in the same range. Workflow and classifier-test
 changes select every concern. Malformed classifier output defaults to every
 concern. Classification failure still fails the aggregate gate.
@@ -97,9 +98,9 @@ the final `CI gate`. The quality job receives only fixed package names selected
 by the dependency closure; changed paths are never interpolated into commands.
 Formatting, Clippy, package tests, and library documentation tests therefore
 run only for affected packages; binary-only CLI changes do not invoke an
-invalid CLI doctest target. New workspace members and root build-input changes
-use Cargo's real `--workspace` selection. Python modules, compatibility, and
-release-smoke steps have their own selectors. Dependency audit, native target matrices, and
+invalid CLI doctest target. Root build-input changes use Cargo's real
+`--workspace` selection. Python modules, compatibility, and release-smoke
+steps have their own selectors. Dependency audit, native target matrices, and
 unsupported-platform compilation remain separate conditional jobs. The four
 focused documents add only their named checks. The final gate independently
 verifies each selector against its job result: selected jobs must succeed and
