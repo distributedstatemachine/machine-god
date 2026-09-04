@@ -661,9 +661,10 @@ impl fmt::Debug for TerminalBackgroundSignalOutcome {
 pub trait TerminalBackgroundSignaler: Send + Sync + 'static {
     /// Returns an inert future for one non-escalating signal delivery.
     ///
-    /// Once the implementation commits an OS signal, it must return the ready
-    /// acknowledgement in that same poll; later cancellation cannot revoke or
-    /// relabel a committed delivery.
+    /// The first poll is the ordered-mutation submission boundary. Before that
+    /// boundary cancellation must have no process effect. After submission the
+    /// implementation must own its bounded delivery through completion; later
+    /// cancellation cannot abandon or relabel the result.
     fn signal(
         &self,
         owner: BackgroundOutputOwner,
@@ -3160,19 +3161,18 @@ async fn await_background_signal(
     cancellation: &CancellationToken,
 ) -> Result<Result<TerminalBackgroundSignalOutcome, TerminalBackgroundSignalError>, ToolError> {
     let mut cancelled = Box::pin(cancellation.cancelled());
+    let mut submitted = false;
     poll_fn(|context| {
-        // Poll delivery first: a signal committed during this poll wins over a
-        // concurrent cancellation and cannot be relabelled as cancelled.
-        match Pin::new(&mut future).poll(context) {
-            Poll::Ready(result) => Poll::Ready(Ok(result)),
-            Poll::Pending => {
-                if cancelled.as_mut().poll(context).is_ready() || cancellation.is_cancelled() {
-                    Poll::Ready(Err(cancelled_error()))
-                } else {
-                    Poll::Pending
-                }
-            }
+        if !submitted
+            && (cancelled.as_mut().poll(context).is_ready() || cancellation.is_cancelled())
+        {
+            return Poll::Ready(Err(cancelled_error()));
         }
+        submitted = true;
+        // Submission is the irreversible ordered-mutation boundary. The
+        // injected controller owns cancellation until that boundary; once its
+        // future has been polled, delivery or a fixed delivery failure wins.
+        Pin::new(&mut future).poll(context).map(Ok)
     })
     .await
 }
@@ -3497,7 +3497,7 @@ impl TerminalTool {
             actions.push("read bounded same-session background output");
         }
         if self.signaler.is_some() {
-            actions.push("signal one live same-session background process group");
+            actions.push("signal one live same-session background process tree");
         }
         if self.catalog.is_some() {
             actions.push("list persisted background records");

@@ -25,9 +25,9 @@ input; it is not a machine-god product language or runtime dependency.
 - Delivered main: `b1bbb81f5dbb5dcb4010cc2b49dbf95561c94811`
 - Main CI: `33905683447` (`GREEN`)
 - Main Benchmark evidence: `33905683324` (`GREEN`)
-- Active branch: `main`
-- Active phase: `selecting the next bounded terminal tool action`
-- Next gate: `open agent/m58-terminal-signal only after freezing its authority, ownership, and lifecycle boundary`
+- Active branch: `agent/m58-terminal-signal`
+- Active phase: `implementing exact-owner identity-safe terminal process-tree signaling`
+- Next gate: `freeze one documented candidate, run the complete exact-1.94.1 local gate, then start three fresh adversarial reviews`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -49,8 +49,10 @@ delivered-slice count. Documentation-only descendants now exercise only the
 bounded documentation checks and aggregate gates, without Rust, platform,
 audit, compatibility, or benchmark-artifact jobs.
 
-The next product slice returns directly to terminal tool behavior and will
-bound one background control action before implementation. Durable or
+The active product slice adds the closed five-value terminal `signal` action
+with exact session-incarnation ownership, separate custom authorization,
+bounded off-poll-thread process-tree delivery, and close-before-reap native
+authority. Durable or
 restart-safe logs, persistent interactive handles, write actions, interactive
 terminal behavior, restart-safe control, ACP, teams, and extension slash
 commands remain separate until explicitly bounded.
@@ -64,7 +66,8 @@ Documentation-tool maintenance remains a separate non-product task.
   terminal, configuration, and persistence effects.
 - `machine-god-cli` is a thin host and owns no product state.
 - `machine-god-testkit` owns deterministic test doubles and fixtures.
-- Unsafe Rust is forbidden unless a future ADR narrows an audited exception.
+- Unsafe Rust is forbidden except for the private fixed-record Darwin FFI
+  module narrowed by [ADR 0003](decisions/0003-bounded-darwin-process-query-ffi.md).
 - Constructors and futures must preserve the documented inert-before-poll,
   cancellation, resource-bound, redaction, and authority invariants.
 
@@ -240,7 +243,7 @@ cargo +1.94.1 test --doc --workspace
 Run affected tests first. The complete gate also includes repository Python
 tests, pinned-fx drift checks, dependency policy and vulnerability audit,
 supported Linux/macOS execution, relevant FreeBSD/WASI compilation or active
-unsupported behavior, documentation policy, diff/no-added-unsafe checks, and a
+unsupported behavior, documentation policy, scoped-unsafe conformance checks, and a
 fresh locked release-binary smoke of user-visible behavior. Evidence is a
 regression/delivery claim unless a milestone explicitly promotes it.
 

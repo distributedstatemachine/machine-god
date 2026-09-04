@@ -1050,6 +1050,102 @@ int main(void) {
     assert_processes_absent(&[escaped]);
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn signal_controller_discovers_a_child_forked_by_a_nonleader_thread() {
+    let directory = FreshDirectory::new("signal-thread-child");
+    let source = directory.path().join("signal-thread-child.c");
+    let executable = directory.path().join("signal-thread-child");
+    fs::write(
+        &source,
+        br#"#include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+static volatile sig_atomic_t terminated = 0;
+static void on_term(int signal) { (void)signal; terminated = 1; }
+static int write_marker(const char *path, const char *value) {
+  int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  if (fd < 0) return 1;
+  size_t length = 0;
+  while (value[length] != '\0') length++;
+  ssize_t written = write(fd, value, length);
+  return close(fd) != 0 || written != (ssize_t)length;
+}
+static int write_pid(const char *path, pid_t value) {
+  char reversed[32];
+  char digits[32];
+  size_t length = 0;
+  do {
+    reversed[length++] = (char)('0' + value % 10);
+    value /= 10;
+  } while (value > 0 && length < sizeof(reversed));
+  for (size_t index = 0; index < length; index++) {
+    digits[index] = reversed[length - index - 1];
+  }
+  int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  if (fd < 0) return 1;
+  ssize_t written = write(fd, digits, length);
+  return close(fd) != 0 || written != (ssize_t)length;
+}
+static void *spawn_child(void *unused) {
+  (void)unused;
+  pid_t child = fork();
+  if (child < 0) return (void *)1;
+  if (child == 0) {
+    if (setsid() < 0) _exit(82);
+    if (write_pid("thread-child.pid", getpid()) != 0) _exit(83);
+    while (!terminated) pause();
+    _exit(write_marker("thread-child.signaled", "yes") == 0 ? 24 : 84);
+  }
+  return 0;
+}
+int main(void) {
+  struct sigaction action = {0};
+  action.sa_handler = on_term;
+  sigemptyset(&action.sa_mask);
+  if (sigaction(SIGTERM, &action, 0) != 0) return 80;
+  pthread_t thread;
+  if (pthread_create(&thread, 0, spawn_child, 0) != 0) return 81;
+  void *result = 0;
+  if (pthread_join(thread, &result) != 0 || result != 0) return 85;
+  while (!terminated) pause();
+  return write_marker("thread-leader.signaled", "yes") == 0 ? 23 : 86;
+}
+"#,
+    )
+    .unwrap();
+    assert!(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror", "-pthread", "-o"])
+            .arg(&executable)
+            .arg(&source)
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let mut prepared = adapter()
+        .prepare(request(directory.path(), "exec ./signal-thread-child"))
+        .unwrap();
+    let controller = prepared.attach_signal_controller().unwrap();
+    let mut owned = prepared.release().unwrap();
+    owned.activate_signal_controller().unwrap();
+    let child = wait_for_pid(&directory.path().join("thread-child.pid"));
+    let child_guard = EscapedProcessGuard::new(child);
+
+    controller
+        .signal(BackgroundProcessSignal::Terminate)
+        .expect("the nonleader thread's identity-pinned child is signaled");
+    wait_for(&directory.path().join("thread-child.signaled"));
+    wait_for(&directory.path().join("thread-leader.signaled"));
+    assert_eq!(owned.wait().unwrap(), BackgroundProcessExit::Exited(23));
+    child_guard.kill_and_reap_if_adopted();
+    assert_processes_absent(&[child]);
+}
+
 #[test]
 fn owned_wait_closes_signal_gate_before_reaping_the_identity_pin() {
     let directory = FreshDirectory::new("signal-close-before-reap");

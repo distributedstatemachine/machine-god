@@ -530,6 +530,7 @@ impl TerminalBackgroundSignaler for NativeBackgroundSupervisor {
     {
         signal_background_process(
             self.control.clone(),
+            Some(self.blocking.handle()),
             owner,
             background_id,
             signal,
@@ -569,6 +570,7 @@ pub(crate) struct LazyProductionBackgroundStarter {
     shared: Arc<LazyBackgroundInitialization>,
     output: BackgroundOutputRegistry,
     control: BackgroundControlRegistry,
+    signal_executor: Arc<OnceLock<BlockingExecutorHandle>>,
 }
 
 struct LazyBackgroundInitialization {
@@ -620,11 +622,13 @@ impl LazyProductionBackgroundStarter {
         let environment_identity = production_environment_identity();
         let output = BackgroundOutputRegistry::new();
         let control = BackgroundControlRegistry::new();
+        let signal_executor = Arc::new(OnceLock::new());
         let initializer_output = output.clone();
         let initializer_control = control.clone();
+        let initializer_signal_executor = Arc::clone(&signal_executor);
         let initializer: LazyTerminalInitializer = Box::new(move |ownership| {
             let adapter = system_process_adapter()?;
-            NativeBackgroundSupervisor::construct_parts_with_ownership(
+            let supervisor = NativeBackgroundSupervisor::construct_parts_with_ownership(
                 workspace,
                 workspace_root,
                 state_root,
@@ -636,14 +640,22 @@ impl LazyProductionBackgroundStarter {
                     output: initializer_output,
                     control: initializer_control,
                 },
-            )
-            .map(|supervisor| Arc::new(supervisor) as Arc<dyn TerminalBackgroundStarter>)
+            )?;
+            initializer_signal_executor
+                .set(supervisor.blocking.handle())
+                .map_err(|_| {
+                    NativeBackgroundSupervisorError::new(
+                        NativeBackgroundSupervisorErrorKind::Worker,
+                    )
+                })?;
+            Ok(Arc::new(supervisor) as Arc<dyn TerminalBackgroundStarter>)
         });
         Ok(Self::with_initializer(
             environment_identity,
             initializer,
             output,
             control,
+            signal_executor,
         ))
     }
 
@@ -652,11 +664,13 @@ impl LazyProductionBackgroundStarter {
         initializer: LazyTerminalInitializer,
         output: BackgroundOutputRegistry,
         control: BackgroundControlRegistry,
+        signal_executor: Arc<OnceLock<BlockingExecutorHandle>>,
     ) -> Self {
         Self {
             environment_identity,
             output,
             control,
+            signal_executor,
             shared: Arc::new(LazyBackgroundInitialization {
                 state: Mutex::new(LazyBackgroundInitializationState {
                     phase: LazyBackgroundInitializationPhase::Uninitialized(initializer),
@@ -723,6 +737,7 @@ impl TerminalBackgroundSignaler for LazyProductionBackgroundStarter {
     {
         signal_background_process(
             self.control.clone(),
+            self.signal_executor.get().cloned(),
             owner,
             background_id,
             signal,
@@ -733,24 +748,45 @@ impl TerminalBackgroundSignaler for LazyProductionBackgroundStarter {
 
 fn signal_background_process(
     control: BackgroundControlRegistry,
+    blocking: Option<BlockingExecutorHandle>,
     owner: machine_god_core::BackgroundOutputOwner,
     background_id: u64,
     signal: TerminalBackgroundSignal,
     cancellation: CancellationToken,
 ) -> BoxFuture<'static, Result<TerminalBackgroundSignalOutcome, TerminalBackgroundSignalError>> {
+    let Some(blocking) = blocking else {
+        return Box::pin(async {
+            Err(TerminalBackgroundSignalError::new(
+                TerminalBackgroundSignalErrorKind::NotFound,
+            ))
+        });
+    };
+    let Some(id) = NonZeroU64::new(background_id) else {
+        return Box::pin(async {
+            Err(TerminalBackgroundSignalError::new(
+                TerminalBackgroundSignalErrorKind::NotFound,
+            ))
+        });
+    };
+    let operation_cancellation = CancellationToken::new();
+    let caller_cancellation = cancellation.cancelled();
+    drop(cancellation);
+    let delivery = blocking.run_cancellable(
+        move || control.signal(id, &owner, native_background_signal(signal)),
+        caller_cancellation,
+        operation_cancellation,
+    );
     Box::pin(async move {
-        if cancellation.is_cancelled() {
-            return Err(TerminalBackgroundSignalError::new(
-                TerminalBackgroundSignalErrorKind::Cancelled,
-            ));
+        match delivery.await {
+            Ok(Ok(())) => TerminalBackgroundSignalOutcome::new(background_id, signal),
+            Ok(Err(error)) => Err(map_control_signal_error(error)),
+            Err(BlockingTaskFailure::Admission) => Err(TerminalBackgroundSignalError::new(
+                TerminalBackgroundSignalErrorKind::Busy,
+            )),
+            Err(BlockingTaskFailure::CancelledBeforeSubmission) => Err(
+                TerminalBackgroundSignalError::new(TerminalBackgroundSignalErrorKind::Cancelled),
+            ),
         }
-        let id = NonZeroU64::new(background_id).ok_or_else(|| {
-            TerminalBackgroundSignalError::new(TerminalBackgroundSignalErrorKind::NotFound)
-        })?;
-        control
-            .signal(id, &owner, native_background_signal(signal))
-            .map_err(map_control_signal_error)?;
-        TerminalBackgroundSignalOutcome::new(background_id, signal)
     })
 }
 
@@ -1353,6 +1389,11 @@ struct BlockingExecutor {
     pool: Arc<BlockingPool>,
 }
 
+#[derive(Clone)]
+struct BlockingExecutorHandle {
+    pool: Arc<BlockingPool>,
+}
+
 struct BlockingPool {
     senders: Vec<SyncSender<BlockingMessage>>,
     admissions: Vec<Mutex<BlockingWorkerAdmission>>,
@@ -1498,6 +1539,12 @@ impl BlockingExecutor {
         }
     }
 
+    fn handle(&self) -> BlockingExecutorHandle {
+        BlockingExecutorHandle {
+            pool: Arc::clone(&self.pool),
+        }
+    }
+
     fn run_cancellable<T>(
         &self,
         task: impl FnOnce() -> T + Send + 'static,
@@ -1524,6 +1571,32 @@ impl BlockingExecutor {
 
     fn shutdown(&self) {
         self.pool.shutdown();
+    }
+}
+
+impl BlockingExecutorHandle {
+    fn run_cancellable<T>(
+        &self,
+        task: impl FnOnce() -> T + Send + 'static,
+        caller_cancellation: Cancelled,
+        operation_cancellation: CancellationToken,
+    ) -> BlockingTaskFuture<Result<T, BlockingTaskFailure>>
+    where
+        T: Send + Unpin + 'static,
+    {
+        BlockingTaskFuture {
+            pool: Arc::clone(&self.pool),
+            task: Some(Box::new(move || Ok(task()))),
+            admission_failure: Some(Err(BlockingTaskFailure::Admission)),
+            pre_submission_cancellation: Some(Err(BlockingTaskFailure::CancelledBeforeSubmission)),
+            result: Arc::new(Mutex::new(BlockingResult {
+                value: None,
+                waker: None,
+            })),
+            submitted: false,
+            caller_cancellation: Some(caller_cancellation),
+            operation_cancellation: Some(operation_cancellation),
+        }
     }
 }
 
@@ -2737,7 +2810,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-    use std::sync::{Arc, Barrier, Mutex, Weak, mpsc};
+    use std::sync::{Arc, Barrier, Mutex, OnceLock, Weak, mpsc};
     use std::task::{Context, Poll, Wake, Waker};
     use std::thread;
     use std::time::{Duration, Instant};
@@ -3349,6 +3422,7 @@ mod tests {
             }),
             BackgroundOutputRegistry::new(),
             BackgroundControlRegistry::new(),
+            Arc::new(OnceLock::new()),
         );
         let request = BackgroundStartRequest::new(":", "/tmp").expect("request");
         let mut first = starter.start(request.clone(), CancellationToken::new());
@@ -3396,6 +3470,7 @@ mod tests {
             }),
             BackgroundOutputRegistry::new(),
             BackgroundControlRegistry::new(),
+            Arc::new(OnceLock::new()),
         );
 
         for _ in 0..2 {
@@ -3426,6 +3501,7 @@ mod tests {
             }),
             BackgroundOutputRegistry::new(),
             BackgroundControlRegistry::new(),
+            Arc::new(OnceLock::new()),
         );
         let cancellation = CancellationToken::new();
         cancellation.cancel();
@@ -3434,6 +3510,41 @@ mod tests {
         let error = futures_executor::block_on(starter.start(request, cancellation))
             .expect_err("pre-cancelled start");
         assert_eq!(error.kind(), BackgroundStartErrorKind::Cancelled);
+        assert_eq!(initializations.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn lazy_terminal_signal_without_a_live_process_does_not_initialize() {
+        let initializations = Arc::new(AtomicUsize::new(0));
+        let initializer_initializations = Arc::clone(&initializations);
+        let starter = LazyProductionBackgroundStarter::with_initializer(
+            ProcessEnvironment {
+                profile: "lazy_test".to_owned(),
+                sha256: "0".repeat(64),
+            },
+            Box::new(move |_ownership| {
+                initializer_initializations.fetch_add(1, Ordering::AcqRel);
+                unreachable!("signal lookup must not initialize the starter")
+            }),
+            BackgroundOutputRegistry::new(),
+            BackgroundControlRegistry::new(),
+            Arc::new(OnceLock::new()),
+        );
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("lazy-signal-session").unwrap(),
+            SessionIncarnationId::new("lazy-signal-incarnation").unwrap(),
+        );
+
+        let error = futures_executor::block_on(TerminalBackgroundSignaler::signal(
+            &starter,
+            owner,
+            1,
+            TerminalBackgroundSignal::Terminate,
+            CancellationToken::new(),
+        ))
+        .expect_err("no live process exists");
+
+        assert_eq!(error.kind(), TerminalBackgroundSignalErrorKind::NotFound);
         assert_eq!(initializations.load(Ordering::Acquire), 0);
     }
 
@@ -3447,6 +3558,7 @@ mod tests {
             Box::new(|_ownership| unreachable!("the test holds initialization in progress")),
             BackgroundOutputRegistry::new(),
             BackgroundControlRegistry::new(),
+            Arc::new(OnceLock::new()),
         );
         {
             let mut state = starter

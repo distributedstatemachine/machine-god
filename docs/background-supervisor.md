@@ -178,16 +178,24 @@ after initial publication explicitly aborts and reaps the prepared child. It
 publishes `stopped` only when that fallible cleanup proves success and
 publishes `dead` when cleanup fails or remains ambiguous. Only proven cleanup
 preserves the fixed cancellation result; ambiguous cleanup returns the fixed
-process result. Retention after a successful release is an infallible ownership
-transfer: dropping the caller's start future cannot orphan a process or free
-its capacity slot. A retention permit reserved before shutdown still
+process result. After successful release, the owned process first performs its
+bounded synchronous retain-time activation. Activation failure drops and
+cleans that sole owner, best-effort replaces the record with `dead`, and
+returns a fixed process failure; cancellation can no longer revoke release.
+Successful activation makes retention an infallible ownership transfer:
+dropping the caller's start future cannot orphan a process or free its capacity
+slot. A retention permit reserved before shutdown still
 dispatches to its reserved worker. The fixed rescue worker owns the otherwise
 unreachable channel-failure path, so dispatch never performs a process wait or
 completion publication on the polling caller.
 
 The successful start result contains only the allocated ID and display-only
-PID. Neither value authorizes signaling. The supervisor controls a process
-only through the exact live child and process-group handles it already owns.
+PID. Neither value authorizes signaling. For an owner-scoped terminal start,
+the supervisor separately retains an exact process-tree controller keyed by
+the allocated ID and the private session-incarnation owner. The controller
+becomes visible through core's post-release retain-time activation hook before
+the public handle is returned and never reconstructs authority from either
+display number.
 
 ## Cross-platform retained-cwd launch
 
@@ -198,7 +206,9 @@ path. On macOS the parent passes the retained directory as a standard
 descriptor and the helper applies safe `fchdir` through `rustix`. In both
 cases the helper first emits one fixed readiness byte, waits for the complete
 private release frame, and then replaces itself with fixed `/bin/sh`. No
-machine-god crate contains unsafe Rust.
+unsafe code exists in this launch path. The separate macOS process-query
+wrapper has the narrowly audited fixed-record FFI exception defined by
+[ADR 0003](decisions/0003-bounded-darwin-process-query-ffi.md).
 
 The production adapter resolves the current host executable and supplies one
 exact private helper argument. Native hosts must dispatch that exact singleton
@@ -418,6 +428,41 @@ capped at 7 KiB and requires the exact session and session-incarnation owner
 carried by the original start. The registry, bytes, and ownership disappear on
 host exit and are deliberately independent of the durable background record.
 
+Process control uses a separate registry capped at 16 live entries. A hidden
+entry and identity-pinned native controller are installed during the same
+prepared-process transaction as output capture. Release transfers both leases
+to the owned process, and core activates control only at its synchronous
+retain-time boundary. An activation failure drops the sole released-process
+owner and completes its cleanup before the start returns a fixed process
+failure. The lease remains held by the retained wait future until its native
+controller has synchronously closed under the same lifecycle gate before the
+leader is reaped. Unknown IDs, completed entries, and wrong session or
+incarnation owners are deliberately indistinguishable.
+
+One explicit signal operation revalidates the retained leader, captures a
+bounded ancestry tree, signals identity-checked outside-group descendants
+deepest-first, and signals the original process group last. Linux traversal
+uses the retained procfs descriptor and mount identity, caps inspected entries,
+metadata bytes, and retained members, and uses pidfds for individual delivery.
+macOS traversal uses ADR 0003's safe fixed-buffer wrapper with kernel
+unique-process and parent identities. A vanished descendant does not fail the
+operation; incomplete
+inspection, capacity exhaustion, identity ambiguity, a non-vanished
+descendant-delivery failure, or original-group failure does. The operation is
+non-escalating and acknowledges completed delivery rather than process exit.
+One descendant failure does not suppress later descendant attempts or the
+original-group attempt, but the combined operation still fails.
+The registry lock is released before target dispatch, while the per-process
+lifecycle lock serializes signal against close and reap.
+
+Process-table traversal runs through the supervisor's existing bounded
+blocking pool. The terminal layer separately caps active signal operations at
+four. Cancellation before blocking admission has no process effect; admission
+commits the ordered mutation, so later cancellation cannot abandon or relabel
+an already dispatched tree delivery. The lazy reference adapter shares the
+same registry and blocking handle but does not initialize a supervisor merely
+to reject an unknown signal target.
+
 All public errors and debug output use closed fixed categories and do not
 reflect commands, paths, environment values, record contents, helper details,
 PIDs, IDs, or operating-system diagnostics. Worker-side host syscalls retain
@@ -426,9 +471,10 @@ process syscall.
 
 ## Deferred surface
 
-The bounded terminal `start` and same-incarnation process-local `read`
-entrypoints and separate exact persisted-record `inspect` and `wait` entrypoints
-are delivered. `read`, `inspect`, and `wait` do not
+The bounded terminal `start`, same-incarnation process-local `read`, and
+identity-checked process-local `signal` entrypoints and separate exact
+persisted-record `inspect` and `wait` entrypoints are delivered. `read`,
+`inspect`, and `wait` do not
 initialize, call, or control this supervisor and make no PID or liveness claim;
 `read` observes only the in-memory capture registry, while `wait` observes only
 bounded atomic record replacements through its separately injected
@@ -436,5 +482,5 @@ persisted-history boundary. Future slices may add durable or restart-safe logs
 or design an authenticated durable worker protocol. Top-level
 `background` remains inspection-only. Interactive input, output streaming, URL
 detection, persisted-PID signaling, detached survival, cross-process stop,
-crash adoption, setsid containment, and fx-equivalence or performance claims
-remain out of scope.
+crash adoption, and broader fx-equivalence or performance claims remain out of
+scope.

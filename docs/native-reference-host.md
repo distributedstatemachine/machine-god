@@ -22,9 +22,11 @@ Linux-only. The private host catalog retains both tools on macOS:
 `semantic_search` and terminal `exec` return their fixed unsupported results
 after strict preparation and permission, while terminal `start` uses the
 Linux/macOS background helper, terminal `read` uses the lazy starter's shared
-process-local same-incarnation output registry, and terminal `list`, `inspect`,
-and `wait` use its separately injected descriptor-confined persisted-record
-reader without process authority. `wait` receives its monotonic delays through
+process-local same-incarnation output registry, terminal `signal` uses its
+identity-checked live process-tree registry and bounded blocking executor, and
+terminal `list`, `inspect`, and `wait` use its separately injected
+descriptor-confined persisted-record reader without process authority. `wait`
+receives its monotonic delays through
 the same runtime-paired deadline authority used by web search and vision.
 
 ## Required selections
@@ -107,6 +109,10 @@ Every successful host contains:
   therefore its exact capture registry. Reading does not initialize the
   supervisor, and exact session plus session-incarnation ownership prevents a
   display ID from granting output authority;
+- one process-local signal controller sharing the lazy starter's exact control
+  registry and blocking-worker allocation. It binds delivery to the current
+  session incarnation, never treats the displayed PID as authority, and does
+  not initialize the supervisor merely to reject an unknown target;
 - one background-history reader over a separate clone of the same retained
   state-root descriptor and frozen canonical workspace identity. It creates no
   namespace or worker during composition, listing, or inspection, never
@@ -173,8 +179,10 @@ clone, not ambient cwd or environment discovery. Terminal wait reuses that
 exact reader and the shared deadline authority; none initializes or calls the
 starter. Terminal output read reuses the starter allocation itself without
 initializing it and has a separate four-read limit. At most four terminal lists
-may be active, independently of terminal's foreground-execution, read, and wait
-admission limits.
+may be active. Terminal signal likewise reuses the starter allocation, runs
+bounded process-tree traversal on its existing blocking pool, and has a
+separate four-signal limit. These limits are independent of terminal's
+foreground-execution, read, and wait admission limits.
 `ask_user_question`, `mcp_features`, `mcp_search_tools`, `mcp_select_tool`,
 `subagent`, and `web_fetch` are rootless.
 `mcp_features` uses only its explicitly injected read-only authority. It stamps

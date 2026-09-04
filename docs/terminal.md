@@ -3,21 +3,27 @@
 The native tool executes one bounded foreground shell command, starts one
 noninteractive background shell command after explicit process authorization,
 reads bounded process-local output from a command started by the same session
-incarnation, or lists, inspects, or boundedly waits on persisted background
-records without process authority. It is registered by the reference host and
-has no top-level CLI command.
+incarnation, sends one explicit signal to that exact live process tree after
+separate authorization, or lists, inspects, or boundedly waits on persisted
+background records without process authority. It is registered by the
+reference host and has no top-level CLI command.
 
 ## Boundary
 
 The reference-host tool implements the `exec`, bounded `start`, bounded
 process-local `read`, bounded persisted-record `list`, bounded persisted-record
-`inspect`, and bounded persisted-record `wait` subsets of fx's `terminal` tool.
+`inspect`, bounded persisted-record `wait`, and bounded process-local `signal`
+subsets of fx's `terminal` tool.
 `exec` captures bounded standard output and error and waits for the direct
 child. `start` durably records and releases one noninteractive command through
 the native background supervisor, starts capturing its merged output, and
 returns its display identity without waiting for command completion. `read`
 pages that captured output only for the exact session incarnation that started
 it. `list` returns a compact bounded catalog of recorded history.
+`signal` delivers exactly one of `hangup`, `interrupt`, `quit`, `terminate`, or
+`kill` to the identity-checked live process tree owned by the exact session
+incarnation, then acknowledges delivery without waiting for exit or escalating
+to another signal. It does not derive authority from the displayed PID.
 `inspect` reads the validated record for one display identity without claiming
 current liveness. `wait` observes bounded atomic replacements of that exact
 record until it contains a supported recorded exit or reaches the requested
@@ -27,6 +33,8 @@ only when a trusted lister is explicitly injected, `inspect` appears only when
 a trusted inspector is explicitly injected, and `wait` appears only when its
 separately bounded waiter is also injected. `read` appears only when a trusted
 process-local output reader is explicitly injected alongside a starter.
+`signal` appears only when a trusted process-local signal controller is
+explicitly injected alongside a starter.
 
 The model-facing input is:
 
@@ -71,6 +79,20 @@ The separate read form is:
 canonicalizes to zero when omitted. The numeric background ID is only a display
 and lookup value; the host additionally binds every read to the caller's exact
 session ID and session-incarnation ID.
+The separate signal form is:
+
+```json
+{
+  "action": "signal",
+  "background_id": 7,
+  "signal": "terminate"
+}
+```
+
+All three fields are required. `background_id` is a nonzero JSON `u64`, and
+`signal` accepts exactly `hangup`, `interrupt`, `quit`, `terminate`, or `kill`.
+The host privately supplies the current engine session ID and incarnation; the
+model cannot select or spoof either owner field.
 An exec-only construction accepts only `exec`; a starter-only construction
 accepts `exec` and `start`.
 `cwd` is optional and defaults to `"."`. `profile` is optional and accepts
@@ -97,12 +119,12 @@ without constructing the absolute path or a background request.
 The reference-host tool description is:
 
 ```text
-Run a foreground command, start a background command, read bounded same-session background output, list persisted background records, inspect one persisted background record, or wait for its recorded exit
+Run a foreground command, start a background command, read bounded same-session background output, signal one live same-session background process tree, list persisted background records, inspect one persisted background record, or wait for its recorded exit
 ```
 
 An exec-only construction retains its earlier foreground-only description and
 schema. All forms deliberately exclude `screen`, `write`, `monitor`, `resize`,
-`signal`, and `close`; list filters and pagination; PTYs; interactive stdin;
+`close`; list filters and pagination; PTYs; interactive stdin;
 durable or restart-safe output; output tail retention; separate background
 stdout/stderr channels; artifacts; custom or login shells; user shell profiles;
 retries; external working directories; and benchmark workloads. They make no
@@ -152,14 +174,18 @@ that retained directory or placing a replacement at its former pathname
 therefore cannot make the process permission describe the replacement
 directory.
 
-The stable serialized capability therefore contains the fixed program, exact
+The stable serialized process capability therefore contains the fixed program, exact
 two arguments, authorized cwd, profile name, and digest. Successful preparation
 returns those same canonical model arguments. Direct `execute` reparses and
 revalidates all fields and rejects any canonical-argument, program, argument,
 cwd, profile, or digest divergence before filesystem access, worker creation,
 or process spawn. The existing engine presents terminal execution as critical
-risk. Denial has zero terminal-owned effects. `read`, `list`, `inspect`, and
-`wait` instead prepare with no authority because they can read only through
+risk. Denial has zero terminal-owned effects. `signal` instead prepares the
+exact custom capability
+`{"name":"terminal_signal","details":{"background_id":7,"signal":"terminate"}}`;
+the requested identity and signal cannot change after authorization, and
+denial performs no registry lookup, process-table scan, or signal syscall.
+`read`, `list`, `inspect`, and `wait` prepare with no authority because they can read only through
 explicitly injected owner-scoped output or persisted-history boundaries; none
 requests process permission.
 
@@ -183,8 +209,10 @@ Rename or unlink after descriptor retention cannot redirect the starting
 directory.
 
 Safe standard Rust has no descriptor-relative `Command` cwd primitive on
-macOS, and unsafe Rust is forbidden by repository policy. The production system
-executor is therefore Linux-only. Public `TerminalTool::open` and
+macOS, and the audited
+[Darwin process-query exception](decisions/0003-bounded-darwin-process-query-ffi.md)
+does not authorize command-launch FFI. The production system executor is
+therefore Linux-only. Public `TerminalTool::open` and
 `TerminalTool::open_with_limits` construction on macOS, FreeBSD, WASI, and other
 non-Linux targets fails with the fixed unsupported category before filesystem
 lookup, environment inspection, thread creation, or spawn.
@@ -317,6 +345,60 @@ publication. The four-slot permit is released on success, error, cancellation,
 drop, or unwind. Output exists only in this host process: restart, host exit,
 closed-entry eviction, or use from another composed host loses it. Persisted
 records remain independently inspectable but cannot reconstruct these bytes.
+
+## Process-local background signal
+
+Signal control is available only for a process started by this host with an
+output owner. A separate fixed-capacity registry binds the nonzero background
+ID to the exact session and session-incarnation owner plus a clone of native
+process authority; it never stores or reopens the display PID as authority.
+Registration is hidden before process release. Core invokes the owned
+process's bounded retain-time activation hook after the release commit and
+before returning the public handle or transferring the process to its retainer.
+Activation failure synchronously drops and cleans the released process,
+best-effort records `dead`, and returns the fixed process failure. The registry
+lease stays with retained process ownership and is removed only after the
+signal gate has closed before terminal reap, so a completed or reused numeric
+identity cannot regain control.
+
+The Linux/macOS controller validates the retained root identity, takes one
+bounded process ancestry snapshot, delivers the selected signal deepest-first
+to identity-revalidated descendants outside the original process group, and
+then signals the original group. Linux uses the retained procfs mount authority
+and pidfds for individual outside-group delivery. macOS uses the safe
+fixed-buffer Darwin wrapper's kernel unique-process and parent identities. A
+vanished descendant is harmless, but an incomplete snapshot, identity
+ambiguity, bound overflow, non-vanished delivery failure, or original-group
+delivery failure rejects the operation; partial delivery is never reported as
+success. One descendant failure does not suppress later descendant attempts or
+the original-group attempt. One request never waits for exit, repeats, or
+escalates its chosen signal.
+
+Traversal runs on the supervisor's existing fixed worker pool rather than the
+engine poll thread. Terminal admits at most four signal actions independently
+of foreground executions, output reads, record reads, and supervisor process
+capacity. Registry and per-process lifecycle lock contention fail fast as
+retryable `terminal_signal_busy`. An unknown, completed, or wrong-owner ID is
+indistinguishable as `terminal_signal_not_found`; a process-table or delivery
+failure is the fixed non-retryable `terminal_signal_failed` error. Signal
+future submission is the ordered mutation commit boundary: cancellation before
+submission has no signal effect, while cancellation after submission cannot
+relabel a completed or partially attempted native delivery.
+
+Success acknowledges delivery only:
+
+```json
+{
+  "action": "signal",
+  "background_id": 7,
+  "signal": "terminate",
+  "status": "signaled"
+}
+```
+
+It makes no claim that the process has exited. Callers may use the separate
+persisted-record `wait` action when they need a bounded recorded-exit
+observation.
 
 ## Persisted background inspection
 
@@ -768,8 +850,9 @@ rendering, the final cancellation check, and public return.
 
 Focused and workspace evidence must cover strict schema and
 canonical arguments; exact capability serde and policy/execution equality;
-the injected and reference-host `start`, `read`, `list`, `inspect`, and `wait`
-schemas; authority-free read, list, and exact-wait preparation; same-incarnation
+the injected and reference-host `start`, `read`, `signal`, `list`, `inspect`,
+and `wait` schemas; exact custom signal authorization; authority-free read,
+list, and exact-wait preparation; same-incarnation
 output ownership, wrong-owner indistinguishability, hidden-before-release
 registration, merged-stream marker exclusion, live and closed reads, prefix
 truncation and cursor advance, closed-entry eviction, invalid UTF-8, worst-case
@@ -779,14 +862,18 @@ pending-read cancellation and permit recovery; empty, ordered, truncated, and
 running-state backoff and safety-ceiling outcomes; all supported and rejected
 recorded states and exit-code ranges; four-active-list, 128-observation,
 four-active-wait, serialized-result, and live-memory bounds; no PID probe,
-process, foreground executor, supervisor initialization, or permission effects;
+process, foreground executor, supervisor initialization, or permission effects
+for read-only actions; four-signal admission, wrong-owner and completed-process
+rejection, identity-revalidated outside-group descendant delivery, root-group
+delivery, incomplete-delivery failure, close-before-reap serialization, and
+off-poll-thread traversal;
 pending listing, observation, and timer cancellation, destructor-triggered
 cancellation, outer-future drop, and exact-once list- and wait-slot recovery;
 workspace-relative permission,
 private absolute background cwd, and fixed environment identity;
 exact and over-limit combined workspace/cwd preflight before authorization;
 post-construction retained-root rename/replacement behavior; rejection of
-interactive and control fields; zero-effect pre-cancellation; committed
+interactive and unsupported control fields; zero-effect pre-cancellation; committed
 success despite later cancellation; nonzero/redacted display identities; every
 fixed supervisor-error mapping; foreground-capacity and executor bypass; and
 denial with zero effects; retained-root cwd and symlink/replacement races;

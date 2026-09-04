@@ -10,16 +10,20 @@ the [implementation plan](implementation-plan.md#current-delivery-state).
 | Crate | Owns | Must not own |
 | --- | --- | --- |
 | `machine-god-core` | Model, session, permission, tool, event, cancellation, identifier, and orchestration contracts | Ambient filesystem, process, environment, credential, clock, randomness, network, or executor authority |
+| `machine-god-darwin-proc` | Safe fixed-buffer access to the narrowly audited Darwin process identity and lineage ABI | Product policy, allocation from kernel counts, process mutation, or non-macOS effects |
 | `machine-god-native` | Operating-system, persistence, network, credential, root, prompt, and native-tool effects | Provider-neutral product state or CLI presentation policy |
 | `machine-god-cli` | Argument parsing, process environment capture for a command, runtime driving where required, rendering, exit codes, and stdout/stderr writes | Engine state, provider protocol, permission policy, persistence schema, or tool behavior |
 | `machine-god-testkit` | Deterministic providers, stores, permission handlers, tools, event sinks, and fixtures | Production effects |
 
 The production dependency direction is `machine-god-cli` to
-`machine-god-native` to `machine-god-core`. The testkit depends on core. Core
-does not depend on the other workspace crates.
+`machine-god-native` to `machine-god-core`; on macOS only, native also depends
+on `machine-god-darwin-proc`. The testkit depends on core. Core does not depend
+on the other workspace crates.
 
-Unsafe Rust is forbidden workspace-wide. A future exception would require a
-narrow, reviewed architecture decision.
+Unsafe Rust remains forbidden in core, native, CLI, and testkit. The sole
+production exception is the private Darwin FFI module narrowed and audited by
+[ADR 0003](decisions/0003-bounded-darwin-process-query-ffi.md); its crate
+denies unsafe code everywhere else.
 
 ## Core composition
 

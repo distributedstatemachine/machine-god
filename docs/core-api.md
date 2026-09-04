@@ -217,13 +217,19 @@ reserves one durable nonzero ID and passes it through the spawner's defaulted
 ID-aware extension point,
 reads the injected clock, prepares a barrier-held process, durably publishes
 the complete running record, asks native release to open the execution barrier,
-and transfers the lease and exact owned process to the retainer. Release may do
+invokes the owned process's bounded synchronous `activate_retention` hook, and
+transfers the lease and exact owned process to the retainer. The hook defaults
+to no-op for adapters without retain-time state. A hook failure is normalized
+to the fixed process category after synchronously dropping the released
+process, then best-effort replacing the record with `dead`; post-release
+cancellation cannot relabel it. Release may do
 bounded pre-open work, during which cancellation still drops and cleans the
 prepared process under its no-command-executed guarantee. Opening the barrier
 is the irreversible commit point; cancellation cannot revoke the process after
 that point.
 
-The returned [`BackgroundHandle`](crate::BackgroundHandle) exposes only the
+The returned [`BackgroundHandle`](crate::BackgroundHandle) is constructed only
+after retain-time activation succeeds and exposes only the
 durable ID and optional PID for presentation. Those numbers provide no
 liveness, lookup, or signaling authority. Retained completion waits receive a
 host-owned stop token; cancellation of that token requests cleanup and yields

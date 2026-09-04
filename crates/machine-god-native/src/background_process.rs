@@ -492,6 +492,7 @@ fn classify_process_signal(
 struct SignalProcessSnapshot {
     pid: rustix::process::Pid,
     parent: Option<rustix::process::Pid>,
+    parent_identity: Option<ProcessIdentity>,
     group: Option<rustix::process::Pid>,
     identity: ProcessIdentity,
 }
@@ -508,20 +509,55 @@ fn signal_process_tree(
 ) -> Result<(), BackgroundProcessSignalError> {
     let authority = target.authority.as_ref().ok_or_else(signal_process_error)?;
     let snapshot = signal_process_snapshot(authority, target.group)?;
-    let descendants =
-        derive_outside_group_descendants(&snapshot, target.group, target.root_identity)?;
+    let descendants = derive_signal_descendants(&snapshot, target.group, target.root_identity)?;
 
     // The retained, unreaped direct child pins the root PID and original PGID.
-    // Re-reading its admitted start identity after the bounded global snapshot
+    // Re-reading its admitted start identity after the bounded ancestry snapshot
     // rejects a substituted or incomplete process-table view before any signal.
     require_signal_root(authority, target)?;
-    for descendant in descendants {
-        signal_exact_process(authority, &descendant, signal)?;
-    }
+    let incomplete = signal_descendants_with(&descendants, |descendant| {
+        signal_exact_process(authority, descendant, target.group, signal)
+    });
     // Keep the individual-to-group order deterministic and reject success if
     // the retained root can no longer be inspected immediately before killpg.
     require_signal_root(authority, target)?;
-    classify_process_signal(rustix::process::kill_process_group(target.group, signal))
+    finish_signal_delivery(incomplete, || {
+        classify_process_signal(rustix::process::kill_process_group(target.group, signal))
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn finish_signal_delivery(
+    incomplete: bool,
+    signal_group: impl FnOnce() -> Result<(), BackgroundProcessSignalError>,
+) -> Result<(), BackgroundProcessSignalError> {
+    signal_group()?;
+    if incomplete {
+        return Err(signal_process_error());
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn signal_descendants_with(
+    descendants: &[SignalProcessSnapshot],
+    mut send: impl FnMut(&SignalProcessSnapshot) -> Result<(), BackgroundProcessSignalError>,
+) -> bool {
+    let mut incomplete = false;
+    for descendant in descendants {
+        if send(descendant).is_err() {
+            incomplete = true;
+        }
+    }
+    incomplete
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn should_signal_individually(
+    current_group: Option<rustix::process::Pid>,
+    original_group: rustix::process::Pid,
+) -> bool {
+    current_group != Some(original_group)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -541,7 +577,7 @@ fn require_signal_root(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn derive_outside_group_descendants(
+fn derive_signal_descendants(
     snapshot: &[SignalProcessSnapshot],
     root: rustix::process::Pid,
     root_identity: ProcessIdentity,
@@ -551,7 +587,8 @@ fn derive_outside_group_descendants(
     }
 
     let mut identities = HashMap::with_capacity(snapshot.len());
-    let mut children: HashMap<rustix::process::Pid, Vec<usize>> = HashMap::new();
+    let mut children_by_pid: HashMap<rustix::process::Pid, Vec<usize>> = HashMap::new();
+    let mut children_by_identity: HashMap<ProcessIdentity, Vec<usize>> = HashMap::new();
     let mut admitted_root = false;
     for (index, process) in snapshot.iter().enumerate() {
         if identities.insert(process.pid, process.identity).is_some() {
@@ -563,8 +600,13 @@ fn derive_outside_group_descendants(
             }
             admitted_root = true;
         }
-        if let Some(parent) = process.parent {
-            children.entry(parent).or_default().push(index);
+        if let Some(parent_identity) = process.parent_identity {
+            children_by_identity
+                .entry(parent_identity)
+                .or_default()
+                .push(index);
+        } else if let Some(parent) = process.parent {
+            children_by_pid.entry(parent).or_default().push(index);
         }
     }
     if !admitted_root {
@@ -573,13 +615,14 @@ fn derive_outside_group_descendants(
 
     let mut visited = HashSet::with_capacity(snapshot.len().min(MAX_SIGNAL_TREE_PROCESSES));
     visited.insert(root);
-    let mut stack = vec![(root, 0_usize)];
+    let mut stack = vec![(root, root_identity, 0_usize)];
     let mut descendants = Vec::new();
-    while let Some((parent, depth)) = stack.pop() {
+    while let Some((parent, parent_identity, depth)) = stack.pop() {
         let next_depth = depth.checked_add(1).ok_or_else(signal_process_error)?;
-        let Some(indexes) = children.get(&parent) else {
-            continue;
-        };
+        let indexes = children_by_identity
+            .get(&parent_identity)
+            .or_else(|| children_by_pid.get(&parent));
+        let Some(indexes) = indexes else { continue };
         for index in indexes {
             let process = snapshot[*index];
             if !visited.insert(process.pid) {
@@ -588,10 +631,8 @@ fn derive_outside_group_descendants(
             if visited.len() > MAX_SIGNAL_TREE_PROCESSES {
                 return Err(signal_process_error());
             }
-            stack.push((process.pid, next_depth));
-            if process.group != Some(root) {
-                descendants.push((next_depth, process));
-            }
+            stack.push((process.pid, process.identity, next_depth));
+            descendants.push((next_depth, process));
         }
     }
 
@@ -3372,29 +3413,22 @@ fn read_signal_process(
     pid: rustix::process::Pid,
 ) -> Result<Option<SignalProcessSnapshot>, BackgroundProcessSignalError> {
     let raw = pid.as_raw_nonzero().get();
-    match libproc::proc_pid::pidinfo::<libproc::bsd_info::BSDInfo>(raw, 0) {
-        Ok(info) => {
-            if info.pbi_pid != raw.cast_unsigned() {
-                return Err(signal_process_error());
-            }
-            Ok(Some(SignalProcessSnapshot {
-                pid,
-                parent: i32::try_from(info.pbi_ppid)
-                    .ok()
-                    .and_then(rustix::process::Pid::from_raw),
-                group: i32::try_from(info.pbi_pgid)
-                    .ok()
-                    .and_then(rustix::process::Pid::from_raw),
-                identity: ProcessIdentity {
-                    primary: info.pbi_start_tvsec,
-                    secondary: info.pbi_start_tvusec,
-                },
-            }))
-        }
-        Err(_) => match rustix::process::test_kill_process(pid) {
-            Err(rustix::io::Errno::SRCH) => Ok(None),
-            _ => Err(signal_process_error()),
-        },
+    match machine_god_darwin_proc::process_info(raw) {
+        Ok(info) => Ok(Some(SignalProcessSnapshot {
+            pid,
+            parent: rustix::process::Pid::from_raw(info.parent_pid),
+            parent_identity: (info.parent_unique_id != 0).then_some(ProcessIdentity {
+                primary: info.parent_unique_id,
+                secondary: 0,
+            }),
+            group: rustix::process::Pid::from_raw(info.process_group_id),
+            identity: ProcessIdentity {
+                primary: info.unique_id,
+                secondary: 0,
+            },
+        })),
+        Err(machine_god_darwin_proc::Error::NotFound) => Ok(None),
+        Err(_) => Err(signal_process_error()),
     }
 }
 
@@ -3405,27 +3439,41 @@ fn signal_process_snapshot(
 ) -> Result<Vec<SignalProcessSnapshot>, BackgroundProcessSignalError> {
     let root = read_signal_process(authority, root)?.ok_or_else(signal_not_found_error)?;
     let mut snapshot = vec![root];
+    let mut child_buffer = vec![0_i32; MAX_SIGNAL_TREE_PROCESSES + 1];
     let mut cursor = 0_usize;
     while cursor < snapshot.len() {
         let parent = snapshot[cursor].pid;
+        let parent_identity = snapshot[cursor].identity;
         cursor += 1;
-        // libproc 0.14.11 distinguishes an empty successful list from failure
-        // using errno, but does not clear a stale thread-local value itself.
-        errno::set_errno(errno::Errno(0));
-        let children =
-            libproc::processes::pids_by_type(libproc::processes::ProcFilter::ByParentProcess {
-                ppid: parent.as_raw_nonzero().get().cast_unsigned(),
-            })
-            .map_err(|_| signal_process_error())?;
-        for raw in children {
+        let Some(current_parent) = read_signal_process(authority, parent)? else {
+            continue;
+        };
+        if current_parent.identity != parent_identity {
+            continue;
+        }
+        let children = match machine_god_darwin_proc::list_child_pids(
+            parent.as_raw_nonzero().get(),
+            &mut child_buffer,
+        ) {
+            Ok(children) => children,
+            Err(machine_god_darwin_proc::Error::NotFound) => continue,
+            Err(_) => return Err(signal_process_error()),
+        };
+        let Some(revalidated_parent) = read_signal_process(authority, parent)? else {
+            continue;
+        };
+        if revalidated_parent.identity != parent_identity {
+            continue;
+        }
+        for &raw in children {
             if snapshot.len() == MAX_SIGNAL_TREE_PROCESSES {
                 return Err(signal_process_error());
             }
-            let pid = i32::try_from(raw)
-                .ok()
-                .and_then(rustix::process::Pid::from_raw)
-                .ok_or_else(signal_process_error)?;
-            if let Some(process) = read_signal_process(authority, pid)? {
+            let pid = rustix::process::Pid::from_raw(raw).ok_or_else(signal_process_error)?;
+            if let Some(process) = read_signal_process(authority, pid)?
+                && process.parent == Some(parent)
+                && process.parent_identity == Some(parent_identity)
+            {
                 snapshot.push(process);
             }
         }
@@ -3437,12 +3485,16 @@ fn signal_process_snapshot(
 fn signal_exact_process(
     authority: &GroupSnapshotAuthority,
     expected: &SignalProcessSnapshot,
+    original_group: rustix::process::Pid,
     signal: rustix::process::Signal,
 ) -> Result<(), BackgroundProcessSignalError> {
     let Some(current) = read_signal_process(authority, expected.pid)? else {
         return Ok(());
     };
     if !same_signal_process(expected, &current) {
+        return Ok(());
+    }
+    if !should_signal_individually(current.group, original_group) {
         return Ok(());
     }
     match rustix::process::kill_process(expected.pid, signal) {
@@ -3503,6 +3555,7 @@ fn read_linux_signal_process_at(
     Ok(parsed.map(|stat| SignalProcessSnapshot {
         pid,
         parent: stat.parent,
+        parent_identity: None,
         group: stat.group,
         identity: ProcessIdentity {
             primary: stat.start_time,
@@ -3514,66 +3567,176 @@ fn read_linux_signal_process_at(
 #[cfg(target_os = "linux")]
 fn signal_process_snapshot(
     authority: &GroupSnapshotAuthority,
-    _root: rustix::process::Pid,
+    root: rustix::process::Pid,
 ) -> Result<Vec<SignalProcessSnapshot>, BackgroundProcessSignalError> {
     authority.validate().map_err(|()| signal_process_error())?;
-    let scan_fd = rustix::fs::openat(
-        authority.proc_root.as_fd(),
-        ".",
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(|_| signal_process_error())?;
-    let mut directory_buffer = [MaybeUninit::<u8>::uninit(); 8 * 1024];
-    let mut entries = rustix::fs::RawDir::new(scan_fd, &mut directory_buffer);
+    let root = read_signal_process(authority, root)?.ok_or_else(signal_not_found_error)?;
+    let mut snapshot = vec![root];
     let mut inspected_entries = 0_usize;
     let mut inspected_bytes = 0_usize;
-    let mut snapshot = Vec::new();
-    let mut stat_bytes = Vec::with_capacity(MAX_LINUX_PROC_STAT_BYTES + 1);
-    while let Some(entry) = entries.next() {
-        inspected_entries = inspected_entries
-            .checked_add(1)
-            .filter(|count| *count <= MAX_LINUX_PROC_ENTRIES)
-            .ok_or_else(signal_process_error)?;
-        let entry = entry.map_err(|_| signal_process_error())?;
-        let name = entry.file_name();
-        let Some(pid) =
-            parse_linux_proc_directory_pid(name.to_bytes()).map_err(|_| signal_process_error())?
-        else {
-            continue;
-        };
-        let pid_directory = match rustix::fs::openat(
-            authority.proc_root.as_fd(),
-            name,
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::empty(),
-        ) {
-            Ok(directory) => directory,
-            Err(rustix::io::Errno::NOENT | rustix::io::Errno::SRCH) => continue,
-            Err(_) => return Err(signal_process_error()),
-        };
-        let Some(process) =
-            read_linux_signal_process_at(pid_directory.as_fd(), pid, &mut stat_bytes)?
-        else {
-            continue;
-        };
-        inspected_bytes = inspected_bytes
-            .checked_add(stat_bytes.len())
-            .filter(|bytes| *bytes <= MAX_LINUX_PROC_SNAPSHOT_BYTES)
-            .ok_or_else(signal_process_error)?;
-        if snapshot.len() == MAX_SIGNAL_TREE_PROCESSES {
-            return Err(signal_process_error());
-        }
-        snapshot.push(process);
+    let mut child_bytes = Vec::with_capacity(MAX_GROUP_SNAPSHOT_BYTES + 1);
+    let mut cursor = 0_usize;
+    while cursor < snapshot.len() {
+        let parent = snapshot[cursor];
+        cursor += 1;
+        require_linux_signal_parent(authority, &parent)?;
+        append_linux_signal_children(
+            authority,
+            parent,
+            &mut snapshot,
+            &mut child_bytes,
+            &mut inspected_entries,
+            &mut inspected_bytes,
+        )?;
+        require_linux_signal_parent(authority, &parent)?;
     }
     authority.validate().map_err(|()| signal_process_error())?;
     Ok(snapshot)
 }
 
 #[cfg(target_os = "linux")]
+fn require_linux_signal_parent(
+    authority: &GroupSnapshotAuthority,
+    expected: &SignalProcessSnapshot,
+) -> Result<(), BackgroundProcessSignalError> {
+    let Some(current) = read_signal_process(authority, expected.pid)? else {
+        return Err(signal_process_error());
+    };
+    if !same_signal_process(expected, &current) {
+        return Err(signal_process_error());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn append_linux_signal_children(
+    authority: &GroupSnapshotAuthority,
+    parent: SignalProcessSnapshot,
+    snapshot: &mut Vec<SignalProcessSnapshot>,
+    child_bytes: &mut Vec<u8>,
+    inspected_entries: &mut usize,
+    inspected_bytes: &mut usize,
+) -> Result<(), BackgroundProcessSignalError> {
+    let mut name_bytes = [0_u8; 10];
+    let name = linux_pid_path(parent.pid, &mut name_bytes);
+    let parent_directory = rustix::fs::openat(
+        authority.proc_root.as_fd(),
+        name,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|_| signal_process_error())?;
+    let task_directory = rustix::fs::openat(
+        parent_directory.as_fd(),
+        "task",
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|_| signal_process_error())?;
+    let mut directory_buffer = [MaybeUninit::<u8>::uninit(); 8 * 1024];
+    let mut tasks = rustix::fs::RawDir::new(task_directory, &mut directory_buffer);
+    while let Some(entry) = tasks.next() {
+        *inspected_entries = inspected_entries
+            .checked_add(1)
+            .filter(|count| *count <= MAX_LINUX_PROC_ENTRIES)
+            .ok_or_else(signal_process_error)?;
+        let entry = entry.map_err(|_| signal_process_error())?;
+        let task_name = entry.file_name();
+        if parse_linux_proc_directory_pid(task_name.to_bytes())
+            .map_err(|_| signal_process_error())?
+            .is_none()
+        {
+            continue;
+        }
+        let task = match rustix::fs::openat(
+            parent_directory.as_fd(),
+            Path::new("task").join(OsStr::from_bytes(task_name.to_bytes())),
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        ) {
+            Ok(task) => task,
+            Err(rustix::io::Errno::NOENT | rustix::io::Errno::SRCH) => continue,
+            Err(_) => return Err(signal_process_error()),
+        };
+        let children = match rustix::fs::openat(
+            task.as_fd(),
+            "children",
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        ) {
+            Ok(children) => children,
+            Err(rustix::io::Errno::NOENT | rustix::io::Errno::SRCH) => continue,
+            Err(_) => return Err(signal_process_error()),
+        };
+        read_linux_signal_children(
+            children,
+            child_bytes,
+            inspected_bytes,
+            snapshot,
+            authority,
+            parent,
+        )?;
+        require_linux_signal_parent(authority, &parent)?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn read_linux_signal_children(
+    children: OwnedFd,
+    bytes: &mut Vec<u8>,
+    inspected_bytes: &mut usize,
+    snapshot: &mut Vec<SignalProcessSnapshot>,
+    authority: &GroupSnapshotAuthority,
+    parent: SignalProcessSnapshot,
+) -> Result<(), BackgroundProcessSignalError> {
+    bytes.clear();
+    let mut file = std::fs::File::from(children);
+    let mut chunk = [0_u8; 4096];
+    loop {
+        let read = match file.read(&mut chunk) {
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return Err(signal_process_error()),
+        };
+        if read == 0 {
+            break;
+        }
+        if bytes.len().saturating_add(read) > MAX_GROUP_SNAPSHOT_BYTES {
+            return Err(signal_process_error());
+        }
+        *inspected_bytes = inspected_bytes
+            .checked_add(read)
+            .filter(|count| *count <= MAX_LINUX_PROC_SNAPSHOT_BYTES)
+            .ok_or_else(signal_process_error)?;
+        bytes.extend_from_slice(&chunk[..read]);
+    }
+    for token in bytes.split(|byte| byte.is_ascii_whitespace()) {
+        if token.is_empty() {
+            continue;
+        }
+        let pid = parse_linux_proc_directory_pid(token)
+            .map_err(|_| signal_process_error())?
+            .ok_or_else(signal_process_error)?;
+        if snapshot.len() == MAX_SIGNAL_TREE_PROCESSES {
+            return Err(signal_process_error());
+        }
+        let Some(process) = read_signal_process(authority, pid)? else {
+            continue;
+        };
+        if process.parent != Some(parent.pid) {
+            return Err(signal_process_error());
+        }
+        snapshot.push(process);
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 fn signal_exact_process(
     authority: &GroupSnapshotAuthority,
     expected: &SignalProcessSnapshot,
+    original_group: rustix::process::Pid,
     signal: rustix::process::Signal,
 ) -> Result<(), BackgroundProcessSignalError> {
     let process =
@@ -3586,6 +3749,9 @@ fn signal_exact_process(
         return Ok(());
     };
     if !same_signal_process(expected, &current) {
+        return Ok(());
+    }
+    if !should_signal_individually(current.group, original_group) {
         return Ok(());
     }
     match rustix::process::pidfd_send_signal(process.as_fd(), signal) {
@@ -4632,12 +4798,29 @@ mod process_regression_tests {
         SignalProcessSnapshot {
             pid: rustix::process::Pid::from_raw(raw).expect("positive test PID"),
             parent: parent.and_then(rustix::process::Pid::from_raw),
+            parent_identity: None,
             group: rustix::process::Pid::from_raw(group),
             identity: ProcessIdentity {
                 primary: identity,
                 secondary: 0,
             },
         }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn signal_snapshot_with_parent_identity(
+        raw: i32,
+        parent: i32,
+        parent_identity: u64,
+        group: i32,
+        identity: u64,
+    ) -> SignalProcessSnapshot {
+        let mut snapshot = signal_snapshot(raw, Some(parent), group, identity);
+        snapshot.parent_identity = Some(ProcessIdentity {
+            primary: parent_identity,
+            secondary: 0,
+        });
+        snapshot
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -4657,15 +4840,14 @@ mod process_regression_tests {
             signal_snapshot(999, Some(1), 999, 9999),
         ];
 
-        let descendants =
-            derive_outside_group_descendants(&snapshot, root, identity).expect("valid tree");
+        let descendants = derive_signal_descendants(&snapshot, root, identity).expect("valid tree");
         assert_eq!(
             descendants
                 .iter()
                 .map(|process| process.pid.as_raw_nonzero().get())
                 .collect::<Vec<_>>(),
-            [404, 403, 102],
-            "outside-group descendants are deepest-first and unrelated PIDs are excluded"
+            [404, 403, 102, 101],
+            "all descendants are deepest-first and unrelated PIDs are excluded"
         );
 
         let wrong_identity = ProcessIdentity {
@@ -4673,7 +4855,7 @@ mod process_regression_tests {
             secondary: 0,
         };
         assert_eq!(
-            derive_outside_group_descendants(&snapshot, root, wrong_identity)
+            derive_signal_descendants(&snapshot, root, wrong_identity)
                 .expect_err("a reused root identity is rejected")
                 .kind(),
             BackgroundProcessSignalErrorKind::NotFound
@@ -4694,7 +4876,7 @@ mod process_regression_tests {
             signal_snapshot(101, Some(100), 101, 1002),
         ];
         assert_eq!(
-            derive_outside_group_descendants(&duplicate, root, identity)
+            derive_signal_descendants(&duplicate, root, identity)
                 .expect_err("duplicate numeric PID is ambiguous")
                 .kind(),
             BackgroundProcessSignalErrorKind::Process
@@ -4705,11 +4887,80 @@ mod process_regression_tests {
             signal_snapshot(101, Some(100), 101, 1001),
         ];
         assert_eq!(
-            derive_outside_group_descendants(&cycle, root, identity)
+            derive_signal_descendants(&cycle, root, identity)
                 .expect_err("a parent cycle cannot define a signal tree")
                 .kind(),
             BackgroundProcessSignalErrorKind::Process
         );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn signal_tree_derivation_uses_parent_identity_when_available() {
+        let root = rustix::process::Pid::from_raw(100).expect("positive root PID");
+        let identity = ProcessIdentity {
+            primary: 1000,
+            secondary: 0,
+        };
+        let snapshot = [
+            signal_snapshot(100, Some(1), 100, 1000),
+            signal_snapshot_with_parent_identity(101, 100, 9999, 101, 1001),
+            signal_snapshot_with_parent_identity(102, 1, 1000, 102, 1002),
+        ];
+
+        let descendants = derive_signal_descendants(&snapshot, root, identity).expect("valid tree");
+        assert_eq!(
+            descendants
+                .iter()
+                .map(|process| process.pid.as_raw_nonzero().get())
+                .collect::<Vec<_>>(),
+            [102],
+            "a reused numeric parent is excluded while matching unique lineage is retained"
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn signal_delivery_rechecks_groups_and_attempts_every_descendant() {
+        let original_group = rustix::process::Pid::from_raw(100).expect("positive group");
+        assert!(!should_signal_individually(
+            Some(original_group),
+            original_group
+        ));
+        assert!(should_signal_individually(
+            rustix::process::Pid::from_raw(101),
+            original_group
+        ));
+
+        let descendants = [
+            signal_snapshot(101, Some(100), 101, 1001),
+            signal_snapshot(102, Some(100), 102, 1002),
+            signal_snapshot(103, Some(100), 103, 1003),
+        ];
+        let mut attempted = Vec::new();
+        let incomplete = signal_descendants_with(&descendants, |process| {
+            let pid = process.pid.as_raw_nonzero().get();
+            attempted.push(pid);
+            if pid == 101 {
+                Err(signal_process_error())
+            } else {
+                Ok(())
+            }
+        });
+        assert!(incomplete);
+        assert_eq!(attempted, [101, 102, 103]);
+
+        let mut group_attempted = false;
+        assert_eq!(
+            finish_signal_delivery(incomplete, || {
+                group_attempted = true;
+                Ok(())
+            })
+            .expect_err("partial descendant delivery cannot report success")
+            .kind(),
+            BackgroundProcessSignalErrorKind::Process
+        );
+        assert!(group_attempted, "the original group is still attempted");
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -4723,7 +4974,7 @@ mod process_regression_tests {
         let oversized =
             vec![signal_snapshot(100, Some(1), 100, 1000); MAX_SIGNAL_TREE_PROCESSES + 1];
         assert_eq!(
-            derive_outside_group_descendants(&oversized, root, identity)
+            derive_signal_descendants(&oversized, root, identity)
                 .expect_err("an oversized process-table snapshot is rejected")
                 .kind(),
             BackgroundProcessSignalErrorKind::Process

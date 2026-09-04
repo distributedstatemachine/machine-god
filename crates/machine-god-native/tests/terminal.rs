@@ -2512,7 +2512,7 @@ fn background_signal_has_one_closed_permissioned_same_incarnation_form() {
     let spec = tool.spec();
     assert_eq!(
         spec.description,
-        "Run a foreground command, start a background command, or signal one live same-session background process group"
+        "Run a foreground command, start a background command, or signal one live same-session background process tree"
     );
     let forms = spec.input_schema["oneOf"].as_array().unwrap();
     assert_eq!(forms.len(), 3);

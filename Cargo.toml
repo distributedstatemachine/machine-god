@@ -21,14 +21,12 @@ publish = false
 base64 = { version = "0.22.1", default-features = false }
 bytes = { version = "1.12.1", default-features = false, features = ["std"] }
 calcifer-macos-acl = "=0.1.0"
-errno = "=0.3.14"
 futures-core = "0.3.31"
 getrandom = "=0.4.3"
 hickory-proto = { version = "=0.26.1", default-features = false, features = ["std"] }
 hickory-resolver = { version = "=0.26.1", default-features = false, features = ["system-config"] }
 hyper = { version = "=1.11.0", default-features = false }
 libc = "0.2.189"
-libproc = "=0.14.11"
 machine-god-core = { version = "0.1.0", path = "crates/machine-god-core" }
 machine-god-darwin-proc = { version = "0.1.0", path = "crates/machine-god-darwin-proc" }
 machine-god-native = { version = "0.1.0", path = "crates/machine-god-native" }

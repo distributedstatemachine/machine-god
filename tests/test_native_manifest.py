@@ -183,6 +183,61 @@ class NativeManifestTests(unittest.TestCase):
         self.assertTrue(cli_tokio["workspace"])
         self.assertEqual(cli_tokio["features"], ["signal"])
 
+    def test_darwin_process_queries_are_private_and_target_scoped(self) -> None:
+        macos_dependencies = self.manifest["target"][
+            'cfg(target_os = "macos")'
+        ]["dependencies"]
+        self.assertEqual(
+            macos_dependencies["machine-god-darwin-proc"],
+            {"workspace": True},
+        )
+        self.assertNotIn("machine-god-darwin-proc", self.manifest["dependencies"])
+        workspace_dependencies = self.workspace_manifest["workspace"][
+            "dependencies"
+        ]
+        self.assertNotIn("libproc", workspace_dependencies)
+        self.assertNotIn("errno", workspace_dependencies)
+
+        def direct_dependencies(target: str) -> set[str]:
+            completed = subprocess.run(
+                [
+                    "cargo",
+                    "tree",
+                    "--locked",
+                    "-p",
+                    "machine-god-native",
+                    "--edges",
+                    "normal",
+                    "--depth",
+                    "1",
+                    "--prefix",
+                    "none",
+                    "--format",
+                    "{p}",
+                    "--no-default-features",
+                    "--target",
+                    target,
+                ],
+                cwd=REPOSITORY_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return {
+                line.split(maxsplit=1)[0]
+                for line in completed.stdout.splitlines()[1:]
+                if line
+            }
+
+        self.assertIn(
+            "machine-god-darwin-proc",
+            direct_dependencies("aarch64-apple-darwin"),
+        )
+        self.assertNotIn(
+            "machine-god-darwin-proc",
+            direct_dependencies("x86_64-unknown-linux-gnu"),
+        )
+
     def test_sha2_is_unconditional_for_terminal_environment_identity(self) -> None:
         features = self.manifest["features"]
         self.assertIn("web-fetch-http", features)
