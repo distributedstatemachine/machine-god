@@ -432,6 +432,37 @@ fn command_is_blocked_before_release_then_receives_null_stdin() {
     assert_eq!(fs::read_to_string(marker).unwrap(), "released");
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn released_stdout_and_stderr_share_one_stream_without_the_readiness_marker() {
+    let directory = FreshDirectory::new("merged-output");
+    let owned = adapter()
+        .prepare(request(
+            directory.path(),
+            "printf 'stdout-one'; printf 'stderr-two' >&2; printf 'stdout-three'",
+        ))
+        .unwrap()
+        .release()
+        .unwrap();
+    let mut output = Vec::new();
+
+    let outcome = owned
+        .wait_with_stop_and_output(&CancellationToken::new(), |bytes| {
+            output.extend_from_slice(bytes);
+        })
+        .unwrap();
+
+    assert_eq!(
+        outcome,
+        BackgroundProcessOutcome::Completed(BackgroundProcessExit::Exited(0))
+    );
+    assert_eq!(output, b"stdout-onestderr-twostdout-three");
+    assert!(
+        !output.contains(&0xa7),
+        "the helper readiness marker must remain private"
+    );
+}
+
 #[test]
 fn idle_wait_observation_uses_bounded_backoff_and_stays_shutdown_responsive() {
     let directory = FreshDirectory::new("backoff-idle");
@@ -578,7 +609,7 @@ fn retained_directory_survives_rename_and_symlink_replacement() {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn null_output_handles_an_unbounded_flood_without_backpressure() {
+fn merged_output_drains_an_unbounded_flood_without_backpressure() {
     let directory = FreshDirectory::new("flood");
     let owned = adapter()
         .prepare(request(
@@ -588,7 +619,17 @@ fn null_output_handles_an_unbounded_flood_without_backpressure() {
         .unwrap()
         .release()
         .unwrap();
-    assert_eq!(owned.wait().unwrap(), BackgroundProcessExit::Exited(0));
+    let mut bytes = 0_u64;
+    let outcome = owned
+        .wait_with_stop_and_output(&CancellationToken::new(), |chunk| {
+            bytes = bytes.saturating_add(chunk.len() as u64);
+        })
+        .unwrap();
+    assert_eq!(
+        outcome,
+        BackgroundProcessOutcome::Completed(BackgroundProcessExit::Exited(0))
+    );
+    assert_eq!(bytes, 3_200_000);
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -792,6 +833,38 @@ fn cancellable_wait_stops_and_reaps_while_wait_is_active() {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
+fn cancellable_output_wait_drains_before_stop_and_reaps() {
+    let directory = FreshDirectory::new("cancel-output-wait");
+    let ready = directory.path().join("ready");
+    let owned = adapter()
+        .prepare(request(
+            directory.path(),
+            "printf captured; printf ready > ready; trap '' TERM; while :; do /bin/sleep 1; done",
+        ))
+        .unwrap()
+        .release()
+        .unwrap();
+    let pid = owned.pid().get();
+    let stop = CancellationToken::new();
+    let worker_stop = stop.clone();
+    let worker = thread::spawn(move || {
+        let mut output = Vec::new();
+        let outcome = owned.wait_with_stop_and_output(&worker_stop, |bytes| {
+            output.extend_from_slice(bytes);
+        });
+        (outcome, output)
+    });
+    wait_for(&ready);
+    assert!(stop.cancel());
+
+    let (outcome, output) = worker.join().unwrap();
+    assert_eq!(outcome.unwrap(), BackgroundProcessOutcome::Stopped);
+    assert_eq!(output, b"captured");
+    assert!(!process_exists(pid));
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
 fn prepared_abort_and_both_handle_drops_clean_processes() {
     let directory = FreshDirectory::new("drop");
     let marker = directory.path().join("must-not-run");
@@ -813,12 +886,18 @@ fn prepared_abort_and_both_handle_drops_clean_processes() {
     drop(prepared);
     assert!(!process_exists(dropped_prepared_pid));
 
+    let output_ready = directory.path().join("output-ready");
     let owned: OwnedBackgroundProcess = adapter()
-        .prepare(request(directory.path(), "sleep 30"))
+        .prepare(request(
+            directory.path(),
+            "printf ready > output-ready; while :; do printf '0123456789abcdef'; done",
+        ))
         .unwrap()
         .release()
         .unwrap();
     let owned_pid = owned.pid().get();
+    wait_for(&output_ready);
+    thread::sleep(Duration::from_millis(20));
     drop(owned);
     assert!(!process_exists(owned_pid));
 }

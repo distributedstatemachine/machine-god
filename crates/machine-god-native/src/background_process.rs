@@ -165,6 +165,12 @@ const CHILD_REAP_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const RELEASE_FRAME_TIMEOUT: Duration = Duration::from_millis(500);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+const BACKGROUND_OUTPUT_READ_BYTES: usize = 16 * 1024;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const BACKGROUND_OUTPUT_READS_PER_OBSERVATION: usize = 16;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const BACKGROUND_OUTPUT_FINAL_READS: usize = 128;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const RELEASE_FRAME_MAGIC: &[u8; 8] = b"MGBG\0\0\0\x01";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const RELEASE_FRAME_WRITE_CHUNK_BYTES: usize = 16 * 1024;
@@ -687,14 +693,15 @@ pub fn run_background_process_helper() -> Result<(), BackgroundProcessError> {
     drop((input, stdout));
     #[cfg(target_os = "linux")]
     drop(input);
+    let output = rustix::io::dup(stderr().as_fd()).map_err(|_| spawn_error())?;
     let error = Command::new(BACKGROUND_PROCESS_PROGRAM)
         .arg("-c")
         .arg(command)
         .env_clear()
         .envs(environment)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::from(output))
+        .stderr(Stdio::inherit())
         .exec();
     drop(error);
     Err(spawn_error())
@@ -795,6 +802,8 @@ pub struct PreparedBackgroundProcess {
     snapshot_authority: Option<GroupSnapshotAuthority>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     reap_permit: Option<ChildReapPermit>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    output: Option<ChildStderr>,
     pid: NonZeroU32,
 }
 
@@ -875,6 +884,8 @@ pub struct OwnedBackgroundProcess {
     snapshot_authority: Option<GroupSnapshotAuthority>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     reap_permit: Option<ChildReapPermit>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    output: Option<ChildStderr>,
     pid: NonZeroU32,
 }
 
@@ -911,6 +922,25 @@ impl OwnedBackgroundProcess {
         stop: &CancellationToken,
     ) -> Result<BackgroundProcessOutcome, BackgroundProcessError> {
         wait_owned_with_stop(&mut self, stop)
+    }
+
+    /// Waits while forwarding bounded chunks from the merged standard-output
+    /// and standard-error stream to an explicitly supplied synchronous sink.
+    ///
+    /// The sink is invoked only by the calling thread. The process pipe remains
+    /// nonblocking, is drained under a fixed per-observation syscall budget,
+    /// and is drained once more after terminal cleanup. The helper's private
+    /// readiness byte is consumed during preparation and is never forwarded.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed wait, cleanup, or invariant failure.
+    pub fn wait_with_stop_and_output(
+        mut self,
+        stop: &CancellationToken,
+        mut output: impl FnMut(&[u8]),
+    ) -> Result<BackgroundProcessOutcome, BackgroundProcessError> {
+        wait_owned_with_stop_and_output(&mut self, stop, &mut output)
     }
 
     /// Sends TERM to the original group, waits the fixed grace, sends KILL,
@@ -1408,26 +1438,13 @@ fn prepare_system(
         );
         return Err(spawn_error());
     };
-    let Some(ready) = child.as_mut().and_then(|child| child.stderr.take()) else {
-        let _ = cleanup_child(
-            &mut child,
-            &mut reap_permit,
-            group,
-            Duration::ZERO,
-            &snapshot_authority,
-        );
-        return Err(spawn_error());
-    };
-    if let Err(readiness_error) = await_helper_ready(ready, cancellation) {
-        cleanup_child(
-            &mut child,
-            &mut reap_permit,
-            group,
-            Duration::ZERO,
-            &snapshot_authority,
-        )?;
-        return Err(readiness_error);
-    }
+    let output = retain_helper_output(
+        &mut child,
+        &mut reap_permit,
+        group,
+        &snapshot_authority,
+        cancellation,
+    )?;
     // `spawn` has completed the descriptor-backed chdir in the child. Move
     // only the inert release frame out of the retained request.
     let BackgroundProcessRequest {
@@ -1443,8 +1460,42 @@ fn prepare_system(
         group,
         snapshot_authority: Some(snapshot_authority),
         reap_permit,
+        output: Some(output),
         pid,
     })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn retain_helper_output(
+    child: &mut Option<Child>,
+    reap_permit: &mut Option<ChildReapPermit>,
+    group: rustix::process::Pid,
+    snapshot_authority: &GroupSnapshotAuthority,
+    cancellation: &CancellationToken,
+) -> Result<ChildStderr, BackgroundProcessError> {
+    let Some(ready) = child.as_mut().and_then(|child| child.stderr.take()) else {
+        let _ = cleanup_child(
+            child,
+            reap_permit,
+            group,
+            Duration::ZERO,
+            snapshot_authority,
+        );
+        return Err(spawn_error());
+    };
+    match await_helper_ready(ready, cancellation) {
+        Ok(output) => Ok(output),
+        Err(readiness_error) => {
+            cleanup_child(
+                child,
+                reap_permit,
+                group,
+                Duration::ZERO,
+                snapshot_authority,
+            )?;
+            Err(readiness_error)
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1463,14 +1514,15 @@ fn retained_linux_cwd(
 fn await_helper_ready(
     mut ready: ChildStderr,
     cancellation: &CancellationToken,
-) -> Result<(), BackgroundProcessError> {
+) -> Result<ChildStderr, BackgroundProcessError> {
     let flags = rustix::fs::fcntl_getfl(&ready).map_err(|_| spawn_error())?;
     rustix::fs::fcntl_setfl(&ready, flags | OFlags::NONBLOCK).map_err(|_| spawn_error())?;
     await_helper_ready_bounded(
         &mut ready,
         cancellation,
         Instant::now() + HELPER_READY_TIMEOUT,
-    )
+    )?;
+    Ok(ready)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1561,6 +1613,7 @@ fn release_prepared(
     if prepared.child.is_none()
         || prepared.snapshot_authority.is_none()
         || prepared.reap_permit.is_none()
+        || prepared.output.is_none()
     {
         return Err(invariant_error());
     }
@@ -1570,11 +1623,13 @@ fn release_prepared(
         .take()
         .ok_or_else(invariant_error)?;
     let reap_permit = prepared.reap_permit.take().ok_or_else(invariant_error)?;
+    let output = prepared.output.take().ok_or_else(invariant_error)?;
     Ok(OwnedBackgroundProcess {
         child: Some(child),
         group: prepared.group,
         snapshot_authority: Some(snapshot_authority),
         reap_permit: Some(reap_permit),
+        output: Some(output),
         pid: prepared.pid,
     })
 }
@@ -1801,6 +1856,7 @@ fn release_prepared(
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn abort_prepared(prepared: &mut PreparedBackgroundProcess) -> Result<(), BackgroundProcessError> {
     drop(prepared.gate.take());
+    drop(prepared.output.take());
     if prepared.child.is_none() {
         return Ok(());
     }
@@ -1830,11 +1886,30 @@ fn abort_prepared(_prepared: &mut PreparedBackgroundProcess) -> Result<(), Backg
 fn wait_owned(
     owned: &mut OwnedBackgroundProcess,
 ) -> Result<BackgroundProcessExit, BackgroundProcessError> {
+    wait_owned_with_output(owned, &mut |_| {})
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn wait_owned_with_output(
+    owned: &mut OwnedBackgroundProcess,
+    output: &mut impl FnMut(&[u8]),
+) -> Result<BackgroundProcessExit, BackgroundProcessError> {
     if owned.child.is_none() {
         return Err(invariant_error());
     }
     let mut observation = ObservationBackoff::new();
     let observed = loop {
+        let drained = match drain_background_output(
+            &mut owned.output,
+            BACKGROUND_OUTPUT_READS_PER_OBSERVATION,
+            output,
+        ) {
+            Ok(drained) => drained,
+            Err(error) => {
+                let cleanup = cleanup_owned_child(owned, Duration::ZERO, None, true);
+                return Err(combine_cleanup_failures(error, cleanup));
+            }
+        };
         match observe_leader(owned.group) {
             Err(LeaderObservationFailure::LostAuthority) => {
                 drop(owned.child.take());
@@ -1845,10 +1920,11 @@ fn wait_owned(
                 return Err(combine_cleanup_failures(error, cleanup));
             }
             Ok(Some(status)) => break status,
+            Ok(None) if drained.progressed() => observation = ObservationBackoff::new(),
             Ok(None) => observation.sleep_and_advance(),
         }
     };
-    finish_observed(owned, observed)
+    finish_observed_with_output(owned, observed, output)
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -1865,6 +1941,15 @@ fn wait_owned_with_stop(
     owned: &mut OwnedBackgroundProcess,
     stop: &CancellationToken,
 ) -> Result<BackgroundProcessOutcome, BackgroundProcessError> {
+    wait_owned_with_stop_and_output(owned, stop, &mut |_| {})
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn wait_owned_with_stop_and_output(
+    owned: &mut OwnedBackgroundProcess,
+    stop: &CancellationToken,
+    output: &mut impl FnMut(&[u8]),
+) -> Result<BackgroundProcessOutcome, BackgroundProcessError> {
     if owned.child.is_none() {
         return Err(invariant_error());
     }
@@ -1873,11 +1958,29 @@ fn wait_owned_with_stop(
     loop {
         if cancellation.is_cancelled() {
             stop_owned(owned)?;
+            finish_background_output(owned, output)?;
+            return Ok(BackgroundProcessOutcome::Stopped);
+        }
+        let drained = match drain_background_output(
+            &mut owned.output,
+            BACKGROUND_OUTPUT_READS_PER_OBSERVATION,
+            output,
+        ) {
+            Ok(drained) => drained,
+            Err(error) => {
+                let cleanup = cleanup_owned_child(owned, Duration::ZERO, None, true);
+                return Err(combine_cleanup_failures(error, cleanup));
+            }
+        };
+        if cancellation.is_cancelled() {
+            stop_owned(owned)?;
+            finish_background_output(owned, output)?;
             return Ok(BackgroundProcessOutcome::Stopped);
         }
         match observe_leader(owned.group) {
             Ok(Some(status)) => {
-                return finish_observed(owned, status).map(BackgroundProcessOutcome::Completed);
+                return finish_observed_with_output(owned, status, output)
+                    .map(BackgroundProcessOutcome::Completed);
             }
             Ok(None) => {}
             Err(LeaderObservationFailure::LostAuthority) => {
@@ -1889,7 +1992,11 @@ fn wait_owned_with_stop(
                 return Err(combine_cleanup_failures(error, cleanup));
             }
         }
-        observation.park_and_advance(&mut cancellation);
+        if drained.progressed() {
+            observation = ObservationBackoff::new();
+        } else {
+            observation.park_and_advance(&mut cancellation);
+        }
     }
 }
 
@@ -1903,13 +2010,99 @@ fn wait_owned_with_stop(
     ))
 }
 
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn wait_owned_with_stop_and_output(
+    owned: &mut OwnedBackgroundProcess,
+    stop: &CancellationToken,
+    _output: &mut impl FnMut(&[u8]),
+) -> Result<BackgroundProcessOutcome, BackgroundProcessError> {
+    wait_owned_with_stop(owned, stop)
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn finish_observed(
     owned: &mut OwnedBackgroundProcess,
     observed: BackgroundProcessExit,
 ) -> Result<BackgroundProcessExit, BackgroundProcessError> {
+    finish_observed_with_output(owned, observed, &mut |_| {})
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn finish_observed_with_output(
+    owned: &mut OwnedBackgroundProcess,
+    observed: BackgroundProcessExit,
+    output: &mut impl FnMut(&[u8]),
+) -> Result<BackgroundProcessExit, BackgroundProcessError> {
     cleanup_owned_child(owned, Duration::ZERO, Some(observed), false)?;
+    finish_background_output(owned, output)?;
     Ok(observed)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BackgroundOutputDrain {
+    Idle,
+    Progress,
+    Exhausted,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl BackgroundOutputDrain {
+    const fn progressed(self) -> bool {
+        !matches!(self, Self::Idle)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn drain_background_output(
+    output: &mut Option<ChildStderr>,
+    maximum_reads: usize,
+    sink: &mut impl FnMut(&[u8]),
+) -> Result<BackgroundOutputDrain, BackgroundProcessError> {
+    let Some(reader) = output.as_mut() else {
+        return Ok(BackgroundOutputDrain::Idle);
+    };
+    let mut buffer = [0_u8; BACKGROUND_OUTPUT_READ_BYTES];
+    let mut progressed = false;
+    for _ in 0..maximum_reads {
+        match std::io::Read::read(reader, &mut buffer) {
+            Ok(0) => {
+                drop(output.take());
+                return Ok(if progressed {
+                    BackgroundOutputDrain::Progress
+                } else {
+                    BackgroundOutputDrain::Idle
+                });
+            }
+            Ok(length) => {
+                progressed = true;
+                sink(&buffer[..length]);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                return Ok(if progressed {
+                    BackgroundOutputDrain::Progress
+                } else {
+                    BackgroundOutputDrain::Idle
+                });
+            }
+            Err(_) => return Err(wait_error()),
+        }
+    }
+    Ok(BackgroundOutputDrain::Exhausted)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn finish_background_output(
+    owned: &mut OwnedBackgroundProcess,
+    sink: &mut impl FnMut(&[u8]),
+) -> Result<(), BackgroundProcessError> {
+    let drained = drain_background_output(&mut owned.output, BACKGROUND_OUTPUT_FINAL_READS, sink)?;
+    drop(owned.output.take());
+    if drained == BackgroundOutputDrain::Exhausted {
+        return Err(wait_error());
+    }
+    Ok(())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
