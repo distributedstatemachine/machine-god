@@ -48,6 +48,7 @@ VISION_REFERENCE_HOST_CFG = '''cfg(all(
     not(target_family = "wasm"),
     any(target_os = "linux", target_os = "macos")
 ))'''
+SUPPORTED_PROCESS_CONTROL_CFG = 'cfg(any(target_os = "linux", target_os = "macos"))'
 MODEL_CATALOG_HTTP_DIRECT_DEPENDENCIES = {
     "hickory-proto",
     "hickory-resolver",
@@ -90,6 +91,21 @@ class NativeManifestTests(unittest.TestCase):
         self.assertEqual(
             self.workspace_manifest["profile"]["release"]["panic"],
             "unwind",
+        )
+
+    def test_background_control_implementation_is_supported_platform_scoped(
+        self,
+    ) -> None:
+        lib_source = NATIVE_LIB_SOURCE.read_text(encoding="utf-8")
+        control_cfg = f"#[{SUPPORTED_PROCESS_CONTROL_CFG}]\n"
+
+        self.assertEqual(
+            lib_source.count(control_cfg + "mod background_control;"),
+            1,
+        )
+        self.assertEqual(
+            lib_source.count(control_cfg + "mod background_supervisor;"),
+            1,
         )
 
     def test_release_question_cleanup_probe_recovers_capacity(self) -> None:
