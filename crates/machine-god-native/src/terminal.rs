@@ -571,6 +571,7 @@ impl TerminalBackgroundSignal {
 pub enum TerminalBackgroundSignalErrorKind {
     NotFound,
     Busy,
+    ResourceLimit,
     Unavailable,
     Cancelled,
 }
@@ -4706,6 +4707,12 @@ fn map_background_signal_error(error: TerminalBackgroundSignalError) -> ToolErro
             false,
         ),
         TerminalBackgroundSignalErrorKind::Busy => signal_busy(),
+        TerminalBackgroundSignalErrorKind::ResourceLimit => fixed_tool_error(
+            ToolErrorKind::Unavailable,
+            "terminal_signal_resource_limit",
+            "terminal background signal reached a resource limit",
+            false,
+        ),
         TerminalBackgroundSignalErrorKind::Unavailable => fixed_tool_error(
             ToolErrorKind::Execution,
             "terminal_signal_failed",

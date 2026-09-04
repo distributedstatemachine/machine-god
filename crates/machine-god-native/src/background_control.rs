@@ -26,6 +26,7 @@ pub(crate) enum BackgroundSignal {
 pub(crate) enum BackgroundControlErrorKind {
     NotFound,
     Busy,
+    ResourceLimit,
     Process,
     Capacity,
     Conflict,
@@ -330,6 +331,7 @@ mod tests {
         for kind in [
             BackgroundControlErrorKind::NotFound,
             BackgroundControlErrorKind::Busy,
+            BackgroundControlErrorKind::ResourceLimit,
             BackgroundControlErrorKind::Process,
             BackgroundControlErrorKind::Capacity,
             BackgroundControlErrorKind::Conflict,

@@ -2623,6 +2623,11 @@ fn background_signal_rejects_bad_shape_and_maps_fixed_failures() {
             true,
         ),
         (
+            TerminalBackgroundSignalErrorKind::ResourceLimit,
+            "terminal_signal_resource_limit",
+            false,
+        ),
+        (
             TerminalBackgroundSignalErrorKind::Unavailable,
             "terminal_signal_failed",
             false,

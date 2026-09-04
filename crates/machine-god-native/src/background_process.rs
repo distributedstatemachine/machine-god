@@ -120,8 +120,22 @@ const LINUX_PROC_INITIAL_RECORD_CAPACITY: usize = 1024;
 const MAX_LINUX_MOUNTINFO_ENTRIES: usize = 4 * 1024;
 #[cfg(target_os = "linux")]
 const MAX_LINUX_PROC_STATUS_BYTES: usize = 64 * 1024;
+/// Maximum signal-preparation descriptors retained by one Linux operation.
+#[cfg(target_os = "linux")]
+const MAX_LINUX_SIGNAL_OPERATION_DESCRIPTORS: usize = 256;
+/// Hard ceiling for signal-preparation descriptors retained across this process.
+#[cfg(target_os = "linux")]
+const MAX_LINUX_SIGNAL_GLOBAL_DESCRIPTORS: usize = 1024;
+/// Descriptor capacity reserved for unrelated process work.
+#[cfg(target_os = "linux")]
+const LINUX_SIGNAL_DESCRIPTOR_HEADROOM: u64 = 128;
+/// Maximum share of remaining soft-limit capacity owned by signal preparation.
+#[cfg(target_os = "linux")]
+const LINUX_SIGNAL_DESCRIPTOR_SHARE_DIVISOR: u64 = 2;
 #[cfg(target_os = "linux")]
 const LINUX_PROC_SUPER_MAGIC: u64 = 0x9fa0;
+#[cfg(target_os = "linux")]
+static LINUX_SIGNAL_DESCRIPTOR_COUNT: OnceLock<Arc<AtomicUsize>> = OnceLock::new();
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 static OBSERVED_LEADER: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
@@ -266,6 +280,8 @@ pub(crate) enum BackgroundProcessSignalErrorKind {
     Busy,
     /// The operating-system signal operation failed.
     Process,
+    /// The bounded signal-preparation descriptor capacity is exhausted.
+    ResourceLimit,
     /// A prepared process already has an attached controller.
     AlreadyAttached,
     /// This operating system has no active adapter.
@@ -690,6 +706,7 @@ struct SignalProcessSnapshot {
 struct SignalProcessScratch {
     stat_bytes: Vec<u8>,
     budget: LinuxProcIoBudget,
+    descriptors: LinuxSignalDescriptorBudget,
 }
 
 #[cfg(target_os = "linux")]
@@ -698,7 +715,185 @@ impl SignalProcessScratch {
         Self {
             stat_bytes: linux_proc_record_buffer(MAX_LINUX_PROC_STAT_BYTES),
             budget: LinuxProcIoBudget::signal_operation(),
+            descriptors: LinuxSignalDescriptorBudget::production(),
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone)]
+struct LinuxSignalDescriptorPool {
+    in_use: Arc<AtomicUsize>,
+    maximum: usize,
+    tracks_soft_limit: bool,
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxSignalDescriptorPool {
+    fn production() -> Self {
+        // The static counter makes the bound process-wide even though each
+        // controller has an independent signal reservation.
+        Self {
+            in_use: Arc::clone(
+                LINUX_SIGNAL_DESCRIPTOR_COUNT.get_or_init(|| Arc::new(AtomicUsize::new(0))),
+            ),
+            maximum: linux_signal_descriptor_pool_limit(
+                rustix::process::getrlimit(rustix::process::Resource::Nofile).current,
+            ),
+            tracks_soft_limit: true,
+        }
+    }
+
+    #[cfg(test)]
+    fn for_test(maximum: usize) -> Self {
+        Self {
+            in_use: Arc::new(AtomicUsize::new(0)),
+            maximum,
+            tracks_soft_limit: false,
+        }
+    }
+
+    fn current_maximum(&self) -> usize {
+        if self.tracks_soft_limit {
+            self.maximum.min(linux_signal_descriptor_pool_limit(
+                rustix::process::getrlimit(rustix::process::Resource::Nofile).current,
+            ))
+        } else {
+            self.maximum
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_signal_descriptor_pool_limit(soft_limit: Option<u64>) -> usize {
+    let quota = soft_limit.map_or(MAX_LINUX_SIGNAL_GLOBAL_DESCRIPTORS as u64, |soft_limit| {
+        (soft_limit / LINUX_SIGNAL_DESCRIPTOR_SHARE_DIVISOR)
+            .min(soft_limit.saturating_sub(LINUX_SIGNAL_DESCRIPTOR_HEADROOM))
+    });
+    usize::try_from(quota)
+        .unwrap_or(usize::MAX)
+        .min(MAX_LINUX_SIGNAL_GLOBAL_DESCRIPTORS)
+}
+
+#[cfg(target_os = "linux")]
+struct LinuxSignalDescriptorBudget {
+    operation_in_use: Arc<AtomicUsize>,
+    operation_maximum: usize,
+    pool: LinuxSignalDescriptorPool,
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxSignalDescriptorBudget {
+    fn production() -> Self {
+        Self::new(
+            LinuxSignalDescriptorPool::production(),
+            MAX_LINUX_SIGNAL_OPERATION_DESCRIPTORS,
+        )
+    }
+
+    fn new(pool: LinuxSignalDescriptorPool, operation_maximum: usize) -> Self {
+        Self {
+            operation_in_use: Arc::new(AtomicUsize::new(0)),
+            operation_maximum,
+            pool,
+        }
+    }
+
+    fn acquire(&self) -> Result<LinuxSignalDescriptorPermit, BackgroundProcessSignalError> {
+        if !increment_below(&self.operation_in_use, self.operation_maximum) {
+            return Err(signal_resource_limit_error());
+        }
+        if !increment_below(&self.pool.in_use, self.pool.current_maximum()) {
+            self.operation_in_use.fetch_sub(1, Ordering::AcqRel);
+            return Err(signal_resource_limit_error());
+        }
+        Ok(LinuxSignalDescriptorPermit {
+            operation_in_use: Arc::clone(&self.operation_in_use),
+            global_in_use: Arc::clone(&self.pool.in_use),
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn increment_below(counter: &AtomicUsize, maximum: usize) -> bool {
+    counter
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            (current < maximum).then(|| current + 1)
+        })
+        .is_ok()
+}
+
+#[cfg(target_os = "linux")]
+struct LinuxSignalDescriptorPermit {
+    operation_in_use: Arc<AtomicUsize>,
+    global_in_use: Arc<AtomicUsize>,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for LinuxSignalDescriptorPermit {
+    fn drop(&mut self) {
+        self.operation_in_use.fetch_sub(1, Ordering::AcqRel);
+        self.global_in_use.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct BudgetedLinuxSignalFd {
+    // Field order is deliberate: close the descriptor before its permit is
+    // returned to either the operation or process-wide pool.
+    descriptor: OwnedFd,
+    permit: LinuxSignalDescriptorPermit,
+}
+
+#[cfg(target_os = "linux")]
+impl AsFd for BudgetedLinuxSignalFd {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.descriptor.as_fd()
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl AsRawFd for BudgetedLinuxSignalFd {
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        self.descriptor.as_raw_fd()
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct BudgetedLinuxSignalFile {
+    file: std::fs::File,
+    permit: LinuxSignalDescriptorPermit,
+}
+
+#[cfg(target_os = "linux")]
+impl Read for BudgetedLinuxSignalFile {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.file.read(buffer)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl BudgetedLinuxSignalFd {
+    fn into_file(self) -> BudgetedLinuxSignalFile {
+        BudgetedLinuxSignalFile {
+            file: std::fs::File::from(self.descriptor),
+            permit: self.permit,
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn budgeted_linux_signal_open(
+    budget: &LinuxSignalDescriptorBudget,
+    open: impl FnOnce() -> Result<OwnedFd, rustix::io::Errno>,
+) -> Result<Result<BudgetedLinuxSignalFd, rustix::io::Errno>, BackgroundProcessSignalError> {
+    let permit = budget.acquire()?;
+    match open() {
+        Ok(descriptor) => Ok(Ok(BudgetedLinuxSignalFd { descriptor, permit })),
+        Err(rustix::io::Errno::MFILE | rustix::io::Errno::NFILE) => {
+            Err(signal_resource_limit_error())
+        }
+        Err(error) => Ok(Err(error)),
     }
 }
 
@@ -808,7 +1003,7 @@ fn same_signal_process(expected: &SignalProcessSnapshot, current: &SignalProcess
 #[cfg(target_os = "linux")]
 struct PreparedSignalProcessTree {
     descendants: Vec<SignalProcessSnapshot>,
-    pinned_processes: HashMap<rustix::process::Pid, OwnedFd>,
+    pinned_processes: HashMap<rustix::process::Pid, BudgetedLinuxSignalFd>,
 }
 
 #[cfg(target_os = "linux")]
@@ -917,9 +1112,7 @@ fn require_signal_root_snapshot(
     target: &ProcessSignalTarget,
     scratch: &mut SignalProcessScratch,
 ) -> Result<(), BackgroundProcessSignalError> {
-    authority
-        .validate_with_budget(&mut scratch.budget)
-        .map_err(|()| signal_process_error())?;
+    authority.validate_for_signal(scratch)?;
     let Some(root) = read_signal_process(authority, target.group, scratch)? else {
         return Err(signal_not_found_error());
     };
@@ -1018,6 +1211,11 @@ fn derive_signal_descendants(
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const fn signal_process_error() -> BackgroundProcessSignalError {
     BackgroundProcessSignalError::new(BackgroundProcessSignalErrorKind::Process)
+}
+
+#[cfg(target_os = "linux")]
+const fn signal_resource_limit_error() -> BackgroundProcessSignalError {
+    BackgroundProcessSignalError::new(BackgroundProcessSignalErrorKind::ResourceLimit)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -2198,6 +2396,77 @@ impl GroupSnapshotAuthority {
         }
         let mut mountinfo = std::fs::File::from(mountinfo_fd);
         validate_linux_proc_mountinfo(&mut mountinfo, self.mount_id, budget)
+    }
+
+    fn validate_for_signal(
+        &self,
+        scratch: &mut SignalProcessScratch,
+    ) -> Result<(), BackgroundProcessSignalError> {
+        scratch
+            .budget
+            .preflight()
+            .map_err(|_| signal_process_error())?;
+        let filesystem =
+            rustix::fs::fstatfs(self.proc_root.as_fd()).map_err(|_| signal_process_error())?;
+        if u64::try_from(filesystem.f_type).ok() != Some(LINUX_PROC_SUPER_MAGIC)
+            || linux_fd_mount_id_with_budget(self.proc_root.as_fd(), &scratch.budget)
+                .map_err(|()| signal_process_error())?
+                != self.mount_id
+        {
+            return Err(signal_process_error());
+        }
+
+        scratch
+            .budget
+            .preflight()
+            .map_err(|_| signal_process_error())?;
+        let status_fd = budgeted_linux_signal_open(&scratch.descriptors, || {
+            rustix::fs::openat(
+                self.proc_root.as_fd(),
+                "self/status",
+                OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+        })?
+        .map_err(|_| signal_process_error())?;
+        if linux_fd_mount_id_with_budget(status_fd.as_fd(), &scratch.budget)
+            .map_err(|()| signal_process_error())?
+            != self.mount_id
+        {
+            return Err(signal_process_error());
+        }
+        validate_linux_proc_status(
+            &mut status_fd.into_file(),
+            rustix::process::getpid(),
+            &mut scratch.budget,
+        )
+        .map_err(|()| signal_process_error())?;
+
+        scratch
+            .budget
+            .preflight()
+            .map_err(|_| signal_process_error())?;
+        let mountinfo_fd = budgeted_linux_signal_open(&scratch.descriptors, || {
+            rustix::fs::openat(
+                self.proc_root.as_fd(),
+                "self/mountinfo",
+                OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+        })?
+        .map_err(|_| signal_process_error())?;
+        if linux_fd_mount_id_with_budget(mountinfo_fd.as_fd(), &scratch.budget)
+            .map_err(|()| signal_process_error())?
+            != self.mount_id
+        {
+            return Err(signal_process_error());
+        }
+        validate_linux_proc_mountinfo(
+            &mut mountinfo_fd.into_file(),
+            self.mount_id,
+            &mut scratch.budget,
+        )
+        .map_err(|()| signal_process_error())
     }
 }
 
@@ -3858,9 +4127,7 @@ fn signal_process_identity(
     pid: rustix::process::Pid,
     scratch: &mut SignalProcessScratch,
 ) -> Result<ProcessIdentity, BackgroundProcessSignalError> {
-    authority
-        .validate_with_budget(&mut scratch.budget)
-        .map_err(|()| signal_process_error())?;
+    authority.validate_for_signal(scratch)?;
     read_signal_process(authority, pid, scratch)?
         .map(|process| process.identity)
         .ok_or_else(signal_not_found_error)
@@ -3872,8 +4139,7 @@ fn read_signal_process(
     pid: rustix::process::Pid,
     scratch: &mut SignalProcessScratch,
 ) -> Result<Option<SignalProcessSnapshot>, BackgroundProcessSignalError> {
-    let Some(pid_directory) = open_linux_signal_process_directory(authority, pid, &scratch.budget)?
-    else {
+    let Some(pid_directory) = open_linux_signal_process_directory(authority, pid, scratch)? else {
         return Ok(None);
     };
     read_linux_signal_process_at(
@@ -3881,6 +4147,7 @@ fn read_signal_process(
         pid,
         &mut scratch.stat_bytes,
         &mut scratch.budget,
+        &scratch.descriptors,
     )
 }
 
@@ -3888,11 +4155,15 @@ fn read_signal_process(
 fn open_linux_signal_process_directory(
     authority: &GroupSnapshotAuthority,
     pid: rustix::process::Pid,
-    budget: &LinuxProcIoBudget,
-) -> Result<Option<OwnedFd>, BackgroundProcessSignalError> {
+    scratch: &SignalProcessScratch,
+) -> Result<Option<BudgetedLinuxSignalFd>, BackgroundProcessSignalError> {
     let mut name_bytes = [0_u8; 10];
     let name = linux_pid_path(pid, &mut name_bytes);
-    let result = linux_signal_probe(budget, || {
+    scratch
+        .budget
+        .preflight()
+        .map_err(|_| signal_process_error())?;
+    let result = budgeted_linux_signal_open(&scratch.descriptors, || {
         rustix::fs::openat(
             authority.proc_root.as_fd(),
             name,
@@ -3922,19 +4193,22 @@ fn read_linux_signal_process_at(
     pid: rustix::process::Pid,
     bytes: &mut Vec<u8>,
     budget: &mut LinuxProcIoBudget,
+    descriptors: &LinuxSignalDescriptorBudget,
 ) -> Result<Option<SignalProcessSnapshot>, BackgroundProcessSignalError> {
     budget.preflight().map_err(|_| signal_process_error())?;
-    let stat_fd = match rustix::fs::openat(
-        pid_directory,
-        "stat",
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-    ) {
+    let stat_fd = match budgeted_linux_signal_open(descriptors, || {
+        rustix::fs::openat(
+            pid_directory,
+            "stat",
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+    })? {
         Ok(stat) => stat,
         Err(rustix::io::Errno::NOENT | rustix::io::Errno::SRCH) => return Ok(None),
         Err(_) => return Err(signal_process_error()),
     };
-    let parsed = read_linux_proc_stat(&mut std::fs::File::from(stat_fd), bytes, pid, budget)
+    let parsed = read_linux_proc_stat(&mut stat_fd.into_file(), bytes, pid, budget)
         .map_err(|_| signal_process_error())?;
     Ok(parsed.map(|stat| SignalProcessSnapshot {
         pid,
@@ -3950,8 +4224,8 @@ fn read_linux_signal_process_at(
 
 #[cfg(target_os = "linux")]
 struct LinuxPendingSignalProcess {
-    directory: OwnedFd,
-    process: Option<OwnedFd>,
+    directory: BudgetedLinuxSignalFd,
+    process: Option<BudgetedLinuxSignalFd>,
 }
 
 #[cfg(target_os = "linux")]
@@ -3962,21 +4236,20 @@ fn signal_process_snapshot(
 ) -> Result<
     (
         Vec<SignalProcessSnapshot>,
-        HashMap<rustix::process::Pid, OwnedFd>,
+        HashMap<rustix::process::Pid, BudgetedLinuxSignalFd>,
     ),
     BackgroundProcessSignalError,
 > {
-    authority
-        .validate_with_budget(&mut scratch.budget)
-        .map_err(|()| signal_process_error())?;
+    authority.validate_for_signal(scratch)?;
     let root_pid = root;
-    let root_directory = open_linux_signal_process_directory(authority, root_pid, &scratch.budget)?
+    let root_directory = open_linux_signal_process_directory(authority, root_pid, scratch)?
         .ok_or_else(signal_not_found_error)?;
     let root = read_linux_signal_process_at(
         root_directory.as_fd(),
         root_pid,
         &mut scratch.stat_bytes,
         &mut scratch.budget,
+        &scratch.descriptors,
     )?
     .ok_or_else(signal_not_found_error)?;
     let mut snapshot = vec![root];
@@ -4029,9 +4302,7 @@ fn signal_process_snapshot(
             snapshot.push(process);
         }
     }
-    authority
-        .validate_with_budget(&mut scratch.budget)
-        .map_err(|()| signal_process_error())?;
+    authority.validate_for_signal(scratch)?;
     let root_directory = root_directory.ok_or_else(signal_process_error)?;
     require_linux_signal_parent_at(root_directory.as_fd(), &root, scratch)?;
     if !pending_processes.is_empty() {
@@ -4051,6 +4322,7 @@ fn require_linux_signal_parent_at(
         expected.pid,
         &mut scratch.stat_bytes,
         &mut scratch.budget,
+        &scratch.descriptors,
     )?
     else {
         return Err(signal_process_error());
@@ -4065,15 +4337,20 @@ fn require_linux_signal_parent_at(
 fn open_linux_signal_task(
     task_directory: BorrowedFd<'_>,
     task_name: &std::ffi::CStr,
-    budget: &LinuxProcIoBudget,
-) -> Result<Option<OwnedFd>, BackgroundProcessSignalError> {
-    budget.preflight().map_err(|_| signal_process_error())?;
-    match rustix::fs::openat(
-        task_directory,
-        task_name,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-    ) {
+    scratch: &SignalProcessScratch,
+) -> Result<Option<BudgetedLinuxSignalFd>, BackgroundProcessSignalError> {
+    scratch
+        .budget
+        .preflight()
+        .map_err(|_| signal_process_error())?;
+    match budgeted_linux_signal_open(&scratch.descriptors, || {
+        rustix::fs::openat(
+            task_directory,
+            task_name,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+    })? {
         Ok(task) => Ok(Some(task)),
         Err(rustix::io::Errno::NOENT | rustix::io::Errno::SRCH) => Ok(None),
         Err(_) => Err(signal_process_error()),
@@ -4093,12 +4370,14 @@ fn read_linux_signal_children(
         .budget
         .preflight()
         .map_err(|_| signal_process_error())?;
-    let task_directory = rustix::fs::openat(
-        parent_directory,
-        "task",
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
+    let task_directory = budgeted_linux_signal_open(&scratch.descriptors, || {
+        rustix::fs::openat(
+            parent_directory,
+            "task",
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+    })?
     .map_err(|_| signal_process_error())?;
     let mut directory_buffer = [MaybeUninit::<u8>::uninit(); 8 * 1024];
     let mut tasks = rustix::fs::RawDir::new(task_directory.as_fd(), &mut directory_buffer);
@@ -4123,21 +4402,21 @@ fn read_linux_signal_children(
         {
             continue;
         }
-        let Some(task) =
-            open_linux_signal_task(task_directory.as_fd(), task_name, &scratch.budget)?
-        else {
+        let Some(task) = open_linux_signal_task(task_directory.as_fd(), task_name, scratch)? else {
             continue;
         };
         scratch
             .budget
             .preflight()
             .map_err(|_| signal_process_error())?;
-        let children = match rustix::fs::openat(
-            task.as_fd(),
-            "children",
-            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::empty(),
-        ) {
+        let children = match budgeted_linux_signal_open(&scratch.descriptors, || {
+            rustix::fs::openat(
+                task.as_fd(),
+                "children",
+                OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+        })? {
             Ok(children) => children,
             Err(rustix::io::Errno::NOENT | rustix::io::Errno::SRCH) => continue,
             Err(_) => return Err(signal_process_error()),
@@ -4158,7 +4437,7 @@ fn read_linux_signal_children(
 
 #[cfg(target_os = "linux")]
 fn append_linux_signal_children_record(
-    children: OwnedFd,
+    children: BudgetedLinuxSignalFd,
     bytes: &mut Vec<u8>,
     discovered: &mut Vec<(SignalProcessSnapshot, LinuxPendingSignalProcess)>,
     authority: &GroupSnapshotAuthority,
@@ -4166,7 +4445,7 @@ fn append_linux_signal_children_record(
     remaining_processes: usize,
     scratch: &mut SignalProcessScratch,
 ) -> Result<(), BackgroundProcessSignalError> {
-    let mut file = std::fs::File::from(children);
+    let mut file = children.into_file();
     read_linux_proc_record(
         &mut file,
         bytes,
@@ -4184,11 +4463,14 @@ fn append_linux_signal_children_record(
         if discovered.len() == remaining_processes {
             return Err(signal_process_error());
         }
-        let Some(directory) = open_linux_signal_process_directory(authority, pid, &scratch.budget)?
-        else {
+        let Some(directory) = open_linux_signal_process_directory(authority, pid, scratch)? else {
             continue;
         };
-        let process_handle = match linux_signal_probe(&scratch.budget, || {
+        scratch
+            .budget
+            .preflight()
+            .map_err(|_| signal_process_error())?;
+        let process_handle = match budgeted_linux_signal_open(&scratch.descriptors, || {
             rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty())
         })? {
             Ok(process) => process,
@@ -4200,6 +4482,7 @@ fn append_linux_signal_children_record(
             pid,
             &mut scratch.stat_bytes,
             &mut scratch.budget,
+            &scratch.descriptors,
         )?
         else {
             continue;
@@ -5514,6 +5797,147 @@ mod linux_proc_tests {
     }
 
     #[test]
+    fn signal_descriptor_pool_derives_a_bounded_share_with_fixed_headroom() {
+        assert_eq!(linux_signal_descriptor_pool_limit(None), 1024);
+        assert_eq!(linux_signal_descriptor_pool_limit(Some(127)), 0);
+        assert_eq!(linux_signal_descriptor_pool_limit(Some(128)), 0);
+        assert_eq!(linux_signal_descriptor_pool_limit(Some(130)), 2);
+        assert_eq!(linux_signal_descriptor_pool_limit(Some(256)), 128);
+        assert_eq!(linux_signal_descriptor_pool_limit(Some(u64::MAX)), 1024);
+    }
+
+    #[test]
+    fn signal_descriptor_budget_enforces_exact_boundary_and_recovers_without_leaks() {
+        let pool = LinuxSignalDescriptorPool::for_test(8);
+        let budget = LinuxSignalDescriptorBudget::new(pool.clone(), 2);
+        let first = budget.acquire().expect("first operation permit");
+        let second = budget.acquire().expect("exact operation boundary");
+        assert_eq!(budget.operation_in_use.load(Ordering::Acquire), 2);
+        assert_eq!(pool.in_use.load(Ordering::Acquire), 2);
+        let Err(one_over) = budget.acquire() else {
+            panic!("one over must fail closed");
+        };
+        assert_eq!(
+            one_over.kind(),
+            BackgroundProcessSignalErrorKind::ResourceLimit
+        );
+
+        drop(first);
+        let replacement = budget.acquire().expect("dropped permit is reusable");
+        drop((second, replacement));
+        assert_eq!(budget.operation_in_use.load(Ordering::Acquire), 0);
+        assert_eq!(pool.in_use.load(Ordering::Acquire), 0);
+
+        let failed = budgeted_linux_signal_open(&budget, || Err(rustix::io::Errno::ACCESS))
+            .expect("descriptor admission succeeds");
+        assert!(matches!(failed, Err(rustix::io::Errno::ACCESS)));
+        assert_eq!(budget.operation_in_use.load(Ordering::Acquire), 0);
+        assert_eq!(pool.in_use.load(Ordering::Acquire), 0);
+
+        let Err(exhausted) = budgeted_linux_signal_open(&budget, || Err(rustix::io::Errno::MFILE))
+        else {
+            panic!("kernel descriptor exhaustion must use the stable category");
+        };
+        assert_eq!(
+            exhausted.kind(),
+            BackgroundProcessSignalErrorKind::ResourceLimit
+        );
+        assert_eq!(budget.operation_in_use.load(Ordering::Acquire), 0);
+        assert_eq!(pool.in_use.load(Ordering::Acquire), 0);
+
+        let descriptor = budgeted_linux_signal_open(&budget, || {
+            rustix::fs::open("/dev/null", OFlags::RDONLY | OFlags::CLOEXEC, Mode::empty())
+        })
+        .expect("descriptor admission succeeds")
+        .expect("open descriptor");
+        assert_eq!(pool.in_use.load(Ordering::Acquire), 1);
+        let mut file = descriptor.into_file();
+        assert_eq!(pool.in_use.load(Ordering::Acquire), 1);
+        let mut byte = [0_u8; 1];
+        assert_eq!(file.read(&mut byte).expect("read null descriptor"), 0);
+        drop(file);
+        assert_eq!(pool.in_use.load(Ordering::Acquire), 0);
+
+        let unwound = std::panic::catch_unwind({
+            let budget = LinuxSignalDescriptorBudget::new(pool.clone(), 1);
+            move || {
+                let _permit = budget.acquire().expect("permit before unwind");
+                panic!("injected descriptor owner unwind");
+            }
+        });
+        assert!(unwound.is_err());
+        assert_eq!(pool.in_use.load(Ordering::Acquire), 0);
+
+        let single = LinuxSignalDescriptorBudget::new(pool.clone(), 1);
+        let held = single.acquire().expect("fill one-operation budget");
+        let mut opened = false;
+        let rejected = budgeted_linux_signal_open(&single, || {
+            opened = true;
+            rustix::fs::open("/dev/null", OFlags::RDONLY, Mode::empty())
+        });
+        let Err(rejected) = rejected else {
+            panic!("admission must precede the open");
+        };
+        assert_eq!(
+            rejected.kind(),
+            BackgroundProcessSignalErrorKind::ResourceLimit
+        );
+        assert!(
+            !opened,
+            "capacity failure suppresses the descriptor syscall"
+        );
+        drop(held);
+    }
+
+    #[test]
+    fn concurrent_signal_descriptor_operations_share_one_global_bound() {
+        const WORKERS: usize = 8;
+        const GLOBAL_BOUND: usize = 4;
+        let pool = LinuxSignalDescriptorPool::for_test(GLOBAL_BOUND);
+        let admitted = Arc::new(std::sync::Barrier::new(WORKERS + 1));
+        let release = Arc::new(std::sync::Barrier::new(WORKERS + 1));
+        let successes = Arc::new(AtomicUsize::new(0));
+        let mut workers = Vec::new();
+        for _ in 0..WORKERS {
+            let worker_pool = pool.clone();
+            let worker_admitted = Arc::clone(&admitted);
+            let worker_release = Arc::clone(&release);
+            let worker_successes = Arc::clone(&successes);
+            workers.push(thread::spawn(move || {
+                let budget = LinuxSignalDescriptorBudget::new(worker_pool, GLOBAL_BOUND);
+                let permit = budget.acquire();
+                match &permit {
+                    Ok(_) => {
+                        worker_successes.fetch_add(1, Ordering::AcqRel);
+                    }
+                    Err(error) => {
+                        assert_eq!(
+                            error.kind(),
+                            BackgroundProcessSignalErrorKind::ResourceLimit
+                        );
+                    }
+                }
+                worker_admitted.wait();
+                worker_release.wait();
+                drop(permit);
+            }));
+        }
+
+        admitted.wait();
+        assert_eq!(successes.load(Ordering::Acquire), GLOBAL_BOUND);
+        assert_eq!(pool.in_use.load(Ordering::Acquire), GLOBAL_BOUND);
+        release.wait();
+        for worker in workers {
+            worker.join().expect("join descriptor-budget worker");
+        }
+        assert_eq!(pool.in_use.load(Ordering::Acquire), 0);
+        LinuxSignalDescriptorBudget::new(pool.clone(), 1)
+            .acquire()
+            .expect("global capacity recovers after every worker drops");
+        assert_eq!(pool.in_use.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
     fn retained_signal_directory_cannot_follow_a_reaped_pid() {
         let authority = GroupSnapshotAuthority::open().expect("open proc authority");
         let mut child = Command::new("/bin/sleep")
@@ -5525,7 +5949,7 @@ mod linux_proc_tests {
             .expect("spawn retained-directory fixture");
         let child_pid = pid(i32::try_from(child.id()).expect("child PID fits signed range"));
         let mut scratch = SignalProcessScratch::new();
-        let directory = open_linux_signal_process_directory(&authority, child_pid, &scratch.budget)
+        let directory = open_linux_signal_process_directory(&authority, child_pid, &scratch)
             .expect("open child proc directory")
             .expect("child remains live");
         assert!(
@@ -5534,6 +5958,7 @@ mod linux_proc_tests {
                 child_pid,
                 &mut scratch.stat_bytes,
                 &mut scratch.budget,
+                &scratch.descriptors,
             )
             .expect("read initial incarnation")
             .is_some()
@@ -5547,6 +5972,7 @@ mod linux_proc_tests {
                 child_pid,
                 &mut scratch.stat_bytes,
                 &mut scratch.budget,
+                &scratch.descriptors,
             )
             .expect("retained directory reports disappearance"),
             None,
@@ -5610,7 +6036,7 @@ mod linux_proc_tests {
         .expect("open current process task directory");
         let mut directory_buffer = [MaybeUninit::<u8>::uninit(); 8 * 1024];
         let mut tasks = rustix::fs::RawDir::new(task_directory.as_fd(), &mut directory_buffer);
-        let budget = proc_read_budget();
+        let scratch = SignalProcessScratch::new();
         let mut opened = 0_usize;
         while let Some(entry) = tasks.next() {
             let entry = entry.expect("read current process task entry");
@@ -5620,7 +6046,7 @@ mod linux_proc_tests {
             {
                 continue;
             }
-            if open_linux_signal_task(task_directory.as_fd(), entry.file_name(), &budget)
+            if open_linux_signal_task(task_directory.as_fd(), entry.file_name(), &scratch)
                 .expect("open task entry without constructing a joined path")
                 .is_some()
             {

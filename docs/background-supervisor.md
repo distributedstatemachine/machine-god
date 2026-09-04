@@ -481,6 +481,17 @@ combined operation still fails. After a descendant attempt begins, later
 leader or group disappearance is reported as a process failure; not-found
 remains limited to absence before any delivery.
 
+Linux signal preparation also has a descriptor budget independent of the
+process-count bound: at most 256 descriptors per operation and 1,024 across
+all concurrent controllers and tools in the process. Each admission recomputes
+the process-wide ceiling as the minimum of that hard cap, half the current soft
+`RLIMIT_NOFILE`, and the soft limit minus 128 reserved descriptors. Transient
+mount/status/stat/task/children descriptors, queued proc directories, and all
+retained pidfds acquire before their syscall and release only after the owned
+descriptor closes. Exhaustion therefore suppresses the next syscall, fails
+with the fixed resource-limit category, and cannot leak capacity through
+errors, unwinds, or abandoned prepared deliveries.
+
 macOS deliberately performs no signal ancestry traversal or per-descendant
 numeric PID delivery because it has no public incarnation-pinned process
 handle equivalent to Linux pidfd. The retained, unreaped direct child pins its

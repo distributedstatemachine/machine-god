@@ -821,6 +821,9 @@ const fn map_control_signal_error(error: BackgroundControlError) -> TerminalBack
     let kind = match error.kind() {
         BackgroundControlErrorKind::NotFound => TerminalBackgroundSignalErrorKind::NotFound,
         BackgroundControlErrorKind::Busy => TerminalBackgroundSignalErrorKind::Busy,
+        BackgroundControlErrorKind::ResourceLimit => {
+            TerminalBackgroundSignalErrorKind::ResourceLimit
+        }
         BackgroundControlErrorKind::Process
         | BackgroundControlErrorKind::Capacity
         | BackgroundControlErrorKind::Conflict => TerminalBackgroundSignalErrorKind::Unavailable,
@@ -1990,6 +1993,9 @@ const fn map_process_signal_error(
     let kind = match error.kind() {
         BackgroundProcessSignalErrorKind::NotFound => BackgroundControlErrorKind::NotFound,
         BackgroundProcessSignalErrorKind::Busy => BackgroundControlErrorKind::Busy,
+        BackgroundProcessSignalErrorKind::ResourceLimit => {
+            BackgroundControlErrorKind::ResourceLimit
+        }
         BackgroundProcessSignalErrorKind::Process
         | BackgroundProcessSignalErrorKind::AlreadyAttached
         | BackgroundProcessSignalErrorKind::Unsupported => BackgroundControlErrorKind::Process,
@@ -2098,6 +2104,7 @@ const fn control_registration_error_kind(
         BackgroundControlErrorKind::Capacity => BackgroundStartErrorKind::Capacity,
         BackgroundControlErrorKind::NotFound
         | BackgroundControlErrorKind::Busy
+        | BackgroundControlErrorKind::ResourceLimit
         | BackgroundControlErrorKind::Process
         | BackgroundControlErrorKind::Conflict => BackgroundStartErrorKind::Process,
     }
@@ -2800,12 +2807,13 @@ mod tests {
         SystemBackgroundProcessAdapter, SystemClock, WORKER_OWNERSHIP_CAPACITY,
         WorkerOwnershipRegistry, WorkerRetainer, accept_bounded_environment,
         background_environment_identity, build_production_environment,
-        finish_prepared_after_readiness, open_directory, process_error_kind,
-        production_environment, production_environment_identity, retain_canonical_directory_with,
-        signal_background_process, worker_ownership_registry,
+        finish_prepared_after_readiness, map_control_signal_error, open_directory,
+        process_error_kind, production_environment, production_environment_identity,
+        retain_canonical_directory_with, signal_background_process, worker_ownership_registry,
     };
     use crate::background_control::{
-        BackgroundControlError, BackgroundControlTarget, BackgroundSignal,
+        BackgroundControlError, BackgroundControlErrorKind, BackgroundControlTarget,
+        BackgroundSignal,
     };
     use crate::background_process::{
         BackgroundProcessErrorKind, BackgroundProcessHelper,
@@ -2835,6 +2843,21 @@ mod tests {
     use std::task::{Context, Poll, Wake, Waker};
     use std::thread;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn signal_descriptor_resource_limit_preserves_its_public_category() {
+        let error = map_control_signal_error(BackgroundControlError::new(
+            BackgroundControlErrorKind::ResourceLimit,
+        ));
+        assert_eq!(
+            error.kind(),
+            crate::terminal::TerminalBackgroundSignalErrorKind::ResourceLimit
+        );
+        assert_eq!(
+            error.to_string(),
+            "terminal background signal is unavailable"
+        );
+    }
 
     use crate::terminal::{
         TerminalBackgroundOutcome, TerminalBackgroundOutputReader, TerminalBackgroundReadErrorKind,
