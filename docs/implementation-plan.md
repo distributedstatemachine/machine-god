@@ -21,26 +21,25 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `56`
-- Delivered main: `a262b469454570c282f8916fb175365b3cabd06d`
-- Main CI: `33881680992` (`GREEN`)
-- Main Benchmark evidence: `33881680813` (`GREEN`)
-- Active branch: `agent/m57-terminal-read`
-- Active phase: `validating bounded same-incarnation terminal background output read`
-- Next gate: `freeze the exact candidate after full local checks, then run three fresh adversarial product reviews`
+- Delivered slices: `57`
+- Delivered main: `b1bbb81f5dbb5dcb4010cc2b49dbf95561c94811`
+- Main CI: `33905683447` (`GREEN`)
+- Main Benchmark evidence: `33905683324` (`GREEN`)
+- Active branch: `main`
+- Active phase: `selecting the next bounded terminal tool action`
+- Next gate: `open agent/m58-terminal-signal only after freezing its authority, ownership, and lifecycle boundary`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
-run retains both required unexpired exact-SHA artifacts. Slice 56 adds the
-authority-free `terminal` list action over retained persisted background
-records. It returns at most 100 rows ordered by `(updated_at_ms, id)` descending
-under fixed scan, record-byte, serialization, and four-slot concurrency bounds,
-without exposing commands, paths, process identity, exit data, URLs, or native
-diagnostics. Missing history is an empty complete result; corrupt storage,
-including a zero durable ID, fails closed. Three fresh final review tracks
-reported zero findings after two rejected candidates closed a description/schema
-mismatch and the zero-ID persisted-record gap. Detailed history is retained
-only in the linked review ledger.
+run retains both required unexpired exact-SHA artifacts. Slice 57 adds bounded
+process-local merged-output capture and same-session-incarnation cursor reads
+for managed terminal starts. Capture remains opt-in so callers without an
+output owner retain null output, and the registry has fixed live, closed, byte,
+page, and concurrency bounds. Linux cleanup now tolerates vanished proc entries
+and identity-verifiably reaps descendants adopted when machine-god is a
+container's PID 1. Three fresh final review tracks reported zero findings after
+earlier candidates closed proc-race, capture-overhead, copy, and PID-namespace
+lifecycle gaps. Detailed history is retained only in the linked review ledger.
 
 The delivered non-product CI maintenance replaces binary
 full-versus-documentation routing with fail-closed dependency-aware concern
@@ -50,11 +49,11 @@ delivered-slice count. Documentation-only descendants now exercise only the
 bounded documentation checks and aggregate gates, without Rust, platform,
 audit, compatibility, or benchmark-artifact jobs.
 
-The active product slice adds bounded process-local merged output capture and
-same-session-incarnation cursor reads to managed terminal starts. Durable or
-restart-safe logs, persistent interactive handles, write/control actions,
-interactive terminal behavior, restart-safe control, ACP, teams, and extension
-slash commands remain separate until explicitly bounded.
+The next product slice returns directly to terminal tool behavior and will
+bound one background control action before implementation. Durable or
+restart-safe logs, persistent interactive handles, write actions, interactive
+terminal behavior, restart-safe control, ACP, teams, and extension slash
+commands remain separate until explicitly bounded.
 Documentation-tool maintenance remains a separate non-product task.
 
 ## Architecture ownership
@@ -175,8 +174,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 54 | Bounded exact persisted-record `terminal` inspect | [terminal](terminal.md), [background CLI](background-cli.md) | [review](reviews/m03-terminal-inspect-review-01.md) | `bd4e97d` |
 | 55 | Bounded exact persisted-record `terminal` wait | [terminal](terminal.md), [background CLI](background-cli.md) | [review](reviews/m03-terminal-wait-review-01.md) | `f16f099` |
 | 56 | Bounded persisted-record `terminal` list | [terminal](terminal.md), [background CLI](background-cli.md) | [review](reviews/m03-terminal-list-review-01.md) | `a8f5af3` |
+| 57 | Bounded same-incarnation `terminal` background output read | [terminal](terminal.md), [supervisor](background-supervisor.md) | [review](reviews/m03-terminal-read-review-01.md) | `b1bbb81` |
 
-The exact delivered-main record after slice 56 is in the canonical live-status
+The exact delivered-main record after slice 57 is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.
