@@ -12,18 +12,17 @@ Those workflows also built `cargo-deny` and `cargo-audit` in separate ephemeral
 jobs, repeating runner and dependency setup without increasing their isolation
 from product builds.
 
-The exact Rust 1.94.1 rustup installation in this checkout has also exhibited
-damage even when the installed `stable` channel contains the same 1.94.1 Rust
-and Cargo releases. A local fallback must not silently turn the pinned compiler
-gate into a floating-stable gate.
+The exact Rust 1.94.1 rustup installation in a checkout can become incomplete
+or damaged. Local recovery must repair that named toolchain rather than turn
+the pinned compiler gate into a floating-channel gate.
 
 ## Decision
 
-CI installs and invokes Rust 1.94.1 explicitly. Local verification uses
-`+1.94.1` by default. It may use `+stable` only when both
-`rustc +stable --version` and `cargo +stable --version` report release 1.94.1
-exactly, and the substitution is recorded with the check results. Once stable
-moves beyond 1.94.1, it is not an acceptable substitute.
+CI and local verification install and invoke Rust 1.94.1 explicitly. If the
+local installation is unavailable or damaged, `rustup toolchain install
+1.94.1 --profile minimal --component rustfmt,clippy` repairs it before checks
+continue. Floating channels, including `+stable`, are not substitutes for the
+named toolchain even when they currently report the same release.
 
 Third-party JavaScript actions are pinned to complete immutable commit SHAs.
 The reviewed pins are:

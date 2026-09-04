@@ -77,10 +77,12 @@ jobs:
           predicate-quantifier: some-with-excludes
           filters: |
             documentation:
+              - 'AGENTS.md'
               - 'README.md'
               - 'docs/**/*.md'
             non_documentation:
               - '**'
+              - '!AGENTS.md'
               - '!README.md'
               - '!docs/**/*.md'
             core_api_docs:

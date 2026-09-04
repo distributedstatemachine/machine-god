@@ -25,9 +25,9 @@ input; it is not a machine-god product language or runtime dependency.
 - Delivered main: `f16f099b73c2f1ab2513f9bc7d9c41630e2cb439`
 - Main CI: `33854100684` (`GREEN`)
 - Main Benchmark evidence: `33854100687` (`GREEN`)
-- Active branch: `main`
-- Active phase: `selecting slice 56 from actual unfinished tool or CLI work`
-- Next gate: `bound one unfinished tool or CLI slice, freeze its durable contract, and create its feature branch`
+- Active branch: `agent/m01-exact-toolchain-policy`
+- Active phase: `repairing the exact-toolchain policy and instruction-only CI routing before slice 56`
+- Next gate: `prove exact 1.94.1 locally, review the routing boundary, and pass exact remote gates`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -217,10 +217,8 @@ requires an explicit reviewed plan change.
 
 ### Local feature gate
 
-Use Rust and Cargo 1.94.1 exactly. This checkout may use `+stable` only when
-both `rustc +stable --version` and `cargo +stable --version` report release
-1.94.1 exactly; record that fallback. A newer floating stable does not satisfy
-the gate.
+Use Rust and Cargo 1.94.1 exactly. Repair an unavailable or damaged pinned
+toolchain with `rustup`; no floating-channel substitution satisfies the gate.
 
 ```sh
 cargo +1.94.1 fmt --all -- --check

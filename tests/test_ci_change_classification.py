@@ -94,10 +94,12 @@ class CiChangeClassificationTests(unittest.TestCase):
     def test_filters_declare_one_documentation_boundary(self) -> None:
         expected = (
             "documentation:\n"
+            "              - 'AGENTS.md'\n"
             "              - 'README.md'\n"
             "              - 'docs/**/*.md'\n"
             "            non_documentation:\n"
             "              - '**'\n"
+            "              - '!AGENTS.md'\n"
             "              - '!README.md'\n"
             "              - '!docs/**/*.md'"
         )

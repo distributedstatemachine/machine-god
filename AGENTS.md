@@ -30,21 +30,18 @@ detailed review history under `docs/reviews/`.
 ## Required checks
 
 ```sh
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace
-cargo test --doc --workspace
+cargo +1.94.1 fmt --all -- --check
+cargo +1.94.1 clippy --workspace --all-targets --all-features -- -D warnings
+cargo +1.94.1 test --workspace
+cargo +1.94.1 test --doc --workspace
 ```
 
 Run focused tests first, then the whole workspace. Exercise user-visible work
 through the freshly built `target/release/machine-god` binary.
 
-CI always uses the exact Rust 1.94.1 toolchain. Local checks should use
-`+1.94.1` too. This checkout has exhibited a damaged exact-toolchain
-installation, so `+stable` is allowed only as a local fallback after both
-`rustc +stable --version` and `cargo +stable --version` report release 1.94.1
-exactly. Record the fallback in the check results; a newer floating stable does
-not satisfy the pinned-toolchain gate.
+CI and local checks use the exact Rust 1.94.1 toolchain. A damaged local
+installation must be repaired with `rustup`; substituting `+stable` does not
+satisfy the pinned-toolchain gate.
 
 ## Architecture
 

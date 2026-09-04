@@ -11,9 +11,10 @@ contexts for branch protection.
 
 ## Classification boundary
 
-A change is documentation-only when every changed path is either `README.md`
-or Markdown below `docs/`. The four code-coupled documents remain
-documentation-only but request focused checks:
+A change is documentation-only when every changed path is `AGENTS.md`,
+`README.md`, or Markdown below `docs/`. `AGENTS.md` is maintained instruction
+text and is checked by the same bounded documentation policy. The four
+code-coupled documents remain documentation-only but request focused checks:
 
 - `docs/core-api.md` runs `machine-god-core` doctests;
 - `docs/testkit.md` runs `machine-god-testkit` doctests;
