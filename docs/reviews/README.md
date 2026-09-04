@@ -88,6 +88,7 @@ product behavior; they are not penetration tests.
 - [web_search](m03-web-search-review-01.md)
 - [terminal](m03-terminal-review-01.md)
 - [terminal `start`](m03-terminal-start-review-01.md)
+- [terminal `inspect`](m03-terminal-inspect-review-01.md)
 - [ask_user_question](m03-ask-user-question-review-01.md)
 - [read_tool_result](m03-read-tool-result-review-01.md)
 

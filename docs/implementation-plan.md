@@ -21,37 +21,30 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `53`
-- Delivered main: `3bf4672e4607296c518f1c2259d51fed5bb16031`
-- Main CI: `33805243450` (`GREEN`)
-- Main Benchmark evidence: `33805243468` (`GREEN`)
-- Active branch: `agent/m03-terminal-inspect`
-- Active phase: `implementing slice 54 bounded terminal persisted-record inspect`
-- Next gate: `complete the focused and full local gates for the slice-54 candidate, then freeze one exact SHA for three fresh adversarial reviews`
+- Delivered slices: `54`
+- Delivered main: `bd4e97d5dd1db3a02bad9938adf8c086ee1a5d8f`
+- Main CI: `33837103631` (`GREEN`)
+- Main Benchmark evidence: `33837103715` (`GREEN`)
+- Active branch: `main`
+- Active phase: `selecting slice 55 from the remaining bounded terminal tool work`
+- Next gate: `define one bounded managed-output or read/wait terminal slice without adding durable process control, then create its feature branch`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
-run retains both required unexpired exact-SHA artifacts. Slice 53 delivers
-bounded noninteractive `terminal` action `start` through the slice-52
-background supervisor. The replacement fixed the Linux deadline regression by
-observing actual callback-tail slot reclamation with a hard retry ceiling and
-passive backoff; three fresh cycle-25 reviews reported zero findings before
-exact feature and main gates passed. Detailed rejected-candidate, remediation,
-review, and workflow history is retained only in the linked historical review
-ledger.
+run retains both required unexpired exact-SHA artifacts. Slice 54 adds
+no-authority exact persisted-record inspection to `terminal` through an
+explicitly injected inspector. It preserves the legacy schemas when that seam
+is absent, performs one bounded descriptor-confined read, and does not list,
+probe, wait for, or control a process. Three fresh final reviews reported zero
+findings after two rejected candidates closed schema and cancellation-teardown
+races. Detailed history is retained only in the linked review ledger.
 
-Slice 54 is the active bounded product slice. It adds only no-authority exact
-persisted-record inspection for an explicitly injected terminal inspector;
-output streaming, persistent interactive handles, read/write/wait/control
-actions, interactive terminal behavior, restart-safe control, ACP, teams, and
-extension slash commands remain separate. Documentation-tool maintenance
-remains a separate non-product task.
-The post-delivery Apple maintenance repair replaced the regression fixture's
-busy process loop with a bounded passive descendant, added panic-safe group
-cleanup and explicit leader-exit synchronization, and serializes only Apple
-native test harnesses. Three fresh reviews reported zero findings, and exact
-feature and main gates passed on both Apple architectures. This maintenance did
-not increment the delivered-slice count.
+The next product slice returns directly to bounded terminal/tool work. Managed
+background output or read/wait behavior may be selected next, but output
+streaming, persistent interactive handles, write/control actions, interactive
+terminal behavior, restart-safe control, ACP, teams, and extension slash
+commands remain separate until explicitly bounded. Documentation-tool
+maintenance remains a separate non-product task.
 
 ## Architecture ownership
 
@@ -168,8 +161,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 51 | Bounded read-only persisted `background` CLI | [contract](background-cli.md) | [review](reviews/m05-background-cli-review-01.md) | `a665289` |
 | 52 | Bounded production background supervisor and process lifecycle | [contract](background-supervisor.md) | [review](reviews/m05-background-supervisor-review-01.md) | `1d8ef7b` |
 | 53 | Bounded noninteractive `terminal` background start | [terminal](terminal.md), [supervisor](background-supervisor.md) | [review](reviews/m03-terminal-start-review-01.md) | `ceed855` |
+| 54 | Bounded exact persisted-record `terminal` inspect | [terminal](terminal.md), [background CLI](background-cli.md) | [review](reviews/m03-terminal-inspect-review-01.md) | `bd4e97d` |
 
-The exact delivered-main record after slice 53 is in the canonical live-status
+The exact delivered-main record after slice 54 is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.
