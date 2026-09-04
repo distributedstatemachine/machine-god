@@ -21,31 +21,26 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `55`
-- Delivered main: `3779d71da81e7a25bae2381e7b44d9761fd15b40`
-- Main CI: `33864252989` (`GREEN`)
-- Main Benchmark evidence: `33864253020` (`GREEN`)
-- Active branch: `agent/m03-terminal-list`
-- Active phase: `implementing bounded terminal list`
-- Next gate: `pass focused and complete exact-1.94.1 checks, then freeze one candidate for three fresh reviews`
+- Delivered slices: `56`
+- Delivered main: `a8f5af3987ec4a4c79af79d0428830d93d48f9df`
+- Main CI: `33872064499` (`GREEN`)
+- Main Benchmark evidence: `33872064372` (`GREEN`)
+- Active branch: `main`
+- Active phase: `selecting the next bounded tool or CLI slice`
+- Next gate: `bound and implement the next unfinished tool or CLI behavior without expanding documentation tooling`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
-run retains both required unexpired exact-SHA artifacts. Non-product
-maintenance after slice 55 repaired the local Rust 1.94.1 installation,
-removed the floating-toolchain fallback, and made `AGENTS.md`-only changes use
-the lightweight documentation gate. This did not increment the delivered-slice
-count. Main CI passed on attempt 2 after one nondeterministic native test timing
-assertion failed despite the same SHA passing on its feature branch. Slice 55 adds
-authority-free waiting for one exact persisted background record to reach its
-recorded exit state, with a caller-supplied absolute ceiling, fixed observation
-backoff, a 128-observation cap, and four fail-fast wait slots. One persistent
-ceiling timer wakes pending observations and backoffs; cancellation and
-synchronous teardown precede publication. The action neither infers liveness
-nor initializes, waits on, or controls the process supervisor. Three fresh
-final reviews reported zero findings after replacement candidates closed
-deadline-admission, runtime-lifecycle, teardown, worktree, and pending-wake
-defects. Detailed history is retained only in the linked review ledger.
+run retains both required unexpired exact-SHA artifacts. Slice 56 adds the
+authority-free `terminal` list action over retained persisted background
+records. It returns at most 100 rows ordered by `(updated_at_ms, id)` descending
+under fixed scan, record-byte, serialization, and four-slot concurrency bounds,
+without exposing commands, paths, process identity, exit data, URLs, or native
+diagnostics. Missing history is an empty complete result; corrupt storage,
+including a zero durable ID, fails closed. Three fresh final review tracks
+reported zero findings after two rejected candidates closed a description/schema
+mismatch and the zero-ID persisted-record gap. Detailed history is retained
+only in the linked review ledger.
 
 The next product slice returns to unfinished tool or CLI behavior. Managed
 background output and read, persistent interactive handles, write/control
@@ -170,8 +165,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 53 | Bounded noninteractive `terminal` background start | [terminal](terminal.md), [supervisor](background-supervisor.md) | [review](reviews/m03-terminal-start-review-01.md) | `ceed855` |
 | 54 | Bounded exact persisted-record `terminal` inspect | [terminal](terminal.md), [background CLI](background-cli.md) | [review](reviews/m03-terminal-inspect-review-01.md) | `bd4e97d` |
 | 55 | Bounded exact persisted-record `terminal` wait | [terminal](terminal.md), [background CLI](background-cli.md) | [review](reviews/m03-terminal-wait-review-01.md) | `f16f099` |
+| 56 | Bounded persisted-record `terminal` list | [terminal](terminal.md), [background CLI](background-cli.md) | [review](reviews/m03-terminal-list-review-01.md) | `a8f5af3` |
 
-The exact delivered-main record after slice 55 is in the canonical live-status
+The exact delivered-main record after slice 56 is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.
