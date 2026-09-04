@@ -670,8 +670,55 @@ pub trait TerminalBackgroundSignaler: Send + Sync + 'static {
         owner: BackgroundOutputOwner,
         background_id: u64,
         signal: TerminalBackgroundSignal,
+        completion: TerminalBackgroundSignalCompletion,
         cancellation: CancellationToken,
     ) -> BoxFuture<'static, Result<TerminalBackgroundSignalOutcome, TerminalBackgroundSignalError>>;
+}
+
+/// Opaque ownership of one admitted terminal background signal operation.
+///
+/// An injected signaler must retain this value until its committed native
+/// delivery has actually completed. Before submission, dropping the inert
+/// signal future releases the admission immediately.
+pub struct TerminalBackgroundSignalCompletion {
+    active: Arc<AtomicUsize>,
+}
+
+impl TerminalBackgroundSignalCompletion {
+    fn try_acquire(active: &Arc<AtomicUsize>) -> Result<Self, ToolError> {
+        active
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current < TERMINAL_MAX_ACTIVE_SIGNALS).then_some(current + 1)
+            })
+            .map_err(|_| signal_busy())?;
+        Ok(Self {
+            active: Arc::clone(active),
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        Self::for_test_with_active(Arc::new(AtomicUsize::new(1)))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test_with_active(active: Arc<AtomicUsize>) -> Self {
+        Self { active }
+    }
+}
+
+impl fmt::Debug for TerminalBackgroundSignalCompletion {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TerminalBackgroundSignalCompletion")
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for TerminalBackgroundSignalCompletion {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 /// Stable category returned by an injected process-local output reader.
@@ -2762,10 +2809,16 @@ impl TerminalTool {
         cancellation: CancellationToken,
     ) -> Result<ToolOutput, ToolError> {
         check_cancellation(&cancellation)?;
-        let _permit = ActiveSignalPermit::try_acquire(&self.active_signals)?;
+        let completion = TerminalBackgroundSignalCompletion::try_acquire(&self.active_signals)?;
         let signaler = self.signaler.as_ref().ok_or_else(invalid_arguments)?;
         let delivered = await_background_signal(
-            signaler.signal(owner, background_id, signal, cancellation.clone()),
+            signaler.signal(
+                owner,
+                background_id,
+                signal,
+                completion,
+                cancellation.clone(),
+            ),
             &cancellation,
         )
         .await?
@@ -3125,29 +3178,6 @@ impl ActiveReadPermit {
 }
 
 impl Drop for ActiveReadPermit {
-    fn drop(&mut self) {
-        self.active.fetch_sub(1, Ordering::AcqRel);
-    }
-}
-
-struct ActiveSignalPermit {
-    active: Arc<AtomicUsize>,
-}
-
-impl ActiveSignalPermit {
-    fn try_acquire(active: &Arc<AtomicUsize>) -> Result<Self, ToolError> {
-        active
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-                (current < TERMINAL_MAX_ACTIVE_SIGNALS).then_some(current + 1)
-            })
-            .map_err(|_| signal_busy())?;
-        Ok(Self {
-            active: Arc::clone(active),
-        })
-    }
-}
-
-impl Drop for ActiveSignalPermit {
     fn drop(&mut self) {
         self.active.fetch_sub(1, Ordering::AcqRel);
     }
@@ -3606,7 +3636,8 @@ impl Tool for TerminalTool {
                     }),
                 },
                 canonical,
-            )),
+            )
+            .completion_wins_after_first_poll()),
             TerminalArguments::Command(parsed) => {
                 let environment = match parsed.action {
                     TerminalAction::Exec => ProcessEnvironment {

@@ -40,6 +40,14 @@ pub struct ToolContext {
 pub struct PreparedToolCall {
     authorization: PreparedToolAuthorization,
     arguments: Value,
+    execution_cancellation: ToolExecutionCancellation,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum ToolExecutionCancellation {
+    #[default]
+    Cancellable,
+    CompletionWinsAfterFirstPoll,
 }
 
 /// Authorization disposition selected by trusted [`Tool::prepare`] code.
@@ -74,6 +82,7 @@ impl PreparedToolCall {
         Self {
             authorization: PreparedToolAuthorization::PermissionRequired(capability),
             arguments,
+            execution_cancellation: ToolExecutionCancellation::Cancellable,
         }
     }
 
@@ -93,7 +102,21 @@ impl PreparedToolCall {
         Self {
             authorization: PreparedToolAuthorization::NoAuthorityRequired,
             arguments,
+            execution_cancellation: ToolExecutionCancellation::Cancellable,
         }
+    }
+
+    /// Declares that execution owns cancellation once its first poll begins.
+    ///
+    /// This is a trusted tool assertion for an operation whose first poll is
+    /// its irreversible submission boundary. Turn cancellation still wins
+    /// before that poll. Once polling starts, core waits for the real result,
+    /// stores it, and publishes its finished event before observing a pending
+    /// turn cancellation. Model-controlled arguments cannot select this mode.
+    #[must_use]
+    pub fn completion_wins_after_first_poll(mut self) -> Self {
+        self.execution_cancellation = ToolExecutionCancellation::CompletionWinsAfterFirstPoll;
+        self
     }
 
     /// Returns the explicit authorization disposition for this call.
@@ -124,6 +147,10 @@ impl PreparedToolCall {
 
     pub(crate) fn into_arguments(mut self) -> Value {
         std::mem::take(&mut self.arguments)
+    }
+
+    pub(crate) const fn execution_cancellation(&self) -> ToolExecutionCancellation {
+        self.execution_cancellation
     }
 }
 

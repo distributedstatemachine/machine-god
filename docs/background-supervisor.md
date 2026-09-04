@@ -459,7 +459,11 @@ Process-table traversal runs through the supervisor's existing bounded
 blocking pool. The terminal layer separately caps active signal operations at
 four. Cancellation before blocking admission has no process effect; admission
 commits the ordered mutation, so later cancellation cannot abandon or relabel
-an already dispatched tree delivery. The lazy reference adapter shares the
+an already dispatched tree delivery. The committed blocking closure retains
+the terminal admission even if its caller future is dropped and releases it
+only when native delivery actually returns. Linux reuses one preallocated,
+bounded proc-stat scratch buffer across snapshot, identity revalidation, and
+individual delivery observations. The lazy reference adapter shares the
 same registry and blocking handle but does not initialize a supervisor merely
 to reject an unknown signal target.
 

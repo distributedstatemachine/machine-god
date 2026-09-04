@@ -383,7 +383,12 @@ indistinguishable as `terminal_signal_not_found`; a process-table or delivery
 failure is the fixed non-retryable `terminal_signal_failed` error. Signal
 future submission is the ordered mutation commit boundary: cancellation before
 submission has no signal effect, while cancellation after submission cannot
-relabel a completed or partially attempted native delivery.
+relabel a completed or partially attempted native delivery. The trusted
+prepared-call mode makes core retain a first-polled signal execution through
+durable result replacement and `ToolFinished` delivery. Dropping the direct
+caller future after native submission likewise cannot release one of the four
+signal admissions early: the native blocking closure owns its admission until
+the real delivery attempt returns.
 
 Success acknowledges delivery only:
 
@@ -866,7 +871,9 @@ process, foreground executor, supervisor initialization, or permission effects
 for read-only actions; four-signal admission, wrong-owner and completed-process
 rejection, identity-revalidated outside-group descendant delivery, root-group
 delivery, incomplete-delivery failure, close-before-reap serialization, and
-off-poll-thread traversal;
+off-poll-thread traversal; pre-poll cancellation, same-first-poll and
+post-submission result precedence, caller-drop admission retention through
+native completion, and Linux proc-stat scratch reuse;
 pending listing, observation, and timer cancellation, destructor-triggered
 cancellation, outer-future drop, and exact-once list- and wait-slot recovery;
 workspace-relative permission,

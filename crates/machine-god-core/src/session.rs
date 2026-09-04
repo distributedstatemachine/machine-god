@@ -1,3 +1,4 @@
+use crate::tool::ToolExecutionCancellation;
 use crate::{
     BoxFuture, CancellationToken, Capability, ContentBlock, EngineError, EngineEvent,
     InferenceOptions, Message, ModelEvent, ModelEventStream, ModelRequest, PermissionDecision,
@@ -727,6 +728,7 @@ struct EmissionState {
     acknowledged: bool,
     usage: TokenUsage,
     terminal_established: bool,
+    cancellation_deferrals: usize,
 }
 
 struct StagedTurnEvent {
@@ -743,6 +745,10 @@ struct EmitFuture {
     inner: Arc<Mutex<EmissionState>>,
     event: Option<StagedTurnEvent>,
     staged: bool,
+}
+
+struct TurnCancellationDeferral {
+    inner: Arc<Mutex<EmissionState>>,
 }
 
 impl EmissionGate {
@@ -790,9 +796,32 @@ impl EmissionGate {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .terminal_established
     }
+
+    fn cancellation_deferred(&self) -> bool {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .cancellation_deferrals
+            != 0
+    }
 }
 
 impl TurnEmitter {
+    fn defer_cancellation(&self) -> TurnCancellationDeferral {
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.cancellation_deferrals = state
+            .cancellation_deferrals
+            .checked_add(1)
+            .expect("bounded turn workflow cannot overflow cancellation deferrals");
+        drop(state);
+        TurnCancellationDeferral {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+
     fn set_usage(&self, usage: TokenUsage) {
         self.inner
             .lock()
@@ -829,6 +858,19 @@ impl TurnEmitter {
             staged: false,
         }
         .await;
+    }
+}
+
+impl Drop for TurnCancellationDeferral {
+    fn drop(&mut self) {
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.cancellation_deferrals = state
+            .cancellation_deferrals
+            .checked_sub(1)
+            .expect("each turn cancellation deferral is released once");
     }
 }
 
@@ -1351,8 +1393,9 @@ async fn run_turn_inner(
             let preparation = tool.prepare(call.clone());
             check_cancelled(&cancellation)?;
 
-            let (output, next_round_tool, emit_finished) = match preparation {
-                Err(error) => (tool_error_output(&error), None, false),
+            let (output, next_round_tool, emit_finished, cancellation_deferral) = match preparation
+            {
+                Err(error) => (tool_error_output(&error), None, false, None),
                 Ok(prepared) => {
                     validate_prepared_tool_call(&prepared, limits)?;
                     let denied = match prepared.authorization() {
@@ -1423,11 +1466,13 @@ async fn run_turn_inner(
                             },
                             None,
                             false,
+                            None,
                         )
                     } else {
                         emitter
                             .emit(TurnEvent::ToolStarted { call: call.clone() })
                             .await;
+                        let execution_cancellation = prepared.execution_cancellation();
                         let execution = tool.execute_for_turn(
                             ToolContext {
                                 session_id: session_id.clone(),
@@ -1438,12 +1483,18 @@ async fn run_turn_inner(
                             prepared.into_arguments(),
                             cancellation.clone(),
                         );
-                        let result = await_tool_execution(execution, &cancellation).await?;
+                        let (result, cancellation_deferral) = await_tool_execution(
+                            execution,
+                            &cancellation,
+                            execution_cancellation,
+                            &emitter,
+                        )
+                        .await?;
                         let (output, next_round_tool) = match result {
                             Ok(execution) => execution.into_parts(),
                             Err(error) => (tool_error_output(&error), None),
                         };
-                        (output, next_round_tool, true)
+                        (output, next_round_tool, true, cancellation_deferral)
                     }
                 }
             };
@@ -1497,7 +1548,15 @@ async fn run_turn_inner(
                     )
                     .into());
                 }
-                turn_tools.validate_registration(&engine, registration, limits)?
+                match turn_tools.validate_registration(&engine, registration, limits) {
+                    Ok(insert) => insert,
+                    Err(error) => {
+                        if cancellation_deferral.is_some() {
+                            emitter.establish_terminal();
+                        }
+                        return Err(error.into());
+                    }
+                }
             } else {
                 false
             };
@@ -1509,16 +1568,25 @@ async fn run_turn_inner(
                         "placeholder message index overflowed",
                     )
                 })?;
-            record = replace_message(
+            let replacement = replace_message(
                 &engine,
                 &session_state,
                 &record,
                 placeholder_index,
                 tool_result_message(call_id.clone(), output.get().clone()),
                 &cancellation,
-                true,
+                cancellation_deferral.is_none(),
             )
-            .await?;
+            .await;
+            record = match replacement {
+                Ok(record) => record,
+                Err(error) => {
+                    if cancellation_deferral.is_some() {
+                        emitter.establish_terminal();
+                    }
+                    return Err(error);
+                }
+            };
             if insert_next_round_tool {
                 turn_tools
                     .insert(next_round_tool.expect("validated turn-local registration is present"));
@@ -1531,6 +1599,7 @@ async fn run_turn_inner(
                     })
                     .await;
             }
+            drop(cancellation_deferral);
         }
         tool_calls = new_total;
     }
@@ -2076,22 +2145,51 @@ async fn await_cancellable<T>(
 async fn await_tool_execution(
     mut future: BoxFuture<'_, Result<ToolExecution, crate::ToolError>>,
     cancellation: &CancellationToken,
-) -> Result<Result<ToolExecution, crate::ToolError>, WorkflowAbort> {
-    poll_fn(|context| {
-        if cancellation.is_cancelled() {
-            return Poll::Ready(Err(WorkflowAbort::Cancelled));
+    mode: ToolExecutionCancellation,
+    emitter: &TurnEmitter,
+) -> Result<
+    (
+        Result<ToolExecution, crate::ToolError>,
+        Option<TurnCancellationDeferral>,
+    ),
+    WorkflowAbort,
+> {
+    match mode {
+        ToolExecutionCancellation::Cancellable => {
+            let result = poll_fn(|context| {
+                if cancellation.is_cancelled() {
+                    return Poll::Ready(Err(WorkflowAbort::Cancelled));
+                }
+                let result = future.as_mut().poll(context);
+                if cancellation.is_cancelled() {
+                    if let Poll::Ready(Ok(mut execution)) = result {
+                        execution.drain_owned_json();
+                    }
+                    Poll::Ready(Err(WorkflowAbort::Cancelled))
+                } else {
+                    result.map(Ok)
+                }
+            })
+            .await?;
+            Ok((result, None))
         }
-        let result = future.as_mut().poll(context);
-        if cancellation.is_cancelled() {
-            if let Poll::Ready(Ok(mut execution)) = result {
-                execution.drain_owned_json();
-            }
-            Poll::Ready(Err(WorkflowAbort::Cancelled))
-        } else {
-            result.map(Ok)
+        ToolExecutionCancellation::CompletionWinsAfterFirstPoll => {
+            let mut first_poll = true;
+            let mut deferral = None;
+            let result = poll_fn(|context| {
+                if first_poll {
+                    if cancellation.is_cancelled() {
+                        return Poll::Ready(Err(WorkflowAbort::Cancelled));
+                    }
+                    first_poll = false;
+                    deferral = Some(emitter.defer_cancellation());
+                }
+                future.as_mut().poll(context).map(Ok)
+            })
+            .await?;
+            Ok((result, deferral))
         }
-    })
-    .await
+    }
 }
 
 async fn await_operation<T>(
@@ -2606,7 +2704,10 @@ impl Turn {
     }
 
     fn establish_cancellation_if_observed(&mut self) -> bool {
-        if self.cancellation.is_cancelled() && !self.terminal_seen {
+        if self.cancellation.is_cancelled()
+            && !self.terminal_seen
+            && !self.gate.cancellation_deferred()
+        {
             self.establish_cancellation();
             true
         } else {
@@ -2615,7 +2716,7 @@ impl Turn {
     }
 
     fn cancel_pending_delivery(&mut self) -> Option<EngineEvent> {
-        if !self.cancellation.is_cancelled() {
+        if !self.cancellation.is_cancelled() || self.gate.cancellation_deferred() {
             return None;
         }
         let delivers_cancellation = self.locally_synthesized_cancellation

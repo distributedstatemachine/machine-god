@@ -1967,6 +1967,201 @@ fn next(turn: &mut Turn) -> EngineEvent {
     futures_executor::block_on(turn.next()).unwrap().unwrap()
 }
 
+#[derive(Clone, Copy)]
+enum CompletionOwnedToolMode {
+    CancelAndCompleteOnFirstPoll,
+    Pending,
+}
+
+#[derive(Clone)]
+struct CompletionOwnedTool {
+    mode: CompletionOwnedToolMode,
+    state: Arc<CompletionOwnedToolState>,
+}
+
+struct CompletionOwnedToolState {
+    polls: AtomicUsize,
+    ready: AtomicBool,
+    waker: Mutex<Option<std::task::Waker>>,
+}
+
+impl CompletionOwnedTool {
+    fn new(mode: CompletionOwnedToolMode) -> Self {
+        Self {
+            mode,
+            state: Arc::new(CompletionOwnedToolState {
+                polls: AtomicUsize::new(0),
+                ready: AtomicBool::new(false),
+                waker: Mutex::new(None),
+            }),
+        }
+    }
+
+    fn polls(&self) -> usize {
+        self.state.polls.load(Ordering::Acquire)
+    }
+
+    fn complete(&self) {
+        self.state.ready.store(true, Ordering::Release);
+        if let Some(waker) = self.state.waker.lock().unwrap().take() {
+            waker.wake();
+        }
+    }
+}
+
+struct CompletionOwnedToolFuture {
+    mode: CompletionOwnedToolMode,
+    state: Arc<CompletionOwnedToolState>,
+    cancellation: CancellationToken,
+}
+
+impl Future for CompletionOwnedToolFuture {
+    type Output = Result<ToolOutput, ToolError>;
+
+    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        self.state.polls.fetch_add(1, Ordering::AcqRel);
+        if matches!(
+            self.mode,
+            CompletionOwnedToolMode::CancelAndCompleteOnFirstPoll
+        ) {
+            let _ = self.cancellation.cancel();
+            return Poll::Ready(Ok(ToolOutput::success(json!({"delivered": true}))));
+        }
+        if self.state.ready.load(Ordering::Acquire) {
+            return Poll::Ready(Ok(ToolOutput::success(json!({"delivered": true}))));
+        }
+        let mut waker = self.state.waker.lock().unwrap();
+        *waker = Some(context.waker().clone());
+        if self.state.ready.load(Ordering::Acquire) {
+            Poll::Ready(Ok(ToolOutput::success(json!({"delivered": true}))))
+        } else {
+            Poll::Pending
+        }
+    }
+}
+
+impl Tool for CompletionOwnedTool {
+    fn spec(&self) -> ToolSpec {
+        spec("completion-owned")
+    }
+
+    fn prepare(&self, call: ToolCall) -> Result<PreparedToolCall, ToolError> {
+        Ok(PreparedToolCall::without_authority(call.arguments).completion_wins_after_first_poll())
+    }
+
+    fn execute(
+        &self,
+        _context: ToolContext,
+        _arguments: Value,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(CompletionOwnedToolFuture {
+            mode: self.mode,
+            state: Arc::clone(&self.state),
+            cancellation,
+        })
+    }
+}
+
+fn completion_owned_turn(
+    tool: CompletionOwnedTool,
+    id: &str,
+) -> (Session, Turn, InMemorySessionStore) {
+    let provider = ScriptedModelProvider::new(
+        id,
+        [events([
+            ModelEvent::ToolCall {
+                call: call("call", "completion-owned", json!({})),
+            },
+            ModelEvent::Stop {
+                reason: StopReason::ToolCalls,
+            },
+        ])],
+    );
+    let store = InMemorySessionStore::new();
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(store.clone())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .tool(tool)
+        .build()
+        .unwrap();
+    let session = engine.create_test_session(SessionId::new(id).unwrap());
+    let mut turn = futures_executor::block_on(session.prompt("go")).unwrap();
+    loop {
+        if matches!(next(&mut turn).payload, TurnEvent::ToolStarted { .. }) {
+            return (session, turn, store);
+        }
+    }
+}
+
+#[test]
+fn completion_owned_tool_obeys_pre_poll_and_committed_cancellation_boundaries() {
+    let pre_poll = CompletionOwnedTool::new(CompletionOwnedToolMode::Pending);
+    let (_session, mut turn, _store) =
+        completion_owned_turn(pre_poll.clone(), "completion-pre-poll");
+    assert!(turn.handle().cancel());
+    assert!(matches!(
+        next(&mut turn).payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    ));
+    assert_eq!(pre_poll.polls(), 0);
+
+    let same_poll = CompletionOwnedTool::new(CompletionOwnedToolMode::CancelAndCompleteOnFirstPoll);
+    let (_session, mut turn, store) =
+        completion_owned_turn(same_poll.clone(), "completion-same-poll");
+    assert!(matches!(
+        next(&mut turn).payload,
+        TurnEvent::ToolFinished { output, .. }
+            if output.content == json!({"delivered": true})
+    ));
+    assert_eq!(same_poll.polls(), 1);
+    assert!(matches!(
+        next(&mut turn).payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    ));
+    let id = SessionId::new("completion-same-poll").unwrap();
+    let durable = store.record(&id).expect("committed session record");
+    let ContentBlock::ToolResult { output, .. } = &durable.messages[2].content[0] else {
+        panic!("expected durable committed tool result")
+    };
+    assert_eq!(output.content, json!({"delivered": true}));
+
+    let post_pending = CompletionOwnedTool::new(CompletionOwnedToolMode::Pending);
+    let (_session, mut turn, store) =
+        completion_owned_turn(post_pending.clone(), "completion-post-pending");
+    poll_pending(&mut turn);
+    assert_eq!(post_pending.polls(), 1);
+    assert!(turn.handle().cancel());
+    poll_pending(&mut turn);
+    post_pending.complete();
+    assert!(matches!(
+        next(&mut turn).payload,
+        TurnEvent::ToolFinished { output, .. }
+            if output.content == json!({"delivered": true})
+    ));
+    assert!(post_pending.polls() >= 2);
+    assert!(matches!(
+        next(&mut turn).payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    ));
+    let id = SessionId::new("completion-post-pending").unwrap();
+    let durable = store.record(&id).expect("committed session record");
+    let ContentBlock::ToolResult { output, .. } = &durable.messages[2].content[0] else {
+        panic!("expected durable committed tool result")
+    };
+    assert_eq!(output.content, json!({"delivered": true}));
+}
+
 #[test]
 #[allow(clippy::too_many_lines)]
 fn cancellation_interrupts_pending_permission_tool_store_and_new_provider_phases() {

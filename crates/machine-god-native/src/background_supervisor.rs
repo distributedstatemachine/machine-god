@@ -50,9 +50,9 @@ use crate::session_store::FileSessionStore;
 use crate::terminal::{
     TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TerminalBackgroundOutcome,
     TerminalBackgroundOutputReader, TerminalBackgroundReadError, TerminalBackgroundReadErrorKind,
-    TerminalBackgroundReadSnapshot, TerminalBackgroundSignal, TerminalBackgroundSignalError,
-    TerminalBackgroundSignalErrorKind, TerminalBackgroundSignalOutcome, TerminalBackgroundSignaler,
-    TerminalBackgroundStarter,
+    TerminalBackgroundReadSnapshot, TerminalBackgroundSignal, TerminalBackgroundSignalCompletion,
+    TerminalBackgroundSignalError, TerminalBackgroundSignalErrorKind,
+    TerminalBackgroundSignalOutcome, TerminalBackgroundSignaler, TerminalBackgroundStarter,
 };
 
 /// Default number of concurrently retained background processes.
@@ -525,6 +525,7 @@ impl TerminalBackgroundSignaler for NativeBackgroundSupervisor {
         owner: machine_god_core::BackgroundOutputOwner,
         background_id: u64,
         signal: TerminalBackgroundSignal,
+        completion: TerminalBackgroundSignalCompletion,
         cancellation: CancellationToken,
     ) -> BoxFuture<'static, Result<TerminalBackgroundSignalOutcome, TerminalBackgroundSignalError>>
     {
@@ -534,6 +535,7 @@ impl TerminalBackgroundSignaler for NativeBackgroundSupervisor {
             owner,
             background_id,
             signal,
+            completion,
             cancellation,
         )
     }
@@ -732,6 +734,7 @@ impl TerminalBackgroundSignaler for LazyProductionBackgroundStarter {
         owner: machine_god_core::BackgroundOutputOwner,
         background_id: u64,
         signal: TerminalBackgroundSignal,
+        completion: TerminalBackgroundSignalCompletion,
         cancellation: CancellationToken,
     ) -> BoxFuture<'static, Result<TerminalBackgroundSignalOutcome, TerminalBackgroundSignalError>>
     {
@@ -741,6 +744,7 @@ impl TerminalBackgroundSignaler for LazyProductionBackgroundStarter {
             owner,
             background_id,
             signal,
+            completion,
             cancellation,
         )
     }
@@ -752,17 +756,20 @@ fn signal_background_process(
     owner: machine_god_core::BackgroundOutputOwner,
     background_id: u64,
     signal: TerminalBackgroundSignal,
+    completion: TerminalBackgroundSignalCompletion,
     cancellation: CancellationToken,
 ) -> BoxFuture<'static, Result<TerminalBackgroundSignalOutcome, TerminalBackgroundSignalError>> {
     let Some(blocking) = blocking else {
-        return Box::pin(async {
+        return Box::pin(async move {
+            drop(completion);
             Err(TerminalBackgroundSignalError::new(
                 TerminalBackgroundSignalErrorKind::NotFound,
             ))
         });
     };
     let Some(id) = NonZeroU64::new(background_id) else {
-        return Box::pin(async {
+        return Box::pin(async move {
+            drop(completion);
             Err(TerminalBackgroundSignalError::new(
                 TerminalBackgroundSignalErrorKind::NotFound,
             ))
@@ -772,7 +779,10 @@ fn signal_background_process(
     let caller_cancellation = cancellation.cancelled();
     drop(cancellation);
     let delivery = blocking.run_cancellable(
-        move || control.signal(id, &owner, native_background_signal(signal)),
+        move || {
+            let _completion = completion;
+            control.signal(id, &owner, native_background_signal(signal))
+        },
         caller_cancellation,
         operation_cancellation,
     );
@@ -2785,7 +2795,10 @@ mod tests {
         background_environment_identity, build_production_environment,
         finish_prepared_after_readiness, open_directory, process_error_kind,
         production_environment, production_environment_identity, retain_canonical_directory_with,
-        worker_ownership_registry,
+        signal_background_process, worker_ownership_registry,
+    };
+    use crate::background_control::{
+        BackgroundControlError, BackgroundControlTarget, BackgroundSignal,
     };
     use crate::background_process::{
         BackgroundProcessErrorKind, BackgroundProcessHelper,
@@ -2806,6 +2819,7 @@ mod tests {
     use std::ffi::OsString;
     use std::fs;
     use std::future::Future;
+    use std::num::NonZeroU64;
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
@@ -2817,8 +2831,8 @@ mod tests {
 
     use crate::terminal::{
         TerminalBackgroundOutcome, TerminalBackgroundOutputReader, TerminalBackgroundReadErrorKind,
-        TerminalBackgroundSignal, TerminalBackgroundSignalErrorKind, TerminalBackgroundSignaler,
-        TerminalBackgroundStarter,
+        TerminalBackgroundSignal, TerminalBackgroundSignalCompletion,
+        TerminalBackgroundSignalErrorKind, TerminalBackgroundSignaler, TerminalBackgroundStarter,
     };
 
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -3326,6 +3340,7 @@ mod tests {
             other_owner,
             handle.id(),
             TerminalBackgroundSignal::Terminate,
+            TerminalBackgroundSignalCompletion::for_test(),
             CancellationToken::new(),
         ))
         .expect_err("cross-incarnation signal must fail closed");
@@ -3336,6 +3351,7 @@ mod tests {
             owner,
             handle.id(),
             TerminalBackgroundSignal::Terminate,
+            TerminalBackgroundSignalCompletion::for_test(),
             CancellationToken::new(),
         ))
         .expect("same-owner signal delivery");
@@ -3354,10 +3370,84 @@ mod tests {
             ),
             handle.id(),
             TerminalBackgroundSignal::Kill,
+            TerminalBackgroundSignalCompletion::for_test(),
             CancellationToken::new(),
         ))
         .expect_err("reaped background signal must fail closed");
         assert_eq!(error.kind(), TerminalBackgroundSignalErrorKind::NotFound);
+    }
+
+    struct BlockingSignalTarget {
+        entered: mpsc::SyncSender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+    }
+
+    impl BackgroundControlTarget for BlockingSignalTarget {
+        fn signal(&self, _signal: BackgroundSignal) -> Result<(), BackgroundControlError> {
+            self.entered.send(()).expect("report committed delivery");
+            self.release
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .recv()
+                .expect("release committed delivery");
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn dropped_signal_future_retains_admission_until_native_delivery_completes() {
+        let executor = BlockingExecutor::new(1).expect("blocking executor");
+        let registry = BackgroundControlRegistry::new();
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("signal-drop-session").unwrap(),
+            SessionIncarnationId::new("signal-drop-incarnation").unwrap(),
+        );
+        let (entered, entered_receiver) = mpsc::sync_channel(1);
+        let (release, release_receiver) = mpsc::sync_channel(1);
+        let lease = registry
+            .register(
+                NonZeroU64::new(1).unwrap(),
+                &owner,
+                Arc::new(BlockingSignalTarget {
+                    entered,
+                    release: Mutex::new(release_receiver),
+                }),
+            )
+            .expect("register signal target");
+        let active = Arc::new(AtomicUsize::new(1));
+        let completion =
+            TerminalBackgroundSignalCompletion::for_test_with_active(Arc::clone(&active));
+        let mut delivery = signal_background_process(
+            registry,
+            Some(executor.handle()),
+            owner,
+            1,
+            TerminalBackgroundSignal::Terminate,
+            completion,
+            CancellationToken::new(),
+        );
+        assert!(matches!(
+            delivery
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        entered_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("native delivery committed");
+
+        drop(delivery);
+        assert_eq!(active.load(Ordering::Acquire), 1);
+        release.send(()).expect("complete native delivery");
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while active.load(Ordering::Acquire) != 0 {
+            assert!(
+                Instant::now() < deadline,
+                "native delivery did not release signal admission"
+            );
+            thread::yield_now();
+        }
+        drop(lease);
     }
 
     #[test]
@@ -3540,6 +3630,7 @@ mod tests {
             owner,
             1,
             TerminalBackgroundSignal::Terminate,
+            TerminalBackgroundSignalCompletion::for_test(),
             CancellationToken::new(),
         ))
         .expect_err("no live process exists");

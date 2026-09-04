@@ -25,12 +25,12 @@ use machine_god_native::{
     TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TERMINAL_MAX_ACTIVE_LISTS, TerminalBackgroundCatalog,
     TerminalBackgroundInspector, TerminalBackgroundOutcome, TerminalBackgroundOutputReader,
     TerminalBackgroundReadError, TerminalBackgroundReadErrorKind, TerminalBackgroundReadSnapshot,
-    TerminalBackgroundSignal, TerminalBackgroundSignalError, TerminalBackgroundSignalErrorKind,
-    TerminalBackgroundSignalOutcome, TerminalBackgroundSignaler, TerminalBackgroundStarter,
-    TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError, TerminalCapturedOutput,
-    TerminalConfigErrorKind, TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest,
-    TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError, TerminalExecutorErrorKind,
-    TerminalLimits, TerminalTool,
+    TerminalBackgroundSignal, TerminalBackgroundSignalCompletion, TerminalBackgroundSignalError,
+    TerminalBackgroundSignalErrorKind, TerminalBackgroundSignalOutcome, TerminalBackgroundSignaler,
+    TerminalBackgroundStarter, TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError,
+    TerminalCapturedOutput, TerminalConfigErrorKind, TerminalExecution, TerminalExecutionOutcome,
+    TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError,
+    TerminalExecutorErrorKind, TerminalLimits, TerminalTool,
 };
 use machine_god_reentrant_waker_test::{Callback, new as reentrant_waker};
 use serde_json::{Value, json};
@@ -392,6 +392,7 @@ type BackgroundSignalRequest = (String, String, u64, TerminalBackgroundSignal);
 struct FakeBackgroundSignaler {
     mode: BackgroundSignalMode,
     requests: Arc<Mutex<Vec<BackgroundSignalRequest>>>,
+    committed: Arc<Mutex<Vec<TerminalBackgroundSignalCompletion>>>,
 }
 
 impl FakeBackgroundSignaler {
@@ -399,7 +400,16 @@ impl FakeBackgroundSignaler {
         Self {
             mode,
             requests: Arc::new(Mutex::new(Vec::new())),
+            committed: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    fn complete_one(&self) {
+        self.committed
+            .lock()
+            .unwrap()
+            .pop()
+            .expect("one committed signal operation");
     }
 }
 
@@ -409,11 +419,13 @@ impl TerminalBackgroundSignaler for FakeBackgroundSignaler {
         owner: BackgroundOutputOwner,
         background_id: u64,
         signal: TerminalBackgroundSignal,
+        completion: TerminalBackgroundSignalCompletion,
         cancellation: CancellationToken,
     ) -> BoxFuture<'static, Result<TerminalBackgroundSignalOutcome, TerminalBackgroundSignalError>>
     {
         let mode = self.mode;
         let requests = Arc::clone(&self.requests);
+        let committed = Arc::clone(&self.committed);
         Box::pin(async move {
             requests.lock().unwrap().push((
                 owner.session_id().to_string(),
@@ -425,13 +437,20 @@ impl TerminalBackgroundSignaler for FakeBackgroundSignaler {
                 BackgroundSignalMode::Success {
                     cancel_before_return,
                 } => {
+                    let _completion = completion;
                     if cancel_before_return {
                         let _ = cancellation.cancel();
                     }
                     TerminalBackgroundSignalOutcome::new(background_id, signal)
                 }
-                BackgroundSignalMode::Error(kind) => Err(TerminalBackgroundSignalError::new(kind)),
-                BackgroundSignalMode::Pending => std::future::pending().await,
+                BackgroundSignalMode::Error(kind) => {
+                    let _completion = completion;
+                    Err(TerminalBackgroundSignalError::new(kind))
+                }
+                BackgroundSignalMode::Pending => {
+                    committed.lock().unwrap().push(completion);
+                    std::future::pending().await
+                }
             }
         })
     }
@@ -2649,7 +2668,7 @@ fn background_signal_committed_delivery_wins_same_poll_cancellation() {
 }
 
 #[test]
-fn background_signal_capacity_is_fail_fast_and_recovers_on_drop() {
+fn background_signal_capacity_tracks_committed_delivery_after_caller_drop() {
     let temporary = TemporaryDirectory::new("background-signal-capacity");
     let executor = FakeExecutor::new(Mode::Exited(0));
     let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
@@ -2669,11 +2688,19 @@ fn background_signal_capacity_is_fail_fast_and_recovers_on_drop() {
     assert_eq!(busy.code, "terminal_signal_busy");
     assert!(busy.retryable);
 
-    drop(active.pop());
+    drop(active);
+    let still_busy =
+        poll_ready(tool.execute(context(), arguments.clone(), CancellationToken::new()))
+            .unwrap_err();
+    assert_eq!(still_busy.code, "terminal_signal_busy");
+
+    signaler.complete_one();
     let mut replacement = tool.execute(context(), arguments, CancellationToken::new());
     assert!(poll_once(replacement.as_mut()).is_pending());
     drop(replacement);
-    drop(active);
+    while !signaler.committed.lock().unwrap().is_empty() {
+        signaler.complete_one();
+    }
 }
 
 #[test]

@@ -1,17 +1,22 @@
 #![cfg(unix)]
 
 use std::ffi::OsString;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 use std::time::Instant;
 
+use futures_core::Stream;
 use futures_util::StreamExt;
 use machine_god_core::{
     BackgroundOutputOwner, BackgroundStartError, BackgroundStartRequest, BoxFuture, Capability,
     ContentBlock, Engine, EngineEvent, MAX_BACKGROUND_CWD_BYTES, Message, ModelEvent,
     PermissionDecision, PermissionGrantScope, ProcessEnvironment, Role, SessionId,
-    SessionIncarnationId, StopReason, Tool, ToolCall, ToolCallId, ToolName, ToolOutput, TurnEvent,
+    SessionIncarnationId, StopReason, Tool, ToolCall, ToolCallId, ToolName, ToolOutput, Turn,
+    TurnEvent,
 };
 use machine_god_native::{
     MAX_TERMINAL_CWD_COMPONENT_BYTES, MAX_TERMINAL_CWD_COMPONENTS, NativeBackgroundDetail,
@@ -19,10 +24,11 @@ use machine_god_native::{
     NativeBackgroundState, TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TerminalBackgroundCatalog,
     TerminalBackgroundInspector, TerminalBackgroundOutcome, TerminalBackgroundOutputReader,
     TerminalBackgroundReadError, TerminalBackgroundReadSnapshot, TerminalBackgroundSignal,
-    TerminalBackgroundSignalError, TerminalBackgroundSignalOutcome, TerminalBackgroundSignaler,
-    TerminalBackgroundStarter, TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError,
-    TerminalCapturedOutput, TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest,
-    TerminalExecutionStatus, TerminalExecutor, TerminalLimits, TerminalTool,
+    TerminalBackgroundSignalCompletion, TerminalBackgroundSignalError,
+    TerminalBackgroundSignalOutcome, TerminalBackgroundSignaler, TerminalBackgroundStarter,
+    TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError, TerminalCapturedOutput,
+    TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest, TerminalExecutionStatus,
+    TerminalExecutor, TerminalLimits, TerminalTool,
 };
 use machine_god_testkit::{
     InMemorySessionStore, ModelProviderStep, PermissionStep, ScriptedModelProvider,
@@ -188,6 +194,7 @@ impl TerminalBackgroundOutputReader for FakeBackgroundOutputReader {
 #[derive(Clone, Default)]
 struct FakeBackgroundSignaler {
     calls: Arc<AtomicUsize>,
+    cancel_before_return: bool,
 }
 
 impl TerminalBackgroundSignaler for FakeBackgroundSignaler {
@@ -196,7 +203,8 @@ impl TerminalBackgroundSignaler for FakeBackgroundSignaler {
         owner: BackgroundOutputOwner,
         background_id: u64,
         signal: TerminalBackgroundSignal,
-        _cancellation: machine_god_core::CancellationToken,
+        completion: TerminalBackgroundSignalCompletion,
+        cancellation: machine_god_core::CancellationToken,
     ) -> BoxFuture<'static, Result<TerminalBackgroundSignalOutcome, TerminalBackgroundSignalError>>
     {
         assert_eq!(owner.session_id().as_str(), "terminal-signal-session");
@@ -205,9 +213,93 @@ impl TerminalBackgroundSignaler for FakeBackgroundSignaler {
             "incarnation-terminal-signal-session"
         );
         let calls = Arc::clone(&self.calls);
+        let cancel_before_return = self.cancel_before_return;
         Box::pin(async move {
+            let _completion = completion;
             calls.fetch_add(1, Ordering::SeqCst);
+            if cancel_before_return {
+                let _ = cancellation.cancel();
+            }
             TerminalBackgroundSignalOutcome::new(background_id, signal)
+        })
+    }
+}
+
+#[derive(Clone)]
+struct PendingBackgroundSignaler {
+    state: Arc<PendingBackgroundSignalState>,
+}
+
+struct PendingBackgroundSignalState {
+    polls: AtomicUsize,
+    ready: AtomicBool,
+    waker: Mutex<Option<Waker>>,
+}
+
+impl PendingBackgroundSignaler {
+    fn new() -> Self {
+        Self {
+            state: Arc::new(PendingBackgroundSignalState {
+                polls: AtomicUsize::new(0),
+                ready: AtomicBool::new(false),
+                waker: Mutex::new(None),
+            }),
+        }
+    }
+
+    fn complete(&self) {
+        self.state.ready.store(true, Ordering::Release);
+        if let Some(waker) = self.state.waker.lock().unwrap().take() {
+            waker.wake();
+        }
+    }
+}
+
+struct PendingBackgroundSignalFuture {
+    state: Arc<PendingBackgroundSignalState>,
+    background_id: u64,
+    signal: TerminalBackgroundSignal,
+    completion: Option<TerminalBackgroundSignalCompletion>,
+}
+
+impl Future for PendingBackgroundSignalFuture {
+    type Output = Result<TerminalBackgroundSignalOutcome, TerminalBackgroundSignalError>;
+
+    fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        self.state.polls.fetch_add(1, Ordering::AcqRel);
+        if self.state.ready.load(Ordering::Acquire) {
+            self.completion.take();
+            return Poll::Ready(TerminalBackgroundSignalOutcome::new(
+                self.background_id,
+                self.signal,
+            ));
+        }
+        let mut waker = self.state.waker.lock().unwrap();
+        *waker = Some(context.waker().clone());
+        Poll::Pending
+    }
+}
+
+impl TerminalBackgroundSignaler for PendingBackgroundSignaler {
+    fn signal(
+        &self,
+        owner: BackgroundOutputOwner,
+        background_id: u64,
+        signal: TerminalBackgroundSignal,
+        completion: TerminalBackgroundSignalCompletion,
+        _cancellation: machine_god_core::CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundSignalOutcome, TerminalBackgroundSignalError>>
+    {
+        assert_eq!(owner.session_id().as_str(), "terminal-signal-session");
+        assert_eq!(
+            owner.session_incarnation_id().as_str(),
+            "incarnation-terminal-signal-session"
+        );
+        Box::pin(PendingBackgroundSignalFuture {
+            state: Arc::clone(&self.state),
+            background_id,
+            signal,
+            completion: Some(completion),
         })
     }
 }
@@ -335,7 +427,7 @@ fn terminal_with_signaler(
     root: &std::path::Path,
     executor: FakeExecutor,
     starter: FakeBackgroundStarter,
-    signaler: FakeBackgroundSignaler,
+    signaler: impl TerminalBackgroundSignaler,
 ) -> TerminalTool {
     terminal_with_background(root, executor, starter)
         .with_signaler(Arc::new(signaler))
@@ -427,6 +519,17 @@ fn collect(engine: &Engine, name: &str) -> (SessionId, Vec<EngineEvent>) {
             .unwrap()
     });
     (session_id, events)
+}
+
+fn next(turn: &mut Turn) -> EngineEvent {
+    futures_executor::block_on(turn.next()).unwrap().unwrap()
+}
+
+fn poll_pending(turn: &mut Turn) {
+    assert!(matches!(
+        Pin::new(turn).poll_next(&mut Context::from_waker(Waker::noop())),
+        Poll::Pending
+    ));
 }
 
 fn second_request_tool_output(provider: &ScriptedModelProvider) -> (Message, ToolOutput) {
@@ -883,6 +986,133 @@ fn background_signal_requires_exact_custom_permission_before_delivery() {
         }
     );
     assert_eq!(store.record(&session_id).unwrap().messages[2], message);
+}
+
+#[test]
+fn committed_background_signal_result_survives_same_poll_turn_cancellation() {
+    let temporary = TemporaryDirectory::new("engine-signal-cancel");
+    let provider = provider_with_arguments(
+        "terminal-signal-cancel",
+        json!({
+            "action": "signal",
+            "background_id": 17,
+            "signal": "terminate"
+        }),
+    );
+    let store = InMemorySessionStore::new();
+    let policy =
+        ScriptedPermissionHandler::new([PermissionStep::Decision(PermissionDecision::Allow {
+            scope: PermissionGrantScope::Once,
+        })]);
+    let signaler = FakeBackgroundSignaler {
+        calls: Arc::new(AtomicUsize::new(0)),
+        cancel_before_return: true,
+    };
+    let tool = terminal_with_signaler(
+        temporary.path(),
+        FakeExecutor::default(),
+        FakeBackgroundStarter::default(),
+        signaler.clone(),
+    );
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(store.clone())
+        .permission_handler(policy)
+        .tool(tool)
+        .build()
+        .unwrap();
+
+    let (session_id, events) = collect(&engine, "terminal-signal-session");
+
+    assert_eq!(signaler.calls.load(Ordering::SeqCst), 1);
+    assert!(events.iter().any(|event| matches!(
+        &event.payload,
+        TurnEvent::ToolFinished { output, .. }
+            if output.content["status"] == "signaled"
+    )));
+    assert!(matches!(
+        events.last().map(|event| &event.payload),
+        Some(TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        })
+    ));
+    let record = store.record(&session_id).expect("durable signal result");
+    let ContentBlock::ToolResult { output, .. } = &record.messages[2].content[0] else {
+        panic!("expected durable signal result")
+    };
+    assert_eq!(output.content["status"], "signaled");
+}
+
+#[test]
+fn pending_background_signal_completion_wins_after_turn_cancellation() {
+    let temporary = TemporaryDirectory::new("engine-signal-pending-cancel");
+    let provider = provider_with_arguments(
+        "terminal-signal-pending-cancel",
+        json!({
+            "action": "signal",
+            "background_id": 17,
+            "signal": "terminate"
+        }),
+    );
+    let store = InMemorySessionStore::new();
+    let policy =
+        ScriptedPermissionHandler::new([PermissionStep::Decision(PermissionDecision::Allow {
+            scope: PermissionGrantScope::Once,
+        })]);
+    let signaler = PendingBackgroundSignaler::new();
+    let tool = terminal_with_signaler(
+        temporary.path(),
+        FakeExecutor::default(),
+        FakeBackgroundStarter::default(),
+        signaler.clone(),
+    );
+    let engine = Engine::builder()
+        .provider(provider)
+        .session_store(store.clone())
+        .permission_handler(policy)
+        .tool(tool)
+        .build()
+        .unwrap();
+    let session_id = SessionId::new("terminal-signal-session").unwrap();
+    let session = engine
+        .create_session(
+            session_id.clone(),
+            SessionIncarnationId::new("incarnation-terminal-signal-session").unwrap(),
+        )
+        .unwrap();
+    let mut turn = futures_executor::block_on(session.prompt("signal it")).unwrap();
+
+    loop {
+        if matches!(next(&mut turn).payload, TurnEvent::ToolStarted { .. }) {
+            break;
+        }
+    }
+    poll_pending(&mut turn);
+    assert_eq!(signaler.state.polls.load(Ordering::Acquire), 1);
+    assert!(signaler.state.waker.lock().unwrap().is_some());
+    assert!(turn.handle().cancel());
+    poll_pending(&mut turn);
+    assert!(signaler.state.waker.lock().unwrap().is_some());
+    signaler.complete();
+
+    assert!(matches!(
+        next(&mut turn).payload,
+        TurnEvent::ToolFinished { output, .. }
+            if output.content["status"] == "signaled"
+    ));
+    assert!(matches!(
+        next(&mut turn).payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    ));
+    let record = store.record(&session_id).expect("durable signal result");
+    let ContentBlock::ToolResult { output, .. } = &record.messages[2].content[0] else {
+        panic!("expected durable signal result")
+    };
+    assert_eq!(output.content["status"], "signaled");
 }
 
 #[test]

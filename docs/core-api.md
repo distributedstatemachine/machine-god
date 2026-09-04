@@ -123,6 +123,19 @@ next provider round. Core never derives the disposition from model-controlled
 arguments. Hosts must treat the no-authority constructor as a trust-boundary
 assertion rather than a permission optimization.
 
+Prepared calls are ordinarily cancellation-first throughout execution. A
+trusted tool whose durable contract defines its first execution poll as an
+irreversible submission boundary may additionally use
+[`PreparedToolCall::completion_wins_after_first_poll`](crate::PreparedToolCall::completion_wins_after_first_poll).
+Cancellation still wins before that first poll and the future is not polled.
+Once the poll begins, core retains the execution through its actual completion,
+durably replaces the result placeholder without cancellation interruption, and
+delivers `ToolFinished` before observing a pending turn cancellation. The mode
+is private prepared-call state, is not serialized or exposed through `Debug`,
+and cannot be selected by model-controlled arguments. It does not grant
+authority, relax output validation, or make later provider/store work
+uncancellable.
+
 [`EngineLimits`](crate::EngineLimits) supplies nonzero resource bounds. Defaults
 allow 8 model rounds, 16 tool calls per turn, 4 calls per round, 1 MiB each of
 assistant text and observer-visible reasoning, a JSON container depth of 64,
@@ -466,10 +479,12 @@ terminal cancellation directly before releasing the session lease. Core
 rechecks cancellation immediately after provider startup, provider-stream,
 store, policy, tool, and observer-delivery polls and before interpreting their
 results. Cancellation observed at one of those boundaries wins while the turn
-is still preterminal. The narrow exception is a ready successful final-assistant
-save: durable success wins that poll, reconciliation completes, and the final
-`Stop` is established before control returns to the outer turn. Cancellation
-still wins if that save is pending or returns an error in the cancelling poll.
+is still preterminal, except during the explicitly prepared completion-owned
+tool scope described above. The other narrow exception is a ready successful
+final-assistant save: durable success wins that poll, reconciliation completes,
+and the final `Stop` is established before control returns to the outer turn.
+Cancellation still wins if that save is pending or returns an error in the
+cancelling poll.
 A provider failure or missing-stop failure establishes precedence when accepted;
 later cancellation cannot relabel or bypass an established pending delivery or
 terminal result.
