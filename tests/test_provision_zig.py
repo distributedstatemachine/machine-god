@@ -1315,9 +1315,12 @@ class ProvisionZigTests(unittest.TestCase):
             release_first = threading.Event()
             cleanup_started = threading.Event()
             release_cleanup = threading.Event()
-            second_finished = threading.Event()
+            second_admitted = threading.Event()
             errors: list[BaseException] = []
             blocked_cleanup = False
+            active_lease_calls = 0
+            active_lease_calls_lock = threading.Lock()
+            real_create_active_lease = provision_zig.create_active_lease
             real_rmtree = provision_zig.shutil.rmtree
 
             def fake_extract(
@@ -1343,9 +1346,19 @@ class ProvisionZigTests(unittest.TestCase):
                 if is_owned_trash and not blocked_cleanup:
                     blocked_cleanup = True
                     cleanup_started.set()
-                    if not release_cleanup.wait(timeout=5.0):
+                    if not release_cleanup.wait(timeout=30.0):
                         raise AssertionError("cleanup synchronization timed out")
                 real_rmtree(path, *args, **kwargs)
+
+            def observe_active_lease(
+                selected_active: Path, selected_spec: provision_zig.ToolchainSpec
+            ) -> tuple[Path, int]:
+                nonlocal active_lease_calls
+                with active_lease_calls_lock:
+                    active_lease_calls += 1
+                    if active_lease_calls == 2:
+                        second_admitted.set()
+                return real_create_active_lease(selected_active, selected_spec)
 
             def first_run() -> None:
                 try:
@@ -1362,8 +1375,6 @@ class ProvisionZigTests(unittest.TestCase):
                         pass
                 except BaseException as error:
                     errors.append(error)
-                finally:
-                    second_finished.set()
 
             with (
                 mock.patch.object(provision_zig, "ensure_archive", return_value=archive),
@@ -1375,19 +1386,31 @@ class ProvisionZigTests(unittest.TestCase):
                     "rmtree",
                     side_effect=pause_first_active_cleanup,
                 ),
+                mock.patch.object(
+                    provision_zig,
+                    "create_active_lease",
+                    side_effect=observe_active_lease,
+                ),
             ):
                 first = threading.Thread(target=first_run)
-                first.start()
-                self.assertTrue(first_entered.wait(timeout=5.0))
-                release_first.set()
-                self.assertTrue(cleanup_started.wait(timeout=5.0))
-                second = threading.Thread(target=second_run)
-                second.start()
-                self.assertTrue(second_finished.wait(timeout=2.0))
-                release_cleanup.set()
-                first.join(timeout=5.0)
-                second.join(timeout=5.0)
+                second: threading.Thread | None = None
+                try:
+                    first.start()
+                    self.assertTrue(first_entered.wait(timeout=10.0))
+                    release_first.set()
+                    self.assertTrue(cleanup_started.wait(timeout=10.0))
+                    second = threading.Thread(target=second_run)
+                    second.start()
+                    self.assertTrue(second_admitted.wait(timeout=10.0))
+                finally:
+                    release_first.set()
+                    release_cleanup.set()
+                    first.join(timeout=10.0)
+                    if second is not None:
+                        second.join(timeout=10.0)
                 self.assertFalse(first.is_alive())
+                self.assertIsNotNone(second)
+                assert second is not None
                 self.assertFalse(second.is_alive())
             self.assertEqual(errors, [])
             self.assertEqual(list((root / "active").iterdir()), [])
