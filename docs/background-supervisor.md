@@ -440,10 +440,13 @@ leader is reaped. Unknown IDs, completed entries, and wrong session or
 incarnation owners are deliberately indistinguishable.
 
 One explicit signal operation revalidates the retained leader, captures a
-bounded ancestry tree, signals identity-checked outside-group descendants
-deepest-first, and signals the original process group last. Linux traversal
-uses the retained procfs descriptor and mount identity, caps inspected entries,
-metadata bytes, and retained members, and uses pidfds for individual delivery.
+bounded ancestry tree, signals every identity-checked descendant deepest-first,
+and signals the original process group last. Descendants still inside that
+group may receive the requested signal twice; individual delivery deliberately
+closes an inside-group-to-escaped-group race before the final group syscall.
+Linux traversal uses the retained procfs descriptor and mount identity, caps
+inspected entries, metadata bytes, and retained members, and uses pidfds for
+individual delivery.
 macOS traversal uses ADR 0003's safe fixed-buffer wrapper with kernel
 unique-process and parent identities. A vanished descendant does not fail the
 operation; incomplete
@@ -451,7 +454,9 @@ inspection, capacity exhaustion, identity ambiguity, a non-vanished
 descendant-delivery failure, or original-group failure does. The operation is
 non-escalating and acknowledges completed delivery rather than process exit.
 One descendant failure does not suppress later descendant attempts or the
-original-group attempt, but the combined operation still fails.
+original-group attempt, but the combined operation still fails. After a
+descendant attempt begins, later leader or group disappearance is reported as
+a process failure; not-found remains limited to absence before any delivery.
 The registry lock is released before target dispatch, while the per-process
 lifecycle lock serializes signal against close and reap.
 

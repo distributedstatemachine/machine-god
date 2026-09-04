@@ -363,16 +363,20 @@ identity cannot regain control.
 
 The Linux/macOS controller validates the retained root identity, takes one
 bounded process ancestry snapshot, delivers the selected signal deepest-first
-to identity-revalidated descendants outside the original process group, and
-then signals the original group. Linux uses the retained procfs mount authority
-and pidfds for individual outside-group delivery. macOS uses the safe
+to every identity-revalidated descendant, and then signals the original group.
+An inside-group descendant can therefore receive the requested signal twice;
+that deliberate duplicate closes the race in which it could call `setsid`
+after its group was observed but before the final group signal. Linux uses the
+retained procfs mount authority and pidfds for individual delivery. macOS uses the safe
 fixed-buffer Darwin wrapper's kernel unique-process and parent identities. A
 vanished descendant is harmless, but an incomplete snapshot, identity
 ambiguity, bound overflow, non-vanished delivery failure, or original-group
 delivery failure rejects the operation; partial delivery is never reported as
 success. One descendant failure does not suppress later descendant attempts or
-the original-group attempt. One request never waits for exit, repeats, or
-escalates its chosen signal.
+the original-group attempt. Once descendant delivery starts, later root or
+group disappearance is a process failure rather than a pre-effect not-found
+result. One request never waits for exit, repeats, or escalates its chosen
+signal.
 
 Traversal runs on the supervisor's existing fixed worker pool rather than the
 engine poll thread. Terminal admits at most four signal actions independently
@@ -869,7 +873,7 @@ recorded states and exit-code ranges; four-active-list, 128-observation,
 four-active-wait, serialized-result, and live-memory bounds; no PID probe,
 process, foreground executor, supervisor initialization, or permission effects
 for read-only actions; four-signal admission, wrong-owner and completed-process
-rejection, identity-revalidated outside-group descendant delivery, root-group
+rejection, identity-revalidated all-descendant delivery, root-group
 delivery, incomplete-delivery failure, close-before-reap serialization, and
 off-poll-thread traversal; pre-poll cancellation, same-first-poll and
 post-submission result precedence, caller-drop admission retention through

@@ -558,23 +558,42 @@ fn signal_process_tree(
     // Re-reading its admitted start identity after the bounded ancestry snapshot
     // rejects a substituted or incomplete process-table view before any signal.
     require_signal_root(authority, target, &mut scratch)?;
-    let incomplete = signal_descendants_with(&descendants, |descendant| {
-        signal_exact_process(authority, descendant, target.group, signal, &mut scratch)
+    let descendant_delivery = signal_descendants_with(&descendants, |descendant| {
+        signal_exact_process(authority, descendant, signal, &mut scratch)
     });
-    // Keep the individual-to-group order deterministic and reject success if
-    // the retained root can no longer be inspected immediately before killpg.
-    require_signal_root(authority, target, &mut scratch)?;
-    finish_signal_delivery(incomplete, || {
-        classify_process_signal(rustix::process::kill_process_group(target.group, signal))
-    })
+    // Keep the individual-to-group order deterministic. Once any descendant
+    // attempt begins, neither a later root observation nor the final group
+    // syscall may downgrade the outcome to the pre-effect NotFound category.
+    finish_signal_delivery(
+        descendant_delivery,
+        || require_signal_root(authority, target, &mut scratch),
+        || classify_process_signal(rustix::process::kill_process_group(target.group, signal)),
+    )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct DescendantSignalDelivery {
+    attempted: bool,
+    incomplete: bool,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn finish_signal_delivery(
-    incomplete: bool,
+    descendant: DescendantSignalDelivery,
+    validate_root: impl FnOnce() -> Result<(), BackgroundProcessSignalError>,
     signal_group: impl FnOnce() -> Result<(), BackgroundProcessSignalError>,
 ) -> Result<(), BackgroundProcessSignalError> {
-    signal_group()?;
+    let root_result = validate_root();
+    if !descendant.attempted {
+        // No signal delivery has started, so an absent root is still the
+        // caller-visible NotFound case and the unvalidated group is untouched.
+        root_result?;
+    }
+    let mut incomplete = descendant.incomplete || root_result.is_err();
+    if signal_group().is_err() {
+        incomplete = true;
+    }
     if incomplete {
         return Err(signal_process_error());
     }
@@ -585,22 +604,33 @@ fn finish_signal_delivery(
 fn signal_descendants_with(
     descendants: &[SignalProcessSnapshot],
     mut send: impl FnMut(&SignalProcessSnapshot) -> Result<(), BackgroundProcessSignalError>,
-) -> bool {
-    let mut incomplete = false;
+) -> DescendantSignalDelivery {
+    let mut delivery = DescendantSignalDelivery::default();
     for descendant in descendants {
+        delivery.attempted = true;
         if send(descendant).is_err() {
-            incomplete = true;
+            delivery.incomplete = true;
         }
     }
-    incomplete
+    delivery
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn should_signal_individually(
-    current_group: Option<rustix::process::Pid>,
-    original_group: rustix::process::Pid,
-) -> bool {
-    current_group != Some(original_group)
+fn signal_identity_checked_descendant_with(
+    expected: &SignalProcessSnapshot,
+    current: Option<SignalProcessSnapshot>,
+    send: impl FnOnce() -> Result<(), BackgroundProcessSignalError>,
+) -> Result<(), BackgroundProcessSignalError> {
+    let Some(current) = current else {
+        return Ok(());
+    };
+    if !same_signal_process(expected, &current) {
+        return Ok(());
+    }
+    // Every admitted descendant gets an individual delivery. Filtering on an
+    // observed PGID would leave a race in which it could escape the original
+    // group before the final killpg call.
+    send()
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -3553,23 +3583,16 @@ fn signal_process_snapshot(
 fn signal_exact_process(
     authority: &GroupSnapshotAuthority,
     expected: &SignalProcessSnapshot,
-    original_group: rustix::process::Pid,
     signal: rustix::process::Signal,
     scratch: &mut SignalProcessScratch,
 ) -> Result<(), BackgroundProcessSignalError> {
-    let Some(current) = read_signal_process(authority, expected.pid, scratch)? else {
-        return Ok(());
-    };
-    if !same_signal_process(expected, &current) {
-        return Ok(());
-    }
-    if !should_signal_individually(current.group, original_group) {
-        return Ok(());
-    }
-    match rustix::process::kill_process(expected.pid, signal) {
-        Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
-        Err(_) => Err(signal_process_error()),
-    }
+    let current = read_signal_process(authority, expected.pid, scratch)?;
+    signal_identity_checked_descendant_with(expected, current, || {
+        match rustix::process::kill_process(expected.pid, signal) {
+            Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
+            Err(_) => Err(signal_process_error()),
+        }
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -3822,7 +3845,6 @@ fn read_linux_signal_children(
 fn signal_exact_process(
     authority: &GroupSnapshotAuthority,
     expected: &SignalProcessSnapshot,
-    original_group: rustix::process::Pid,
     signal: rustix::process::Signal,
     scratch: &mut SignalProcessScratch,
 ) -> Result<(), BackgroundProcessSignalError> {
@@ -3832,19 +3854,13 @@ fn signal_exact_process(
             Err(rustix::io::Errno::SRCH) => return Ok(()),
             Err(_) => return Err(signal_process_error()),
         };
-    let Some(current) = read_signal_process(authority, expected.pid, scratch)? else {
-        return Ok(());
-    };
-    if !same_signal_process(expected, &current) {
-        return Ok(());
-    }
-    if !should_signal_individually(current.group, original_group) {
-        return Ok(());
-    }
-    match rustix::process::pidfd_send_signal(process.as_fd(), signal) {
-        Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
-        Err(_) => Err(signal_process_error()),
-    }
+    let current = read_signal_process(authority, expected.pid, scratch)?;
+    signal_identity_checked_descendant_with(expected, current, || {
+        match rustix::process::pidfd_send_signal(process.as_fd(), signal) {
+            Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
+            Err(_) => Err(signal_process_error()),
+        }
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -5111,24 +5127,14 @@ mod process_regression_tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
-    fn signal_delivery_rechecks_groups_and_attempts_every_descendant() {
-        let original_group = rustix::process::Pid::from_raw(100).expect("positive group");
-        assert!(!should_signal_individually(
-            Some(original_group),
-            original_group
-        ));
-        assert!(should_signal_individually(
-            rustix::process::Pid::from_raw(101),
-            original_group
-        ));
-
+    fn signal_delivery_attempts_every_descendant_and_aggregates_failures() {
         let descendants = [
-            signal_snapshot(101, Some(100), 101, 1001),
+            signal_snapshot(101, Some(100), 100, 1001),
             signal_snapshot(102, Some(100), 102, 1002),
             signal_snapshot(103, Some(100), 103, 1003),
         ];
         let mut attempted = Vec::new();
-        let incomplete = signal_descendants_with(&descendants, |process| {
+        let delivery = signal_descendants_with(&descendants, |process| {
             let pid = process.pid.as_raw_nonzero().get();
             attempted.push(pid);
             if pid == 101 {
@@ -5137,20 +5143,109 @@ mod process_regression_tests {
                 Ok(())
             }
         });
-        assert!(incomplete);
+        assert_eq!(
+            delivery,
+            DescendantSignalDelivery {
+                attempted: true,
+                incomplete: true,
+            }
+        );
         assert_eq!(attempted, [101, 102, 103]);
 
+        let mut root_checked = false;
         let mut group_attempted = false;
         assert_eq!(
-            finish_signal_delivery(incomplete, || {
-                group_attempted = true;
-                Ok(())
-            })
+            finish_signal_delivery(
+                delivery,
+                || {
+                    root_checked = true;
+                    Ok(())
+                },
+                || {
+                    group_attempted = true;
+                    Ok(())
+                },
+            )
             .expect_err("partial descendant delivery cannot report success")
             .kind(),
             BackgroundProcessSignalErrorKind::Process
         );
+        assert!(root_checked, "the root is revalidated after descendants");
         assert!(group_attempted, "the original group is still attempted");
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn individually_signals_descendant_that_escapes_after_observation() {
+        let expected = signal_snapshot(101, Some(100), 100, 1001);
+        let observed_inside_original_group = expected;
+        let mut escaped_after_observation = false;
+        let mut individual_signal_sent = false;
+
+        signal_identity_checked_descendant_with(
+            &expected,
+            Some(observed_inside_original_group),
+            || {
+                // This hook models setsid racing after the exact-identity and
+                // group observation but before the individual signal syscall.
+                escaped_after_observation = true;
+                individual_signal_sent = true;
+                Ok(())
+            },
+        )
+        .expect("the exact descendant remains individually addressable");
+
+        assert!(escaped_after_observation);
+        assert!(
+            individual_signal_sent,
+            "an observed inside-group descendant cannot rely on the later group signal"
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn post_descendant_root_and_group_disappearance_is_process_failure() {
+        let delivery = DescendantSignalDelivery {
+            attempted: true,
+            incomplete: false,
+        };
+        let mut group_attempted = false;
+        let error = finish_signal_delivery(
+            delivery,
+            || Err(signal_not_found_error()),
+            || {
+                group_attempted = true;
+                Err(signal_not_found_error())
+            },
+        )
+        .expect_err("post-effect disappearance cannot be reported as not found");
+
+        assert_eq!(error.kind(), BackgroundProcessSignalErrorKind::Process);
+        assert!(
+            group_attempted,
+            "post-descendant root disappearance does not suppress the final group attempt"
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn pre_effect_root_disappearance_remains_not_found() {
+        let mut group_attempted = false;
+        let error = finish_signal_delivery(
+            DescendantSignalDelivery::default(),
+            || Err(signal_not_found_error()),
+            || {
+                group_attempted = true;
+                Ok(())
+            },
+        )
+        .expect_err("an absent root before any delivery is not found");
+
+        assert_eq!(error.kind(), BackgroundProcessSignalErrorKind::NotFound);
+        assert!(
+            !group_attempted,
+            "an unvalidated group must not be signalled"
+        );
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
