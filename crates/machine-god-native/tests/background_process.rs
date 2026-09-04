@@ -6,7 +6,8 @@ mod background_process;
 use background_process::BackgroundProcessHelper;
 use background_process::{
     BACKGROUND_PROCESS_TERM_GRACE, BackgroundProcessErrorKind, BackgroundProcessExit,
-    BackgroundProcessOutcome, BackgroundProcessRequest, MAX_BACKGROUND_PROCESS_COMMAND_BYTES,
+    BackgroundProcessOutcome, BackgroundProcessRequest, BackgroundProcessSignal,
+    BackgroundProcessSignalErrorKind, MAX_BACKGROUND_PROCESS_COMMAND_BYTES,
     MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES, OwnedBackgroundProcess,
     SystemBackgroundProcessAdapter, cancel_release_before_commit_for_test,
     cancellation_wakeup_latency_for_test, clear_release_before_commit_cancellation_for_test,
@@ -177,9 +178,10 @@ fn requested_environment_is_inert_until_release_and_frame_bytes_cannot_fake_read
 fn cancellation_after_complete_payload_before_commit_runs_no_user_command() {
     let directory = FreshDirectory::new("cancel-before-commit");
     let marker = directory.path().join("user-ran");
-    let prepared = adapter()
+    let mut prepared = adapter()
         .prepare(request(directory.path(), "printf user-ran > user-ran"))
         .expect("prepare inert helper");
+    let controller = prepared.attach_signal_controller().unwrap();
     let pid = prepared.pid();
     let cancellation = CancellationToken::new();
     cancel_release_before_commit_for_test(pid);
@@ -190,6 +192,7 @@ fn cancellation_after_complete_payload_before_commit_runs_no_user_command() {
 
     assert_eq!(error.kind(), BackgroundProcessErrorKind::Cancelled);
     assert!(cancellation.is_cancelled());
+    assert!(controller.is_closed_for_test());
     assert!(
         !marker.exists(),
         "complete payload without the final commit byte executed the user command"
@@ -267,11 +270,12 @@ fn incompatible_sigchld_modes_fail_before_the_requested_child_is_spawned() {
 #[test]
 fn external_reap_loses_authority_without_any_group_signal() {
     let directory = FreshDirectory::new("external-reap");
-    let owned = adapter()
+    let mut prepared = adapter()
         .prepare(request(directory.path(), "exit 0"))
-        .unwrap()
-        .release()
         .unwrap();
+    let controller = prepared.attach_signal_controller().unwrap();
+    let mut owned = prepared.release().unwrap();
+    owned.activate_signal_controller().unwrap();
     let leader = owned.pid();
     let pid = rustix::process::Pid::from_raw(i32::try_from(leader.get()).unwrap()).unwrap();
     rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::empty())
@@ -283,6 +287,7 @@ fn external_reap_loses_authority_without_any_group_signal() {
 
     assert_eq!(error.kind(), BackgroundProcessErrorKind::Wait);
     assert_eq!(group_signal_attempts_for_test(), 0);
+    assert!(controller.is_closed_for_test());
 }
 
 #[test]
@@ -570,14 +575,15 @@ fn group_cleanup_fails_closed_for_permission_denial_and_surviving_members() {
 fn waitid_and_snapshot_spawn_failures_keep_wait_precedence_and_cleanup() {
     let directory = FreshDirectory::new("waitid-cleanup-failure");
     let pid_file = directory.path().join("descendant.pid");
-    let owned = adapter()
+    let mut prepared = adapter()
         .prepare(request(
             directory.path(),
             "trap '' TERM; sleep 30 & printf '%s' \"$!\" > descendant.pid; while :; do :; done",
         ))
-        .unwrap()
-        .release()
         .unwrap();
+    let controller = prepared.attach_signal_controller().unwrap();
+    let mut owned = prepared.release().unwrap();
+    owned.activate_signal_controller().unwrap();
     let leader = owned.pid();
     let descendant = wait_for_pid(&pid_file);
     inject_waitid_failures_for_test(leader, 1);
@@ -587,6 +593,7 @@ fn waitid_and_snapshot_spawn_failures_keep_wait_precedence_and_cleanup() {
 
     assert_eq!(error.kind(), BackgroundProcessErrorKind::Wait);
     assert_processes_absent(&[leader.get(), descendant]);
+    assert!(controller.is_closed_for_test());
 }
 
 #[test]
@@ -913,6 +920,129 @@ fn cancellable_output_wait_drains_before_stop_and_reaps() {
     assert_eq!(outcome.unwrap(), BackgroundProcessOutcome::Stopped);
     assert_eq!(output, b"captured");
     assert!(!process_exists(pid));
+}
+
+#[test]
+fn attached_signal_controller_is_hidden_until_owned_activation_and_closes_after_wait() {
+    let directory = FreshDirectory::new("signal-controller");
+    let ready = directory.path().join("ready");
+    let terminated = directory.path().join("terminated");
+    let mut prepared = adapter()
+        .prepare(request(
+            directory.path(),
+            "trap 'printf terminated > terminated; exit 23' TERM; printf ready > ready; while :; do /bin/sleep 1; done",
+        ))
+        .unwrap();
+    let controller = prepared.attach_signal_controller().unwrap();
+    assert_eq!(
+        prepared
+            .attach_signal_controller()
+            .err()
+            .expect("a second attachment fails")
+            .kind(),
+        BackgroundProcessSignalErrorKind::AlreadyAttached
+    );
+    assert_eq!(
+        controller
+            .signal(BackgroundProcessSignal::Terminate)
+            .unwrap_err()
+            .kind(),
+        BackgroundProcessSignalErrorKind::NotFound
+    );
+
+    let mut owned = prepared.release().unwrap();
+    let pid = owned.pid().get();
+    assert_eq!(
+        controller
+            .signal(BackgroundProcessSignal::Terminate)
+            .unwrap_err()
+            .kind(),
+        BackgroundProcessSignalErrorKind::NotFound,
+        "release does not expose guessed-ID signal authority"
+    );
+    owned.activate_signal_controller().unwrap();
+    wait_for(&ready);
+    controller
+        .signal(BackgroundProcessSignal::Terminate)
+        .unwrap();
+
+    assert_eq!(owned.wait().unwrap(), BackgroundProcessExit::Exited(23));
+    assert_eq!(fs::read_to_string(terminated).unwrap(), "terminated");
+    assert!(!process_exists(pid), "normal wait must reap the leader");
+    assert_eq!(
+        controller
+            .signal(BackgroundProcessSignal::Kill)
+            .unwrap_err()
+            .kind(),
+        BackgroundProcessSignalErrorKind::NotFound,
+        "normal exit synchronously closes retained signal clones"
+    );
+}
+
+#[test]
+fn owned_wait_closes_signal_gate_before_reaping_the_identity_pin() {
+    let directory = FreshDirectory::new("signal-close-before-reap");
+    let ready = directory.path().join("ready");
+    let mut prepared = adapter()
+        .prepare(request(directory.path(), "printf ready > ready; exit 0"))
+        .unwrap();
+    let controller = prepared.attach_signal_controller().unwrap();
+    let mut owned = prepared.release().unwrap();
+    let pid = owned.pid().get();
+    owned.activate_signal_controller().unwrap();
+    wait_for(&ready);
+    let gate = controller.hold_gate_for_test();
+
+    let waiter = thread::spawn(move || owned.wait());
+    thread::sleep(Duration::from_millis(100));
+    assert!(
+        process_exists(pid),
+        "the retained leader was reaped while lifecycle close was blocked"
+    );
+    drop(gate);
+
+    assert_eq!(
+        waiter.join().unwrap().unwrap(),
+        BackgroundProcessExit::Exited(0)
+    );
+    assert!(!process_exists(pid));
+    assert_eq!(
+        controller
+            .signal(BackgroundProcessSignal::Interrupt)
+            .unwrap_err()
+            .kind(),
+        BackgroundProcessSignalErrorKind::NotFound
+    );
+}
+
+#[test]
+fn abort_stop_and_drop_close_all_attached_signal_clones() {
+    let directory = FreshDirectory::new("signal-lifecycle-close");
+
+    let mut prepared = adapter()
+        .prepare(request(directory.path(), "sleep 30"))
+        .unwrap();
+    let aborted = prepared.attach_signal_controller().unwrap();
+    prepared.abort_and_reap().unwrap();
+    assert!(aborted.is_closed_for_test());
+
+    let mut prepared = adapter()
+        .prepare(request(directory.path(), "sleep 30"))
+        .unwrap();
+    let stopped = prepared.attach_signal_controller().unwrap();
+    let mut owned = prepared.release().unwrap();
+    owned.activate_signal_controller().unwrap();
+    owned.stop().unwrap();
+    assert!(stopped.is_closed_for_test());
+
+    let mut prepared = adapter()
+        .prepare(request(directory.path(), "sleep 30"))
+        .unwrap();
+    let dropped = prepared.attach_signal_controller().unwrap();
+    let mut owned = prepared.release().unwrap();
+    owned.activate_signal_controller().unwrap();
+    drop(owned);
+    assert!(dropped.is_closed_for_test());
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

@@ -236,6 +236,199 @@ pub enum BackgroundProcessErrorKind {
     Invariant,
 }
 
+/// Closed set of signals accepted by the managed background-process control
+/// path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BackgroundProcessSignal {
+    Hangup,
+    Interrupt,
+    Quit,
+    Terminate,
+    Kill,
+}
+
+/// Stable failure category for one explicit managed-process signal attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BackgroundProcessSignalErrorKind {
+    /// No active identity-pinned process authority exists.
+    NotFound,
+    /// Another signal or lifecycle transition owns the per-process gate.
+    Busy,
+    /// The operating-system signal operation failed.
+    Process,
+    /// A prepared process already has an attached controller.
+    AlreadyAttached,
+    /// This operating system has no active adapter.
+    Unsupported,
+}
+
+/// Fixed, data-free native signal-control failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct BackgroundProcessSignalError {
+    kind: BackgroundProcessSignalErrorKind,
+}
+
+impl BackgroundProcessSignalError {
+    #[must_use]
+    pub(crate) const fn kind(self) -> BackgroundProcessSignalErrorKind {
+        self.kind
+    }
+
+    const fn new(kind: BackgroundProcessSignalErrorKind) -> Self {
+        Self { kind }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BackgroundProcessSignalState {
+    Hidden(rustix::process::Pid),
+    Active(rustix::process::Pid),
+    Closed,
+}
+
+/// Cloneable identity-pinned authority for one managed process group.
+///
+/// The controller starts hidden, becomes active only through its owning
+/// released process, and is synchronously closed by that owner's lifecycle
+/// gate before the retained leader can be reaped or released. It never derives
+/// signal authority from the display PID.
+#[derive(Clone)]
+pub(crate) struct BackgroundProcessSignalController {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    inner: Arc<Mutex<BackgroundProcessSignalState>>,
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    unsupported: (),
+}
+
+impl BackgroundProcessSignalController {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn hidden(group: rustix::process::Pid) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(BackgroundProcessSignalState::Hidden(group))),
+        }
+    }
+
+    pub(crate) fn signal(
+        &self,
+        signal: BackgroundProcessSignal,
+    ) -> Result<(), BackgroundProcessSignalError> {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            self.signal_with(signal, rustix::process::kill_process_group)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            let _ = (self, signal);
+            Err(BackgroundProcessSignalError::new(
+                BackgroundProcessSignalErrorKind::Unsupported,
+            ))
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn signal_with(
+        &self,
+        signal: BackgroundProcessSignal,
+        send: impl FnOnce(
+            rustix::process::Pid,
+            rustix::process::Signal,
+        ) -> Result<(), rustix::io::Errno>,
+    ) -> Result<(), BackgroundProcessSignalError> {
+        use std::sync::TryLockError;
+
+        let state = match self.inner.try_lock() {
+            Ok(state) => state,
+            Err(TryLockError::WouldBlock) => return Err(signal_busy_error()),
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        };
+        let BackgroundProcessSignalState::Active(group) = *state else {
+            return Err(signal_not_found_error());
+        };
+        classify_process_signal(send(group, process_signal(signal)))
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn activate(&self) -> Result<(), BackgroundProcessSignalError> {
+        use std::sync::TryLockError;
+
+        let mut state = match self.inner.try_lock() {
+            Ok(state) => state,
+            Err(TryLockError::WouldBlock) => return Err(signal_busy_error()),
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        };
+        match *state {
+            BackgroundProcessSignalState::Hidden(group) => {
+                *state = BackgroundProcessSignalState::Active(group);
+                Ok(())
+            }
+            BackgroundProcessSignalState::Active(_) => Ok(()),
+            BackgroundProcessSignalState::Closed => Err(signal_not_found_error()),
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn close(&self) {
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *state = BackgroundProcessSignalState::Closed;
+    }
+
+    #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+    pub(crate) fn hold_gate_for_test(&self) -> impl Drop + '_ {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+    pub(crate) fn is_closed_for_test(&self) -> bool {
+        matches!(
+            *self
+                .inner
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            BackgroundProcessSignalState::Closed
+        )
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const fn process_signal(signal: BackgroundProcessSignal) -> rustix::process::Signal {
+    match signal {
+        BackgroundProcessSignal::Hangup => rustix::process::Signal::HUP,
+        BackgroundProcessSignal::Interrupt => rustix::process::Signal::INT,
+        BackgroundProcessSignal::Quit => rustix::process::Signal::QUIT,
+        BackgroundProcessSignal::Terminate => rustix::process::Signal::TERM,
+        BackgroundProcessSignal::Kill => rustix::process::Signal::KILL,
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn classify_process_signal(
+    result: Result<(), rustix::io::Errno>,
+) -> Result<(), BackgroundProcessSignalError> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(rustix::io::Errno::SRCH) => Err(signal_not_found_error()),
+        Err(_) => Err(BackgroundProcessSignalError::new(
+            BackgroundProcessSignalErrorKind::Process,
+        )),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const fn signal_not_found_error() -> BackgroundProcessSignalError {
+    BackgroundProcessSignalError::new(BackgroundProcessSignalErrorKind::NotFound)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const fn signal_busy_error() -> BackgroundProcessSignalError {
+    BackgroundProcessSignalError::new(BackgroundProcessSignalErrorKind::Busy)
+}
+
 /// Fixed, data-free native process failure.
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct BackgroundProcessError {
@@ -860,6 +1053,7 @@ pub struct PreparedBackgroundProcess {
     reap_permit: Option<ChildReapPermit>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     output: Option<ChildStderr>,
+    signal_controller: Option<BackgroundProcessSignalController>,
     pid: NonZeroU32,
 }
 
@@ -868,6 +1062,29 @@ impl PreparedBackgroundProcess {
     #[must_use]
     pub const fn pid(&self) -> NonZeroU32 {
         self.pid
+    }
+
+    /// Attaches one hidden, identity-pinned signal controller before release.
+    pub(crate) fn attach_signal_controller(
+        &mut self,
+    ) -> Result<BackgroundProcessSignalController, BackgroundProcessSignalError> {
+        if self.signal_controller.is_some() {
+            return Err(BackgroundProcessSignalError::new(
+                BackgroundProcessSignalErrorKind::AlreadyAttached,
+            ));
+        }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            let controller = BackgroundProcessSignalController::hidden(self.group);
+            self.signal_controller = Some(controller.clone());
+            Ok(controller)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            Err(BackgroundProcessSignalError::new(
+                BackgroundProcessSignalErrorKind::Unsupported,
+            ))
+        }
     }
 
     /// Releases the private start gate and transfers process ownership.
@@ -965,6 +1182,7 @@ pub struct OwnedBackgroundProcess {
     reap_permit: Option<ChildReapPermit>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     output: Option<ChildStderr>,
+    signal_controller: Option<BackgroundProcessSignalController>,
     pid: NonZeroU32,
 }
 
@@ -973,6 +1191,29 @@ impl OwnedBackgroundProcess {
     #[must_use]
     pub const fn pid(&self) -> NonZeroU32 {
         self.pid
+    }
+
+    /// Makes the attached controller visible only after a host has retained
+    /// this owned process in its authoritative registry.
+    pub(crate) fn activate_signal_controller(
+        &mut self,
+    ) -> Result<(), BackgroundProcessSignalError> {
+        let Some(controller) = self.signal_controller.as_ref() else {
+            return Err(BackgroundProcessSignalError::new(
+                BackgroundProcessSignalErrorKind::NotFound,
+            ));
+        };
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            controller.activate()
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            let _ = controller;
+            Err(BackgroundProcessSignalError::new(
+                BackgroundProcessSignalErrorKind::Unsupported,
+            ))
+        }
     }
 
     /// Waits for the direct child, cleans the bounded owned-member set, proves
@@ -1554,6 +1795,7 @@ fn prepare_system(
         snapshot_authority: Some(snapshot_authority),
         reap_permit,
         output: Some(output),
+        signal_controller: None,
         pid,
     })
 }
@@ -1725,6 +1967,7 @@ fn release_prepared(
         snapshot_authority: Some(snapshot_authority),
         reap_permit: Some(reap_permit),
         output: capture_output.then_some(output),
+        signal_controller: prepared.signal_controller.take(),
         pid: prepared.pid,
     })
 }
@@ -1958,6 +2201,7 @@ fn release_prepared(
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn abort_prepared(prepared: &mut PreparedBackgroundProcess) -> Result<(), BackgroundProcessError> {
+    close_signal_controller(&mut prepared.signal_controller);
     drop(prepared.gate.take());
     drop(prepared.output.take());
     if prepared.child.is_none() {
@@ -1998,6 +2242,7 @@ fn wait_owned_with_output(
     output: &mut impl FnMut(&[u8]),
 ) -> Result<BackgroundProcessExit, BackgroundProcessError> {
     if owned.child.is_none() {
+        close_signal_controller(&mut owned.signal_controller);
         return Err(invariant_error());
     }
     let mut observation = ObservationBackoff::new();
@@ -2015,6 +2260,7 @@ fn wait_owned_with_output(
         };
         match observe_leader(owned.group) {
             Err(LeaderObservationFailure::LostAuthority) => {
+                close_signal_controller(&mut owned.signal_controller);
                 drop(owned.child.take());
                 return Err(wait_error());
             }
@@ -2057,6 +2303,7 @@ fn wait_owned_with_stop_and_output(
     output: &mut impl FnMut(&[u8]),
 ) -> Result<BackgroundProcessOutputOutcome, BackgroundProcessError> {
     if owned.child.is_none() {
+        close_signal_controller(&mut owned.signal_controller);
         return Err(invariant_error());
     }
     let mut observation = ObservationBackoff::new();
@@ -2095,6 +2342,7 @@ fn wait_owned_with_stop_and_output(
             }
             Ok(None) => {}
             Err(LeaderObservationFailure::LostAuthority) => {
+                close_signal_controller(&mut owned.signal_controller);
                 drop(owned.child.take());
                 return Err(wait_error());
             }
@@ -2214,6 +2462,7 @@ fn finish_background_output_bounded<R: std::io::Read>(
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn stop_owned(owned: &mut OwnedBackgroundProcess) -> Result<(), BackgroundProcessError> {
+    close_signal_controller(&mut owned.signal_controller);
     if owned.child.is_none() {
         return Ok(());
     }
@@ -2490,6 +2739,7 @@ fn cleanup_owned_child(
     expected: Option<BackgroundProcessExit>,
     force_cleanup: bool,
 ) -> Result<(), BackgroundProcessError> {
+    close_signal_controller(&mut owned.signal_controller);
     if owned.child.is_none() {
         return Err(invariant_error());
     }
@@ -2506,6 +2756,13 @@ fn cleanup_owned_child(
         force_cleanup,
         authority,
     )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn close_signal_controller(controller: &mut Option<BackgroundProcessSignalController>) {
+    if let Some(controller) = controller.take() {
+        controller.close();
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -3884,6 +4141,151 @@ mod process_regression_tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn test_signal_controller() -> BackgroundProcessSignalController {
+        BackgroundProcessSignalController::hidden(
+            rustix::process::Pid::from_raw(4242).expect("positive test process group"),
+        )
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn process_signal_mapping_is_closed_and_exact() {
+        assert_eq!(
+            process_signal(BackgroundProcessSignal::Hangup),
+            rustix::process::Signal::HUP
+        );
+        assert_eq!(
+            process_signal(BackgroundProcessSignal::Interrupt),
+            rustix::process::Signal::INT
+        );
+        assert_eq!(
+            process_signal(BackgroundProcessSignal::Quit),
+            rustix::process::Signal::QUIT
+        );
+        assert_eq!(
+            process_signal(BackgroundProcessSignal::Terminate),
+            rustix::process::Signal::TERM
+        );
+        assert_eq!(
+            process_signal(BackgroundProcessSignal::Kill),
+            rustix::process::Signal::KILL
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn signal_controller_enforces_hidden_active_closed_states() {
+        let controller = test_signal_controller();
+        let mut sends = 0_usize;
+        let hidden = controller.signal_with(BackgroundProcessSignal::Terminate, |_, _| {
+            sends += 1;
+            Ok(())
+        });
+        assert_eq!(
+            hidden.unwrap_err().kind(),
+            BackgroundProcessSignalErrorKind::NotFound
+        );
+        assert_eq!(sends, 0);
+
+        controller.activate().expect("activate hidden controller");
+        controller
+            .signal_with(BackgroundProcessSignal::Interrupt, |group, signal| {
+                sends += 1;
+                assert_eq!(group.as_raw_nonzero().get(), 4242);
+                assert_eq!(signal, rustix::process::Signal::INT);
+                Ok(())
+            })
+            .expect("active controller accepts exact group signal");
+        assert_eq!(sends, 1);
+
+        controller.close();
+        let closed = controller.signal_with(BackgroundProcessSignal::Kill, |_, _| {
+            sends += 1;
+            Ok(())
+        });
+        assert_eq!(
+            closed.unwrap_err().kind(),
+            BackgroundProcessSignalErrorKind::NotFound
+        );
+        assert_eq!(sends, 1);
+        assert_eq!(
+            controller.activate().unwrap_err().kind(),
+            BackgroundProcessSignalErrorKind::NotFound
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn signal_controller_has_fixed_os_error_mapping() {
+        let controller = test_signal_controller();
+        controller.activate().expect("activate controller");
+
+        controller
+            .signal_with(BackgroundProcessSignal::Hangup, |_, _| Ok(()))
+            .expect("accepted killpg is success");
+        assert_eq!(
+            controller
+                .signal_with(BackgroundProcessSignal::Quit, |_, _| {
+                    Err(rustix::io::Errno::SRCH)
+                })
+                .unwrap_err()
+                .kind(),
+            BackgroundProcessSignalErrorKind::NotFound
+        );
+        assert_eq!(
+            controller
+                .signal_with(BackgroundProcessSignal::Quit, |_, _| {
+                    Err(rustix::io::Errno::PERM)
+                })
+                .unwrap_err()
+                .kind(),
+            BackgroundProcessSignalErrorKind::Process
+        );
+        assert_eq!(
+            controller
+                .signal_with(BackgroundProcessSignal::Quit, |_, _| {
+                    Err(rustix::io::Errno::INTR)
+                })
+                .unwrap_err()
+                .kind(),
+            BackgroundProcessSignalErrorKind::Process,
+            "signals are neither retried nor escalated"
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn signal_controller_reports_gate_contention_without_an_os_effect() {
+        let controller = test_signal_controller();
+        let held = controller
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(
+            controller.activate().unwrap_err().kind(),
+            BackgroundProcessSignalErrorKind::Busy
+        );
+        drop(held);
+        controller.activate().expect("activate controller");
+        let held = controller
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut sent = false;
+
+        let error = controller
+            .signal_with(BackgroundProcessSignal::Kill, |_, _| {
+                sent = true;
+                Ok(())
+            })
+            .expect_err("held per-process gate is busy");
+
+        assert_eq!(error.kind(), BackgroundProcessSignalErrorKind::Busy);
+        assert!(!sent);
+        drop(held);
+    }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     struct AlwaysInterruptedReader {
