@@ -251,11 +251,19 @@ struct FakeBackgroundOutputReader {
 type BackgroundReadRequest = (String, String, u64, u64, u64);
 
 impl FakeBackgroundOutputReader {
+    fn snapshot(snapshot: TerminalBackgroundReadSnapshot) -> Self {
+        Self {
+            result: Ok(snapshot),
+            requests: Arc::new(Mutex::new(Vec::new())),
+            pending: false,
+        }
+    }
+
     fn success(bytes: Vec<u8>, closed: bool) -> Self {
         let length = u64::try_from(bytes.len()).unwrap();
         Self {
             result: TerminalBackgroundReadSnapshot::new(
-                bytes, length, length, length, false, closed,
+                bytes, length, length, length, 0, false, closed,
             ),
             requests: Arc::new(Mutex::new(Vec::new())),
             pending: false,
@@ -1964,6 +1972,146 @@ fn background_read_has_one_closed_same_incarnation_no_authority_form() {
     );
     assert_eq!(starter.calls(), 0);
     assert_eq!(executor.calls(), 0);
+}
+
+#[test]
+fn background_read_preserves_utf8_pages_and_live_partial_scalars() {
+    let temporary = TemporaryDirectory::new("background-read-utf8");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let page_prefix = vec![b'a'; MAX_TERMINAL_BACKGROUND_READ_BYTES - 1];
+    let first_reader = FakeBackgroundOutputReader::snapshot(
+        TerminalBackgroundReadSnapshot::new(
+            page_prefix.clone(),
+            u64::try_from(page_prefix.len()).unwrap(),
+            u64::try_from(page_prefix.len() + 2).unwrap(),
+            u64::try_from(page_prefix.len() + 2).unwrap(),
+            0,
+            false,
+            true,
+        )
+        .unwrap(),
+    );
+    let first_tool = reading_tool(temporary.path(), &executor, &starter, &first_reader);
+    let first = poll_ready(first_tool.execute(
+        context(),
+        json!({
+            "action": "read",
+            "background_id": 7,
+            "cursor_segment": 1,
+            "cursor_offset": 0
+        }),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+    assert_eq!(first.content["output"], "a".repeat(page_prefix.len()));
+    assert_eq!(first.content["lossy"], false);
+
+    let second_reader = FakeBackgroundOutputReader::snapshot(
+        TerminalBackgroundReadSnapshot::new(
+            "é".as_bytes().to_vec(),
+            u64::try_from(page_prefix.len() + 2).unwrap(),
+            u64::try_from(page_prefix.len() + 2).unwrap(),
+            u64::try_from(page_prefix.len() + 2).unwrap(),
+            0,
+            false,
+            true,
+        )
+        .unwrap(),
+    );
+    let second_tool = reading_tool(temporary.path(), &executor, &starter, &second_reader);
+    let second = poll_ready(second_tool.execute(
+        context(),
+        json!({
+            "action": "read",
+            "background_id": 7,
+            "cursor_segment": 1,
+            "cursor_offset": page_prefix.len()
+        }),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+    assert_eq!(second.content["output"], "é");
+    assert_eq!(second.content["lossy"], false);
+
+    let partial_reader = FakeBackgroundOutputReader::snapshot(
+        TerminalBackgroundReadSnapshot::new(Vec::new(), 0, 1, 1, 1, false, false).unwrap(),
+    );
+    let partial_tool = reading_tool(temporary.path(), &executor, &starter, &partial_reader);
+    let partial = poll_ready(partial_tool.execute(
+        context(),
+        json!({
+            "action": "read",
+            "background_id": 7,
+            "cursor_segment": 1,
+            "cursor_offset": 0
+        }),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+    assert_eq!(partial.content["output"], "");
+    assert_eq!(partial.content["cursor_offset"], 0);
+    assert_eq!(partial.content["lossy"], false);
+    assert_eq!(partial.content["stream_closed"], false);
+
+    let completed_reader = FakeBackgroundOutputReader::snapshot(
+        TerminalBackgroundReadSnapshot::new("é".as_bytes().to_vec(), 2, 2, 2, 0, false, false)
+            .unwrap(),
+    );
+    let completed_tool = reading_tool(temporary.path(), &executor, &starter, &completed_reader);
+    let completed = poll_ready(completed_tool.execute(
+        context(),
+        json!({
+            "action": "read",
+            "background_id": 7,
+            "cursor_segment": 1,
+            "cursor_offset": 0
+        }),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+    assert_eq!(completed.content["output"], "é");
+    assert_eq!(completed.content["cursor_offset"], 2);
+    assert_eq!(completed.content["lossy"], false);
+}
+
+#[test]
+fn background_read_rejects_malformed_reader_pages() {
+    for malformed in [
+        TerminalBackgroundReadSnapshot::new(Vec::new(), 0, 1, 1, 0, false, false),
+        TerminalBackgroundReadSnapshot::new(vec![b'a', b'b'], 2, 2, 1, 0, true, true),
+        TerminalBackgroundReadSnapshot::new(Vec::new(), 0, 1, 1, 1, false, true),
+    ] {
+        assert_eq!(
+            malformed.unwrap_err().kind(),
+            TerminalBackgroundReadErrorKind::Unavailable
+        );
+    }
+
+    let temporary = TemporaryDirectory::new("background-read-malformed");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let reader = FakeBackgroundOutputReader::snapshot(
+        TerminalBackgroundReadSnapshot::new(vec![b'x'], 2, 2, 2, 0, false, true).unwrap(),
+    );
+    let tool = reading_tool(temporary.path(), &executor, &starter, &reader);
+    let error = poll_ready(tool.execute(
+        context(),
+        json!({
+            "action": "read",
+            "background_id": 7,
+            "cursor_segment": 1,
+            "cursor_offset": 0
+        }),
+        CancellationToken::new(),
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "terminal_read_resource_limit");
+    assert!(!error.retryable);
 }
 
 #[test]

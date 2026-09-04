@@ -583,6 +583,7 @@ pub struct TerminalBackgroundReadSnapshot {
     next_offset: u64,
     produced_bytes: u64,
     retained_bytes: u64,
+    pending_utf8_bytes: u8,
     truncated: bool,
     closed: bool,
 }
@@ -599,14 +600,31 @@ impl TerminalBackgroundReadSnapshot {
         next_offset: u64,
         produced_bytes: u64,
         retained_bytes: u64,
+        pending_utf8_bytes: u8,
         truncated: bool,
         closed: bool,
     ) -> Result<Self, TerminalBackgroundReadError> {
+        let page_bytes = u64::try_from(bytes.len()).map_err(|_| {
+            TerminalBackgroundReadError::new(TerminalBackgroundReadErrorKind::Unavailable)
+        })?;
+        let ordinary_page_shape = pending_utf8_bytes == 0
+            && if bytes.is_empty() {
+                next_offset >= retained_bytes
+            } else {
+                page_bytes <= next_offset && next_offset <= retained_bytes
+            };
+        let pending_page_shape = matches!(pending_utf8_bytes, 1..=3)
+            && bytes.is_empty()
+            && !closed
+            && !truncated
+            && next_offset < retained_bytes
+            && next_offset.checked_add(u64::from(pending_utf8_bytes)) == Some(retained_bytes);
         if bytes.len() > MAX_TERMINAL_BACKGROUND_READ_BYTES
             || retained_bytes > MAX_TERMINAL_RETAINED_OUTPUT_BYTES as u64
             || retained_bytes > produced_bytes
             || truncated != (retained_bytes < produced_bytes)
             || next_offset > produced_bytes
+            || (!ordinary_page_shape && !pending_page_shape)
         {
             return Err(TerminalBackgroundReadError::new(
                 TerminalBackgroundReadErrorKind::Unavailable,
@@ -617,6 +635,7 @@ impl TerminalBackgroundReadSnapshot {
             next_offset,
             produced_bytes,
             retained_bytes,
+            pending_utf8_bytes,
             truncated,
             closed,
         })
@@ -642,6 +661,10 @@ impl TerminalBackgroundReadSnapshot {
         self.retained_bytes
     }
 
+    const fn pending_utf8_bytes(&self) -> u8 {
+        self.pending_utf8_bytes
+    }
+
     #[must_use]
     pub const fn truncated(&self) -> bool {
         self.truncated
@@ -661,6 +684,7 @@ impl fmt::Debug for TerminalBackgroundReadSnapshot {
             .field("next_offset", &self.next_offset)
             .field("produced_bytes", &self.produced_bytes)
             .field("retained_bytes", &self.retained_bytes)
+            .field("pending_utf8_bytes", &self.pending_utf8_bytes)
             .field("truncated", &self.truncated)
             .field("closed", &self.closed)
             .finish()
@@ -2467,13 +2491,28 @@ impl TerminalTool {
         let expected_next = cursor_offset
             .checked_add(page_bytes)
             .ok_or_else(background_read_resource_limit)?;
-        let skipped_truncated_suffix = snapshot.bytes().is_empty()
-            && snapshot.truncated()
-            && cursor_offset >= snapshot.retained_bytes()
-            && snapshot.next_offset() == snapshot.produced_bytes();
+        let within_prefix = cursor_offset < snapshot.retained_bytes();
+        let valid_prefix_page = within_prefix
+            && !snapshot.bytes().is_empty()
+            && snapshot.pending_utf8_bytes() == 0
+            && snapshot.next_offset() == expected_next
+            && snapshot.next_offset() > cursor_offset
+            && snapshot.next_offset() <= snapshot.retained_bytes();
+        let valid_pending_scalar = within_prefix
+            && snapshot.bytes().is_empty()
+            && matches!(snapshot.pending_utf8_bytes(), 1..=3)
+            && !snapshot.closed()
+            && !snapshot.truncated()
+            && snapshot.next_offset() == cursor_offset
+            && cursor_offset.checked_add(u64::from(snapshot.pending_utf8_bytes()))
+                == Some(snapshot.retained_bytes());
+        let valid_end = !within_prefix
+            && snapshot.pending_utf8_bytes() == 0
+            && snapshot.bytes().is_empty()
+            && snapshot.next_offset() == snapshot.produced_bytes()
+            && (snapshot.truncated() || cursor_offset == snapshot.produced_bytes());
         if cursor_offset > snapshot.produced_bytes()
-            || snapshot.next_offset() < cursor_offset
-            || (snapshot.next_offset() != expected_next && !skipped_truncated_suffix)
+            || (!valid_prefix_page && !valid_pending_scalar && !valid_end)
         {
             return Err(background_read_resource_limit());
         }

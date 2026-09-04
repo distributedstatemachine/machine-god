@@ -176,6 +176,7 @@ impl TerminalBackgroundOutputReader for FakeBackgroundOutputReader {
                 15,
                 15,
                 15,
+                0,
                 false,
                 true,
             )

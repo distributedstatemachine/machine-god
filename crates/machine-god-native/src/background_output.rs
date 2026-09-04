@@ -71,6 +71,7 @@ pub(crate) struct BackgroundOutputSnapshot {
     next_offset: u64,
     produced_bytes: u64,
     retained_bytes: u64,
+    pending_utf8_bytes: u8,
     closed: bool,
 }
 
@@ -95,6 +96,11 @@ impl BackgroundOutputSnapshot {
         self.retained_bytes
     }
 
+    /// Returns a live trailing byte count withheld until its UTF-8 scalar is complete.
+    pub(crate) const fn pending_utf8_bytes(&self) -> u8 {
+        self.pending_utf8_bytes
+    }
+
     /// Reports whether produced bytes extend beyond the retained prefix.
     pub(crate) const fn truncated(&self) -> bool {
         self.produced_bytes > self.retained_bytes
@@ -114,6 +120,7 @@ impl fmt::Debug for BackgroundOutputSnapshot {
             .field("next_offset", &self.next_offset)
             .field("produced_bytes", &self.produced_bytes)
             .field("retained_bytes", &self.retained_bytes)
+            .field("pending_utf8_bytes", &self.pending_utf8_bytes)
             .field("closed", &self.closed)
             .finish()
     }
@@ -251,21 +258,39 @@ impl BackgroundOutputRegistry {
         }
 
         let retained_bytes = entry.bytes.len() as u64;
-        let (bytes, next_offset) = if offset >= retained_bytes {
-            (Vec::new(), entry.produced_bytes)
+        let (bytes, next_offset, pending_utf8_bytes) = if offset >= retained_bytes {
+            (Vec::new(), entry.produced_bytes, 0)
         } else {
             let start = usize::try_from(offset)
                 .expect("an offset below the retained byte bound always fits usize");
-            let end = start
+            let candidate_end = start
                 .saturating_add(MAX_BACKGROUND_OUTPUT_READ_BYTES)
                 .min(entry.bytes.len());
-            (entry.bytes[start..end].to_vec(), end as u64)
+            let preserve_incomplete_suffix = candidate_end < entry.bytes.len()
+                || (!entry.closed && entry.produced_bytes == retained_bytes);
+            let pending = if preserve_incomplete_suffix {
+                incomplete_utf8_suffix_len(&entry.bytes[start..candidate_end])
+            } else {
+                0
+            };
+            let end = candidate_end - pending;
+            let pending_utf8_bytes = if end == start {
+                u8::try_from(pending).expect("a UTF-8 scalar has at most three pending bytes")
+            } else {
+                0
+            };
+            (
+                entry.bytes[start..end].to_vec(),
+                end as u64,
+                pending_utf8_bytes,
+            )
         };
         Ok(BackgroundOutputSnapshot {
             bytes,
             next_offset,
             produced_bytes: entry.produced_bytes,
             retained_bytes,
+            pending_utf8_bytes,
             closed: entry.closed,
         })
     }
@@ -310,6 +335,54 @@ const fn error(kind: BackgroundOutputErrorKind) -> BackgroundOutputError {
 
 fn saturating_add_length(produced_bytes: u64, appended_bytes: usize) -> u64 {
     produced_bytes.saturating_add(u64::try_from(appended_bytes).unwrap_or(u64::MAX))
+}
+
+fn incomplete_utf8_suffix_len(bytes: &[u8]) -> usize {
+    let continuation_bytes = bytes
+        .iter()
+        .rev()
+        .take(3)
+        .take_while(|byte| matches!(byte, 0x80..=0xbf))
+        .count();
+    let Some(lead_index) = bytes.len().checked_sub(continuation_bytes + 1) else {
+        return 0;
+    };
+    let lead = bytes[lead_index];
+    let expected_length = match lead {
+        0xc2..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf4 => 4,
+        _ => return 0,
+    };
+    let available_length = continuation_bytes + 1;
+    if available_length >= expected_length
+        || !partial_utf8_scalar_is_valid(&bytes[lead_index..], expected_length)
+    {
+        0
+    } else {
+        available_length
+    }
+}
+
+fn partial_utf8_scalar_is_valid(bytes: &[u8], expected_length: usize) -> bool {
+    if bytes.len() >= 2 {
+        let second = bytes[1];
+        let valid_second = match bytes[0] {
+            0xe0 => matches!(second, 0xa0..=0xbf),
+            0xed => matches!(second, 0x80..=0x9f),
+            0xf0 => matches!(second, 0x90..=0xbf),
+            0xf4 => matches!(second, 0x80..=0x8f),
+            _ => matches!(second, 0x80..=0xbf),
+        };
+        if !valid_second {
+            return false;
+        }
+    }
+    bytes
+        .iter()
+        .skip(2)
+        .take(expected_length.saturating_sub(2))
+        .all(|byte| matches!(byte, 0x80..=0xbf))
 }
 
 #[cfg(test)]
@@ -419,6 +492,79 @@ mod tests {
                 .kind(),
             BackgroundOutputErrorKind::InvalidRequest
         );
+    }
+
+    #[test]
+    fn pages_preserve_a_valid_utf8_scalar_across_the_raw_page_boundary() {
+        let registry = BackgroundOutputRegistry::new();
+        let owner = owner("utf8-page");
+        visible(&registry, 1, owner.clone());
+        let mut output = vec![b'a'; MAX_BACKGROUND_OUTPUT_READ_BYTES - 1];
+        output.extend_from_slice("é".as_bytes());
+        registry.append(1, &output).unwrap();
+        registry.close(1).unwrap();
+
+        let first = registry
+            .read(1, &owner, BACKGROUND_OUTPUT_SEGMENT, 0)
+            .unwrap();
+        assert_eq!(
+            first.bytes(),
+            &output[..MAX_BACKGROUND_OUTPUT_READ_BYTES - 1]
+        );
+        assert_eq!(
+            first.next_offset(),
+            (MAX_BACKGROUND_OUTPUT_READ_BYTES - 1) as u64
+        );
+        assert_eq!(first.pending_utf8_bytes(), 0);
+
+        let second = registry
+            .read(1, &owner, BACKGROUND_OUTPUT_SEGMENT, first.next_offset())
+            .unwrap();
+        assert_eq!(second.bytes(), "é".as_bytes());
+        assert_eq!(second.next_offset(), output.len() as u64);
+        assert_eq!(second.pending_utf8_bytes(), 0);
+    }
+
+    #[test]
+    fn live_incomplete_utf8_scalar_waits_without_loss_then_advances() {
+        let registry = BackgroundOutputRegistry::new();
+        let owner = owner("utf8-live");
+        visible(&registry, 1, owner.clone());
+        registry.append(1, &[0xc3]).unwrap();
+
+        let pending = registry
+            .read(1, &owner, BACKGROUND_OUTPUT_SEGMENT, 0)
+            .unwrap();
+        assert!(pending.bytes().is_empty());
+        assert_eq!(pending.next_offset(), 0);
+        assert_eq!(pending.retained_bytes(), 1);
+        assert_eq!(pending.pending_utf8_bytes(), 1);
+        assert!(!pending.closed());
+
+        registry.append(1, &[0xa9]).unwrap();
+        let complete = registry
+            .read(1, &owner, BACKGROUND_OUTPUT_SEGMENT, 0)
+            .unwrap();
+        assert_eq!(complete.bytes(), "é".as_bytes());
+        assert_eq!(complete.next_offset(), 2);
+        assert_eq!(complete.pending_utf8_bytes(), 0);
+    }
+
+    #[test]
+    fn closed_incomplete_utf8_suffix_is_returned_for_lossy_decoding() {
+        let registry = BackgroundOutputRegistry::new();
+        let owner = owner("utf8-closed-incomplete");
+        visible(&registry, 1, owner.clone());
+        registry.append(1, &[0xc3]).unwrap();
+        registry.close(1).unwrap();
+
+        let snapshot = registry
+            .read(1, &owner, BACKGROUND_OUTPUT_SEGMENT, 0)
+            .unwrap();
+        assert_eq!(snapshot.bytes(), &[0xc3]);
+        assert_eq!(snapshot.next_offset(), 1);
+        assert_eq!(snapshot.pending_utf8_bytes(), 0);
+        assert!(snapshot.closed());
     }
 
     #[test]

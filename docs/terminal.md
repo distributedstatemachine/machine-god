@@ -263,9 +263,13 @@ at most 100 closed streams, evicting only the oldest closed stream. It retains
 the first 64 KiB per stream and counts all produced bytes with saturation. One
 read returns at most 7 KiB. That page bound keeps the complete result below the
 48 KiB serialized-result limit even when every byte needs a six-byte JSON
-control escape. Invalid UTF-8 is replaced lossily and reported. Captured bytes,
-owner identities, commands, paths, and native errors are absent from Debug and
-error values.
+control escape. Pages retreat from their raw size boundary rather than split a
+potentially valid UTF-8 scalar. A trailing partial scalar in an open stream is
+temporarily withheld with an unchanged cursor and `lossy: false`; once its
+remaining bytes arrive it is returned intact, while an incomplete scalar at
+stream close is invalid UTF-8 and is replaced lossily. Other invalid UTF-8 is
+likewise replaced and reported. Captured bytes, owner identities, commands,
+paths, and native errors are absent from Debug and error values.
 
 The registry entry is hidden until process release commits. A failed or dropped
 pre-release start removes it. After release, reads require the exact

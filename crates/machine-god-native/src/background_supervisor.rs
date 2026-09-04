@@ -697,6 +697,7 @@ fn read_output_snapshot(
             snapshot.next_offset(),
             snapshot.produced_bytes(),
             snapshot.retained_bytes(),
+            snapshot.pending_utf8_bytes(),
             snapshot.truncated(),
             snapshot.closed(),
         )
