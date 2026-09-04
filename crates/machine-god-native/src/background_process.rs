@@ -355,6 +355,8 @@ pub(crate) struct BackgroundProcessSignalController {
     inner: Arc<Mutex<BackgroundProcessSignalState>>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     close_requested: Arc<AtomicBool>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    signal_reserved: Arc<AtomicBool>,
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     unsupported: (),
 }
@@ -369,6 +371,7 @@ impl BackgroundProcessSignalController {
         Ok(Self {
             inner: Arc::new(Mutex::new(BackgroundProcessSignalState::Hidden(target))),
             close_requested: Arc::new(AtomicBool::new(false)),
+            signal_reserved: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -379,6 +382,7 @@ impl BackgroundProcessSignalController {
                 ProcessSignalTarget::fake(group),
             ))),
             close_requested: Arc::new(AtomicBool::new(false)),
+            signal_reserved: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -388,7 +392,9 @@ impl BackgroundProcessSignalController {
     ) -> Result<(), BackgroundProcessSignalError> {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
-            self.with_active_target(|target| signal_process_tree(target, process_signal(signal)))
+            self.signal_operation_with(prepare_signal_process_tree, |target, prepared| {
+                deliver_signal_process_tree(target, process_signal(signal), &prepared)
+            })
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
@@ -435,6 +441,64 @@ impl BackgroundProcessSignalController {
             return Err(signal_not_found_error());
         };
         operation(target)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn signal_operation_with<Prepared>(
+        &self,
+        prepare: impl FnOnce(&ProcessSignalTarget) -> Result<Prepared, BackgroundProcessSignalError>,
+        deliver: impl FnOnce(&ProcessSignalTarget, Prepared) -> Result<(), BackgroundProcessSignalError>,
+    ) -> Result<(), BackgroundProcessSignalError> {
+        let _reservation = self.reserve_signal()?;
+        let target = self.active_target()?;
+        // Process-table reads may enter the kernel. They deliberately run
+        // without the lifecycle mutex so close can revoke admission and reap
+        // the retained child even if one observation stalls.
+        let prepared = prepare(&target)?;
+        self.with_active_target(|current| {
+            if !same_signal_target(&target, current) {
+                return Err(signal_not_found_error());
+            }
+            deliver(current, prepared)
+        })
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn active_target(&self) -> Result<ProcessSignalTarget, BackgroundProcessSignalError> {
+        use std::sync::TryLockError;
+
+        if self.close_requested.load(Ordering::Acquire) {
+            return Err(signal_not_found_error());
+        }
+        let state = match self.inner.try_lock() {
+            Ok(state) => state,
+            Err(TryLockError::WouldBlock) => return Err(signal_busy_error()),
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        };
+        if self.close_requested.load(Ordering::Acquire) {
+            return Err(signal_not_found_error());
+        }
+        let BackgroundProcessSignalState::Active(target) = &*state else {
+            return Err(signal_not_found_error());
+        };
+        Ok(target.clone())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn reserve_signal(&self) -> Result<SignalReservation<'_>, BackgroundProcessSignalError> {
+        if self.close_requested.load(Ordering::Acquire) {
+            return Err(signal_not_found_error());
+        }
+        self.signal_reserved
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| signal_busy_error())?;
+        let reservation = SignalReservation {
+            reserved: self.signal_reserved.as_ref(),
+        };
+        if self.close_requested.load(Ordering::Acquire) {
+            return Err(signal_not_found_error());
+        }
+        Ok(reservation)
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -489,6 +553,29 @@ impl BackgroundProcessSignalController {
             BackgroundProcessSignalState::Closed
         )
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct SignalReservation<'a> {
+    reserved: &'a AtomicBool,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Drop for SignalReservation<'_> {
+    fn drop(&mut self) {
+        self.reserved.store(false, Ordering::Release);
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn same_signal_target(left: &ProcessSignalTarget, right: &ProcessSignalTarget) -> bool {
+    left.group == right.group
+        && left.root_identity == right.root_identity
+        && match (&left.authority, &right.authority) {
+            (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+            (None, None) => true,
+            _ => false,
+        }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -569,6 +656,15 @@ impl LinuxProcIoBudget {
         )
     }
 
+    fn mountinfo() -> Self {
+        Self::new(
+            Instant::now() + GROUP_SNAPSHOT_TIMEOUT,
+            MAX_LINUX_PROC_READ_ATTEMPTS,
+            MAX_LINUX_MOUNTINFO_BYTES + 1,
+            MAX_LINUX_MOUNTINFO_ENTRIES,
+        )
+    }
+
     const fn new(
         deadline: Instant,
         remaining_attempts: usize,
@@ -584,7 +680,7 @@ impl LinuxProcIoBudget {
     }
 
     fn begin_read(&mut self) -> Result<(), BackgroundProcessError> {
-        self.require_live()?;
+        self.preflight()?;
         if self.remaining_attempts == 0 {
             return Err(cleanup_error());
         }
@@ -599,6 +695,22 @@ impl LinuxProcIoBudget {
         Ok(())
     }
 
+    fn preflight(&self) -> Result<(), BackgroundProcessError> {
+        self.require_live()?;
+        if self.remaining_attempts == 0 || self.remaining_bytes == 0 {
+            return Err(cleanup_error());
+        }
+        Ok(())
+    }
+
+    fn preflight_entry(&self) -> Result<(), BackgroundProcessError> {
+        self.preflight()?;
+        if self.remaining_entries == 0 {
+            return Err(cleanup_error());
+        }
+        Ok(())
+    }
+
     fn charge_bytes(&mut self, bytes: usize) -> Result<(), BackgroundProcessError> {
         self.remaining_bytes = self
             .remaining_bytes
@@ -608,10 +720,7 @@ impl LinuxProcIoBudget {
     }
 
     fn charge_entry(&mut self) -> Result<(), BackgroundProcessError> {
-        self.require_live()?;
-        if self.remaining_entries == 0 {
-            return Err(cleanup_error());
-        }
+        self.preflight_entry()?;
         self.remaining_entries -= 1;
         Ok(())
     }
@@ -633,28 +742,68 @@ fn same_signal_process(expected: &SignalProcessSnapshot, current: &SignalProcess
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn signal_process_tree(
+struct PreparedSignalProcessTree {
+    descendants: Vec<SignalProcessSnapshot>,
+    #[cfg(target_os = "linux")]
+    pinned_processes: HashMap<rustix::process::Pid, LinuxPinnedSignalProcess>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn prepare_signal_process_tree(
     target: &ProcessSignalTarget,
-    signal: rustix::process::Signal,
-) -> Result<(), BackgroundProcessSignalError> {
+) -> Result<PreparedSignalProcessTree, BackgroundProcessSignalError> {
     let authority = target.authority.as_ref().ok_or_else(signal_process_error)?;
     let mut scratch = SignalProcessScratch::new();
+    #[cfg(target_os = "linux")]
+    let (snapshot, pinned_processes) =
+        signal_process_snapshot(authority, target.group, &mut scratch)?;
+    #[cfg(target_os = "macos")]
     let snapshot = signal_process_snapshot(authority, target.group, &mut scratch)?;
     let descendants = derive_signal_descendants(&snapshot, target.group, target.root_identity)?;
 
     // The retained, unreaped direct child pins the root PID and original PGID.
     // Re-reading its admitted start identity after the bounded ancestry snapshot
     // rejects a substituted or incomplete process-table view before any signal.
-    require_signal_root(authority, target, &mut scratch)?;
-    let descendant_delivery = signal_descendants_with(&descendants, |descendant| {
-        signal_exact_process(authority, descendant, signal, &mut scratch)
+    #[cfg(target_os = "macos")]
+    require_signal_root_snapshot(authority, target, &mut scratch)?;
+    Ok(PreparedSignalProcessTree {
+        descendants,
+        #[cfg(target_os = "linux")]
+        pinned_processes,
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn deliver_signal_process_tree(
+    target: &ProcessSignalTarget,
+    signal: rustix::process::Signal,
+    prepared: &PreparedSignalProcessTree,
+) -> Result<(), BackgroundProcessSignalError> {
+    #[cfg(target_os = "macos")]
+    let authority = target.authority.as_ref().ok_or_else(signal_process_error)?;
+    #[cfg(target_os = "macos")]
+    let mut scratch = SignalProcessScratch::new();
+    let descendant_delivery = signal_descendants_with(&prepared.descendants, |descendant| {
+        #[cfg(target_os = "linux")]
+        {
+            let process = prepared
+                .pinned_processes
+                .get(&descendant.pid)
+                .and_then(|process| process.process.as_ref())
+                .ok_or_else(signal_process_error)?;
+            signal_pinned_linux_process(process.as_fd(), signal)
+        }
+        #[cfg(target_os = "macos")]
+        {
+            signal_exact_process(authority, descendant, signal, &mut scratch)
+        }
     });
     // Keep the individual-to-group order deterministic. Once any descendant
     // attempt begins, neither a later root observation nor the final group
     // syscall may downgrade the outcome to the pre-effect NotFound category.
     finish_signal_delivery(
         descendant_delivery,
-        || require_signal_root(authority, target, &mut scratch),
+        || require_retained_signal_root(target),
         || classify_process_signal(rustix::process::kill_process_group(target.group, signal)),
     )
 }
@@ -722,13 +871,15 @@ fn signal_identity_checked_descendant_with(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn require_signal_root(
+fn require_signal_root_snapshot(
     authority: &GroupSnapshotAuthority,
     target: &ProcessSignalTarget,
     scratch: &mut SignalProcessScratch,
 ) -> Result<(), BackgroundProcessSignalError> {
     #[cfg(target_os = "linux")]
-    authority.validate().map_err(|()| signal_process_error())?;
+    authority
+        .validate_with_budget(&mut scratch.budget)
+        .map_err(|()| signal_process_error())?;
     let Some(root) = read_signal_process(authority, target.group, scratch)? else {
         return Err(signal_not_found_error());
     };
@@ -736,6 +887,17 @@ fn require_signal_root(
         return Err(signal_not_found_error());
     }
     Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn require_retained_signal_root(
+    target: &ProcessSignalTarget,
+) -> Result<(), BackgroundProcessSignalError> {
+    match rustix::process::getpgid(Some(target.group)) {
+        Ok(group) if group == target.group => Ok(()),
+        Ok(_) | Err(rustix::io::Errno::SRCH) => Err(signal_not_found_error()),
+        Err(_) => Err(signal_process_error()),
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1947,12 +2109,20 @@ impl GroupSnapshotAuthority {
     }
 
     fn validate(&self) -> Result<(), ()> {
+        let mut budget = LinuxProcIoBudget::mountinfo();
+        self.validate_with_budget(&mut budget)
+    }
+
+    fn validate_with_budget(&self, budget: &mut LinuxProcIoBudget) -> Result<(), ()> {
+        budget.preflight().map_err(|_| ())?;
         let filesystem = rustix::fs::fstatfs(self.proc_root.as_fd()).map_err(|_| ())?;
+        budget.preflight().map_err(|_| ())?;
         if u64::try_from(filesystem.f_type).ok() != Some(LINUX_PROC_SUPER_MAGIC)
             || linux_fd_mount_id(self.proc_root.as_fd())? != self.mount_id
         {
             return Err(());
         }
+        budget.preflight().map_err(|_| ())?;
         let mountinfo_fd = rustix::fs::openat(
             self.proc_root.as_fd(),
             "self/mountinfo",
@@ -1960,11 +2130,12 @@ impl GroupSnapshotAuthority {
             Mode::empty(),
         )
         .map_err(|_| ())?;
+        budget.preflight().map_err(|_| ())?;
         if linux_fd_mount_id(mountinfo_fd.as_fd())? != self.mount_id {
             return Err(());
         }
-        let mountinfo = std::fs::File::from(mountinfo_fd);
-        validate_linux_proc_mountinfo(std::io::BufReader::new(mountinfo), self.mount_id)
+        let mut mountinfo = std::fs::File::from(mountinfo_fd);
+        validate_linux_proc_mountinfo(&mut mountinfo, self.mount_id, budget)
     }
 }
 
@@ -1982,31 +2153,35 @@ fn linux_fd_mount_id(fd: BorrowedFd<'_>) -> Result<u64, ()> {
 
 #[cfg(target_os = "linux")]
 fn validate_linux_proc_mountinfo(
-    reader: impl std::io::BufRead,
+    reader: &mut impl Read,
     expected_mount_id: u64,
+    budget: &mut LinuxProcIoBudget,
 ) -> Result<(), ()> {
-    let mut reader = std::io::Read::take(
-        reader,
-        u64::try_from(MAX_LINUX_MOUNTINFO_BYTES + 1).map_err(|_| ())?,
-    );
-    let mut line = Vec::with_capacity(256);
-    let mut bytes = 0_usize;
-    let mut entries = 0_usize;
+    let mut bytes = Vec::with_capacity(MAX_LINUX_MOUNTINFO_BYTES + 1);
+    read_linux_proc_record(reader, &mut bytes, MAX_LINUX_MOUNTINFO_BYTES, budget)
+        .map_err(|_| ())?;
+    validate_linux_proc_mountinfo_bytes(&bytes, expected_mount_id, Some(budget))
+}
+
+#[cfg(target_os = "linux")]
+fn validate_linux_proc_mountinfo_bytes(
+    bytes: &[u8],
+    expected_mount_id: u64,
+    mut budget: Option<&mut LinuxProcIoBudget>,
+) -> Result<(), ()> {
+    if bytes.is_empty() || bytes.len() > MAX_LINUX_MOUNTINFO_BYTES {
+        return Err(());
+    }
     let mut proc_mounts = 0_usize;
-    loop {
-        line.clear();
-        let read = std::io::BufRead::read_until(&mut reader, b'\n', &mut line).map_err(|_| ())?;
-        if read == 0 {
-            break;
+    let mut entries = 0_usize;
+    for line in bytes.split_inclusive(|byte| *byte == b'\n') {
+        if let Some(budget) = budget.as_deref_mut() {
+            budget.charge_entry().map_err(|_| ())?;
         }
-        bytes = bytes
-            .checked_add(read)
-            .filter(|value| *value <= MAX_LINUX_MOUNTINFO_BYTES)
-            .ok_or(())?;
-        entries = entries
-            .checked_add(1)
-            .filter(|value| *value <= MAX_LINUX_MOUNTINFO_ENTRIES)
-            .ok_or(())?;
+        entries = entries.checked_add(1).ok_or(())?;
+        if entries > MAX_LINUX_MOUNTINFO_ENTRIES {
+            return Err(());
+        }
         let content = line.strip_suffix(b"\n").ok_or(())?;
         if content.is_empty() {
             return Err(());
@@ -2015,7 +2190,7 @@ fn validate_linux_proc_mountinfo(
             proc_mounts = proc_mounts.checked_add(1).ok_or(())?;
         }
     }
-    if bytes == 0 || proc_mounts != 1 {
+    if proc_mounts != 1 {
         return Err(());
     }
     Ok(())
@@ -2026,8 +2201,7 @@ fn parse_linux_proc_mount_authority(
     bytes: &[u8],
     expected_mount_id: u64,
 ) -> Result<(), BackgroundProcessError> {
-    validate_linux_proc_mountinfo(std::io::Cursor::new(bytes), expected_mount_id)
-        .map_err(|()| spawn_error())
+    validate_linux_proc_mountinfo_bytes(bytes, expected_mount_id, None).map_err(|()| spawn_error())
 }
 
 #[cfg(target_os = "linux")]
@@ -3700,17 +3874,9 @@ fn read_signal_process(
     pid: rustix::process::Pid,
     scratch: &mut SignalProcessScratch,
 ) -> Result<Option<SignalProcessSnapshot>, BackgroundProcessSignalError> {
-    let mut name_bytes = [0_u8; 10];
-    let name = linux_pid_path(pid, &mut name_bytes);
-    let pid_directory = match rustix::fs::openat(
-        authority.proc_root.as_fd(),
-        name,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-    ) {
-        Ok(directory) => directory,
-        Err(rustix::io::Errno::NOENT | rustix::io::Errno::SRCH) => return Ok(None),
-        Err(_) => return Err(signal_process_error()),
+    let Some(pid_directory) = open_linux_signal_process_directory(authority, pid, &scratch.budget)?
+    else {
+        return Ok(None);
     };
     read_linux_signal_process_at(
         pid_directory.as_fd(),
@@ -3721,12 +3887,45 @@ fn read_signal_process(
 }
 
 #[cfg(target_os = "linux")]
+fn open_linux_signal_process_directory(
+    authority: &GroupSnapshotAuthority,
+    pid: rustix::process::Pid,
+    budget: &LinuxProcIoBudget,
+) -> Result<Option<OwnedFd>, BackgroundProcessSignalError> {
+    let mut name_bytes = [0_u8; 10];
+    let name = linux_pid_path(pid, &mut name_bytes);
+    let result = linux_signal_probe(budget, || {
+        rustix::fs::openat(
+            authority.proc_root.as_fd(),
+            name,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+    })?;
+    match result {
+        Ok(directory) => Ok(Some(directory)),
+        Err(rustix::io::Errno::NOENT | rustix::io::Errno::SRCH) => Ok(None),
+        Err(_) => Err(signal_process_error()),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_signal_probe<T>(
+    budget: &LinuxProcIoBudget,
+    probe: impl FnOnce() -> T,
+) -> Result<T, BackgroundProcessSignalError> {
+    budget.preflight().map_err(|_| signal_process_error())?;
+    Ok(probe())
+}
+
+#[cfg(target_os = "linux")]
 fn read_linux_signal_process_at(
     pid_directory: BorrowedFd<'_>,
     pid: rustix::process::Pid,
     bytes: &mut Vec<u8>,
     budget: &mut LinuxProcIoBudget,
 ) -> Result<Option<SignalProcessSnapshot>, BackgroundProcessSignalError> {
+    budget.preflight().map_err(|_| signal_process_error())?;
     let stat_fd = match rustix::fs::openat(
         pid_directory,
         "stat",
@@ -3752,37 +3951,99 @@ fn read_linux_signal_process_at(
 }
 
 #[cfg(target_os = "linux")]
+struct LinuxPinnedSignalProcess {
+    directory: OwnedFd,
+    process: Option<OwnedFd>,
+}
+
+#[cfg(target_os = "linux")]
 fn signal_process_snapshot(
     authority: &GroupSnapshotAuthority,
     root: rustix::process::Pid,
     scratch: &mut SignalProcessScratch,
-) -> Result<Vec<SignalProcessSnapshot>, BackgroundProcessSignalError> {
-    authority.validate().map_err(|()| signal_process_error())?;
-    let root = read_signal_process(authority, root, scratch)?.ok_or_else(signal_not_found_error)?;
+) -> Result<
+    (
+        Vec<SignalProcessSnapshot>,
+        HashMap<rustix::process::Pid, LinuxPinnedSignalProcess>,
+    ),
+    BackgroundProcessSignalError,
+> {
+    authority
+        .validate_with_budget(&mut scratch.budget)
+        .map_err(|()| signal_process_error())?;
+    let root_pid = root;
+    let root_directory = open_linux_signal_process_directory(authority, root_pid, &scratch.budget)?
+        .ok_or_else(signal_not_found_error)?;
+    let root = read_linux_signal_process_at(
+        root_directory.as_fd(),
+        root_pid,
+        &mut scratch.stat_bytes,
+        &mut scratch.budget,
+    )?
+    .ok_or_else(signal_not_found_error)?;
     let mut snapshot = vec![root];
+    let mut pinned_processes = HashMap::from([(
+        root_pid,
+        LinuxPinnedSignalProcess {
+            directory: root_directory,
+            process: None,
+        },
+    )]);
     let mut child_bytes = Vec::with_capacity(MAX_GROUP_SNAPSHOT_BYTES + 1);
     let mut cursor = 0_usize;
     while cursor < snapshot.len() {
         let parent = snapshot[cursor];
         cursor += 1;
-        require_linux_signal_parent(authority, &parent, scratch)?;
-        append_linux_signal_children(authority, parent, &mut snapshot, &mut child_bytes, scratch)?;
-        require_linux_signal_parent(authority, &parent, scratch)?;
+        let parent_directory = pinned_processes
+            .get(&parent.pid)
+            .ok_or_else(signal_process_error)?
+            .directory
+            .as_fd();
+        require_linux_signal_parent_at(parent_directory, &parent, scratch)?;
+        let children = read_linux_signal_children(
+            authority,
+            parent,
+            parent_directory,
+            MAX_SIGNAL_TREE_PROCESSES.saturating_sub(snapshot.len()),
+            &mut child_bytes,
+            scratch,
+        )?;
+        require_linux_signal_parent_at(parent_directory, &parent, scratch)?;
+        for (process, pinned) in children {
+            if pinned_processes.insert(process.pid, pinned).is_some() {
+                return Err(signal_process_error());
+            }
+            snapshot.push(process);
+        }
     }
-    authority.validate().map_err(|()| signal_process_error())?;
-    Ok(snapshot)
+    authority
+        .validate_with_budget(&mut scratch.budget)
+        .map_err(|()| signal_process_error())?;
+    let root_directory = pinned_processes
+        .get(&root_pid)
+        .ok_or_else(signal_process_error)?
+        .directory
+        .as_fd();
+    require_linux_signal_parent_at(root_directory, &root, scratch)?;
+    Ok((snapshot, pinned_processes))
 }
 
 #[cfg(target_os = "linux")]
-fn require_linux_signal_parent(
-    authority: &GroupSnapshotAuthority,
+fn require_linux_signal_parent_at(
+    directory: BorrowedFd<'_>,
     expected: &SignalProcessSnapshot,
     scratch: &mut SignalProcessScratch,
 ) -> Result<(), BackgroundProcessSignalError> {
-    let Some(current) = read_signal_process(authority, expected.pid, scratch)? else {
+    let Some(current) = read_linux_signal_process_at(
+        directory,
+        expected.pid,
+        &mut scratch.stat_bytes,
+        &mut scratch.budget,
+    )?
+    else {
         return Err(signal_process_error());
     };
-    if !same_signal_process(expected, &current) {
+    if current != *expected {
         return Err(signal_process_error());
     }
     Ok(())
@@ -3792,7 +4053,9 @@ fn require_linux_signal_parent(
 fn open_linux_signal_task(
     task_directory: BorrowedFd<'_>,
     task_name: &std::ffi::CStr,
+    budget: &LinuxProcIoBudget,
 ) -> Result<Option<OwnedFd>, BackgroundProcessSignalError> {
+    budget.preflight().map_err(|_| signal_process_error())?;
     match rustix::fs::openat(
         task_directory,
         task_name,
@@ -3806,24 +4069,20 @@ fn open_linux_signal_task(
 }
 
 #[cfg(target_os = "linux")]
-fn append_linux_signal_children(
+fn read_linux_signal_children(
     authority: &GroupSnapshotAuthority,
     parent: SignalProcessSnapshot,
-    snapshot: &mut Vec<SignalProcessSnapshot>,
+    parent_directory: BorrowedFd<'_>,
+    remaining_processes: usize,
     child_bytes: &mut Vec<u8>,
     scratch: &mut SignalProcessScratch,
-) -> Result<(), BackgroundProcessSignalError> {
-    let mut name_bytes = [0_u8; 10];
-    let name = linux_pid_path(parent.pid, &mut name_bytes);
-    let parent_directory = rustix::fs::openat(
-        authority.proc_root.as_fd(),
-        name,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(|_| signal_process_error())?;
+) -> Result<Vec<(SignalProcessSnapshot, LinuxPinnedSignalProcess)>, BackgroundProcessSignalError> {
+    scratch
+        .budget
+        .preflight()
+        .map_err(|_| signal_process_error())?;
     let task_directory = rustix::fs::openat(
-        parent_directory.as_fd(),
+        parent_directory,
         "task",
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
         Mode::empty(),
@@ -3831,10 +4090,12 @@ fn append_linux_signal_children(
     .map_err(|_| signal_process_error())?;
     let mut directory_buffer = [MaybeUninit::<u8>::uninit(); 8 * 1024];
     let mut tasks = rustix::fs::RawDir::new(task_directory.as_fd(), &mut directory_buffer);
+    let mut discovered = Vec::new();
     loop {
-        if Instant::now() >= scratch.budget.deadline {
-            return Err(signal_process_error());
-        }
+        scratch
+            .budget
+            .preflight_entry()
+            .map_err(|_| signal_process_error())?;
         let Some(entry) = tasks.next() else {
             break;
         };
@@ -3850,9 +4111,15 @@ fn append_linux_signal_children(
         {
             continue;
         }
-        let Some(task) = open_linux_signal_task(task_directory.as_fd(), task_name)? else {
+        let Some(task) =
+            open_linux_signal_task(task_directory.as_fd(), task_name, &scratch.budget)?
+        else {
             continue;
         };
+        scratch
+            .budget
+            .preflight()
+            .map_err(|_| signal_process_error())?;
         let children = match rustix::fs::openat(
             task.as_fd(),
             "children",
@@ -3863,19 +4130,28 @@ fn append_linux_signal_children(
             Err(rustix::io::Errno::NOENT | rustix::io::Errno::SRCH) => continue,
             Err(_) => return Err(signal_process_error()),
         };
-        read_linux_signal_children(children, child_bytes, snapshot, authority, parent, scratch)?;
-        require_linux_signal_parent(authority, &parent, scratch)?;
+        append_linux_signal_children_record(
+            children,
+            child_bytes,
+            &mut discovered,
+            authority,
+            parent,
+            remaining_processes,
+            scratch,
+        )?;
+        require_linux_signal_parent_at(parent_directory, &parent, scratch)?;
     }
-    Ok(())
+    Ok(discovered)
 }
 
 #[cfg(target_os = "linux")]
-fn read_linux_signal_children(
+fn append_linux_signal_children_record(
     children: OwnedFd,
     bytes: &mut Vec<u8>,
-    snapshot: &mut Vec<SignalProcessSnapshot>,
+    discovered: &mut Vec<(SignalProcessSnapshot, LinuxPinnedSignalProcess)>,
     authority: &GroupSnapshotAuthority,
     parent: SignalProcessSnapshot,
+    remaining_processes: usize,
     scratch: &mut SignalProcessScratch,
 ) -> Result<(), BackgroundProcessSignalError> {
     let mut file = std::fs::File::from(children);
@@ -3893,40 +4169,52 @@ fn read_linux_signal_children(
         let pid = parse_linux_proc_directory_pid(token)
             .map_err(|_| signal_process_error())?
             .ok_or_else(signal_process_error)?;
-        if snapshot.len() == MAX_SIGNAL_TREE_PROCESSES {
+        if discovered.len() == remaining_processes {
             return Err(signal_process_error());
         }
-        let Some(process) = read_signal_process(authority, pid, scratch)? else {
+        let Some(directory) = open_linux_signal_process_directory(authority, pid, &scratch.budget)?
+        else {
+            continue;
+        };
+        let process_handle = match linux_signal_probe(&scratch.budget, || {
+            rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty())
+        })? {
+            Ok(process) => process,
+            Err(rustix::io::Errno::SRCH) => continue,
+            Err(_) => return Err(signal_process_error()),
+        };
+        let Some(process) = read_linux_signal_process_at(
+            directory.as_fd(),
+            pid,
+            &mut scratch.stat_bytes,
+            &mut scratch.budget,
+        )?
+        else {
             continue;
         };
         if process.parent != Some(parent.pid) {
             return Err(signal_process_error());
         }
-        snapshot.push(process);
+        discovered.push((
+            process,
+            LinuxPinnedSignalProcess {
+                directory,
+                process: Some(process_handle),
+            },
+        ));
     }
     Ok(())
 }
 
 #[cfg(target_os = "linux")]
-fn signal_exact_process(
-    authority: &GroupSnapshotAuthority,
-    expected: &SignalProcessSnapshot,
+fn signal_pinned_linux_process(
+    process: BorrowedFd<'_>,
     signal: rustix::process::Signal,
-    scratch: &mut SignalProcessScratch,
 ) -> Result<(), BackgroundProcessSignalError> {
-    let process =
-        match rustix::process::pidfd_open(expected.pid, rustix::process::PidfdFlags::empty()) {
-            Ok(process) => process,
-            Err(rustix::io::Errno::SRCH) => return Ok(()),
-            Err(_) => return Err(signal_process_error()),
-        };
-    let current = read_signal_process(authority, expected.pid, scratch)?;
-    signal_identity_checked_descendant_with(expected, current, || {
-        match rustix::process::pidfd_send_signal(process.as_fd(), signal) {
-            Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
-            Err(_) => Err(signal_process_error()),
-        }
-    })
+    match rustix::process::pidfd_send_signal(process, signal) {
+        Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
+        Err(_) => Err(signal_process_error()),
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -4999,8 +5287,10 @@ mod linux_proc_tests {
             .is_err(),
             "task children cannot exceed bytes already consumed by proc stat"
         );
-        budget.charge_entry().expect("the sole task entry fits");
-        assert!(budget.charge_entry().is_err());
+        assert!(
+            budget.charge_entry().is_err(),
+            "global byte exhaustion prevents every later proc probe"
+        );
 
         let mut unread = std::io::Cursor::new(b"105 ".as_slice());
         let mut expired = LinuxProcIoBudget::new(Instant::now(), 8, 64, 1);
@@ -5055,6 +5345,79 @@ mod linux_proc_tests {
     }
 
     #[test]
+    fn mountinfo_permanent_eintr_exhausts_the_shared_attempt_budget() {
+        struct AlwaysInterrupted {
+            reads: usize,
+        }
+
+        impl Read for AlwaysInterrupted {
+            fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+                self.reads += 1;
+                Err(std::io::ErrorKind::Interrupted.into())
+            }
+        }
+
+        let mut reader = AlwaysInterrupted { reads: 0 };
+        let mut budget = LinuxProcIoBudget::new(
+            Instant::now() + Duration::from_secs(1),
+            3,
+            MAX_LINUX_MOUNTINFO_BYTES + 1,
+            MAX_LINUX_MOUNTINFO_ENTRIES,
+        );
+        assert!(validate_linux_proc_mountinfo(&mut reader, 36, &mut budget).is_err());
+        assert_eq!(reader.reads, 3, "there is no hidden BufRead EINTR loop");
+    }
+
+    #[test]
+    fn expired_signal_budget_prevents_the_wrapped_proc_probe() {
+        let budget = LinuxProcIoBudget::new(Instant::now(), 8, 64, 1);
+        let mut probes = 0_usize;
+        assert!(linux_signal_probe(&budget, || probes += 1).is_err());
+        assert_eq!(probes, 0, "preflight runs before the syscall closure");
+    }
+
+    #[test]
+    fn retained_signal_directory_cannot_follow_a_reaped_pid() {
+        let authority = GroupSnapshotAuthority::open().expect("open proc authority");
+        let mut child = Command::new("/bin/sleep")
+            .arg("30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn retained-directory fixture");
+        let child_pid = pid(i32::try_from(child.id()).expect("child PID fits signed range"));
+        let mut scratch = SignalProcessScratch::new();
+        let directory = open_linux_signal_process_directory(&authority, child_pid, &scratch.budget)
+            .expect("open child proc directory")
+            .expect("child remains live");
+        assert!(
+            read_linux_signal_process_at(
+                directory.as_fd(),
+                child_pid,
+                &mut scratch.stat_bytes,
+                &mut scratch.budget,
+            )
+            .expect("read initial incarnation")
+            .is_some()
+        );
+
+        child.kill().expect("kill fixture");
+        child.wait().expect("reap fixture");
+        assert_eq!(
+            read_linux_signal_process_at(
+                directory.as_fd(),
+                child_pid,
+                &mut scratch.stat_bytes,
+                &mut scratch.budget,
+            )
+            .expect("retained directory reports disappearance"),
+            None,
+            "queued-parent validation never reopens a numeric PID"
+        );
+    }
+
+    #[test]
     fn proc_directory_pid_parser_ignores_kernel_names_and_rejects_numeric_ambiguity() {
         assert_eq!(parse_linux_proc_directory_pid(b"self").unwrap(), None);
         assert_eq!(
@@ -5077,6 +5440,7 @@ mod linux_proc_tests {
         .expect("open current process task directory");
         let mut directory_buffer = [MaybeUninit::<u8>::uninit(); 8 * 1024];
         let mut tasks = rustix::fs::RawDir::new(task_directory.as_fd(), &mut directory_buffer);
+        let budget = proc_read_budget();
         let mut opened = 0_usize;
         while let Some(entry) = tasks.next() {
             let entry = entry.expect("read current process task entry");
@@ -5086,7 +5450,7 @@ mod linux_proc_tests {
             {
                 continue;
             }
-            if open_linux_signal_task(task_directory.as_fd(), entry.file_name())
+            if open_linux_signal_task(task_directory.as_fd(), entry.file_name(), &budget)
                 .expect("open task entry without constructing a joined path")
                 .is_some()
             {
@@ -5662,6 +6026,64 @@ mod process_regression_tests {
             .signal_with(BackgroundProcessSignal::Interrupt, |_, _| Ok(()))
             .expect("the failed read released the lifecycle gate");
         controller.close();
+        assert!(controller.is_closed_for_test());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn close_does_not_wait_for_blocked_signal_preparation() {
+        let controller = test_signal_controller();
+        controller.activate().expect("activate controller");
+        let signal_controller = controller.clone();
+        let delivered = Arc::new(AtomicBool::new(false));
+        let worker_delivered = Arc::clone(&delivered);
+        let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+        let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+        let signal_worker = thread::spawn(move || {
+            signal_controller.signal_operation_with(
+                |_| {
+                    entered_sender.send(()).expect("report blocked preparation");
+                    release_receiver.recv().expect("release preparation");
+                    Ok(())
+                },
+                |_, ()| {
+                    worker_delivered.store(true, Ordering::Release);
+                    Ok(())
+                },
+            )
+        });
+        entered_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("signal reached preparation outside lifecycle gate");
+
+        let second = controller.signal_operation_with(|_| Ok(()), |_, ()| Ok(()));
+        assert_eq!(
+            second
+                .expect_err("one preparation reserves the signal path")
+                .kind(),
+            BackgroundProcessSignalErrorKind::Busy
+        );
+
+        let close_controller = controller.clone();
+        let (closed_sender, closed_receiver) = std::sync::mpsc::sync_channel(0);
+        let close_worker = thread::spawn(move || {
+            close_controller.close();
+            closed_sender.send(()).expect("report close completion");
+        });
+        closed_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("close never waits for read-only signal preparation");
+        release_sender.send(()).expect("release preparation");
+
+        let result = signal_worker.join().expect("join signal worker");
+        close_worker.join().expect("join close worker");
+        assert_eq!(
+            result
+                .expect_err("closed admission prevents committed delivery")
+                .kind(),
+            BackgroundProcessSignalErrorKind::NotFound
+        );
+        assert!(!delivered.load(Ordering::Acquire));
         assert!(controller.is_closed_for_test());
     }
 

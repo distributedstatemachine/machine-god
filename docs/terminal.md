@@ -367,10 +367,14 @@ to every identity-revalidated descendant, and then signals the original group.
 An inside-group descendant can therefore receive the requested signal twice;
 that deliberate duplicate closes the race in which it could call `setsid`
 after its group was observed but before the final group signal. Linux uses the
-retained procfs mount authority and pidfds for individual delivery. One Linux
+retained procfs mount authority and opens a retained proc directory plus pidfd
+for every descendant while its queued parent remains pinned. Individual
+delivery uses those pidfds without resolving the numeric PID again. One Linux
 traversal shares a 250 ms monotonic deadline, 524,288 read attempts, 131,072
-task entries, and 32 MiB across all 64 KiB task-children records and 4 KiB
-proc-stat identity records; `EINTR` consumes the same finite attempt budget.
+entries, and 32 MiB across mountinfo, all 64 KiB task-children records, and 4
+KiB proc-stat identity records; `EINTR` consumes the same finite attempt
+budget, including mountinfo, and terminal exhaustion suppresses later proc and
+pidfd probes.
 The retained root-identity capture is independently subject to the same finite
 reader limits. macOS uses the safe fixed-buffer Darwin wrapper's kernel
 unique-process and parent identities. A
@@ -386,7 +390,12 @@ signal.
 Traversal runs on the supervisor's existing fixed worker pool rather than the
 engine poll thread. Terminal admits at most four signal actions independently
 of foreground executions, output reads, record reads, and supervisor process
-capacity. Registry and per-process lifecycle lock contention fail fast as
+capacity. One per-process reservation rejects overlapping signals while
+read-only traversal runs outside the lifecycle lock. Before the first signal,
+delivery reacquires that lock and rechecks both close admission and the exact
+controller target. A close can therefore finish and reap while a proc read is
+stalled, and the stalled preparation performs no later effect. Registry and
+per-process lifecycle lock contention fail fast as
 retryable `terminal_signal_busy`. An unknown, completed, or wrong-owner ID is
 indistinguishable as `terminal_signal_not_found`; a process-table or delivery
 failure is the fixed non-retryable `terminal_signal_failed` error. Signal

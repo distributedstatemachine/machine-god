@@ -450,11 +450,17 @@ group may receive the requested signal twice; individual delivery deliberately
 closes an inside-group-to-escaped-group race before the final group syscall.
 Linux traversal uses the retained procfs descriptor and mount identity, caps
 inspected entries, metadata bytes, read attempts, and retained members, and
-uses pidfds for individual delivery. Every signal traversal shares one 250 ms
+opens and retains each descendant's proc directory and pidfd while its verified
+parent is still pinned. Delivery uses only those retained pidfds, so a
+same-clock-tick numeric PID replacement cannot inherit signal authority. Every
+signal traversal shares one 250 ms
 monotonic deadline, 524,288-attempt cap, 131,072-entry cap, and 32 MiB byte
-budget across task-children records plus every proc-stat identity read. Each
+budget across mount-authority records, task-children records, and every
+proc-stat identity read. Each
 record remains independently capped at 64 KiB for task children or 4 KiB for
-proc stat. `EINTR` consumes an attempt rather than extending the operation;
+proc stat. Mountinfo uses the same explicit reader; `EINTR` consumes an attempt
+rather than extending the operation, and terminal budget exhaustion prevents
+later proc opens or pidfd probes;
 deadline or budget exhaustion fails with the fixed process category. The
 pre-release root-identity capture uses the same bounded reader with a fresh
 operation budget, so constructing retained signal authority is bounded too.
@@ -468,8 +474,12 @@ One descendant failure does not suppress later descendant attempts or the
 original-group attempt, but the combined operation still fails. After a
 descendant attempt begins, later leader or group disappearance is reported as
 a process failure; not-found remains limited to absence before any delivery.
-The registry lock is released before target dispatch, while the per-process
-lifecycle lock serializes signal against close and reap.
+The registry lock is released before target dispatch. A separate per-process
+reservation excludes concurrent signals while read-only process-table
+preparation runs outside the lifecycle lock. Delivery reacquires that lock and
+rechecks close plus the exact controller target before its first effect. Close
+can therefore revoke a stalled preparation and reap without waiting for a proc
+read; an already admitted delivery remains serialized against close and reap.
 
 Process-table traversal runs through the supervisor's existing bounded
 blocking pool. The terminal layer separately caps active signal operations at
@@ -481,8 +491,8 @@ only when native delivery actually returns. An unexpected unwind from the
 registered native target is contained at that delivery boundary, returns the
 same fixed process failure, and still publishes completion and releases the
 worker and terminal admissions. Linux reuses one preallocated,
-bounded proc-stat scratch buffer across snapshot, identity revalidation, and
-individual delivery observations. The lazy reference adapter shares the
+bounded proc-stat scratch buffer across snapshot and identity revalidation.
+The lazy reference adapter shares the
 same registry and blocking handle but does not initialize a supervisor merely
 to reject an unknown signal target.
 
