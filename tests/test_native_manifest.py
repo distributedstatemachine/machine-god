@@ -576,7 +576,7 @@ class NativeManifestTests(unittest.TestCase):
         unsupported_job = """  unsupported-native-tools:
     name: Unsupported native tools (FreeBSD/WASI)
     needs: change-classification
-    if: ${{ needs.change-classification.outputs.full == 'true' }}
+    if: ${{ needs.change-classification.outputs.unsupported == 'true' }}
     runs-on: ubuntu-24.04
 """
         install_command = (

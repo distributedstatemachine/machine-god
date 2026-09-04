@@ -22,8 +22,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      full: ${{ steps.route.outputs.full }}
-      docs_only: ${{ steps.route.outputs.docs_only }}
+      documentation: ${{ steps.route.outputs.documentation }}
+      core: ${{ steps.route.outputs.core }}
+      testkit: ${{ steps.route.outputs.testkit }}
+      native: ${{ steps.route.outputs.native }}
+      cli: ${{ steps.route.outputs.cli }}
+      format: ${{ steps.route.outputs.format }}
+      quality: ${{ steps.route.outputs.quality }}
+      python: ${{ steps.route.outputs.python }}
+      compatibility: ${{ steps.route.outputs.compatibility }}
+      release_smoke: ${{ steps.route.outputs.release_smoke }}
+      dependency_audit: ${{ steps.route.outputs.dependency_audit }}
+      native_matrix: ${{ steps.route.outputs.native_matrix }}
+      unsupported: ${{ steps.route.outputs.unsupported }}
+      test_support: ${{ steps.route.outputs.test_support }}
       core_api_docs: ${{ steps.route.outputs.core_api_docs }}
       testkit_docs: ${{ steps.route.outputs.testkit_docs }}
       compatibility_docs: ${{ steps.route.outputs.compatibility_docs }}
@@ -85,6 +97,86 @@ jobs:
               - '!AGENTS.md'
               - '!README.md'
               - '!docs/**/*.md'
+            unclassified:
+              - '**'
+              - '!AGENTS.md'
+              - '!README.md'
+              - '!docs/**/*.md'
+              - '!.github/workflows/**'
+              - '!.gitignore'
+              - '!**/*.py'
+              - '!Cargo.lock'
+              - '!Cargo.toml'
+              - '!LICENSE'
+              - '!NOTICE'
+              - '!benchmarks/**'
+              - '!compatibility/**'
+              - '!crates/machine-god-cli/**'
+              - '!crates/machine-god-core/**'
+              - '!crates/machine-god-native/**'
+              - '!crates/machine-god-testkit/**'
+              - '!deny.toml'
+              - '!rust-toolchain.toml'
+              - '!rustfmt.toml'
+              - '!test-support/**'
+            ci_infrastructure:
+              - '.github/workflows/**'
+              - 'tests/test_ci_change_classification.py'
+            rust_global:
+              - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'rust-toolchain.toml'
+            rust_format:
+              - 'rustfmt.toml'
+            core_any:
+              - 'crates/machine-god-core/**'
+            core_source:
+              - 'crates/machine-god-core/**'
+              - '!crates/machine-god-core/benches/**'
+              - '!crates/machine-god-core/examples/**'
+              - '!crates/machine-god-core/tests/**'
+            testkit_any:
+              - 'crates/machine-god-testkit/**'
+            testkit_source:
+              - 'crates/machine-god-testkit/**'
+              - '!crates/machine-god-testkit/benches/**'
+              - '!crates/machine-god-testkit/examples/**'
+              - '!crates/machine-god-testkit/tests/**'
+            native_any:
+              - 'crates/machine-god-native/**'
+            native_source:
+              - 'crates/machine-god-native/**'
+              - '!crates/machine-god-native/benches/**'
+              - '!crates/machine-god-native/examples/**'
+              - '!crates/machine-god-native/tests/**'
+            cli_any:
+              - 'crates/machine-god-cli/**'
+            cli_source:
+              - 'crates/machine-god-cli/**'
+              - '!crates/machine-god-cli/benches/**'
+              - '!crates/machine-god-cli/examples/**'
+              - '!crates/machine-god-cli/tests/**'
+            test_support:
+              - 'test-support/**'
+            python_inputs:
+              - '**/*.py'
+              - 'benchmarks/**'
+              - 'compatibility/**'
+            compatibility_inputs:
+              - 'compatibility/**'
+              - 'benchmarks/upstream.lock'
+              - 'scripts/generate_compatibility.py'
+            dependency_inputs:
+              - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'crates/*/Cargo.toml'
+              - 'deny.toml'
+            documentation_policy:
+              - 'AGENTS.md'
+              - 'README.md'
+              - 'docs/**/*.md'
+              - 'scripts/check_documentation.py'
+              - 'tests/test_documentation_policy.py'
             core_api_docs:
               - 'docs/core-api.md'
             testkit_docs:
@@ -98,6 +190,23 @@ jobs:
         env:
           DOCUMENTATION: ${{ steps.paths.outputs.documentation }}
           NON_DOCUMENTATION: ${{ steps.paths.outputs.non_documentation }}
+          UNCLASSIFIED: ${{ steps.paths.outputs.unclassified }}
+          CI_INFRASTRUCTURE: ${{ steps.paths.outputs.ci_infrastructure }}
+          RUST_GLOBAL: ${{ steps.paths.outputs.rust_global }}
+          RUST_FORMAT: ${{ steps.paths.outputs.rust_format }}
+          CORE_ANY: ${{ steps.paths.outputs.core_any }}
+          CORE_SOURCE: ${{ steps.paths.outputs.core_source }}
+          TESTKIT_ANY: ${{ steps.paths.outputs.testkit_any }}
+          TESTKIT_SOURCE: ${{ steps.paths.outputs.testkit_source }}
+          NATIVE_ANY: ${{ steps.paths.outputs.native_any }}
+          NATIVE_SOURCE: ${{ steps.paths.outputs.native_source }}
+          CLI_ANY: ${{ steps.paths.outputs.cli_any }}
+          CLI_SOURCE: ${{ steps.paths.outputs.cli_source }}
+          TEST_SUPPORT: ${{ steps.paths.outputs.test_support }}
+          PYTHON_INPUTS: ${{ steps.paths.outputs.python_inputs }}
+          COMPATIBILITY_INPUTS: ${{ steps.paths.outputs.compatibility_inputs }}
+          DEPENDENCY_INPUTS: ${{ steps.paths.outputs.dependency_inputs }}
+          DOCUMENTATION_POLICY: ${{ steps.paths.outputs.documentation_policy }}
           CORE_API_DOCS: ${{ steps.paths.outputs.core_api_docs }}
           TESTKIT_DOCS: ${{ steps.paths.outputs.testkit_docs }}
           COMPATIBILITY_DOCS: ${{ steps.paths.outputs.compatibility_docs }}
@@ -106,17 +215,46 @@ jobs:
         run: |
           set -euo pipefail
 
-          full=true
-          docs_only=false
-          core_api_docs=false
-          testkit_docs=false
-          compatibility_docs=false
-          vision_docs=false
+          documentation=true
+          core=true
+          testkit=true
+          native=true
+          cli=true
+          format=true
+          quality=true
+          python=true
+          compatibility=true
+          release_smoke=true
+          dependency_audit=true
+          native_matrix=true
+          unsupported=true
+          test_support=true
+          core_api_docs=true
+          testkit_docs=true
+          compatibility_docs=true
+          vision_docs=true
 
           valid=true
           for value in \
             "${DOCUMENTATION}" \
             "${NON_DOCUMENTATION}" \
+            "${UNCLASSIFIED}" \
+            "${CI_INFRASTRUCTURE}" \
+            "${RUST_GLOBAL}" \
+            "${RUST_FORMAT}" \
+            "${CORE_ANY}" \
+            "${CORE_SOURCE}" \
+            "${TESTKIT_ANY}" \
+            "${TESTKIT_SOURCE}" \
+            "${NATIVE_ANY}" \
+            "${NATIVE_SOURCE}" \
+            "${CLI_ANY}" \
+            "${CLI_SOURCE}" \
+            "${TEST_SUPPORT}" \
+            "${PYTHON_INPUTS}" \
+            "${COMPATIBILITY_INPUTS}" \
+            "${DEPENDENCY_INPUTS}" \
+            "${DOCUMENTATION_POLICY}" \
             "${CORE_API_DOCS}" \
             "${TESTKIT_DOCS}" \
             "${COMPATIBILITY_DOCS}" \
@@ -128,21 +266,97 @@ jobs:
           done
 
           if [[ "${valid}" == "true" ]]; then
-            case "${DOCUMENTATION}:${NON_DOCUMENTATION}" in
-              true:false)
-                full=false
-                docs_only=true
-                core_api_docs="${CORE_API_DOCS}"
-                testkit_docs="${TESTKIT_DOCS}"
-                compatibility_docs="${COMPATIBILITY_DOCS}"
-                vision_docs="${VISION_DOCS}"
-                ;;
-            esac
+            documentation="${DOCUMENTATION_POLICY}"
+            core=false
+            testkit=false
+            native=false
+            cli=false
+            format="${RUST_FORMAT}"
+            python=false
+            compatibility=false
+            release_smoke=false
+            dependency_audit=false
+            test_support="${TEST_SUPPORT}"
+
+            fallback=false
+            if [[ "${CI_INFRASTRUCTURE}" == "true" || "${UNCLASSIFIED}" == "true" ]]; then
+              fallback=true
+            fi
+
+            if [[ "${fallback}" == "true" ]]; then
+              documentation=true
+              core=true
+              testkit=true
+              native=true
+              cli=true
+              format=true
+              python=true
+              compatibility=true
+              release_smoke=true
+              dependency_audit=true
+              test_support=true
+              core_api_docs=true
+              testkit_docs=true
+              compatibility_docs=true
+              vision_docs=true
+            else
+              if [[ "${RUST_GLOBAL}" == "true" || "${CORE_ANY}" == "true" || "${TEST_SUPPORT}" == "true" ]]; then
+                core=true
+              fi
+              if [[ "${RUST_GLOBAL}" == "true" || "${TESTKIT_ANY}" == "true" || "${CORE_SOURCE}" == "true" ]]; then
+                testkit=true
+              fi
+              if [[ "${RUST_GLOBAL}" == "true" || "${NATIVE_ANY}" == "true" || "${CORE_SOURCE}" == "true" || "${TESTKIT_SOURCE}" == "true" || "${TEST_SUPPORT}" == "true" ]]; then
+                native=true
+              fi
+              if [[ "${RUST_GLOBAL}" == "true" || "${CLI_ANY}" == "true" || "${CORE_SOURCE}" == "true" || "${NATIVE_SOURCE}" == "true" ]]; then
+                cli=true
+              fi
+              if [[ "${PYTHON_INPUTS}" == "true" || "${RUST_GLOBAL}" == "true" || "${NATIVE_SOURCE}" == "true" || "${CLI_SOURCE}" == "true" || "${VISION_DOCS}" == "true" ]]; then
+                python=true
+              fi
+              if [[ "${COMPATIBILITY_INPUTS}" == "true" ]]; then
+                compatibility=true
+              fi
+              if [[ "${RUST_GLOBAL}" == "true" || "${CORE_SOURCE}" == "true" || "${NATIVE_SOURCE}" == "true" || "${CLI_SOURCE}" == "true" ]]; then
+                release_smoke=true
+              fi
+              dependency_audit="${DEPENDENCY_INPUTS}"
+              core_api_docs="${CORE_API_DOCS}"
+              testkit_docs="${TESTKIT_DOCS}"
+              compatibility_docs="${COMPATIBILITY_DOCS}"
+              vision_docs="${VISION_DOCS}"
+            fi
+          fi
+
+          quality=false
+          native_matrix=false
+          unsupported=false
+          if [[ "${core}" == "true" || "${testkit}" == "true" || "${native}" == "true" || "${cli}" == "true" || "${format}" == "true" || "${python}" == "true" || "${compatibility}" == "true" || "${release_smoke}" == "true" ]]; then
+            quality=true
+          fi
+          if [[ "${core}" == "true" || "${testkit}" == "true" || "${native}" == "true" || "${cli}" == "true" ]]; then
+            native_matrix=true
+          fi
+          if [[ "${native}" == "true" ]]; then
+            unsupported=true
           fi
 
           # shellcheck disable=SC2129
-          echo "full=${full}" >> "${GITHUB_OUTPUT}"
-          echo "docs_only=${docs_only}" >> "${GITHUB_OUTPUT}"
+          echo "documentation=${documentation}" >> "${GITHUB_OUTPUT}"
+          echo "core=${core}" >> "${GITHUB_OUTPUT}"
+          echo "testkit=${testkit}" >> "${GITHUB_OUTPUT}"
+          echo "native=${native}" >> "${GITHUB_OUTPUT}"
+          echo "cli=${cli}" >> "${GITHUB_OUTPUT}"
+          echo "format=${format}" >> "${GITHUB_OUTPUT}"
+          echo "quality=${quality}" >> "${GITHUB_OUTPUT}"
+          echo "python=${python}" >> "${GITHUB_OUTPUT}"
+          echo "compatibility=${compatibility}" >> "${GITHUB_OUTPUT}"
+          echo "release_smoke=${release_smoke}" >> "${GITHUB_OUTPUT}"
+          echo "dependency_audit=${dependency_audit}" >> "${GITHUB_OUTPUT}"
+          echo "native_matrix=${native_matrix}" >> "${GITHUB_OUTPUT}"
+          echo "unsupported=${unsupported}" >> "${GITHUB_OUTPUT}"
+          echo "test_support=${test_support}" >> "${GITHUB_OUTPUT}"
           echo "core_api_docs=${core_api_docs}" >> "${GITHUB_OUTPUT}"
           echo "testkit_docs=${testkit_docs}" >> "${GITHUB_OUTPUT}"
           echo "compatibility_docs=${compatibility_docs}" >> "${GITHUB_OUTPUT}"
@@ -183,23 +397,77 @@ jobs:
   quality:
     name: Quality and tests
     needs: change-classification
-    if: ${{ needs.change-classification.outputs.full == 'true' }}
+    if: ${{ needs.change-classification.outputs.quality == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install exact Rust toolchain
+        if: ${{ needs.change-classification.outputs.core == 'true' || needs.change-classification.outputs.testkit == 'true' || needs.change-classification.outputs.native == 'true' || needs.change-classification.outputs.cli == 'true' || needs.change-classification.outputs.format == 'true' || needs.change-classification.outputs.release_smoke == 'true' }}
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt
-      - name: Formatting
+      - name: Formatting configuration
+        if: ${{ needs.change-classification.outputs.format == 'true' }}
         run: cargo +"${RUST_TOOLCHAIN}" fmt --all -- --check
+      - name: Formatting
+        if: ${{ needs.change-classification.outputs.format != 'true' && (needs.change-classification.outputs.core == 'true' || needs.change-classification.outputs.testkit == 'true' || needs.change-classification.outputs.native == 'true' || needs.change-classification.outputs.cli == 'true') }}
+        env: &affected-packages
+          CORE: ${{ needs.change-classification.outputs.core }}
+          TESTKIT: ${{ needs.change-classification.outputs.testkit }}
+          NATIVE: ${{ needs.change-classification.outputs.native }}
+          CLI: ${{ needs.change-classification.outputs.cli }}
+        run: |
+          set -euo pipefail
+          packages=()
+          [[ "${CORE}" == "true" ]] && packages+=(--package machine-god-core)
+          [[ "${TESTKIT}" == "true" ]] && packages+=(--package machine-god-testkit)
+          [[ "${NATIVE}" == "true" ]] && packages+=(--package machine-god-native)
+          [[ "${CLI}" == "true" ]] && packages+=(--package machine-god-cli)
+          cargo +"${RUST_TOOLCHAIN}" fmt "${packages[@]}" -- --check
       - name: Clippy
-        run: cargo +"${RUST_TOOLCHAIN}" clippy --locked --workspace --all-targets --all-features -- -D warnings
+        if: ${{ needs.change-classification.outputs.core == 'true' || needs.change-classification.outputs.testkit == 'true' || needs.change-classification.outputs.native == 'true' || needs.change-classification.outputs.cli == 'true' }}
+        env: *affected-packages
+        run: |
+          set -euo pipefail
+          packages=()
+          [[ "${CORE}" == "true" ]] && packages+=(--package machine-god-core)
+          [[ "${TESTKIT}" == "true" ]] && packages+=(--package machine-god-testkit)
+          [[ "${NATIVE}" == "true" ]] && packages+=(--package machine-god-native)
+          [[ "${CLI}" == "true" ]] && packages+=(--package machine-god-cli)
+          cargo +"${RUST_TOOLCHAIN}" clippy --locked "${packages[@]}" --all-targets --all-features -- -D warnings
       - name: Tests
-        run: cargo +"${RUST_TOOLCHAIN}" test --locked --workspace
+        if: ${{ needs.change-classification.outputs.core == 'true' || needs.change-classification.outputs.testkit == 'true' || needs.change-classification.outputs.native == 'true' || needs.change-classification.outputs.cli == 'true' }}
+        env: *affected-packages
+        run: |
+          set -euo pipefail
+          packages=()
+          [[ "${CORE}" == "true" ]] && packages+=(--package machine-god-core)
+          [[ "${TESTKIT}" == "true" ]] && packages+=(--package machine-god-testkit)
+          [[ "${NATIVE}" == "true" ]] && packages+=(--package machine-god-native)
+          [[ "${CLI}" == "true" ]] && packages+=(--package machine-god-cli)
+          cargo +"${RUST_TOOLCHAIN}" test --locked "${packages[@]}"
       - name: Documentation tests
-        run: cargo +"${RUST_TOOLCHAIN}" test --locked --doc --workspace
+        if: ${{ needs.change-classification.outputs.core == 'true' || needs.change-classification.outputs.testkit == 'true' || needs.change-classification.outputs.native == 'true' || needs.change-classification.outputs.cli == 'true' }}
+        env: *affected-packages
+        run: |
+          set -euo pipefail
+          packages=()
+          [[ "${CORE}" == "true" ]] && packages+=(--package machine-god-core)
+          [[ "${TESTKIT}" == "true" ]] && packages+=(--package machine-god-testkit)
+          [[ "${NATIVE}" == "true" ]] && packages+=(--package machine-god-native)
+          [[ "${CLI}" == "true" ]] && packages+=(--package machine-god-cli)
+          cargo +"${RUST_TOOLCHAIN}" test --locked --doc "${packages[@]}"
+      - name: Format standalone reentrant-waker test support
+        if: ${{ needs.change-classification.outputs.test_support == 'true' }}
+        run: cargo +"${RUST_TOOLCHAIN}" fmt --manifest-path test-support/reentrant-waker/Cargo.toml -- --check
+      - name: Clippy standalone reentrant-waker test support
+        if: ${{ needs.change-classification.outputs.test_support == 'true' }}
+        run: cargo +"${RUST_TOOLCHAIN}" clippy --locked --manifest-path test-support/reentrant-waker/Cargo.toml --all-targets --all-features -- -D warnings
+      - name: Test standalone reentrant-waker test support
+        if: ${{ needs.change-classification.outputs.test_support == 'true' }}
+        run: cargo +"${RUST_TOOLCHAIN}" test --locked --manifest-path test-support/reentrant-waker/Cargo.toml --all-targets --all-features
       - name: Python tests
+        if: ${{ needs.change-classification.outputs.python == 'true' }}
         run: |
           python3 - <<'PY'
           import fnmatch
@@ -231,6 +499,7 @@ jobs:
           )
           PY
       - name: Check pinned upstream compatibility inventory
+        if: ${{ needs.change-classification.outputs.compatibility == 'true' }}
         env:
           GIT_CONFIG_NOSYSTEM: "1"
           GIT_TERMINAL_PROMPT: "0"
@@ -303,6 +572,7 @@ jobs:
           )
           PY
       - name: Release smoke test
+        if: ${{ needs.change-classification.outputs.release_smoke == 'true' }}
         run: |
           cargo +"${RUST_TOOLCHAIN}" build --locked --release -p machine-god-cli
           python3 - <<'PY'
@@ -857,7 +1127,7 @@ jobs:
   security:
     name: Dependency policy and vulnerability audit
     needs: change-classification
-    if: ${{ needs.change-classification.outputs.full == 'true' }}
+    if: ${{ needs.change-classification.outputs.dependency_audit == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -889,7 +1159,7 @@ jobs:
   native-target-tests:
     name: Native tests (${{ matrix.target }})
     needs: change-classification
-    if: ${{ needs.change-classification.outputs.full == 'true' }}
+    if: ${{ needs.change-classification.outputs.native_matrix == 'true' }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -911,15 +1181,35 @@ jobs:
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target "${{ matrix.target }}"
       - name: Test target natively
         if: ${{ !endsWith(matrix.target, '-apple-darwin') }}
-        run: cargo +"${RUST_TOOLCHAIN}" test --locked --workspace --all-targets --all-features --target "${{ matrix.target }}"
+        env: &native-affected-packages
+          CORE: ${{ needs.change-classification.outputs.core }}
+          TESTKIT: ${{ needs.change-classification.outputs.testkit }}
+          NATIVE: ${{ needs.change-classification.outputs.native }}
+          CLI: ${{ needs.change-classification.outputs.cli }}
+        run: |
+          set -euo pipefail
+          packages=()
+          [[ "${CORE}" == "true" ]] && packages+=(--package machine-god-core)
+          [[ "${TESTKIT}" == "true" ]] && packages+=(--package machine-god-testkit)
+          [[ "${NATIVE}" == "true" ]] && packages+=(--package machine-god-native)
+          [[ "${CLI}" == "true" ]] && packages+=(--package machine-god-cli)
+          cargo +"${RUST_TOOLCHAIN}" test --locked "${packages[@]}" --all-targets --all-features --target "${{ matrix.target }}"
       - name: Test Apple target natively without shared process-table contention
         if: ${{ endsWith(matrix.target, '-apple-darwin') }}
-        run: cargo +"${RUST_TOOLCHAIN}" test --locked --workspace --all-targets --all-features --target "${{ matrix.target }}" -- --test-threads=1
+        env: *native-affected-packages
+        run: |
+          set -euo pipefail
+          packages=()
+          [[ "${CORE}" == "true" ]] && packages+=(--package machine-god-core)
+          [[ "${TESTKIT}" == "true" ]] && packages+=(--package machine-god-testkit)
+          [[ "${NATIVE}" == "true" ]] && packages+=(--package machine-god-native)
+          [[ "${CLI}" == "true" ]] && packages+=(--package machine-god-cli)
+          cargo +"${RUST_TOOLCHAIN}" test --locked "${packages[@]}" --all-targets --all-features --target "${{ matrix.target }}" -- --test-threads=1
 
   unsupported-native-tools:
     name: Unsupported native tools (FreeBSD/WASI)
     needs: change-classification
-    if: ${{ needs.change-classification.outputs.full == 'true' }}
+    if: ${{ needs.change-classification.outputs.unsupported == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -948,8 +1238,10 @@ jobs:
         env:
           CLASSIFICATION_RESULT: ${{ needs.change-classification.result }}
           DOCUMENTATION_RESULT: ${{ needs.documentation-policy.result }}
-          FULL: ${{ needs.change-classification.outputs.full }}
-          DOCS_ONLY: ${{ needs.change-classification.outputs.docs_only }}
+          QUALITY: ${{ needs.change-classification.outputs.quality }}
+          DEPENDENCY_AUDIT: ${{ needs.change-classification.outputs.dependency_audit }}
+          NATIVE_MATRIX: ${{ needs.change-classification.outputs.native_matrix }}
+          UNSUPPORTED: ${{ needs.change-classification.outputs.unsupported }}
           QUALITY_RESULT: ${{ needs.quality.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
           NATIVE_RESULT: ${{ needs.native-target-tests.result }}
@@ -967,27 +1259,26 @@ jobs:
             exit 1
           fi
 
-          case "${FULL}:${DOCS_ONLY}" in
-            true:false)
-              expected="success"
-              ;;
-            false:true)
-              expected="skipped"
-              ;;
-            *)
-              echo "invalid classification full=${FULL} docs_only=${DOCS_ONLY}" >&2
-              exit 1
-              ;;
-          esac
-
-          for result in \
-            "${QUALITY_RESULT}" \
-            "${SECURITY_RESULT}" \
-            "${NATIVE_RESULT}" \
-            "${FREEBSD_RESULT}"
-          do
+          require_result() {
+            local selected="${1}"
+            local result="${2}"
+            local label="${3}"
+            local expected
+            case "${selected}" in
+              true) expected=success ;;
+              false) expected=skipped ;;
+              *)
+                echo "invalid ${label} classification: ${selected}" >&2
+                exit 1
+                ;;
+            esac
             if [[ "${result}" != "${expected}" ]]; then
-              echo "heavy CI job was ${result}; expected ${expected}" >&2
+              echo "${label} job was ${result}; expected ${expected}" >&2
               exit 1
             fi
-          done
+          }
+
+          require_result "${QUALITY}" "${QUALITY_RESULT}" quality
+          require_result "${DEPENDENCY_AUDIT}" "${SECURITY_RESULT}" security
+          require_result "${NATIVE_MATRIX}" "${NATIVE_RESULT}" native-matrix
+          require_result "${UNSUPPORTED}" "${FREEBSD_RESULT}" unsupported

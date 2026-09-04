@@ -11,10 +11,10 @@ contexts for branch protection.
 
 ## Classification boundary
 
-A change is documentation-only when every changed path is `AGENTS.md`,
-`README.md`, or Markdown below `docs/`. `AGENTS.md` is maintained instruction
-text and is checked by the same bounded documentation policy. The four
-code-coupled documents remain documentation-only but request focused checks:
+CI classifies independent concerns instead of assigning a single full or
+documentation-only label. A documentation concern is selected by changes to
+`AGENTS.md`, `README.md`, Markdown below `docs/`, the bounded documentation
+checker, or its tests. The four code-coupled documents request focused checks:
 
 - `docs/core-api.md` runs `machine-god-core` doctests;
 - `docs/testkit.md` runs `machine-god-testkit` doctests;
@@ -24,14 +24,35 @@ code-coupled documents remain documentation-only but request focused checks:
   test.
 
 Other Markdown uses only the bounded repository documentation checker and its
-policy tests. A change to any other path, including a mixed documentation and
-code change, selects the complete product gate. Classifier failure does not
-grant a documentation exemption: the aggregate gates fail.
+policy tests. Mixed changes select both their documentation checks and the
+affected code concerns.
 
-The complete product gate separately validates the inventory against the
+Rust routing follows source dependency closure. A core source or manifest
+change selects core, testkit, native, and CLI packages. A testkit source or
+manifest change selects testkit and its native test consumer. A native source
+or manifest change selects native and CLI. A CLI change selects CLI. Changes
+confined to a crate's tests, examples, or benchmarks select that crate only. Root Cargo,
+lockfile, or toolchain inputs select every package; formatting configuration
+selects workspace formatting without package tests. The standalone
+reentrant-waker fixture is formatted, linted, and tested through its own
+manifest while also selecting its core and native consumers.
+
+Python, compatibility, release-smoke, dependency-audit, native-matrix, and
+unsupported-platform concerns are independent. In particular, dependency
+policy alone does not run product tests, while shipped core/native/CLI source
+selects the release smoke. Compatibility inputs include the policy, inventory,
+generator, fixtures, and pinned upstream lock.
+
+An explicit catch-all filter selects every CI concern for any unclassified
+non-documentation path, including when an otherwise known path changes in the
+same range. Workflow and classifier-test changes also select every concern.
+Malformed classifier output defaults to every concern. Classification failure
+still fails the aggregate gate.
+
+The compatibility concern separately validates the inventory against the
 pinned upstream checkout. Every input to that agreement—lock, policy,
-inventory, generator, and workflow—remains a full-gate path, so the focused
-offline check does not weaken upstream evidence.
+inventory, generator, and workflow—selects that concern, so the focused offline
+documentation check does not weaken upstream evidence.
 
 The action runs in local Git mode with an empty API token, receives no
 changed-file list output, and interpolates no changed path into a shell
@@ -63,16 +84,20 @@ candidate.
 ## Workflow gates
 
 The CI workflow always runs change classification, documentation policy, and
-the final `CI gate`. Documentation-only changes skip formatting, Clippy, Rust
-workspace tests, release smoke, dependency audit, native target matrices, and
-unsupported-platform compilation. The four focused documents add only their
-named checks. Complete and mixed changes run the full product jobs. The final
-gate verifies that classification and documentation succeeded and that heavy
-jobs either all succeeded or all skipped as required.
+the final `CI gate`. The quality job receives only fixed package names selected
+by the dependency closure; changed paths are never interpolated into commands.
+Formatting, Clippy, package tests, and package documentation tests therefore
+run only for affected packages. Python, compatibility, and release-smoke steps
+have their own selectors. Dependency audit, native target matrices, and
+unsupported-platform compilation remain separate conditional jobs. The four
+focused documents add only their named checks. The final gate independently
+verifies each selector against its job result: selected jobs must succeed and
+unselected jobs must be skipped.
 
 The Benchmark workflow always runs classification and the final `Benchmark
-gate`. Complete changes and manual dispatches run both artifact-producing
-benchmark jobs. Documentation-only changes skip both and create no benchmark
+gate`. Every non-documentation change and every manual dispatch runs both
+artifact-producing benchmark jobs, preserving the repository's exact-SHA
+evidence policy. Documentation-only changes skip both and create no benchmark
 artifact; the aggregate gate verifies those skips.
 
 A lightweight result is not benchmark evidence for an ancestor. The

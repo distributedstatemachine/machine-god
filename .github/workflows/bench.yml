@@ -18,8 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      full: ${{ steps.route.outputs.full }}
-      docs_only: ${{ steps.route.outputs.docs_only }}
+      evidence: ${{ steps.route.outputs.evidence }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -87,11 +86,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          full=true
-          docs_only=false
+          evidence=true
 
           valid=true
-          for value in "${DOCUMENTATION}" "${NON_DOCUMENTATION}"
+          for value in \
+            "${DOCUMENTATION}" \
+            "${NON_DOCUMENTATION}"
           do
             if [[ "${value}" != "true" && "${value}" != "false" ]]; then
               valid=false
@@ -99,22 +99,15 @@ jobs:
           done
 
           if [[ "${EVENT_NAME}" != "workflow_dispatch" && "${valid}" == "true" ]]; then
-            case "${DOCUMENTATION}:${NON_DOCUMENTATION}" in
-              true:false)
-                full=false
-                docs_only=true
-                ;;
-            esac
+            evidence="${NON_DOCUMENTATION}"
           fi
 
-          # shellcheck disable=SC2129
-          echo "full=${full}" >> "${GITHUB_OUTPUT}"
-          echo "docs_only=${docs_only}" >> "${GITHUB_OUTPUT}"
+          echo "evidence=${evidence}" >> "${GITHUB_OUTPUT}"
 
   bootstrap-evidence:
     name: Bootstrap benchmark evidence
     needs: change-classification
-    if: ${{ needs.change-classification.outputs.full == 'true' }}
+    if: ${{ needs.change-classification.outputs.evidence == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -142,7 +135,7 @@ jobs:
   pinned-upstream-evidence:
     name: Pinned upstream benchmark evidence
     needs: change-classification
-    if: ${{ needs.change-classification.outputs.full == 'true' }}
+    if: ${{ needs.change-classification.outputs.evidence == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -188,8 +181,7 @@ jobs:
       - name: Require the applicable benchmark evidence
         env:
           CLASSIFICATION_RESULT: ${{ needs.change-classification.result }}
-          FULL: ${{ needs.change-classification.outputs.full }}
-          DOCS_ONLY: ${{ needs.change-classification.outputs.docs_only }}
+          EVIDENCE: ${{ needs.change-classification.outputs.evidence }}
           BOOTSTRAP_RESULT: ${{ needs.bootstrap-evidence.result }}
           UPSTREAM_RESULT: ${{ needs.pinned-upstream-evidence.result }}
         shell: bash
@@ -201,15 +193,11 @@ jobs:
             exit 1
           fi
 
-          case "${FULL}:${DOCS_ONLY}" in
-            true:false)
-              expected="success"
-              ;;
-            false:true)
-              expected="skipped"
-              ;;
+          case "${EVIDENCE}" in
+            true) expected="success" ;;
+            false) expected="skipped" ;;
             *)
-              echo "invalid classification full=${FULL} docs_only=${DOCS_ONLY}" >&2
+              echo "invalid evidence classification: ${EVIDENCE}" >&2
               exit 1
               ;;
           esac
@@ -222,8 +210,8 @@ jobs:
             fi
           done
 
-          if [[ "${DOCS_ONLY}" == "true" ]]; then
-            echo "Documentation-only change: benchmark jobs were skipped; no artifacts were produced." \
+          if [[ "${EVIDENCE}" == "false" ]]; then
+            echo "Documentation-only change: evidence jobs were skipped; no artifacts were produced." \
               | tee -a "${GITHUB_STEP_SUMMARY}"
           else
             echo "Full benchmark evidence succeeded."

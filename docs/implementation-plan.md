@@ -25,9 +25,9 @@ input; it is not a machine-god product language or runtime dependency.
 - Delivered main: `a8f5af3987ec4a4c79af79d0428830d93d48f9df`
 - Main CI: `33872064499` (`GREEN`)
 - Main Benchmark evidence: `33872064372` (`GREEN`)
-- Active branch: `main`
-- Active phase: `selecting the next bounded tool or CLI slice`
-- Next gate: `bound and implement the next unfinished tool or CLI behavior without expanding documentation tooling`
+- Active branch: `agent/m01-affected-ci`
+- Active phase: `dependency-aware CI routing maintenance without product behavior changes`
+- Next gate: `pass focused workflow tests and adversarial CI review, then exact lightweight remote aggregate gates`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -42,7 +42,12 @@ reported zero findings after two rejected candidates closed a description/schema
 mismatch and the zero-ID persisted-record gap. Detailed history is retained
 only in the linked review ledger.
 
-The next product slice returns to unfinished tool or CLI behavior. Managed
+The active non-product iteration replaces binary full-versus-documentation CI
+routing with fail-closed dependency-aware concern selection while preserving
+the stable aggregate gates and exact-SHA Benchmark evidence policy. It does not
+increment the delivered-slice count or require a product-review cycle.
+
+After that maintenance, the next product slice returns to unfinished tool or CLI behavior. Managed
 background output and read, persistent interactive handles, write/control
 actions, interactive terminal behavior, restart-safe control, ACP, teams, and
 extension slash commands remain separate until explicitly bounded.

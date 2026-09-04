@@ -17,6 +17,52 @@ FOCUSED_FILTERS = {
     "compatibility_docs": "docs/compatibility.md",
     "vision_docs": "docs/vision.md",
 }
+CI_ROUTE_INPUTS = (
+    "DOCUMENTATION",
+    "NON_DOCUMENTATION",
+    "UNCLASSIFIED",
+    "CI_INFRASTRUCTURE",
+    "RUST_GLOBAL",
+    "RUST_FORMAT",
+    "CORE_ANY",
+    "CORE_SOURCE",
+    "TESTKIT_ANY",
+    "TESTKIT_SOURCE",
+    "NATIVE_ANY",
+    "NATIVE_SOURCE",
+    "CLI_ANY",
+    "CLI_SOURCE",
+    "TEST_SUPPORT",
+    "PYTHON_INPUTS",
+    "COMPATIBILITY_INPUTS",
+    "DEPENDENCY_INPUTS",
+    "DOCUMENTATION_POLICY",
+    "CORE_API_DOCS",
+    "TESTKIT_DOCS",
+    "COMPATIBILITY_DOCS",
+    "VISION_DOCS",
+)
+CI_ROUTE_OUTPUTS = (
+    "documentation",
+    "core",
+    "testkit",
+    "native",
+    "cli",
+    "format",
+    "quality",
+    "python",
+    "compatibility",
+    "release_smoke",
+    "dependency_audit",
+    "native_matrix",
+    "unsupported",
+    "test_support",
+    *FOCUSED_FILTERS,
+)
+BENCHMARK_ROUTE_INPUTS = (
+    "DOCUMENTATION",
+    "NON_DOCUMENTATION",
+)
 
 
 def job(workflow: str, name: str) -> str:
@@ -41,6 +87,53 @@ def step_script(workflow: str, name: str) -> str:
     if script is None:
         raise AssertionError(f"workflow step {name!r} has no block script")
     return textwrap.dedent(script.group("body"))
+
+
+def run_route(
+    workflow: str,
+    inputs: tuple[str, ...],
+    values: dict[str, str],
+) -> dict[str, str]:
+    environment = os.environ.copy()
+    environment.update({name: "false" for name in inputs})
+    environment.update(values)
+    with tempfile.NamedTemporaryFile() as output:
+        environment["GITHUB_OUTPUT"] = output.name
+        result = subprocess.run(
+            ["bash", "-c", step_script(workflow, "Select the applicable gate")],
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise AssertionError(
+                f"route failed: stdout={result.stdout!r} stderr={result.stderr!r}"
+            )
+        output.seek(0)
+        return dict(
+            line.decode().rstrip("\n").split("=", 1)
+            for line in output
+            if b"=" in line
+        )
+
+
+def run_step_script(
+    workflow: str,
+    name: str,
+    values: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    environment = os.environ.copy()
+    environment.update(values)
+    with tempfile.NamedTemporaryFile() as summary:
+        environment["GITHUB_STEP_SUMMARY"] = summary.name
+        return subprocess.run(
+            ["bash", "-c", step_script(workflow, name)],
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
 
 
 class CiChangeClassificationTests(unittest.TestCase):
@@ -113,6 +206,31 @@ class CiChangeClassificationTests(unittest.TestCase):
                 self.assertIn(f"            {output}:\n", classifier)
                 self.assertIn(f"              - '{path}'\n", classifier)
 
+        self.assertIn("            unclassified:\n              - '**'", classifier)
+        for admitted in (
+            "!.github/workflows/**",
+            "!**/*.py",
+            "!benchmarks/**",
+            "!compatibility/**",
+            "!crates/machine-god-cli/**",
+            "!crates/machine-god-core/**",
+            "!crates/machine-god-native/**",
+            "!crates/machine-god-testkit/**",
+            "!test-support/**",
+        ):
+            self.assertIn(f"              - '{admitted}'", classifier)
+        for unsafe_exclusion in ("!.github/**", "!crates/**", "!scripts/**", "!tests/**"):
+            self.assertNotIn(
+                f"              - '{unsafe_exclusion}'", classifier
+            )
+        self.assertIn(
+            "            compatibility_inputs:\n"
+            "              - 'compatibility/**'\n"
+            "              - 'benchmarks/upstream.lock'\n"
+            "              - 'scripts/generate_compatibility.py'",
+            classifier,
+        )
+
     def test_gitlink_guard_behaviorally_rejects_gitmodules_symlinks(self) -> None:
         environment = os.environ.copy()
         environment["GIT_CONFIG_GLOBAL"] = os.devnull
@@ -142,38 +260,220 @@ class CiChangeClassificationTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(".gitmodules must be a regular file", result.stdout)
 
-    def test_route_defaults_every_non_docs_only_case_to_full(self) -> None:
-        for workflow in (self.ci, self.benchmark):
-            classifier = job(workflow, "change-classification")
-            self.assertIn("id: route", classifier)
-            self.assertIn(
-                "DOCUMENTATION: ${{ steps.paths.outputs.documentation }}",
-                classifier,
-            )
-            self.assertIn(
-                "NON_DOCUMENTATION: ${{ steps.paths.outputs.non_documentation }}",
-                classifier,
-            )
-            self.assertIn("full=true", classifier)
-            self.assertIn("docs_only=false", classifier)
-            self.assertIn("true:false", classifier)
-            self.assertIn('echo "full=${full}" >> "${GITHUB_OUTPUT}"', classifier)
-            self.assertIn(
-                'echo "docs_only=${docs_only}" >> "${GITHUB_OUTPUT}"',
-                classifier,
-            )
-            self.assertIn("full: ${{ steps.route.outputs.full }}", classifier)
-            self.assertIn(
-                "docs_only: ${{ steps.route.outputs.docs_only }}", classifier
-            )
+    def test_ci_route_uses_dependency_closure_and_fails_closed(self) -> None:
+        false = {name: "false" for name in CI_ROUTE_OUTPUTS}
+        all_concerns = {
+            name: "true"
+            for name in CI_ROUTE_OUTPUTS
+            if name not in FOCUSED_FILTERS
+        }
+        cases = (
+            (
+                "documentation only",
+                {
+                    "DOCUMENTATION": "true",
+                    "DOCUMENTATION_POLICY": "true",
+                },
+                {**false, "documentation": "true"},
+            ),
+            (
+                "core source reaches every dependent",
+                {
+                    "NON_DOCUMENTATION": "true",
+                    "CORE_ANY": "true",
+                    "CORE_SOURCE": "true",
+                },
+                {
+                    **false,
+                    "core": "true",
+                    "testkit": "true",
+                    "native": "true",
+                    "cli": "true",
+                    "quality": "true",
+                    "release_smoke": "true",
+                    "native_matrix": "true",
+                    "unsupported": "true",
+                },
+            ),
+            (
+                "core test stays in its owner",
+                {
+                    "NON_DOCUMENTATION": "true",
+                    "CORE_ANY": "true",
+                },
+                {
+                    **false,
+                    "core": "true",
+                    "quality": "true",
+                    "native_matrix": "true",
+                },
+            ),
+            (
+                "testkit source reaches native test consumers",
+                {
+                    "NON_DOCUMENTATION": "true",
+                    "TESTKIT_ANY": "true",
+                    "TESTKIT_SOURCE": "true",
+                },
+                {
+                    **false,
+                    "testkit": "true",
+                    "native": "true",
+                    "quality": "true",
+                    "native_matrix": "true",
+                    "unsupported": "true",
+                },
+            ),
+            (
+                "native source reaches cli and native agreements",
+                {
+                    "NON_DOCUMENTATION": "true",
+                    "NATIVE_ANY": "true",
+                    "NATIVE_SOURCE": "true",
+                },
+                {
+                    **false,
+                    "native": "true",
+                    "cli": "true",
+                    "quality": "true",
+                    "python": "true",
+                    "release_smoke": "true",
+                    "native_matrix": "true",
+                    "unsupported": "true",
+                },
+            ),
+            (
+                "cli test stays in its owner",
+                {
+                    "NON_DOCUMENTATION": "true",
+                    "CLI_ANY": "true",
+                },
+                {
+                    **false,
+                    "cli": "true",
+                    "quality": "true",
+                    "native_matrix": "true",
+                },
+            ),
+            (
+                "standalone test support checks itself and consumers",
+                {
+                    "NON_DOCUMENTATION": "true",
+                    "TEST_SUPPORT": "true",
+                },
+                {
+                    **false,
+                    "core": "true",
+                    "native": "true",
+                    "quality": "true",
+                    "native_matrix": "true",
+                    "unsupported": "true",
+                    "test_support": "true",
+                },
+            ),
+            (
+                "lockfile reaches every package audit and smoke",
+                {
+                    "NON_DOCUMENTATION": "true",
+                    "RUST_GLOBAL": "true",
+                    "DEPENDENCY_INPUTS": "true",
+                },
+                {
+                    **false,
+                    "core": "true",
+                    "testkit": "true",
+                    "native": "true",
+                    "cli": "true",
+                    "quality": "true",
+                    "python": "true",
+                    "release_smoke": "true",
+                    "dependency_audit": "true",
+                    "native_matrix": "true",
+                    "unsupported": "true",
+                },
+            ),
+            (
+                "dependency policy does not run product tests",
+                {
+                    "NON_DOCUMENTATION": "true",
+                    "DEPENDENCY_INPUTS": "true",
+                },
+                {**false, "dependency_audit": "true"},
+            ),
+            (
+                "format policy does not run package tests",
+                {
+                    "NON_DOCUMENTATION": "true",
+                    "RUST_FORMAT": "true",
+                },
+                {**false, "format": "true", "quality": "true"},
+            ),
+            (
+                "mixed docs and cli test",
+                {
+                    "DOCUMENTATION": "true",
+                    "DOCUMENTATION_POLICY": "true",
+                    "NON_DOCUMENTATION": "true",
+                    "CLI_ANY": "true",
+                },
+                {
+                    **false,
+                    "documentation": "true",
+                    "cli": "true",
+                    "quality": "true",
+                    "native_matrix": "true",
+                },
+            ),
+            (
+                "workflow change",
+                {
+                    "NON_DOCUMENTATION": "true",
+                    "CI_INFRASTRUCTURE": "true",
+                },
+                {**false, **all_concerns, **dict.fromkeys(FOCUSED_FILTERS, "true")},
+            ),
+            (
+                "unknown path",
+                {"NON_DOCUMENTATION": "true", "UNCLASSIFIED": "true"},
+                {**false, **all_concerns, **dict.fromkeys(FOCUSED_FILTERS, "true")},
+            ),
+            (
+                "known and unknown paths still fail closed",
+                {
+                    "NON_DOCUMENTATION": "true",
+                    "CLI_ANY": "true",
+                    "UNCLASSIFIED": "true",
+                },
+                {**false, **all_concerns, **dict.fromkeys(FOCUSED_FILTERS, "true")},
+            ),
+            (
+                "new crate fails closed",
+                {"NON_DOCUMENTATION": "true", "UNCLASSIFIED": "true"},
+                {**false, **all_concerns, **dict.fromkeys(FOCUSED_FILTERS, "true")},
+            ),
+            (
+                "non-python script or test fixture fails closed",
+                {"NON_DOCUMENTATION": "true", "UNCLASSIFIED": "true"},
+                {**false, **all_concerns, **dict.fromkeys(FOCUSED_FILTERS, "true")},
+            ),
+        )
+        for name, inputs, expected in cases:
+            with self.subTest(name=name):
+                self.assertEqual(
+                    run_route(self.ci, CI_ROUTE_INPUTS, inputs), expected
+                )
 
-        for output in FOCUSED_FILTERS:
-            self.assertIn(
-                f"{output}: ${{{{ steps.route.outputs.{output} }}}}",
-                job(self.ci, "change-classification"),
-            )
+        malformed = run_route(
+            self.ci,
+            CI_ROUTE_INPUTS,
+            {"CORE_ANY": "not-a-boolean"},
+        )
+        self.assertTrue(
+            all(malformed[name] == "true" for name in CI_ROUTE_OUTPUTS),
+            malformed,
+        )
 
-    def test_ci_keeps_focused_docs_light_and_mixed_changes_full(self) -> None:
+    def test_ci_keeps_focused_docs_and_selects_independent_jobs(self) -> None:
         documentation = job(self.ci, "documentation-policy")
         self.assertIn("needs: change-classification", documentation)
         self.assertIn("if: ${{ always() }}", documentation)
@@ -199,14 +499,15 @@ class CiChangeClassificationTests(unittest.TestCase):
         self.assertIn("testkit_docs", rust_install.group("body"))
         self.assertNotIn("vision_docs", rust_install.group("body"))
 
-        for heavy_job in (
-            "quality",
-            "security",
-            "native-target-tests",
-            "unsupported-native-tools",
-        ):
+        conditions = {
+            "quality": "quality",
+            "security": "dependency_audit",
+            "native-target-tests": "native_matrix",
+            "unsupported-native-tools": "unsupported",
+        }
+        for heavy_job, output in conditions.items():
             self.assertIn(
-                "if: ${{ needs.change-classification.outputs.full == 'true' }}",
+                f"if: ${{{{ needs.change-classification.outputs.{output} == 'true' }}}}",
                 job(self.ci, heavy_job),
             )
 
@@ -215,9 +516,49 @@ class CiChangeClassificationTests(unittest.TestCase):
         self.assertIn("if: ${{ always() }}", gate)
         self.assertIn("CLASSIFICATION_RESULT", gate)
         self.assertIn("DOCUMENTATION_RESULT", gate)
-        self.assertIn("DOCS_ONLY", gate)
-        self.assertIn('expected="skipped"', gate)
-        self.assertIn('expected="success"', gate)
+        self.assertIn("require_result", gate)
+        for output in conditions.values():
+            self.assertIn(output.upper(), gate)
+
+        quality = job(self.ci, "quality")
+        helper_manifest = "test-support/reentrant-waker/Cargo.toml"
+        self.assertEqual(quality.count(f"--manifest-path {helper_manifest}"), 3)
+        self.assertIn("fmt --manifest-path", quality)
+        self.assertIn("clippy --locked --manifest-path", quality)
+        self.assertIn("test --locked --manifest-path", quality)
+
+    def test_ci_gate_requires_each_selected_job_independently(self) -> None:
+        base = {
+            "CLASSIFICATION_RESULT": "success",
+            "DOCUMENTATION_RESULT": "success",
+            "QUALITY": "true",
+            "DEPENDENCY_AUDIT": "false",
+            "NATIVE_MATRIX": "true",
+            "UNSUPPORTED": "false",
+            "QUALITY_RESULT": "success",
+            "SECURITY_RESULT": "skipped",
+            "NATIVE_RESULT": "success",
+            "FREEBSD_RESULT": "skipped",
+        }
+        accepted = run_step_script(
+            self.ci, "Require the applicable checks", base
+        )
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+
+        for name, updates in (
+            ("selected skipped", {"QUALITY_RESULT": "skipped"}),
+            ("unselected ran", {"SECURITY_RESULT": "success"}),
+            ("invalid selector", {"NATIVE_MATRIX": "invalid"}),
+            ("classification failed", {"CLASSIFICATION_RESULT": "failure"}),
+            ("documentation failed", {"DOCUMENTATION_RESULT": "failure"}),
+        ):
+            with self.subTest(name=name):
+                result = run_step_script(
+                    self.ci,
+                    "Require the applicable checks",
+                    {**base, **updates},
+                )
+                self.assertNotEqual(result.returncode, 0)
 
     def test_apple_native_tests_serialize_only_test_threads(self) -> None:
         native_tests = job(self.ci, "native-target-tests")
@@ -271,10 +612,10 @@ class CiChangeClassificationTests(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, release_smoke)
 
-    def test_benchmark_keeps_a_stable_non_artifact_docs_gate(self) -> None:
+    def test_benchmark_keeps_a_stable_affected_evidence_gate(self) -> None:
         for evidence_job in ("bootstrap-evidence", "pinned-upstream-evidence"):
             self.assertIn(
-                "if: ${{ needs.change-classification.outputs.full == 'true' }}",
+                "if: ${{ needs.change-classification.outputs.evidence == 'true' }}",
                 job(self.benchmark, evidence_job),
             )
 
@@ -285,10 +626,85 @@ class CiChangeClassificationTests(unittest.TestCase):
         gate = job(self.benchmark, "benchmark-gate")
         self.assertIn("name: Benchmark gate", gate)
         self.assertIn("if: ${{ always() }}", gate)
-        self.assertIn("DOCS_ONLY", gate)
+        self.assertIn("EVIDENCE", gate)
         self.assertIn('expected="skipped"', gate)
         self.assertIn('expected="success"', gate)
         self.assertIn("no artifacts were produced", gate)
+
+        cases = (
+            ("docs", {"DOCUMENTATION": "true"}, "false"),
+            (
+                "runtime source",
+                {"NON_DOCUMENTATION": "true"},
+                "true",
+            ),
+            (
+                "test only retains exact-sha evidence",
+                {"NON_DOCUMENTATION": "true"},
+                "true",
+            ),
+            (
+                "classifier",
+                {"NON_DOCUMENTATION": "true"},
+                "true",
+            ),
+            ("unknown", {"NON_DOCUMENTATION": "true"}, "true"),
+            (
+                "manual",
+                {"EVENT_NAME": "workflow_dispatch"},
+                "true",
+            ),
+            ("malformed", {"NON_DOCUMENTATION": "invalid"}, "true"),
+        )
+        for name, inputs, expected in cases:
+            with self.subTest(name=name):
+                values = {"EVENT_NAME": "push", **inputs}
+                self.assertEqual(
+                    run_route(
+                        self.benchmark,
+                        BENCHMARK_ROUTE_INPUTS,
+                        values,
+                    ),
+                    {"evidence": expected},
+                )
+
+    def test_benchmark_gate_requires_evidence_exactly_when_selected(self) -> None:
+        base = {
+            "CLASSIFICATION_RESULT": "success",
+            "EVIDENCE": "true",
+            "BOOTSTRAP_RESULT": "success",
+            "UPSTREAM_RESULT": "success",
+        }
+        accepted = run_step_script(
+            self.benchmark, "Require the applicable benchmark evidence", base
+        )
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+
+        docs = run_step_script(
+            self.benchmark,
+            "Require the applicable benchmark evidence",
+            {
+                **base,
+                "EVIDENCE": "false",
+                "BOOTSTRAP_RESULT": "skipped",
+                "UPSTREAM_RESULT": "skipped",
+            },
+        )
+        self.assertEqual(docs.returncode, 0, docs.stderr)
+        self.assertIn("Documentation-only change", docs.stdout)
+
+        for name, updates in (
+            ("selected skipped", {"UPSTREAM_RESULT": "skipped"}),
+            ("invalid selector", {"EVIDENCE": "invalid"}),
+            ("classification failed", {"CLASSIFICATION_RESULT": "failure"}),
+        ):
+            with self.subTest(name=name):
+                result = run_step_script(
+                    self.benchmark,
+                    "Require the applicable benchmark evidence",
+                    {**base, **updates},
+                )
+                self.assertNotEqual(result.returncode, 0)
 
 
 if __name__ == "__main__":
