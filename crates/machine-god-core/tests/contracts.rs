@@ -2198,6 +2198,216 @@ impl Wake for TurnWakeCounter {
     }
 }
 
+#[derive(Debug, Default)]
+struct CompletionGate {
+    ready: AtomicBool,
+    waiter: Mutex<Option<Waker>>,
+}
+
+impl CompletionGate {
+    fn wait(&self) -> impl Future<Output = ()> + '_ {
+        std::future::poll_fn(|context| {
+            if self.ready.load(Ordering::Acquire) {
+                return Poll::Ready(());
+            }
+            *self.waiter.lock().unwrap() = Some(context.waker().clone());
+            if self.ready.load(Ordering::Acquire) {
+                self.waiter.lock().unwrap().take();
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        })
+    }
+
+    fn complete(&self) {
+        self.ready.store(true, Ordering::Release);
+        if let Some(waiter) = self.waiter.lock().unwrap().take() {
+            waiter.wake();
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CompletionOwnedTool {
+    name: ToolName,
+    gate: Arc<CompletionGate>,
+}
+
+impl Tool for CompletionOwnedTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: self.name.clone(),
+            description: "completion-owned test tool".to_owned(),
+            input_schema: json!({"type": "object"}),
+        }
+    }
+
+    fn prepare(&self, call: ToolCall) -> Result<PreparedToolCall, ToolError> {
+        Ok(PreparedToolCall::without_authority(call.arguments).completion_wins_after_first_poll())
+    }
+
+    fn execute(
+        &self,
+        _context: ToolContext,
+        _arguments: Value,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            self.gate.wait().await;
+            Ok(ToolOutput::success(json!({"completed": true})))
+        })
+    }
+}
+
+#[derive(Debug)]
+struct ToolFinishedGateSink {
+    gate: Arc<CompletionGate>,
+}
+
+impl EventSink for ToolFinishedGateSink {
+    fn emit(&self, event: EngineEvent) -> BoxFuture<'_, Result<(), EventSinkError>> {
+        let gate = Arc::clone(&self.gate);
+        Box::pin(async move {
+            if matches!(event.payload, TurnEvent::ToolFinished { .. }) {
+                gate.wait().await;
+            }
+            Ok(())
+        })
+    }
+}
+
+fn completion_owned_tool_engine(
+    execution_gate: Arc<CompletionGate>,
+    sink: impl EventSink,
+) -> Engine {
+    let name = ToolName::new("completion_owned").unwrap();
+    let call = ToolCall {
+        id: ToolCallId::new("completion-owned-call").unwrap(),
+        name: name.clone(),
+        arguments: json!({}),
+    };
+    Engine::builder()
+        .provider(BoundaryProvider::new(call))
+        .session_store(MemoryStore::default())
+        .permission_handler(AllowOnce)
+        .event_sink(sink)
+        .tool(CompletionOwnedTool {
+            name,
+            gate: execution_gate,
+        })
+        .build()
+        .unwrap()
+}
+
+fn advance_to_completion_owned_execution(turn: &mut Turn) {
+    for expected in ["started", "tool call", "model stop", "tool started"] {
+        let event = futures_executor::block_on(turn.next()).unwrap().unwrap();
+        let matches_expected = match expected {
+            "started" => matches!(event.payload, TurnEvent::Started),
+            "tool call" => matches!(
+                event.payload,
+                TurnEvent::Model {
+                    event: ModelEvent::ToolCall { .. }
+                }
+            ),
+            "model stop" => matches!(
+                event.payload,
+                TurnEvent::Model {
+                    event: ModelEvent::Stop {
+                        reason: StopReason::ToolCalls
+                    }
+                }
+            ),
+            "tool started" => matches!(event.payload, TurnEvent::ToolStarted { .. }),
+            _ => unreachable!(),
+        };
+        assert!(matches_expected, "expected {expected}, got {event:?}");
+    }
+}
+
+fn assert_tool_finished_then_cancelled(turn: &mut Turn) {
+    let cancelled = futures_executor::block_on(turn.next()).unwrap().unwrap();
+    assert!(matches!(
+        cancelled.payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    ));
+    assert!(futures_executor::block_on(turn.next()).is_none());
+}
+
+#[test]
+fn deferred_cancellation_does_not_self_wake_pending_completion_owned_tool() {
+    let execution_gate = Arc::new(CompletionGate::default());
+    let engine =
+        completion_owned_tool_engine(Arc::clone(&execution_gate), machine_god_core::NoopEventSink);
+    let session = engine.create_test_session(SessionId::new("pending-owned-tool-wake").unwrap());
+    let mut turn = prompt(&session, "run");
+    let handle = turn.handle();
+    advance_to_completion_owned_execution(&mut turn);
+
+    let wake_counter = Arc::new(TurnWakeCounter::default());
+    let waker = Waker::from(Arc::clone(&wake_counter));
+    let mut context = Context::from_waker(&waker);
+    let mut next = Box::pin(turn.next());
+    assert!(matches!(next.as_mut().poll(&mut context), Poll::Pending));
+    assert!(handle.cancel());
+    assert_eq!(wake_counter.0.swap(0, Ordering::Relaxed), 1);
+
+    assert!(matches!(next.as_mut().poll(&mut context), Poll::Pending));
+    assert_eq!(wake_counter.0.load(Ordering::Relaxed), 0);
+    execution_gate.complete();
+    assert_eq!(wake_counter.0.load(Ordering::Relaxed), 1);
+    let Poll::Ready(Some(Ok(finished))) = next.as_mut().poll(&mut context) else {
+        panic!("completion-owned tool result was not published");
+    };
+    assert!(matches!(finished.payload, TurnEvent::ToolFinished { .. }));
+    drop(next);
+
+    assert_tool_finished_then_cancelled(&mut turn);
+    assert!(!session.has_active_turn());
+}
+
+#[test]
+fn deferred_cancellation_does_not_self_wake_pending_tool_finished_delivery() {
+    let execution_gate = Arc::new(CompletionGate::default());
+    execution_gate.complete();
+    let delivery_gate = Arc::new(CompletionGate::default());
+    let engine = completion_owned_tool_engine(
+        execution_gate,
+        ToolFinishedGateSink {
+            gate: Arc::clone(&delivery_gate),
+        },
+    );
+    let session = engine.create_test_session(SessionId::new("pending-tool-finished-wake").unwrap());
+    let mut turn = prompt(&session, "run");
+    let handle = turn.handle();
+    advance_to_completion_owned_execution(&mut turn);
+
+    let wake_counter = Arc::new(TurnWakeCounter::default());
+    let waker = Waker::from(Arc::clone(&wake_counter));
+    let mut context = Context::from_waker(&waker);
+    let mut next = Box::pin(turn.next());
+    assert!(matches!(next.as_mut().poll(&mut context), Poll::Pending));
+    assert!(handle.cancel());
+    assert_eq!(wake_counter.0.swap(0, Ordering::Relaxed), 1);
+
+    assert!(matches!(next.as_mut().poll(&mut context), Poll::Pending));
+    assert_eq!(wake_counter.0.load(Ordering::Relaxed), 0);
+    delivery_gate.complete();
+    assert_eq!(wake_counter.0.load(Ordering::Relaxed), 1);
+    let Poll::Ready(Some(Ok(finished))) = next.as_mut().poll(&mut context) else {
+        panic!("completion-owned ToolFinished event was not delivered");
+    };
+    assert!(matches!(finished.payload, TurnEvent::ToolFinished { .. }));
+    drop(next);
+
+    assert_tool_finished_then_cancelled(&mut turn);
+    assert!(!session.has_active_turn());
+}
+
 fn assert_cancellation_during_provider_poll_wins(outcome: BarrierPollOutcome, session_id: &str) {
     let barrier = Arc::new(Barrier::new(2));
     let engine = Engine::builder()

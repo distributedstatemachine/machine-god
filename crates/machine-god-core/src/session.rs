@@ -2694,6 +2694,15 @@ impl Turn {
         });
     }
 
+    fn update_cancellation_waiter(&mut self, context: &Context<'_>) {
+        let cancellation = self.cancellation.clone();
+        if self.terminal_seen || cancellation.is_cancelled() {
+            cancellation.deregister(&mut self.cancellation_waiter);
+        } else {
+            cancellation.register(&mut self.cancellation_waiter, context.waker());
+        }
+    }
+
     fn establish_cancellation(&mut self) {
         self.terminal_seen = true;
         self.locally_synthesized_cancellation = true;
@@ -2757,12 +2766,7 @@ impl Turn {
         &mut self,
         context: &mut Context<'_>,
     ) -> Poll<Option<Result<EngineEvent, EngineError>>> {
-        let cancellation = self.cancellation.clone();
-        if self.terminal_seen {
-            cancellation.deregister(&mut self.cancellation_waiter);
-        } else {
-            cancellation.register(&mut self.cancellation_waiter, context.waker());
-        }
+        self.update_cancellation_waiter(context);
         if let Some(event) = self.cancel_pending_delivery() {
             return Poll::Ready(Some(Ok(event)));
         }
@@ -2824,10 +2828,7 @@ impl Stream for Turn {
             self.usage = self.gate.usage();
             self.terminal_seen |= self.gate.terminal_established();
             self.establish_cancellation_if_observed();
-            if !self.terminal_seen {
-                let cancellation = self.cancellation.clone();
-                cancellation.register(&mut self.cancellation_waiter, context.waker());
-            }
+            self.update_cancellation_waiter(context);
 
             let state = core::mem::replace(&mut self.state, TurnState::Done);
             match state {
