@@ -588,7 +588,12 @@ pub struct TerminalBackgroundReadSnapshot {
 }
 
 impl TerminalBackgroundReadSnapshot {
-    #[allow(clippy::too_many_arguments)]
+    /// Validates and constructs one bounded read snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed unavailable error when the page or stream counters are
+    /// inconsistent with the public bounds.
     pub fn new(
         bytes: Vec<u8>,
         next_offset: u64,
@@ -653,6 +658,7 @@ impl fmt::Debug for TerminalBackgroundReadSnapshot {
         formatter
             .debug_struct("TerminalBackgroundReadSnapshot")
             .field("byte_count", &self.bytes.len())
+            .field("next_offset", &self.next_offset)
             .field("produced_bytes", &self.produced_bytes)
             .field("retained_bytes", &self.retained_bytes)
             .field("truncated", &self.truncated)
@@ -2375,6 +2381,63 @@ impl TerminalTool {
         })
     }
 
+    async fn execute_foreground(
+        &self,
+        arguments: TerminalCommandArguments,
+        started: Instant,
+        cancellation: CancellationToken,
+    ) -> Result<ToolOutput, ToolError> {
+        let deadline = started
+            .checked_add(self.limits.timeout)
+            .ok_or_else(execution_unavailable)?;
+        if self.system_unsupported {
+            return Err(unsupported_platform());
+        }
+        if Instant::now() >= deadline {
+            check_cancellation(&cancellation)?;
+            return render_timeout(&arguments.cwd, started);
+        }
+        let Some(activity) =
+            ExecutionActivity::acquire(&self.active, self.limits.max_active_executions)
+        else {
+            check_cancellation(&cancellation)?;
+            return if Instant::now() >= deadline {
+                render_timeout(&arguments.cwd, started)
+            } else {
+                Err(busy())
+            };
+        };
+        check_cancellation(&cancellation)?;
+        let request = self.execution_request(
+            arguments.clone(),
+            started,
+            deadline,
+            Arc::clone(&activity),
+            &cancellation,
+        )?;
+        check_cancellation(&cancellation)?;
+        if Instant::now() >= deadline {
+            let _ = activity.close_timeout();
+            return render_timeout(&arguments.cwd, started);
+        }
+        let timer = DeadlineTimer::new(deadline, Arc::clone(&activity))?;
+        let future = self.executor.execute(request, cancellation.clone());
+        let outcome = await_executor(
+            future,
+            &cancellation,
+            deadline,
+            started,
+            timer,
+            Arc::clone(&activity),
+        )
+        .await;
+        check_cancellation(&cancellation)?;
+        let outcome = outcome?;
+        let output = render_output(&arguments.cwd, &outcome)?;
+        check_cancellation(&cancellation)?;
+        Ok(output)
+    }
+
     async fn execute_read(
         &self,
         owner: BackgroundOutputOwner,
@@ -3258,55 +3321,7 @@ impl Tool for TerminalTool {
                 }
                 TerminalArguments::Command(parsed) => parsed,
             };
-            let deadline = started
-                .checked_add(self.limits.timeout)
-                .ok_or_else(execution_unavailable)?;
-            if self.system_unsupported {
-                return Err(unsupported_platform());
-            }
-            if Instant::now() >= deadline {
-                check_cancellation(&cancellation)?;
-                return render_timeout(&parsed.cwd, started);
-            }
-            let Some(activity) =
-                ExecutionActivity::acquire(&self.active, self.limits.max_active_executions)
-            else {
-                check_cancellation(&cancellation)?;
-                return if Instant::now() >= deadline {
-                    render_timeout(&parsed.cwd, started)
-                } else {
-                    Err(busy())
-                };
-            };
-            check_cancellation(&cancellation)?;
-            let request = self.execution_request(
-                parsed.clone(),
-                started,
-                deadline,
-                Arc::clone(&activity),
-                &cancellation,
-            )?;
-            check_cancellation(&cancellation)?;
-            if Instant::now() >= deadline {
-                let _ = activity.close_timeout();
-                return render_timeout(&parsed.cwd, started);
-            }
-            let timer = DeadlineTimer::new(deadline, Arc::clone(&activity))?;
-            let future = self.executor.execute(request, cancellation.clone());
-            let outcome = await_executor(
-                future,
-                &cancellation,
-                deadline,
-                started,
-                timer,
-                Arc::clone(&activity),
-            )
-            .await;
-            check_cancellation(&cancellation)?;
-            let outcome = outcome?;
-            let output = render_output(&parsed.cwd, &outcome)?;
-            check_cancellation(&cancellation)?;
-            Ok(output)
+            self.execute_foreground(parsed, started, cancellation).await
         })
     }
 }

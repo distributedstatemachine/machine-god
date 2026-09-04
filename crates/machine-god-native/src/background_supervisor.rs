@@ -339,8 +339,10 @@ impl NativeBackgroundSupervisor {
             environment,
             limits,
             adapter,
-            ownership,
-            BackgroundOutputRegistry::new(),
+            SupervisorConstructionResources {
+                ownership,
+                output: BackgroundOutputRegistry::new(),
+            },
         )
     }
 
@@ -351,9 +353,9 @@ impl NativeBackgroundSupervisor {
         environment: ValidatedBackgroundEnvironment,
         limits: NativeBackgroundLimits,
         adapter: SystemBackgroundProcessAdapter,
-        ownership: SupervisorWorkerOwnership,
-        output: BackgroundOutputRegistry,
+        resources: SupervisorConstructionResources,
     ) -> Result<Self, NativeBackgroundSupervisorError> {
+        let SupervisorConstructionResources { ownership, output } = resources;
         let environment_identity = background_environment_identity(&environment);
         let store = Arc::new(NativeStore {
             inner: Arc::new(
@@ -591,8 +593,10 @@ impl LazyProductionBackgroundStarter {
                 environment,
                 NativeBackgroundLimits::default(),
                 adapter,
-                ownership,
-                initializer_output,
+                SupervisorConstructionResources {
+                    ownership,
+                    output: initializer_output,
+                },
             )
             .map(|supervisor| Arc::new(supervisor) as Arc<dyn TerminalBackgroundStarter>)
         });
@@ -960,6 +964,11 @@ struct WorkerOwnershipReservation {
 struct SupervisorWorkerOwnership {
     blocking: WorkerOwnershipReservation,
     retainer: WorkerOwnershipReservation,
+}
+
+struct SupervisorConstructionResources {
+    ownership: SupervisorWorkerOwnership,
+    output: BackgroundOutputRegistry,
 }
 
 struct WorkerOwnershipPermit {

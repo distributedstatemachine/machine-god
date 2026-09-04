@@ -244,9 +244,11 @@ impl TerminalBackgroundStarter for FakeBackgroundStarter {
 #[derive(Clone)]
 struct FakeBackgroundOutputReader {
     result: Result<TerminalBackgroundReadSnapshot, TerminalBackgroundReadError>,
-    requests: Arc<Mutex<Vec<(String, String, u64, u64, u64)>>>,
+    requests: Arc<Mutex<Vec<BackgroundReadRequest>>>,
     pending: bool,
 }
+
+type BackgroundReadRequest = (String, String, u64, u64, u64);
 
 impl FakeBackgroundOutputReader {
     fn success(bytes: Vec<u8>, closed: bool) -> Self {
@@ -1503,6 +1505,28 @@ fn reading_tool(
         .unwrap()
 }
 
+fn assert_background_start_spec(tool: &TerminalTool) {
+    let spec = tool.spec();
+    assert_eq!(
+        spec.description,
+        "Run one foreground command or start one noninteractive background command"
+    );
+    assert_eq!(
+        spec.input_schema,
+        json!({
+            "type": "object",
+            "properties": {
+                "action": { "type": "string", "enum": ["exec", "start"] },
+                "command": { "type": "string" },
+                "cwd": { "type": "string", "default": "." },
+                "profile": { "type": "string", "enum": ["clean"], "default": "clean" }
+            },
+            "required": ["action", "command"],
+            "additionalProperties": false
+        })
+    );
+}
+
 fn inspecting_tool<I>(
     root: &std::path::Path,
     executor: &FakeExecutor,
@@ -1790,25 +1814,7 @@ fn background_start_has_exact_permission_identity_and_bypasses_foreground_execut
     );
     assert_foreground_capacity_is_busy(&tool);
 
-    let spec = tool.spec();
-    assert_eq!(
-        spec.description,
-        "Run one foreground command or start one noninteractive background command"
-    );
-    assert_eq!(
-        spec.input_schema,
-        json!({
-            "type": "object",
-            "properties": {
-                "action": { "type": "string", "enum": ["exec", "start"] },
-                "command": { "type": "string" },
-                "cwd": { "type": "string", "default": "." },
-                "profile": { "type": "string", "enum": ["clean"], "default": "clean" }
-            },
-            "required": ["action", "command"],
-            "additionalProperties": false
-        })
-    );
+    assert_background_start_spec(&tool);
     let prepared = tool
         .prepare(call(
             "terminal",
