@@ -31,6 +31,7 @@ mod ai_gateway_vision;
 mod ai_gateway_web_search;
 mod ask_permission;
 mod ask_user_question;
+mod background_control;
 mod background_inspection;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) mod background_output;
