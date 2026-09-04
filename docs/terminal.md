@@ -260,7 +260,7 @@ so an output flood cannot block command completion.
 
 The process-local registry admits at most 16 live captured streams and retains
 at most 100 closed streams, evicting only the oldest closed stream. It retains
-the first 64 KiB per stream and counts all produced bytes with saturation. One
+the first 64 KiB per stream and counts all observed bytes with saturation. One
 read returns at most 7 KiB. That page bound keeps the complete result below the
 48 KiB serialized-result limit even when every byte needs a six-byte JSON
 control escape. Pages retreat from their raw size boundary rather than split a
@@ -297,12 +297,14 @@ The successful result is exactly:
 }
 ```
 
-`cursor_offset` is the next offset. `output_bytes` counts all bytes produced,
-whereas `retained_bytes` reports the readable prefix. Once output exceeds the
-prefix, `truncated` stays true. Reading from within the prefix advances by the
-returned page. Reading at or beyond the retained boundary of a truncated
+`cursor_offset` is the next offset. `output_bytes` counts bytes observed from
+the pipe, whereas `retained_bytes` reports the readable prefix. Once output
+exceeds the prefix, `truncated` stays true. A bounded final drain that closes
+before EOF also sets `truncated`; in that case `output_bytes` is a lower bound
+because an unread suffix was discarded. Reading from within the prefix advances
+by the returned page. Reading at or beyond the retained boundary of a truncated
 stream returns an empty page and advances directly to `output_bytes`, making
-the discarded suffix explicit without creating a retry loop. `stream_closed`
+known discarded bytes explicit without creating a retry loop. `stream_closed`
 means this process-local producer closed; it is not a persisted process-state
 or liveness claim.
 

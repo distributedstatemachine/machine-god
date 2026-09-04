@@ -21,6 +21,7 @@ use crate::background_inspection::{
     MAX_BACKGROUND_RECORDS, NativeBackgroundDetail, NativeBackgroundInspectionError,
     NativeBackgroundInspectionErrorKind, NativeBackgroundList, NativeBackgroundState,
 };
+use crate::background_output::incomplete_utf8_suffix_len;
 use machine_god_core::{
     BackgroundOutputOwner, BackgroundStartError, BackgroundStartErrorKind, BackgroundStartRequest,
     BoxFuture, CancellationToken, Capability, PreparedToolCall, ProcessEnvironment, Tool, ToolCall,
@@ -103,11 +104,6 @@ const TERMINAL_EXEC_DESCRIPTION: &str =
     "Run one foreground shell command from a workspace-relative directory";
 const TERMINAL_BACKGROUND_DESCRIPTION: &str =
     "Run one foreground command or start one noninteractive background command";
-const TERMINAL_INSPECT_DESCRIPTION: &str = "Run a foreground command, start a background command, or inspect one persisted background record";
-const TERMINAL_WAIT_DESCRIPTION: &str = "Run a foreground command, start a background command, inspect one persisted background record, or wait for its recorded exit";
-const TERMINAL_LIST_INSPECT_DESCRIPTION: &str = "Run a foreground command, start a background command, list persisted background records, or inspect one persisted background record";
-const TERMINAL_LIST_DESCRIPTION: &str = "Run a foreground command, start a background command, list persisted background records, inspect one persisted background record, or wait for its recorded exit";
-const TERMINAL_READ_DESCRIPTION: &str = "Run a foreground command, start a background command, read bounded same-session background output, list persisted background records, inspect one persisted background record, or wait for its recorded exit";
 const TERMINAL_MAX_ACTIVE_READS: usize = 4;
 const TERMINAL_WAIT_DELAYS_MS: [u64; 5] = [16, 32, 64, 128, 250];
 const PIPE_RETAINED_BYTES: usize = MAX_TERMINAL_RETAINED_OUTPUT_BYTES / 2;
@@ -619,12 +615,15 @@ impl TerminalBackgroundReadSnapshot {
             && !truncated
             && next_offset < retained_bytes
             && next_offset.checked_add(u64::from(pending_utf8_bytes)) == Some(retained_bytes);
+        let visible_incomplete_utf8 = incomplete_utf8_suffix_len(&bytes) > 0
+            && (next_offset < retained_bytes || (!closed && !truncated));
         if bytes.len() > MAX_TERMINAL_BACKGROUND_READ_BYTES
             || retained_bytes > MAX_TERMINAL_RETAINED_OUTPUT_BYTES as u64
             || retained_bytes > produced_bytes
-            || truncated != (retained_bytes < produced_bytes)
+            || (!truncated && retained_bytes < produced_bytes)
             || next_offset > produced_bytes
             || (!ordinary_page_shape && !pending_page_shape)
+            || visible_incomplete_utf8
         {
             return Err(TerminalBackgroundReadError::new(
                 TerminalBackgroundReadErrorKind::Unavailable,
@@ -3176,6 +3175,35 @@ fn terminal_list_schema() -> Value {
     })
 }
 
+impl TerminalTool {
+    fn combined_description(&self) -> String {
+        let mut actions = vec!["Run a foreground command"];
+        if self.background.is_some() {
+            actions.push("start a background command");
+        }
+        if self.output_reader.is_some() {
+            actions.push("read bounded same-session background output");
+        }
+        if self.catalog.is_some() {
+            actions.push("list persisted background records");
+        }
+        if self.inspector.is_some() {
+            actions.push("inspect one persisted background record");
+        }
+        if self.inspector.is_some() && self.wait_delay.is_some() {
+            actions.push("wait for its recorded exit");
+        }
+        let Some((last, preceding)) = actions.split_last() else {
+            unreachable!("terminal always has foreground execution")
+        };
+        match preceding {
+            [] => (*last).to_owned(),
+            [first] => format!("{first} or {last}"),
+            _ => format!("{}, or {last}", preceding.join(", ")),
+        }
+    }
+}
+
 impl Tool for TerminalTool {
     fn spec(&self) -> ToolSpec {
         if self.catalog.is_none() && self.inspector.is_none() && self.output_reader.is_none() {
@@ -3222,32 +3250,7 @@ impl Tool for TerminalTool {
         }
         ToolSpec {
             name: terminal_name(),
-            description: if self.output_reader.is_some()
-                && self.catalog.is_some()
-                && self.inspector.is_some()
-                && self.wait_delay.is_some()
-            {
-                TERMINAL_READ_DESCRIPTION.to_owned()
-            } else if self.output_reader.is_some() {
-                "Run a foreground command, start a background command, or read bounded same-session background output".to_owned()
-            } else if self.catalog.is_some()
-                && self.inspector.is_some()
-                && self.wait_delay.is_some()
-            {
-                TERMINAL_LIST_DESCRIPTION.to_owned()
-            } else if self.catalog.is_some() && self.inspector.is_some() {
-                TERMINAL_LIST_INSPECT_DESCRIPTION.to_owned()
-            } else if self.catalog.is_some() {
-                "Run a foreground command, start a background command, or list persisted background records".to_owned()
-            } else if self.inspector.is_some() && self.wait_delay.is_some() {
-                TERMINAL_WAIT_DESCRIPTION.to_owned()
-            } else if self.inspector.is_some() {
-                TERMINAL_INSPECT_DESCRIPTION.to_owned()
-            } else if self.background.is_some() {
-                TERMINAL_BACKGROUND_DESCRIPTION.to_owned()
-            } else {
-                TERMINAL_EXEC_DESCRIPTION.to_owned()
-            },
+            description: self.combined_description(),
             input_schema: json!({
                 "oneOf": forms
             }),

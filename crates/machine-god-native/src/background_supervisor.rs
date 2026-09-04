@@ -1906,9 +1906,13 @@ impl NativeCapture {
         let _ = self.registry.append(self.id, bytes);
     }
 
-    fn close(&mut self) {
+    fn close(&mut self, capture_incomplete: bool) {
         if self.phase == NativeCapturePhase::Active {
-            let _ = self.registry.close(self.id);
+            let _ = if capture_incomplete {
+                self.registry.close_incomplete(self.id)
+            } else {
+                self.registry.close(self.id)
+            };
             self.phase = NativeCapturePhase::Closed;
         }
     }
@@ -1920,7 +1924,7 @@ impl Drop for NativeCapture {
             NativeCapturePhase::Hidden => {
                 let _ = self.registry.remove(self.id);
             }
-            NativeCapturePhase::Active => self.close(),
+            NativeCapturePhase::Active => self.close(true),
             NativeCapturePhase::Closed => {}
         }
     }
@@ -1979,6 +1983,21 @@ struct NativeOwned {
     capture: Option<NativeCapture>,
 }
 
+fn core_process_outcome(
+    result: Result<BackgroundProcessOutcome, crate::background_process::BackgroundProcessError>,
+) -> CoreProcessOutcome {
+    match result {
+        Ok(BackgroundProcessOutcome::Stopped) => CoreProcessOutcome::Stopped(None),
+        Ok(BackgroundProcessOutcome::Completed(BackgroundProcessExit::Exited(code))) => {
+            CoreProcessOutcome::Exited(code)
+        }
+        Ok(BackgroundProcessOutcome::Completed(BackgroundProcessExit::Signaled(signal))) => {
+            CoreProcessOutcome::Exited(128_i32.saturating_add(signal))
+        }
+        Err(_) => CoreProcessOutcome::Dead,
+    }
+}
+
 impl CoreOwnedProcess for NativeOwned {
     fn pid(&self) -> Option<std::num::NonZeroU32> {
         self.process.as_ref().map(OwnedBackgroundProcess::pid)
@@ -1993,23 +2012,19 @@ impl CoreOwnedProcess for NativeOwned {
         Box::pin(async move {
             let process = process.ok_or_else(|| start_error(BackgroundStartErrorKind::Process))?;
             let result = if let Some(capture) = capture.as_ref() {
-                process.wait_with_stop_and_output(&stop, |bytes| capture.append(bytes))
+                process.wait_with_stop_and_captured_output(&stop, |bytes| capture.append(bytes))
             } else {
-                process.wait_with_stop(&stop)
+                return Ok(core_process_outcome(process.wait_with_stop(&stop)));
             };
             if let Some(capture) = capture.as_mut() {
-                capture.close();
+                let capture_incomplete = result
+                    .as_ref()
+                    .map_or(true, |outcome| outcome.capture_truncated());
+                capture.close(capture_incomplete);
             }
-            match result {
-                Ok(BackgroundProcessOutcome::Stopped) => Ok(CoreProcessOutcome::Stopped(None)),
-                Ok(BackgroundProcessOutcome::Completed(BackgroundProcessExit::Exited(code))) => {
-                    Ok(CoreProcessOutcome::Exited(code))
-                }
-                Ok(BackgroundProcessOutcome::Completed(BackgroundProcessExit::Signaled(
-                    signal,
-                ))) => Ok(CoreProcessOutcome::Exited(128_i32.saturating_add(signal))),
-                Err(_) => Ok(CoreProcessOutcome::Dead),
-            }
+            Ok(core_process_outcome(result.map(
+                crate::background_process::BackgroundProcessOutputOutcome::outcome,
+            )))
         })
     }
 }
@@ -2477,8 +2492,8 @@ mod tests {
         LAZY_BACKGROUND_INITIALIZATION_WAITERS, LazyBackgroundInitializationPhase,
         LazyProductionBackgroundStarter, NATIVE_BACKGROUND_DEFAULT_MAX_ACTIVE,
         NativeBackgroundLimits, NativeBackgroundSupervisor, NativeBackgroundSupervisorError,
-        NativeBackgroundSupervisorErrorKind, NativeSpawner, NativeStore,
-        PRODUCTION_BACKGROUND_LANGUAGE, PRODUCTION_BACKGROUND_PATH, RetainedJob,
+        NativeBackgroundSupervisorErrorKind, NativeCapture, NativeCapturePhase, NativeSpawner,
+        NativeStore, PRODUCTION_BACKGROUND_LANGUAGE, PRODUCTION_BACKGROUND_PATH, RetainedJob,
         SupervisorWorkerOwnership, SystemBackgroundProcessAdapter, SystemClock,
         WORKER_OWNERSHIP_CAPACITY, WorkerOwnershipRegistry, WorkerRetainer,
         accept_bounded_environment, background_environment_identity, build_production_environment,
@@ -2977,6 +2992,7 @@ mod tests {
             captured.extend_from_slice(snapshot.bytes());
             offset = snapshot.next_offset();
             if snapshot.closed() {
+                assert!(!snapshot.truncated());
                 closed = true;
                 break;
             }
@@ -2999,6 +3015,31 @@ mod tests {
         ))
         .expect_err("cross-incarnation read must fail closed");
         assert_eq!(error.kind(), TerminalBackgroundReadErrorKind::NotFound);
+    }
+
+    #[test]
+    fn incomplete_native_capture_closes_with_conservative_truncation() {
+        let registry = BackgroundOutputRegistry::new();
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("incomplete-capture-session").unwrap(),
+            SessionIncarnationId::new("incomplete-capture-incarnation").unwrap(),
+        );
+        registry.register(1, owner.clone()).unwrap();
+        let mut capture = NativeCapture {
+            registry: registry.clone(),
+            id: 1,
+            phase: NativeCapturePhase::Hidden,
+        };
+        capture.activate().unwrap();
+        capture.append(b"observed");
+        capture.close(true);
+
+        let snapshot = registry.read(1, &owner, 1, 0).unwrap();
+        assert_eq!(snapshot.bytes(), b"observed");
+        assert_eq!(snapshot.produced_bytes(), 8);
+        assert_eq!(snapshot.retained_bytes(), 8);
+        assert!(snapshot.truncated());
+        assert!(snapshot.closed());
     }
 
     #[test]

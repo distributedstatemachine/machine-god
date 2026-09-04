@@ -72,6 +72,7 @@ pub(crate) struct BackgroundOutputSnapshot {
     produced_bytes: u64,
     retained_bytes: u64,
     pending_utf8_bytes: u8,
+    capture_incomplete: bool,
     closed: bool,
 }
 
@@ -103,7 +104,7 @@ impl BackgroundOutputSnapshot {
 
     /// Reports whether produced bytes extend beyond the retained prefix.
     pub(crate) const fn truncated(&self) -> bool {
-        self.produced_bytes > self.retained_bytes
+        self.capture_incomplete || self.produced_bytes > self.retained_bytes
     }
 
     /// Reports whether the producer has closed this stream.
@@ -121,6 +122,7 @@ impl fmt::Debug for BackgroundOutputSnapshot {
             .field("produced_bytes", &self.produced_bytes)
             .field("retained_bytes", &self.retained_bytes)
             .field("pending_utf8_bytes", &self.pending_utf8_bytes)
+            .field("capture_incomplete", &self.capture_incomplete)
             .field("closed", &self.closed)
             .finish()
     }
@@ -162,6 +164,7 @@ impl BackgroundOutputRegistry {
                 owner,
                 bytes: Vec::new(),
                 produced_bytes: 0,
+                capture_incomplete: false,
                 active: false,
                 closed: false,
             },
@@ -203,6 +206,19 @@ impl BackgroundOutputRegistry {
 
     /// Marks a stream closed and evicts the oldest closed stream when needed.
     pub(crate) fn close(&self, id: u64) -> Result<(), BackgroundOutputError> {
+        self.close_with_incomplete(id, false)
+    }
+
+    /// Marks a stream closed after bounded draining discarded an unread suffix.
+    pub(crate) fn close_incomplete(&self, id: u64) -> Result<(), BackgroundOutputError> {
+        self.close_with_incomplete(id, true)
+    }
+
+    fn close_with_incomplete(
+        &self,
+        id: u64,
+        capture_incomplete: bool,
+    ) -> Result<(), BackgroundOutputError> {
         let mut state = self.lock();
         let entry = state
             .entries
@@ -211,6 +227,7 @@ impl BackgroundOutputRegistry {
         if entry.closed {
             return Err(error(BackgroundOutputErrorKind::Conflict));
         }
+        entry.capture_incomplete = capture_incomplete;
         entry.closed = true;
         state.live_streams -= 1;
         state.closed_order.push_back(id);
@@ -291,6 +308,7 @@ impl BackgroundOutputRegistry {
             produced_bytes: entry.produced_bytes,
             retained_bytes,
             pending_utf8_bytes,
+            capture_incomplete: entry.capture_incomplete,
             closed: entry.closed,
         })
     }
@@ -325,6 +343,7 @@ struct OutputEntry {
     owner: BackgroundOutputOwner,
     bytes: Vec<u8>,
     produced_bytes: u64,
+    capture_incomplete: bool,
     active: bool,
     closed: bool,
 }
@@ -337,7 +356,7 @@ fn saturating_add_length(produced_bytes: u64, appended_bytes: usize) -> u64 {
     produced_bytes.saturating_add(u64::try_from(appended_bytes).unwrap_or(u64::MAX))
 }
 
-fn incomplete_utf8_suffix_len(bytes: &[u8]) -> usize {
+pub(crate) fn incomplete_utf8_suffix_len(bytes: &[u8]) -> usize {
     let continuation_bytes = bytes
         .iter()
         .rev()
@@ -668,6 +687,24 @@ mod tests {
             .read(1, &owner, BACKGROUND_OUTPUT_SEGMENT, 0)
             .unwrap();
         assert_eq!(snapshot.bytes(), b"complete");
+        assert!(snapshot.closed());
+    }
+
+    #[test]
+    fn incomplete_close_reports_truncation_without_inventing_observed_bytes() {
+        let registry = BackgroundOutputRegistry::new();
+        let owner = owner("incomplete-close");
+        visible(&registry, 1, owner.clone());
+        registry.append(1, b"observed").unwrap();
+        registry.close_incomplete(1).unwrap();
+
+        let snapshot = registry
+            .read(1, &owner, BACKGROUND_OUTPUT_SEGMENT, 0)
+            .unwrap();
+        assert_eq!(snapshot.bytes(), b"observed");
+        assert_eq!(snapshot.produced_bytes(), 8);
+        assert_eq!(snapshot.retained_bytes(), 8);
+        assert!(snapshot.truncated());
         assert!(snapshot.closed());
     }
 

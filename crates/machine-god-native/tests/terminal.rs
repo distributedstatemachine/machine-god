@@ -2083,6 +2083,8 @@ fn background_read_rejects_malformed_reader_pages() {
         TerminalBackgroundReadSnapshot::new(Vec::new(), 0, 1, 1, 0, false, false),
         TerminalBackgroundReadSnapshot::new(vec![b'a', b'b'], 2, 2, 1, 0, true, true),
         TerminalBackgroundReadSnapshot::new(Vec::new(), 0, 1, 1, 1, false, true),
+        TerminalBackgroundReadSnapshot::new(vec![0xc3], 1, 2, 2, 0, false, false),
+        TerminalBackgroundReadSnapshot::new(vec![0xc3], 1, 1, 1, 0, false, false),
     ] {
         assert_eq!(
             malformed.unwrap_err().kind(),
@@ -2112,6 +2114,37 @@ fn background_read_rejects_malformed_reader_pages() {
     .unwrap_err();
     assert_eq!(error.code, "terminal_read_resource_limit");
     assert!(!error.retryable);
+}
+
+#[test]
+fn background_read_preserves_conservative_truncation_metadata() {
+    let temporary = TemporaryDirectory::new("background-read-incomplete");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let reader = FakeBackgroundOutputReader::snapshot(
+        TerminalBackgroundReadSnapshot::new(b"seen".to_vec(), 4, 4, 4, 0, true, true).unwrap(),
+    );
+    let tool = reading_tool(temporary.path(), &executor, &starter, &reader);
+
+    let output = poll_ready(tool.execute(
+        context(),
+        json!({
+            "action": "read",
+            "background_id": 7,
+            "cursor_segment": 1,
+            "cursor_offset": 0
+        }),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+
+    assert_eq!(output.content["output"], "seen");
+    assert_eq!(output.content["output_bytes"], 4);
+    assert_eq!(output.content["retained_bytes"], 4);
+    assert_eq!(output.content["truncated"], true);
+    assert_eq!(output.content["stream_closed"], true);
 }
 
 #[test]
@@ -2672,6 +2705,45 @@ fn background_list_and_inspect_description_matches_advertised_actions_without_wa
 }
 
 #[test]
+fn combined_description_names_every_advertised_action() {
+    let temporary = TemporaryDirectory::new("background-all-actions-schema");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let inspector = FakeBackgroundInspector::new(false);
+    let delay = SleepingWaitDelay::default();
+    let catalog = FakeBackgroundCatalog::ready(background_listing(Vec::new(), false));
+    let reader = FakeBackgroundOutputReader::success(Vec::new(), false);
+    let tool = cataloging_tool(
+        temporary.path(),
+        &executor,
+        &starter,
+        &inspector,
+        &delay,
+        &catalog,
+    )
+    .with_output_reader(Arc::new(reader))
+    .unwrap();
+
+    let spec = tool.spec();
+    assert_eq!(
+        spec.description,
+        "Run a foreground command, start a background command, read bounded same-session background output, list persisted background records, inspect one persisted background record, or wait for its recorded exit"
+    );
+    let actions = spec.input_schema["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|form| form["properties"]["action"]["const"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actions,
+        ["exec", "start", "read", "inspect", "wait", "list"]
+    );
+}
+
+#[test]
 fn background_list_native_failures_have_fixed_redacted_mappings() {
     let temporary = TemporaryDirectory::new("background-list-errors");
     let executor = FakeExecutor::new(Mode::Exited(0));
@@ -3154,8 +3226,12 @@ fn background_wait_lost_delay_and_cancellation_fail_redacted() {
         let inspector = SequenceBackgroundInspector::new(vec![(state, code)]);
         let delay = SleepingWaitDelay::default();
         let tool = waiting_tool(temporary.path(), &executor, &starter, &inspector, &delay);
-        let error =
-            execute(&tool, exact_wait_arguments(7, 1), CancellationToken::new()).unwrap_err();
+        let error = execute(
+            &tool,
+            exact_wait_arguments(7, 30_000),
+            CancellationToken::new(),
+        )
+        .unwrap_err();
         assert_eq!(error.kind, ToolErrorKind::Execution);
         assert_eq!(error.code, "terminal_background_lost");
         assert_eq!(

@@ -562,6 +562,29 @@ pub enum BackgroundProcessOutcome {
     Stopped,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct BackgroundProcessOutputOutcome {
+    outcome: BackgroundProcessOutcome,
+    capture_truncated: bool,
+}
+
+impl BackgroundProcessOutputOutcome {
+    const fn new(outcome: BackgroundProcessOutcome, capture_truncated: bool) -> Self {
+        Self {
+            outcome,
+            capture_truncated,
+        }
+    }
+
+    pub(crate) const fn outcome(self) -> BackgroundProcessOutcome {
+        self.outcome
+    }
+
+    pub(crate) const fn capture_truncated(self) -> bool {
+        self.capture_truncated
+    }
+}
+
 /// Explicit executable and private arguments used by the safe launch helper.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Clone, Debug)]
@@ -940,6 +963,15 @@ impl OwnedBackgroundProcess {
         stop: &CancellationToken,
         mut output: impl FnMut(&[u8]),
     ) -> Result<BackgroundProcessOutcome, BackgroundProcessError> {
+        wait_owned_with_stop_and_output(&mut self, stop, &mut output)
+            .map(BackgroundProcessOutputOutcome::outcome)
+    }
+
+    pub(crate) fn wait_with_stop_and_captured_output(
+        mut self,
+        stop: &CancellationToken,
+        mut output: impl FnMut(&[u8]),
+    ) -> Result<BackgroundProcessOutputOutcome, BackgroundProcessError> {
         wait_owned_with_stop_and_output(&mut self, stop, &mut output)
     }
 
@@ -1924,7 +1956,9 @@ fn wait_owned_with_output(
             Ok(None) => observation.sleep_and_advance(),
         }
     };
-    finish_observed_with_output(owned, observed, output)
+    cleanup_owned_child(owned, Duration::ZERO, Some(observed), false)?;
+    let _ = finish_background_output(owned, output)?;
+    Ok(observed)
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -1942,6 +1976,7 @@ fn wait_owned_with_stop(
     stop: &CancellationToken,
 ) -> Result<BackgroundProcessOutcome, BackgroundProcessError> {
     wait_owned_with_stop_and_output(owned, stop, &mut |_| {})
+        .map(BackgroundProcessOutputOutcome::outcome)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1949,7 +1984,7 @@ fn wait_owned_with_stop_and_output(
     owned: &mut OwnedBackgroundProcess,
     stop: &CancellationToken,
     output: &mut impl FnMut(&[u8]),
-) -> Result<BackgroundProcessOutcome, BackgroundProcessError> {
+) -> Result<BackgroundProcessOutputOutcome, BackgroundProcessError> {
     if owned.child.is_none() {
         return Err(invariant_error());
     }
@@ -1958,8 +1993,11 @@ fn wait_owned_with_stop_and_output(
     loop {
         if cancellation.is_cancelled() {
             stop_owned(owned)?;
-            finish_background_output(owned, output)?;
-            return Ok(BackgroundProcessOutcome::Stopped);
+            let capture_truncated = finish_background_output(owned, output)?;
+            return Ok(BackgroundProcessOutputOutcome::new(
+                BackgroundProcessOutcome::Stopped,
+                capture_truncated,
+            ));
         }
         let drained = match drain_background_output(
             &mut owned.output,
@@ -1974,13 +2012,15 @@ fn wait_owned_with_stop_and_output(
         };
         if cancellation.is_cancelled() {
             stop_owned(owned)?;
-            finish_background_output(owned, output)?;
-            return Ok(BackgroundProcessOutcome::Stopped);
+            let capture_truncated = finish_background_output(owned, output)?;
+            return Ok(BackgroundProcessOutputOutcome::new(
+                BackgroundProcessOutcome::Stopped,
+                capture_truncated,
+            ));
         }
         match observe_leader(owned.group) {
             Ok(Some(status)) => {
-                return finish_observed_with_output(owned, status, output)
-                    .map(BackgroundProcessOutcome::Completed);
+                return finish_observed_with_output(owned, status, output);
             }
             Ok(None) => {}
             Err(LeaderObservationFailure::LostAuthority) => {
@@ -2015,16 +2055,9 @@ fn wait_owned_with_stop_and_output(
     owned: &mut OwnedBackgroundProcess,
     stop: &CancellationToken,
     _output: &mut impl FnMut(&[u8]),
-) -> Result<BackgroundProcessOutcome, BackgroundProcessError> {
+) -> Result<BackgroundProcessOutputOutcome, BackgroundProcessError> {
     wait_owned_with_stop(owned, stop)
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn finish_observed(
-    owned: &mut OwnedBackgroundProcess,
-    observed: BackgroundProcessExit,
-) -> Result<BackgroundProcessExit, BackgroundProcessError> {
-    finish_observed_with_output(owned, observed, &mut |_| {})
+        .map(|outcome| BackgroundProcessOutputOutcome::new(outcome, false))
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -2032,23 +2065,26 @@ fn finish_observed_with_output(
     owned: &mut OwnedBackgroundProcess,
     observed: BackgroundProcessExit,
     output: &mut impl FnMut(&[u8]),
-) -> Result<BackgroundProcessExit, BackgroundProcessError> {
+) -> Result<BackgroundProcessOutputOutcome, BackgroundProcessError> {
     cleanup_owned_child(owned, Duration::ZERO, Some(observed), false)?;
-    finish_background_output(owned, output)?;
-    Ok(observed)
+    let capture_truncated = finish_background_output(owned, output)?;
+    Ok(BackgroundProcessOutputOutcome::new(
+        BackgroundProcessOutcome::Completed(observed),
+        capture_truncated,
+    ))
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum BackgroundOutputDrain {
-    Idle,
-    Progress,
+struct BackgroundOutputDrain {
+    progressed: bool,
+    exhausted: bool,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl BackgroundOutputDrain {
     const fn progressed(self) -> bool {
-        !matches!(self, Self::Idle)
+        self.progressed
     }
 }
 
@@ -2059,7 +2095,10 @@ fn drain_background_output<R: std::io::Read>(
     sink: &mut impl FnMut(&[u8]),
 ) -> Result<BackgroundOutputDrain, BackgroundProcessError> {
     let Some(reader) = output.as_mut() else {
-        return Ok(BackgroundOutputDrain::Idle);
+        return Ok(BackgroundOutputDrain {
+            progressed: false,
+            exhausted: false,
+        });
     };
     let mut buffer = [0_u8; BACKGROUND_OUTPUT_READ_BYTES];
     let mut progressed = false;
@@ -2067,10 +2106,9 @@ fn drain_background_output<R: std::io::Read>(
         match std::io::Read::read(reader, &mut buffer) {
             Ok(0) => {
                 drop(output.take());
-                return Ok(if progressed {
-                    BackgroundOutputDrain::Progress
-                } else {
-                    BackgroundOutputDrain::Idle
+                return Ok(BackgroundOutputDrain {
+                    progressed,
+                    exhausted: false,
                 });
             }
             Ok(length) => {
@@ -2079,19 +2117,17 @@ fn drain_background_output<R: std::io::Read>(
             }
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                return Ok(if progressed {
-                    BackgroundOutputDrain::Progress
-                } else {
-                    BackgroundOutputDrain::Idle
+                return Ok(BackgroundOutputDrain {
+                    progressed,
+                    exhausted: false,
                 });
             }
             Err(_) => return Err(wait_error()),
         }
     }
-    Ok(if progressed {
-        BackgroundOutputDrain::Progress
-    } else {
-        BackgroundOutputDrain::Idle
+    Ok(BackgroundOutputDrain {
+        progressed,
+        exhausted: true,
     })
 }
 
@@ -2099,7 +2135,7 @@ fn drain_background_output<R: std::io::Read>(
 fn finish_background_output(
     owned: &mut OwnedBackgroundProcess,
     sink: &mut impl FnMut(&[u8]),
-) -> Result<(), BackgroundProcessError> {
+) -> Result<bool, BackgroundProcessError> {
     finish_background_output_bounded(&mut owned.output, sink)
 }
 
@@ -2107,14 +2143,14 @@ fn finish_background_output(
 fn finish_background_output_bounded<R: std::io::Read>(
     output: &mut Option<R>,
     sink: &mut impl FnMut(&[u8]),
-) -> Result<(), BackgroundProcessError> {
-    let _ = drain_background_output(output, BACKGROUND_OUTPUT_FINAL_READS, sink)?;
+) -> Result<bool, BackgroundProcessError> {
+    let drained = drain_background_output(output, BACKGROUND_OUTPUT_FINAL_READS, sink)?;
     // The leader outcome and owned-process cleanup are already final here.
     // A writer outside the bounded cleanup set may keep this pipe readable or
     // open indefinitely, so reaching the drain budget is truncation rather
     // than evidence that the observed process outcome failed.
     drop(output.take());
-    Ok(())
+    Ok(drained.exhausted)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -3686,7 +3722,13 @@ mod process_regression_tests {
         )
         .expect("interrupted reads remain retryable");
 
-        assert_eq!(drained, BackgroundOutputDrain::Idle);
+        assert_eq!(
+            drained,
+            BackgroundOutputDrain {
+                progressed: false,
+                exhausted: true,
+            }
+        );
         assert!(
             !drained.progressed(),
             "idle waits must retain their backoff"
@@ -3703,7 +3745,7 @@ mod process_regression_tests {
         let mut output = Some(std::io::repeat(b'x'));
         let mut captured = 0_usize;
 
-        finish_background_output_bounded(&mut output, &mut |bytes| {
+        let truncated = finish_background_output_bounded(&mut output, &mut |bytes| {
             captured = captured.saturating_add(bytes.len());
         })
         .expect("a bounded readable suffix is truncated after process completion");
@@ -3716,6 +3758,7 @@ mod process_regression_tests {
             output.is_none(),
             "the final drain closes its read authority"
         );
+        assert!(truncated);
     }
 
     struct TestDirectory(PathBuf);
