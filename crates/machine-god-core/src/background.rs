@@ -1,6 +1,6 @@
 //! Provider-neutral admission for durably recorded background processes.
 
-use crate::{BoxFuture, CancellationToken};
+use crate::{BoxFuture, CancellationToken, SessionId, SessionIncarnationId};
 use core::fmt;
 use core::future::Future;
 use core::num::NonZeroU32;
@@ -65,6 +65,47 @@ impl fmt::Display for BackgroundStartError {
 
 impl std::error::Error for BackgroundStartError {}
 
+/// Bounded session ownership for one background process's captured output.
+///
+/// Both identifiers retain their validated 128-byte bounds. Debug output is
+/// deliberately data-free because session identities may be sensitive.
+#[derive(Clone, Eq, PartialEq)]
+pub struct BackgroundOutputOwner {
+    session_id: SessionId,
+    session_incarnation_id: SessionIncarnationId,
+}
+
+impl BackgroundOutputOwner {
+    /// Constructs output ownership from validated session identities.
+    #[must_use]
+    pub const fn new(session_id: SessionId, session_incarnation_id: SessionIncarnationId) -> Self {
+        Self {
+            session_id,
+            session_incarnation_id,
+        }
+    }
+
+    /// Returns the owning session identity.
+    #[must_use]
+    pub const fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+
+    /// Returns the owning logical session incarnation.
+    #[must_use]
+    pub const fn session_incarnation_id(&self) -> &SessionIncarnationId {
+        &self.session_incarnation_id
+    }
+}
+
+impl fmt::Debug for BackgroundOutputOwner {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BackgroundOutputOwner")
+            .finish_non_exhaustive()
+    }
+}
+
 /// One bounded, noninteractive background start request.
 ///
 /// The working directory is an absolute canonical Unicode path in the native
@@ -75,6 +116,7 @@ impl std::error::Error for BackgroundStartError {}
 pub struct BackgroundStartRequest {
     command: Box<str>,
     cwd: Box<str>,
+    output_owner: Option<BackgroundOutputOwner>,
 }
 
 impl BackgroundStartRequest {
@@ -102,7 +144,15 @@ impl BackgroundStartRequest {
         Ok(Self {
             command: command.into_boxed_str(),
             cwd: cwd.into_boxed_str(),
+            output_owner: None,
         })
+    }
+
+    /// Associates captured output with one validated session incarnation.
+    #[must_use]
+    pub fn with_output_owner(mut self, output_owner: BackgroundOutputOwner) -> Self {
+        self.output_owner = Some(output_owner);
+        self
     }
 
     /// Returns the exact bounded shell command.
@@ -115,6 +165,12 @@ impl BackgroundStartRequest {
     #[must_use]
     pub const fn cwd(&self) -> &str {
         &self.cwd
+    }
+
+    /// Returns the session incarnation allowed to own captured output, if any.
+    #[must_use]
+    pub const fn output_owner(&self) -> Option<&BackgroundOutputOwner> {
+        self.output_owner.as_ref()
     }
 }
 
@@ -425,9 +481,10 @@ pub trait OwnedBackgroundProcess: Send + 'static {
 /// command did not execute. The native adapter may retain descriptor-bound cwd
 /// and environment authority inside that future and the prepared process.
 pub trait BackgroundProcessSpawner: Send + Sync + 'static {
-    /// Prepares one barrier-held process.
+    /// Prepares one barrier-held process for an already reserved nonzero ID.
     fn prepare<'a>(
         &'a self,
+        background_id: u64,
         request: &'a BackgroundStartRequest,
         cancellation: CancellationToken,
     ) -> BoxFuture<'a, Result<Box<dyn PreparedBackgroundProcess>, BackgroundStartError>>;
@@ -572,7 +629,7 @@ async fn start_polled(
     check_cancellation(&cancellation)?;
 
     let prepared = await_prepared_or_cancel(
-        spawner.prepare(&request, cancellation.clone()),
+        spawner.prepare(id, &request, cancellation.clone()),
         &cancellation,
     )
     .await?;
@@ -835,15 +892,15 @@ async fn await_commit_or_cancel<T>(
 #[cfg(test)]
 mod tests {
     use super::{
-        BackgroundClock, BackgroundCompletionRecord, BackgroundHandle, BackgroundProcessOutcome,
-        BackgroundProcessRetainer, BackgroundProcessSpawner, BackgroundRecordLease,
-        BackgroundRetentionPermit, BackgroundRunningRecord, BackgroundStartError,
-        BackgroundStartErrorKind, BackgroundStartRequest, BackgroundStore, BackgroundSupervisor,
-        CommitAwaitError, MAX_BACKGROUND_COMMAND_BYTES, MAX_BACKGROUND_CWD_BYTES,
-        OwnedBackgroundProcess, PreparedBackgroundProcess, await_commit_or_cancel, await_or_cancel,
-        await_prepared_or_cancel,
+        BackgroundClock, BackgroundCompletionRecord, BackgroundHandle, BackgroundOutputOwner,
+        BackgroundProcessOutcome, BackgroundProcessRetainer, BackgroundProcessSpawner,
+        BackgroundRecordLease, BackgroundRetentionPermit, BackgroundRunningRecord,
+        BackgroundStartError, BackgroundStartErrorKind, BackgroundStartRequest, BackgroundStore,
+        BackgroundSupervisor, CommitAwaitError, MAX_BACKGROUND_COMMAND_BYTES,
+        MAX_BACKGROUND_CWD_BYTES, OwnedBackgroundProcess, PreparedBackgroundProcess,
+        await_commit_or_cancel, await_or_cancel, await_prepared_or_cancel,
     };
-    use crate::{BoxFuture, CancellationToken};
+    use crate::{BoxFuture, CancellationToken, SessionId, SessionIncarnationId};
     use core::future::Future;
     use core::num::NonZeroU32;
     use core::pin::Pin;
@@ -870,6 +927,7 @@ mod tests {
     #[derive(Debug, Default)]
     struct Observations {
         events: Mutex<Vec<&'static str>>,
+        preparation: Mutex<Option<(u64, Option<BackgroundOutputOwner>)>>,
         aborted: AtomicUsize,
         executed: AtomicUsize,
         retained: AtomicUsize,
@@ -887,6 +945,13 @@ mod tests {
 
         fn events(&self) -> Vec<&'static str> {
             self.events
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+        }
+
+        fn preparation(&self) -> Option<(u64, Option<BackgroundOutputOwner>)> {
+            self.preparation
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone()
@@ -1135,12 +1200,19 @@ mod tests {
     impl BackgroundProcessSpawner for FakeSpawner {
         fn prepare<'a>(
             &'a self,
-            _request: &'a BackgroundStartRequest,
+            background_id: u64,
+            request: &'a BackgroundStartRequest,
             _cancellation: CancellationToken,
         ) -> BoxFuture<'a, Result<Box<dyn PreparedBackgroundProcess>, BackgroundStartError>>
         {
             Box::pin(async move {
                 self.observations.event("prepare");
+                *self
+                    .observations
+                    .preparation
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    Some((background_id, request.output_owner().cloned()));
                 let _drop_probe = DropCounter(Arc::clone(&self.pending_dropped));
                 if self.stay_pending {
                     std::future::pending::<()>().await;
@@ -1503,8 +1575,31 @@ mod tests {
     }
 
     #[test]
+    fn request_is_unowned_until_an_output_owner_is_attached() {
+        let request = BackgroundStartRequest::new("echo ready", "/workspace").unwrap();
+        assert_eq!(request.output_owner(), None);
+
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("session-owner").unwrap(),
+            SessionIncarnationId::new("incarnation-owner").unwrap(),
+        );
+        let request = request.with_output_owner(owner.clone());
+
+        assert_eq!(request.output_owner(), Some(&owner));
+        assert_eq!(owner.session_id().as_str(), "session-owner");
+        assert_eq!(owner.session_incarnation_id().as_str(), "incarnation-owner");
+    }
+
+    #[test]
     fn request_record_and_errors_do_not_debug_secrets() {
-        let request = BackgroundStartRequest::new("PRIVATE_COMMAND", "/PRIVATE_CWD").unwrap();
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("PRIVATE_SESSION").unwrap(),
+            SessionIncarnationId::new("PRIVATE_INCARNATION").unwrap(),
+        );
+        assert_eq!(format!("{owner:?}"), "BackgroundOutputOwner { .. }");
+        let request = BackgroundStartRequest::new("PRIVATE_COMMAND", "/PRIVATE_CWD")
+            .unwrap()
+            .with_output_owner(owner);
         assert!(!format!("{request:?}").contains("PRIVATE"));
         let record = BackgroundRunningRecord::new(
             9_876_543_210,
@@ -1590,6 +1685,21 @@ mod tests {
         assert_eq!(observations.executed.load(Ordering::Relaxed), 1);
         assert_eq!(observations.retained.load(Ordering::Relaxed), 1);
         assert_eq!(observations.aborted.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn reserved_id_and_output_owner_reach_the_spawner_exactly() {
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("session-spawner").unwrap(),
+            SessionIncarnationId::new("incarnation-spawner").unwrap(),
+        );
+        let request = request().with_output_owner(owner.clone());
+        let (supervisor, observations, _) = fixture(Failures::default(), None, None, false);
+
+        let handle = block_on(supervisor.start(request, CancellationToken::new())).unwrap();
+
+        assert_eq!(handle.id(), 7);
+        assert_eq!(observations.preparation(), Some((7, Some(owner))));
     }
 
     #[test]
