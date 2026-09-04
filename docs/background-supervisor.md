@@ -321,7 +321,11 @@ and topology before and after every scan, so a remount, bind overmount, or
 post-admission topology change fails cleanup before the leader is reaped. The
 traversal remains bounded to 131,072 entries, 4 KiB per stat record, 32 MiB of
 aggregate stat bytes, and one aggregate union of at most 32,768 retained
-members across every phase. An indexed union makes duplicate and reversed
+members across every phase. Proc-stat reads use the explicit bounded reader:
+one scan shares the existing 250 ms snapshot deadline and at most 524,288 read
+attempts, while one captured-member observation permits at most eight attempts
+across its identity and optional zombie recheck. `EINTR` consumes those finite
+attempt budgets. An indexed union makes duplicate and reversed
 snapshots linear rather than quadratic. It reuses one directory buffer and
 one stat-record buffer for a scan, and reuses one stat-record buffer throughout
 the captured-member backoff rather than allocating per PID,
@@ -445,8 +449,15 @@ and signals the original process group last. Descendants still inside that
 group may receive the requested signal twice; individual delivery deliberately
 closes an inside-group-to-escaped-group race before the final group syscall.
 Linux traversal uses the retained procfs descriptor and mount identity, caps
-inspected entries, metadata bytes, and retained members, and uses pidfds for
-individual delivery.
+inspected entries, metadata bytes, read attempts, and retained members, and
+uses pidfds for individual delivery. Every signal traversal shares one 250 ms
+monotonic deadline, 524,288-attempt cap, 131,072-entry cap, and 32 MiB byte
+budget across task-children records plus every proc-stat identity read. Each
+record remains independently capped at 64 KiB for task children or 4 KiB for
+proc stat. `EINTR` consumes an attempt rather than extending the operation;
+deadline or budget exhaustion fails with the fixed process category. The
+pre-release root-identity capture uses the same bounded reader with a fresh
+operation budget, so constructing retained signal authority is bounded too.
 macOS traversal uses ADR 0003's safe fixed-buffer wrapper with kernel
 unique-process and parent identities. A vanished descendant does not fail the
 operation; incomplete

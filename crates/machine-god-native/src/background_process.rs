@@ -109,6 +109,8 @@ const MAX_LINUX_PROC_STAT_BYTES: usize = 4 * 1024;
 #[cfg(target_os = "linux")]
 const MAX_LINUX_PROC_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
 #[cfg(target_os = "linux")]
+const MAX_LINUX_PROC_READ_ATTEMPTS: usize = 512 * 1024;
+#[cfg(target_os = "linux")]
 const MAX_LINUX_MOUNTINFO_BYTES: usize = 1024 * 1024;
 #[cfg(target_os = "linux")]
 const MAX_LINUX_MOUNTINFO_ENTRIES: usize = 4 * 1024;
@@ -303,7 +305,15 @@ impl ProcessSignalTarget {
         authority: Arc<GroupSnapshotAuthority>,
     ) -> Result<Self, BackgroundProcessSignalError> {
         let mut scratch = SignalProcessScratch::new();
-        let root_identity = signal_process_identity(&authority, group, &mut scratch)?;
+        Self::capture_with_scratch(group, authority, &mut scratch)
+    }
+
+    fn capture_with_scratch(
+        group: rustix::process::Pid,
+        authority: Arc<GroupSnapshotAuthority>,
+        scratch: &mut SignalProcessScratch,
+    ) -> Result<Self, BackgroundProcessSignalError> {
+        let root_identity = signal_process_identity(&authority, group, scratch)?;
         Ok(Self {
             group,
             root_identity,
@@ -518,6 +528,7 @@ struct SignalProcessSnapshot {
 #[cfg(target_os = "linux")]
 struct SignalProcessScratch {
     stat_bytes: Vec<u8>,
+    budget: LinuxProcIoBudget,
 }
 
 #[cfg(target_os = "linux")]
@@ -525,7 +536,84 @@ impl SignalProcessScratch {
     fn new() -> Self {
         Self {
             stat_bytes: Vec::with_capacity(MAX_LINUX_PROC_STAT_BYTES + 1),
+            budget: LinuxProcIoBudget::signal_operation(),
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct LinuxProcIoBudget {
+    deadline: Instant,
+    remaining_attempts: usize,
+    remaining_bytes: usize,
+    remaining_entries: usize,
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxProcIoBudget {
+    fn signal_operation() -> Self {
+        Self::new(
+            Instant::now() + GROUP_SNAPSHOT_TIMEOUT,
+            MAX_LINUX_PROC_READ_ATTEMPTS,
+            MAX_LINUX_PROC_SNAPSHOT_BYTES,
+            MAX_LINUX_PROC_ENTRIES,
+        )
+    }
+
+    fn proc_stat_pair() -> Self {
+        Self::new(
+            Instant::now() + GROUP_SNAPSHOT_TIMEOUT,
+            8,
+            2 * (MAX_LINUX_PROC_STAT_BYTES + 1),
+            0,
+        )
+    }
+
+    const fn new(
+        deadline: Instant,
+        remaining_attempts: usize,
+        remaining_bytes: usize,
+        remaining_entries: usize,
+    ) -> Self {
+        Self {
+            deadline,
+            remaining_attempts,
+            remaining_bytes,
+            remaining_entries,
+        }
+    }
+
+    fn begin_read(&mut self) -> Result<(), BackgroundProcessError> {
+        self.require_live()?;
+        if self.remaining_attempts == 0 {
+            return Err(cleanup_error());
+        }
+        self.remaining_attempts -= 1;
+        Ok(())
+    }
+
+    fn require_live(&self) -> Result<(), BackgroundProcessError> {
+        if Instant::now() >= self.deadline {
+            return Err(cleanup_error());
+        }
+        Ok(())
+    }
+
+    fn charge_bytes(&mut self, bytes: usize) -> Result<(), BackgroundProcessError> {
+        self.remaining_bytes = self
+            .remaining_bytes
+            .checked_sub(bytes)
+            .ok_or_else(cleanup_error)?;
+        Ok(())
+    }
+
+    fn charge_entry(&mut self) -> Result<(), BackgroundProcessError> {
+        self.require_live()?;
+        if self.remaining_entries == 0 {
+            return Err(cleanup_error());
+        }
+        self.remaining_entries -= 1;
+        Ok(())
     }
 }
 
@@ -3624,7 +3712,12 @@ fn read_signal_process(
         Err(rustix::io::Errno::NOENT | rustix::io::Errno::SRCH) => return Ok(None),
         Err(_) => return Err(signal_process_error()),
     };
-    read_linux_signal_process_at(pid_directory.as_fd(), pid, &mut scratch.stat_bytes)
+    read_linux_signal_process_at(
+        pid_directory.as_fd(),
+        pid,
+        &mut scratch.stat_bytes,
+        &mut scratch.budget,
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -3632,6 +3725,7 @@ fn read_linux_signal_process_at(
     pid_directory: BorrowedFd<'_>,
     pid: rustix::process::Pid,
     bytes: &mut Vec<u8>,
+    budget: &mut LinuxProcIoBudget,
 ) -> Result<Option<SignalProcessSnapshot>, BackgroundProcessSignalError> {
     let stat_fd = match rustix::fs::openat(
         pid_directory,
@@ -3643,7 +3737,7 @@ fn read_linux_signal_process_at(
         Err(rustix::io::Errno::NOENT | rustix::io::Errno::SRCH) => return Ok(None),
         Err(_) => return Err(signal_process_error()),
     };
-    let parsed = read_linux_proc_stat(&mut std::fs::File::from(stat_fd), bytes, pid)
+    let parsed = read_linux_proc_stat(&mut std::fs::File::from(stat_fd), bytes, pid, budget)
         .map_err(|_| signal_process_error())?;
     Ok(parsed.map(|stat| SignalProcessSnapshot {
         pid,
@@ -3666,23 +3760,13 @@ fn signal_process_snapshot(
     authority.validate().map_err(|()| signal_process_error())?;
     let root = read_signal_process(authority, root, scratch)?.ok_or_else(signal_not_found_error)?;
     let mut snapshot = vec![root];
-    let mut inspected_entries = 0_usize;
-    let mut inspected_bytes = 0_usize;
     let mut child_bytes = Vec::with_capacity(MAX_GROUP_SNAPSHOT_BYTES + 1);
     let mut cursor = 0_usize;
     while cursor < snapshot.len() {
         let parent = snapshot[cursor];
         cursor += 1;
         require_linux_signal_parent(authority, &parent, scratch)?;
-        append_linux_signal_children(
-            authority,
-            parent,
-            &mut snapshot,
-            &mut child_bytes,
-            &mut inspected_entries,
-            &mut inspected_bytes,
-            scratch,
-        )?;
+        append_linux_signal_children(authority, parent, &mut snapshot, &mut child_bytes, scratch)?;
         require_linux_signal_parent(authority, &parent, scratch)?;
     }
     authority.validate().map_err(|()| signal_process_error())?;
@@ -3727,8 +3811,6 @@ fn append_linux_signal_children(
     parent: SignalProcessSnapshot,
     snapshot: &mut Vec<SignalProcessSnapshot>,
     child_bytes: &mut Vec<u8>,
-    inspected_entries: &mut usize,
-    inspected_bytes: &mut usize,
     scratch: &mut SignalProcessScratch,
 ) -> Result<(), BackgroundProcessSignalError> {
     let mut name_bytes = [0_u8; 10];
@@ -3749,11 +3831,17 @@ fn append_linux_signal_children(
     .map_err(|_| signal_process_error())?;
     let mut directory_buffer = [MaybeUninit::<u8>::uninit(); 8 * 1024];
     let mut tasks = rustix::fs::RawDir::new(task_directory.as_fd(), &mut directory_buffer);
-    while let Some(entry) = tasks.next() {
-        *inspected_entries = inspected_entries
-            .checked_add(1)
-            .filter(|count| *count <= MAX_LINUX_PROC_ENTRIES)
-            .ok_or_else(signal_process_error)?;
+    loop {
+        if Instant::now() >= scratch.budget.deadline {
+            return Err(signal_process_error());
+        }
+        let Some(entry) = tasks.next() else {
+            break;
+        };
+        scratch
+            .budget
+            .charge_entry()
+            .map_err(|_| signal_process_error())?;
         let entry = entry.map_err(|_| signal_process_error())?;
         let task_name = entry.file_name();
         if parse_linux_proc_directory_pid(task_name.to_bytes())
@@ -3775,15 +3863,7 @@ fn append_linux_signal_children(
             Err(rustix::io::Errno::NOENT | rustix::io::Errno::SRCH) => continue,
             Err(_) => return Err(signal_process_error()),
         };
-        read_linux_signal_children(
-            children,
-            child_bytes,
-            inspected_bytes,
-            snapshot,
-            authority,
-            parent,
-            scratch,
-        )?;
+        read_linux_signal_children(children, child_bytes, snapshot, authority, parent, scratch)?;
         require_linux_signal_parent(authority, &parent, scratch)?;
     }
     Ok(())
@@ -3793,34 +3873,20 @@ fn append_linux_signal_children(
 fn read_linux_signal_children(
     children: OwnedFd,
     bytes: &mut Vec<u8>,
-    inspected_bytes: &mut usize,
     snapshot: &mut Vec<SignalProcessSnapshot>,
     authority: &GroupSnapshotAuthority,
     parent: SignalProcessSnapshot,
     scratch: &mut SignalProcessScratch,
 ) -> Result<(), BackgroundProcessSignalError> {
-    bytes.clear();
     let mut file = std::fs::File::from(children);
-    let mut chunk = [0_u8; 4096];
-    loop {
-        let read = match file.read(&mut chunk) {
-            Ok(read) => read,
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => return Err(signal_process_error()),
-        };
-        if read == 0 {
-            break;
-        }
-        if bytes.len().saturating_add(read) > MAX_GROUP_SNAPSHOT_BYTES {
-            return Err(signal_process_error());
-        }
-        *inspected_bytes = inspected_bytes
-            .checked_add(read)
-            .filter(|count| *count <= MAX_LINUX_PROC_SNAPSHOT_BYTES)
-            .ok_or_else(signal_process_error)?;
-        bytes.extend_from_slice(&chunk[..read]);
-    }
-    for token in bytes.split(|byte| byte.is_ascii_whitespace()) {
+    read_linux_proc_record(
+        &mut file,
+        bytes,
+        MAX_GROUP_SNAPSHOT_BYTES,
+        &mut scratch.budget,
+    )
+    .map_err(|_| signal_process_error())?;
+    for token in bytes.split(u8::is_ascii_whitespace) {
         if token.is_empty() {
             continue;
         }
@@ -4032,6 +4098,12 @@ fn group_members(
     let mut inspected_bytes = 0_usize;
     let mut members = Vec::new();
     let mut stat_bytes = Vec::with_capacity(MAX_LINUX_PROC_STAT_BYTES + 1);
+    let mut read_budget = LinuxProcIoBudget::new(
+        Instant::now() + GROUP_SNAPSHOT_TIMEOUT,
+        MAX_LINUX_PROC_READ_ATTEMPTS,
+        MAX_LINUX_PROC_SNAPSHOT_BYTES,
+        0,
+    );
     while let Some(entry) = entries.next() {
         inspected_entries = inspected_entries
             .checked_add(1)
@@ -4063,7 +4135,8 @@ fn group_members(
             Err(_) => return Err(cleanup_error()),
         };
         let mut stat = std::fs::File::from(stat_fd);
-        let Some(parsed) = read_linux_proc_stat(&mut stat, &mut stat_bytes, pid)? else {
+        let Some(parsed) = read_linux_proc_stat(&mut stat, &mut stat_bytes, pid, &mut read_budget)?
+        else {
             continue;
         };
         inspected_bytes = inspected_bytes
@@ -4182,12 +4255,9 @@ fn read_linux_proc_stat(
     reader: &mut impl Read,
     bytes: &mut Vec<u8>,
     expected_pid: rustix::process::Pid,
+    budget: &mut LinuxProcIoBudget,
 ) -> Result<Option<LinuxProcStat>, BackgroundProcessError> {
-    bytes.clear();
-    match reader
-        .take((MAX_LINUX_PROC_STAT_BYTES + 1) as u64)
-        .read_to_end(bytes)
-    {
+    match read_linux_proc_record(reader, bytes, MAX_LINUX_PROC_STAT_BYTES, budget) {
         Ok(0) => return Ok(None),
         Ok(_) => {}
         Err(error) if matches!(error.raw_os_error(), Some(libc::ENOENT | libc::ESRCH)) => {
@@ -4203,11 +4273,61 @@ fn read_linux_proc_stat(
 }
 
 #[cfg(target_os = "linux")]
+fn read_linux_proc_record(
+    reader: &mut impl Read,
+    bytes: &mut Vec<u8>,
+    record_limit: usize,
+    budget: &mut LinuxProcIoBudget,
+) -> std::io::Result<usize> {
+    bytes.clear();
+    let record_capacity = record_limit.checked_add(1).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid proc record bound")
+    })?;
+    let mut chunk = [0_u8; 4096];
+    loop {
+        budget
+            .begin_read()
+            .map_err(|_| std::io::Error::other("proc read budget exhausted"))?;
+        let remaining_record = record_capacity.saturating_sub(bytes.len());
+        let read_capacity = chunk
+            .len()
+            .min(remaining_record)
+            .min(budget.remaining_bytes);
+        if read_capacity == 0 {
+            return Err(std::io::Error::other("proc byte budget exhausted"));
+        }
+        match reader.read(&mut chunk[..read_capacity]) {
+            Ok(0) => {
+                budget
+                    .require_live()
+                    .map_err(|_| std::io::Error::other("proc read deadline exhausted"))?;
+                return Ok(bytes.len());
+            }
+            Ok(read) => {
+                budget
+                    .require_live()
+                    .map_err(|_| std::io::Error::other("proc read deadline exhausted"))?;
+                budget
+                    .charge_bytes(read)
+                    .map_err(|_| std::io::Error::other("proc byte budget exhausted"))?;
+                bytes.extend_from_slice(&chunk[..read]);
+                if bytes.len() > record_limit {
+                    return Err(std::io::Error::other("proc record bound exceeded"));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn captured_group_member_exists(
     authority: &GroupSnapshotAuthority,
     member: &CapturedGroupMember,
     bytes: &mut Vec<u8>,
 ) -> Result<bool, BackgroundProcessError> {
+    let mut read_budget = LinuxProcIoBudget::proc_stat_pair();
     let mut name_bytes = [0_u8; 10];
     let name = linux_pid_path(member.pid, &mut name_bytes);
     let pid_fd = match rustix::fs::openat(
@@ -4231,7 +4351,7 @@ fn captured_group_member_exists(
         Err(_) => return Err(cleanup_error()),
     };
     let mut stat = std::fs::File::from(stat_fd);
-    let Some(parsed) = read_linux_proc_stat(&mut stat, bytes, member.pid)? else {
+    let Some(parsed) = read_linux_proc_stat(&mut stat, bytes, member.pid, &mut read_budget)? else {
         return Ok(false);
     };
     if member.identity != Some(parsed.start_time) {
@@ -4240,7 +4360,7 @@ fn captured_group_member_exists(
     if !parsed.zombie {
         return Ok(true);
     }
-    reap_adopted_captured_zombie(pid_fd.as_fd(), member, bytes)
+    reap_adopted_captured_zombie(pid_fd.as_fd(), member, bytes, &mut read_budget)
 }
 
 #[cfg(target_os = "linux")]
@@ -4248,6 +4368,7 @@ fn reap_adopted_captured_zombie(
     pid_directory: BorrowedFd<'_>,
     member: &CapturedGroupMember,
     bytes: &mut Vec<u8>,
+    read_budget: &mut LinuxProcIoBudget,
 ) -> Result<bool, BackgroundProcessError> {
     let process =
         match rustix::process::pidfd_open(member.pid, rustix::process::PidfdFlags::empty()) {
@@ -4273,7 +4394,7 @@ fn reap_adopted_captured_zombie(
         Err(_) => return Err(cleanup_error()),
     };
     let mut stat = std::fs::File::from(stat_fd);
-    let Some(parsed) = read_linux_proc_stat(&mut stat, bytes, member.pid)? else {
+    let Some(parsed) = read_linux_proc_stat(&mut stat, bytes, member.pid, read_budget)? else {
         return Ok(false);
     };
     if member.identity != Some(parsed.start_time) {
@@ -4660,6 +4781,15 @@ mod linux_proc_tests {
         rustix::process::Pid::from_raw(raw).expect("positive test pid")
     }
 
+    fn proc_read_budget() -> LinuxProcIoBudget {
+        LinuxProcIoBudget::new(
+            Instant::now() + Duration::from_secs(1),
+            32,
+            MAX_LINUX_PROC_SNAPSHOT_BYTES,
+            MAX_LINUX_PROC_ENTRIES,
+        )
+    }
+
     #[test]
     fn proc_stat_uses_the_final_parenthesis_after_a_hostile_comm() {
         let stat =
@@ -4731,6 +4861,26 @@ mod linux_proc_tests {
     }
 
     #[test]
+    fn signal_target_construction_obeys_the_finite_proc_read_budget() {
+        let authority = Arc::new(GroupSnapshotAuthority::open().expect("open proc authority"));
+        let raw = i32::try_from(std::process::id()).expect("current PID fits signed range");
+        let current = rustix::process::Pid::from_raw(raw).expect("positive current PID");
+        let mut scratch = SignalProcessScratch::new();
+        scratch.budget = LinuxProcIoBudget::new(
+            Instant::now() + Duration::from_secs(1),
+            0,
+            MAX_LINUX_PROC_STAT_BYTES + 1,
+            0,
+        );
+
+        let error = ProcessSignalTarget::capture_with_scratch(current, authority, &mut scratch)
+            .err()
+            .expect("target capture cannot outlive an exhausted read budget");
+        assert_eq!(error.kind(), BackgroundProcessSignalErrorKind::Process);
+        assert!(scratch.stat_bytes.is_empty());
+    }
+
+    #[test]
     fn retained_proc_stat_fd_treats_a_reaped_task_as_vanished() {
         let mut child = Command::new("/bin/sleep")
             .arg("30")
@@ -4746,8 +4896,9 @@ mod linux_proc_tests {
         child.wait().expect("reap proc-stat fixture");
 
         let mut bytes = Vec::new();
+        let mut budget = proc_read_budget();
         assert_eq!(
-            read_linux_proc_stat(&mut stat, &mut bytes, child_pid)
+            read_linux_proc_stat(&mut stat, &mut bytes, child_pid, &mut budget)
                 .expect("a reaped task is an ordinary disappearance"),
             None
         );
@@ -4767,8 +4918,9 @@ mod linux_proc_tests {
         for vanished in [libc::ENOENT, libc::ESRCH] {
             let mut reader = ErrorReader(vanished);
             let mut bytes = vec![b'x'];
+            let mut budget = proc_read_budget();
             assert_eq!(
-                read_linux_proc_stat(&mut reader, &mut bytes, pid(321))
+                read_linux_proc_stat(&mut reader, &mut bytes, pid(321), &mut budget)
                     .expect("a vanished task is omitted"),
                 None
             );
@@ -4777,12 +4929,128 @@ mod linux_proc_tests {
 
         let mut reader = ErrorReader(libc::EIO);
         let mut bytes = vec![b'x'];
+        let mut budget = proc_read_budget();
         assert_eq!(
-            read_linux_proc_stat(&mut reader, &mut bytes, pid(321))
+            read_linux_proc_stat(&mut reader, &mut bytes, pid(321), &mut budget)
                 .expect_err("other proc-stat read failures remain fail-closed")
                 .kind(),
             BackgroundProcessErrorKind::Cleanup
         );
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn proc_stat_eintr_retries_consume_one_finite_operation_budget() {
+        struct AlwaysInterrupted {
+            reads: usize,
+        }
+
+        impl Read for AlwaysInterrupted {
+            fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+                self.reads += 1;
+                Err(std::io::ErrorKind::Interrupted.into())
+            }
+        }
+
+        let mut reader = AlwaysInterrupted { reads: 0 };
+        let mut bytes = Vec::with_capacity(MAX_LINUX_PROC_STAT_BYTES + 1);
+        let mut budget = LinuxProcIoBudget::new(
+            Instant::now() + Duration::from_secs(1),
+            3,
+            MAX_LINUX_PROC_STAT_BYTES + 1,
+            0,
+        );
+
+        assert_eq!(
+            read_linux_proc_stat(&mut reader, &mut bytes, pid(321), &mut budget)
+                .expect_err("permanent EINTR exhausts the fixed read-attempt budget")
+                .kind(),
+            BackgroundProcessErrorKind::Cleanup
+        );
+        assert_eq!(reader.reads, 3);
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn proc_stat_and_task_children_share_byte_attempt_entry_and_deadline_bounds() {
+        let stat = b"321 (worker) S 12 77 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 4242";
+        let mut stat_reader = std::io::Cursor::new(stat.as_slice());
+        let mut children_reader = std::io::Cursor::new(b"103 104 ".as_slice());
+        let mut bytes = Vec::with_capacity(MAX_GROUP_SNAPSHOT_BYTES + 1);
+        let mut budget = LinuxProcIoBudget::new(
+            Instant::now() + Duration::from_secs(1),
+            8,
+            stat.len() + b"103".len(),
+            1,
+        );
+
+        assert!(
+            read_linux_proc_stat(&mut stat_reader, &mut bytes, pid(321), &mut budget)
+                .expect("the proc-stat record fits")
+                .is_some()
+        );
+        assert!(
+            read_linux_proc_record(
+                &mut children_reader,
+                &mut bytes,
+                MAX_GROUP_SNAPSHOT_BYTES,
+                &mut budget,
+            )
+            .is_err(),
+            "task children cannot exceed bytes already consumed by proc stat"
+        );
+        budget.charge_entry().expect("the sole task entry fits");
+        assert!(budget.charge_entry().is_err());
+
+        let mut unread = std::io::Cursor::new(b"105 ".as_slice());
+        let mut expired = LinuxProcIoBudget::new(Instant::now(), 8, 64, 1);
+        assert!(
+            read_linux_proc_record(
+                &mut unread,
+                &mut bytes,
+                MAX_GROUP_SNAPSHOT_BYTES,
+                &mut expired,
+            )
+            .is_err()
+        );
+        assert_eq!(
+            unread.position(),
+            0,
+            "an expired operation performs no read"
+        );
+    }
+
+    #[test]
+    fn task_children_permanent_eintr_exhausts_attempts_without_hidden_retries() {
+        struct AlwaysInterrupted {
+            reads: usize,
+        }
+
+        impl Read for AlwaysInterrupted {
+            fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+                self.reads += 1;
+                Err(std::io::ErrorKind::Interrupted.into())
+            }
+        }
+
+        let mut reader = AlwaysInterrupted { reads: 0 };
+        let mut bytes = Vec::new();
+        let mut budget = LinuxProcIoBudget::new(
+            Instant::now() + Duration::from_secs(1),
+            2,
+            MAX_GROUP_SNAPSHOT_BYTES + 1,
+            1,
+        );
+        assert!(
+            read_linux_proc_record(
+                &mut reader,
+                &mut bytes,
+                MAX_GROUP_SNAPSHOT_BYTES,
+                &mut budget,
+            )
+            .is_err()
+        );
+        assert_eq!(reader.reads, 2);
         assert!(bytes.is_empty());
     }
 
@@ -4818,12 +5086,12 @@ mod linux_proc_tests {
             {
                 continue;
             }
-            assert!(
-                open_linux_signal_task(task_directory.as_fd(), entry.file_name())
-                    .expect("open task entry without constructing a joined path")
-                    .is_some()
-            );
-            opened = opened.saturating_add(1);
+            if open_linux_signal_task(task_directory.as_fd(), entry.file_name())
+                .expect("open task entry without constructing a joined path")
+                .is_some()
+            {
+                opened = opened.saturating_add(1);
+            }
         }
         assert!(opened > 0, "the current process exposes at least one task");
     }
@@ -5353,6 +5621,48 @@ mod process_regression_tests {
             BackgroundProcessSignalErrorKind::Process,
             "signals are neither retried nor escalated"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn exhausted_signal_proc_read_releases_lifecycle_gate_for_close() {
+        struct AlwaysInterrupted;
+
+        impl Read for AlwaysInterrupted {
+            fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::ErrorKind::Interrupted.into())
+            }
+        }
+
+        let controller = test_signal_controller();
+        controller.activate().expect("activate controller");
+        let error = controller
+            .with_active_target(|_| {
+                let mut reader = AlwaysInterrupted;
+                let mut bytes = Vec::new();
+                let mut budget = LinuxProcIoBudget::new(
+                    Instant::now() + Duration::from_secs(1),
+                    2,
+                    MAX_LINUX_PROC_STAT_BYTES + 1,
+                    0,
+                );
+                read_linux_proc_stat(
+                    &mut reader,
+                    &mut bytes,
+                    rustix::process::Pid::from_raw(321).expect("positive test PID"),
+                    &mut budget,
+                )
+                .map_err(|_| signal_process_error())?;
+                Ok(())
+            })
+            .expect_err("exhausted proc read fails the signal operation");
+        assert_eq!(error.kind(), BackgroundProcessSignalErrorKind::Process);
+
+        controller
+            .signal_with(BackgroundProcessSignal::Interrupt, |_, _| Ok(()))
+            .expect("the failed read released the lifecycle gate");
+        controller.close();
+        assert!(controller.is_closed_for_test());
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -6512,9 +6822,15 @@ mod process_regression_tests {
         )
         .expect("open child stat");
         let mut bytes = Vec::with_capacity(MAX_LINUX_PROC_STAT_BYTES + 1);
-        let parsed = read_linux_proc_stat(&mut std::fs::File::from(stat_fd), &mut bytes, pid)
-            .expect("read child stat")
-            .expect("live child stat is present");
+        let mut read_budget = LinuxProcIoBudget::proc_stat_pair();
+        let parsed = read_linux_proc_stat(
+            &mut std::fs::File::from(stat_fd),
+            &mut bytes,
+            pid,
+            &mut read_budget,
+        )
+        .expect("read child stat")
+        .expect("live child stat is present");
         let member = CapturedGroupMember {
             pid,
             identity: Some(parsed.start_time),

@@ -367,8 +367,13 @@ to every identity-revalidated descendant, and then signals the original group.
 An inside-group descendant can therefore receive the requested signal twice;
 that deliberate duplicate closes the race in which it could call `setsid`
 after its group was observed but before the final group signal. Linux uses the
-retained procfs mount authority and pidfds for individual delivery. macOS uses the safe
-fixed-buffer Darwin wrapper's kernel unique-process and parent identities. A
+retained procfs mount authority and pidfds for individual delivery. One Linux
+traversal shares a 250 ms monotonic deadline, 524,288 read attempts, 131,072
+task entries, and 32 MiB across all 64 KiB task-children records and 4 KiB
+proc-stat identity records; `EINTR` consumes the same finite attempt budget.
+The retained root-identity capture is independently subject to the same finite
+reader limits. macOS uses the safe fixed-buffer Darwin wrapper's kernel
+unique-process and parent identities. A
 vanished descendant is harmless, but an incomplete snapshot, identity
 ambiguity, bound overflow, non-vanished delivery failure, or original-group
 delivery failure rejects the operation; partial delivery is never reported as
