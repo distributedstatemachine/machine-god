@@ -2043,7 +2043,6 @@ fn finish_observed_with_output(
 enum BackgroundOutputDrain {
     Idle,
     Progress,
-    Exhausted,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -2089,7 +2088,11 @@ fn drain_background_output<R: std::io::Read>(
             Err(_) => return Err(wait_error()),
         }
     }
-    Ok(BackgroundOutputDrain::Exhausted)
+    Ok(if progressed {
+        BackgroundOutputDrain::Progress
+    } else {
+        BackgroundOutputDrain::Idle
+    })
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -3653,9 +3656,46 @@ mod linux_proc_tests {
 mod process_regression_tests {
     use super::*;
     use std::fs;
+    use std::io;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    struct AlwaysInterruptedReader {
+        reads: usize,
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    impl io::Read for AlwaysInterruptedReader {
+        fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+            self.reads = self.reads.saturating_add(1);
+            Err(io::Error::from(io::ErrorKind::Interrupted))
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn interrupted_output_budget_without_bytes_is_idle() {
+        let mut output = Some(AlwaysInterruptedReader { reads: 0 });
+
+        let drained = drain_background_output(
+            &mut output,
+            BACKGROUND_OUTPUT_READS_PER_OBSERVATION,
+            &mut |_| panic!("interrupted reads must not deliver output"),
+        )
+        .expect("interrupted reads remain retryable");
+
+        assert_eq!(drained, BackgroundOutputDrain::Idle);
+        assert!(
+            !drained.progressed(),
+            "idle waits must retain their backoff"
+        );
+        assert_eq!(
+            output.as_ref().expect("reader remains open").reads,
+            BACKGROUND_OUTPUT_READS_PER_OBSERVATION
+        );
+    }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
