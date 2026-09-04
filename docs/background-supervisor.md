@@ -191,8 +191,10 @@ completion publication on the polling caller.
 
 The successful start result contains only the allocated ID and display-only
 PID. Neither value authorizes signaling. For an owner-scoped terminal start,
-the supervisor separately retains an exact process-tree controller keyed by
-the allocated ID and the private session-incarnation owner. The controller
+the supervisor separately retains an exact native process controller keyed by
+the allocated ID and the private session-incarnation owner. On Linux its scope
+is the identity-pinned ancestry tree plus the original process group; on macOS
+its scope is only the original process group. The controller
 becomes visible through core's post-release retain-time activation hook before
 the public handle is returned and never reconstructs authority from either
 display number.
@@ -205,10 +207,8 @@ after preparation. Linux starts it through the retained platform descriptor
 path. On macOS the parent passes the retained directory as a standard
 descriptor and the helper applies safe `fchdir` through `rustix`. In both
 cases the helper first emits one fixed readiness byte, waits for the complete
-private release frame, and then replaces itself with fixed `/bin/sh`. No
-unsafe code exists in this launch path. The separate macOS process-query
-wrapper has the narrowly audited fixed-record FFI exception defined by
-[ADR 0003](decisions/0003-bounded-darwin-process-query-ffi.md).
+private release frame, and then replaces itself with fixed `/bin/sh`. Unsafe
+Rust is forbidden throughout the production workspace.
 
 The production adapter resolves the current host executable and supplies one
 exact private helper argument. Native hosts must dispatch that exact singleton
@@ -290,7 +290,7 @@ is only historical presentation data.
 
 Every released child is a process-group leader retained by one host-owned
 worker. Waiting reaps the direct child and removes remaining original-group
-descendants before releasing the record lease and capacity. Stop sends TERM to
+members before releasing the record lease and capacity. Stop sends TERM to
 the owned group, waits through a fixed grace period, sends KILL if still
 present, and reaps. Before reaping the leader, a bounded platform group scan
 proves that the unreaped leader is the sole remaining member of its original

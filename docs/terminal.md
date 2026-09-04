@@ -210,10 +210,8 @@ Rename or unlink after descriptor retention cannot redirect the starting
 directory.
 
 Safe standard Rust has no descriptor-relative `Command` cwd primitive on
-macOS, and the audited
-[Darwin process-query exception](decisions/0003-bounded-darwin-process-query-ffi.md)
-does not authorize command-launch FFI. The production system executor is
-therefore Linux-only. Public `TerminalTool::open` and
+macOS. The production system executor is therefore Linux-only. Public
+`TerminalTool::open` and
 `TerminalTool::open_with_limits` construction on macOS, FreeBSD, WASI, and other
 non-Linux targets fails with the fixed unsupported category before filesystem
 lookup, environment inspection, thread creation, or spawn.

@@ -26,7 +26,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `33905683447` (`GREEN`)
 - Main Benchmark evidence: `33905683324` (`GREEN`)
 - Active branch: `agent/m58-terminal-signal`
-- Active phase: `implementing exact-owner identity-safe terminal process-tree signaling`
+- Active phase: `implementing exact-owner identity-safe terminal native signaling`
 - Next gate: `freeze one documented candidate, run the complete exact-1.94.1 local gate, then start three fresh adversarial reviews`
 <!-- canonical-live-status:end -->
 
@@ -51,8 +51,8 @@ audit, compatibility, or benchmark-artifact jobs.
 
 The active product slice adds the closed five-value terminal `signal` action
 with exact session-incarnation ownership, separate custom authorization,
-bounded off-poll-thread process-tree delivery, and close-before-reap native
-authority. Durable or
+bounded off-poll-thread Linux process-tree or macOS original-group delivery,
+and close-before-reap native authority. Durable or
 restart-safe logs, persistent interactive handles, write actions, interactive
 terminal behavior, restart-safe control, ACP, teams, and extension slash
 commands remain separate until explicitly bounded.
@@ -66,8 +66,7 @@ Documentation-tool maintenance remains a separate non-product task.
   terminal, configuration, and persistence effects.
 - `machine-god-cli` is a thin host and owns no product state.
 - `machine-god-testkit` owns deterministic test doubles and fixtures.
-- Unsafe Rust is forbidden except for the private fixed-record Darwin FFI
-  module narrowed by [ADR 0003](decisions/0003-bounded-darwin-process-query-ffi.md).
+- Unsafe Rust is forbidden throughout the production workspace.
 - Constructors and futures must preserve the documented inert-before-poll,
   cancellation, resource-bound, redaction, and authority invariants.
 
@@ -243,7 +242,7 @@ cargo +1.94.1 test --doc --workspace
 Run affected tests first. The complete gate also includes repository Python
 tests, pinned-fx drift checks, dependency policy and vulnerability audit,
 supported Linux/macOS execution, relevant FreeBSD/WASI compilation or active
-unsupported behavior, documentation policy, scoped-unsafe conformance checks, and a
+unsupported behavior, documentation policy, no-unsafe conformance checks, and a
 fresh locked release-binary smoke of user-visible behavior. Evidence is a
 regression/delivery claim unless a milestone explicitly promotes it.
 
