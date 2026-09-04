@@ -442,7 +442,7 @@ fn released_stdout_and_stderr_share_one_stream_without_the_readiness_marker() {
             "printf 'stdout-one'; printf 'stderr-two' >&2; printf 'stdout-three'",
         ))
         .unwrap()
-        .release()
+        .release_with_output()
         .unwrap();
     let mut output = Vec::new();
 
@@ -461,6 +461,33 @@ fn released_stdout_and_stderr_share_one_stream_without_the_readiness_marker() {
         !output.contains(&0xa7),
         "the helper readiness marker must remain private"
     );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn ordinary_release_preserves_null_output_for_no_capture_callers() {
+    let directory = FreshDirectory::new("null-output");
+    let owned = adapter()
+        .prepare(request(
+            directory.path(),
+            "i=0; while [ $i -lt 200000 ]; do printf '0123456789abcdef'; printf error >&2; i=$((i+1)); done",
+        ))
+        .unwrap()
+        .release()
+        .unwrap();
+    let mut bytes = 0_usize;
+
+    let outcome = owned
+        .wait_with_stop_and_output(&CancellationToken::new(), |chunk| {
+            bytes = bytes.saturating_add(chunk.len());
+        })
+        .unwrap();
+
+    assert_eq!(
+        outcome,
+        BackgroundProcessOutcome::Completed(BackgroundProcessExit::Exited(0))
+    );
+    assert_eq!(bytes, 0);
 }
 
 #[test]
@@ -617,7 +644,7 @@ fn merged_output_drains_an_unbounded_flood_without_backpressure() {
             "i=0; while [ $i -lt 200000 ]; do printf '0123456789abcdef'; i=$((i+1)); done",
         ))
         .unwrap()
-        .release()
+        .release_with_output()
         .unwrap();
     let mut bytes = 0_u64;
     let outcome = owned
@@ -842,7 +869,7 @@ fn cancellable_output_wait_drains_before_stop_and_reaps() {
             "printf captured; printf ready > ready; trap '' TERM; while :; do /bin/sleep 1; done",
         ))
         .unwrap()
-        .release()
+        .release_cancellable_with_output(&CancellationToken::new())
         .unwrap();
     let pid = owned.pid().get();
     let stop = CancellationToken::new();

@@ -692,14 +692,20 @@ fn read_output_snapshot(
                 TerminalBackgroundReadErrorKind::Unavailable,
             ));
         }
+        let next_offset = snapshot.next_offset();
+        let produced_bytes = snapshot.produced_bytes();
+        let retained_bytes = snapshot.retained_bytes();
+        let pending_utf8_bytes = snapshot.pending_utf8_bytes();
+        let truncated = snapshot.truncated();
+        let closed = snapshot.closed();
         TerminalBackgroundReadSnapshot::new(
-            snapshot.bytes().to_vec(),
-            snapshot.next_offset(),
-            snapshot.produced_bytes(),
-            snapshot.retained_bytes(),
-            snapshot.pending_utf8_bytes(),
-            snapshot.truncated(),
-            snapshot.closed(),
+            snapshot.into_bytes(),
+            next_offset,
+            produced_bytes,
+            retained_bytes,
+            pending_utf8_bytes,
+            truncated,
+            closed,
         )
     })
 }
@@ -1973,9 +1979,12 @@ impl CorePreparedProcess for NativePrepared {
             .process
             .take()
             .ok_or_else(|| start_error(BackgroundStartErrorKind::Process))?;
-        let owned = prepared
-            .release_cancellable(cancellation)
-            .map_err(|error| start_error(process_error_kind(error.kind())))?;
+        let owned = if self.capture.is_some() {
+            prepared.release_cancellable_with_output(cancellation)
+        } else {
+            prepared.release_cancellable(cancellation)
+        }
+        .map_err(|error| start_error(process_error_kind(error.kind())))?;
         if let Some(capture) = self.capture.as_mut() {
             capture.activate()?;
         }

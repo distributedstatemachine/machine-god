@@ -20,15 +20,18 @@ One start request contains a nonempty command of at most 32 KiB and one
 absolute canonical Unicode cwd of at most 4,096 bytes. Both reject NUL. The
 fixed program is `/bin/sh` with arguments `[-c, command]`; the command is an
 argument and is never interpolated into a machine-god wrapper script.
-Standard input is null after release. The helper duplicates one retained pipe
-onto the final shell's standard output and error, producing a single merged
-byte stream; their relative ordering is only the order observed by that pipe.
-The readiness byte is consumed before the pipe becomes captured output. The
-supervisor drains continuously and retains a bounded process-local prefix only
-when the start request carries an output owner. It detects no URL, accepts no
-interactive input, and creates no PTY. Linux and macOS use the same private
-helper protocol. The helper consumes only its bounded release frame and gives
-the user shell input from `/dev/null`.
+Standard input is null after release. Only a start request carrying an output
+owner selects capture in the private release frame: the helper then duplicates
+one retained pipe onto the final shell's standard output and error, producing a
+single merged byte stream whose relative ordering is only the order observed by
+that pipe. The readiness byte is consumed before the pipe becomes captured
+output. Without an output owner, the final shell retains the original null
+standard-output and standard-error behavior, and no worker drains or counts its
+output. The supervisor drains captured output continuously and retains a
+bounded process-local prefix. It detects no URL, accepts no interactive input,
+and creates no PTY. Linux and macOS use the same private helper protocol. The
+helper consumes only its bounded release frame and gives the user shell input
+from `/dev/null`.
 
 The requested environment is never installed in the pre-release process. The
 host starts its helper with an emptied, fixed bootstrap environment; loader

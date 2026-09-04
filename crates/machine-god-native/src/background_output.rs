@@ -79,8 +79,14 @@ pub(crate) struct BackgroundOutputSnapshot {
 
 impl BackgroundOutputSnapshot {
     /// Returns this page's merged output bytes.
+    #[cfg(test)]
     pub(crate) fn bytes(&self) -> &[u8] {
         &self.bytes
+    }
+
+    /// Moves this page's merged output bytes without another allocation.
+    pub(crate) fn into_bytes(self) -> Vec<u8> {
+        self.bytes
     }
 
     /// Returns the byte offset to use for the next read in segment one.

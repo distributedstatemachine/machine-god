@@ -173,7 +173,11 @@ const BACKGROUND_OUTPUT_READS_PER_OBSERVATION: usize = 16;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const BACKGROUND_OUTPUT_FINAL_READS: usize = 128;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-const RELEASE_FRAME_MAGIC: &[u8; 8] = b"MGBG\0\0\0\x01";
+const RELEASE_FRAME_MAGIC: &[u8; 8] = b"MGBG\0\0\0\x02";
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const RELEASE_NULL_OUTPUT_BYTE: u8 = 0;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const RELEASE_CAPTURE_OUTPUT_BYTE: u8 = 1;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const RELEASE_FRAME_WRITE_CHUNK_BYTES: usize = 16 * 1024;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -184,6 +188,7 @@ const RELEASE_FRAME_PIPE_WRITE_BYTES: usize = if libc::PIPE_BUF < RELEASE_FRAME_
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_RELEASE_FRAME_PAYLOAD_BYTES: usize = RELEASE_FRAME_MAGIC.len()
+    + 1
     + 4
     + MAX_BACKGROUND_PROCESS_COMMAND_BYTES
     + 4
@@ -708,7 +713,11 @@ pub fn run_background_process_helper() -> Result<(), BackgroundProcessError> {
     drop(ready);
 
     let mut input = stdin().lock();
-    let (command, environment) = read_release_frame(&mut input)?;
+    let ReleaseFrame {
+        command,
+        environment,
+        capture_output,
+    } = read_release_frame(&mut input)?;
     let mut commit = [0_u8; 1];
     read_release_bytes(&mut input, &mut commit)?;
     if commit[0] != RELEASE_COMMIT_BYTE {
@@ -718,29 +727,47 @@ pub fn run_background_process_helper() -> Result<(), BackgroundProcessError> {
     drop((input, stdout));
     #[cfg(target_os = "linux")]
     drop(input);
-    let output = rustix::io::dup(stderr().as_fd()).map_err(|_| spawn_error())?;
-    let error = Command::new(BACKGROUND_PROCESS_PROGRAM)
+    let mut shell = Command::new(BACKGROUND_PROCESS_PROGRAM);
+    shell
         .arg("-c")
         .arg(command)
         .env_clear()
         .envs(environment)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(output))
-        .stderr(Stdio::inherit())
-        .exec();
+        .stdin(Stdio::null());
+    if capture_output {
+        let output = rustix::io::dup(stderr().as_fd()).map_err(|_| spawn_error())?;
+        shell.stdout(Stdio::from(output)).stderr(Stdio::inherit());
+    } else {
+        shell.stdout(Stdio::null()).stderr(Stdio::null());
+    }
+    let error = shell.exec();
     drop(error);
     Err(spawn_error())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+struct ReleaseFrame {
+    command: String,
+    environment: Vec<(OsString, OsString)>,
+    capture_output: bool,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn read_release_frame(
     input: &mut impl std::io::Read,
-) -> Result<(String, Vec<(OsString, OsString)>), BackgroundProcessError> {
+) -> Result<ReleaseFrame, BackgroundProcessError> {
     let mut magic = [0_u8; RELEASE_FRAME_MAGIC.len()];
     read_release_bytes(input, &mut magic)?;
     if &magic != RELEASE_FRAME_MAGIC {
         return Err(invalid_request());
     }
+    let mut output_mode = [0_u8; 1];
+    read_release_bytes(input, &mut output_mode)?;
+    let capture_output = match output_mode[0] {
+        RELEASE_NULL_OUTPUT_BYTE => false,
+        RELEASE_CAPTURE_OUTPUT_BYTE => true,
+        _ => return Err(invalid_request()),
+    };
     let command_length = read_release_length(input, MAX_BACKGROUND_PROCESS_COMMAND_BYTES)?;
     if command_length == 0 {
         return Err(invalid_request());
@@ -771,7 +798,11 @@ fn read_release_frame(
         environment.push((OsString::from_vec(key), OsString::from_vec(value)));
     }
     validate_request(&command, "helper", &environment)?;
-    Ok((command, environment))
+    Ok(ReleaseFrame {
+        command,
+        environment,
+        capture_output,
+    })
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -848,7 +879,17 @@ impl PreparedBackgroundProcess {
     /// Returns a fixed release or cleanup failure and reaps the child when the
     /// gate cannot be released.
     pub fn release(mut self) -> Result<OwnedBackgroundProcess, BackgroundProcessError> {
-        release_prepared(&mut self, &CancellationToken::new())
+        release_prepared(&mut self, &CancellationToken::new(), false)
+    }
+
+    /// Releases the process while retaining its merged output pipe for
+    /// [`OwnedBackgroundProcess::wait_with_stop_and_output`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the same fixed failures as [`Self::release`].
+    pub fn release_with_output(mut self) -> Result<OwnedBackgroundProcess, BackgroundProcessError> {
+        release_prepared(&mut self, &CancellationToken::new(), true)
     }
 
     /// Releases the private start gate while observing cooperative
@@ -864,7 +905,20 @@ impl PreparedBackgroundProcess {
         mut self,
         cancellation: &CancellationToken,
     ) -> Result<OwnedBackgroundProcess, BackgroundProcessError> {
-        release_prepared(&mut self, cancellation)
+        release_prepared(&mut self, cancellation, false)
+    }
+
+    /// Releases the process with a retained merged output pipe while observing
+    /// cooperative cancellation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same fixed failures as [`Self::release_cancellable`].
+    pub fn release_cancellable_with_output(
+        mut self,
+        cancellation: &CancellationToken,
+    ) -> Result<OwnedBackgroundProcess, BackgroundProcessError> {
+        release_prepared(&mut self, cancellation, true)
     }
 
     /// Aborts the prepared process without permitting the user command to run,
@@ -951,6 +1005,11 @@ impl OwnedBackgroundProcess {
 
     /// Waits while forwarding bounded chunks from the merged standard-output
     /// and standard-error stream to an explicitly supplied synchronous sink.
+    ///
+    /// Output is available only when the prepared process was released through
+    /// [`PreparedBackgroundProcess::release_with_output`] or
+    /// [`PreparedBackgroundProcess::release_cancellable_with_output`]. An
+    /// ordinary release preserves the original null-output behavior.
     ///
     /// The sink is invoked only by the calling thread. The process pipe remains
     /// nonblocking, is drained under a fixed per-observation syscall budget,
@@ -1617,6 +1676,7 @@ fn prepare_system(
 fn release_prepared(
     prepared: &mut PreparedBackgroundProcess,
     cancellation: &CancellationToken,
+    capture_output: bool,
 ) -> Result<OwnedBackgroundProcess, BackgroundProcessError> {
     let Some(mut gate) = prepared.gate.take() else {
         return Err(invariant_error());
@@ -1631,6 +1691,7 @@ fn release_prepared(
                 &mut gate,
                 &command,
                 &environment,
+                capture_output,
                 cancellation,
                 prepared.pid,
             )
@@ -1663,7 +1724,7 @@ fn release_prepared(
         group: prepared.group,
         snapshot_authority: Some(snapshot_authority),
         reap_permit: Some(reap_permit),
-        output: Some(output),
+        output: capture_output.then_some(output),
         pid: prepared.pid,
     })
 }
@@ -1673,9 +1734,15 @@ fn write_release_frame(
     output: &mut impl std::io::Write,
     command: &str,
     environment: &ValidatedBackgroundEnvironment,
+    capture_output: bool,
 ) -> std::io::Result<()> {
     let mut output = ReleaseFrameChunkWriter::new(output);
     output.write_bytes(RELEASE_FRAME_MAGIC)?;
+    output.write_bytes(&[if capture_output {
+        RELEASE_CAPTURE_OUTPUT_BYTE
+    } else {
+        RELEASE_NULL_OUTPUT_BYTE
+    }])?;
     output.write_length(command.len())?;
     output.write_bytes(command.as_bytes())?;
     output.write_bytes(environment.release_frame())?;
@@ -1736,6 +1803,7 @@ fn write_release_frame_bounded(
     output: &mut ChildStdin,
     command: &str,
     environment: &ValidatedBackgroundEnvironment,
+    capture_output: bool,
     cancellation: &CancellationToken,
     pid: NonZeroU32,
 ) -> Result<(), ReleaseWriteFailure> {
@@ -1754,7 +1822,7 @@ fn write_release_frame_bounded(
         attempts: 0,
         attempt_limit: MAX_RELEASE_FRAME_WRITE_ATTEMPTS,
     };
-    if write_release_frame(&mut output, command, environment).is_err() {
+    if write_release_frame(&mut output, command, environment, capture_output).is_err() {
         return Err(output.observed_failure());
     }
     #[cfg(test)]
@@ -1881,6 +1949,7 @@ impl<W: std::io::Write + ?Sized> std::io::Write for BoundedGateWriter<'_, W> {
 fn release_prepared(
     _prepared: &mut PreparedBackgroundProcess,
     _cancellation: &CancellationToken,
+    _capture_output: bool,
 ) -> Result<OwnedBackgroundProcess, BackgroundProcessError> {
     Err(BackgroundProcessError::new(
         BackgroundProcessErrorKind::Unsupported,
@@ -3147,7 +3216,7 @@ fn read_linux_proc_stat(
     {
         Ok(0) => return Ok(None),
         Ok(_) => {}
-        Err(error) if error.raw_os_error() == Some(libc::ESRCH) => {
+        Err(error) if matches!(error.raw_os_error(), Some(libc::ENOENT | libc::ESRCH)) => {
             bytes.clear();
             return Ok(None);
         }
@@ -3628,6 +3697,38 @@ mod linux_proc_tests {
     }
 
     #[test]
+    fn proc_stat_read_omits_only_vanished_task_errors() {
+        struct ErrorReader(i32);
+
+        impl Read for ErrorReader {
+            fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::from_raw_os_error(self.0))
+            }
+        }
+
+        for vanished in [libc::ENOENT, libc::ESRCH] {
+            let mut reader = ErrorReader(vanished);
+            let mut bytes = vec![b'x'];
+            assert_eq!(
+                read_linux_proc_stat(&mut reader, &mut bytes, pid(321))
+                    .expect("a vanished task is omitted"),
+                None
+            );
+            assert!(bytes.is_empty());
+        }
+
+        let mut reader = ErrorReader(libc::EIO);
+        let mut bytes = vec![b'x'];
+        assert_eq!(
+            read_linux_proc_stat(&mut reader, &mut bytes, pid(321))
+                .expect_err("other proc-stat read failures remain fail-closed")
+                .kind(),
+            BackgroundProcessErrorKind::Cleanup
+        );
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
     fn proc_directory_pid_parser_ignores_kernel_names_and_rejects_numeric_ambiguity() {
         assert_eq!(parse_linux_proc_directory_pid(b"self").unwrap(), None);
         assert_eq!(
@@ -3958,19 +4059,46 @@ mod process_regression_tests {
             bytes: Vec::new(),
         };
 
-        write_release_frame(&mut output, &command, &environment).expect("release frame");
+        write_release_frame(&mut output, &command, &environment, true).expect("release frame");
         assert_eq!(output.lengths.len(), 19);
         assert!(
             output.lengths[..18]
                 .iter()
                 .all(|length| *length == RELEASE_FRAME_WRITE_CHUNK_BYTES)
         );
-        assert_eq!(output.lengths[18], 4_112);
-        assert_eq!(output.bytes.len(), 299_024);
+        assert_eq!(output.lengths[18], 4_113);
+        assert_eq!(output.bytes.len(), 299_025);
         std::io::Write::write_all(&mut output, &[RELEASE_COMMIT_BYTE]).expect("distinct commit");
         assert_eq!(output.lengths.len(), 20);
         assert_eq!(output.lengths[19], 1);
         assert_eq!(output.bytes.last(), Some(&RELEASE_COMMIT_BYTE));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn release_frame_output_mode_is_explicit_and_strict() {
+        let environment = ValidatedBackgroundEnvironment::new(Vec::new()).unwrap();
+
+        for (capture_output, expected) in [
+            (false, RELEASE_NULL_OUTPUT_BYTE),
+            (true, RELEASE_CAPTURE_OUTPUT_BYTE),
+        ] {
+            let mut bytes = Vec::new();
+            write_release_frame(&mut bytes, "true", &environment, capture_output).unwrap();
+            assert_eq!(bytes[RELEASE_FRAME_MAGIC.len()], expected);
+            let decoded = read_release_frame(&mut bytes.as_slice()).unwrap();
+            assert_eq!(decoded.command, "true");
+            assert!(decoded.environment.is_empty());
+            assert_eq!(decoded.capture_output, capture_output);
+        }
+
+        let mut invalid = Vec::new();
+        write_release_frame(&mut invalid, "true", &environment, false).unwrap();
+        invalid[RELEASE_FRAME_MAGIC.len()] = 2;
+        let Err(error) = read_release_frame(&mut invalid.as_slice()) else {
+            panic!("an unknown output mode must be rejected");
+        };
+        assert_eq!(error.kind(), BackgroundProcessErrorKind::InvalidRequest);
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -4020,7 +4148,7 @@ mod process_regression_tests {
             attempt_limit: MAX_RELEASE_FRAME_WRITE_ATTEMPTS,
         };
 
-        write_release_frame(&mut writer, &command, &environment).expect("release frame");
+        write_release_frame(&mut writer, &command, &environment, true).expect("release frame");
         let payload_attempts =
             MAX_RELEASE_FRAME_PAYLOAD_BYTES.div_ceil(RELEASE_FRAME_PIPE_WRITE_BYTES);
         assert_eq!(writer.attempts, payload_attempts);
