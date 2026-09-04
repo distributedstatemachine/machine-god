@@ -249,7 +249,7 @@ fn exact_id_returns_full_detail_and_ignores_other_corrupt_candidates() {
 #[test]
 fn last_refuses_to_guess_after_record_limit_truncation() {
     let fixture = Fixture::new();
-    for id in 0..=100 {
+    for id in 1..=101 {
         fixture.write_record(id, id + 10, "bounded");
     }
 
@@ -274,6 +274,21 @@ fn last_refuses_to_guess_after_record_limit_truncation() {
     };
     assert_eq!(list.records().len(), 100);
     assert!(list.truncated());
+}
+
+#[test]
+fn zero_id_persisted_record_is_corrupt_before_list_projection() {
+    let fixture = Fixture::new();
+    fixture.write_record(0, 20, "PRIVATE_ZERO_ID_COMMAND");
+
+    let error = block_on(inspect_native_background(
+        fixture.environment(),
+        fixture.workspace.clone(),
+        NativeBackgroundQuery::List,
+    ))
+    .unwrap_err();
+    assert_eq!(error.kind(), NativeBackgroundInspectionErrorKind::Corrupt);
+    assert!(!format!("{error:?}").contains("PRIVATE_ZERO_ID_COMMAND"));
 }
 
 #[test]

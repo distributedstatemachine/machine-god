@@ -18,15 +18,15 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::background_inspection::{
-    NativeBackgroundDetail, NativeBackgroundInspectionError, NativeBackgroundInspectionErrorKind,
-    NativeBackgroundState,
+    MAX_BACKGROUND_RECORDS, NativeBackgroundDetail, NativeBackgroundInspectionError,
+    NativeBackgroundInspectionErrorKind, NativeBackgroundList, NativeBackgroundState,
 };
 use machine_god_core::{
     BackgroundStartError, BackgroundStartErrorKind, BackgroundStartRequest, BoxFuture,
     CancellationToken, Capability, PreparedToolCall, ProcessEnvironment, Tool, ToolCall,
     ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
 };
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 #[cfg(unix)]
 use sha2::{Digest, Sha256};
 #[cfg(target_os = "linux")]
@@ -91,6 +91,8 @@ pub const TERMINAL_MAX_ACTIVE_EXECUTIONS: usize = 16;
 pub const TERMINAL_MAX_WAIT_CEILING_MS: u64 = 30_000;
 /// Maximum simultaneous persisted-background waits.
 pub const TERMINAL_MAX_ACTIVE_WAITS: usize = 4;
+/// Maximum simultaneous persisted-background listings.
+pub const TERMINAL_MAX_ACTIVE_LISTS: usize = 4;
 /// Maximum exact record observations made by one persisted-background wait.
 pub const TERMINAL_MAX_WAIT_OBSERVATIONS: usize = 128;
 
@@ -100,6 +102,8 @@ const TERMINAL_BACKGROUND_DESCRIPTION: &str =
     "Run one foreground command or start one noninteractive background command";
 const TERMINAL_INSPECT_DESCRIPTION: &str = "Run a foreground command, start a background command, or inspect one persisted background record";
 const TERMINAL_WAIT_DESCRIPTION: &str = "Run a foreground command, start a background command, inspect one persisted background record, or wait for its recorded exit";
+const TERMINAL_LIST_INSPECT_DESCRIPTION: &str = "Run a foreground command, start a background command, list persisted background records, or inspect one persisted background record";
+const TERMINAL_LIST_DESCRIPTION: &str = "Run a foreground command, start a background command, list persisted background records, inspect one persisted background record, or wait for its recorded exit";
 const TERMINAL_WAIT_DELAYS_MS: [u64; 5] = [16, 32, 64, 128, 250];
 const PIPE_RETAINED_BYTES: usize = MAX_TERMINAL_RETAINED_OUTPUT_BYTES / 2;
 #[cfg(target_os = "linux")]
@@ -534,6 +538,17 @@ pub trait TerminalBackgroundInspector: Send + Sync + 'static {
     ) -> BoxFuture<'static, Result<NativeBackgroundDetail, NativeBackgroundInspectionError>>;
 }
 
+/// Trusted read-only boundary for a bounded persisted-background catalog.
+pub trait TerminalBackgroundCatalog: Send + Sync + 'static {
+    /// Returns an inert listing future. Implementations must return records in
+    /// authoritative newest-first order and must not infer process liveness or
+    /// control a process.
+    fn list(
+        &self,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeBackgroundList, NativeBackgroundInspectionError>>;
+}
+
 /// Explicit monotonic delay boundary for persisted-background waits.
 ///
 /// The same boundary supplies one persistent absolute-ceiling wake and the
@@ -652,6 +667,8 @@ pub struct TerminalTool {
     active: Arc<AtomicUsize>,
     system_unsupported: bool,
     background: Option<TerminalBackground>,
+    catalog: Option<Arc<dyn TerminalBackgroundCatalog>>,
+    active_lists: Arc<AtomicUsize>,
     inspector: Option<Arc<dyn TerminalBackgroundInspector>>,
     wait_delay: Option<Arc<dyn TerminalBackgroundWaitDelay>>,
     active_waits: Arc<AtomicUsize>,
@@ -849,6 +866,26 @@ impl TerminalTool {
         Ok(self)
     }
 
+    /// Adds bounded persisted-background listing support.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed configuration failure when background persistence is
+    /// not configured.
+    #[cfg(unix)]
+    pub fn with_catalog(
+        mut self,
+        catalog: Arc<dyn TerminalBackgroundCatalog>,
+    ) -> Result<Self, TerminalConfigError> {
+        if self.background.is_none() {
+            return Err(TerminalConfigError::new(
+                TerminalConfigErrorKind::InvalidRoot,
+            ));
+        }
+        self.catalog = Some(catalog);
+        Ok(self)
+    }
+
     /// Adds bounded persisted-background wait support to a terminal that
     /// already owns an exact-record inspector.
     ///
@@ -887,6 +924,8 @@ impl TerminalTool {
             active: Arc::new(AtomicUsize::new(0)),
             system_unsupported,
             background: None,
+            catalog: None,
+            active_lists: Arc::new(AtomicUsize::new(0)),
             inspector: None,
             wait_delay: None,
             active_waits: Arc::new(AtomicUsize::new(0)),
@@ -1033,10 +1072,34 @@ fn terminal_name() -> ToolName {
 }
 
 #[derive(Clone, Copy)]
-struct TerminalActionAvailability {
-    start: bool,
-    inspect: bool,
-    wait: bool,
+struct TerminalActionAvailability(u8);
+
+impl TerminalActionAvailability {
+    const START: u8 = 1;
+    const LIST: u8 = 1 << 1;
+    const INSPECT: u8 = 1 << 2;
+    const WAIT: u8 = 1 << 3;
+
+    fn for_tool(tool: &TerminalTool) -> Self {
+        let mut flags = 0;
+        if tool.background.is_some() {
+            flags |= Self::START;
+        }
+        if tool.catalog.is_some() {
+            flags |= Self::LIST;
+        }
+        if tool.inspector.is_some() {
+            flags |= Self::INSPECT;
+        }
+        if tool.inspector.is_some() && tool.wait_delay.is_some() {
+            flags |= Self::WAIT;
+        }
+        Self(flags)
+    }
+
+    const fn contains(self, flag: u8) -> bool {
+        self.0 & flag != 0
+    }
 }
 
 fn parse_arguments(
@@ -1052,60 +1115,92 @@ fn parse_arguments(
     }
     let action = match object.get("action").and_then(Value::as_str) {
         Some("exec") => TerminalAction::Exec,
-        Some("start") if available.start => TerminalAction::Start,
-        Some("inspect") if available.inspect => TerminalAction::Inspect,
-        Some("wait") if available.wait => TerminalAction::Wait,
+        Some("start") if available.contains(TerminalActionAvailability::START) => {
+            TerminalAction::Start
+        }
+        Some("list") if available.contains(TerminalActionAvailability::LIST) => {
+            TerminalAction::List
+        }
+        Some("inspect") if available.contains(TerminalActionAvailability::INSPECT) => {
+            TerminalAction::Inspect
+        }
+        Some("wait") if available.contains(TerminalActionAvailability::WAIT) => {
+            TerminalAction::Wait
+        }
         _ => return Err(invalid_arguments()),
     };
-    if action == TerminalAction::Inspect {
-        if object.len() != 2
-            || object
-                .keys()
-                .any(|key| !matches!(key.as_str(), "action" | "background_id"))
-        {
-            return Err(invalid_arguments());
+    match action {
+        TerminalAction::List => parse_list_arguments(object),
+        TerminalAction::Inspect => parse_inspect_arguments(object),
+        TerminalAction::Wait => parse_wait_arguments(object),
+        TerminalAction::Exec | TerminalAction::Start => {
+            parse_command_arguments(object, action, require_complete)
         }
-        let background_id = object
-            .get("background_id")
-            .and_then(Value::as_u64)
-            .filter(|id| *id != 0)
-            .ok_or_else(invalid_arguments)?;
-        return Ok(TerminalArguments::Inspect { background_id });
     }
-    if action == TerminalAction::Wait {
-        if object.len() != 4
-            || object.keys().any(|key| {
-                !matches!(
-                    key.as_str(),
-                    "action" | "background_id" | "return_when" | "wait_ceiling_ms"
-                )
-            })
-        {
-            return Err(invalid_arguments());
-        }
-        let background_id = object
-            .get("background_id")
-            .and_then(Value::as_u64)
-            .filter(|id| *id != 0)
-            .ok_or_else(invalid_arguments)?;
-        let return_when = object
-            .get("return_when")
-            .and_then(Value::as_object)
-            .filter(|value| {
-                value.len() == 1 && value.get("kind").and_then(Value::as_str) == Some("exit")
-            })
-            .ok_or_else(invalid_arguments)?;
-        let _ = return_when;
-        let wait_ceiling_ms = object
-            .get("wait_ceiling_ms")
-            .and_then(Value::as_u64)
-            .filter(|value| (1..=TERMINAL_MAX_WAIT_CEILING_MS).contains(value))
-            .ok_or_else(invalid_arguments)?;
-        return Ok(TerminalArguments::Wait {
-            background_id,
-            wait_ceiling_ms,
-        });
+}
+
+fn parse_list_arguments(object: &Map<String, Value>) -> Result<TerminalArguments, ToolError> {
+    if object.len() != 1 || object.keys().any(|key| key != "action") {
+        return Err(invalid_arguments());
     }
+    Ok(TerminalArguments::List)
+}
+
+fn parse_inspect_arguments(object: &Map<String, Value>) -> Result<TerminalArguments, ToolError> {
+    if object.len() != 2
+        || object
+            .keys()
+            .any(|key| !matches!(key.as_str(), "action" | "background_id"))
+    {
+        return Err(invalid_arguments());
+    }
+    let background_id = object
+        .get("background_id")
+        .and_then(Value::as_u64)
+        .filter(|id| *id != 0)
+        .ok_or_else(invalid_arguments)?;
+    Ok(TerminalArguments::Inspect { background_id })
+}
+
+fn parse_wait_arguments(object: &Map<String, Value>) -> Result<TerminalArguments, ToolError> {
+    if object.len() != 4
+        || object.keys().any(|key| {
+            !matches!(
+                key.as_str(),
+                "action" | "background_id" | "return_when" | "wait_ceiling_ms"
+            )
+        })
+    {
+        return Err(invalid_arguments());
+    }
+    let background_id = object
+        .get("background_id")
+        .and_then(Value::as_u64)
+        .filter(|id| *id != 0)
+        .ok_or_else(invalid_arguments)?;
+    object
+        .get("return_when")
+        .and_then(Value::as_object)
+        .filter(|value| {
+            value.len() == 1 && value.get("kind").and_then(Value::as_str) == Some("exit")
+        })
+        .ok_or_else(invalid_arguments)?;
+    let wait_ceiling_ms = object
+        .get("wait_ceiling_ms")
+        .and_then(Value::as_u64)
+        .filter(|value| (1..=TERMINAL_MAX_WAIT_CEILING_MS).contains(value))
+        .ok_or_else(invalid_arguments)?;
+    Ok(TerminalArguments::Wait {
+        background_id,
+        wait_ceiling_ms,
+    })
+}
+
+fn parse_command_arguments(
+    object: &Map<String, Value>,
+    action: TerminalAction,
+    require_complete: bool,
+) -> Result<TerminalArguments, ToolError> {
     let expected_len = if require_complete { 4 } else { object.len() };
     if (require_complete && expected_len != 4)
         || (!require_complete && !(2..=4).contains(&expected_len))
@@ -1147,6 +1242,9 @@ fn canonical_arguments(arguments: &TerminalArguments) -> Value {
             "command": arguments.command,
             "cwd": arguments.cwd,
             "profile": "clean"
+        }),
+        TerminalArguments::List => json!({
+            "action": "list"
         }),
         TerminalArguments::Inspect { background_id } => json!({
             "action": "inspect",
@@ -1975,6 +2073,7 @@ fn lock_deadline(state: &Mutex<DeadlineTimerState>) -> MutexGuard<'_, DeadlineTi
 enum TerminalAction {
     Exec,
     Start,
+    List,
     Inspect,
     Wait,
 }
@@ -1984,6 +2083,7 @@ impl TerminalAction {
         match self {
             Self::Exec => "exec",
             Self::Start => "start",
+            Self::List => "list",
             Self::Inspect => "inspect",
             Self::Wait => "wait",
         }
@@ -2000,6 +2100,7 @@ struct TerminalCommandArguments {
 #[derive(Clone)]
 enum TerminalArguments {
     Command(TerminalCommandArguments),
+    List,
     Inspect {
         background_id: u64,
     },
@@ -2070,6 +2171,42 @@ impl TerminalTool {
                 "updated_at_ms": detail.updated_at_ms(),
                 "pid": detail.pid(),
                 "exit_code": detail.exit_code()
+            }),
+            is_error: false,
+        };
+        if !serialized_value_fits(&output.content, MAX_TERMINAL_SERIALIZED_RESULT_BYTES) {
+            return Err(background_inspection_resource_limit());
+        }
+        check_cancellation(&cancellation)?;
+        Ok(output)
+    }
+
+    async fn execute_list(&self, cancellation: CancellationToken) -> Result<ToolOutput, ToolError> {
+        check_cancellation(&cancellation)?;
+        let _permit = ActiveListPermit::try_acquire(&self.active_lists)?;
+        let catalog = self.catalog.as_ref().ok_or_else(invalid_arguments)?;
+        let listed =
+            await_background_inspection(catalog.list(cancellation.clone()), &cancellation).await?;
+        check_cancellation(&cancellation)?;
+        let listing = listed.map_err(map_background_list_error)?;
+        validate_background_listing(&listing)?;
+        let records = listing
+            .records()
+            .iter()
+            .map(|record| {
+                json!({
+                    "background_id": record.id(),
+                    "recorded_state": record.state().as_str(),
+                    "updated_at_ms": record.updated_at_ms()
+                })
+            })
+            .collect::<Vec<_>>();
+        let output = ToolOutput {
+            content: json!({
+                "action": "list",
+                "count": records.len(),
+                "truncated": listing.truncated(),
+                "records": records
             }),
             is_error: false,
         };
@@ -2304,10 +2441,33 @@ impl Drop for ActiveWaitPermit {
     }
 }
 
-async fn await_background_inspection(
-    mut future: BoxFuture<'static, Result<NativeBackgroundDetail, NativeBackgroundInspectionError>>,
+struct ActiveListPermit {
+    active: Arc<AtomicUsize>,
+}
+
+impl ActiveListPermit {
+    fn try_acquire(active: &Arc<AtomicUsize>) -> Result<Self, ToolError> {
+        active
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current < TERMINAL_MAX_ACTIVE_LISTS).then_some(current + 1)
+            })
+            .map_err(|_| list_busy())?;
+        Ok(Self {
+            active: Arc::clone(active),
+        })
+    }
+}
+
+impl Drop for ActiveListPermit {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+async fn await_background_inspection<T>(
+    mut future: BoxFuture<'static, Result<T, NativeBackgroundInspectionError>>,
     cancellation: &CancellationToken,
-) -> Result<Result<NativeBackgroundDetail, NativeBackgroundInspectionError>, ToolError> {
+) -> Result<Result<T, NativeBackgroundInspectionError>, ToolError> {
     let mut cancelled = Box::pin(cancellation.cancelled());
     let inspected = poll_fn(|context| {
         if cancelled.as_mut().poll(context).is_ready() || cancellation.is_cancelled() {
@@ -2505,9 +2665,67 @@ fn checked_background_cwd_length(workspace: &str, cwd: &str) -> Result<usize, To
     Ok(length)
 }
 
+fn terminal_command_schema(action: &str) -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "action": { "const": action },
+            "command": { "type": "string" },
+            "cwd": { "type": "string", "default": "." },
+            "profile": { "type": "string", "const": "clean", "default": "clean" }
+        },
+        "required": ["action", "command"],
+        "additionalProperties": false
+    })
+}
+
+fn terminal_inspect_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "action": { "const": "inspect" },
+            "background_id": { "type": "integer", "minimum": 1 }
+        },
+        "required": ["action", "background_id"],
+        "additionalProperties": false
+    })
+}
+
+fn terminal_wait_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "action": { "const": "wait" },
+            "background_id": { "type": "integer", "minimum": 1 },
+            "return_when": {
+                "type": "object",
+                "properties": { "kind": { "const": "exit" } },
+                "required": ["kind"],
+                "additionalProperties": false
+            },
+            "wait_ceiling_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": TERMINAL_MAX_WAIT_CEILING_MS
+            }
+        },
+        "required": ["action", "background_id", "return_when", "wait_ceiling_ms"],
+        "additionalProperties": false
+    })
+}
+
+fn terminal_list_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": { "action": { "const": "list" } },
+        "required": ["action"],
+        "additionalProperties": false
+    })
+}
+
 impl Tool for TerminalTool {
     fn spec(&self) -> ToolSpec {
-        if self.inspector.is_none() {
+        if self.catalog.is_none() && self.inspector.is_none() {
             let actions = if self.background.is_some() {
                 json!(["exec", "start"])
             } else {
@@ -2533,61 +2751,31 @@ impl Tool for TerminalTool {
                 }),
             };
         }
-        let command_schema = |action: &str| {
-            json!({
-                "type": "object",
-                "properties": {
-                    "action": { "const": action },
-                    "command": { "type": "string" },
-                    "cwd": { "type": "string", "default": "." },
-                    "profile": { "type": "string", "const": "clean", "default": "clean" }
-                },
-                "required": ["action", "command"],
-                "additionalProperties": false
-            })
-        };
-        let mut forms = vec![command_schema("exec")];
+        let mut forms = vec![terminal_command_schema("exec")];
         if self.background.is_some() {
-            forms.push(command_schema("start"));
+            forms.push(terminal_command_schema("start"));
         }
         if self.inspector.is_some() {
-            forms.push(json!({
-                "type": "object",
-                "properties": {
-                    "action": { "const": "inspect" },
-                    "background_id": { "type": "integer", "minimum": 1 }
-                },
-                "required": ["action", "background_id"],
-                "additionalProperties": false
-            }));
+            forms.push(terminal_inspect_schema());
         }
         if self.inspector.is_some() && self.wait_delay.is_some() {
-            forms.push(json!({
-                "type": "object",
-                "properties": {
-                    "action": { "const": "wait" },
-                    "background_id": { "type": "integer", "minimum": 1 },
-                    "return_when": {
-                        "type": "object",
-                        "properties": {
-                            "kind": { "const": "exit" }
-                        },
-                        "required": ["kind"],
-                        "additionalProperties": false
-                    },
-                    "wait_ceiling_ms": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": TERMINAL_MAX_WAIT_CEILING_MS
-                    }
-                },
-                "required": ["action", "background_id", "return_when", "wait_ceiling_ms"],
-                "additionalProperties": false
-            }));
+            forms.push(terminal_wait_schema());
+        }
+        if self.catalog.is_some() {
+            forms.push(terminal_list_schema());
         }
         ToolSpec {
             name: terminal_name(),
-            description: if self.inspector.is_some() && self.wait_delay.is_some() {
+            description: if self.catalog.is_some()
+                && self.inspector.is_some()
+                && self.wait_delay.is_some()
+            {
+                TERMINAL_LIST_DESCRIPTION.to_owned()
+            } else if self.catalog.is_some() && self.inspector.is_some() {
+                TERMINAL_LIST_INSPECT_DESCRIPTION.to_owned()
+            } else if self.catalog.is_some() {
+                "Run a foreground command, start a background command, or list persisted background records".to_owned()
+            } else if self.inspector.is_some() && self.wait_delay.is_some() {
                 TERMINAL_WAIT_DESCRIPTION.to_owned()
             } else if self.inspector.is_some() {
                 TERMINAL_INSPECT_DESCRIPTION.to_owned()
@@ -2609,17 +2797,13 @@ impl Tool for TerminalTool {
         let parsed = parse_arguments(
             &call.arguments,
             false,
-            TerminalActionAvailability {
-                start: self.background.is_some(),
-                inspect: self.inspector.is_some(),
-                wait: self.inspector.is_some() && self.wait_delay.is_some(),
-            },
+            TerminalActionAvailability::for_tool(self),
         )?;
         let canonical = canonical_arguments(&parsed);
         match parsed {
-            TerminalArguments::Inspect { .. } | TerminalArguments::Wait { .. } => {
-                Ok(PreparedToolCall::without_authority(canonical))
-            }
+            TerminalArguments::List
+            | TerminalArguments::Inspect { .. }
+            | TerminalArguments::Wait { .. } => Ok(PreparedToolCall::without_authority(canonical)),
             TerminalArguments::Command(parsed) => {
                 let environment = match parsed.action {
                     TerminalAction::Exec => ProcessEnvironment {
@@ -2631,7 +2815,7 @@ impl Tool for TerminalTool {
                         checked_background_cwd_length(&background.workspace, &parsed.cwd)?;
                         background.environment.clone()
                     }
-                    TerminalAction::Inspect | TerminalAction::Wait => {
+                    TerminalAction::List | TerminalAction::Inspect | TerminalAction::Wait => {
                         return Err(invalid_arguments());
                     }
                 };
@@ -2657,19 +2841,15 @@ impl Tool for TerminalTool {
         Box::pin(async move {
             let started = Instant::now();
             check_cancellation(&cancellation)?;
-            let parsed = parse_arguments(
-                &arguments,
-                true,
-                TerminalActionAvailability {
-                    start: self.background.is_some(),
-                    inspect: self.inspector.is_some(),
-                    wait: self.inspector.is_some() && self.wait_delay.is_some(),
-                },
-            )?;
+            let parsed =
+                parse_arguments(&arguments, true, TerminalActionAvailability::for_tool(self))?;
             if canonical_arguments(&parsed) != arguments {
                 return Err(invalid_arguments());
             }
             let parsed = match parsed {
+                TerminalArguments::List => {
+                    return self.execute_list(cancellation).await;
+                }
                 TerminalArguments::Inspect { background_id } => {
                     return self.execute_inspect(background_id, cancellation).await;
                 }
@@ -3669,6 +3849,73 @@ fn map_background_inspection_error(error: NativeBackgroundInspectionError) -> To
         ),
         NativeBackgroundInspectionErrorKind::UnsupportedPlatform => unsupported_platform(),
     }
+}
+
+fn map_background_list_error(error: NativeBackgroundInspectionError) -> ToolError {
+    match error.kind() {
+        NativeBackgroundInspectionErrorKind::NotFound => background_list_invariant(),
+        NativeBackgroundInspectionErrorKind::Corrupt => fixed_tool_error(
+            ToolErrorKind::Execution,
+            "terminal_background_corrupt",
+            "terminal background record is corrupt",
+            false,
+        ),
+        NativeBackgroundInspectionErrorKind::ResourceLimit => background_list_resource_limit(),
+        NativeBackgroundInspectionErrorKind::Unavailable => fixed_tool_error(
+            ToolErrorKind::Unavailable,
+            "terminal_list_unavailable",
+            "terminal background listing is unavailable",
+            true,
+        ),
+        NativeBackgroundInspectionErrorKind::UnsupportedPlatform => unsupported_platform(),
+    }
+}
+
+fn validate_background_listing(listing: &NativeBackgroundList) -> Result<(), ToolError> {
+    let records = listing.records();
+    if records.len() > MAX_BACKGROUND_RECORDS {
+        return Err(background_list_resource_limit());
+    }
+    for (index, record) in records.iter().enumerate() {
+        if record.id() == 0
+            || records[..index]
+                .iter()
+                .any(|previous| previous.id() == record.id())
+            || records.get(index + 1).is_some_and(|next| {
+                (record.updated_at_ms(), record.id()) <= (next.updated_at_ms(), next.id())
+            })
+        {
+            return Err(background_list_invariant());
+        }
+    }
+    Ok(())
+}
+
+fn background_list_resource_limit() -> ToolError {
+    fixed_tool_error(
+        ToolErrorKind::Unavailable,
+        "terminal_list_resource_limit",
+        "terminal background listing reached a resource limit",
+        false,
+    )
+}
+
+fn background_list_invariant() -> ToolError {
+    fixed_tool_error(
+        ToolErrorKind::Execution,
+        "terminal_lister_failed",
+        "terminal background lister failed",
+        false,
+    )
+}
+
+fn list_busy() -> ToolError {
+    fixed_tool_error(
+        ToolErrorKind::Unavailable,
+        "terminal_list_busy",
+        "terminal background list capacity is busy",
+        true,
+    )
 }
 
 fn background_inspection_resource_limit() -> ToolError {

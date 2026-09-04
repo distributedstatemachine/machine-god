@@ -407,6 +407,22 @@ fn terminal_inspect_round_responses() -> [Vec<u8>; 2] {
     [tool_call, finish]
 }
 
+fn terminal_list_round_responses() -> [Vec<u8>; 2] {
+    let tool_call = concat!(
+        "data: {\"type\":\"tool-call\",\"toolCallId\":\"terminal-list-call\",\"toolName\":\"terminal\",\"input\":{\"action\":\"list\"}}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    let finish = concat!(
+        "data: {\"type\":\"text-delta\",\"id\":\"answer\",\"delta\":\"listing complete\"}\n\n",
+        "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n"
+    )
+    .as_bytes()
+    .to_vec();
+    [tool_call, finish]
+}
+
 fn terminal_wait_round_responses(background_id: u64, wait_ceiling_ms: u64) -> [Vec<u8>; 2] {
     let tool_call = format!(
         concat!(
@@ -1065,7 +1081,7 @@ fn assert_exact_native_tool_catalog(request: &Value) {
         .find(|tool| tool["name"] == TERMINAL_TOOL_NAME)
         .expect("terminal tool is registered");
     let forms = terminal["inputSchema"]["oneOf"].as_array().unwrap();
-    assert_eq!(forms.len(), 4);
+    assert_eq!(forms.len(), 5);
     assert_eq!(forms[0]["properties"]["action"]["const"], "exec");
     assert_eq!(forms[1]["properties"]["action"]["const"], "start");
     assert_eq!(forms[2]["properties"]["action"]["const"], "inspect");
@@ -1075,6 +1091,9 @@ fn assert_exact_native_tool_catalog(request: &Value) {
         forms[3]["required"],
         json!(["action", "background_id", "return_when", "wait_ceiling_ms"])
     );
+    assert_eq!(forms[4]["properties"]["action"]["const"], "list");
+    assert_eq!(forms[4]["required"], json!(["action"]));
+    assert_eq!(forms[4]["additionalProperties"], false);
 }
 
 fn assert_exact_native_tool_permissions(prompter: &AllowingPrompter) {
@@ -2289,6 +2308,188 @@ fn composed_terminal_inspect_reads_exact_record_without_permission_or_supervisor
         !body(&requests[1])
             .to_string()
             .contains("PRIVATE_REFERENCE_HOST_COMMAND")
+    );
+}
+
+#[test]
+fn composed_terminal_list_reads_ordered_private_free_records_from_retained_state_root() {
+    let temporary = TemporaryDirectory::new("terminal-list");
+    let (workspace, sessions) = roots(temporary.path());
+    let workspace = fs::canonicalize(workspace).unwrap();
+    write_background_record(
+        &sessions,
+        &workspace,
+        17,
+        20,
+        "exited",
+        None,
+        Some(0),
+        "PRIVATE_OLDER_LIST_COMMAND",
+    );
+    write_background_record(
+        &sessions,
+        &workspace,
+        19,
+        30,
+        "running",
+        Some(1234),
+        None,
+        "PRIVATE_NEWER_LIST_COMMAND",
+    );
+
+    let transport = ScriptedTransport::new(
+        "TERMINAL_LIST_FACTORY_SENTINEL",
+        terminal_list_round_responses(),
+    );
+    let prompter = AllowingPrompter::default();
+    let host = compose_with_transport(
+        built_in_config(),
+        transport.clone(),
+        &workspace,
+        &sessions,
+        prompter.clone(),
+    )
+    .unwrap();
+    let retained_sessions = temporary.path().join("retained-list-sessions");
+    fs::rename(&sessions, &retained_sessions).unwrap();
+    fs::create_dir(&sessions).unwrap();
+    fs::set_permissions(&sessions, fs::Permissions::from_mode(0o700)).unwrap();
+    write_background_record(
+        &sessions,
+        &workspace,
+        23,
+        40,
+        "failed",
+        Some(999),
+        Some(7),
+        "PRIVATE_REPLACEMENT_LIST_COMMAND",
+    );
+
+    let (_, events) = collect_turn(&host, "composed-terminal-list");
+
+    assert_completed(&events);
+    assert!(prompter.requests().is_empty());
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    assert_exact_native_tool_catalog(&body(&requests[0]));
+    assert_eq!(
+        decoded_tool_output(&body(&requests[1]), 2),
+        json!({
+            "content": {
+                "action": "list",
+                "count": 2,
+                "truncated": false,
+                "records": [
+                    {
+                        "background_id": 19,
+                        "recorded_state": "running",
+                        "updated_at_ms": 30
+                    },
+                    {
+                        "background_id": 17,
+                        "recorded_state": "exited",
+                        "updated_at_ms": 20
+                    }
+                ]
+            },
+            "is_error": false
+        })
+    );
+    let request = body(&requests[1]).to_string();
+    assert!(!request.contains("PRIVATE_OLDER_LIST_COMMAND"));
+    assert!(!request.contains("PRIVATE_NEWER_LIST_COMMAND"));
+    assert!(!request.contains("PRIVATE_REPLACEMENT_LIST_COMMAND"));
+}
+
+#[test]
+fn composed_terminal_list_treats_missing_history_as_an_empty_complete_result() {
+    let temporary = TemporaryDirectory::new("terminal-list-empty");
+    let (workspace, sessions) = roots(temporary.path());
+    let workspace = fs::canonicalize(workspace).unwrap();
+    let transport = ScriptedTransport::new(
+        "TERMINAL_LIST_EMPTY_FACTORY_SENTINEL",
+        terminal_list_round_responses(),
+    );
+    let prompter = AllowingPrompter::default();
+    let host = compose_with_transport(
+        built_in_config(),
+        transport.clone(),
+        &workspace,
+        &sessions,
+        prompter.clone(),
+    )
+    .unwrap();
+
+    let (_, events) = collect_turn(&host, "composed-terminal-list-empty");
+
+    assert_completed(&events);
+    assert!(prompter.requests().is_empty());
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        decoded_tool_output(&body(&requests[1]), 2),
+        json!({
+            "content": {
+                "action": "list",
+                "count": 0,
+                "truncated": false,
+                "records": []
+            },
+            "is_error": false
+        })
+    );
+}
+
+#[test]
+fn composed_terminal_list_rejects_a_zero_id_persisted_record_without_disclosure() {
+    let temporary = TemporaryDirectory::new("terminal-list-zero-id");
+    let (workspace, sessions) = roots(temporary.path());
+    let workspace = fs::canonicalize(workspace).unwrap();
+    write_background_record(
+        &sessions,
+        &workspace,
+        0,
+        20,
+        "exited",
+        None,
+        Some(0),
+        "PRIVATE_ZERO_ID_REFERENCE_HOST_COMMAND",
+    );
+    let transport = ScriptedTransport::new(
+        "TERMINAL_LIST_ZERO_ID_FACTORY_SENTINEL",
+        terminal_list_round_responses(),
+    );
+    let prompter = AllowingPrompter::default();
+    let host = compose_with_transport(
+        built_in_config(),
+        transport.clone(),
+        &workspace,
+        &sessions,
+        prompter.clone(),
+    )
+    .unwrap();
+
+    let (_, events) = collect_turn(&host, "composed-terminal-list-zero-id");
+
+    assert_completed(&events);
+    assert!(prompter.requests().is_empty());
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        decoded_tool_output(&body(&requests[1]), 2),
+        json!({
+            "content": {
+                "code": "tool_error",
+                "message": "tool execution failed",
+                "retryable": false
+            },
+            "is_error": true
+        })
+    );
+    assert!(
+        !body(&requests[1])
+            .to_string()
+            .contains("PRIVATE_ZERO_ID_REFERENCE_HOST_COMMAND")
     );
 }
 

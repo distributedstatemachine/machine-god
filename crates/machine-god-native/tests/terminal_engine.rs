@@ -15,12 +15,12 @@ use machine_god_core::{
 };
 use machine_god_native::{
     MAX_TERMINAL_CWD_COMPONENT_BYTES, MAX_TERMINAL_CWD_COMPONENTS, NativeBackgroundDetail,
-    NativeBackgroundInspectionError, NativeBackgroundState,
-    TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TerminalBackgroundInspector,
-    TerminalBackgroundOutcome, TerminalBackgroundStarter, TerminalBackgroundWaitDelay,
-    TerminalBackgroundWaitDelayError, TerminalCapturedOutput, TerminalExecution,
-    TerminalExecutionOutcome, TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor,
-    TerminalLimits, TerminalTool,
+    NativeBackgroundInspectionError, NativeBackgroundList, NativeBackgroundRecordSummary,
+    NativeBackgroundState, TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TerminalBackgroundCatalog,
+    TerminalBackgroundInspector, TerminalBackgroundOutcome, TerminalBackgroundStarter,
+    TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError, TerminalCapturedOutput,
+    TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest, TerminalExecutionStatus,
+    TerminalExecutor, TerminalLimits, TerminalTool,
 };
 use machine_god_testkit::{
     InMemorySessionStore, ModelProviderStep, PermissionStep, ScriptedModelProvider,
@@ -177,6 +177,42 @@ impl TerminalBackgroundInspector for FakeBackgroundInspector {
 }
 
 #[derive(Clone, Default)]
+struct FakeBackgroundCatalog {
+    calls: Arc<AtomicUsize>,
+}
+
+impl TerminalBackgroundCatalog for FakeBackgroundCatalog {
+    fn list(
+        &self,
+        _cancellation: machine_god_core::CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeBackgroundList, NativeBackgroundInspectionError>> {
+        let calls = Arc::clone(&self.calls);
+        Box::pin(async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            NativeBackgroundList::new(
+                vec![
+                    NativeBackgroundRecordSummary::new(
+                        19,
+                        NativeBackgroundState::Failed,
+                        30,
+                        "PRIVATE_NEWER_COMMAND".to_owned(),
+                        false,
+                    )?,
+                    NativeBackgroundRecordSummary::new(
+                        17,
+                        NativeBackgroundState::Exited,
+                        20,
+                        PRIVATE_COMMAND.to_owned(),
+                        false,
+                    )?,
+                ],
+                false,
+            )
+        })
+    }
+}
+
+#[derive(Clone, Default)]
 struct UnusedWaitDelay {
     calls: Arc<AtomicUsize>,
 }
@@ -270,6 +306,17 @@ fn terminal_with_wait(
         Arc::new(delay),
     )
     .unwrap()
+}
+
+fn terminal_with_catalog(
+    root: &std::path::Path,
+    executor: FakeExecutor,
+    starter: FakeBackgroundStarter,
+    catalog: FakeBackgroundCatalog,
+) -> TerminalTool {
+    terminal_with_background(root, executor, starter)
+        .with_catalog(Arc::new(catalog))
+        .unwrap()
 }
 
 fn collect(engine: &Engine, name: &str) -> (SessionId, Vec<EngineEvent>) {
@@ -670,6 +717,78 @@ fn background_inspect_bypasses_permission_and_persists_compact_record() {
             is_error: false,
         }
     );
+    assert_eq!(store.record(&session_id).unwrap().messages[2], message);
+}
+
+#[test]
+fn background_list_bypasses_permission_and_persists_compact_private_free_output() {
+    let temporary = TemporaryDirectory::new("engine-list");
+    let arguments = json!({ "action": "list" });
+    let provider = provider_with_arguments("terminal-list", arguments.clone());
+    let store = InMemorySessionStore::new();
+    let policy = ScriptedPermissionHandler::new([]);
+    let executor = FakeExecutor::default();
+    let starter = FakeBackgroundStarter::default();
+    let catalog = FakeBackgroundCatalog::default();
+    let tool = terminal_with_catalog(
+        temporary.path(),
+        executor.clone(),
+        starter.clone(),
+        catalog.clone(),
+    );
+    assert!(
+        tool.prepare(call("terminal", arguments))
+            .unwrap()
+            .capability()
+            .is_none()
+    );
+    let engine = Engine::builder()
+        .provider(provider.clone())
+        .session_store(store.clone())
+        .permission_handler(policy.clone())
+        .tool(tool)
+        .build()
+        .unwrap();
+
+    let (session_id, events) = collect(&engine, "terminal-list-session");
+
+    assert!(policy.requests().is_empty());
+    assert_eq!(catalog.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(starter.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event.payload, TurnEvent::ToolStarted { .. }))
+    );
+    let (message, output) = second_request_tool_output(&provider);
+    assert_eq!(
+        output,
+        ToolOutput {
+            content: json!({
+                "action": "list",
+                "count": 2,
+                "truncated": false,
+                "records": [
+                    {
+                        "background_id": 19,
+                        "recorded_state": "failed",
+                        "updated_at_ms": 30
+                    },
+                    {
+                        "background_id": 17,
+                        "recorded_state": "exited",
+                        "updated_at_ms": 20
+                    }
+                ]
+            }),
+            is_error: false,
+        }
+    );
+    let persisted = serde_json::to_string(&output).unwrap();
+    assert!(!persisted.contains("PRIVATE_NEWER_COMMAND"));
+    assert!(!persisted.contains(PRIVATE_COMMAND));
+    assert!(!persisted.contains(PRIVATE_ENVIRONMENT_VALUE));
     assert_eq!(store.record(&session_id).unwrap().messages[2], message);
 }
 

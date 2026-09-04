@@ -25,9 +25,9 @@ input; it is not a machine-god product language or runtime dependency.
 - Delivered main: `3779d71da81e7a25bae2381e7b44d9761fd15b40`
 - Main CI: `33864252989` (`GREEN`)
 - Main Benchmark evidence: `33864253020` (`GREEN`)
-- Active branch: `main`
-- Active phase: `selecting slice 56 from unfinished tool or CLI behavior`
-- Next gate: `bound terminal list and create its isolated feature branch`
+- Active branch: `agent/m03-terminal-list`
+- Active phase: `implementing bounded terminal list`
+- Next gate: `pass focused and complete exact-1.94.1 checks, then freeze one candidate for three fresh reviews`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark

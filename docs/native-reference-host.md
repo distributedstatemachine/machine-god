@@ -21,8 +21,8 @@ but the production `semantic_search` and terminal foreground executor are
 Linux-only. The private host catalog retains both tools on macOS:
 `semantic_search` and terminal `exec` return their fixed unsupported results
 after strict preparation and permission, while terminal `start` uses the
-Linux/macOS background helper and terminal `inspect` and `wait` use its
-separately injected descriptor-confined persisted-record reader without
+Linux/macOS background helper and terminal `list`, `inspect`, and `wait` use
+its separately injected descriptor-confined persisted-record reader without
 process authority. `wait` receives its monotonic delays through the same
 runtime-paired deadline authority used by web search and vision.
 
@@ -102,12 +102,12 @@ Every successful host contains:
   its environment is fixed and independently identified for process
   permission, while one supervisor is initialized and reused only after the
   first permitted start is polled;
-- one exact-ID background inspector over a separate clone of the same retained
+- one background-history reader over a separate clone of the same retained
   state-root descriptor and frozen canonical workspace identity. It creates no
-  namespace or worker during composition or inspection, never initializes the
-  lazy supervisor, and exposes only terminal's compact recorded-state
-  projection. A separately injected delay adapter adds bounded record-only
-  `wait` without process authority;
+  namespace or worker during composition, listing, or inspection, never
+  initializes the lazy supervisor, and exposes only terminal's compact ordered
+  list and exact-record projections. A separately injected delay adapter adds
+  bounded record-only `wait` without process authority;
 - default provider-neutral `EngineLimits` and the default no-op event sink;
 - one explicit `Arc<dyn WebSearchDeadline>` for bounded web-search timing,
   reused through fixed category-only adapters for terminal's persisted-record
@@ -163,9 +163,11 @@ identity-preserving clones: `copy_file`, `create_folder`, `delete_file`,
 `open_file`, `read_file`, `rename_file`, `semantic_search`, `skill`, `terminal`,
 `vision`, and `write_file`. The terminal lazy background starter receives one
 additional clone of that same workspace identity; it is not another catalog
-tool. Terminal inspection receives a separate retained state-root clone, not
-ambient cwd or environment discovery. Terminal wait reuses that exact reader
-and the shared deadline authority; it does not initialize or call the starter.
+tool. Terminal listing and inspection receive a separate retained state-root
+clone, not ambient cwd or environment discovery. Terminal wait reuses that
+exact reader and the shared deadline authority; none initializes or calls the
+starter. At most four terminal lists may be active, independently of terminal's
+foreground-execution and wait admission limits.
 `ask_user_question`, `mcp_features`, `mcp_search_tools`, `mcp_select_tool`,
 `subagent`, and `web_fetch` are rootless.
 `mcp_features` uses only its explicitly injected read-only authority. It stamps

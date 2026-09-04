@@ -20,12 +20,13 @@ use machine_god_native::{
 };
 use machine_god_native::{
     NativeBackgroundDetail, NativeBackgroundInspectionError, NativeBackgroundInspectionErrorKind,
-    NativeBackgroundState, TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TerminalBackgroundInspector,
-    TerminalBackgroundOutcome, TerminalBackgroundStarter, TerminalBackgroundWaitDelay,
-    TerminalBackgroundWaitDelayError, TerminalCapturedOutput, TerminalConfigErrorKind,
-    TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest, TerminalExecutionStatus,
-    TerminalExecutor, TerminalExecutorError, TerminalExecutorErrorKind, TerminalLimits,
-    TerminalTool,
+    NativeBackgroundList, NativeBackgroundRecordSummary, NativeBackgroundState,
+    TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TERMINAL_MAX_ACTIVE_LISTS, TerminalBackgroundCatalog,
+    TerminalBackgroundInspector, TerminalBackgroundOutcome, TerminalBackgroundStarter,
+    TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError, TerminalCapturedOutput,
+    TerminalConfigErrorKind, TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest,
+    TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError, TerminalExecutorErrorKind,
+    TerminalLimits, TerminalTool,
 };
 use machine_god_reentrant_waker_test::{Callback, new as reentrant_waker};
 use serde_json::{Value, json};
@@ -289,6 +290,127 @@ impl TerminalBackgroundInspector for FakeBackgroundInspector {
                 Some("private diagnostic".to_owned()),
             )
         })
+    }
+}
+
+#[derive(Clone)]
+enum BackgroundCatalogMode {
+    Ready {
+        listing: NativeBackgroundList,
+        cancel_before_return: bool,
+    },
+    Error(NativeBackgroundInspectionErrorKind),
+    Pending,
+}
+
+#[derive(Default)]
+struct BackgroundCatalogState {
+    calls: AtomicUsize,
+    polls: AtomicUsize,
+    drops: AtomicUsize,
+}
+
+#[derive(Clone)]
+struct FakeBackgroundCatalog {
+    mode: BackgroundCatalogMode,
+    state: Arc<BackgroundCatalogState>,
+}
+
+impl FakeBackgroundCatalog {
+    fn ready(listing: NativeBackgroundList) -> Self {
+        Self {
+            mode: BackgroundCatalogMode::Ready {
+                listing,
+                cancel_before_return: false,
+            },
+            state: Arc::new(BackgroundCatalogState::default()),
+        }
+    }
+
+    fn cancelling(listing: NativeBackgroundList) -> Self {
+        Self {
+            mode: BackgroundCatalogMode::Ready {
+                listing,
+                cancel_before_return: true,
+            },
+            state: Arc::new(BackgroundCatalogState::default()),
+        }
+    }
+
+    fn with_error(kind: NativeBackgroundInspectionErrorKind) -> Self {
+        Self {
+            mode: BackgroundCatalogMode::Error(kind),
+            state: Arc::new(BackgroundCatalogState::default()),
+        }
+    }
+
+    fn pending() -> Self {
+        Self {
+            mode: BackgroundCatalogMode::Pending,
+            state: Arc::new(BackgroundCatalogState::default()),
+        }
+    }
+
+    fn calls(&self) -> usize {
+        self.state.calls.load(Ordering::SeqCst)
+    }
+
+    fn polls(&self) -> usize {
+        self.state.polls.load(Ordering::SeqCst)
+    }
+
+    fn drops(&self) -> usize {
+        self.state.drops.load(Ordering::SeqCst)
+    }
+}
+
+struct PendingBackgroundCatalogFuture {
+    state: Arc<BackgroundCatalogState>,
+}
+
+impl Future for PendingBackgroundCatalogFuture {
+    type Output = Result<NativeBackgroundList, NativeBackgroundInspectionError>;
+
+    fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+        self.state.polls.fetch_add(1, Ordering::SeqCst);
+        Poll::Pending
+    }
+}
+
+impl Drop for PendingBackgroundCatalogFuture {
+    fn drop(&mut self) {
+        self.state.drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl TerminalBackgroundCatalog for FakeBackgroundCatalog {
+    fn list(
+        &self,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeBackgroundList, NativeBackgroundInspectionError>> {
+        self.state.calls.fetch_add(1, Ordering::SeqCst);
+        match &self.mode {
+            BackgroundCatalogMode::Ready {
+                listing,
+                cancel_before_return,
+            } => {
+                let listing = listing.clone();
+                let cancel_before_return = *cancel_before_return;
+                Box::pin(async move {
+                    if cancel_before_return {
+                        let _ = cancellation.cancel();
+                    }
+                    Ok(listing)
+                })
+            }
+            BackgroundCatalogMode::Error(kind) => {
+                let kind = *kind;
+                Box::pin(async move { Err(NativeBackgroundInspectionError::new(kind)) })
+            }
+            BackgroundCatalogMode::Pending => Box::pin(PendingBackgroundCatalogFuture {
+                state: Arc::clone(&self.state),
+            }),
+        }
     }
 }
 
@@ -1356,6 +1478,48 @@ where
     .unwrap()
 }
 
+fn cataloging_tool<I, D, C>(
+    root: &std::path::Path,
+    executor: &FakeExecutor,
+    starter: &FakeBackgroundStarter,
+    inspector: &I,
+    delay: &D,
+    catalog: &C,
+) -> TerminalTool
+where
+    I: TerminalBackgroundInspector + Clone,
+    D: TerminalBackgroundWaitDelay + Clone,
+    C: TerminalBackgroundCatalog + Clone,
+{
+    waiting_tool(root, executor, starter, inspector, delay)
+        .with_catalog(Arc::new(catalog.clone()))
+        .unwrap()
+}
+
+fn background_summary(
+    id: u64,
+    state: NativeBackgroundState,
+    updated_at_ms: u64,
+    command_preview: &str,
+    preview_truncated: bool,
+) -> NativeBackgroundRecordSummary {
+    NativeBackgroundRecordSummary::new(
+        id,
+        state,
+        updated_at_ms,
+        command_preview.to_owned(),
+        preview_truncated,
+    )
+    .unwrap()
+}
+
+fn background_listing(
+    records: Vec<NativeBackgroundRecordSummary>,
+    truncated: bool,
+) -> NativeBackgroundList {
+    NativeBackgroundList::new(records, truncated).unwrap()
+}
+
 fn exact_wait_arguments(background_id: u64, wait_ceiling_ms: u64) -> Value {
     json!({
         "action": "wait",
@@ -1902,6 +2066,421 @@ fn background_inspect_native_failures_have_fixed_redacted_mappings() {
         assert!(!format!("{error:?}").contains("private"));
         assert_eq!(inspector.calls(), 1);
     }
+    assert_eq!(starter.calls(), 0);
+    assert_eq!(executor.calls(), 0);
+}
+
+fn assert_list_schema_and_prepare_are_exact(
+    tool: &TerminalTool,
+    catalog: &FakeBackgroundCatalog,
+) -> Value {
+    let spec = tool.spec();
+    assert_eq!(
+        spec.description,
+        "Run a foreground command, start a background command, list persisted background records, inspect one persisted background record, or wait for its recorded exit"
+    );
+    let forms = spec.input_schema["oneOf"]
+        .as_array()
+        .expect("all five terminal action forms are advertised");
+    assert_eq!(forms.len(), 5);
+    assert_eq!(forms[4], terminal_list_schema());
+
+    let prepared = tool
+        .prepare(call("terminal", json!({ "action": "list" })))
+        .unwrap();
+    assert!(prepared.capability().is_none());
+    assert_eq!(prepared.arguments(), &json!({ "action": "list" }));
+    for invalid in [
+        json!({ "action": "list", "background_id": 7 }),
+        json!({ "action": "list", "command": ":" }),
+        json!({ "action": "list", "extra": true }),
+    ] {
+        assert_invalid_input(&tool.prepare(call("terminal", invalid)).unwrap_err());
+    }
+    assert_eq!(catalog.calls(), 0);
+    prepared.arguments().clone()
+}
+
+fn terminal_list_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": { "action": { "const": "list" } },
+        "required": ["action"],
+        "additionalProperties": false
+    })
+}
+
+#[test]
+fn background_list_has_one_strict_closed_no_authority_form_and_redacted_bounded_output() {
+    let temporary = TemporaryDirectory::new("background-list-contract");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let inspector =
+        SequenceBackgroundInspector::new(vec![(NativeBackgroundState::Exited, Some(0))]);
+    let delay = SleepingWaitDelay::default();
+    let first_private_preview = "PRIVATE_LIST_COMMAND_ONE_DO_NOT_REFLECT";
+    let second_private_preview = "PRIVATE_LIST_COMMAND_TWO_DO_NOT_REFLECT";
+    let catalog = FakeBackgroundCatalog::ready(background_listing(
+        vec![
+            background_summary(
+                9,
+                NativeBackgroundState::Exited,
+                30,
+                first_private_preview,
+                true,
+            ),
+            background_summary(
+                7,
+                NativeBackgroundState::Running,
+                20,
+                second_private_preview,
+                false,
+            ),
+        ],
+        true,
+    ));
+    let tool = cataloging_tool(
+        temporary.path(),
+        &executor,
+        &starter,
+        &inspector,
+        &delay,
+        &catalog,
+    );
+
+    let arguments = assert_list_schema_and_prepare_are_exact(&tool, &catalog);
+
+    let output = execute(&tool, arguments, CancellationToken::new()).unwrap();
+    assert!(!output.is_error);
+    assert_eq!(
+        output.content,
+        json!({
+            "action": "list",
+            "count": 2,
+            "truncated": true,
+            "records": [
+                {
+                    "background_id": 9,
+                    "recorded_state": "exited",
+                    "updated_at_ms": 30
+                },
+                {
+                    "background_id": 7,
+                    "recorded_state": "running",
+                    "updated_at_ms": 20
+                }
+            ]
+        })
+    );
+    let encoded = serde_json::to_vec(&output.content).unwrap();
+    assert!(encoded.len() <= machine_god_native::MAX_TERMINAL_SERIALIZED_RESULT_BYTES);
+    let rendered = output.content.to_string();
+    assert!(!rendered.contains(first_private_preview));
+    assert!(!rendered.contains(second_private_preview));
+    assert_eq!(catalog.calls(), 1);
+    assert_eq!(inspector.calls(), 0);
+    assert_eq!(delay.polls.load(Ordering::SeqCst), 0);
+    assert_eq!(starter.calls(), 0);
+    assert_eq!(executor.calls(), 0);
+
+    let tool_without_catalog =
+        waiting_tool(temporary.path(), &executor, &starter, &inspector, &delay);
+    assert_invalid_input(
+        &tool_without_catalog
+            .prepare(call("terminal", json!({ "action": "list" })))
+            .unwrap_err(),
+    );
+    assert_eq!(catalog.calls(), 1);
+}
+
+#[test]
+fn background_list_and_inspect_description_matches_advertised_actions_without_wait() {
+    let temporary = TemporaryDirectory::new("background-list-inspect-schema");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let inspector = FakeBackgroundInspector::new(false);
+    let catalog = FakeBackgroundCatalog::ready(background_listing(Vec::new(), false));
+    let tool = inspecting_tool(temporary.path(), &executor, &starter, &inspector)
+        .with_catalog(Arc::new(catalog))
+        .unwrap();
+
+    let spec = tool.spec();
+    assert_eq!(
+        spec.description,
+        "Run a foreground command, start a background command, list persisted background records, or inspect one persisted background record"
+    );
+    let forms = spec.input_schema["oneOf"].as_array().unwrap();
+    assert_eq!(forms.len(), 4);
+    assert_eq!(forms[2]["properties"]["action"]["const"], "inspect");
+    assert_eq!(forms[3], terminal_list_schema());
+}
+
+#[test]
+fn background_list_native_failures_have_fixed_redacted_mappings() {
+    let temporary = TemporaryDirectory::new("background-list-errors");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let inspector =
+        SequenceBackgroundInspector::new(vec![(NativeBackgroundState::Exited, Some(0))]);
+    let delay = SleepingWaitDelay::default();
+    let cases = [
+        (
+            NativeBackgroundInspectionErrorKind::NotFound,
+            ToolErrorKind::Execution,
+            "terminal_lister_failed",
+            false,
+        ),
+        (
+            NativeBackgroundInspectionErrorKind::Corrupt,
+            ToolErrorKind::Execution,
+            "terminal_background_corrupt",
+            false,
+        ),
+        (
+            NativeBackgroundInspectionErrorKind::ResourceLimit,
+            ToolErrorKind::Unavailable,
+            "terminal_list_resource_limit",
+            false,
+        ),
+        (
+            NativeBackgroundInspectionErrorKind::Unavailable,
+            ToolErrorKind::Unavailable,
+            "terminal_list_unavailable",
+            true,
+        ),
+        (
+            NativeBackgroundInspectionErrorKind::UnsupportedPlatform,
+            ToolErrorKind::Unavailable,
+            "terminal_unsupported",
+            false,
+        ),
+    ];
+    for (kind, expected_kind, code, retryable) in cases {
+        let catalog = FakeBackgroundCatalog::with_error(kind);
+        let tool = cataloging_tool(
+            temporary.path(),
+            &executor,
+            &starter,
+            &inspector,
+            &delay,
+            &catalog,
+        );
+        let error =
+            execute(&tool, json!({ "action": "list" }), CancellationToken::new()).unwrap_err();
+        assert_eq!(error.kind, expected_kind);
+        assert_eq!(error.code, code);
+        assert_eq!(error.retryable, retryable);
+        match kind {
+            NativeBackgroundInspectionErrorKind::NotFound => {
+                assert_eq!(error.message, "terminal background lister failed");
+            }
+            NativeBackgroundInspectionErrorKind::ResourceLimit => {
+                assert_eq!(
+                    error.message,
+                    "terminal background listing reached a resource limit"
+                );
+            }
+            NativeBackgroundInspectionErrorKind::Unavailable => {
+                assert_eq!(error.message, "terminal background listing is unavailable");
+            }
+            _ => {}
+        }
+        assert!(!error.message.contains("private"));
+        assert!(!format!("{error:?}").contains("private"));
+        assert_eq!(catalog.calls(), 1);
+    }
+    assert_eq!(inspector.calls(), 0);
+    assert_eq!(delay.polls.load(Ordering::SeqCst), 0);
+    assert_eq!(starter.calls(), 0);
+    assert_eq!(executor.calls(), 0);
+}
+
+#[test]
+fn background_list_constructors_reject_invalid_identity_order_and_duplicates() {
+    assert!(
+        NativeBackgroundRecordSummary::new(
+            0,
+            NativeBackgroundState::Running,
+            10,
+            "private command".to_owned(),
+            false,
+        )
+        .is_err()
+    );
+
+    let older = background_summary(
+        7,
+        NativeBackgroundState::Running,
+        20,
+        "older private command",
+        false,
+    );
+    let newer = background_summary(
+        9,
+        NativeBackgroundState::Exited,
+        30,
+        "newer private command",
+        false,
+    );
+    assert!(NativeBackgroundList::new(vec![older.clone(), newer], false).is_err());
+    assert!(NativeBackgroundList::new(vec![older.clone(), older], false).is_err());
+}
+
+#[test]
+fn background_list_cancellation_bounds_calls_and_drops_pending_catalog_future() {
+    let temporary = TemporaryDirectory::new("background-list-cancellation");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let inspector =
+        SequenceBackgroundInspector::new(vec![(NativeBackgroundState::Exited, Some(0))]);
+    let delay = SleepingWaitDelay::default();
+    let catalog = FakeBackgroundCatalog::pending();
+    let tool = cataloging_tool(
+        temporary.path(),
+        &executor,
+        &starter,
+        &inspector,
+        &delay,
+        &catalog,
+    );
+    let cancellation = CancellationToken::new();
+    let observed = Arc::new(ObservedWake::default());
+    let waker = Waker::from(Arc::clone(&observed));
+    let mut future = tool.execute(context(), json!({ "action": "list" }), cancellation.clone());
+
+    assert_eq!(catalog.calls(), 0);
+    assert!(poll_with_waker(future.as_mut(), &waker).is_pending());
+    assert_eq!(catalog.calls(), 1);
+    assert_eq!(catalog.polls(), 1);
+    assert_eq!(catalog.drops(), 0);
+    assert!(cancellation.cancel());
+    observed.wait_for_calls(1);
+    let error = match poll_with_waker(future.as_mut(), &waker) {
+        Poll::Ready(Err(error)) => error,
+        Poll::Ready(Ok(_)) => panic!("cancelled list returned output"),
+        Poll::Pending => panic!("cancelled list remained pending"),
+    };
+    assert_eq!(error.kind, ToolErrorKind::Cancelled);
+    assert_eq!(error.code, "terminal_cancelled");
+    assert_eq!(catalog.drops(), 1);
+
+    let mut dropped = tool.execute(
+        context(),
+        json!({ "action": "list" }),
+        CancellationToken::new(),
+    );
+    assert!(poll_once(dropped.as_mut()).is_pending());
+    assert_eq!(catalog.calls(), 2);
+    assert_eq!(catalog.polls(), 2);
+    drop(dropped);
+    assert_eq!(catalog.drops(), 2);
+
+    let pre_cancelled = CancellationToken::new();
+    assert!(pre_cancelled.cancel());
+    let error = execute(&tool, json!({ "action": "list" }), pre_cancelled).unwrap_err();
+    assert_eq!(error.kind, ToolErrorKind::Cancelled);
+    assert_eq!(catalog.calls(), 2);
+    assert_eq!(inspector.calls(), 0);
+    assert_eq!(delay.polls.load(Ordering::SeqCst), 0);
+    assert_eq!(starter.calls(), 0);
+    assert_eq!(executor.calls(), 0);
+}
+
+#[test]
+fn cancellation_from_ready_catalog_wins_before_background_list_output_publication() {
+    let temporary = TemporaryDirectory::new("background-list-ready-cancel");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let inspector =
+        SequenceBackgroundInspector::new(vec![(NativeBackgroundState::Exited, Some(0))]);
+    let delay = SleepingWaitDelay::default();
+    let catalog = FakeBackgroundCatalog::cancelling(background_listing(Vec::new(), false));
+    let tool = cataloging_tool(
+        temporary.path(),
+        &executor,
+        &starter,
+        &inspector,
+        &delay,
+        &catalog,
+    );
+
+    let error = execute(&tool, json!({ "action": "list" }), CancellationToken::new()).unwrap_err();
+    assert_eq!(error.kind, ToolErrorKind::Cancelled);
+    assert_eq!(error.code, "terminal_cancelled");
+    assert_eq!(catalog.calls(), 1);
+    assert_eq!(inspector.calls(), 0);
+    assert_eq!(starter.calls(), 0);
+    assert_eq!(executor.calls(), 0);
+}
+
+#[test]
+fn background_list_has_four_independent_slots_and_recovers_after_drop() {
+    let temporary = TemporaryDirectory::new("background-list-capacity");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let inspector =
+        SequenceBackgroundInspector::new(vec![(NativeBackgroundState::Exited, Some(0))]);
+    let delay = SleepingWaitDelay::default();
+    let catalog = FakeBackgroundCatalog::pending();
+    let tool = cataloging_tool(
+        temporary.path(),
+        &executor,
+        &starter,
+        &inspector,
+        &delay,
+        &catalog,
+    );
+
+    let mut active = (0..TERMINAL_MAX_ACTIVE_LISTS)
+        .map(|_| {
+            tool.execute(
+                context(),
+                json!({ "action": "list" }),
+                CancellationToken::new(),
+            )
+        })
+        .collect::<Vec<_>>();
+    for future in &mut active {
+        assert!(poll_once(future.as_mut()).is_pending());
+    }
+    assert_eq!(catalog.calls(), TERMINAL_MAX_ACTIVE_LISTS);
+    assert_eq!(catalog.polls(), TERMINAL_MAX_ACTIVE_LISTS);
+
+    let busy = execute(&tool, json!({ "action": "list" }), CancellationToken::new()).unwrap_err();
+    assert_eq!(busy.kind, ToolErrorKind::Unavailable);
+    assert_eq!(busy.code, "terminal_list_busy");
+    assert!(busy.retryable);
+    assert_eq!(catalog.calls(), TERMINAL_MAX_ACTIVE_LISTS);
+
+    let released = active.pop().unwrap();
+    drop(released);
+    assert_eq!(catalog.drops(), 1);
+    let mut replacement = tool.execute(
+        context(),
+        json!({ "action": "list" }),
+        CancellationToken::new(),
+    );
+    assert!(poll_once(replacement.as_mut()).is_pending());
+    assert_eq!(catalog.calls(), TERMINAL_MAX_ACTIVE_LISTS + 1);
+    assert_eq!(catalog.polls(), TERMINAL_MAX_ACTIVE_LISTS + 1);
+
+    drop(replacement);
+    drop(active);
+    assert_eq!(catalog.drops(), TERMINAL_MAX_ACTIVE_LISTS + 1);
+    assert_eq!(inspector.calls(), 0);
+    assert_eq!(delay.polls.load(Ordering::SeqCst), 0);
     assert_eq!(starter.calls(), 0);
     assert_eq!(executor.calls(), 0);
 }

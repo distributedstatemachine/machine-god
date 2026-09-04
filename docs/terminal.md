@@ -2,25 +2,27 @@
 
 The native tool executes one bounded foreground shell command, starts one
 noninteractive background shell command after explicit process authorization,
-or inspects or boundedly waits on one exact persisted background record without
+or lists, inspects, or boundedly waits on persisted background records without
 process authority. It is registered by the reference host and has no top-level
 CLI command.
 
 ## Boundary
 
 The reference-host tool implements the `exec`, bounded `start`, bounded
-persisted-record `inspect`, and bounded persisted-record `wait` subsets of
-fx's `terminal` tool. `exec` captures bounded standard output and error and
-waits for the direct child. `start` durably records and releases one
-noninteractive command through the native background supervisor and returns
-its display identity without waiting for command completion. `inspect` reads
-the validated record for that display identity without claiming current
-liveness. `wait` observes bounded atomic replacements of that exact record
-until it contains a supported recorded exit or reaches the requested safety
-ceiling. Standalone public terminal constructors remain exec-only; injecting
-only a trusted background starter adds only `start`, `inspect` appears only
-when a trusted inspector is explicitly injected, and `wait` appears only when
-its separately bounded waiter is also injected.
+persisted-record `list`, bounded persisted-record `inspect`, and bounded
+persisted-record `wait` subsets of fx's `terminal` tool. `exec` captures bounded
+standard output and error and waits for the direct child. `start` durably
+records and releases one noninteractive command through the native background
+supervisor and returns its display identity without waiting for command
+completion. `list` returns a compact bounded catalog of recorded history.
+`inspect` reads the validated record for one display identity without claiming
+current liveness. `wait` observes bounded atomic replacements of that exact
+record until it contains a supported recorded exit or reaches the requested
+safety ceiling. Standalone public terminal constructors remain exec-only;
+injecting only a trusted background starter adds only `start`, `list` appears
+only when a trusted lister is explicitly injected, `inspect` appears only when
+a trusted inspector is explicitly injected, and `wait` appears only when its
+separately bounded waiter is also injected.
 
 The model-facing input is:
 
@@ -34,9 +36,9 @@ The model-facing input is:
 ```
 
 `action` and `command` are required for the closed `exec` and `start` forms.
-The reference host also accepts the separate closed form
-`{"action":"inspect","background_id":7}`, where `background_id` is a
-nonzero JSON `u64`, and this exact wait form:
+The reference host also accepts the separate closed forms `{"action":"list"}`
+and `{"action":"inspect","background_id":7}`, where `background_id` is a
+nonzero JSON `u64`, plus this exact wait form:
 
 ```json
 {
@@ -75,15 +77,15 @@ without constructing the absolute path or a background request.
 The reference-host tool description is:
 
 ```text
-Run a foreground command, start a background command, inspect one persisted background record, or wait for its recorded exit
+Run a foreground command, start a background command, list persisted background records, inspect one persisted background record, or wait for its recorded exit
 ```
 
 An exec-only construction retains its earlier foreground-only description and
 schema. All forms deliberately exclude `read`, `screen`, `write`, `monitor`,
-`list`, `resize`, `signal`, and `close`; PTYs; interactive
-stdin; managed background output; artifacts; custom or login shells; user shell
-profiles; retries; external working directories; and benchmark workloads. They
-make no fx-equivalence or product-performance claim.
+`resize`, `signal`, and `close`; list filters, cursors, and pagination; PTYs;
+interactive stdin; managed background output; artifacts; custom or login
+shells; user shell profiles; retries; external working directories; and
+benchmark workloads. They make no fx-equivalence or product-performance claim.
 
 ## Permission and exact execution agreement
 
@@ -135,9 +137,9 @@ returns those same canonical model arguments. Direct `execute` reparses and
 revalidates all fields and rejects any canonical-argument, program, argument,
 cwd, profile, or digest divergence before filesystem access, worker creation,
 or process spawn. The existing engine presents terminal execution as critical
-risk. Denial has zero terminal-owned effects. `inspect` and `wait` instead
-prepare with no authority because they can read only through explicitly
-injected persisted-history boundaries; neither requests process permission.
+risk. Denial has zero terminal-owned effects. `list`, `inspect`, and `wait`
+instead prepare with no authority because they can read only through explicitly
+injected persisted-history boundaries; none requests process permission.
 
 The capability authorizes a process, not a sandbox. The retained workspace
 descriptor constrains only the child's starting-directory identity. Once
@@ -169,14 +171,16 @@ Reference-host composition retains the workspace authority and advertises
 `terminal` as defined by the canonical
 [tool catalog](native-reference-host.md#tool-catalog). On macOS, `exec` returns
 its fixed unsupported error after strict preparation and permission. `start`,
-descriptor-confined `inspect`, and persisted-record `wait` are supported on
-Linux and macOS. On other platforms the complete reference host is unavailable.
-The exported exec
-contract remains portable through a trusted injected `TerminalExecutor`, and a
-trusted injected `TerminalBackgroundStarter` may implement the documented
-background ownership contract. A trusted injected
+descriptor-confined `list` and `inspect`, and persisted-record `wait` are
+supported on Linux and macOS. On other platforms the complete reference host
+is unavailable. The exported exec contract remains portable through a trusted
+injected `TerminalExecutor`, and a trusted injected
+`TerminalBackgroundStarter` may implement the documented background ownership
+contract. A trusted injected
 `TerminalBackgroundInspector` may implement the exact persisted-record read
-contract, while a separately injected waiter may implement the bounded
+contract, a trusted injected `TerminalBackgroundCatalog` may implement the
+bounded persisted-record catalog contract, and a separately injected waiter
+may implement the bounded
 persisted-record wait contract.
 
 ## Background start protocol
@@ -259,6 +263,91 @@ This is intentionally not equivalent to upstream fx interactive-session
 inspection. machine-god's `background_id` identifies one persisted start
 record; it is not a session authority and grants no access to interactive
 terminal state or control.
+
+## Persisted background listing
+
+`list` accepts exactly `{"action":"list"}`. Every other field, including
+`background_id`, command, cwd, profile, task, workspace, backend, lifecycle,
+cursor, and pagination fields, rejects. Preparation preserves that canonical
+one-field object, requests no authority, and has no lister or filesystem
+effect.
+
+Execution invokes only the separately injected persisted-history lister over
+the frozen workspace identity. A missing background hierarchy or workspace
+directory is a complete empty success:
+
+```json
+{
+  "action": "list",
+  "count": 0,
+  "truncated": false,
+  "records": []
+}
+```
+
+A nonempty success contains at most 100 compact rows:
+
+```json
+{
+  "action": "list",
+  "count": 2,
+  "truncated": false,
+  "records": [
+    {
+      "background_id": 9,
+      "recorded_state": "exited",
+      "updated_at_ms": 1200
+    },
+    {
+      "background_id": 7,
+      "recorded_state": "running",
+      "updated_at_ms": 1100
+    }
+  ]
+}
+```
+
+`count` is exactly the returned row count. Rows are ordered by
+`updated_at_ms` descending and then numeric `background_id` descending. IDs
+are nonzero and unique, and recorded states use the same closed six-state
+vocabulary as inspection. The projection deliberately omits command previews,
+cwd, PID, exit code, server URL, and diagnostics. It therefore exposes no
+process authority or present-liveness assertion and keeps the complete
+100-row shape within the terminal 48 KiB serialized-result ceiling.
+
+The lister reuses the persisted reader's existing bounds: one call processes
+at most 1,024 non-dot directory entries plus one name-only overflow witness,
+accepts at most 100 records, retains at most 64 KiB per record, and accepts at
+most 8 MiB of aggregate canonical record bytes. Each record retains the
+four-container-level and 64-node JSON bounds. A bounded incomplete scan returns
+its validated partial set with `truncated` equal to `true`; that flag is not a
+cursor or pagination promise. A complete list proves only that every observed
+canonical candidate within those bounds validated. Concurrent atomic
+replacement may expose an old or new complete record, concurrent disappearance
+may omit a candidate, and no multi-record snapshot is promised.
+
+Four list calls may be active. Further calls fail immediately with the fixed
+retryable `terminal_list_busy` result before invoking the lister, opening a
+file, or creating a queue, worker, thread, timer, process, or supervisor
+effect. The list slots are independent of foreground-execution and wait slots.
+The execution future is inert until first poll. Pre-cancellation has no lister
+effect; cancellation has its own wake path, drops a pending lister future, and
+releases its slot exactly once. Cancellation is checked after the read and
+bounded rendering and immediately before publication, so a cancelled call
+does not publish a stale success.
+
+Corrupt, resource-limit, unavailable, and unsupported reader failures map to
+fixed redacted terminal categories. An impossible `NotFound` list result or an
+invalid injected shape, identity, bound, uniqueness, or ordering is the fixed
+`terminal_lister_failed` invariant result; missing production state must have
+returned the empty success. No failure reflects a path, ID, timestamp, command,
+record content, environment value, filename, or native diagnostic.
+
+Listing never probes a PID, infers liveness, initializes, reconciles, or calls
+the background supervisor, or signals, waits for, restarts, adopts, or controls
+a process. It is intentionally a bounded machine-god persisted-history
+projection, not pinned-fx's interactive terminal-session catalog, and makes no
+fx-equivalence or performance claim.
 
 ## Persisted background wait
 
@@ -584,14 +673,16 @@ rendering, the final cancellation check, and public return.
 
 Focused and workspace evidence must cover strict schema and
 canonical arguments; exact capability serde and policy/execution equality;
-the injected and reference-host `start`, `inspect`, and `wait` schemas;
-authority-free exact wait preparation; immediate exit, bounded running-state
-backoff and safety-ceiling outcomes; all supported and rejected recorded states
-and exit-code ranges; 128-observation, four-active-wait, serialized-result, and
-live-memory bounds; no listing, PID probe, process, foreground executor,
-supervisor initialization, or permission effects; pending observation and
-timer cancellation, destructor-triggered cancellation, outer-future drop, and
-exact-once wait-slot recovery; workspace-relative permission,
+the injected and reference-host `start`, `list`, `inspect`, and `wait` schemas;
+authority-free list and exact-wait preparation; empty, ordered, truncated, and
+100-row list results without sensitive detail; immediate exit, bounded
+running-state backoff and safety-ceiling outcomes; all supported and rejected
+recorded states and exit-code ranges; four-active-list, 128-observation,
+four-active-wait, serialized-result, and live-memory bounds; no PID probe,
+process, foreground executor, supervisor initialization, or permission effects;
+pending listing, observation, and timer cancellation, destructor-triggered
+cancellation, outer-future drop, and exact-once list- and wait-slot recovery;
+workspace-relative permission,
 private absolute background cwd, and fixed environment identity;
 exact and over-limit combined workspace/cwd preflight before authorization;
 post-construction retained-root rename/replacement behavior; rejection of

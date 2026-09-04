@@ -132,6 +132,36 @@ pub struct NativeBackgroundRecordSummary {
 }
 
 impl NativeBackgroundRecordSummary {
+    /// Constructs one bounded persisted-record summary.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed error when the summary violates the persisted-list
+    /// bounds.
+    pub fn new(
+        id: u64,
+        state: NativeBackgroundState,
+        updated_at_ms: u64,
+        command_preview: String,
+        preview_truncated: bool,
+    ) -> Result<Self, NativeBackgroundInspectionError> {
+        if id == 0
+            || command_preview.is_empty()
+            || invalid_background_string(&command_preview, MAX_BACKGROUND_COMMAND_PREVIEW_BYTES)
+        {
+            return Err(NativeBackgroundInspectionError::new(
+                NativeBackgroundInspectionErrorKind::Corrupt,
+            ));
+        }
+        Ok(Self {
+            id,
+            state,
+            updated_at_ms,
+            command_preview,
+            preview_truncated,
+        })
+    }
+
     #[must_use]
     pub const fn id(&self) -> u64 {
         self.id
@@ -178,6 +208,37 @@ pub struct NativeBackgroundList {
 }
 
 impl NativeBackgroundList {
+    /// Constructs one bounded authoritative newest-first listing.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed error when the list is too large, contains duplicate
+    /// identities, or is not in descending update-time and identity order.
+    pub fn new(
+        records: Vec<NativeBackgroundRecordSummary>,
+        truncated: bool,
+    ) -> Result<Self, NativeBackgroundInspectionError> {
+        if records.len() > MAX_BACKGROUND_RECORDS {
+            return Err(NativeBackgroundInspectionError::new(
+                NativeBackgroundInspectionErrorKind::ResourceLimit,
+            ));
+        }
+        for (index, record) in records.iter().enumerate() {
+            if records[..index]
+                .iter()
+                .any(|previous| previous.id == record.id)
+                || records.get(index + 1).is_some_and(|next| {
+                    (record.updated_at_ms, record.id) <= (next.updated_at_ms, next.id)
+                })
+            {
+                return Err(NativeBackgroundInspectionError::new(
+                    NativeBackgroundInspectionErrorKind::Corrupt,
+                ));
+            }
+        }
+        Ok(Self { records, truncated })
+    }
+
     #[must_use]
     pub fn records(&self) -> &[NativeBackgroundRecordSummary] {
         &self.records
@@ -389,6 +450,20 @@ impl NativeBackgroundRecordInspector {
             supported::inspect_retained(state_root.as_ref(), &workspace, id)
         })
     }
+
+    /// Returns an inert future that lists bounded persisted records on first
+    /// poll.
+    #[must_use]
+    pub(crate) fn list(
+        &self,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeBackgroundList, NativeBackgroundInspectionError>> {
+        let state_root = Arc::clone(&self.state_root);
+        let workspace = self.workspace.clone();
+        Box::pin(
+            async move { supported::list_retained(state_root.as_ref(), &workspace, &cancellation) },
+        )
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -400,6 +475,16 @@ impl crate::terminal::TerminalBackgroundInspector for NativeBackgroundRecordInsp
     ) -> BoxFuture<'static, Result<NativeBackgroundDetail, NativeBackgroundInspectionError>> {
         let _ = cancellation;
         NativeBackgroundRecordInspector::inspect(self, background_id)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl crate::terminal::TerminalBackgroundCatalog for NativeBackgroundRecordInspector {
+    fn list(
+        &self,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<NativeBackgroundList, NativeBackgroundInspectionError>> {
+        NativeBackgroundRecordInspector::list(self, cancellation)
     }
 }
 
@@ -607,6 +692,7 @@ pub(crate) fn is_background_record_name(name: &[u8]) -> bool {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn valid_background_record(record: &StoredBackgroundRecord, workspace: &str) -> bool {
     record.version == 1
+        && record.id != 0
         && record.workspace == workspace
         && record.updated_at_ms >= record.started_at_ms
         && !record.command.is_empty()
@@ -671,6 +757,7 @@ pub(crate) mod supported {
     use std::os::unix::ffi::OsStrExt;
     use std::path::{Path, PathBuf};
 
+    use machine_god_core::CancellationToken;
     use rustix::fd::{AsFd, BorrowedFd, OwnedFd};
     #[cfg(target_os = "linux")]
     use rustix::fs::CWD;
@@ -721,11 +808,11 @@ pub(crate) mod supported {
                 NativeBackgroundInspectionError::new(NativeBackgroundInspectionErrorKind::NotFound),
             ),
             (Some(root), NativeBackgroundQuery::List) => {
-                let (listing, _) = list(root.as_fd(), workspace)?;
+                let (listing, _) = list(root.as_fd(), workspace, None)?;
                 Ok(NativeBackgroundInspection::List(listing))
             }
             (Some(root), NativeBackgroundQuery::Last) => {
-                let (listing, latest) = list(root.as_fd(), workspace)?;
+                let (listing, latest) = list(root.as_fd(), workspace, None)?;
                 if listing.truncated {
                     return Err(NativeBackgroundInspectionError::new(
                         NativeBackgroundInspectionErrorKind::ResourceLimit,
@@ -775,6 +862,41 @@ pub(crate) mod supported {
         read_record(workspace_root.as_fd(), workspace, id)?.ok_or_else(|| {
             NativeBackgroundInspectionError::new(NativeBackgroundInspectionErrorKind::NotFound)
         })
+    }
+
+    pub(super) fn list_retained(
+        state_root: &OwnedFd,
+        workspace: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<NativeBackgroundList, NativeBackgroundInspectionError> {
+        if cancellation.is_cancelled() {
+            return Err(unavailable());
+        }
+        validate_directory(state_root, true)?;
+        if cancellation.is_cancelled() {
+            return Err(unavailable());
+        }
+        let Some(background) = open_child_directory(state_root.as_fd(), BACKGROUND_DIRECTORY)?
+        else {
+            return Ok(NativeBackgroundList {
+                records: Vec::new(),
+                truncated: false,
+            });
+        };
+        validate_directory(&background, true)?;
+        if cancellation.is_cancelled() {
+            return Err(unavailable());
+        }
+        let workspace_name = background_workspace_name(workspace);
+        let Some(workspace_root) = open_child_directory(background.as_fd(), &workspace_name)?
+        else {
+            return Ok(NativeBackgroundList {
+                records: Vec::new(),
+                truncated: false,
+            });
+        };
+        validate_directory(&workspace_root, true)?;
+        list(workspace_root.as_fd(), workspace, Some(cancellation)).map(|(listing, _)| listing)
     }
 
     fn state_base_and_suffix(
@@ -948,6 +1070,7 @@ pub(crate) mod supported {
     fn list(
         root: BorrowedFd<'_>,
         workspace: &str,
+        cancellation: Option<&CancellationToken>,
     ) -> Result<
         (NativeBackgroundList, Option<NativeBackgroundDetail>),
         NativeBackgroundInspectionError,
@@ -964,6 +1087,9 @@ pub(crate) mod supported {
         let mut scanned = 0_usize;
         let mut truncated = false;
         loop {
+            if cancellation.is_some_and(CancellationToken::is_cancelled) {
+                return Err(unavailable());
+            }
             let Some(entry) = stream.next() else {
                 break;
             };
@@ -992,6 +1118,9 @@ pub(crate) mod supported {
         let mut latest: Option<NativeBackgroundDetail> = None;
         let mut accepted_bytes = 0_usize;
         for name in candidates {
+            if cancellation.is_some_and(CancellationToken::is_cancelled) {
+                return Err(unavailable());
+            }
             if records.len() == MAX_BACKGROUND_RECORDS {
                 truncated = true;
                 break;
@@ -1402,8 +1531,9 @@ pub(crate) mod supported {
 #[cfg(test)]
 mod tests {
     use super::{
-        NativeBackgroundDetail, NativeBackgroundInspectionError,
-        NativeBackgroundInspectionErrorKind, NativeBackgroundState,
+        MAX_BACKGROUND_RECORDS, NativeBackgroundDetail, NativeBackgroundInspectionError,
+        NativeBackgroundInspectionErrorKind, NativeBackgroundList, NativeBackgroundRecordSummary,
+        NativeBackgroundState,
     };
 
     #[test]
@@ -1474,5 +1604,86 @@ mod tests {
         let summary = detail.summary();
         assert_eq!(summary.command_preview().len(), 255);
         assert!(summary.preview_truncated());
+    }
+
+    #[test]
+    fn public_summary_and_list_constructors_enforce_catalog_invariants() {
+        let summary = |id, updated_at_ms| {
+            NativeBackgroundRecordSummary::new(
+                id,
+                NativeBackgroundState::Running,
+                updated_at_ms,
+                "private command".to_owned(),
+                false,
+            )
+            .unwrap()
+        };
+        let listing =
+            NativeBackgroundList::new(vec![summary(9, 20), summary(8, 20), summary(7, 19)], true)
+                .unwrap();
+        assert_eq!(
+            listing
+                .records()
+                .iter()
+                .map(NativeBackgroundRecordSummary::id)
+                .collect::<Vec<_>>(),
+            [9, 8, 7]
+        );
+        assert!(listing.truncated());
+
+        for records in [
+            vec![summary(8, 20), summary(9, 20)],
+            vec![summary(8, 20), summary(8, 19)],
+        ] {
+            assert_eq!(
+                NativeBackgroundList::new(records, false)
+                    .unwrap_err()
+                    .kind(),
+                NativeBackgroundInspectionErrorKind::Corrupt
+            );
+        }
+        assert_eq!(
+            NativeBackgroundList::new(
+                (0..=MAX_BACKGROUND_RECORDS)
+                    .map(|offset| {
+                        summary(
+                            u64::try_from(MAX_BACKGROUND_RECORDS + 1 - offset).unwrap(),
+                            u64::try_from(MAX_BACKGROUND_RECORDS + 1 - offset).unwrap(),
+                        )
+                    })
+                    .collect(),
+                true,
+            )
+            .unwrap_err()
+            .kind(),
+            NativeBackgroundInspectionErrorKind::ResourceLimit
+        );
+
+        for preview in [String::new(), "x\0y".to_owned(), "x".repeat(257)] {
+            assert_eq!(
+                NativeBackgroundRecordSummary::new(
+                    1,
+                    NativeBackgroundState::Running,
+                    1,
+                    preview,
+                    false,
+                )
+                .unwrap_err()
+                .kind(),
+                NativeBackgroundInspectionErrorKind::Corrupt
+            );
+        }
+        assert_eq!(
+            NativeBackgroundRecordSummary::new(
+                0,
+                NativeBackgroundState::Running,
+                1,
+                "command".to_owned(),
+                false,
+            )
+            .unwrap_err()
+            .kind(),
+            NativeBackgroundInspectionErrorKind::Corrupt
+        );
     }
 }

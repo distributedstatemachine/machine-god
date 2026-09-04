@@ -156,11 +156,14 @@ stop or liveness authority. None of those capabilities, terminal background
 input, arbitrary log paths, URL probing, `/proc` inspection, repair, or
 migration is part of this read-only command.
 
-The separately injected terminal `inspect` and bounded exit-only `wait` actions
-reuse the same exact-ID persisted-record validation but return only compact
+The separately injected terminal `list`, `inspect`, and bounded exit-only
+`wait` actions reuse this descriptor-confined persisted-record reader. Terminal
+`list` returns at most 100 ordered rows containing only background ID, recorded
+state, and update timestamp; it deliberately omits the command preview exposed
+by this human-facing command. `inspect` and `wait` retain their compact exact-ID
 recorded-state projections. `wait` observes atomic record replacements through
-an independently injected monotonic delay boundary; neither action broadens
-this top-level CLI or adds supervisor authority.
+an independently injected monotonic delay boundary. None of these actions
+broadens this top-level CLI or adds process or supervisor authority.
 
 The compatibility scenario moves only from unimplemented to
 implemented-but-non-equivalent and remains not measured and claim-ineligible.
