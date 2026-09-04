@@ -322,7 +322,13 @@ last two scans it checks an identity-bearing union of every member observed
 before TERM, before KILL, or in the post-KILL capture. Linux binds each
 captured PID to its procfs start time and therefore distinguishes disappearance
 from PID reuse; a captured process must cease to exist even if it leaves the
-original group after partial signal delivery. macOS lacks that retained
+original group after partial signal delivery. When Linux reports a captured
+member as a zombie, the adapter opens a pidfd, rechecks the retained start-time
+identity, and consumes its status only when `waitid(P_PIDFD)` proves that the
+member was adopted as this process's child. This also discharges descendants
+when the host binary is a container's PID 1; a zombie owned by another reaper
+remains unresolved and therefore fail-closed. Kernels without pidfd support
+retain the original disappearance proof. macOS lacks that retained
 start-time identity in this adapter and conservatively treats any still-
 existing captured PID as a survivor. The wait advances permanently past each
 vanished prefix member and checks one live witness per backoff interval, making

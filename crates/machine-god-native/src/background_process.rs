@@ -3193,6 +3193,7 @@ fn parse_linux_proc_stat(
     Ok(LinuxProcStat {
         group: rustix::process::Pid::from_raw(group),
         start_time,
+        zombie: state[0] == b'Z',
     })
 }
 
@@ -3201,6 +3202,7 @@ fn parse_linux_proc_stat(
 struct LinuxProcStat {
     group: Option<rustix::process::Pid>,
     start_time: u64,
+    zombie: bool,
 }
 
 #[cfg(target_os = "linux")]
@@ -3260,7 +3262,66 @@ fn captured_group_member_exists(
     let Some(parsed) = read_linux_proc_stat(&mut stat, bytes, member.pid)? else {
         return Ok(false);
     };
-    Ok(member.identity == Some(parsed.start_time))
+    if member.identity != Some(parsed.start_time) {
+        return Ok(false);
+    }
+    if !parsed.zombie {
+        return Ok(true);
+    }
+    reap_adopted_captured_zombie(pid_fd.as_fd(), member, bytes)
+}
+
+#[cfg(target_os = "linux")]
+fn reap_adopted_captured_zombie(
+    pid_directory: BorrowedFd<'_>,
+    member: &CapturedGroupMember,
+    bytes: &mut Vec<u8>,
+) -> Result<bool, BackgroundProcessError> {
+    let process =
+        match rustix::process::pidfd_open(member.pid, rustix::process::PidfdFlags::empty()) {
+            Ok(process) => process,
+            Err(rustix::io::Errno::SRCH) => return Ok(false),
+            // Preserve support for kernels without pidfds. The ordinary bounded
+            // disappearance proof remains fail-closed if their init does not reap.
+            Err(rustix::io::Errno::NOSYS | rustix::io::Errno::INVAL) => return Ok(true),
+            Err(_) => return Err(cleanup_error()),
+        };
+
+    // Opening a pidfd and re-reading through the already retained proc
+    // directory closes the numeric-PID reuse race before consuming wait
+    // status. A different incarnation is outside this captured identity.
+    let stat_fd = match rustix::fs::openat(
+        pid_directory,
+        "stat",
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    ) {
+        Ok(fd) => fd,
+        Err(rustix::io::Errno::NOENT | rustix::io::Errno::SRCH) => return Ok(false),
+        Err(_) => return Err(cleanup_error()),
+    };
+    let mut stat = std::fs::File::from(stat_fd);
+    let Some(parsed) = read_linux_proc_stat(&mut stat, bytes, member.pid)? else {
+        return Ok(false);
+    };
+    if member.identity != Some(parsed.start_time) {
+        return Ok(false);
+    }
+    if !parsed.zombie {
+        return Ok(true);
+    }
+
+    match rustix::process::waitid(
+        rustix::process::WaitId::PidFd(process.as_fd()),
+        rustix::process::WaitIdOptions::EXITED | rustix::process::WaitIdOptions::NOHANG,
+    ) {
+        Ok(Some(_)) | Err(rustix::io::Errno::SRCH) => Ok(false),
+        Ok(None)
+        | Err(rustix::io::Errno::CHILD | rustix::io::Errno::INVAL | rustix::io::Errno::NOSYS) => {
+            Ok(true)
+        }
+        Err(_) => Err(cleanup_error()),
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -3637,6 +3698,7 @@ mod linux_proc_tests {
             LinuxProcStat {
                 group: Some(pid(77)),
                 start_time: 4242,
+                zombie: false,
             }
         );
     }
@@ -3661,6 +3723,7 @@ mod linux_proc_tests {
             LinuxProcStat {
                 group: None,
                 start_time: 99,
+                zombie: false,
             }
         );
     }
@@ -4848,11 +4911,6 @@ mod process_regression_tests {
             captured_group_member_exists(&authority, &escaped, &mut observation_bytes)
                 .expect("escaped member observation succeeds")
         );
-        assert_ne!(
-            stat.group,
-            Some(rustix::process::Pid::from_raw(1).expect("positive comparison group"))
-        );
-
         let reused = CapturedGroupMember {
             identity: Some(stat.start_time.wrapping_add(1)),
             ..escaped
@@ -4861,6 +4919,61 @@ mod process_regression_tests {
             !captured_group_member_exists(&authority, &reused, &mut observation_bytes)
                 .expect("PID reuse observation succeeds")
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn captured_zombie_adopted_by_this_process_is_reaped_through_a_pidfd() {
+        let authority = GroupSnapshotAuthority::open().expect("open proc authority");
+        let mut child = Command::new("/bin/sleep")
+            .arg("30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn direct captured-member fixture");
+        let raw = i32::try_from(child.id()).expect("child PID fits signed range");
+        let pid = rustix::process::Pid::from_raw(raw).expect("positive child PID");
+        let mut name_bytes = [0_u8; 10];
+        let pid_directory = rustix::fs::openat(
+            authority.proc_root.as_fd(),
+            linux_pid_path(pid, &mut name_bytes),
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .expect("open child proc directory");
+        let stat_fd = rustix::fs::openat(
+            pid_directory.as_fd(),
+            "stat",
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .expect("open child stat");
+        let mut bytes = Vec::with_capacity(MAX_LINUX_PROC_STAT_BYTES + 1);
+        let parsed = read_linux_proc_stat(&mut std::fs::File::from(stat_fd), &mut bytes, pid)
+            .expect("read child stat")
+            .expect("live child stat is present");
+        let member = CapturedGroupMember {
+            pid,
+            identity: Some(parsed.start_time),
+        };
+        child.kill().expect("kill captured-member fixture");
+        let deadline = Instant::now() + Duration::from_secs(5);
+
+        loop {
+            if !captured_group_member_exists(&authority, &member, &mut bytes)
+                .expect("captured child observation succeeds")
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "captured zombie was not reaped");
+            thread::sleep(Duration::from_millis(2));
+        }
+
+        assert!(matches!(
+            child.try_wait(),
+            Err(error) if error.raw_os_error() == Some(libc::ECHILD)
+        ));
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -5058,6 +5171,9 @@ mod process_regression_tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn lingering_group_cleanup_uses_constant_global_snapshots() {
+        #[cfg(target_os = "linux")]
+        rustix::process::set_child_subreaper(rustix::process::Pid::from_raw(1))
+            .expect("make the Linux test process its fixture's nearest reaper");
         let directory = TestDirectory::new("snapshot-count");
         let marker = directory.0.join("descendant.pid");
         let command = "trap '' TERM; /bin/sh -c 'trap \"\" TERM; printf \"%s\" \"$$\" > descendant.pid; exec /bin/sleep 30' & exit 7";

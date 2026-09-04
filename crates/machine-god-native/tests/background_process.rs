@@ -23,11 +23,15 @@ use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::process::{Command, Stdio};
+#[cfg(target_os = "linux")]
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
+#[cfg(target_os = "linux")]
+static TEST_SUBREAPER: OnceLock<()> = OnceLock::new();
 
 struct FreshDirectory {
     path: PathBuf,
@@ -67,6 +71,13 @@ fn request(directory: &Path, command: impl Into<String>) -> BackgroundProcessReq
 }
 
 fn adapter() -> SystemBackgroundProcessAdapter {
+    #[cfg(target_os = "linux")]
+    TEST_SUBREAPER.get_or_init(|| {
+        // Cargo can itself be PID 1 in a container and does not reap the test
+        // binary's orphaned fixtures. Make the test binary their nearest
+        // reaper so the production captured-member protocol is exercised.
+        rustix::process::set_child_subreaper(rustix::process::Pid::from_raw(1)).unwrap();
+    });
     let helper = BackgroundProcessHelper::new(
         std::env::current_exe().unwrap(),
         vec![
@@ -343,12 +354,26 @@ impl EscapedProcessGuard {
     fn kill(&self) {
         let _ = rustix::process::kill_process(self.pid, rustix::process::Signal::KILL);
     }
+
+    fn kill_and_reap_if_adopted(&self) {
+        self.kill();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match rustix::process::waitid(
+                rustix::process::WaitId::Pid(self.pid),
+                rustix::process::WaitIdOptions::EXITED | rustix::process::WaitIdOptions::NOHANG,
+            ) {
+                Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(2)),
+                Ok(Some(_) | None) | Err(_) => return,
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
 impl Drop for EscapedProcessGuard {
     fn drop(&mut self) {
-        self.kill();
+        self.kill_and_reap_if_adopted();
     }
 }
 
@@ -736,7 +761,7 @@ int main(void) {
         process_exists(escaped),
         "escaped identity was mistaken for gone"
     );
-    escaped_guard.kill();
+    escaped_guard.kill_and_reap_if_adopted();
     assert_processes_absent(&[escaped]);
 }
 
@@ -792,7 +817,7 @@ int main(void) {
         process_exists(escaped),
         "an unobserved session escape is outside the bounded ownership set"
     );
-    escaped_guard.kill();
+    escaped_guard.kill_and_reap_if_adopted();
     assert_processes_absent(&[escaped]);
 }
 
