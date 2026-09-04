@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33905683324` (`GREEN`)
 - Active branch: `agent/m58-terminal-signal`
 - Active phase: `implementing exact-owner identity-safe terminal native signaling`
-- Next gate: `freeze one documented candidate, run the complete exact-1.94.1 local gate, then start three fresh adversarial reviews`
+- Next gate: `run the complete exact-1.94.1 replacement gate, then start three fresh adversarial reviews of the corrected candidate`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark

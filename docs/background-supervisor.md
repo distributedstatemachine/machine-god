@@ -456,9 +456,11 @@ inside that group may receive the requested signal twice; individual delivery
 deliberately closes an inside-group-to-escaped-group race before the final
 group syscall. Linux traversal uses the retained procfs descriptor and mount
 identity, caps inspected entries, metadata bytes, read attempts, and retained
-members, and opens and retains each descendant's proc directory and pidfd while
-its verified parent is still pinned. Delivery uses only those retained pidfds,
-so a same-clock-tick numeric PID replacement cannot inherit signal authority.
+members, and opens each descendant's proc directory and pidfd while its
+verified parent is still pinned. Each proc directory is released after that
+node's children and identity are fully scanned; prepared delivery retains only
+pidfds, so a same-clock-tick numeric PID replacement cannot inherit signal
+authority.
 Every signal traversal shares one 250 ms
 monotonic deadline, 524,288-attempt cap, 131,072-entry cap, and 32 MiB byte
 budget across mount-authority and namespace-status records, task-children

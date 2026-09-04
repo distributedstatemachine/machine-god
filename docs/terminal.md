@@ -366,9 +366,11 @@ to every identity-pinned descendant, and then signals the original group. An
 inside-group descendant can therefore receive the requested signal twice; that
 deliberate duplicate closes the race in which it could call `setsid` after its
 group was observed but before the final group signal. Linux uses the retained
-procfs mount authority and opens a retained proc directory plus pidfd for every
-descendant while its queued parent remains pinned. Individual delivery uses
-those pidfds without resolving the numeric PID again. Before
+procfs mount authority and opens a proc directory plus pidfd for every
+descendant while its queued parent remains pinned. A descendant's proc
+directory is released immediately after that node's children and identity are
+fully scanned; the prepared delivery retains only pidfds and never resolves a
+numeric PID again. Before
 capturing signal authority and on every later authority validation, Linux also
 requires descriptor-relative `self/status` to have the retained mount ID and
 exactly one `NSpid` equal to the current process PID. Ancestor procfs namespace
