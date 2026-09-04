@@ -21,6 +21,7 @@ CI_ROUTE_INPUTS = (
     "DOCUMENTATION",
     "NON_DOCUMENTATION",
     "UNCLASSIFIED",
+    "WORKSPACE_FALLBACK",
     "CI_INFRASTRUCTURE",
     "RUST_GLOBAL",
     "RUST_FORMAT",
@@ -33,7 +34,11 @@ CI_ROUTE_INPUTS = (
     "CLI_ANY",
     "CLI_SOURCE",
     "TEST_SUPPORT",
-    "PYTHON_INPUTS",
+    "BENCHMARK_TEST_INPUTS",
+    "COMPATIBILITY_TEST_INPUTS",
+    "CI_CLASSIFIER_TEST_INPUTS",
+    "NATIVE_MANIFEST_TEST_INPUTS",
+    "PROVISION_ZIG_TEST_INPUTS",
     "COMPATIBILITY_INPUTS",
     "DEPENDENCY_INPUTS",
     "DOCUMENTATION_POLICY",
@@ -50,7 +55,12 @@ CI_ROUTE_OUTPUTS = (
     "cli",
     "format",
     "quality",
-    "python",
+    "full_workspace",
+    "benchmark_tests",
+    "compatibility_tests",
+    "ci_classifier_tests",
+    "native_manifest_tests",
+    "provision_zig_tests",
     "compatibility",
     "release_smoke",
     "dependency_audit",
@@ -209,9 +219,9 @@ class CiChangeClassificationTests(unittest.TestCase):
         self.assertIn("            unclassified:\n              - '**'", classifier)
         for admitted in (
             "!.github/workflows/**",
-            "!**/*.py",
             "!benchmarks/**",
             "!compatibility/**",
+            "!crates/**",
             "!crates/machine-god-cli/**",
             "!crates/machine-god-core/**",
             "!crates/machine-god-native/**",
@@ -219,10 +229,30 @@ class CiChangeClassificationTests(unittest.TestCase):
             "!test-support/**",
         ):
             self.assertIn(f"              - '{admitted}'", classifier)
-        for unsafe_exclusion in ("!.github/**", "!crates/**", "!scripts/**", "!tests/**"):
+        for unsafe_exclusion in (
+            "!.github/**",
+            "!**/*.py",
+            "!scripts/**",
+            "!tests/**",
+        ):
             self.assertNotIn(
                 f"              - '{unsafe_exclusion}'", classifier
             )
+        self.assertNotIn(
+            "              - '!scripts/generate_terminal_unicode_data.py'",
+            classifier,
+        )
+        self.assertIn("            workspace_fallback:\n", classifier)
+        for path in (
+            "scripts/check_documentation.py",
+            "scripts/generate_compatibility.py",
+            "scripts/provision_zig.py",
+            "tests/test_ci_change_classification.py",
+            "tests/test_documentation_policy.py",
+            "tests/test_native_manifest.py",
+            "tests/test_provision_zig.py",
+        ):
+            self.assertIn(f"              - '!{path}'", classifier)
         self.assertIn(
             "            compatibility_inputs:\n"
             "              - 'compatibility/**'\n"
@@ -325,7 +355,7 @@ class CiChangeClassificationTests(unittest.TestCase):
                 },
             ),
             (
-                "native source reaches cli and native agreements",
+                "native source reaches cli",
                 {
                     "NON_DOCUMENTATION": "true",
                     "NATIVE_ANY": "true",
@@ -336,7 +366,6 @@ class CiChangeClassificationTests(unittest.TestCase):
                     "native": "true",
                     "cli": "true",
                     "quality": "true",
-                    "python": "true",
                     "release_smoke": "true",
                     "native_matrix": "true",
                     "unsupported": "true",
@@ -376,6 +405,7 @@ class CiChangeClassificationTests(unittest.TestCase):
                 {
                     "NON_DOCUMENTATION": "true",
                     "RUST_GLOBAL": "true",
+                    "NATIVE_MANIFEST_TEST_INPUTS": "true",
                     "DEPENDENCY_INPUTS": "true",
                 },
                 {
@@ -385,7 +415,8 @@ class CiChangeClassificationTests(unittest.TestCase):
                     "native": "true",
                     "cli": "true",
                     "quality": "true",
-                    "python": "true",
+                    "full_workspace": "true",
+                    "native_manifest_tests": "true",
                     "release_smoke": "true",
                     "dependency_audit": "true",
                     "native_matrix": "true",
@@ -406,7 +437,72 @@ class CiChangeClassificationTests(unittest.TestCase):
                     "NON_DOCUMENTATION": "true",
                     "RUST_FORMAT": "true",
                 },
-                {**false, "format": "true", "quality": "true"},
+                {
+                    **false,
+                    "format": "true",
+                    "quality": "true",
+                    "test_support": "true",
+                },
+            ),
+            (
+                "benchmark Python owns benchmark inputs",
+                {
+                    "NON_DOCUMENTATION": "true",
+                    "BENCHMARK_TEST_INPUTS": "true",
+                },
+                {**false, "benchmark_tests": "true", "quality": "true"},
+            ),
+            (
+                "compatibility Python and pinned agreement share inputs",
+                {
+                    "NON_DOCUMENTATION": "true",
+                    "COMPATIBILITY_TEST_INPUTS": "true",
+                    "COMPATIBILITY_INPUTS": "true",
+                },
+                {
+                    **false,
+                    "compatibility_tests": "true",
+                    "compatibility": "true",
+                    "quality": "true",
+                },
+            ),
+            (
+                "native manifest owns the release panic probe",
+                {
+                    "NON_DOCUMENTATION": "true",
+                    "NATIVE_ANY": "true",
+                    "NATIVE_MANIFEST_TEST_INPUTS": "true",
+                },
+                {
+                    **false,
+                    "native": "true",
+                    "native_manifest_tests": "true",
+                    "quality": "true",
+                    "native_matrix": "true",
+                    "unsupported": "true",
+                },
+            ),
+            (
+                "Zig provisioner owns its focused test",
+                {
+                    "NON_DOCUMENTATION": "true",
+                    "PROVISION_ZIG_TEST_INPUTS": "true",
+                },
+                {**false, "provision_zig_tests": "true", "quality": "true"},
+            ),
+            (
+                "vision docs install native manifest prerequisites",
+                {
+                    "DOCUMENTATION": "true",
+                    "DOCUMENTATION_POLICY": "true",
+                    "VISION_DOCS": "true",
+                    "NATIVE_MANIFEST_TEST_INPUTS": "true",
+                },
+                {
+                    **false,
+                    "documentation": "true",
+                    "vision_docs": "true",
+                },
             ),
             (
                 "mixed docs and cli test",
@@ -433,27 +529,8 @@ class CiChangeClassificationTests(unittest.TestCase):
                 {**false, **all_concerns, **dict.fromkeys(FOCUSED_FILTERS, "true")},
             ),
             (
-                "unknown path",
-                {"NON_DOCUMENTATION": "true", "UNCLASSIFIED": "true"},
-                {**false, **all_concerns, **dict.fromkeys(FOCUSED_FILTERS, "true")},
-            ),
-            (
-                "known and unknown paths still fail closed",
-                {
-                    "NON_DOCUMENTATION": "true",
-                    "CLI_ANY": "true",
-                    "UNCLASSIFIED": "true",
-                },
-                {**false, **all_concerns, **dict.fromkeys(FOCUSED_FILTERS, "true")},
-            ),
-            (
-                "new crate fails closed",
-                {"NON_DOCUMENTATION": "true", "UNCLASSIFIED": "true"},
-                {**false, **all_concerns, **dict.fromkeys(FOCUSED_FILTERS, "true")},
-            ),
-            (
-                "non-python script or test fixture fails closed",
-                {"NON_DOCUMENTATION": "true", "UNCLASSIFIED": "true"},
+                "new crate uses actual workspace fallback",
+                {"NON_DOCUMENTATION": "true", "WORKSPACE_FALLBACK": "true"},
                 {**false, **all_concerns, **dict.fromkeys(FOCUSED_FILTERS, "true")},
             ),
         )
@@ -462,6 +539,34 @@ class CiChangeClassificationTests(unittest.TestCase):
                 self.assertEqual(
                     run_route(self.ci, CI_ROUTE_INPUTS, inputs), expected
                 )
+
+        for name, inputs in (
+            ("unknown path", {"NON_DOCUMENTATION": "true", "UNCLASSIFIED": "true"}),
+            (
+                "known and unknown paths",
+                {
+                    "NON_DOCUMENTATION": "true",
+                    "CLI_ANY": "true",
+                    "UNCLASSIFIED": "true",
+                },
+            ),
+            (
+                "unknown Python or non-Python script/test fixture",
+                {"NON_DOCUMENTATION": "true", "UNCLASSIFIED": "true"},
+            ),
+            (
+                "terminal Unicode generator without a checked input",
+                {"NON_DOCUMENTATION": "true", "UNCLASSIFIED": "true"},
+            ),
+        ):
+            with self.subTest(name=name):
+                environment = {key: "false" for key in CI_ROUTE_INPUTS}
+                environment.update(inputs)
+                result = run_step_script(
+                    self.ci, "Select the applicable gate", environment
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("unclassified", result.stderr)
 
         malformed = run_route(
             self.ci,
@@ -497,7 +602,8 @@ class CiChangeClassificationTests(unittest.TestCase):
         assert rust_install is not None
         self.assertIn("core_api_docs", rust_install.group("body"))
         self.assertIn("testkit_docs", rust_install.group("body"))
-        self.assertNotIn("vision_docs", rust_install.group("body"))
+        self.assertIn("vision_docs", rust_install.group("body"))
+        self.assertIn('cargo +"${RUST_TOOLCHAIN}" fetch --locked', documentation)
 
         conditions = {
             "quality": "quality",
@@ -521,6 +627,16 @@ class CiChangeClassificationTests(unittest.TestCase):
             self.assertIn(output.upper(), gate)
 
         quality = job(self.ci, "quality")
+        documentation_tests = re.search(
+            r"(?ms)- name: Documentation tests\n(?P<body>.*?)(?=      - name:)",
+            quality,
+        )
+        self.assertIsNotNone(documentation_tests)
+        assert documentation_tests is not None
+        self.assertNotIn("machine-god-cli", documentation_tests.group("body"))
+        self.assertIn("--workspace", documentation_tests.group("body"))
+        self.assertIn("native_manifest_tests == 'true'", quality)
+        self.assertIn('cargo +"${RUST_TOOLCHAIN}" fetch --locked', quality)
         helper_manifest = "test-support/reentrant-waker/Cargo.toml"
         self.assertEqual(quality.count(f"--manifest-path {helper_manifest}"), 3)
         self.assertIn("fmt --manifest-path", quality)

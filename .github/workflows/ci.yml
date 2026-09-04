@@ -29,7 +29,12 @@ jobs:
       cli: ${{ steps.route.outputs.cli }}
       format: ${{ steps.route.outputs.format }}
       quality: ${{ steps.route.outputs.quality }}
-      python: ${{ steps.route.outputs.python }}
+      full_workspace: ${{ steps.route.outputs.full_workspace }}
+      benchmark_tests: ${{ steps.route.outputs.benchmark_tests }}
+      compatibility_tests: ${{ steps.route.outputs.compatibility_tests }}
+      ci_classifier_tests: ${{ steps.route.outputs.ci_classifier_tests }}
+      native_manifest_tests: ${{ steps.route.outputs.native_manifest_tests }}
+      provision_zig_tests: ${{ steps.route.outputs.provision_zig_tests }}
       compatibility: ${{ steps.route.outputs.compatibility }}
       release_smoke: ${{ steps.route.outputs.release_smoke }}
       dependency_audit: ${{ steps.route.outputs.dependency_audit }}
@@ -104,13 +109,13 @@ jobs:
               - '!docs/**/*.md'
               - '!.github/workflows/**'
               - '!.gitignore'
-              - '!**/*.py'
               - '!Cargo.lock'
               - '!Cargo.toml'
               - '!LICENSE'
               - '!NOTICE'
               - '!benchmarks/**'
               - '!compatibility/**'
+              - '!crates/**'
               - '!crates/machine-god-cli/**'
               - '!crates/machine-god-core/**'
               - '!crates/machine-god-native/**'
@@ -119,6 +124,21 @@ jobs:
               - '!rust-toolchain.toml'
               - '!rustfmt.toml'
               - '!test-support/**'
+              - '!benchmarks/test_benchmarks.py'
+              - '!compatibility/test_generate_compatibility.py'
+              - '!scripts/check_documentation.py'
+              - '!scripts/generate_compatibility.py'
+              - '!scripts/provision_zig.py'
+              - '!tests/test_ci_change_classification.py'
+              - '!tests/test_documentation_policy.py'
+              - '!tests/test_native_manifest.py'
+              - '!tests/test_provision_zig.py'
+            workspace_fallback:
+              - 'crates/**'
+              - '!crates/machine-god-cli/**'
+              - '!crates/machine-god-core/**'
+              - '!crates/machine-god-native/**'
+              - '!crates/machine-god-testkit/**'
             ci_infrastructure:
               - '.github/workflows/**'
               - 'tests/test_ci_change_classification.py'
@@ -158,10 +178,32 @@ jobs:
               - '!crates/machine-god-cli/tests/**'
             test_support:
               - 'test-support/**'
-            python_inputs:
-              - '**/*.py'
+            benchmark_test_inputs:
               - 'benchmarks/**'
+            compatibility_test_inputs:
               - 'compatibility/**'
+              - 'benchmarks/upstream.lock'
+              - 'scripts/generate_compatibility.py'
+            ci_classifier_test_inputs:
+              - '.github/workflows/**'
+              - 'tests/test_ci_change_classification.py'
+            native_manifest_test_inputs:
+              - '.github/workflows/ci.yml'
+              - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'crates/machine-god-cli/Cargo.toml'
+              - 'crates/machine-god-native/Cargo.toml'
+              - 'crates/machine-god-native/examples/ask_user_question_release_panic_probe.rs'
+              - 'crates/machine-god-native/src/ai_gateway_model_catalog_http.rs'
+              - 'crates/machine-god-native/src/lib.rs'
+              - 'crates/machine-god-native/src/vision_portable.rs'
+              - 'crates/machine-god-native/src/web_search.rs'
+              - 'docs/vision.md'
+              - 'rust-toolchain.toml'
+              - 'tests/test_native_manifest.py'
+            provision_zig_test_inputs:
+              - 'scripts/provision_zig.py'
+              - 'tests/test_provision_zig.py'
             compatibility_inputs:
               - 'compatibility/**'
               - 'benchmarks/upstream.lock'
@@ -191,6 +233,7 @@ jobs:
           DOCUMENTATION: ${{ steps.paths.outputs.documentation }}
           NON_DOCUMENTATION: ${{ steps.paths.outputs.non_documentation }}
           UNCLASSIFIED: ${{ steps.paths.outputs.unclassified }}
+          WORKSPACE_FALLBACK: ${{ steps.paths.outputs.workspace_fallback }}
           CI_INFRASTRUCTURE: ${{ steps.paths.outputs.ci_infrastructure }}
           RUST_GLOBAL: ${{ steps.paths.outputs.rust_global }}
           RUST_FORMAT: ${{ steps.paths.outputs.rust_format }}
@@ -203,7 +246,11 @@ jobs:
           CLI_ANY: ${{ steps.paths.outputs.cli_any }}
           CLI_SOURCE: ${{ steps.paths.outputs.cli_source }}
           TEST_SUPPORT: ${{ steps.paths.outputs.test_support }}
-          PYTHON_INPUTS: ${{ steps.paths.outputs.python_inputs }}
+          BENCHMARK_TEST_INPUTS: ${{ steps.paths.outputs.benchmark_test_inputs }}
+          COMPATIBILITY_TEST_INPUTS: ${{ steps.paths.outputs.compatibility_test_inputs }}
+          CI_CLASSIFIER_TEST_INPUTS: ${{ steps.paths.outputs.ci_classifier_test_inputs }}
+          NATIVE_MANIFEST_TEST_INPUTS: ${{ steps.paths.outputs.native_manifest_test_inputs }}
+          PROVISION_ZIG_TEST_INPUTS: ${{ steps.paths.outputs.provision_zig_test_inputs }}
           COMPATIBILITY_INPUTS: ${{ steps.paths.outputs.compatibility_inputs }}
           DEPENDENCY_INPUTS: ${{ steps.paths.outputs.dependency_inputs }}
           DOCUMENTATION_POLICY: ${{ steps.paths.outputs.documentation_policy }}
@@ -222,7 +269,12 @@ jobs:
           cli=true
           format=true
           quality=true
-          python=true
+          full_workspace=true
+          benchmark_tests=true
+          compatibility_tests=true
+          ci_classifier_tests=true
+          native_manifest_tests=true
+          provision_zig_tests=true
           compatibility=true
           release_smoke=true
           dependency_audit=true
@@ -239,6 +291,7 @@ jobs:
             "${DOCUMENTATION}" \
             "${NON_DOCUMENTATION}" \
             "${UNCLASSIFIED}" \
+            "${WORKSPACE_FALLBACK}" \
             "${CI_INFRASTRUCTURE}" \
             "${RUST_GLOBAL}" \
             "${RUST_FORMAT}" \
@@ -251,7 +304,11 @@ jobs:
             "${CLI_ANY}" \
             "${CLI_SOURCE}" \
             "${TEST_SUPPORT}" \
-            "${PYTHON_INPUTS}" \
+            "${BENCHMARK_TEST_INPUTS}" \
+            "${COMPATIBILITY_TEST_INPUTS}" \
+            "${CI_CLASSIFIER_TEST_INPUTS}" \
+            "${NATIVE_MANIFEST_TEST_INPUTS}" \
+            "${PROVISION_ZIG_TEST_INPUTS}" \
             "${COMPATIBILITY_INPUTS}" \
             "${DEPENDENCY_INPUTS}" \
             "${DOCUMENTATION_POLICY}" \
@@ -265,21 +322,41 @@ jobs:
             fi
           done
 
+          if [[ "${valid}" == "true" && "${UNCLASSIFIED}" == "true" ]]; then
+            echo "unclassified non-documentation path" >&2
+            exit 1
+          fi
+
           if [[ "${valid}" == "true" ]]; then
             documentation="${DOCUMENTATION_POLICY}"
             core=false
             testkit=false
             native=false
             cli=false
-            format="${RUST_FORMAT}"
-            python=false
+            format=false
+            full_workspace=false
+            benchmark_tests=false
+            compatibility_tests=false
+            ci_classifier_tests=false
+            native_manifest_tests=false
+            provision_zig_tests=false
             compatibility=false
             release_smoke=false
             dependency_audit=false
-            test_support="${TEST_SUPPORT}"
+            test_support=false
+
+            if [[ "${NON_DOCUMENTATION}" == "true" ]]; then
+              format="${RUST_FORMAT}"
+              benchmark_tests="${BENCHMARK_TEST_INPUTS}"
+              compatibility_tests="${COMPATIBILITY_TEST_INPUTS}"
+              ci_classifier_tests="${CI_CLASSIFIER_TEST_INPUTS}"
+              native_manifest_tests="${NATIVE_MANIFEST_TEST_INPUTS}"
+              provision_zig_tests="${PROVISION_ZIG_TEST_INPUTS}"
+              test_support="${TEST_SUPPORT}"
+            fi
 
             fallback=false
-            if [[ "${CI_INFRASTRUCTURE}" == "true" || "${UNCLASSIFIED}" == "true" ]]; then
+            if [[ "${CI_INFRASTRUCTURE}" == "true" || "${WORKSPACE_FALLBACK}" == "true" ]]; then
               fallback=true
             fi
 
@@ -290,7 +367,12 @@ jobs:
               native=true
               cli=true
               format=true
-              python=true
+              full_workspace=true
+              benchmark_tests=true
+              compatibility_tests=true
+              ci_classifier_tests=true
+              native_manifest_tests=true
+              provision_zig_tests=true
               compatibility=true
               release_smoke=true
               dependency_audit=true
@@ -303,6 +385,9 @@ jobs:
               if [[ "${RUST_GLOBAL}" == "true" || "${CORE_ANY}" == "true" || "${TEST_SUPPORT}" == "true" ]]; then
                 core=true
               fi
+              if [[ "${RUST_GLOBAL}" == "true" ]]; then
+                full_workspace=true
+              fi
               if [[ "${RUST_GLOBAL}" == "true" || "${TESTKIT_ANY}" == "true" || "${CORE_SOURCE}" == "true" ]]; then
                 testkit=true
               fi
@@ -312,9 +397,6 @@ jobs:
               if [[ "${RUST_GLOBAL}" == "true" || "${CLI_ANY}" == "true" || "${CORE_SOURCE}" == "true" || "${NATIVE_SOURCE}" == "true" ]]; then
                 cli=true
               fi
-              if [[ "${PYTHON_INPUTS}" == "true" || "${RUST_GLOBAL}" == "true" || "${NATIVE_SOURCE}" == "true" || "${CLI_SOURCE}" == "true" || "${VISION_DOCS}" == "true" ]]; then
-                python=true
-              fi
               if [[ "${COMPATIBILITY_INPUTS}" == "true" ]]; then
                 compatibility=true
               fi
@@ -322,6 +404,9 @@ jobs:
                 release_smoke=true
               fi
               dependency_audit="${DEPENDENCY_INPUTS}"
+              if [[ "${RUST_FORMAT}" == "true" ]]; then
+                test_support=true
+              fi
               core_api_docs="${CORE_API_DOCS}"
               testkit_docs="${TESTKIT_DOCS}"
               compatibility_docs="${COMPATIBILITY_DOCS}"
@@ -332,7 +417,7 @@ jobs:
           quality=false
           native_matrix=false
           unsupported=false
-          if [[ "${core}" == "true" || "${testkit}" == "true" || "${native}" == "true" || "${cli}" == "true" || "${format}" == "true" || "${python}" == "true" || "${compatibility}" == "true" || "${release_smoke}" == "true" ]]; then
+          if [[ "${core}" == "true" || "${testkit}" == "true" || "${native}" == "true" || "${cli}" == "true" || "${format}" == "true" || "${full_workspace}" == "true" || "${benchmark_tests}" == "true" || "${compatibility_tests}" == "true" || "${ci_classifier_tests}" == "true" || "${native_manifest_tests}" == "true" || "${provision_zig_tests}" == "true" || "${compatibility}" == "true" || "${release_smoke}" == "true" ]]; then
             quality=true
           fi
           if [[ "${core}" == "true" || "${testkit}" == "true" || "${native}" == "true" || "${cli}" == "true" ]]; then
@@ -350,7 +435,12 @@ jobs:
           echo "cli=${cli}" >> "${GITHUB_OUTPUT}"
           echo "format=${format}" >> "${GITHUB_OUTPUT}"
           echo "quality=${quality}" >> "${GITHUB_OUTPUT}"
-          echo "python=${python}" >> "${GITHUB_OUTPUT}"
+          echo "full_workspace=${full_workspace}" >> "${GITHUB_OUTPUT}"
+          echo "benchmark_tests=${benchmark_tests}" >> "${GITHUB_OUTPUT}"
+          echo "compatibility_tests=${compatibility_tests}" >> "${GITHUB_OUTPUT}"
+          echo "ci_classifier_tests=${ci_classifier_tests}" >> "${GITHUB_OUTPUT}"
+          echo "native_manifest_tests=${native_manifest_tests}" >> "${GITHUB_OUTPUT}"
+          echo "provision_zig_tests=${provision_zig_tests}" >> "${GITHUB_OUTPUT}"
           echo "compatibility=${compatibility}" >> "${GITHUB_OUTPUT}"
           echo "release_smoke=${release_smoke}" >> "${GITHUB_OUTPUT}"
           echo "dependency_audit=${dependency_audit}" >> "${GITHUB_OUTPUT}"
@@ -377,7 +467,7 @@ jobs:
       - name: Test documentation policy
         run: python3 -m unittest --verbose tests/test_documentation_policy.py
       - name: Install exact Rust toolchain for focused contract checks
-        if: ${{ needs.change-classification.outputs.core_api_docs == 'true' || needs.change-classification.outputs.testkit_docs == 'true' }}
+        if: ${{ needs.change-classification.outputs.core_api_docs == 'true' || needs.change-classification.outputs.testkit_docs == 'true' || needs.change-classification.outputs.vision_docs == 'true' }}
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
       - name: Test core API documentation
         if: ${{ needs.change-classification.outputs.core_api_docs == 'true' }}
@@ -390,9 +480,9 @@ jobs:
         run: python3 scripts/generate_compatibility.py --check-rendered-docs
       - name: Check vision documentation agreement
         if: ${{ needs.change-classification.outputs.vision_docs == 'true' }}
-        run: >-
-          python3 -m unittest --verbose
-          tests.test_native_manifest.NativeManifestTests.test_vision_portable_contract_and_native_edges_are_feature_scoped
+        run: |
+          cargo +"${RUST_TOOLCHAIN}" fetch --locked
+          python3 -m unittest --verbose tests.test_native_manifest.NativeManifestTests.test_vision_portable_contract_and_native_edges_are_feature_scoped
 
   quality:
     name: Quality and tests
@@ -404,7 +494,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install exact Rust toolchain
-        if: ${{ needs.change-classification.outputs.core == 'true' || needs.change-classification.outputs.testkit == 'true' || needs.change-classification.outputs.native == 'true' || needs.change-classification.outputs.cli == 'true' || needs.change-classification.outputs.format == 'true' || needs.change-classification.outputs.release_smoke == 'true' }}
+        if: ${{ needs.change-classification.outputs.core == 'true' || needs.change-classification.outputs.testkit == 'true' || needs.change-classification.outputs.native == 'true' || needs.change-classification.outputs.cli == 'true' || needs.change-classification.outputs.format == 'true' || needs.change-classification.outputs.native_manifest_tests == 'true' || needs.change-classification.outputs.release_smoke == 'true' }}
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt
       - name: Formatting configuration
         if: ${{ needs.change-classification.outputs.format == 'true' }}
@@ -412,6 +502,7 @@ jobs:
       - name: Formatting
         if: ${{ needs.change-classification.outputs.format != 'true' && (needs.change-classification.outputs.core == 'true' || needs.change-classification.outputs.testkit == 'true' || needs.change-classification.outputs.native == 'true' || needs.change-classification.outputs.cli == 'true') }}
         env: &affected-packages
+          FULL_WORKSPACE: ${{ needs.change-classification.outputs.full_workspace }}
           CORE: ${{ needs.change-classification.outputs.core }}
           TESTKIT: ${{ needs.change-classification.outputs.testkit }}
           NATIVE: ${{ needs.change-classification.outputs.native }}
@@ -430,10 +521,14 @@ jobs:
         run: |
           set -euo pipefail
           packages=()
-          [[ "${CORE}" == "true" ]] && packages+=(--package machine-god-core)
-          [[ "${TESTKIT}" == "true" ]] && packages+=(--package machine-god-testkit)
-          [[ "${NATIVE}" == "true" ]] && packages+=(--package machine-god-native)
-          [[ "${CLI}" == "true" ]] && packages+=(--package machine-god-cli)
+          if [[ "${FULL_WORKSPACE}" == "true" ]]; then
+            packages+=(--workspace)
+          else
+            [[ "${CORE}" == "true" ]] && packages+=(--package machine-god-core)
+            [[ "${TESTKIT}" == "true" ]] && packages+=(--package machine-god-testkit)
+            [[ "${NATIVE}" == "true" ]] && packages+=(--package machine-god-native)
+            [[ "${CLI}" == "true" ]] && packages+=(--package machine-god-cli)
+          fi
           cargo +"${RUST_TOOLCHAIN}" clippy --locked "${packages[@]}" --all-targets --all-features -- -D warnings
       - name: Tests
         if: ${{ needs.change-classification.outputs.core == 'true' || needs.change-classification.outputs.testkit == 'true' || needs.change-classification.outputs.native == 'true' || needs.change-classification.outputs.cli == 'true' }}
@@ -441,21 +536,28 @@ jobs:
         run: |
           set -euo pipefail
           packages=()
-          [[ "${CORE}" == "true" ]] && packages+=(--package machine-god-core)
-          [[ "${TESTKIT}" == "true" ]] && packages+=(--package machine-god-testkit)
-          [[ "${NATIVE}" == "true" ]] && packages+=(--package machine-god-native)
-          [[ "${CLI}" == "true" ]] && packages+=(--package machine-god-cli)
+          if [[ "${FULL_WORKSPACE}" == "true" ]]; then
+            packages+=(--workspace)
+          else
+            [[ "${CORE}" == "true" ]] && packages+=(--package machine-god-core)
+            [[ "${TESTKIT}" == "true" ]] && packages+=(--package machine-god-testkit)
+            [[ "${NATIVE}" == "true" ]] && packages+=(--package machine-god-native)
+            [[ "${CLI}" == "true" ]] && packages+=(--package machine-god-cli)
+          fi
           cargo +"${RUST_TOOLCHAIN}" test --locked "${packages[@]}"
       - name: Documentation tests
-        if: ${{ needs.change-classification.outputs.core == 'true' || needs.change-classification.outputs.testkit == 'true' || needs.change-classification.outputs.native == 'true' || needs.change-classification.outputs.cli == 'true' }}
+        if: ${{ needs.change-classification.outputs.full_workspace == 'true' || needs.change-classification.outputs.core == 'true' || needs.change-classification.outputs.testkit == 'true' || needs.change-classification.outputs.native == 'true' }}
         env: *affected-packages
         run: |
           set -euo pipefail
           packages=()
-          [[ "${CORE}" == "true" ]] && packages+=(--package machine-god-core)
-          [[ "${TESTKIT}" == "true" ]] && packages+=(--package machine-god-testkit)
-          [[ "${NATIVE}" == "true" ]] && packages+=(--package machine-god-native)
-          [[ "${CLI}" == "true" ]] && packages+=(--package machine-god-cli)
+          if [[ "${FULL_WORKSPACE}" == "true" ]]; then
+            packages+=(--workspace)
+          else
+            [[ "${CORE}" == "true" ]] && packages+=(--package machine-god-core)
+            [[ "${TESTKIT}" == "true" ]] && packages+=(--package machine-god-testkit)
+            [[ "${NATIVE}" == "true" ]] && packages+=(--package machine-god-native)
+          fi
           cargo +"${RUST_TOOLCHAIN}" test --locked --doc "${packages[@]}"
       - name: Format standalone reentrant-waker test support
         if: ${{ needs.change-classification.outputs.test_support == 'true' }}
@@ -466,38 +568,24 @@ jobs:
       - name: Test standalone reentrant-waker test support
         if: ${{ needs.change-classification.outputs.test_support == 'true' }}
         run: cargo +"${RUST_TOOLCHAIN}" test --locked --manifest-path test-support/reentrant-waker/Cargo.toml --all-targets --all-features
-      - name: Python tests
-        if: ${{ needs.change-classification.outputs.python == 'true' }}
-        run: |
-          python3 - <<'PY'
-          import fnmatch
-          import os
-          import subprocess
-          import sys
-
-          excluded_directories = {".bench", ".git", "target"}
-          test_files = []
-          for root, directories, files in os.walk("."):
-              directories[:] = sorted(
-                  directory
-                  for directory in directories
-                  if directory not in excluded_directories
-              )
-              test_files.extend(
-                  os.path.join(root, filename)
-                  for filename in sorted(files)
-                  if fnmatch.fnmatchcase(filename, "test_*.py")
-              )
-
-          if not test_files:
-              raise SystemExit("no Python test_*.py files found")
-
-          print("Python test files:", *test_files, sep="\n- ", flush=True)
-          subprocess.run(
-              [sys.executable, "-m", "unittest", "--verbose", *test_files],
-              check=True,
-          )
-          PY
+      - name: Test benchmark harness
+        if: ${{ needs.change-classification.outputs.benchmark_tests == 'true' }}
+        run: python3 -m unittest --verbose benchmarks/test_benchmarks.py
+      - name: Test compatibility generator
+        if: ${{ needs.change-classification.outputs.compatibility_tests == 'true' }}
+        run: python3 -m unittest --verbose compatibility/test_generate_compatibility.py
+      - name: Test CI change classification
+        if: ${{ needs.change-classification.outputs.ci_classifier_tests == 'true' }}
+        run: python3 -m unittest --verbose tests/test_ci_change_classification.py
+      - name: Fetch locked native-manifest test dependencies
+        if: ${{ needs.change-classification.outputs.native_manifest_tests == 'true' }}
+        run: cargo +"${RUST_TOOLCHAIN}" fetch --locked
+      - name: Test native manifest agreements
+        if: ${{ needs.change-classification.outputs.native_manifest_tests == 'true' }}
+        run: python3 -m unittest --verbose tests/test_native_manifest.py
+      - name: Test Zig provisioner
+        if: ${{ needs.change-classification.outputs.provision_zig_tests == 'true' }}
+        run: python3 -m unittest --verbose tests/test_provision_zig.py
       - name: Check pinned upstream compatibility inventory
         if: ${{ needs.change-classification.outputs.compatibility == 'true' }}
         env:
@@ -1182,6 +1270,7 @@ jobs:
       - name: Test target natively
         if: ${{ !endsWith(matrix.target, '-apple-darwin') }}
         env: &native-affected-packages
+          FULL_WORKSPACE: ${{ needs.change-classification.outputs.full_workspace }}
           CORE: ${{ needs.change-classification.outputs.core }}
           TESTKIT: ${{ needs.change-classification.outputs.testkit }}
           NATIVE: ${{ needs.change-classification.outputs.native }}
@@ -1189,10 +1278,14 @@ jobs:
         run: |
           set -euo pipefail
           packages=()
-          [[ "${CORE}" == "true" ]] && packages+=(--package machine-god-core)
-          [[ "${TESTKIT}" == "true" ]] && packages+=(--package machine-god-testkit)
-          [[ "${NATIVE}" == "true" ]] && packages+=(--package machine-god-native)
-          [[ "${CLI}" == "true" ]] && packages+=(--package machine-god-cli)
+          if [[ "${FULL_WORKSPACE}" == "true" ]]; then
+            packages+=(--workspace)
+          else
+            [[ "${CORE}" == "true" ]] && packages+=(--package machine-god-core)
+            [[ "${TESTKIT}" == "true" ]] && packages+=(--package machine-god-testkit)
+            [[ "${NATIVE}" == "true" ]] && packages+=(--package machine-god-native)
+            [[ "${CLI}" == "true" ]] && packages+=(--package machine-god-cli)
+          fi
           cargo +"${RUST_TOOLCHAIN}" test --locked "${packages[@]}" --all-targets --all-features --target "${{ matrix.target }}"
       - name: Test Apple target natively without shared process-table contention
         if: ${{ endsWith(matrix.target, '-apple-darwin') }}
@@ -1200,10 +1293,14 @@ jobs:
         run: |
           set -euo pipefail
           packages=()
-          [[ "${CORE}" == "true" ]] && packages+=(--package machine-god-core)
-          [[ "${TESTKIT}" == "true" ]] && packages+=(--package machine-god-testkit)
-          [[ "${NATIVE}" == "true" ]] && packages+=(--package machine-god-native)
-          [[ "${CLI}" == "true" ]] && packages+=(--package machine-god-cli)
+          if [[ "${FULL_WORKSPACE}" == "true" ]]; then
+            packages+=(--workspace)
+          else
+            [[ "${CORE}" == "true" ]] && packages+=(--package machine-god-core)
+            [[ "${TESTKIT}" == "true" ]] && packages+=(--package machine-god-testkit)
+            [[ "${NATIVE}" == "true" ]] && packages+=(--package machine-god-native)
+            [[ "${CLI}" == "true" ]] && packages+=(--package machine-god-cli)
+          fi
           cargo +"${RUST_TOOLCHAIN}" test --locked "${packages[@]}" --all-targets --all-features --target "${{ matrix.target }}" -- --test-threads=1
 
   unsupported-native-tools:

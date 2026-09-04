@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33872064372` (`GREEN`)
 - Active branch: `agent/m01-affected-ci`
 - Active phase: `dependency-aware CI routing maintenance without product behavior changes`
-- Next gate: `pass focused workflow tests and adversarial CI review, then exact lightweight remote aggregate gates`
+- Next gate: `pass focused workflow tests and adversarial CI review, then full exact CI and artifact-producing Benchmark gates`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark

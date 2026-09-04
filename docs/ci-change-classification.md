@@ -31,23 +31,32 @@ Rust routing follows source dependency closure. A core source or manifest
 change selects core, testkit, native, and CLI packages. A testkit source or
 manifest change selects testkit and its native test consumer. A native source
 or manifest change selects native and CLI. A CLI change selects CLI. Changes
-confined to a crate's tests, examples, or benchmarks select that crate only. Root Cargo,
-lockfile, or toolchain inputs select every package; formatting configuration
-selects workspace formatting without package tests. The standalone
+confined to a crate's tests, examples, or benchmarks select that crate only.
+Root Cargo, lockfile, or toolchain inputs select the actual workspace;
+formatting configuration selects workspace and standalone-fixture formatting
+without package tests. The standalone
 reentrant-waker fixture is formatted, linted, and tested through its own
 manifest while also selecting its core and native consumers.
 
-Python, compatibility, release-smoke, dependency-audit, native-matrix, and
-unsupported-platform concerns are independent. In particular, dependency
-policy alone does not run product tests, while shipped core/native/CLI source
-selects the release smoke. Compatibility inputs include the policy, inventory,
-generator, fixtures, and pinned upstream lock.
+Python tests are selected by bounded ownership: benchmark, compatibility, CI
+classification, native-manifest agreement, and Zig provisioning each have an
+explicit input set and step. The native-manifest step installs Rust 1.94.1 and
+fetches the locked dependencies before tests that deliberately use offline
+Cargo commands. The terminal Unicode generator is not treated as generic
+Python maintenance; changing it fails classification until a deterministic
+focused verification input is available.
+Compatibility, release-smoke, dependency-audit, native-matrix, and
+unsupported-platform concerns remain independent. Dependency policy alone does
+not run product tests, while shipped core/native/CLI source selects release
+smoke. Compatibility inputs include the policy, inventory, generator,
+fixtures, and pinned upstream lock.
 
-An explicit catch-all filter selects every CI concern for any unclassified
-non-documentation path, including when an otherwise known path changes in the
-same range. Workflow and classifier-test changes also select every concern.
-Malformed classifier output defaults to every concern. Classification failure
-still fails the aggregate gate.
+New crate paths select a complete actual-workspace fallback, so a simultaneous
+root-manifest addition cannot be hidden by the current four package names. Any
+other unclassified non-documentation path fails classification, including when
+an otherwise known path changes in the same range. Workflow and classifier-test
+changes select every concern. Malformed classifier output defaults to every
+concern. Classification failure still fails the aggregate gate.
 
 The compatibility concern separately validates the inventory against the
 pinned upstream checkout. Every input to that agreement—lock, policy,
@@ -86,9 +95,11 @@ candidate.
 The CI workflow always runs change classification, documentation policy, and
 the final `CI gate`. The quality job receives only fixed package names selected
 by the dependency closure; changed paths are never interpolated into commands.
-Formatting, Clippy, package tests, and package documentation tests therefore
-run only for affected packages. Python, compatibility, and release-smoke steps
-have their own selectors. Dependency audit, native target matrices, and
+Formatting, Clippy, package tests, and library documentation tests therefore
+run only for affected packages; binary-only CLI changes do not invoke an
+invalid CLI doctest target. New workspace members and root build-input changes
+use Cargo's real `--workspace` selection. Python modules, compatibility, and
+release-smoke steps have their own selectors. Dependency audit, native target matrices, and
 unsupported-platform compilation remain separate conditional jobs. The four
 focused documents add only their named checks. The final gate independently
 verifies each selector against its job result: selected jobs must succeed and
