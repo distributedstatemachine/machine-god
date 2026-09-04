@@ -455,9 +455,29 @@ pub trait PreparedBackgroundProcess: Send + 'static {
 
 /// A released native process whose ownership is sufficient to observe its
 /// completion without PID-based lookup.
+///
+/// Dropping this object before transferring it to a retainer must synchronously
+/// terminate and reap its complete bounded ownership set. This includes a
+/// failure from [`Self::activate_retention`].
 pub trait OwnedBackgroundProcess: Send + 'static {
     /// Returns a display-only process ID, when the platform exposes one.
     fn pid(&self) -> Option<NonZeroU32>;
+
+    /// Activates process-local state that must become visible with retention.
+    ///
+    /// Core calls this synchronously after the execution barrier has opened,
+    /// but before constructing a public handle or transferring ownership to a
+    /// retainer. The default preserves adapters with no retain-time activation.
+    /// Implementations must perform bounded nonblocking work. A failure is
+    /// normalized to [`BackgroundStartErrorKind::Process`]; cancellation can no
+    /// longer revoke the operation after release.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed failure when retain-time activation cannot complete.
+    fn activate_retention(&mut self) -> Result<(), BackgroundStartError> {
+        Ok(())
+    }
 
     /// Consumes ownership and waits for one terminal observation.
     ///
@@ -698,7 +718,7 @@ async fn start_polled(
     // Opening the execution barrier is the irreversible commit point. Release
     // observes the same operation token while performing bounded pre-open work;
     // cancellation cannot revoke ownership after the barrier opens.
-    let process = match prepared.release(&cancellation) {
+    let mut process = match prepared.release(&cancellation) {
         Ok(process) => process,
         Err(error) => {
             let outcome = if error.kind() == BackgroundStartErrorKind::Cancelled {
@@ -713,6 +733,16 @@ async fn start_polled(
         }
     };
     debug_assert_eq!(process.pid(), pid);
+    if process.activate_retention().is_err() {
+        // The barrier is already open, so this is never a clean cancellation.
+        // Dropping the sole owned handle must synchronously terminate and reap
+        // the complete native ownership set before publishing `dead`.
+        drop(process);
+        if let Ok(completion) = record.completion(started_at_ms, BackgroundProcessOutcome::Dead) {
+            let _ = lease.publish_completion(&record, &completion).await;
+        }
+        return Err(BackgroundStartError::new(BackgroundStartErrorKind::Process));
+    }
     let handle = BackgroundHandle {
         id: record.id(),
         pid,
@@ -935,6 +965,7 @@ mod tests {
         publish: bool,
         completion: bool,
         release: bool,
+        activation: bool,
         abort: bool,
     }
 
@@ -944,6 +975,7 @@ mod tests {
         preparation: Mutex<Option<(u64, Option<BackgroundOutputOwner>)>>,
         aborted: AtomicUsize,
         executed: AtomicUsize,
+        owned_dropped: AtomicUsize,
         retained: AtomicUsize,
         completion_publications: AtomicUsize,
         dead_completion_publications: AtomicUsize,
@@ -1204,9 +1236,11 @@ mod tests {
         prepare_fail: bool,
         release_fail: bool,
         abort_fail: bool,
+        activation_fail: bool,
         cancel_during_prepare: Option<CancellationToken>,
         cancel_during_pid: Option<CancellationToken>,
         cancel_during_release: Option<CancellationToken>,
+        cancel_during_activation: Option<CancellationToken>,
         stay_pending: bool,
         pending_dropped: Arc<AtomicUsize>,
     }
@@ -1251,8 +1285,10 @@ mod tests {
                     released: false,
                     release_fail: self.release_fail,
                     abort_fail: self.abort_fail,
+                    activation_fail: self.activation_fail,
                     cancel_during_pid: self.cancel_during_pid.clone(),
                     cancel_during_release: self.cancel_during_release.clone(),
+                    cancel_during_activation: self.cancel_during_activation.clone(),
                 });
                 Ok(prepared)
             })
@@ -1343,13 +1379,19 @@ mod tests {
     }
 
     #[derive(Debug)]
+    #[allow(
+        clippy::struct_excessive_bools,
+        reason = "test double independently injects released-process boundaries"
+    )]
     struct FakePrepared {
         observations: Arc<Observations>,
         released: bool,
         release_fail: bool,
         abort_fail: bool,
+        activation_fail: bool,
         cancel_during_pid: Option<CancellationToken>,
         cancel_during_release: Option<CancellationToken>,
+        cancel_during_activation: Option<CancellationToken>,
     }
 
     impl Drop for FakePrepared {
@@ -1385,7 +1427,11 @@ mod tests {
             }
             self.observations.executed.fetch_add(1, Ordering::Relaxed);
             self.released = true;
-            Ok(Box::new(FakeOwned))
+            Ok(Box::new(FakeOwned {
+                observations: Arc::clone(&self.observations),
+                activation_fail: self.activation_fail,
+                cancel_during_activation: self.cancel_during_activation.clone(),
+            }))
         }
 
         fn abort(mut self: Box<Self>) -> Result<(), BackgroundStartError> {
@@ -1401,11 +1447,54 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct FakeOwned;
+    struct FakeOwned {
+        observations: Arc<Observations>,
+        activation_fail: bool,
+        cancel_during_activation: Option<CancellationToken>,
+    }
+
+    impl Drop for FakeOwned {
+        fn drop(&mut self) {
+            self.observations.event("drop-owned");
+            self.observations
+                .owned_dropped
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
 
     impl OwnedBackgroundProcess for FakeOwned {
         fn pid(&self) -> Option<NonZeroU32> {
             NonZeroU32::new(42)
+        }
+
+        fn activate_retention(&mut self) -> Result<(), BackgroundStartError> {
+            self.observations.event("activate");
+            if let Some(cancellation) = &self.cancel_during_activation {
+                cancellation.cancel();
+            }
+            if self.activation_fail {
+                // Core must normalize every post-release activation failure to
+                // `Process`, including a hostile or stale adapter category.
+                Err(error(BackgroundStartErrorKind::Cancelled))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn wait(
+            self: Box<Self>,
+            _stop: CancellationToken,
+        ) -> BoxFuture<'static, Result<BackgroundProcessOutcome, BackgroundStartError>> {
+            Box::pin(async { Ok(BackgroundProcessOutcome::Exited(0)) })
+        }
+    }
+
+    #[derive(Debug)]
+    struct DefaultActivationOwned;
+
+    impl OwnedBackgroundProcess for DefaultActivationOwned {
+        fn pid(&self) -> Option<NonZeroU32> {
+            None
         }
 
         fn wait(
@@ -1494,6 +1583,7 @@ mod tests {
                 prepare_fail: failures.prepare,
                 release_fail: failures.release,
                 abort_fail: failures.abort,
+                activation_fail: failures.activation,
                 cancel_during_prepare: (cancel_stage == Some("prepare"))
                     .then_some(cancellation.clone())
                     .flatten(),
@@ -1501,6 +1591,9 @@ mod tests {
                     .then_some(cancellation.clone())
                     .flatten(),
                 cancel_during_release: (cancel_stage == Some("release"))
+                    .then_some(cancellation.clone())
+                    .flatten(),
+                cancel_during_activation: (cancel_stage == Some("activate"))
                     .then_some(cancellation.clone())
                     .flatten(),
                 stay_pending,
@@ -1545,9 +1638,11 @@ mod tests {
                 prepare_fail: false,
                 release_fail: false,
                 abort_fail,
+                activation_fail: false,
                 cancel_during_prepare: None,
                 cancel_during_pid: None,
                 cancel_during_release: None,
+                cancel_during_activation: None,
                 stay_pending: false,
                 pending_dropped: Arc::new(AtomicUsize::new(0)),
             }),
@@ -1702,12 +1797,27 @@ mod tests {
         assert_eq!(
             observations.events(),
             [
-                "admit", "reserve", "clock", "prepare", "publish", "release", "retain"
+                "admit",
+                "reserve",
+                "clock",
+                "prepare",
+                "publish",
+                "release",
+                "activate",
+                "retain",
+                "drop-owned"
             ]
         );
         assert_eq!(observations.executed.load(Ordering::Relaxed), 1);
         assert_eq!(observations.retained.load(Ordering::Relaxed), 1);
         assert_eq!(observations.aborted.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn owned_processes_without_activation_work_remain_compatible() {
+        let mut process = DefaultActivationOwned;
+
+        assert_eq!(process.activate_retention(), Ok(()));
     }
 
     #[test]
@@ -1832,6 +1942,45 @@ mod tests {
     }
 
     #[test]
+    fn activation_failure_cleans_before_dead_publication_and_never_retains() {
+        let failures = Failures {
+            activation: true,
+            ..Failures::default()
+        };
+        let (supervisor, observations, _) = fixture(failures, None, None, false);
+
+        let result = block_on(supervisor.start(request(), CancellationToken::new()));
+
+        assert_eq!(
+            result.unwrap_err().kind(),
+            BackgroundStartErrorKind::Process
+        );
+        assert_eq!(
+            observations.events(),
+            [
+                "admit",
+                "reserve",
+                "clock",
+                "prepare",
+                "publish",
+                "release",
+                "activate",
+                "drop-owned",
+                "complete"
+            ]
+        );
+        assert_eq!(observations.executed.load(Ordering::Relaxed), 1);
+        assert_eq!(observations.owned_dropped.load(Ordering::Relaxed), 1);
+        assert_eq!(observations.retained.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            observations
+                .dead_completion_publications
+                .load(Ordering::Relaxed),
+            1
+        );
+    }
+
+    #[test]
     fn cancellation_before_poll_exercises_no_authority() {
         let cancellation = CancellationToken::new();
         cancellation.cancel();
@@ -1903,8 +2052,10 @@ mod tests {
             released: false,
             release_fail: false,
             abort_fail: true,
+            activation_fail: false,
             cancel_during_pid: None,
             cancel_during_release: None,
+            cancel_during_activation: None,
         });
         let operation = Box::pin(GatedFuture::new(
             Ok::<Box<dyn PreparedBackgroundProcess>, BackgroundStartError>(prepared),
@@ -2354,6 +2505,37 @@ mod tests {
         assert!(cancellation.is_cancelled());
         assert_eq!(handle.id(), 7);
         assert_eq!(observations.retained.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn cancellation_during_activation_cannot_revoke_retained_ownership() {
+        let cancellation = CancellationToken::new();
+        let (supervisor, observations, _) = fixture(
+            Failures::default(),
+            Some(cancellation.clone()),
+            Some("activate"),
+            false,
+        );
+
+        let handle = block_on(supervisor.start(request(), cancellation.clone())).unwrap();
+
+        assert!(cancellation.is_cancelled());
+        assert_eq!(handle.id(), 7);
+        assert_eq!(observations.retained.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            observations.events(),
+            [
+                "admit",
+                "reserve",
+                "clock",
+                "prepare",
+                "publish",
+                "release",
+                "activate",
+                "retain",
+                "drop-owned"
+            ]
+        );
     }
 
     #[test]
