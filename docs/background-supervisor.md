@@ -395,10 +395,13 @@ and failed or dropped preparation removes the hidden entry. The retainer worker
 drains through fixed nonblocking chunks while waiting and continues discarding
 after the 64 KiB retained prefix is full, so pipe pressure cannot turn the
 retention bound into a child deadlock. It marks the entry closed on every owned
-wait return or active-capture drop. Each read is capped at 7 KiB and requires
-the exact session and session-incarnation owner carried by the original start.
-The registry, bytes, and ownership disappear on host exit and are deliberately
-independent of the durable background record.
+wait return or active-capture drop. After the leader exit or requested stop is
+observed, final draining remains bounded; exhausting that drain budget closes
+and truncates the capture pipe without relabeling the already-observed process
+outcome as dead. Actual pipe-read failure still fails the wait. Each read is
+capped at 7 KiB and requires the exact session and session-incarnation owner
+carried by the original start. The registry, bytes, and ownership disappear on
+host exit and are deliberately independent of the durable background record.
 
 All public errors and debug output use closed fixed categories and do not
 reflect commands, paths, environment values, record contents, helper details,
