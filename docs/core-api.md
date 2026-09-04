@@ -210,9 +210,11 @@ Core receives no ambient clock, filesystem, environment, task, thread,
 process, signal, or persistence authority.
 
 [`BackgroundStartRequest`](crate::BackgroundStartRequest) owns one bounded
-command and an absolute canonical persisted cwd of at most 4,096 UTF-8 bytes.
-Its start future is inert until poll. On poll, core admits capacity fail-fast,
-reserves one durable nonzero ID,
+command, an absolute canonical persisted cwd of at most 4,096 UTF-8 bytes, and
+an optional bounded session-incarnation owner for process-local output. Its
+start future is inert until poll. On poll, core admits capacity fail-fast,
+reserves one durable nonzero ID and passes it through the spawner's defaulted
+ID-aware extension point,
 reads the injected clock, prepares a barrier-held process, durably publishes
 the complete running record, asks native release to open the execution barrier,
 and transfers the lease and exact owned process to the retainer. Release may do

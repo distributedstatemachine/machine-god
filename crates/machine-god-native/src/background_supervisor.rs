@@ -1776,12 +1776,34 @@ struct NativeSpawner {
 impl BackgroundProcessSpawner for NativeSpawner {
     fn prepare<'a>(
         &'a self,
+        request: &'a BackgroundStartRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'a, Result<Box<dyn CorePreparedProcess>, BackgroundStartError>> {
+        self.prepare_with_reserved_id(None, request, cancellation)
+    }
+
+    fn prepare_reserved<'a>(
+        &'a self,
         background_id: u64,
+        request: &'a BackgroundStartRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'a, Result<Box<dyn CorePreparedProcess>, BackgroundStartError>> {
+        self.prepare_with_reserved_id(Some(background_id), request, cancellation)
+    }
+}
+
+impl NativeSpawner {
+    fn prepare_with_reserved_id<'a>(
+        &'a self,
+        background_id: Option<u64>,
         request: &'a BackgroundStartRequest,
         cancellation: CancellationToken,
     ) -> BoxFuture<'a, Result<Box<dyn CorePreparedProcess>, BackgroundStartError>> {
         Box::pin(async move {
             check_cancelled(&cancellation)?;
+            if request.output_owner().is_some() && background_id.is_none() {
+                return Err(start_error(BackgroundStartErrorKind::Process));
+            }
             let directory = self.resolve_cwd(request.cwd(), &cancellation)?;
             let process_request = BackgroundProcessRequest::from_directory_with_environment(
                 request.command().to_owned(),
@@ -1801,6 +1823,9 @@ impl BackgroundProcessSpawner for NativeSpawner {
                 PreparedBackgroundProcess::abort_and_reap,
             )?;
             let capture = if let Some(owner) = request.output_owner() {
+                let background_id = background_id
+                    .filter(|background_id| *background_id != 0)
+                    .ok_or_else(|| start_error(BackgroundStartErrorKind::Process))?;
                 self.output
                     .register(background_id, owner.clone())
                     .map_err(|error| start_error(output_registration_error_kind(error.kind())))?;
@@ -2636,7 +2661,6 @@ mod tests {
     impl BackgroundProcessSpawner for PausedSpawner {
         fn prepare<'a>(
             &'a self,
-            _background_id: u64,
             _request: &'a BackgroundStartRequest,
             _cancellation: CancellationToken,
         ) -> BoxFuture<'a, Result<Box<dyn PreparedBackgroundProcess>, BackgroundStartError>>

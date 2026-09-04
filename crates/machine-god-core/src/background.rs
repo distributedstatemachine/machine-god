@@ -481,13 +481,27 @@ pub trait OwnedBackgroundProcess: Send + 'static {
 /// command did not execute. The native adapter may retain descriptor-bound cwd
 /// and environment authority inside that future and the prepared process.
 pub trait BackgroundProcessSpawner: Send + Sync + 'static {
-    /// Prepares one barrier-held process for an already reserved nonzero ID.
+    /// Prepares one barrier-held process.
     fn prepare<'a>(
+        &'a self,
+        request: &'a BackgroundStartRequest,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'a, Result<Box<dyn PreparedBackgroundProcess>, BackgroundStartError>>;
+
+    /// Prepares one barrier-held process for an already reserved nonzero ID.
+    ///
+    /// The default preserves implementations of the original preparation
+    /// contract. Adapters that bind process-local resources to the durable ID
+    /// may override this extension point.
+    fn prepare_reserved<'a>(
         &'a self,
         background_id: u64,
         request: &'a BackgroundStartRequest,
         cancellation: CancellationToken,
-    ) -> BoxFuture<'a, Result<Box<dyn PreparedBackgroundProcess>, BackgroundStartError>>;
+    ) -> BoxFuture<'a, Result<Box<dyn PreparedBackgroundProcess>, BackgroundStartError>> {
+        let _ = background_id;
+        self.prepare(request, cancellation)
+    }
 }
 
 /// One fail-fast native retention reservation.
@@ -629,7 +643,7 @@ async fn start_polled(
     check_cancellation(&cancellation)?;
 
     let prepared = await_prepared_or_cancel(
-        spawner.prepare(id, &request, cancellation.clone()),
+        spawner.prepare_reserved(id, &request, cancellation.clone()),
         &cancellation,
     )
     .await?;
@@ -1199,6 +1213,15 @@ mod tests {
 
     impl BackgroundProcessSpawner for FakeSpawner {
         fn prepare<'a>(
+            &'a self,
+            request: &'a BackgroundStartRequest,
+            cancellation: CancellationToken,
+        ) -> BoxFuture<'a, Result<Box<dyn PreparedBackgroundProcess>, BackgroundStartError>>
+        {
+            self.prepare_reserved(0, request, cancellation)
+        }
+
+        fn prepare_reserved<'a>(
             &'a self,
             background_id: u64,
             request: &'a BackgroundStartRequest,
