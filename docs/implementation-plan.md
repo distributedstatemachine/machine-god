@@ -22,12 +22,12 @@ input; it is not a machine-god product language or runtime dependency.
 
 <!-- canonical-live-status:start -->
 - Delivered slices: `56`
-- Delivered main: `a8f5af3987ec4a4c79af79d0428830d93d48f9df`
-- Main CI: `33872064499` (`GREEN`)
-- Main Benchmark evidence: `33872064372` (`GREEN`)
-- Active branch: `agent/m01-affected-ci`
-- Active phase: `dependency-aware CI routing maintenance without product behavior changes`
-- Next gate: `pass focused workflow tests and adversarial CI review, then full exact CI and artifact-producing Benchmark gates`
+- Delivered main: `a262b469454570c282f8916fb175365b3cabd06d`
+- Main CI: `33881680992` (`GREEN`)
+- Main Benchmark evidence: `33881680813` (`GREEN`)
+- Active branch: `agent/m57-terminal-read`
+- Active phase: `bounded process-local terminal background-output read`
+- Next gate: `rebase onto delivered main, pass the complete exact local gate, then close three fresh product-review tracks`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -42,16 +42,20 @@ reported zero findings after two rejected candidates closed a description/schema
 mismatch and the zero-ID persisted-record gap. Detailed history is retained
 only in the linked review ledger.
 
-The active non-product iteration replaces binary full-versus-documentation CI
-routing with fail-closed dependency-aware concern selection while preserving
-the stable aggregate gates and exact-SHA Benchmark evidence policy. It does not
-increment the delivered-slice count or require a product-review cycle.
+The delivered non-product CI maintenance replaces binary
+full-versus-documentation routing with fail-closed dependency-aware concern
+selection while preserving stable aggregate gates and exact-SHA Benchmark
+evidence for behavior and evidence-affecting changes. It does not increment the
+delivered-slice count. Documentation-only descendants now exercise only the
+bounded documentation checks and aggregate gates, without Rust, platform,
+audit, compatibility, or benchmark-artifact jobs.
 
-After that maintenance, the next product slice returns to unfinished tool or CLI behavior. Managed
-background output and read, persistent interactive handles, write/control
-actions, interactive terminal behavior, restart-safe control, ACP, teams, and
-extension slash commands remain separate until explicitly bounded.
-Documentation-tool maintenance remains a separate non-product task.
+The active product slice has returned to unfinished tool behavior: bounded
+process-local background-output reads for `terminal`. Persistent interactive
+handles, write/control actions, interactive terminal behavior, restart-safe
+control, ACP, teams, and extension slash commands remain separate until
+explicitly bounded. Documentation-tool maintenance remains a separate
+non-product task.
 
 ## Architecture ownership
 
