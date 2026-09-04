@@ -2078,7 +2078,6 @@ fn finish_observed_with_output(
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct BackgroundOutputDrain {
     progressed: bool,
-    exhausted: bool,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -2095,10 +2094,7 @@ fn drain_background_output<R: std::io::Read>(
     sink: &mut impl FnMut(&[u8]),
 ) -> Result<BackgroundOutputDrain, BackgroundProcessError> {
     let Some(reader) = output.as_mut() else {
-        return Ok(BackgroundOutputDrain {
-            progressed: false,
-            exhausted: false,
-        });
+        return Ok(BackgroundOutputDrain { progressed: false });
     };
     let mut buffer = [0_u8; BACKGROUND_OUTPUT_READ_BYTES];
     let mut progressed = false;
@@ -2106,10 +2102,7 @@ fn drain_background_output<R: std::io::Read>(
         match std::io::Read::read(reader, &mut buffer) {
             Ok(0) => {
                 drop(output.take());
-                return Ok(BackgroundOutputDrain {
-                    progressed,
-                    exhausted: false,
-                });
+                return Ok(BackgroundOutputDrain { progressed });
             }
             Ok(length) => {
                 progressed = true;
@@ -2117,18 +2110,12 @@ fn drain_background_output<R: std::io::Read>(
             }
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                return Ok(BackgroundOutputDrain {
-                    progressed,
-                    exhausted: false,
-                });
+                return Ok(BackgroundOutputDrain { progressed });
             }
             Err(_) => return Err(wait_error()),
         }
     }
-    Ok(BackgroundOutputDrain {
-        progressed,
-        exhausted: true,
-    })
+    Ok(BackgroundOutputDrain { progressed })
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -2144,13 +2131,14 @@ fn finish_background_output_bounded<R: std::io::Read>(
     output: &mut Option<R>,
     sink: &mut impl FnMut(&[u8]),
 ) -> Result<bool, BackgroundProcessError> {
-    let drained = drain_background_output(output, BACKGROUND_OUTPUT_FINAL_READS, sink)?;
+    drain_background_output(output, BACKGROUND_OUTPUT_FINAL_READS, sink)?;
     // The leader outcome and owned-process cleanup are already final here.
     // A writer outside the bounded cleanup set may keep this pipe readable or
-    // open indefinitely, so reaching the drain budget is truncation rather
-    // than evidence that the observed process outcome failed.
+    // open indefinitely, so any close before EOF is truncation rather than
+    // evidence that the observed process outcome failed.
+    let capture_incomplete = output.is_some();
     drop(output.take());
-    Ok(drained.exhausted)
+    Ok(capture_incomplete)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -3711,6 +3699,16 @@ mod process_regression_tests {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
+    struct WouldBlockReader;
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    impl io::Read for WouldBlockReader {
+        fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::from(io::ErrorKind::WouldBlock))
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn interrupted_output_budget_without_bytes_is_idle() {
         let mut output = Some(AlwaysInterruptedReader { reads: 0 });
@@ -3722,13 +3720,7 @@ mod process_regression_tests {
         )
         .expect("interrupted reads remain retryable");
 
-        assert_eq!(
-            drained,
-            BackgroundOutputDrain {
-                progressed: false,
-                exhausted: true,
-            }
-        );
+        assert_eq!(drained, BackgroundOutputDrain { progressed: false });
         assert!(
             !drained.progressed(),
             "idle waits must retain their backoff"
@@ -3754,6 +3746,23 @@ mod process_regression_tests {
             captured,
             BACKGROUND_OUTPUT_FINAL_READS * BACKGROUND_OUTPUT_READ_BYTES
         );
+        assert!(
+            output.is_none(),
+            "the final drain closes its read authority"
+        );
+        assert!(truncated);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn final_output_drain_would_block_closes_the_pipe_as_incomplete() {
+        let mut output = Some(WouldBlockReader);
+
+        let truncated = finish_background_output_bounded(&mut output, &mut |_| {
+            panic!("a would-blocking reader must not deliver output");
+        })
+        .expect("a pre-EOF would-block closes as incomplete after process completion");
+
         assert!(
             output.is_none(),
             "the final drain closes its read authority"

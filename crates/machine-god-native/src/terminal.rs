@@ -21,7 +21,7 @@ use crate::background_inspection::{
     MAX_BACKGROUND_RECORDS, NativeBackgroundDetail, NativeBackgroundInspectionError,
     NativeBackgroundInspectionErrorKind, NativeBackgroundList, NativeBackgroundState,
 };
-use crate::background_output::incomplete_utf8_suffix_len;
+use crate::utf8_boundary::incomplete_utf8_suffix_len;
 use machine_god_core::{
     BackgroundOutputOwner, BackgroundStartError, BackgroundStartErrorKind, BackgroundStartRequest,
     BoxFuture, CancellationToken, Capability, PreparedToolCall, ProcessEnvironment, Tool, ToolCall,

@@ -32,6 +32,7 @@ mod ai_gateway_web_search;
 mod ask_permission;
 mod ask_user_question;
 mod background_inspection;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) mod background_output;
 mod background_process;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -84,6 +85,7 @@ mod terminal_unicode_data;
 mod tokio_web_search_deadline;
 mod tool_output_serializer;
 mod tool_result_projection;
+mod utf8_boundary;
 #[cfg(all(feature = "vision", not(target_family = "wasm")))]
 mod vision;
 mod vision_portable;
