@@ -25,10 +25,12 @@ use machine_god_native::{
     TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TERMINAL_MAX_ACTIVE_LISTS, TerminalBackgroundCatalog,
     TerminalBackgroundInspector, TerminalBackgroundOutcome, TerminalBackgroundOutputReader,
     TerminalBackgroundReadError, TerminalBackgroundReadErrorKind, TerminalBackgroundReadSnapshot,
-    TerminalBackgroundStarter, TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError,
-    TerminalCapturedOutput, TerminalConfigErrorKind, TerminalExecution, TerminalExecutionOutcome,
-    TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError,
-    TerminalExecutorErrorKind, TerminalLimits, TerminalTool,
+    TerminalBackgroundSignal, TerminalBackgroundSignalError, TerminalBackgroundSignalErrorKind,
+    TerminalBackgroundSignalOutcome, TerminalBackgroundSignaler, TerminalBackgroundStarter,
+    TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError, TerminalCapturedOutput,
+    TerminalConfigErrorKind, TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest,
+    TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError, TerminalExecutorErrorKind,
+    TerminalLimits, TerminalTool,
 };
 use machine_god_reentrant_waker_test::{Callback, new as reentrant_waker};
 use serde_json::{Value, json};
@@ -373,6 +375,64 @@ impl TerminalBackgroundOutputReader for ReadyCancellingBackgroundOutputReader {
         Box::pin(async move {
             cancellation.cancel();
             Ok(snapshot)
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum BackgroundSignalMode {
+    Success { cancel_before_return: bool },
+    Error(TerminalBackgroundSignalErrorKind),
+    Pending,
+}
+
+type BackgroundSignalRequest = (String, String, u64, TerminalBackgroundSignal);
+
+#[derive(Clone)]
+struct FakeBackgroundSignaler {
+    mode: BackgroundSignalMode,
+    requests: Arc<Mutex<Vec<BackgroundSignalRequest>>>,
+}
+
+impl FakeBackgroundSignaler {
+    fn new(mode: BackgroundSignalMode) -> Self {
+        Self {
+            mode,
+            requests: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
+impl TerminalBackgroundSignaler for FakeBackgroundSignaler {
+    fn signal(
+        &self,
+        owner: BackgroundOutputOwner,
+        background_id: u64,
+        signal: TerminalBackgroundSignal,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundSignalOutcome, TerminalBackgroundSignalError>>
+    {
+        let mode = self.mode;
+        let requests = Arc::clone(&self.requests);
+        Box::pin(async move {
+            requests.lock().unwrap().push((
+                owner.session_id().to_string(),
+                owner.session_incarnation_id().to_string(),
+                background_id,
+                signal,
+            ));
+            match mode {
+                BackgroundSignalMode::Success {
+                    cancel_before_return,
+                } => {
+                    if cancel_before_return {
+                        let _ = cancellation.cancel();
+                    }
+                    TerminalBackgroundSignalOutcome::new(background_id, signal)
+                }
+                BackgroundSignalMode::Error(kind) => Err(TerminalBackgroundSignalError::new(kind)),
+                BackgroundSignalMode::Pending => std::future::pending().await,
+            }
         })
     }
 }
@@ -1582,6 +1642,17 @@ where
         .unwrap()
 }
 
+fn signaling_tool(
+    root: &std::path::Path,
+    executor: &FakeExecutor,
+    starter: &FakeBackgroundStarter,
+    signaler: &FakeBackgroundSignaler,
+) -> TerminalTool {
+    background_tool(root, executor, starter)
+        .with_signaler(Arc::new(signaler.clone()))
+        .unwrap()
+}
+
 fn assert_background_start_spec(tool: &TerminalTool) {
     let spec = tool.spec();
     assert_eq!(
@@ -2424,6 +2495,185 @@ fn background_read_same_poll_cancellation_wins_ready_snapshot() {
 
     assert_eq!(error.kind, ToolErrorKind::Cancelled);
     assert_eq!(error.code, "terminal_cancelled");
+}
+
+#[test]
+fn background_signal_has_one_closed_permissioned_same_incarnation_form() {
+    let temporary = TemporaryDirectory::new("background-signal");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let signaler = FakeBackgroundSignaler::new(BackgroundSignalMode::Success {
+        cancel_before_return: false,
+    });
+    let tool = signaling_tool(temporary.path(), &executor, &starter, &signaler);
+
+    let spec = tool.spec();
+    assert_eq!(
+        spec.description,
+        "Run a foreground command, start a background command, or signal one live same-session background process group"
+    );
+    let forms = spec.input_schema["oneOf"].as_array().unwrap();
+    assert_eq!(forms.len(), 3);
+    assert_eq!(forms[2]["properties"]["action"]["const"], "signal");
+    assert_eq!(
+        forms[2]["properties"]["signal"]["enum"],
+        json!(["hangup", "interrupt", "quit", "terminate", "kill"])
+    );
+    assert_eq!(
+        forms[2]["required"],
+        json!(["action", "background_id", "signal"])
+    );
+
+    let prepared = tool
+        .prepare(call(
+            "terminal",
+            json!({
+                "action": "signal",
+                "background_id": 7,
+                "signal": "interrupt"
+            }),
+        ))
+        .unwrap();
+    assert_eq!(
+        prepared.capability(),
+        Some(&Capability::Custom {
+            name: "terminal_signal".to_owned(),
+            details: json!({ "background_id": 7, "signal": "interrupt" }),
+        })
+    );
+    let output = poll_ready(tool.execute(
+        context(),
+        prepared.arguments().clone(),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+    assert_eq!(
+        output.content,
+        json!({
+            "action": "signal",
+            "background_id": 7,
+            "signal": "interrupt",
+            "status": "signaled"
+        })
+    );
+    assert_eq!(
+        *signaler.requests.lock().unwrap(),
+        vec![(
+            "terminal-session".to_owned(),
+            "terminal-incarnation".to_owned(),
+            7,
+            TerminalBackgroundSignal::Interrupt,
+        )]
+    );
+}
+
+#[test]
+fn background_signal_rejects_bad_shape_and_maps_fixed_failures() {
+    let temporary = TemporaryDirectory::new("background-signal-errors");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    for arguments in [
+        json!({ "action": "signal", "background_id": 7 }),
+        json!({ "action": "signal", "background_id": 0, "signal": "kill" }),
+        json!({ "action": "signal", "background_id": 7, "signal": "SIGTERM" }),
+        json!({ "action": "signal", "background_id": 7, "signal": "kill", "extra": true }),
+    ] {
+        let signaler = FakeBackgroundSignaler::new(BackgroundSignalMode::Success {
+            cancel_before_return: false,
+        });
+        let tool = signaling_tool(temporary.path(), &executor, &starter, &signaler);
+        assert_eq!(
+            tool.prepare(call("terminal", arguments)).unwrap_err().code,
+            "terminal_invalid_arguments"
+        );
+    }
+
+    for (kind, code, retryable) in [
+        (
+            TerminalBackgroundSignalErrorKind::NotFound,
+            "terminal_signal_not_found",
+            false,
+        ),
+        (
+            TerminalBackgroundSignalErrorKind::Busy,
+            "terminal_signal_busy",
+            true,
+        ),
+        (
+            TerminalBackgroundSignalErrorKind::Unavailable,
+            "terminal_signal_failed",
+            false,
+        ),
+        (
+            TerminalBackgroundSignalErrorKind::Cancelled,
+            "terminal_cancelled",
+            false,
+        ),
+    ] {
+        let signaler = FakeBackgroundSignaler::new(BackgroundSignalMode::Error(kind));
+        let tool = signaling_tool(temporary.path(), &executor, &starter, &signaler);
+        let error = poll_ready(tool.execute(
+            context(),
+            json!({ "action": "signal", "background_id": 7, "signal": "terminate" }),
+            CancellationToken::new(),
+        ))
+        .unwrap_err();
+        assert_eq!(error.code, code);
+        assert_eq!(error.retryable, retryable);
+    }
+}
+
+#[test]
+fn background_signal_committed_delivery_wins_same_poll_cancellation() {
+    let temporary = TemporaryDirectory::new("background-signal-commit");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let signaler = FakeBackgroundSignaler::new(BackgroundSignalMode::Success {
+        cancel_before_return: true,
+    });
+    let tool = signaling_tool(temporary.path(), &executor, &starter, &signaler);
+
+    let output = poll_ready(tool.execute(
+        context(),
+        json!({ "action": "signal", "background_id": 7, "signal": "kill" }),
+        CancellationToken::new(),
+    ))
+    .unwrap();
+    assert_eq!(output.content["status"], "signaled");
+}
+
+#[test]
+fn background_signal_capacity_is_fail_fast_and_recovers_on_drop() {
+    let temporary = TemporaryDirectory::new("background-signal-capacity");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let signaler = FakeBackgroundSignaler::new(BackgroundSignalMode::Pending);
+    let tool = signaling_tool(temporary.path(), &executor, &starter, &signaler);
+    let arguments = json!({ "action": "signal", "background_id": 7, "signal": "quit" });
+    let mut active = (0..4)
+        .map(|_| tool.execute(context(), arguments.clone(), CancellationToken::new()))
+        .collect::<Vec<_>>();
+    for future in &mut active {
+        assert!(poll_once(future.as_mut()).is_pending());
+    }
+    let busy = poll_ready(tool.execute(context(), arguments.clone(), CancellationToken::new()))
+        .unwrap_err();
+    assert_eq!(busy.code, "terminal_signal_busy");
+    assert!(busy.retryable);
+
+    drop(active.pop());
+    let mut replacement = tool.execute(context(), arguments, CancellationToken::new());
+    assert!(poll_once(replacement.as_mut()).is_pending());
+    drop(replacement);
+    drop(active);
 }
 
 #[test]

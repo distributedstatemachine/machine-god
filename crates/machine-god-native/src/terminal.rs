@@ -97,6 +97,8 @@ pub const TERMINAL_MAX_WAIT_CEILING_MS: u64 = 30_000;
 pub const TERMINAL_MAX_ACTIVE_WAITS: usize = 4;
 /// Maximum simultaneous persisted-background listings.
 pub const TERMINAL_MAX_ACTIVE_LISTS: usize = 4;
+/// Maximum simultaneous process-local background signal operations.
+pub const TERMINAL_MAX_ACTIVE_SIGNALS: usize = 4;
 /// Maximum exact record observations made by one persisted-background wait.
 pub const TERMINAL_MAX_WAIT_OBSERVATIONS: usize = 128;
 
@@ -528,6 +530,149 @@ pub trait TerminalBackgroundStarter: Send + Sync + 'static {
     ) -> BoxFuture<'static, Result<TerminalBackgroundOutcome, BackgroundStartError>>;
 }
 
+/// One closed portable signal accepted by the background terminal controller.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum TerminalBackgroundSignal {
+    Hangup,
+    Interrupt,
+    Quit,
+    Terminate,
+    Kill,
+}
+
+impl TerminalBackgroundSignal {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hangup => "hangup",
+            Self::Interrupt => "interrupt",
+            Self::Quit => "quit",
+            Self::Terminate => "terminate",
+            Self::Kill => "kill",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "hangup" => Some(Self::Hangup),
+            "interrupt" => Some(Self::Interrupt),
+            "quit" => Some(Self::Quit),
+            "terminate" => Some(Self::Terminate),
+            "kill" => Some(Self::Kill),
+            _ => None,
+        }
+    }
+}
+
+/// Stable category returned by an injected process-local signal controller.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum TerminalBackgroundSignalErrorKind {
+    NotFound,
+    Busy,
+    Unavailable,
+    Cancelled,
+}
+
+/// Fixed, data-free failure from an injected background signal controller.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct TerminalBackgroundSignalError {
+    kind: TerminalBackgroundSignalErrorKind,
+}
+
+impl TerminalBackgroundSignalError {
+    #[must_use]
+    pub const fn new(kind: TerminalBackgroundSignalErrorKind) -> Self {
+        Self { kind }
+    }
+
+    #[must_use]
+    pub const fn kind(self) -> TerminalBackgroundSignalErrorKind {
+        self.kind
+    }
+}
+
+impl fmt::Debug for TerminalBackgroundSignalError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TerminalBackgroundSignalError")
+            .field("kind", &self.kind)
+            .finish()
+    }
+}
+
+impl fmt::Display for TerminalBackgroundSignalError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("terminal background signal is unavailable")
+    }
+}
+
+impl Error for TerminalBackgroundSignalError {}
+
+/// Acknowledgement that one exact signal was accepted for live delivery.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct TerminalBackgroundSignalOutcome {
+    background_id: u64,
+    signal: TerminalBackgroundSignal,
+}
+
+impl TerminalBackgroundSignalOutcome {
+    /// Constructs a validated delivery acknowledgement.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed unavailable error for the invalid display identity zero.
+    pub fn new(
+        background_id: u64,
+        signal: TerminalBackgroundSignal,
+    ) -> Result<Self, TerminalBackgroundSignalError> {
+        if background_id == 0 {
+            return Err(TerminalBackgroundSignalError::new(
+                TerminalBackgroundSignalErrorKind::Unavailable,
+            ));
+        }
+        Ok(Self {
+            background_id,
+            signal,
+        })
+    }
+
+    #[must_use]
+    pub const fn background_id(self) -> u64 {
+        self.background_id
+    }
+
+    #[must_use]
+    pub const fn signal(self) -> TerminalBackgroundSignal {
+        self.signal
+    }
+}
+
+impl fmt::Debug for TerminalBackgroundSignalOutcome {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TerminalBackgroundSignalOutcome")
+            .finish_non_exhaustive()
+    }
+}
+
+/// Trusted process-local control boundary scoped to one session incarnation.
+pub trait TerminalBackgroundSignaler: Send + Sync + 'static {
+    /// Returns an inert future for one non-escalating signal delivery.
+    ///
+    /// Once the implementation commits an OS signal, it must return the ready
+    /// acknowledgement in that same poll; later cancellation cannot revoke or
+    /// relabel a committed delivery.
+    fn signal(
+        &self,
+        owner: BackgroundOutputOwner,
+        background_id: u64,
+        signal: TerminalBackgroundSignal,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundSignalOutcome, TerminalBackgroundSignalError>>;
+}
+
 /// Stable category returned by an injected process-local output reader.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -844,6 +989,8 @@ pub struct TerminalTool {
     background: Option<TerminalBackground>,
     output_reader: Option<Arc<dyn TerminalBackgroundOutputReader>>,
     active_reads: Arc<AtomicUsize>,
+    signaler: Option<Arc<dyn TerminalBackgroundSignaler>>,
+    active_signals: Arc<AtomicUsize>,
     catalog: Option<Arc<dyn TerminalBackgroundCatalog>>,
     active_lists: Arc<AtomicUsize>,
     inspector: Option<Arc<dyn TerminalBackgroundInspector>>,
@@ -1062,6 +1209,25 @@ impl TerminalTool {
         Ok(self)
     }
 
+    /// Adds bounded same-session process-local background signaling.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed configuration failure when background start is absent.
+    #[cfg(unix)]
+    pub fn with_signaler(
+        mut self,
+        signaler: Arc<dyn TerminalBackgroundSignaler>,
+    ) -> Result<Self, TerminalConfigError> {
+        if self.background.is_none() {
+            return Err(TerminalConfigError::new(
+                TerminalConfigErrorKind::InvalidRoot,
+            ));
+        }
+        self.signaler = Some(signaler);
+        Ok(self)
+    }
+
     /// Adds bounded persisted-background listing support.
     ///
     /// # Errors
@@ -1122,6 +1288,8 @@ impl TerminalTool {
             background: None,
             output_reader: None,
             active_reads: Arc::new(AtomicUsize::new(0)),
+            signaler: None,
+            active_signals: Arc::new(AtomicUsize::new(0)),
             catalog: None,
             active_lists: Arc::new(AtomicUsize::new(0)),
             inspector: None,
@@ -1278,6 +1446,7 @@ impl TerminalActionAvailability {
     const INSPECT: u8 = 1 << 2;
     const WAIT: u8 = 1 << 3;
     const READ: u8 = 1 << 4;
+    const SIGNAL: u8 = 1 << 5;
 
     fn for_tool(tool: &TerminalTool) -> Self {
         let mut flags = 0;
@@ -1295,6 +1464,9 @@ impl TerminalActionAvailability {
         }
         if tool.output_reader.is_some() {
             flags |= Self::READ;
+        }
+        if tool.signaler.is_some() {
+            flags |= Self::SIGNAL;
         }
         Self(flags)
     }
@@ -1332,6 +1504,9 @@ fn parse_arguments(
         Some("read") if available.contains(TerminalActionAvailability::READ) => {
             TerminalAction::Read
         }
+        Some("signal") if available.contains(TerminalActionAvailability::SIGNAL) => {
+            TerminalAction::Signal
+        }
         _ => return Err(invalid_arguments()),
     };
     match action {
@@ -1339,10 +1514,35 @@ fn parse_arguments(
         TerminalAction::Inspect => parse_inspect_arguments(object),
         TerminalAction::Wait => parse_wait_arguments(object),
         TerminalAction::Read => parse_read_arguments(object),
+        TerminalAction::Signal => parse_signal_arguments(object),
         TerminalAction::Exec | TerminalAction::Start => {
             parse_command_arguments(object, action, require_complete)
         }
     }
+}
+
+fn parse_signal_arguments(object: &Map<String, Value>) -> Result<TerminalArguments, ToolError> {
+    if object.len() != 3
+        || object
+            .keys()
+            .any(|key| !matches!(key.as_str(), "action" | "background_id" | "signal"))
+    {
+        return Err(invalid_arguments());
+    }
+    let background_id = object
+        .get("background_id")
+        .and_then(Value::as_u64)
+        .filter(|id| *id != 0)
+        .ok_or_else(invalid_arguments)?;
+    let signal = object
+        .get("signal")
+        .and_then(Value::as_str)
+        .and_then(TerminalBackgroundSignal::parse)
+        .ok_or_else(invalid_arguments)?;
+    Ok(TerminalArguments::Signal {
+        background_id,
+        signal,
+    })
 }
 
 fn parse_read_arguments(object: &Map<String, Value>) -> Result<TerminalArguments, ToolError> {
@@ -1490,6 +1690,14 @@ fn canonical_arguments(arguments: &TerminalArguments) -> Value {
             "background_id": background_id,
             "cursor_segment": cursor_segment,
             "cursor_offset": cursor_offset
+        }),
+        TerminalArguments::Signal {
+            background_id,
+            signal,
+        } => json!({
+            "action": "signal",
+            "background_id": background_id,
+            "signal": signal.as_str()
         }),
         TerminalArguments::List => json!({
             "action": "list"
@@ -2322,6 +2530,7 @@ enum TerminalAction {
     Exec,
     Start,
     Read,
+    Signal,
     List,
     Inspect,
     Wait,
@@ -2333,6 +2542,7 @@ impl TerminalAction {
             Self::Exec => "exec",
             Self::Start => "start",
             Self::Read => "read",
+            Self::Signal => "signal",
             Self::List => "list",
             Self::Inspect => "inspect",
             Self::Wait => "wait",
@@ -2354,6 +2564,10 @@ enum TerminalArguments {
         background_id: u64,
         cursor_segment: u64,
         cursor_offset: u64,
+    },
+    Signal {
+        background_id: u64,
+        signal: TerminalBackgroundSignal,
     },
     List,
     Inspect {
@@ -2536,6 +2750,40 @@ impl TerminalTool {
             return Err(background_read_resource_limit());
         }
         check_cancellation(&cancellation)?;
+        Ok(output)
+    }
+
+    async fn execute_signal(
+        &self,
+        owner: BackgroundOutputOwner,
+        background_id: u64,
+        signal: TerminalBackgroundSignal,
+        cancellation: CancellationToken,
+    ) -> Result<ToolOutput, ToolError> {
+        check_cancellation(&cancellation)?;
+        let _permit = ActiveSignalPermit::try_acquire(&self.active_signals)?;
+        let signaler = self.signaler.as_ref().ok_or_else(invalid_arguments)?;
+        let delivered = await_background_signal(
+            signaler.signal(owner, background_id, signal, cancellation.clone()),
+            &cancellation,
+        )
+        .await?
+        .map_err(map_background_signal_error)?;
+        if delivered.background_id() != background_id || delivered.signal() != signal {
+            return Err(background_signal_invariant());
+        }
+        let output = ToolOutput {
+            content: json!({
+                "action": "signal",
+                "background_id": background_id,
+                "signal": signal.as_str(),
+                "status": "signaled"
+            }),
+            is_error: false,
+        };
+        if !serialized_value_fits(&output.content, MAX_TERMINAL_SERIALIZED_RESULT_BYTES) {
+            return Err(background_signal_invariant());
+        }
         Ok(output)
     }
 
@@ -2881,6 +3129,54 @@ impl Drop for ActiveReadPermit {
     }
 }
 
+struct ActiveSignalPermit {
+    active: Arc<AtomicUsize>,
+}
+
+impl ActiveSignalPermit {
+    fn try_acquire(active: &Arc<AtomicUsize>) -> Result<Self, ToolError> {
+        active
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current < TERMINAL_MAX_ACTIVE_SIGNALS).then_some(current + 1)
+            })
+            .map_err(|_| signal_busy())?;
+        Ok(Self {
+            active: Arc::clone(active),
+        })
+    }
+}
+
+impl Drop for ActiveSignalPermit {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+async fn await_background_signal(
+    mut future: BoxFuture<
+        'static,
+        Result<TerminalBackgroundSignalOutcome, TerminalBackgroundSignalError>,
+    >,
+    cancellation: &CancellationToken,
+) -> Result<Result<TerminalBackgroundSignalOutcome, TerminalBackgroundSignalError>, ToolError> {
+    let mut cancelled = Box::pin(cancellation.cancelled());
+    poll_fn(|context| {
+        // Poll delivery first: a signal committed during this poll wins over a
+        // concurrent cancellation and cannot be relabelled as cancelled.
+        match Pin::new(&mut future).poll(context) {
+            Poll::Ready(result) => Poll::Ready(Ok(result)),
+            Poll::Pending => {
+                if cancelled.as_mut().poll(context).is_ready() || cancellation.is_cancelled() {
+                    Poll::Ready(Err(cancelled_error()))
+                } else {
+                    Poll::Pending
+                }
+            }
+        }
+    })
+    .await
+}
+
 async fn await_background_read(
     mut future: BoxFuture<
         'static,
@@ -3143,6 +3439,22 @@ fn terminal_read_schema() -> Value {
     })
 }
 
+fn terminal_signal_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "action": { "const": "signal" },
+            "background_id": { "type": "integer", "minimum": 1 },
+            "signal": {
+                "type": "string",
+                "enum": ["hangup", "interrupt", "quit", "terminate", "kill"]
+            }
+        },
+        "required": ["action", "background_id", "signal"],
+        "additionalProperties": false
+    })
+}
+
 fn terminal_wait_schema() -> Value {
     json!({
         "type": "object",
@@ -3184,6 +3496,9 @@ impl TerminalTool {
         if self.output_reader.is_some() {
             actions.push("read bounded same-session background output");
         }
+        if self.signaler.is_some() {
+            actions.push("signal one live same-session background process group");
+        }
         if self.catalog.is_some() {
             actions.push("list persisted background records");
         }
@@ -3206,7 +3521,11 @@ impl TerminalTool {
 
 impl Tool for TerminalTool {
     fn spec(&self) -> ToolSpec {
-        if self.catalog.is_none() && self.inspector.is_none() && self.output_reader.is_none() {
+        if self.catalog.is_none()
+            && self.inspector.is_none()
+            && self.output_reader.is_none()
+            && self.signaler.is_none()
+        {
             let actions = if self.background.is_some() {
                 json!(["exec", "start"])
             } else {
@@ -3238,6 +3557,9 @@ impl Tool for TerminalTool {
         }
         if self.output_reader.is_some() {
             forms.push(terminal_read_schema());
+        }
+        if self.signaler.is_some() {
+            forms.push(terminal_signal_schema());
         }
         if self.inspector.is_some() {
             forms.push(terminal_inspect_schema());
@@ -3272,6 +3594,19 @@ impl Tool for TerminalTool {
             | TerminalArguments::Read { .. }
             | TerminalArguments::Inspect { .. }
             | TerminalArguments::Wait { .. } => Ok(PreparedToolCall::without_authority(canonical)),
+            TerminalArguments::Signal {
+                background_id,
+                signal,
+            } => Ok(PreparedToolCall::new(
+                Capability::Custom {
+                    name: "terminal_signal".to_owned(),
+                    details: json!({
+                        "background_id": background_id,
+                        "signal": signal.as_str()
+                    }),
+                },
+                canonical,
+            )),
             TerminalArguments::Command(parsed) => {
                 let environment = match parsed.action {
                     TerminalAction::Exec => ProcessEnvironment {
@@ -3283,10 +3618,11 @@ impl Tool for TerminalTool {
                         checked_background_cwd_length(&background.workspace, &parsed.cwd)?;
                         background.environment.clone()
                     }
-                    TerminalAction::List | TerminalAction::Inspect | TerminalAction::Wait => {
-                        return Err(invalid_arguments());
-                    }
-                    TerminalAction::Read => return Err(invalid_arguments()),
+                    TerminalAction::List
+                    | TerminalAction::Inspect
+                    | TerminalAction::Wait
+                    | TerminalAction::Read
+                    | TerminalAction::Signal => return Err(invalid_arguments()),
                 };
                 Ok(PreparedToolCall::new(
                     Capability::Process {
@@ -3333,6 +3669,18 @@ impl Tool for TerminalTool {
                             cursor_offset,
                             cancellation,
                         )
+                        .await;
+                }
+                TerminalArguments::Signal {
+                    background_id,
+                    signal,
+                } => {
+                    let owner = BackgroundOutputOwner::new(
+                        context.session_id.clone(),
+                        context.session_incarnation_id.clone(),
+                    );
+                    return self
+                        .execute_signal(owner, background_id, signal, cancellation)
                         .await;
                 }
                 TerminalArguments::List => {
@@ -4316,6 +4664,43 @@ fn map_background_read_error(error: TerminalBackgroundReadError) -> ToolError {
             true,
         ),
     }
+}
+
+fn map_background_signal_error(error: TerminalBackgroundSignalError) -> ToolError {
+    match error.kind() {
+        TerminalBackgroundSignalErrorKind::NotFound => fixed_tool_error(
+            ToolErrorKind::InvalidInput,
+            "terminal_signal_not_found",
+            "terminal background process was not found",
+            false,
+        ),
+        TerminalBackgroundSignalErrorKind::Busy => signal_busy(),
+        TerminalBackgroundSignalErrorKind::Unavailable => fixed_tool_error(
+            ToolErrorKind::Execution,
+            "terminal_signal_failed",
+            "terminal background signal delivery failed",
+            false,
+        ),
+        TerminalBackgroundSignalErrorKind::Cancelled => cancelled_error(),
+    }
+}
+
+fn background_signal_invariant() -> ToolError {
+    fixed_tool_error(
+        ToolErrorKind::Execution,
+        "terminal_signaler_failed",
+        "terminal background signal controller returned an invalid acknowledgement",
+        false,
+    )
+}
+
+fn signal_busy() -> ToolError {
+    fixed_tool_error(
+        ToolErrorKind::Unavailable,
+        "terminal_signal_busy",
+        "terminal background signal capacity is busy",
+        true,
+    )
 }
 
 fn background_read_resource_limit() -> ToolError {
