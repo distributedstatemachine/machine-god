@@ -137,7 +137,9 @@ Notification-counter exhaustion also stops pending monitors and records
 incomplete monitor notifications, rather than making retained history
 unreadable or pretending every terminal notification was delivered.
 This incomplete-notification fact also survives failures while consuming live
-or close-time output, even if stopping the remaining monitors succeeds.
+or close-time output, observing a committed resize, or degrading monitors for a
+signal output gap, even if stopping the remaining monitors succeeds. Failed
+gap observation prevents signal delivery; failed observations quiesce input.
 
 The monitor state machine implements all thirteen conditions with explicit
 clock/cursor/lifecycle observations. It emits bounded typed probe requests,

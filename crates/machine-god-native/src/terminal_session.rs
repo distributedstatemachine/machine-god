@@ -285,14 +285,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
                 }
                 Ok(step)
             }
-            Err(error) => {
-                if matches!(error, TerminalSessionError::Monitor(_)) {
-                    self.monitor_notifications_incomplete = true;
-                }
-                self.failed_publication();
-                let _ = self.persist();
-                Err(error)
-            }
+            Err(error) => Err(self.failed_observation(error)),
         }
     }
     fn pump_inner(&mut self) -> Result<TerminalSessionStep> {
@@ -365,8 +358,18 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             .resize(dimensions, |dimensions| backend.resize(dimensions))?;
         self.now_ms = now_ms;
         if self.monitors.needs_screen() {
-            self.monitors
-                .screen(&self.history.screen()?, self.context())?;
+            let observed = self
+                .history
+                .screen()
+                .map_err(TerminalSessionError::from)
+                .and_then(|screen| {
+                    self.monitors
+                        .screen(&screen, self.context())
+                        .map_err(TerminalSessionError::from)
+                });
+            if let Err(error) = observed {
+                return Err(self.failed_observation(error));
+            }
         }
         self.persist()
     }
@@ -385,7 +388,9 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         {
             self.history.mark_output_gap()?;
             self.now_ms = now_ms;
-            self.monitors.raw_gap(self.context())?;
+            if let Err(error) = self.monitors.raw_gap(self.context()) {
+                return Err(self.failed_observation(error.into()));
+            }
             self.persist()?;
         }
         // A failed signal is not retried and never escalates into close/kill.
@@ -622,6 +627,14 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             self.failed_publication();
         }
         result
+    }
+    fn failed_observation(&mut self, error: TerminalSessionError) -> TerminalSessionError {
+        if matches!(error, TerminalSessionError::Monitor(_)) {
+            self.monitor_notifications_incomplete = true;
+        }
+        self.failed_publication();
+        let _ = self.persist();
+        error
     }
     fn failed_publication(&mut self) {
         if self.backend.is_some() {
@@ -1500,6 +1513,69 @@ mod tests {
                     TerminalLifecycle::Lost
                 },
             );
+        }
+    }
+
+    #[test]
+    fn resize_and_signal_observation_failures_survive_recovery() {
+        for signal in [false, true] {
+            let fixture = Fixture::new();
+            let mut session = fixture.session();
+            session.shell_ready(0).unwrap();
+            fixture
+                .state
+                .lock()
+                .unwrap()
+                .output
+                .push_back(b"event".to_vec());
+            session.pump(1).unwrap();
+            add(
+                &mut session,
+                Condition::ScreenMatches {
+                    pattern: "*event*".into(),
+                },
+            );
+            let mut saved: serde_json::Value =
+                serde_json::from_slice(&session.monitors.snapshot().unwrap()).unwrap();
+            saved["next_event_id"] = serde_json::json!(u64::MAX);
+            saved["dropped_through_event_id"] = serde_json::json!(u64::MAX - 1);
+            saved["events"] = serde_json::json!([]);
+            if signal {
+                saved["monitors"][0]["definition"]["notify"] =
+                    serde_json::to_value(TerminalNotifySchedule::OnStateChange).unwrap();
+            }
+            session.monitors =
+                TerminalMonitorSet::restore(&serde_json::to_vec(&saved).unwrap()).unwrap();
+            session.persist().unwrap();
+            let result = if signal {
+                fixture.state.lock().unwrap().signal_flushes = true;
+                session.signal(&owner("owner"), TerminalSignal::Interrupt, 2)
+            } else {
+                session.resize(&owner("owner"), &TerminalDimensions::new(4, 20).unwrap(), 2)
+            };
+            assert!(
+                matches!(
+                    result,
+                    Err(TerminalSessionError::Monitor(TerminalMonitorError::Counter))
+                ),
+                "signal={signal}: {result:?}"
+            );
+            assert!(session.monitor_notifications_incomplete);
+            assert!(session.input.is_quiesced());
+            assert!(fixture.state.lock().unwrap().signals.is_empty());
+            drop(session);
+            let recovered =
+                TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 100).unwrap();
+            assert!(recovered.facts.monitor_notifications_incomplete);
+            assert_eq!(recovered.facts.context.lifecycle, TerminalLifecycle::Lost);
+            assert_eq!(recovered.monitors.len(), 0);
+            if !signal {
+                assert!(recovered.facts.observation_gap.is_none());
+                assert_eq!(
+                    recovered.screen(&owner("owner")).unwrap().dimensions.rows(),
+                    4
+                );
+            }
         }
     }
 
