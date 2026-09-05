@@ -22,16 +22,29 @@ use crate::background_input::{
     BackgroundInputReceipt, BackgroundInputStatus, MAX_BACKGROUND_INPUT_BYTES,
 };
 use crate::background_process::{
-    BackgroundProcessExit, BackgroundProcessSignal, OwnedBackgroundProcess, TerminalChildGuard,
+    BackgroundProcessExit, BackgroundProcessSignal, MAX_BACKGROUND_PROCESS_ENVIRONMENT_BYTES,
+    MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES, MAX_BACKGROUND_PROCESS_ENVIRONMENT_KEY_BYTES,
+    MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES, OwnedBackgroundProcess, TerminalChildGuard,
     TerminalClosePhase, ValidatedBackgroundEnvironment,
 };
 
 const MAGIC: &[u8; 8] = b"MGPTY\0\0\x01";
 const READY: u8 = 0xa7;
 const COMMIT: u8 = 0x5b;
-const MAX_FRAME: usize = 320 * 1024;
-const MAX_ARGUMENT_BYTES: usize = 32 * 1024;
+const MAX_PROGRAM_BYTES: usize = 4096;
+const MAX_ARGUMENT_BYTES: usize = machine_god_core::MAX_TERMINAL_ACTION_COMMAND_BYTES;
+// Keep the former aggregate allowance for auxiliary argv (shell flags, etc.)
+// independently of the full command, which remains one unmodified argv item.
+const MAX_ARGUMENTS_BYTES: usize = MAX_ARGUMENT_BYTES + 32 * 1024;
 const MAX_ARGUMENTS: usize = 256;
+// Binary fields do not escape: magic, dimensions, program, argv and environment
+// bytes, with a u32 length for each string and both collection counts.
+const MAX_FRAME: usize = MAGIC.len()
+    + 4
+    + MAX_PROGRAM_BYTES
+    + MAX_ARGUMENTS_BYTES
+    + MAX_BACKGROUND_PROCESS_ENVIRONMENT_BYTES
+    + 4 * (3 + MAX_ARGUMENTS + 2 * MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES);
 const MAX_READ: usize = 64 * 1024;
 const START_TIMEOUT: Duration = Duration::from_secs(2);
 static LIVE_PTYS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -709,7 +722,7 @@ fn read_frame(
     let mut budget = MAX_FRAME - 12;
     let program = String::from_utf8(read_bytes(
         input,
-        4096,
+        MAX_PROGRAM_BYTES,
         &mut budget,
         deadline,
         cancellation,
@@ -730,19 +743,25 @@ fn read_frame(
         );
     }
     validate_program_arguments(&program, &arguments)?;
-    let count = read_length(input, 512, &mut budget, deadline, cancellation)?;
+    let count = read_length(
+        input,
+        MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES,
+        &mut budget,
+        deadline,
+        cancellation,
+    )?;
     let mut environment = Vec::with_capacity(count);
     for _ in 0..count {
         let key = OsString::from_vec(read_bytes(
             input,
-            1024,
+            MAX_BACKGROUND_PROCESS_ENVIRONMENT_KEY_BYTES,
             &mut budget,
             deadline,
             cancellation,
         )?);
         let value = OsString::from_vec(read_bytes(
             input,
-            16 * 1024,
+            MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES,
             &mut budget,
             deadline,
             cancellation,
@@ -759,15 +778,17 @@ fn read_frame(
 }
 fn validate_program_arguments(program: &str, arguments: &[String]) -> Result<(), TerminalPtyError> {
     if !program.starts_with('/')
-        || program.len() > 4096
+        || program.len() > MAX_PROGRAM_BYTES
         || program.as_bytes().contains(&0)
         || arguments.len() > MAX_ARGUMENTS
-        || arguments.iter().any(|value| value.as_bytes().contains(&0))
+        || arguments
+            .iter()
+            .any(|value| value.len() > MAX_ARGUMENT_BYTES || value.as_bytes().contains(&0))
         || arguments
             .iter()
             .map(String::len)
             .try_fold(0_usize, usize::checked_add)
-            .is_none_or(|total| total > MAX_ARGUMENT_BYTES)
+            .is_none_or(|total| total > MAX_ARGUMENTS_BYTES)
     {
         return Err(error(TerminalPtyErrorKind::InvalidRequest));
     }
@@ -1208,6 +1229,70 @@ mod tests {
             run_terminal_pty_helper().unwrap();
             unreachable!();
         }
+    }
+
+    #[test]
+    fn full_command_boundary_executes_as_one_argument_and_reaps() {
+        let directory = Directory::new();
+        assert_eq!(MAX_ARGUMENT_BYTES, 64 * 1024);
+        for padding in ["x", "\u{1}", "\"\\雪"] {
+            let mut command = String::from("printf boundary; #");
+            command.push_str(&padding.repeat((MAX_ARGUMENT_BYTES - command.len()) / padding.len()));
+            command.push_str(&"x".repeat(MAX_ARGUMENT_BYTES - command.len()));
+            let mut pty = start(&directory, &["-c", &command]);
+            let pid =
+                rustix::process::Pid::from_raw(i32::try_from(pty.pid().get()).unwrap()).unwrap();
+            read_until(&mut pty, b"boundary");
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while pty.status().unwrap() == TerminalPtyStatus::Running {
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            assert_eq!(pty.close(false).unwrap(), TerminalPtyStatus::Exited(0));
+            assert_eq!(
+                rustix::process::test_kill_process(pid),
+                Err(rustix::io::Errno::SRCH)
+            );
+            command.push('x');
+            assert!(validate_program_arguments("/bin/sh", &["-c".into(), command]).is_err());
+        }
+    }
+
+    #[test]
+    fn maximum_frame_roundtrips_all_bounded_fields_and_rejects_aggregate_overflow() {
+        let directory = Directory::new();
+        let mut request = request(&directory, &[]);
+        request.program = format!("/{}", "p".repeat(MAX_PROGRAM_BYTES - 1));
+        request.arguments = vec![String::new(); MAX_ARGUMENTS];
+        request.arguments[0] = "c".repeat(MAX_ARGUMENT_BYTES);
+        request.arguments[1] = "a".repeat(MAX_ARGUMENTS_BYTES - MAX_ARGUMENT_BYTES);
+        let environment = (0..MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES)
+            .map(|index| {
+                let key = format!("K{index:03}");
+                let value = "v".repeat(
+                    MAX_BACKGROUND_PROCESS_ENVIRONMENT_BYTES
+                        / MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES
+                        - key.len(),
+                );
+                (key.into(), value.into())
+            })
+            .collect();
+        request.environment = ValidatedBackgroundEnvironment::new(environment).unwrap();
+        validate_program_arguments(&request.program, &request.arguments).unwrap();
+        let frame = request.frame().unwrap();
+        assert_eq!(frame.len(), MAX_FRAME);
+        let decoded = read_frame(
+            &mut frame.as_slice(),
+            Instant::now() + START_TIMEOUT,
+            &CancellationToken::new(),
+        )
+        .unwrap();
+        assert_eq!(decoded.program, request.program);
+        assert_eq!(decoded.arguments, request.arguments);
+        assert_eq!(decoded.environment.entries(), request.environment.entries());
+        request.arguments[1].push('x');
+        assert!(validate_program_arguments(&request.program, &request.arguments).is_err());
+        assert!(request.frame().is_err());
     }
 
     #[test]

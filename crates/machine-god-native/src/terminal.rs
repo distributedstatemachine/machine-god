@@ -51,15 +51,19 @@ use std::os::unix::ffi::OsStrExt;
 /// Model-visible tool name.
 pub const TERMINAL_TOOL_NAME: &str = "terminal";
 /// Maximum UTF-8 command size.
-pub const MAX_TERMINAL_COMMAND_BYTES: usize = 32 * 1024;
+pub const MAX_TERMINAL_COMMAND_BYTES: usize = machine_god_core::MAX_TERMINAL_ACTION_COMMAND_BYTES;
 /// Maximum canonical working-directory size.
 pub const MAX_TERMINAL_CWD_BYTES: usize = 4 * 1024;
 /// Maximum working-directory component count.
 pub const MAX_TERMINAL_CWD_COMPONENTS: usize = 256;
 /// Maximum bytes in one working-directory component.
 pub const MAX_TERMINAL_CWD_COMPONENT_BYTES: usize = 255;
-/// Maximum serialized canonical argument size.
-pub const MAX_TERMINAL_SERIALIZED_ARGUMENT_BYTES: usize = 64 * 1024;
+/// Maximum serialized canonical argument size. JSON can encode each command
+/// or directory byte as six bytes; the remaining closed fields are fixed.
+/// Other action forms (including base64 writes) are smaller than this bound.
+pub const MAX_TERMINAL_SERIALIZED_ARGUMENT_BYTES: usize = 6
+    * (MAX_TERMINAL_COMMAND_BYTES + MAX_TERMINAL_CWD_BYTES)
+    + r#"{"action":"start","command":"","cwd":"","profile":"clean","stdin":"pipe"}"#.len();
 /// Maximum aggregate raw output retained for presentation.
 pub const MAX_TERMINAL_RETAINED_OUTPUT_BYTES: usize = 64 * 1024;
 /// Maximum aggregate produced output before termination.

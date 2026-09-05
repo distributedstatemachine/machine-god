@@ -74,7 +74,8 @@ use std::time::Instant;
 /// Fixed production shell.
 pub const BACKGROUND_PROCESS_PROGRAM: &str = "/bin/sh";
 /// Maximum UTF-8 command bytes retained in one request.
-pub const MAX_BACKGROUND_PROCESS_COMMAND_BYTES: usize = 32 * 1024;
+pub const MAX_BACKGROUND_PROCESS_COMMAND_BYTES: usize =
+    machine_god_core::MAX_TERMINAL_ACTION_COMMAND_BYTES;
 /// Maximum display working-directory bytes retained in one request.
 pub const MAX_BACKGROUND_PROCESS_CWD_BYTES: usize = 4 * 1024;
 /// Maximum injected environment entries.
@@ -8048,17 +8049,19 @@ mod process_regression_tests {
             ProcessInput::Null,
         )
         .expect("release frame");
-        assert_eq!(output.lengths.len(), 19);
+        let full_chunks = MAX_RELEASE_FRAME_PAYLOAD_BYTES / RELEASE_FRAME_WRITE_CHUNK_BYTES;
+        let payload_writes =
+            MAX_RELEASE_FRAME_PAYLOAD_BYTES.div_ceil(RELEASE_FRAME_WRITE_CHUNK_BYTES);
+        assert_eq!(output.lengths.len(), payload_writes);
         assert!(
-            output.lengths[..18]
+            output.lengths[..full_chunks]
                 .iter()
                 .all(|length| *length == RELEASE_FRAME_WRITE_CHUNK_BYTES)
         );
-        assert_eq!(output.lengths[18], 4_114);
-        assert_eq!(output.bytes.len(), 299_026);
+        assert_eq!(output.bytes.len(), MAX_RELEASE_FRAME_PAYLOAD_BYTES);
         std::io::Write::write_all(&mut output, &[RELEASE_COMMIT_BYTE]).expect("distinct commit");
-        assert_eq!(output.lengths.len(), 20);
-        assert_eq!(output.lengths[19], 1);
+        assert_eq!(output.lengths.len(), payload_writes + 1);
+        assert_eq!(output.lengths[payload_writes], 1);
         assert_eq!(output.bytes.last(), Some(&RELEASE_COMMIT_BYTE));
     }
 

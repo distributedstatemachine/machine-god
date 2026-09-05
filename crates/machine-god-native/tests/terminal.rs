@@ -4501,7 +4501,7 @@ fn strict_schema_command_and_cwd_boundaries_reject_without_executor_effects() {
     let tool = tool(temporary.path(), &executor);
     let over_component = "x".repeat(256);
     let over_cwd = "x".repeat(4_097);
-    let over_command = "x".repeat(32 * 1_024 + 1);
+    let over_command = "x".repeat(MAX_TERMINAL_COMMAND_BYTES + 1);
     let too_many_components = std::iter::repeat_n("x", 257).collect::<Vec<_>>().join("/");
     assert_invalid_input(
         &tool
@@ -4560,7 +4560,7 @@ fn exact_command_and_cwd_boundaries_prepare_successfully() {
     let temporary = TemporaryDirectory::new("exact-bounds");
     let executor = FakeExecutor::new(Mode::Exited(0));
     let tool = tool(temporary.path(), &executor);
-    let exact_command = "x".repeat(32 * 1_024);
+    let exact_command = "x".repeat(MAX_TERMINAL_COMMAND_BYTES);
     let exact_component = "x".repeat(255);
     let exact_components = std::iter::repeat_n("x", 256).collect::<Vec<_>>().join("/");
     for (command, cwd) in [
@@ -4582,6 +4582,55 @@ fn exact_command_and_cwd_boundaries_prepare_successfully() {
         assert_eq!(prepared.arguments(), &exact_arguments(command, cwd));
     }
     assert_eq!(executor.calls(), 0);
+}
+
+#[test]
+fn full_command_json_escaping_and_unicode_survive_permission_and_execution() {
+    let temporary = TemporaryDirectory::new("command-json-boundary");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let tool = tool(temporary.path(), &executor);
+    assert_eq!(MAX_TERMINAL_COMMAND_BYTES, 64 * 1024);
+    for padding in ["x", "\u{1}", "\"\\雪"] {
+        let mut command = String::from("printf boundary; #");
+        let repeats = (MAX_TERMINAL_COMMAND_BYTES - command.len()) / padding.len();
+        command.push_str(&padding.repeat(repeats));
+        command.push_str(&"x".repeat(MAX_TERMINAL_COMMAND_BYTES - command.len()));
+        let arguments = json!({ "action": "exec", "command": command });
+        let serialized = serde_json::to_vec(&arguments).unwrap();
+        assert!(serialized.len() > 64 * 1024);
+        let prepared = tool
+            .prepare(call(
+                "terminal",
+                serde_json::from_slice(&serialized).unwrap(),
+            ))
+            .unwrap();
+        let Capability::Process { arguments, .. } = prepared.capability().unwrap() else {
+            panic!("command requires process permission")
+        };
+        assert_eq!(arguments, &["-c".to_owned(), command.clone()]);
+        assert!(
+            !execute(
+                &tool,
+                prepared.arguments().clone(),
+                CancellationToken::new()
+            )
+            .unwrap()
+            .is_error
+        );
+        assert_eq!(executor.requests().last().unwrap().arguments, *arguments);
+        assert_eq!(executor.requests().last().unwrap().command, command);
+        command.push('x');
+        assert_invalid_input(
+            &tool
+                .prepare(call(
+                    "terminal",
+                    json!({"action":"exec", "command":command}),
+                ))
+                .unwrap_err(),
+        );
+    }
+    assert_eq!(executor.calls(), 3);
+    assert_eq!(executor.drops(), 3);
 }
 
 #[test]
@@ -6024,6 +6073,41 @@ impl EscapedProcessGuard {
 impl Drop for EscapedProcessGuard {
     fn drop(&mut self) {
         let _ = self.terminate();
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_full_command_boundary_executes_and_reaps_after_json_roundtrip() {
+    let temporary = TemporaryDirectory::new("system-command-boundary");
+    let tool = TerminalTool::open(temporary.path()).unwrap();
+    for padding in ["x", "\u{1}", "\"\\雪"] {
+        let mut command = String::from("printf '%s' \"$$\" > pid; printf boundary; #");
+        command.push_str(
+            &padding.repeat((MAX_TERMINAL_COMMAND_BYTES - command.len()) / padding.len()),
+        );
+        command.push_str(&"x".repeat(MAX_TERMINAL_COMMAND_BYTES - command.len()));
+        let serialized = serde_json::to_vec(&json!({"action":"exec", "command":command})).unwrap();
+        let prepared = tool
+            .prepare(call(
+                "terminal",
+                serde_json::from_slice(&serialized).unwrap(),
+            ))
+            .unwrap();
+        let output = futures_executor::block_on(tool.execute(
+            context(),
+            prepared.arguments().clone(),
+            CancellationToken::new(),
+        ))
+        .unwrap();
+        assert!(!output.is_error);
+        assert_eq!(output.content["exit_code"], 0);
+        assert_eq!(output.content["stdout"], "boundary");
+        let pid = read_linux_pid(&temporary.path().join("pid"));
+        assert_eq!(
+            rustix::process::test_kill_process(pid),
+            Err(rustix::io::Errno::SRCH)
+        );
     }
 }
 

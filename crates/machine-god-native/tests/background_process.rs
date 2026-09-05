@@ -413,6 +413,33 @@ fn assert_processes_absent(pids: &[u32]) {
 }
 
 #[test]
+fn full_command_boundary_executes_after_release_and_closes_owned_authority() {
+    let directory = FreshDirectory::new("full-command-boundary");
+    assert_eq!(MAX_BACKGROUND_PROCESS_COMMAND_BYTES, 64 * 1024);
+    for padding in ["x", "\u{1}", "\"\\雪"] {
+        let marker = directory.path().join("released");
+        let mut command = String::from("printf boundary > released; exit 23; #");
+        command.push_str(
+            &padding.repeat((MAX_BACKGROUND_PROCESS_COMMAND_BYTES - command.len()) / padding.len()),
+        );
+        command.push_str(&"x".repeat(MAX_BACKGROUND_PROCESS_COMMAND_BYTES - command.len()));
+        let mut prepared = adapter()
+            .prepare(request(directory.path(), command))
+            .unwrap();
+        let controller = prepared.attach_signal_controller().unwrap();
+        assert!(!marker.exists(), "preparation must not execute the command");
+        let mut owned = prepared.release().unwrap();
+        let pid = owned.pid().get();
+        owned.activate_signal_controller().unwrap();
+        assert_eq!(owned.wait().unwrap(), BackgroundProcessExit::Exited(23));
+        assert_eq!(fs::read_to_string(&marker).unwrap(), "boundary");
+        assert!(!process_exists(pid), "wait must reap the full-size command");
+        assert!(controller.is_closed_for_test());
+        fs::remove_file(marker).unwrap();
+    }
+}
+
+#[test]
 fn request_is_bounded_and_errors_are_redacted() {
     let directory = FreshDirectory::new("bounds");
     let oversized = "x".repeat(MAX_BACKGROUND_PROCESS_COMMAND_BYTES + 1);
