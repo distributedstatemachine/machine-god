@@ -185,6 +185,17 @@ impl TerminalProfileStore {
     }
 }
 
+impl Drop for TerminalProfileTransaction<'_> {
+    fn drop(&mut self) {
+        // A concurrent fork can temporarily inherit this open file description
+        // before CLOEXEC closes it. Releasing our descriptor alone would leave
+        // the transaction locked until that unrelated child closes its copy.
+        // Unlock the description explicitly; descriptor close remains the
+        // fallback if the OS rejects the best-effort release.
+        let _ = rustix::fs::flock(&self.lock, FlockOperation::Unlock);
+    }
+}
+
 impl TerminalProfileTransaction<'_> {
     pub(crate) fn validate(&self) -> Result<()> {
         self.store.validate()?;
@@ -555,18 +566,7 @@ mod tests {
     }
 
     fn begin(store: &TerminalProfileStore) -> TerminalProfileTransaction<'_> {
-        // Parallel PTY tests can briefly inherit a CLOEXEC lock between fork and
-        // exec. Only expected-success acquisition retries; live-owner assertions
-        // below still test the immediate nonblocking Busy response directly.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        loop {
-            match store.transaction() {
-                Err(TerminalProfileStoreError::Busy) if std::time::Instant::now() < deadline => {
-                    std::thread::sleep(std::time::Duration::from_millis(5));
-                }
-                result => return result.unwrap(),
-            }
-        }
+        store.transaction().unwrap()
     }
 
     fn logical_owner(name: &str) -> BackgroundOutputOwner {
@@ -586,6 +586,36 @@ mod tests {
                 result => return result.unwrap(),
             }
         }
+    }
+
+    #[test]
+    fn transaction_drop_unlocks_even_with_an_inherited_open_description() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let transaction = begin(&store);
+        // dup shares the same lock lifetime as a descriptor inherited by fork,
+        // making the close-before-exec window deterministic without a process.
+        let inherited = rustix::io::fcntl_dupfd_cloexec(&transaction.lock, 3).unwrap();
+        assert_eq!(
+            store.transaction().unwrap_err(),
+            TerminalProfileStoreError::Busy
+        );
+        drop(transaction);
+        // No retry: the finished transaction must no longer own the lock.
+        let next = store.transaction().unwrap();
+        assert_eq!(
+            store.transaction().unwrap_err(),
+            TerminalProfileStoreError::Busy
+        );
+        // Closing the older inherited description cannot unlock the fresh
+        // description that owns this subsequent transaction.
+        drop(inherited);
+        assert_eq!(
+            store.transaction().unwrap_err(),
+            TerminalProfileStoreError::Busy
+        );
+        drop(next);
+        assert!(store.transaction().is_ok());
     }
 
     #[test]

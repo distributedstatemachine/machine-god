@@ -98,6 +98,7 @@ and defers contention or quota refusal without consuming output. Exit races
 release the one-read permit before multi-chunk draining under the same held
 transaction, preserving committed reads independently of cleanup errors.
 Shutdown retains failed publication even when profile authority is unavailable.
+Transaction drop explicitly releases the lock despite temporary fork inheritance.
 Persistent live checkpoint reserves and victim selection remain to be composed
 before exposure.
 Per-session retention separates raw/checkpoint output from independently bounded

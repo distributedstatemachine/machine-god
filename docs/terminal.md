@@ -96,8 +96,12 @@ journal. The caller holds the exclusive profile transaction throughout.
 
 The profile store retains `terminal-v1` and a permanent private `profile-lock`.
 Each short nonblocking transaction acquires a fresh lock-file description, so
-independent handles and processes cannot overlap admission. Inventory traverses
-all owner namespaces, including busy writers and nonresident histories, with
+independent handles and processes cannot overlap admission. Transaction drop
+explicitly unlocks its open file description before closing it, so a forked
+child's temporary inherited descriptor cannot prolong the finished transaction.
+Closing that older inherited descriptor cannot release a newer transaction's
+independent lock. Inventory traverses all owner namespaces, including busy
+writers and nonresident histories, with
 limits of 256 owners, 256 sessions per owner and 1,024 sessions overall. Exact
 spelling, private descriptors and before/after topology checks reject replaced
 or unexplained entries. Recognized incomplete namespaces are counted without
