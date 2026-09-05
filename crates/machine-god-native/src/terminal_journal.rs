@@ -2135,14 +2135,15 @@ mod tests {
         let fixture = Fixture::new();
         let mut journal = fixture.create(limits(8, 64));
         let before = std::fs::read(fixture.path.join(META)).unwrap();
-        let plan = journal
-            .prepare_mutation(TerminalJournalMutation::CheckpointReserve(32))
-            .unwrap();
-        assert_eq!(plan.output_charge_growth(), 32);
-        assert_eq!(plan.allocation().output_growth, 0);
-        assert_eq!(plan.allocation().allocation_bytes, MAX_META as u64);
-        assert!(!plan.reclaims_only());
-        drop(plan);
+        {
+            let plan = journal
+                .prepare_mutation(TerminalJournalMutation::CheckpointReserve(32))
+                .unwrap();
+            assert_eq!(plan.output_charge_growth(), 32);
+            assert_eq!(plan.allocation().output_growth, 0);
+            assert_eq!(plan.allocation().allocation_bytes, MAX_META as u64);
+            assert!(!plan.reclaims_only());
+        }
         assert_eq!(std::fs::read(fixture.path.join(META)).unwrap(), before);
         assert_eq!(journal.checkpoint_reserve_bytes(), 0);
         set_reserve(&mut journal, 32);
