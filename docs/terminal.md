@@ -174,9 +174,13 @@ retain their committed cursor even when accounting subsequently fails.
 Legacy no-context history and session mutation entrypoints are available only
 to component tests. Session mutations and recovered acknowledgements receive
 the caller's held persistence context; they never acquire a hidden profile lock.
-These APIs do not intercept bare journal calls. Persistent live-checkpoint
-reserves and validated victim selection remain required before exposing the
-full terminal runtime.
+These APIs do not intercept bare journal calls. Production history creation
+registers the geometry-derived checkpoint floor before its first checkpoint and
+before native startup. The owner verifies the floor before a read permit; an
+unavailable legacy projection cannot invent missing reservation geometry.
+Resize admits a larger floor before native effects, shrinking it only after the
+new checkpoint succeeds. Failed publication and contextless cleanup retain the
+floor. Successful cleanup releases it only after durable completed-session facts.
 
 Profile retention uses explicit metadata-first eviction operations rather than
 rewriting session limits. Completed output/checkpoint eviction preserves facts,
@@ -190,8 +194,20 @@ gap-free when replaying immediately adjacent retained bytes.
 Session dispatch binds retention to the exact owner and lifecycle: completed
 eviction requires closed/exited sessions without native ownership or unresolved
 state publication; recovered lost sessions are not assumed completed. The
-profile coordinator remains responsible for transaction ownership and victim
-selection. Eviction errors retain ordinary journal poison/recovery behavior.
+profile coordinator holds the transaction across selection and eviction. It
+orders candidates by completed raw output, completed checkpoints, then live
+checkpoint-covered raw prefixes; within each class it uses creation time,
+owner namespace and session ID. The active namespace/session pair is excluded.
+Nonresident candidates require their normal nonblocking journal writer lease
+and validated, current, namespace-bound facts, not recovered process authority.
+Busy foreign writers are skipped without bypassing their leases. Physical and
+reserved charges are rescanned after each metadata-first mutation; hypothetical
+reclaimed bytes never authorize a read. Eviction errors retain ordinary journal
+poison/recovery behavior.
+Before selecting victims, the owner checks all non-output admission limits,
+directory binding and publication counters without issuing a read permit. It
+also rejects an active session whose own charge cannot fit after the next read;
+reclaiming other histories cannot remedy either kind of refusal.
 
 The history owner binds the live screen to the journal's committed cursor.
 Raw bytes commit before screen processing can return a protocol reply; a screen
@@ -334,8 +350,9 @@ admitted, otherwise retaining an explicit publication failure without journal
 writes or abandoning the backend needed for cleanup.
 Exit racing an admitted read releases its permit before multi-chunk cleanup;
 a separate cleanup error preserves the successful read result and final observed
-cursor/lifecycle, without returning stale probes. Transactions never span two
-sessions, observers, request callbacks, reply wakes or idle waits.
+cursor/lifecycle, without returning stale probes. A transaction may include
+bounded retention mutations on other sessions before the active read, but never
+spans scheduler turns, observers, request callbacks, reply wakes or idle waits.
 The injected clock cannot rewind any resident session. Resident listing is
 owner-scoped, lexically paged and optionally filtered by lifecycle/backend.
 Inactive residency may be released without deleting history, but a lost session
@@ -399,8 +416,8 @@ External probes remain separately authorized, off-loop effects.
 
 The sixteen-entry resident bound is not disk-history retention. The profile
 transaction and admission components cover nonresident histories and concurrent
-owner namespaces; validated persistent live checkpoint reserves and
-retention victim selection still require coordinator composition.
+owner namespaces, including persistent live checkpoint reserves and bounded
+retention selection before running-session reads.
 Production worker ownership, disk-catalog composition, trusted
 startup control, attention and lease effects, tmux, and model/CLI routing
 remain full-runtime integration work.

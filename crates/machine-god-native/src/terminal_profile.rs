@@ -226,9 +226,7 @@ impl TerminalProfileBudget {
 
     /// Physical output plus unspent committed live-checkpoint headroom. This
     /// observation grants no journal authority and never repairs a directory.
-    pub(crate) fn output_charge(
-        transaction: &TerminalProfileTransaction<'_>,
-    ) -> Result<u64> {
+    pub(crate) fn output_charge(transaction: &TerminalProfileTransaction<'_>) -> Result<u64> {
         add(
             transaction.inventory()?.usage.output_bytes,
             transaction.reserved_output_bytes()?,
@@ -285,6 +283,31 @@ impl TerminalProfileBudget {
         owner_namespace: &str,
         journal: &mut TerminalJournal,
         bounds: TerminalProfileReadBounds,
+    ) -> Result<TerminalProfileReadPermit<'a, 'store>> {
+        self.reserve_read_inner(transaction, owner_namespace, journal, bounds, true)
+    }
+
+    /// Validate every read admission constraint except the output ceiling,
+    /// before retention can remove another session's committed output. The
+    /// temporary plan never escapes as authority to read or publish.
+    pub(crate) fn preflight_read(
+        &self,
+        transaction: &mut TerminalProfileTransaction<'_>,
+        owner_namespace: &str,
+        journal: &mut TerminalJournal,
+        bounds: TerminalProfileReadBounds,
+    ) -> Result<()> {
+        self.reserve_read_inner(transaction, owner_namespace, journal, bounds, false)
+            .map(|_| ())
+    }
+
+    fn reserve_read_inner<'a, 'store>(
+        &self,
+        transaction: &'a mut TerminalProfileTransaction<'store>,
+        owner_namespace: &str,
+        journal: &mut TerminalJournal,
+        bounds: TerminalProfileReadBounds,
+        enforce_output_limit: bool,
     ) -> Result<TerminalProfileReadPermit<'a, 'store>> {
         if bounds.output_bytes == 0
             || bounds.output_bytes > MAX_READ_BYTES
@@ -348,6 +371,7 @@ impl TerminalProfileBudget {
                 false,
                 true,
                 Some(charge_growth),
+                enforce_output_limit,
             )?,
             owner_namespace: owner_namespace.to_owned(),
             session,
@@ -395,6 +419,7 @@ impl TerminalProfileBudget {
             write.reclaims_only(),
             false,
             Some(write.output_charge_growth()),
+            true,
         )?
         .run(|| write.execute())
     }
@@ -407,7 +432,7 @@ impl TerminalProfileBudget {
         transaction: &'a mut TerminalProfileTransaction<'store>,
         demand: TerminalProfileDemand,
     ) -> Result<TerminalProfileReservation<'a, 'store>> {
-        self.reserve_inner(transaction, demand, false, false, None)
+        self.reserve_inner(transaction, demand, false, false, None, true)
     }
 
     fn reserve_inner<'a, 'store>(
@@ -417,6 +442,7 @@ impl TerminalProfileBudget {
         reclaiming: bool,
         sequential: bool,
         output_charge_growth: Option<u64>,
+        enforce_output_limit: bool,
     ) -> Result<TerminalProfileReservation<'a, 'store>> {
         // Only a sealed journal acknowledgement/eviction plan takes this path.
         // Metadata-first reclamation must remain possible above the payload
@@ -454,14 +480,17 @@ impl TerminalProfileBudget {
             output_charge_growth.unwrap_or(demand.retained_growth.output_bytes),
         )?;
         if !reclaiming
-            && (!ceiling.fits(self.limits.retained)
-                || output_charge_ceiling > self.limits.retained.output_bytes)
+            && (ceiling.protected_bytes > self.limits.retained.protected_bytes
+                || ceiling.metadata_bytes > self.limits.retained.metadata_bytes
+                || (enforce_output_limit
+                    && (ceiling.output_bytes > self.limits.retained.output_bytes
+                        || output_charge_ceiling > self.limits.retained.output_bytes)))
         {
             return Err(TerminalProfileError::ResourceLimit);
         }
         // Check the actual gross-allocation envelope, even though the separate
         // ledger checks above are stronger for ordinary bounded inputs.
-        let base_ceiling = if reclaiming {
+        let base_ceiling = if reclaiming || !enforce_output_limit {
             baseline.total()?
         } else {
             self.limits.retained.total()?
@@ -779,6 +808,44 @@ mod tests {
     }
 
     #[test]
+    fn retention_preflight_ignores_only_output_pressure_and_grants_no_permit() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let (catalog, mut journal) = fixture.journal("preflight");
+        let mut transaction = begin_transaction(&store);
+        let before = journal.usage();
+        let check = |allowed: TerminalProfileBudget,
+                     journal: &mut TerminalJournal,
+                     transaction: &mut TerminalProfileTransaction<'_>| {
+            allowed.preflight_read(transaction, catalog.namespace_key(), journal, read_bounds())
+        };
+        check(budget(), &mut journal, &mut transaction).unwrap();
+        assert!(matches!(
+            budget().reserve_read(
+                &mut transaction,
+                catalog.namespace_key(),
+                &mut journal,
+                read_bounds()
+            ),
+            Err(TerminalProfileError::ResourceLimit)
+        ));
+        for kind in 0..3 {
+            let mut limited = budget();
+            match kind {
+                0 => limited.limits.retained.protected_bytes = 3,
+                1 => limited.limits.retained.metadata_bytes = before.metadata_bytes as u64,
+                _ => limited.limits.temporary_bytes = MAX_METADATA + 7,
+            }
+            assert_eq!(
+                check(limited, &mut journal, &mut transaction),
+                Err(TerminalProfileError::ResourceLimit)
+            );
+            assert_eq!(journal.usage(), before);
+        }
+        assert_eq!(transaction.reserved_output_bytes().unwrap(), 0);
+    }
+
+    #[test]
     fn live_reserves_charge_busy_foreign_and_nonresident_owners() {
         let fixture = Fixture::new();
         let store = fixture.store();
@@ -794,7 +861,10 @@ mod tests {
         .unwrap();
         assert_eq!(transaction.inventory().unwrap().usage.output_bytes, 0);
         assert_eq!(transaction.reserved_output_bytes().unwrap(), 6);
-        assert_eq!(TerminalProfileBudget::output_charge(&transaction).unwrap(), 6);
+        assert_eq!(
+            TerminalProfileBudget::output_charge(&transaction).unwrap(),
+            6
+        );
         let mut held_first = Some(first);
         for nonresident in [false, true] {
             if nonresident {
@@ -819,7 +889,10 @@ mod tests {
             TerminalJournalMutation::Append(b"ok"),
         )
         .unwrap();
-        assert_eq!(TerminalProfileBudget::output_charge(&transaction).unwrap(), 8);
+        assert_eq!(
+            TerminalProfileBudget::output_charge(&transaction).unwrap(),
+            8
+        );
         // Checkpoint replacement consumes then replenishes the same reserved
         // capacity, without double charging it or crediting another owner.
         for (bytes, unspent) in [(&b"screen"[..], 0), (&b"x"[..], 5)] {
@@ -832,12 +905,18 @@ mod tests {
             )
             .unwrap();
             assert_eq!(transaction.reserved_output_bytes().unwrap(), unspent);
-            assert_eq!(TerminalProfileBudget::output_charge(&transaction).unwrap(), 8);
+            assert_eq!(
+                TerminalProfileBudget::output_charge(&transaction).unwrap(),
+                8
+            );
         }
         drop(first);
         // Dropping the native owner or writer never grants virtual credit.
         assert_eq!(transaction.reserved_output_bytes().unwrap(), 5);
-        assert_eq!(TerminalProfileBudget::output_charge(&transaction).unwrap(), 8);
+        assert_eq!(
+            TerminalProfileBudget::output_charge(&transaction).unwrap(),
+            8
+        );
     }
 
     #[test]
@@ -875,7 +954,10 @@ mod tests {
         completion.operation.unwrap();
         completion.accounting.unwrap();
         assert_eq!(transaction.reserved_output_bytes().unwrap(), 0);
-        assert_eq!(TerminalProfileBudget::output_charge(&transaction).unwrap(), 0);
+        assert_eq!(
+            TerminalProfileBudget::output_charge(&transaction).unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -914,7 +996,10 @@ mod tests {
             completion.accounting.unwrap();
         }
         drop(permit);
-        assert_eq!(TerminalProfileBudget::output_charge(&transaction).unwrap(), 8);
+        assert_eq!(
+            TerminalProfileBudget::output_charge(&transaction).unwrap(),
+            8
+        );
         assert_eq!(transaction.inventory().unwrap().usage.output_bytes, 8);
         assert_eq!(transaction.reserved_output_bytes().unwrap(), 0);
     }

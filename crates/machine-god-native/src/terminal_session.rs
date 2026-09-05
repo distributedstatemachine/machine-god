@@ -309,6 +309,17 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         Ok(self.history.required_profile_read_growth()?)
     }
 
+    pub(crate) fn preflight_profile_read(
+        &mut self,
+        transaction: &mut TerminalProfileTransaction<'_>,
+        budget: &TerminalProfileBudget,
+        owner_namespace: &str,
+    ) -> Result<()> {
+        Ok(self
+            .history
+            .preflight_profile_read(transaction, budget, owner_namespace)?)
+    }
+
     /// Reserve the whole bounded read before the owner invokes `pump_with`.
     /// The permit borrows the held profile transaction, not this session.
     pub(crate) fn reserve_profile_read<'a, 'store>(

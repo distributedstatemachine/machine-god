@@ -362,6 +362,39 @@ impl TerminalHistory {
             .map_err(TerminalHistoryError::Profile)
     }
 
+    pub(crate) fn preflight_profile_read(
+        &mut self,
+        transaction: &mut TerminalProfileTransaction<'_>,
+        budget: &TerminalProfileBudget,
+        owner_namespace: &str,
+    ) -> Result<()> {
+        self.require_live()?;
+        let bound = match self.screen.as_ref() {
+            Some(screen) => screen.current_checkpoint_bound()? + MAGIC.len() + 1,
+            None if self.journal.checkpoint_reserve_bytes() > 0 => MAGIC.len() + 1,
+            None => {
+                return Err(TerminalHistoryError::Profile(
+                    TerminalProfileError::ResourceLimit,
+                ));
+            }
+        };
+        if self.journal.checkpoint_reserve_bytes() < bound {
+            // One floor publication plus the permit's append, two checkpoints
+            // and two states must fit before any victim can be reclaimed.
+            self.journal.ensure_commit_capacity(6)?;
+            self.journal
+                .prepare_mutation(TerminalJournalMutation::CheckpointReserve(bound))?;
+        }
+        budget
+            .preflight_read(
+                transaction,
+                owner_namespace,
+                &mut self.journal,
+                TerminalProfileReadBounds::for_checkpoint(bound),
+            )
+            .map_err(TerminalHistoryError::Profile)
+    }
+
     /// Session/registry owners establish lifecycle and profile transaction
     /// authority. The history layer alone can validate usable screen coverage.
     fn retention_request(

@@ -108,8 +108,10 @@ refusal after native effects; the latter loses/quiesces the session and retains
 the unresolved publication failure.
 Checkpoint reserves now persist in checksummed journal metadata; profile
 admission and reconciliation separately enforce physical usage and reserved
-output across busy and nonresident owners. Lifecycle registration and validated
-victim selection are being composed before exposure.
+output across busy and nonresident owners. Lifecycle registration precedes
+startup and growth resize; release follows native cleanup and durable completed
+facts. The profile owner is integrating bounded, oldest-first retention classes
+before reads, using resident authority or acquired nonresident writer leases.
 Per-session retention separates raw/checkpoint output from independently bounded
 state and events, matching the pinned output-accounting boundary. Non-output
 publications cannot evict output; recovery retains all ledger categories.
