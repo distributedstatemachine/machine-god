@@ -13,6 +13,10 @@ use crate::terminal_monitor::{
     TerminalMonitorError, TerminalMonitorMutation, TerminalMonitorSet, TerminalProbeEvidence,
     TerminalProbeRequest, TerminalProcessOutcome,
 };
+use crate::terminal_profile::{
+    TerminalJournalPersistence, TerminalProfileBudget, TerminalProfileReadPermit,
+};
+use crate::terminal_profile_store::TerminalProfileTransaction;
 use crate::terminal_pty::{
     TerminalPty, TerminalPtyClose, TerminalPtyDimensions, TerminalPtyRead, TerminalPtyStatus,
 };
@@ -135,6 +139,7 @@ pub(crate) struct TerminalSession<B: TerminalSessionBackend> {
     created_at_ms: i64,
     monitor_notifications_incomplete: bool,
     publication_error: Option<TerminalSessionError>,
+    pending_output_gap: bool,
     now_ms: i64,
     last_output_ms: i64,
 }
@@ -146,7 +151,28 @@ impl<B: TerminalSessionBackend> fmt::Debug for TerminalSession<B> {
 impl<B: TerminalSessionBackend> TerminalSession<B> {
     /// Takes already-owned transport and fresh history. Only a trusted readiness
     /// channel calls `shell_ready`; raw output is never readiness authority.
+    #[cfg(test)]
     pub(crate) fn new(
+        backend: B,
+        history: TerminalHistory,
+        owner: BackgroundOutputOwner,
+        id: TerminalSessionId,
+        metadata: TerminalSessionMetadata,
+        now_ms: i64,
+    ) -> Result<Self> {
+        Self::new_with(
+            &mut crate::terminal_profile::TerminalTestPersistence,
+            backend,
+            history,
+            owner,
+            id,
+            metadata,
+            now_ms,
+        )
+    }
+
+    pub(crate) fn new_with(
+        persistence: &mut dyn TerminalJournalPersistence,
         backend: B,
         history: TerminalHistory,
         owner: BackgroundOutputOwner,
@@ -179,20 +205,33 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             created_at_ms: now_ms,
             monitor_notifications_incomplete: false,
             publication_error: None,
+            pending_output_gap: false,
             now_ms,
             last_output_ms: now_ms,
         };
-        session.persist()?;
+        session.persist_with(persistence)?;
         Ok(session)
     }
+    #[cfg(test)]
     pub(crate) fn shell_ready(&mut self, now_ms: i64) -> Result<()> {
+        self.shell_ready_with(
+            &mut crate::terminal_profile::TerminalTestPersistence,
+            now_ms,
+        )
+    }
+
+    pub(crate) fn shell_ready_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        now_ms: i64,
+    ) -> Result<()> {
         self.check_time(now_ms)?;
         if self.lifecycle != TerminalLifecycle::Starting {
             return Err(TerminalSessionError::InvalidState);
         }
         self.now_ms = now_ms;
         self.lifecycle = TerminalLifecycle::Running;
-        self.persist()
+        self.persist_with(persistence)
     }
     pub(crate) fn context(&self) -> TerminalMonitorContext {
         TerminalMonitorContext {
@@ -213,6 +252,18 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
     /// Native cleanup and durable state publication are independent obligations.
     pub(crate) fn publication_error(&self) -> Option<TerminalSessionError> {
         self.publication_error
+    }
+    /// Reserve the whole bounded read before the owner invokes `pump_with`.
+    /// The permit borrows the held profile transaction, not this session.
+    pub(crate) fn reserve_profile_read<'a, 'store>(
+        &mut self,
+        transaction: &'a mut TerminalProfileTransaction<'store>,
+        budget: &TerminalProfileBudget,
+        owner_namespace: &str,
+    ) -> Result<TerminalProfileReadPermit<'a, 'store>> {
+        Ok(self
+            .history
+            .reserve_read(transaction, budget, owner_namespace)?)
     }
     pub(crate) fn inspect(&self, owner: &BackgroundOutputOwner) -> Result<TerminalSessionFacts> {
         self.authorize(owner)?;
@@ -265,15 +316,29 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         self.authorize_retention(owner, kind)?;
         Ok(self.history.eviction_bytes(kind)?)
     }
+    #[cfg(test)]
     pub(crate) fn evict(
         &mut self,
         owner: &BackgroundOutputOwner,
         kind: TerminalHistoryEviction,
     ) -> Result<usize> {
+        self.evict_with(
+            &mut crate::terminal_profile::TerminalTestPersistence,
+            owner,
+            kind,
+        )
+    }
+
+    pub(crate) fn evict_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        owner: &BackgroundOutputOwner,
+        kind: TerminalHistoryEviction,
+    ) -> Result<usize> {
         self.authorize_retention(owner, kind)?;
         self.history
-            .evict(kind)
-            .map_err(|error| self.failed_observation(error.into()))
+            .evict_with(persistence, kind)
+            .map_err(|error| self.failed_observation_with(persistence, error.into()))
     }
     pub(crate) fn read(
         &self,
@@ -336,7 +401,19 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
 
     /// One nonblocking write, one <=16 KiB read, then bounded monitor work.
     /// Cancelling an attention future does not drop a committed input suffix.
+    #[cfg(test)]
     pub(crate) fn pump(&mut self, now_ms: i64) -> Result<TerminalSessionStep> {
+        self.pump_with(
+            &mut crate::terminal_profile::TerminalTestPersistence,
+            now_ms,
+        )
+    }
+
+    pub(crate) fn pump_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        now_ms: i64,
+    ) -> Result<TerminalSessionStep> {
         self.check_time(now_ms)?;
         let before_lifecycle = self.lifecycle;
         let timer_due = self
@@ -350,21 +427,24 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         ) {
             return Ok(self.step(Vec::new(), Vec::new()));
         }
-        match self.pump_inner() {
+        match self.pump_inner_with(persistence) {
             Ok(step) => {
                 if timer_due
                     || !step.output.is_empty()
                     || !step.probes.is_empty()
                     || self.lifecycle != before_lifecycle
                 {
-                    self.persist()?;
+                    self.persist_with(persistence)?;
                 }
                 Ok(step)
             }
-            Err(error) => Err(self.failed_observation(error)),
+            Err(error) => Err(self.failed_observation_with(persistence, error)),
         }
     }
-    fn pump_inner(&mut self) -> Result<TerminalSessionStep> {
+    fn pump_inner_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+    ) -> Result<TerminalSessionStep> {
         let status = self
             .backend
             .as_mut()
@@ -374,7 +454,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         if status != TerminalPtyStatus::Running {
             // Retain final output and close before reaping the shell, including
             // owned jobs left behind by an exited interactive shell.
-            self.finish_native(false, TerminalLifecycle::Exited)?;
+            self.finish_native_with(persistence, false, TerminalLifecycle::Exited)?;
             return Ok(self.step(Vec::new(), Vec::new()));
         }
         self.flush_input();
@@ -390,8 +470,22 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         }
         let output = buffer[..read.bytes_read].to_vec();
         if !output.is_empty() {
-            let receipt = self.history.append(&output)?;
             self.last_output_ms = self.now_ms;
+            let receipt = match self.history.append_with(persistence, &output) {
+                Ok(receipt) => receipt,
+                Err(error) => {
+                    self.pending_output_gap = true;
+                    self.history.invalidate_output_without_persistence();
+                    self.monitor_notifications_incomplete = true;
+                    return Err(error.into());
+                }
+            };
+            if let Some(error) = receipt.accounting_error {
+                // The bytes are committed. Do not retry their append or enqueue
+                // their protocol replies after admission accounting failed.
+                self.monitor_notifications_incomplete = true;
+                return Err(TerminalHistoryError::Accounting(error).into());
+            }
             self.monitors.output(&output, self.context())?;
             if receipt.screen_unavailable.is_some() {
                 self.monitors.raw_gap(self.context())?;
@@ -413,14 +507,30 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             if status == TerminalPtyStatus::Running {
                 return Err(TerminalSessionError::Native);
             }
-            self.finish_native(false, TerminalLifecycle::Exited)?;
+            self.finish_native_with(persistence, false, TerminalLifecycle::Exited)?;
             return Ok(self.step(output, Vec::new()));
         }
         let probes = self.monitors.tick(self.context())?;
         Ok(self.step(output, probes))
     }
+    #[cfg(test)]
     pub(crate) fn resize(
         &mut self,
+        owner: &BackgroundOutputOwner,
+        dimensions: &TerminalDimensions,
+        now_ms: i64,
+    ) -> Result<()> {
+        self.resize_with(
+            &mut crate::terminal_profile::TerminalTestPersistence,
+            owner,
+            dimensions,
+            now_ms,
+        )
+    }
+
+    pub(crate) fn resize_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
         owner: &BackgroundOutputOwner,
         dimensions: &TerminalDimensions,
         now_ms: i64,
@@ -430,8 +540,17 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             .backend
             .as_mut()
             .ok_or(TerminalSessionError::InvalidState)?;
-        self.history
-            .resize(dimensions, |dimensions| backend.resize(dimensions))?;
+        let resized = self
+            .history
+            .resize_with(persistence, dimensions, |dimensions| {
+                backend.resize(dimensions)
+            });
+        if let Err(error) = resized {
+            if matches!(error, TerminalHistoryError::Profile(_)) {
+                return Err(error.into());
+            }
+            return Err(self.failed_observation_with(persistence, error.into()));
+        }
         self.now_ms = now_ms;
         if self.monitors.needs_screen() {
             let observed = self
@@ -444,13 +563,29 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
                         .map_err(TerminalSessionError::from)
                 });
             if let Err(error) = observed {
-                return Err(self.failed_observation(error));
+                return Err(self.failed_observation_with(persistence, error));
             }
         }
-        self.persist()
+        self.persist_with(persistence)
     }
+    #[cfg(test)]
     pub(crate) fn signal(
         &mut self,
+        owner: &BackgroundOutputOwner,
+        signal: TerminalSignal,
+        now_ms: i64,
+    ) -> Result<()> {
+        self.signal_with(
+            &mut crate::terminal_profile::TerminalTestPersistence,
+            owner,
+            signal,
+            now_ms,
+        )
+    }
+
+    pub(crate) fn signal_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
         owner: &BackgroundOutputOwner,
         signal: TerminalSignal,
         now_ms: i64,
@@ -462,12 +597,17 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             .ok_or(TerminalSessionError::InvalidState)?
             .signal_may_discard_output()
         {
-            self.history.mark_output_gap()?;
+            if let Err(error) = self.history.mark_output_gap_with(persistence) {
+                if matches!(error, TerminalHistoryError::Profile(_)) {
+                    return Err(error.into());
+                }
+                return Err(self.failed_observation_with(persistence, error.into()));
+            }
             self.now_ms = now_ms;
             if let Err(error) = self.monitors.raw_gap(self.context()) {
-                return Err(self.failed_observation(error.into()));
+                return Err(self.failed_observation_with(persistence, error.into()));
             }
-            self.persist()?;
+            self.persist_with(persistence)?;
         }
         // A failed signal is not retried and never escalates into close/kill.
         self.backend
@@ -478,8 +618,24 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         self.now_ms = now_ms;
         Ok(())
     }
+    #[cfg(test)]
     pub(crate) fn close(
         &mut self,
+        owner: &BackgroundOutputOwner,
+        policy: TerminalClosePolicy,
+        now_ms: i64,
+    ) -> Result<()> {
+        self.close_with(
+            &mut crate::terminal_profile::TerminalTestPersistence,
+            owner,
+            policy,
+            now_ms,
+        )
+    }
+
+    pub(crate) fn close_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
         owner: &BackgroundOutputOwner,
         policy: TerminalClosePolicy,
         now_ms: i64,
@@ -487,19 +643,67 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         self.authorize(owner)?;
         self.check_time(now_ms)?;
         self.now_ms = now_ms;
-        let native = self.finish_native(
+        let native = self.finish_native_with(
+            persistence,
             policy == TerminalClosePolicy::Force,
             TerminalLifecycle::Closed,
         );
         // Persist the observed result after cleanup, even when cleanup failed.
         // Persistence failure must never prevent the first native cleanup attempt.
-        let persisted = self.persist();
+        let persisted = self.persist_with(persistence);
+        if self.publication_error.is_none()
+            && let Err(error @ TerminalSessionError::History(_)) = native
+        {
+            self.publication_error = Some(error);
+        }
         native.and(persisted)
     }
 
-    /// Native cleanup proceeds even if history publication fails. The error is
-    /// retained, and input is quiesced before either persistence or process I/O.
-    fn finish_native(&mut self, force: bool, final_lifecycle: TerminalLifecycle) -> Result<()> {
+    /// Last-resort owner cleanup when no profile authority can be obtained.
+    /// This path never publishes a journal mutation and never returns durable
+    /// success. Owned native authority survives failed cleanup for retry.
+    pub(crate) fn teardown_without_persistence(
+        &mut self,
+        force: bool,
+        now_ms: i64,
+        error: TerminalSessionError,
+    ) -> Result<()> {
+        self.now_ms = self.now_ms.max(now_ms);
+        self.input.quiesce();
+        self.monitors.quiesce();
+        self.monitor_notifications_incomplete = true;
+        self.publication_error.get_or_insert(error);
+        let Some(backend) = self.backend.as_mut() else {
+            return Err(error);
+        };
+        self.pending_output_gap = true;
+        self.history.invalidate_output_without_persistence();
+        let mut observed_output = false;
+        let closed = backend
+            .close(force, &mut |bytes| {
+                observed_output |= !bytes.is_empty();
+            })
+            .and_then(require_closed_status);
+        if observed_output {
+            self.last_output_ms = self.now_ms;
+        }
+        if let Ok(closed) = closed {
+            self.outcome = outcome(closed.status);
+            self.lifecycle = TerminalLifecycle::Closed;
+            self.backend.take();
+            Err(error)
+        } else {
+            self.lose();
+            Err(TerminalSessionError::Native)
+        }
+    }
+
+    fn finish_native_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        force: bool,
+        final_lifecycle: TerminalLifecycle,
+    ) -> Result<()> {
         self.input.quiesce();
         let Some(backend) = self.backend.as_mut() else {
             if final_lifecycle == TerminalLifecycle::Closed {
@@ -513,8 +717,9 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         let lifecycle = self.lifecycle;
         let mut observed_output = false;
         let mut monitor_error = None;
-        let result = match self.history.begin_close() {
+        let result = match self.history.begin_close_with(persistence) {
             Ok(mut capture) => {
+                self.pending_output_gap = false;
                 let result = backend
                     .close(force, &mut |bytes| {
                         if bytes.is_empty() {
@@ -555,11 +760,15 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             }
             Err(error) => {
                 history_error = Some(error);
+                self.pending_output_gap = !matches!(error, TerminalHistoryError::Accounting(_));
                 backend
-                    .close(force, &mut |_| {})
+                    .close(force, &mut |bytes| observed_output |= !bytes.is_empty())
                     .and_then(require_closed_status)
             }
         };
+        if self.pending_output_gap {
+            self.history.invalidate_output_without_persistence();
+        }
         if observed_output {
             self.last_output_ms = now_ms;
         }
@@ -585,7 +794,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         } else {
             self.lose();
         }
-        self.monitor_notifications_incomplete |= monitor_error.is_some();
+        self.monitor_notifications_incomplete |= monitor_error.is_some() || history_error.is_some();
         if let Some(error) = history_error {
             return Err(error.into());
         }
@@ -596,8 +805,26 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             .map(|_| ())
             .map_err(|()| TerminalSessionError::Native)
     }
+    #[cfg(test)]
     pub(crate) fn monitor(
         &mut self,
+        owner: &BackgroundOutputOwner,
+        operation: TerminalMonitorOperation,
+        activation: TerminalMonitorActivation,
+        now_ms: i64,
+    ) -> Result<TerminalMonitorMutation> {
+        self.monitor_with(
+            &mut crate::terminal_profile::TerminalTestPersistence,
+            owner,
+            operation,
+            activation,
+            now_ms,
+        )
+    }
+
+    pub(crate) fn monitor_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
         owner: &BackgroundOutputOwner,
         operation: TerminalMonitorOperation,
         activation: TerminalMonitorActivation,
@@ -617,11 +844,25 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             .monitors
             .apply_with_activation(operation, activation, context)?;
         self.now_ms = now_ms;
-        self.persist()?;
+        self.persist_with(persistence)?;
         Ok(mutation)
     }
+    #[cfg(test)]
     pub(crate) fn complete_probe(
         &mut self,
+        evidence: TerminalProbeEvidence,
+        now_ms: i64,
+    ) -> Result<bool> {
+        self.complete_probe_with(
+            &mut crate::terminal_profile::TerminalTestPersistence,
+            evidence,
+            now_ms,
+        )
+    }
+
+    pub(crate) fn complete_probe_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
         evidence: TerminalProbeEvidence,
         now_ms: i64,
     ) -> Result<bool> {
@@ -647,12 +888,26 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             self.check_time(now_ms)?;
             self.monitors = candidate;
             self.now_ms = now_ms;
-            self.persist()?;
+            self.persist_with(persistence)?;
         }
         Ok(accepted)
     }
+    #[cfg(test)]
     pub(crate) fn events(
         &mut self,
+        owner: &BackgroundOutputOwner,
+        query: &TerminalEventQuery,
+    ) -> Result<Vec<TerminalMonitorEvent>> {
+        self.events_with(
+            &mut crate::terminal_profile::TerminalTestPersistence,
+            owner,
+            query,
+        )
+    }
+
+    pub(crate) fn events_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
         owner: &BackgroundOutputOwner,
         query: &TerminalEventQuery,
     ) -> Result<Vec<TerminalMonitorEvent>> {
@@ -666,13 +921,26 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         let mut candidate = self.monitors.clone();
         let events = candidate.events(query)?;
         if candidate.acknowledged_event_id() != self.monitors.acknowledged_event_id() {
+            if let Err(error) = self.persist_pending_output_gap(persistence) {
+                self.publication_error = Some(error);
+                self.failed_publication();
+                return Err(error);
+            }
             let publication = (|| -> Result<()> {
                 candidate.checkpoint_context(self.context())?;
                 let bytes = self.facts()?.encode(&candidate)?;
-                self.history.publish_state(&bytes)?;
+                self.history.publish_state_with(persistence, &bytes)?;
                 Ok(())
             })();
             if let Err(error) = publication {
+                if matches!(
+                    error,
+                    TerminalSessionError::History(TerminalHistoryError::Accounting(_))
+                ) {
+                    // State publication committed this acknowledgement even
+                    // though its accounting failed. Keep that receipt in memory.
+                    self.monitors = candidate;
+                }
                 self.publication_error = Some(error);
                 self.failed_publication();
                 return Err(error);
@@ -695,11 +963,17 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         facts.metadata = Some(self.metadata.clone());
         Ok(facts)
     }
+    #[cfg(test)]
     fn persist(&mut self) -> Result<()> {
+        self.persist_with(&mut crate::terminal_profile::TerminalTestPersistence)
+    }
+
+    fn persist_with(&mut self, persistence: &mut dyn TerminalJournalPersistence) -> Result<()> {
         let result = (|| {
+            self.persist_pending_output_gap(persistence)?;
             self.monitors.checkpoint_context(self.context())?;
             let bytes = self.facts()?.encode(&self.monitors)?;
-            self.history.publish_state(&bytes)?;
+            self.history.publish_state_with(persistence, &bytes)?;
             Ok(())
         })();
         self.publication_error = result.err();
@@ -708,12 +982,42 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         }
         result
     }
-    fn failed_observation(&mut self, error: TerminalSessionError) -> TerminalSessionError {
+    fn persist_pending_output_gap(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+    ) -> Result<()> {
+        if self.pending_output_gap {
+            let result = self.history.mark_output_gap_with(persistence);
+            if result.is_ok() || matches!(result, Err(TerminalHistoryError::Accounting(_))) {
+                // Accounting failure does not revoke the committed barrier.
+                self.pending_output_gap = false;
+            }
+            result?;
+        }
+        Ok(())
+    }
+    fn failed_observation_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        error: TerminalSessionError,
+    ) -> TerminalSessionError {
         if matches!(error, TerminalSessionError::Monitor(_)) {
             self.monitor_notifications_incomplete = true;
         }
         self.failed_publication();
-        let _ = self.persist();
+        let _ = self.persist_with(persistence);
+        // A successful best-effort state write cannot erase a failed output
+        // accounting obligation or a rejected consumed-output publication.
+        if self.publication_error.is_none()
+            && matches!(
+                error,
+                TerminalSessionError::History(
+                    TerminalHistoryError::Accounting(_) | TerminalHistoryError::Profile(_)
+                )
+            )
+        {
+            self.publication_error = Some(error);
+        }
         error
     }
     fn failed_publication(&mut self) {
@@ -797,6 +1101,7 @@ pub(crate) struct TerminalRecoveredSession {
     history: TerminalHistory,
     facts: TerminalSessionFacts,
     monitors: TerminalMonitorSet,
+    publication_error: Option<TerminalSessionError>,
 }
 impl fmt::Debug for TerminalRecoveredSession {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -805,7 +1110,22 @@ impl fmt::Debug for TerminalRecoveredSession {
     }
 }
 impl TerminalRecoveredSession {
+    #[cfg(test)]
     pub(crate) fn recover(
+        history: TerminalHistory,
+        owner: &BackgroundOutputOwner,
+        now_ms: i64,
+    ) -> Result<Self> {
+        Self::recover_with(
+            &mut crate::terminal_profile::TerminalTestPersistence,
+            history,
+            owner,
+            now_ms,
+        )
+    }
+
+    pub(crate) fn recover_with(
+        persistence: &mut dyn TerminalJournalPersistence,
         mut history: TerminalHistory,
         owner: &BackgroundOutputOwner,
         now_ms: i64,
@@ -863,13 +1183,18 @@ impl TerminalRecoveredSession {
             monitors.checkpoint_context(facts.context.clone())?;
         }
         if was_live || incomplete {
-            history.publish_state(&facts.encode(&monitors)?)?;
+            history.publish_state_with(persistence, &facts.encode(&monitors)?)?;
         }
         Ok(Self {
             history,
             facts,
             monitors,
+            publication_error: None,
         })
+    }
+
+    pub(crate) fn publication_error(&self) -> Option<TerminalSessionError> {
+        self.publication_error
     }
 
     pub(crate) fn facts(&self, owner: &BackgroundOutputOwner) -> Result<&TerminalSessionFacts> {
@@ -890,6 +1215,9 @@ impl TerminalRecoveredSession {
         kind: TerminalHistoryEviction,
     ) -> Result<()> {
         self.authorize(owner)?;
+        if let Some(error) = self.publication_error {
+            return Err(error);
+        }
         if kind == TerminalHistoryEviction::LiveCoveredOutput
             || !matches!(
                 self.facts.context.lifecycle,
@@ -908,13 +1236,32 @@ impl TerminalRecoveredSession {
         self.authorize_retention(owner, kind)?;
         Ok(self.history.eviction_bytes(kind)?)
     }
+    #[cfg(test)]
     pub(crate) fn evict(
         &mut self,
         owner: &BackgroundOutputOwner,
         kind: TerminalHistoryEviction,
     ) -> Result<usize> {
+        self.evict_with(
+            &mut crate::terminal_profile::TerminalTestPersistence,
+            owner,
+            kind,
+        )
+    }
+
+    pub(crate) fn evict_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        owner: &BackgroundOutputOwner,
+        kind: TerminalHistoryEviction,
+    ) -> Result<usize> {
         self.authorize_retention(owner, kind)?;
-        Ok(self.history.evict(kind)?)
+        let result = self
+            .history
+            .evict_with(persistence, kind)
+            .map_err(TerminalSessionError::from);
+        self.publication_error = result.as_ref().err().copied();
+        result
     }
 
     pub(crate) fn read(
@@ -932,8 +1279,22 @@ impl TerminalRecoveredSession {
         Ok(self.history.screen()?)
     }
 
+    #[cfg(test)]
     pub(crate) fn events(
         &mut self,
+        owner: &BackgroundOutputOwner,
+        query: &TerminalEventQuery,
+    ) -> Result<Vec<TerminalMonitorEvent>> {
+        self.events_with(
+            &mut crate::terminal_profile::TerminalTestPersistence,
+            owner,
+            query,
+        )
+    }
+
+    pub(crate) fn events_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
         owner: &BackgroundOutputOwner,
         query: &TerminalEventQuery,
     ) -> Result<Vec<TerminalMonitorEvent>> {
@@ -947,8 +1308,17 @@ impl TerminalRecoveredSession {
         let mut candidate = self.monitors.clone();
         let events = candidate.events(query)?;
         if candidate.acknowledged_event_id() != self.monitors.acknowledged_event_id() {
-            self.history
-                .publish_state(&self.facts.encode(&candidate)?)?;
+            let published = self
+                .history
+                .publish_state_with(persistence, &self.facts.encode(&candidate)?);
+            if let Err(error) = published {
+                if matches!(error, TerminalHistoryError::Accounting(_)) {
+                    self.monitors = candidate;
+                }
+                self.publication_error = Some(error.into());
+                return Err(error.into());
+            }
+            self.publication_error = None;
             self.monitors = candidate;
         }
         Ok(events)
@@ -969,8 +1339,14 @@ mod tests {
     use crate::background_input::BackgroundInputStatus;
     use crate::terminal_input::TerminalInputProgress;
     use crate::terminal_journal::{TerminalJournal, TerminalJournalLimits};
+    use crate::terminal_journal::{
+        TerminalJournalError, TerminalJournalMutation, TerminalJournalReceipt,
+    };
     use crate::terminal_monitor::{
         TerminalProbeObservation, TerminalWaitOutcome, TerminalWaitState,
+    };
+    use crate::terminal_profile::{
+        TerminalProfileCompletion, TerminalProfileError, TerminalTestPersistence,
     };
     use machine_god_core::{
         SessionId, SessionIncarnationId, TerminalMonitorCondition as Condition,
@@ -1131,11 +1507,22 @@ mod tests {
             .unwrap()
         }
         fn session(&self) -> TerminalSession<Backend> {
+            self.session_with(&mut TerminalTestPersistence)
+        }
+        fn session_with(
+            &self,
+            persistence: &mut dyn TerminalJournalPersistence,
+        ) -> TerminalSession<Backend> {
             let journal =
                 TerminalJournal::create(self.fd(), id(), TerminalJournalLimits::default()).unwrap();
-            let history =
-                TerminalHistory::create(journal, &TerminalDimensions::new(3, 20).unwrap()).unwrap();
-            TerminalSession::new(
+            let history = TerminalHistory::create_with(
+                persistence,
+                journal,
+                &TerminalDimensions::new(3, 20).unwrap(),
+            )
+            .unwrap();
+            TerminalSession::new_with(
+                persistence,
                 Backend(Arc::clone(&self.state)),
                 history,
                 owner("owner"),
@@ -1240,6 +1627,481 @@ mod tests {
             )
             .unwrap()
             .monitor_id
+    }
+
+    #[derive(Default)]
+    struct Persistence {
+        calls: Vec<&'static str>,
+        denied: bool,
+        fail_accounting: Option<&'static str>,
+    }
+    impl TerminalJournalPersistence for Persistence {
+        fn mutate(
+            &mut self,
+            journal: &mut TerminalJournal,
+            mutation: TerminalJournalMutation<'_>,
+        ) -> std::result::Result<
+            TerminalProfileCompletion<TerminalJournalReceipt, TerminalJournalError>,
+            TerminalProfileError,
+        > {
+            let kind = match &mutation {
+                TerminalJournalMutation::Append(_) => "append",
+                TerminalJournalMutation::Checkpoint { .. } => "checkpoint",
+                TerminalJournalMutation::State { .. } => "state",
+                TerminalJournalMutation::Event(_) => "event",
+                TerminalJournalMutation::Acknowledge(_) => "ack",
+                TerminalJournalMutation::Evict(_) => "evict",
+            };
+            self.calls.push(kind);
+            if self.denied {
+                return Err(TerminalProfileError::ResourceLimit);
+            }
+            let mut completion = TerminalTestPersistence.mutate(journal, mutation)?;
+            if self.fail_accounting == Some(kind) && completion.operation.is_ok() {
+                self.fail_accounting = None;
+                completion.accounting = Err(TerminalProfileError::AccountingMismatch);
+            }
+            Ok(completion)
+        }
+    }
+
+    fn denied_error() -> TerminalSessionError {
+        TerminalHistoryError::Profile(TerminalProfileError::ResourceLimit).into()
+    }
+
+    #[test]
+    fn explicit_context_routes_initialization_controls_output_and_close() {
+        let fixture = Fixture::new();
+        let mut persistence = Persistence::default();
+        let mut session = fixture.session_with(&mut persistence);
+        assert_eq!(persistence.calls, ["checkpoint", "state"]);
+        persistence.calls.clear();
+        session.shell_ready_with(&mut persistence, 0).unwrap();
+        session
+            .resize_with(
+                &mut persistence,
+                &owner("owner"),
+                &TerminalDimensions::new(4, 20).unwrap(),
+                1,
+            )
+            .unwrap();
+        fixture.state.lock().unwrap().signal_flushes = true;
+        session
+            .signal_with(
+                &mut persistence,
+                &owner("owner"),
+                TerminalSignal::Interrupt,
+                2,
+            )
+            .unwrap();
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"output".to_vec());
+        session.pump_with(&mut persistence, 3).unwrap();
+        fixture.state.lock().unwrap().tail = b"tail".to_vec();
+        session
+            .close_with(
+                &mut persistence,
+                &owner("owner"),
+                TerminalClosePolicy::Force,
+                4,
+            )
+            .unwrap();
+        assert_eq!(
+            persistence.calls,
+            [
+                "state",
+                "checkpoint",
+                "checkpoint",
+                "state",
+                "checkpoint",
+                "state",
+                "append",
+                "state",
+                "checkpoint",
+                "append",
+                "state"
+            ]
+        );
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
+        assert!(!session.owns_backend());
+        assert!(session.publication_error().is_none());
+    }
+
+    #[test]
+    fn denied_context_never_dispatches_native_resize_or_flushing_signal() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        fixture.state.lock().unwrap().signal_flushes = true;
+        let before = std::fs::read(fixture.path.join("tj-meta")).unwrap();
+        let mut denied = Persistence {
+            denied: true,
+            ..Persistence::default()
+        };
+        assert_eq!(
+            session.resize_with(
+                &mut denied,
+                &owner("owner"),
+                &TerminalDimensions::new(4, 20).unwrap(),
+                1
+            ),
+            Err(denied_error())
+        );
+        assert_eq!(
+            session.signal_with(&mut denied, &owner("owner"), TerminalSignal::Interrupt, 1),
+            Err(denied_error())
+        );
+        let state = fixture.state.lock().unwrap();
+        assert!(state.resizes.is_empty());
+        assert!(state.signals.is_empty());
+        assert_eq!(state.closes, 0);
+        assert_eq!(session.context().lifecycle, TerminalLifecycle::Running);
+        assert_eq!(std::fs::read(fixture.path.join("tj-meta")).unwrap(), before);
+    }
+
+    #[test]
+    fn committed_output_accounting_error_keeps_cursor_and_never_replays_replies() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        let output = b"committed\x1b[6n";
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(output.to_vec());
+        let mut persistence = Persistence {
+            fail_accounting: Some("append"),
+            ..Persistence::default()
+        };
+        let expected = TerminalSessionError::History(TerminalHistoryError::Accounting(
+            TerminalProfileError::AccountingMismatch,
+        ));
+        assert!(matches!(session.pump_with(&mut persistence, 1), Err(error) if error == expected));
+        assert_eq!(session.context().cursor.offset(), output.len() as u64);
+        assert_eq!(
+            session
+                .read(&owner("owner"), &TerminalCursor::new(1, 0).unwrap(), 64)
+                .unwrap()
+                .bytes,
+            output
+        );
+        assert_eq!(session.publication_error(), Some(expected));
+        assert!(session.input.is_quiesced());
+        assert!(session.monitor_notifications_incomplete);
+        assert!(
+            session
+                .pump_with(&mut persistence, 2)
+                .unwrap()
+                .output
+                .is_empty()
+        );
+        assert_eq!(
+            persistence
+                .calls
+                .iter()
+                .filter(|kind| **kind == "append")
+                .count(),
+            1
+        );
+        assert!(fixture.state.lock().unwrap().writes.is_empty());
+        drop(session);
+        let recovered = TerminalRecoveredSession::recover_with(
+            &mut persistence,
+            fixture.recover(),
+            &owner("owner"),
+            2,
+        )
+        .unwrap();
+        assert_eq!(recovered.facts.context.cursor.offset(), output.len() as u64);
+        assert!(recovered.facts.monitor_notifications_incomplete);
+    }
+
+    #[test]
+    fn denied_close_still_drains_and_cleans_native_authority() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        fixture.state.lock().unwrap().tail = b"discarded tail".to_vec();
+        let before = std::fs::read(fixture.path.join("tj-meta")).unwrap();
+        let mut denied = Persistence {
+            denied: true,
+            ..Persistence::default()
+        };
+        assert_eq!(
+            session.close_with(&mut denied, &owner("owner"), TerminalClosePolicy::Force, 1),
+            Err(denied_error())
+        );
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
+        assert!(fixture.state.lock().unwrap().tail.is_empty());
+        assert!(!session.owns_backend());
+        assert!(session.input.is_quiesced());
+        assert_eq!(session.publication_error(), Some(denied_error()));
+        assert_eq!(std::fs::read(fixture.path.join("tj-meta")).unwrap(), before);
+        assert!(session.history.screen().is_err());
+        assert!(session.pending_output_gap);
+        let mut allowed = Persistence::default();
+        session
+            .close_with(&mut allowed, &owner("owner"), TerminalClosePolicy::Force, 2)
+            .unwrap();
+        assert_eq!(allowed.calls, ["checkpoint", "state"]);
+        assert!(!session.pending_output_gap);
+        assert!(session.publication_error().is_none());
+        drop(session);
+        assert!(fixture.recover().screen().is_err());
+    }
+
+    #[test]
+    fn contextless_teardown_never_writes_and_retains_failed_cleanup_for_retry() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        fixture.state.lock().unwrap().tail = b"discarded tail".to_vec();
+        fixture.state.lock().unwrap().close_fails = true;
+        let before = std::fs::read(fixture.path.join("tj-meta")).unwrap();
+        assert_eq!(
+            session.teardown_without_persistence(true, 1, denied_error()),
+            Err(TerminalSessionError::Native)
+        );
+        assert!(session.owns_backend());
+        fixture.state.lock().unwrap().close_fails = false;
+        assert_eq!(
+            session.teardown_without_persistence(true, 0, denied_error()),
+            Err(denied_error())
+        );
+        assert!(!session.owns_backend());
+        assert_eq!(fixture.state.lock().unwrap().closes, 2);
+        assert_eq!(session.context().now_ms, 1);
+        assert_eq!(session.outcome(), Some(TerminalProcessOutcome::Exited(0)));
+        assert_eq!(session.publication_error(), Some(denied_error()));
+        assert!(session.monitor_notifications_incomplete);
+        assert_eq!(std::fs::read(fixture.path.join("tj-meta")).unwrap(), before);
+        assert!(session.history.screen().is_err());
+        let mut denied = Persistence {
+            denied: true,
+            ..Persistence::default()
+        };
+        assert_eq!(session.persist_with(&mut denied), Err(denied_error()));
+        assert_eq!(denied.calls, ["checkpoint"]);
+        assert!(session.pending_output_gap);
+        let mut allowed = Persistence::default();
+        session.persist_with(&mut allowed).unwrap();
+        assert_eq!(allowed.calls, ["checkpoint", "state"]);
+        assert!(!session.pending_output_gap);
+        drop(session);
+        assert!(fixture.recover().screen().is_err());
+    }
+
+    #[test]
+    fn rejected_consumed_output_requires_gap_barrier_before_state_retry() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"discarded".to_vec());
+        let before = std::fs::read(fixture.path.join("tj-meta")).unwrap();
+        let mut denied = Persistence {
+            denied: true,
+            ..Persistence::default()
+        };
+        assert!(matches!(session.pump_with(&mut denied, 1), Err(error) if error == denied_error()));
+        assert_eq!(denied.calls, ["append", "checkpoint"]);
+        assert_eq!(session.context().cursor.offset(), 0);
+        assert!(session.pending_output_gap);
+        assert!(session.history.screen().is_err());
+        assert!(session.input.is_quiesced());
+        assert_eq!(std::fs::read(fixture.path.join("tj-meta")).unwrap(), before);
+        let mut allowed = Persistence::default();
+        session.persist_with(&mut allowed).unwrap();
+        assert_eq!(allowed.calls, ["checkpoint", "state"]);
+        assert!(!session.pending_output_gap);
+        drop(session);
+        let recovered = TerminalRecoveredSession::recover_with(
+            &mut allowed,
+            fixture.recover(),
+            &owner("owner"),
+            1,
+        )
+        .unwrap();
+        assert!(recovered.history.screen().is_err());
+        assert!(recovered.facts.monitor_notifications_incomplete);
+    }
+
+    #[test]
+    fn close_tail_accounting_error_survives_successful_final_state_publication() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        fixture.state.lock().unwrap().tail = b"committed tail".to_vec();
+        let mut persistence = Persistence {
+            fail_accounting: Some("append"),
+            ..Persistence::default()
+        };
+        let expected = TerminalSessionError::History(TerminalHistoryError::Accounting(
+            TerminalProfileError::AccountingMismatch,
+        ));
+        assert_eq!(
+            session.close_with(
+                &mut persistence,
+                &owner("owner"),
+                TerminalClosePolicy::Force,
+                1
+            ),
+            Err(expected)
+        );
+        assert_eq!(session.publication_error(), Some(expected));
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
+        assert!(!session.owns_backend());
+        assert_eq!(session.context().cursor.offset(), 14);
+        assert!(session.monitor_notifications_incomplete);
+        assert!(fixture.state.lock().unwrap().writes.is_empty());
+        drop(session);
+        let recovered = TerminalRecoveredSession::recover_with(
+            &mut persistence,
+            fixture.recover(),
+            &owner("owner"),
+            1,
+        )
+        .unwrap();
+        assert_eq!(recovered.facts.context.lifecycle, TerminalLifecycle::Closed);
+        assert_eq!(recovered.facts.context.cursor.offset(), 14);
+        assert!(recovered.facts.monitor_notifications_incomplete);
+    }
+
+    #[test]
+    fn live_ack_accounting_failure_tracks_only_the_publication_that_committed() {
+        for gap_pending in [false, true] {
+            let fixture = Fixture::new();
+            let mut session = fixture.session();
+            session.shell_ready(0).unwrap();
+            add(
+                &mut session,
+                Condition::OutputContains {
+                    pattern: "event".into(),
+                },
+            );
+            fixture
+                .state
+                .lock()
+                .unwrap()
+                .output
+                .push_back(b"event".to_vec());
+            session.pump(1).unwrap();
+            let acknowledged = session
+                .events(&owner("owner"), &query())
+                .unwrap()
+                .last()
+                .unwrap()
+                .event_id;
+            if gap_pending {
+                assert_eq!(
+                    session.teardown_without_persistence(true, 2, denied_error()),
+                    Err(denied_error())
+                );
+            }
+            let mut persistence = Persistence {
+                fail_accounting: Some(if gap_pending { "checkpoint" } else { "state" }),
+                ..Persistence::default()
+            };
+            assert!(matches!(
+                session.events_with(
+                    &mut persistence,
+                    &owner("owner"),
+                    &TerminalEventQuery {
+                        acknowledge_event_id: Some(acknowledged),
+                        ..query()
+                    }
+                ),
+                Err(TerminalSessionError::History(
+                    TerminalHistoryError::Accounting(_)
+                ))
+            ));
+            let expected = if gap_pending { 0 } else { acknowledged };
+            assert_eq!(session.monitors.acknowledged_event_id(), expected);
+            assert!(!session.pending_output_gap);
+            assert!(session.publication_error().is_some());
+            assert_eq!(
+                persistence.calls,
+                [if gap_pending { "checkpoint" } else { "state" }]
+            );
+            drop(session);
+            let recovered = TerminalRecoveredSession::recover_with(
+                &mut persistence,
+                fixture.recover(),
+                &owner("owner"),
+                2,
+            )
+            .unwrap();
+            assert_eq!(recovered.monitors.acknowledged_event_id(), expected);
+        }
+    }
+
+    #[test]
+    fn recovered_contextual_ack_preserves_committed_receipt_after_accounting_error() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        add(
+            &mut session,
+            Condition::OutputContains {
+                pattern: "event".into(),
+            },
+        );
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"event".to_vec());
+        session.pump(1).unwrap();
+        session
+            .close(&owner("owner"), TerminalClosePolicy::Force, 2)
+            .unwrap();
+        drop(session);
+        let mut persistence = Persistence::default();
+        let mut recovered = TerminalRecoveredSession::recover_with(
+            &mut persistence,
+            fixture.recover(),
+            &owner("owner"),
+            2,
+        )
+        .unwrap();
+        let events = recovered
+            .events_with(&mut persistence, &owner("owner"), &query())
+            .unwrap();
+        let acknowledged = events.last().unwrap().event_id;
+        persistence.fail_accounting = Some("state");
+        assert!(matches!(
+            recovered.events_with(
+                &mut persistence,
+                &owner("owner"),
+                &TerminalEventQuery {
+                    acknowledge_event_id: Some(acknowledged),
+                    ..query()
+                }
+            ),
+            Err(TerminalSessionError::History(
+                TerminalHistoryError::Accounting(_)
+            ))
+        ));
+        assert_eq!(recovered.monitors.acknowledged_event_id(), acknowledged);
+        assert!(recovered.publication_error().is_some());
+        assert_eq!(persistence.calls, ["state"]);
+        drop(recovered);
+        let reopened = TerminalRecoveredSession::recover_with(
+            &mut persistence,
+            fixture.recover(),
+            &owner("owner"),
+            2,
+        )
+        .unwrap();
+        assert_eq!(reopened.monitors.acknowledged_event_id(), acknowledged);
     }
 
     #[test]
