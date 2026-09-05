@@ -853,6 +853,7 @@ dependencies = [
  "libc",
  "machine-god-core",
  "machine-god-reentrant-waker-test",
+ "machine-god-terminal-sys",
  "machine-god-testkit",
  "memchr",
  "nix",
@@ -869,6 +870,14 @@ dependencies = [
 [[package]]
 name = "machine-god-reentrant-waker-test"
 version = "0.0.0"
+
+[[package]]
+name = "machine-god-terminal-sys"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "rustix",
+]
 
 [[package]]
 name = "machine-god-testkit"

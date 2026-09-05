@@ -46,6 +46,7 @@ sha2.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 calcifer-macos-acl.workspace = true
+machine-god-terminal-sys = { version = "0.1.0", path = "../machine-god-terminal-sys" }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 nix = { version = "=0.31.3", default-features = false, features = ["user"] }

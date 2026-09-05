@@ -113,7 +113,10 @@ remain part of this feature; piped input does not complete it.
   terminal, configuration, and persistence effects.
 - `machine-god-cli` is a thin host and owns no product state.
 - `machine-god-testkit` owns deterministic test doubles and fixtures.
-- Unsafe Rust is forbidden throughout the production workspace.
+- Unsafe Rust is forbidden in the product crates. The isolated macOS
+  `TIOCSIG` binding is the sole exception under
+  [ADR 0001](adr/0001-macos-terminal-foreground-signal.md); it remains subject
+  to the full terminal feature's adversarial and platform gates.
 - Constructors and futures must preserve the documented inert-before-poll,
   cancellation, resource-bound, redaction, and authority invariants.
 

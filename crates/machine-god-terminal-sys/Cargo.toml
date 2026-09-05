@@ -1,0 +1,23 @@
+[package]
+name = "machine-god-terminal-sys"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc.workspace = true
+rustix.workspace = true
+
+# ADR 0001: do not relax the production crates' workspace-wide forbid.
+# Only the one TIOCSIG function may override this crate's deny.
+[lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "deny"

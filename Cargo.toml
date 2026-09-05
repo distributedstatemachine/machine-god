@@ -4,6 +4,7 @@ members = [
     "crates/machine-god-native",
     "crates/machine-god-cli",
     "crates/machine-god-testkit",
+    "crates/machine-god-terminal-sys",
 ]
 exclude = ["test-support/reentrant-waker"]
 resolver = "3"

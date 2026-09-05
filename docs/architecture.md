@@ -16,8 +16,10 @@ the [implementation plan](implementation-plan.md#current-delivery-state).
 
 The production dependency direction is `machine-god-cli` to
 `machine-god-native` to `machine-god-core`. The testkit depends on core. Core
-does not depend on the other workspace crates. Unsafe Rust is forbidden across
-the production workspace.
+does not depend on the other workspace crates. Unsafe Rust is forbidden in the
+product crates, with one isolated macOS OS-binding exception in
+`machine-god-terminal-sys` described by
+[ADR 0001](adr/0001-macos-terminal-foreground-signal.md).
 
 ## Core composition
 
