@@ -307,6 +307,10 @@ Profile-aware pumping acquires a nonblocking transaction and read reservation
 for each running session before consuming native output. Lock contention or
 capacity refusal advances fairness but leaves that session's output and input
 authority untouched. Known exit cleanup does not require normal-read headroom.
+Native status failures are not capacity deferrals: they mark the session lost
+and quiesce input and monitors. The owner publishes that observation when
+admitted, otherwise retaining an explicit publication failure without journal
+writes or abandoning the backend needed for cleanup.
 Exit racing an admitted read releases its permit before multi-chunk cleanup;
 a separate cleanup error preserves the successful read result and final observed
 cursor/lifecycle, without returning stale probes. Transactions never span two

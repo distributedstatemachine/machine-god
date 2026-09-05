@@ -278,6 +278,24 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
     pub(crate) fn publication_error(&self) -> Option<TerminalSessionError> {
         self.publication_error
     }
+    /// A failed native status observation is not a harmless admission deferral.
+    /// Quiesce the lost session even without persistence authority; in that case
+    /// retain a publication obligation without performing any journal writes.
+    pub(crate) fn native_status_failed_with(
+        &mut self,
+        persistence: Option<&mut dyn TerminalJournalPersistence>,
+        now_ms: i64,
+    ) -> Result<TerminalSessionStep> {
+        self.check_time(now_ms)?;
+        self.now_ms = now_ms;
+        let error = TerminalSessionError::Native;
+        if let Some(persistence) = persistence {
+            return Err(self.failed_observation_with(persistence, error));
+        }
+        self.failed_publication();
+        self.publication_error = Some(error);
+        Err(error)
+    }
     /// Reserve the whole bounded read before the owner invokes `pump_with`.
     /// The permit borrows the held profile transaction, not this session.
     pub(crate) fn reserve_profile_read<'a, 'store>(
@@ -1740,6 +1758,44 @@ mod tests {
 
     fn denied_error() -> TerminalSessionError {
         TerminalHistoryError::Profile(TerminalProfileError::ResourceLimit).into()
+    }
+
+    #[test]
+    fn failed_native_status_quiesces_and_only_publishes_with_explicit_authority() {
+        for available in [false, true] {
+            let fixture = Fixture::new();
+            let mut session = fixture.session();
+            session.shell_ready(0).unwrap();
+            add(&mut session, Condition::ProcessExit);
+            let before = session.history.load_state().unwrap().unwrap().bytes;
+            let mut persistence = Persistence::default();
+            let context =
+                available.then_some(&mut persistence as &mut dyn TerminalJournalPersistence);
+            assert!(matches!(
+                session.native_status_failed_with(context, 1),
+                Err(TerminalSessionError::Native)
+            ));
+            assert_eq!(session.lifecycle, TerminalLifecycle::Lost);
+            assert!(session.input.is_quiesced());
+            assert_eq!(session.monitors.len(), 0);
+            assert!(session.owns_backend());
+            assert_eq!(session.publication_error.is_some(), !available);
+            assert_eq!(fixture.state.lock().unwrap().closes, 0);
+            let stored = session.history.load_state().unwrap().unwrap();
+            if available {
+                assert_eq!(persistence.calls, ["state"]);
+                let (facts, monitors) =
+                    TerminalSessionFacts::decode(&stored.bytes, &id(), &stored.source).unwrap();
+                assert_eq!(facts.context.lifecycle, TerminalLifecycle::Lost);
+                assert_eq!(TerminalMonitorSet::restore(monitors).unwrap().len(), 0);
+            } else {
+                assert!(persistence.calls.is_empty());
+                assert_eq!(stored.bytes, before);
+            }
+            session
+                .close(&owner("owner"), TerminalClosePolicy::Force, 2)
+                .unwrap();
+        }
     }
 
     #[test]

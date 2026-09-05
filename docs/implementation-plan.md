@@ -99,6 +99,8 @@ release the one-read permit before multi-chunk draining under the same held
 transaction, preserving committed reads independently of cleanup errors.
 Shutdown retains failed publication even when profile authority is unavailable.
 Transaction drop explicitly releases the lock despite temporary fork inheritance.
+Native status failures take the lost-session/quiescence path even when profile
+publication is unavailable; they are not treated as harmless capacity deferrals.
 Persistent live checkpoint reserves and victim selection remain to be composed
 before exposure.
 Per-session retention separates raw/checkpoint output from independently bounded

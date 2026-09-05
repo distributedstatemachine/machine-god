@@ -387,7 +387,23 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         let workspace = self.workspace.clone();
         self.pump_dispatch(now_ms, maximum, |session, owner| {
             let namespace = owner_name(&workspace, owner);
-            let cleanup = session.needs_native_cleanup()?;
+            let Ok(cleanup) = session.needs_native_cleanup() else {
+                // Native authority loss must take the driver's failed
+                // observation path, not leave a Running session parked as
+                // though only pre-read capacity were temporarily absent.
+                return match store.transaction() {
+                    Ok(mut transaction) => {
+                        let mut context = TerminalProfileMutationContext::new(
+                            &mut transaction,
+                            *budget,
+                            &namespace,
+                        );
+                        session.native_status_failed_with(Some(&mut context), now_ms)
+                    }
+                    Err(_) => session.native_status_failed_with(None, now_ms),
+                }
+                .map(|step| (step, None));
+            };
             let mut transaction = match store.transaction() {
                 Ok(transaction) => transaction,
                 Err(error) if cleanup => {
@@ -662,6 +678,10 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
+    #[allow(
+        clippy::struct_excessive_bools,
+        reason = "independent native backend fault injections"
+    )]
     #[derive(Default)]
     struct State {
         output: VecDeque<Vec<u8>>,
@@ -669,6 +689,7 @@ mod tests {
         closes: usize,
         dropped: usize,
         read_fails: bool,
+        status_fails: bool,
         read_closed: bool,
         close_fails: bool,
         statuses: VecDeque<TerminalPtyStatus>,
@@ -704,10 +725,11 @@ mod tests {
             ))
         }
         fn status(&mut self) -> std::result::Result<TerminalPtyStatus, ()> {
-            Ok(self
-                .0
-                .lock()
-                .unwrap()
+            let mut state = self.0.lock().unwrap();
+            if state.status_fails {
+                return Err(());
+            }
+            Ok(state
                 .statuses
                 .pop_front()
                 .unwrap_or(TerminalPtyStatus::Running))
@@ -873,6 +895,54 @@ mod tests {
     }
     fn registry() -> TerminalRegistry<Backend> {
         TerminalRegistry::new("/workspace".into()).unwrap()
+    }
+
+    #[test]
+    fn native_status_failure_is_lost_even_when_profile_publication_is_unavailable() {
+        for unavailable in 0..3 {
+            let fixture = Fixture::new();
+            let owner = owner("status-failure");
+            let id = id("status-failure");
+            let (store, session) = fixture.profile_live(&owner, &id);
+            let mut registry = registry();
+            registry
+                .start(owner.clone(), id.clone(), || Ok(session))
+                .unwrap();
+            fixture.state.lock().unwrap().status_fails = true;
+            let mut limits = TerminalProfileLimits::default();
+            if unavailable == 2 {
+                limits.retained.output_bytes = 1;
+            }
+            let budget = TerminalProfileBudget::new(limits).unwrap();
+            let held = (unavailable == 1).then(|| store.transaction().unwrap());
+            let steps = registry.pump_with_profile(&store, &budget, 1, 1).unwrap();
+            assert!(matches!(steps[0].result, Err(TerminalSessionError::Native)));
+            assert_eq!(
+                registry.inspect(&owner, &id).unwrap().context.lifecycle,
+                TerminalLifecycle::Lost
+            );
+            let session = registry.live_mut(&owner, &id).unwrap();
+            assert!(session.owns_backend());
+            assert_eq!(session.publication_error().is_some(), unavailable != 0);
+            assert_eq!(fixture.state.lock().unwrap().reads, 0);
+            assert_eq!(fixture.state.lock().unwrap().closes, 0);
+            assert!(
+                registry
+                    .pump_with_profile(&store, &budget, 2, 1)
+                    .unwrap()
+                    .is_empty()
+            );
+            // Failure quiesces observation but does not abandon native cleanup.
+            drop(held);
+            let normal = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+            assert!(
+                registry
+                    .shutdown_with_profile(&store, &normal, 2, TerminalClosePolicy::Force)
+                    .unwrap()
+                    .is_empty()
+            );
+            assert_eq!(fixture.state.lock().unwrap().closes, 1);
+        }
     }
 
     #[test]
