@@ -653,6 +653,22 @@ impl TerminalJournal {
         limits: TerminalJournalLimits,
     ) -> Result<Self> {
         limits.validate()?;
+        Self::open_checked(root, session, Some(limits))
+    }
+
+    /// Acquire the ordinary nonblocking writer lease before interpreting the
+    /// persisted limits for nonresident retention. The journal's checksummed
+    /// limits still pass the same global bounds; no caller estimate replaces
+    /// them. Recovery validates committed payloads before repairing artifacts.
+    pub(crate) fn open_for_retention(root: OwnedFd, session: TerminalSessionId) -> Result<Self> {
+        Self::open_checked(root, &session, None)
+    }
+
+    fn open_checked(
+        root: OwnedFd,
+        session: &TerminalSessionId,
+        expected_limits: Option<TerminalJournalLimits>,
+    ) -> Result<Self> {
         private(&root, true)?;
         let lock = writer_lock(&root, false)?;
         let encoded = read_whole(&open_file(&root, META, OFlags::RDONLY)?, MAX_META)?;
@@ -662,7 +678,7 @@ impl TerminalJournal {
             envelope.version == 1
                 && manifest_hash(&envelope.manifest)? == envelope.sha256
                 && &envelope.manifest.session == session
-                && envelope.manifest.limits == limits,
+                && expected_limits.is_none_or(|limits| envelope.manifest.limits == limits),
             TerminalJournalError::Corrupt,
         )?;
         validate_manifest(&envelope.manifest)?;
@@ -2042,6 +2058,76 @@ mod tests {
                 .checkpoint_reserve_bytes(),
             0
         );
+    }
+
+    #[test]
+    fn retention_open_preserves_custom_limits_and_uses_normal_writer_recovery() {
+        let fixture = Fixture::new();
+        let custom_limits = limits(8, 64);
+        let mut journal = fixture.create(custom_limits);
+        journal.append(b"raw").unwrap();
+        set_reserve(&mut journal, 32);
+        fixture.put(&checkpoint_name(99), b"orphan");
+        assert_eq!(
+            TerminalJournal::open_for_retention(fixture.fd(), session()).unwrap_err(),
+            TerminalJournalError::Busy
+        );
+        assert!(fixture.path.join(checkpoint_name(99)).exists());
+        drop(journal);
+        assert_eq!(
+            fixture.open(TerminalJournalLimits::default()).unwrap_err(),
+            TerminalJournalError::Corrupt
+        );
+        let mut retained =
+            after_owner_drop(|| TerminalJournal::open_for_retention(fixture.fd(), session()))
+                .unwrap();
+        assert_eq!(retained.manifest.limits, custom_limits);
+        assert_eq!(retained.checkpoint_reserve_bytes(), 32);
+        assert_eq!(collect(&retained, cursor(1, 0)), b"raw");
+        assert_eq!(retained.recovery().removed_orphan_files, 1);
+        assert!(!fixture.path.join(checkpoint_name(99)).exists());
+        let plan = retained
+            .prepare_mutation(TerminalJournalMutation::Evict(
+                &TerminalJournalEviction::CompletedOutput,
+            ))
+            .unwrap();
+        plan.execute().unwrap();
+        assert_eq!(retained.usage().raw_bytes, 0);
+        assert_eq!(retained.manifest.limits, custom_limits);
+    }
+
+    #[test]
+    fn retention_open_rejects_invalid_manifest_or_identity_before_repair() {
+        for case in 0..4 {
+            let fixture = Fixture::new();
+            let mut journal = fixture.create(limits(8, 64));
+            journal.append(b"raw").unwrap();
+            let mut manifest = journal.manifest.clone();
+            drop(journal);
+            fixture.put(TEMP, b"interrupted");
+            match case {
+                0 => manifest.session = TerminalSessionId::new("different-session").unwrap(),
+                1 => manifest.limits.segment_bytes = 0,
+                2 => manifest.checkpoint_reserve = Some(65),
+                3 => manifest.segments[0].sha256 = [0; 32],
+                _ => unreachable!(),
+            }
+            replace_metadata(&fixture, manifest);
+            assert_eq!(
+                after_owner_drop(|| TerminalJournal::open_for_retention(fixture.fd(), session()))
+                    .unwrap_err(),
+                TerminalJournalError::Corrupt,
+                "case {case}"
+            );
+            assert_eq!(
+                std::fs::read(fixture.path.join(TEMP)).unwrap(),
+                b"interrupted"
+            );
+            assert_eq!(
+                std::fs::read(fixture.path.join(raw_name(1))).unwrap(),
+                b"raw"
+            );
+        }
     }
 
     #[test]
