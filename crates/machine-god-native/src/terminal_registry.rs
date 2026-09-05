@@ -757,6 +757,91 @@ mod tests {
     }
 
     #[test]
+    fn owner_rejects_every_request_and_cleans_up_after_panicking_wakers_or_destructors() {
+        use crate::terminal_owner::{TerminalOwnerError, TerminalOwnerLoop};
+        use machine_god_core::CancellationToken;
+        use std::future::Future;
+        use std::task::{Context, Wake, Waker};
+        struct PanickingWake;
+        impl Wake for PanickingWake {
+            fn wake(self: Arc<Self>) {
+                panic!("caller wake panic");
+            }
+        }
+        struct PanickingDrop;
+        impl Drop for PanickingDrop {
+            fn drop(&mut self) {
+                panic!("rejected closure capture panic");
+            }
+        }
+        let fixture = Fixture::new();
+        let mut registry = registry();
+        let owner = owner("one");
+        let id = id("cleanup");
+        registry
+            .start(owner.clone(), id.clone(), || fixture.live(&owner, &id, 0))
+            .unwrap();
+        let (worker, handle) = TerminalOwnerLoop::new();
+        let mut waking = handle.request(CancellationToken::new(), |_, _, _| {
+            panic!("rejected operation")
+        });
+        let wake = Waker::from(Arc::new(PanickingWake));
+        assert!(
+            std::pin::Pin::new(&mut waking)
+                .poll(&mut Context::from_waker(&wake))
+                .is_pending()
+        );
+        let capture = PanickingDrop;
+        let mut dropping = handle.request(CancellationToken::new(), move |_, _, _| {
+            drop(capture);
+        });
+        // Both callbacks on this same rejected request panic independently.
+        assert!(
+            std::pin::Pin::new(&mut dropping)
+                .poll(&mut Context::from_waker(&wake))
+                .is_pending()
+        );
+        let mut last = handle.request(CancellationToken::new(), |_, _, _| ());
+        assert!(poll_owner(&mut last).is_pending());
+        handle.shutdown();
+        let exit = worker.run(&mut registry, || 0, |_| {});
+        assert_eq!(exit.error, Some(TerminalOwnerError::Panicked));
+        assert!(exit.shutdown.unwrap().is_empty());
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
+        assert_eq!(
+            futures_executor::block_on(waking),
+            Err(TerminalOwnerError::Closed)
+        );
+        assert_eq!(
+            futures_executor::block_on(dropping),
+            Err(TerminalOwnerError::Closed)
+        );
+        assert_eq!(
+            futures_executor::block_on(last),
+            Err(TerminalOwnerError::Closed)
+        );
+
+        // Dropping an unstarted loop must contain rejection panics as well,
+        // including when Drop is itself reached during another unwind.
+        let (worker, handle) = TerminalOwnerLoop::<Backend>::new();
+        let mut pending = handle.request(CancellationToken::new(), |_, _, _| ());
+        assert!(
+            std::pin::Pin::new(&mut pending)
+                .poll(&mut Context::from_waker(&wake))
+                .is_pending()
+        );
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _worker = worker;
+            panic!("outer panic");
+        }));
+        assert!(result.is_err());
+        assert_eq!(
+            futures_executor::block_on(pending),
+            Err(TerminalOwnerError::Closed)
+        );
+    }
+
+    #[test]
     fn owner_panic_and_clock_failure_stop_admissions_and_cleanup() {
         use crate::terminal_owner::{TerminalOwnerError, TerminalOwnerLoop};
         use machine_god_core::CancellationToken;

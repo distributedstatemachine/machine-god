@@ -42,6 +42,7 @@ struct Shared<B: TerminalSessionBackend> {
     closing: AtomicBool,
     clients: AtomicUsize,
     requests: Arc<AtomicUsize>,
+    callback_panicked: Arc<AtomicBool>,
 }
 impl<B: TerminalSessionBackend> Shared<B> {
     fn close(&self) {
@@ -60,7 +61,7 @@ struct Reply<T> {
     result: Option<Result<T>>,
     waker: Option<Waker>,
 }
-fn complete<T>(reply: &Mutex<Reply<T>>, value: Result<T>) {
+fn complete<T>(reply: &Mutex<Reply<T>>, value: Result<T>) -> bool {
     let wake = {
         let mut reply = reply
             .lock()
@@ -70,8 +71,9 @@ fn complete<T>(reply: &Mutex<Reply<T>>, value: Result<T>) {
     };
     // Never invoke user-controlled wakers while holding a synchronization lock.
     if let Some(waker) = wake {
-        waker.wake();
+        return catch_unwind(AssertUnwindSafe(|| waker.wake())).is_ok();
     }
+    true
 }
 type Operation<B, T> =
     Box<dyn FnOnce(&mut TerminalRegistry<B>, i64, &CancellationToken) -> T + Send>;
@@ -81,6 +83,7 @@ struct Request<B: TerminalSessionBackend, T> {
     caller: CancellationToken,
     cancellation: CancellationToken,
     _permit: Arc<Permit>,
+    callback_panicked: Arc<AtomicBool>,
     completed: bool,
 }
 impl<B: TerminalSessionBackend, T: Send> Job<B> for Request<B, T> {
@@ -99,14 +102,19 @@ impl<B: TerminalSessionBackend, T: Send> Job<B> for Request<B, T> {
         };
         let keep_running = !matches!(&result, Err(TerminalOwnerError::Panicked));
         self.completed = true;
-        complete(&self.reply, result);
-        keep_running
+        let woke = complete(&self.reply, result);
+        if !woke {
+            self.callback_panicked.store(true, Ordering::Release);
+        }
+        keep_running && woke
     }
 }
 impl<B: TerminalSessionBackend, T> Drop for Request<B, T> {
     fn drop(&mut self) {
-        if !self.completed {
-            complete(&self.reply, Err(TerminalOwnerError::Closed));
+        if !self.completed && !complete(&self.reply, Err(TerminalOwnerError::Closed)) {
+            // Contain wake separately from captured-value Drop: if both panic,
+            // unwinding one through the other would abort before any outer catch.
+            self.callback_panicked.store(true, Ordering::Release);
         }
     }
 }
@@ -213,6 +221,7 @@ impl<B: TerminalSessionBackend + 'static, T: Send + 'static> Future for Terminal
                 caller: this.caller.clone(),
                 cancellation: this.cancellation.clone(),
                 _permit: permit,
+                callback_panicked: Arc::clone(&this.shared.callback_panicked),
                 completed: false,
             };
             this.submitted = true;
@@ -271,6 +280,16 @@ pub(crate) struct TerminalOwnerExit {
     pub(crate) shutdown: std::result::Result<Vec<TerminalRegistryFailure>, TerminalRegistryError>,
 }
 impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
+    /// A rejected request can run user waker or captured-value destructors.
+    /// Contain each one independently so every remaining reply is resolved and
+    /// neither normal shutdown nor unwinding Drop can skip native cleanup.
+    fn reject_pending(&self) -> bool {
+        let mut panicked = false;
+        while let Ok(message) = self.receiver.try_recv() {
+            panicked |= catch_unwind(AssertUnwindSafe(|| drop(message))).is_err();
+        }
+        panicked
+    }
     pub(crate) fn new() -> (Self, TerminalOwnerHandle<B>) {
         let (sender, receiver) = sync_channel(MAX_REQUESTS);
         let shared = Arc::new(Shared {
@@ -278,6 +297,7 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
             closing: AtomicBool::new(false),
             clients: AtomicUsize::new(1),
             requests: Arc::new(AtomicUsize::new(0)),
+            callback_panicked: Arc::new(AtomicBool::new(false)),
         });
         (
             Self {
@@ -350,8 +370,9 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
         }
         self.shared.close();
         // Resolve queued requests before native shutdown; no rejected operation runs.
-        while let Ok(message) = self.receiver.try_recv() {
-            drop(message);
+        let rejection_panicked = self.reject_pending();
+        if rejection_panicked || self.shared.callback_panicked.load(Ordering::Acquire) {
+            error = Some(TerminalOwnerError::Panicked);
         }
         let shutdown = registry.shutdown(registry.minimum_time_ms(), TerminalClosePolicy::Force);
         TerminalOwnerExit { error, shutdown }
@@ -360,9 +381,7 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
 impl<B: TerminalSessionBackend> Drop for TerminalOwnerLoop<B> {
     fn drop(&mut self) {
         self.shared.close();
-        while let Ok(message) = self.receiver.try_recv() {
-            drop(message);
-        }
+        self.reject_pending();
     }
 }
 

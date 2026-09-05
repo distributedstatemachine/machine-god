@@ -217,6 +217,8 @@ and probe descriptions go directly to a bounded synchronous host observer,
 not another retained queue. Clock failure or a panicking command/observer stops
 admission and initiates cleanup. Exit reports include every unresolved shutdown
 failure; the blocking host retains registry ownership for recovery disposition.
+Queued rejection contains each request's waker/destructor panic independently,
+so one caller cannot bypass native cleanup or strand the remaining replies.
 External probes remain separately authorized, off-loop effects.
 
 The sixteen-entry resident bound is not disk-history retention. Profile
