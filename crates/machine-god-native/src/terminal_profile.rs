@@ -227,7 +227,6 @@ impl TerminalProfileBudget {
     /// Physical output plus unspent committed live-checkpoint headroom. This
     /// observation grants no journal authority and never repairs a directory.
     pub(crate) fn output_charge(
-        &self,
         transaction: &TerminalProfileTransaction<'_>,
     ) -> Result<u64> {
         add(
@@ -795,7 +794,7 @@ mod tests {
         .unwrap();
         assert_eq!(transaction.inventory().unwrap().usage.output_bytes, 0);
         assert_eq!(transaction.reserved_output_bytes().unwrap(), 6);
-        assert_eq!(budget().output_charge(&transaction).unwrap(), 6);
+        assert_eq!(TerminalProfileBudget::output_charge(&transaction).unwrap(), 6);
         let mut held_first = Some(first);
         for nonresident in [false, true] {
             if nonresident {
@@ -820,7 +819,7 @@ mod tests {
             TerminalJournalMutation::Append(b"ok"),
         )
         .unwrap();
-        assert_eq!(budget().output_charge(&transaction).unwrap(), 8);
+        assert_eq!(TerminalProfileBudget::output_charge(&transaction).unwrap(), 8);
         // Checkpoint replacement consumes then replenishes the same reserved
         // capacity, without double charging it or crediting another owner.
         for (bytes, unspent) in [(&b"screen"[..], 0), (&b"x"[..], 5)] {
@@ -833,12 +832,12 @@ mod tests {
             )
             .unwrap();
             assert_eq!(transaction.reserved_output_bytes().unwrap(), unspent);
-            assert_eq!(budget().output_charge(&transaction).unwrap(), 8);
+            assert_eq!(TerminalProfileBudget::output_charge(&transaction).unwrap(), 8);
         }
         drop(first);
         // Dropping the native owner or writer never grants virtual credit.
         assert_eq!(transaction.reserved_output_bytes().unwrap(), 5);
-        assert_eq!(budget().output_charge(&transaction).unwrap(), 8);
+        assert_eq!(TerminalProfileBudget::output_charge(&transaction).unwrap(), 8);
     }
 
     #[test]
@@ -876,7 +875,7 @@ mod tests {
         completion.operation.unwrap();
         completion.accounting.unwrap();
         assert_eq!(transaction.reserved_output_bytes().unwrap(), 0);
-        assert_eq!(budget().output_charge(&transaction).unwrap(), 0);
+        assert_eq!(TerminalProfileBudget::output_charge(&transaction).unwrap(), 0);
     }
 
     #[test]
@@ -915,7 +914,7 @@ mod tests {
             completion.accounting.unwrap();
         }
         drop(permit);
-        assert_eq!(budget().output_charge(&transaction).unwrap(), 8);
+        assert_eq!(TerminalProfileBudget::output_charge(&transaction).unwrap(), 8);
         assert_eq!(transaction.inventory().unwrap().usage.output_bytes, 8);
         assert_eq!(transaction.reserved_output_bytes().unwrap(), 0);
     }
