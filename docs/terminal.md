@@ -155,10 +155,12 @@ the largest sequential temporary allocation and reconciles after every write.
 Any rejection, operation failure or accounting failure seals further use;
 dropping the permit releases no optimistic capacity credit. Append receipts
 retain their committed cursor even when accounting subsequently fails.
-Legacy no-context history entrypoints are available only to component tests.
-These APIs do not intercept bare journal calls; the production owner/registry
-must route operations through them, establish persistent live-checkpoint
-reserves and select validated victims before exposing the full terminal runtime.
+Legacy no-context history and session mutation entrypoints are available only
+to component tests. Session mutations and recovered acknowledgements receive
+the caller's held persistence context; they never acquire a hidden profile lock.
+These APIs do not intercept bare journal calls. Persistent live-checkpoint
+reserves and validated victim selection remain required before exposing the
+full terminal runtime.
 
 Profile retention uses explicit metadata-first eviction operations rather than
 rewriting session limits. Completed output/checkpoint eviction preserves facts,
@@ -199,6 +201,12 @@ Same-session/different-incarnation callers cannot read or mutate the owned
 terminal. A scheduler step performs one bounded input attempt, reads at most
 16 KiB, and returns typed probe descriptions for separate authorization.
 
+The admitted-read path never performs a shutdown drain. Exit observed before
+or after its single read requests cleanup without consuming the remaining tail.
+The owner releases the one-read permit before draining through ordinary
+persistence authority under the same profile transaction. This preserves a
+multi-chunk exit tail without repeating an already committed read or its replies.
+
 Native text/paste input preserves bytes, including NUL; named keys use the
 pinned fixed sequences and control spellings map to control bytes. Exactly one
 user payload (up to 64 KiB) may remain pending. A shared ordered queue prevents
@@ -215,7 +223,11 @@ Close commits a discontinuity barrier, drains final output without protocol
 reply effects, and removes monitors after final observations. A positively
 complete drain may publish the final coherent screen; an incomplete drain
 retains the gap. Persistence failure cannot skip native cleanup, and failed
-native cleanup retains owned authority for an explicit retry. The driver is a
+native cleanup retains owned authority for an explicit retry. If profile
+authority is unavailable, explicit teardown performs no journal writes, records
+failed publication in memory, and discards drained output with an unavailable
+projection. Later state publication must first establish the missing durable
+gap barrier; a state-only write cannot erase that obligation. The driver is a
 runtime composition component; the persistent catalog/host, attention and lease
 facts, startup-control transport and full tool routing are not
 provided by this driver alone.
@@ -227,8 +239,11 @@ mutations and event acknowledgements commit their state before returning their
 successful result. Idle scheduler steps without those changes do not rewrite
 metadata. A state-publication failure quiesces live input and probes without
 discarding the owned backend needed for explicit cleanup.
-Acknowledgements advance the in-memory record only after durable publication;
-a failed acknowledgement cannot become a successful memory-only retry.
+Acknowledgements advance the in-memory record only after durable publication.
+A committed acknowledgement remains advanced if subsequent accounting fails,
+while the publication error is retained; a pre-commit failure cannot become a
+successful memory-only retry. Committed raw-output cursors likewise survive
+accounting failure without replaying the bytes or their protocol replies.
 
 New driver sessions require trusted launch metadata: host and backend identity,
 resolved shell, workspace, working directory, optional command, backend kind
@@ -284,6 +299,14 @@ facts before residency is accepted. Recovered history has no live-control path.
 Bounded round-robin pumping advances at most the requested number of active
 sessions per step, continues past per-session failures, and returns raw chunks
 and unexecuted probe descriptions without adding another retained output queue.
+Profile-aware pumping acquires a nonblocking transaction and read reservation
+for each running session before consuming native output. Lock contention or
+capacity refusal advances fairness but leaves that session's output and input
+authority untouched. Known exit cleanup does not require normal-read headroom.
+Exit racing an admitted read releases its permit before multi-chunk cleanup;
+a separate cleanup error preserves the successful read result and final observed
+cursor/lifecycle, without returning stale probes. Transactions never span two
+sessions, observers, request callbacks, reply wakes or idle waits.
 The injected clock cannot rewind any resident session. Resident listing is
 owner-scoped, lexically paged and optionally filtered by lifecycle/backend.
 Inactive residency may be released without deleting history, but a lost session
@@ -292,10 +315,14 @@ tracked independently of native ownership: shutdown retries publication after
 successful process cleanup, and ordinary release rejects unresolved failures.
 An explicit failed-history transfer retains the journal lock and in-memory
 facts for a host recovery owner; it is not a successful durable release.
+Recovered-history publication failures also block ordinary release, remain
+visible in shutdown results, and require an explicit failed-history transfer.
 Shutdown stops admission before attempting every owned cleanup; it retains
 failed native cleanup for retry and keeps completed history readable.
-Final registry drop forces a cleanup pass on
-the blocking owner, not on a tool future's poll thread.
+Final registry drop forces a no-persistence cleanup pass on
+the blocking owner, not on a tool future's poll thread. Profile-aware shutdown
+attempts native cleanup even when it cannot obtain the profile transaction,
+while retaining the failed-publication obligation instead of claiming durability.
 
 The disk catalog receives a retained state-root descriptor and derives a framed
 SHA-256 namespace from the canonical workspace and exact logical owner and
@@ -343,7 +370,7 @@ External probes remain separately authorized, off-loop effects.
 
 The sixteen-entry resident bound is not disk-history retention. The profile
 transaction and admission components cover nonresident histories and concurrent
-owner namespaces; runtime-wide routing, validated live checkpoint reserves and
+owner namespaces; validated persistent live checkpoint reserves and
 retention victim selection still require coordinator composition.
 Production worker ownership, disk-catalog composition, trusted
 startup control, attention and lease effects, tmux, and model/CLI routing

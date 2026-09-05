@@ -90,8 +90,15 @@ catalog preparation and directory creation enforce global counts before effects.
 Initial journal metadata now passes admission, and history writes take explicit
 persistence contexts. Pre-read permits reserve bounded output and follow-on
 publications using Rust-encoder-derived checkpoint bounds, keeping committed
-receipts separate from accounting errors. Production owner/registry routing,
-persistent live checkpoint reserves and victim selection remain to be composed
+receipts separate from accounting errors. Session mutations now require held
+persistence authority; cleanup without that authority retains a failed
+publication and requires a durable gap barrier before later state publication.
+The owner/registry now acquires profile admission before running-session reads
+and defers contention or quota refusal without consuming output. Exit races
+release the one-read permit before multi-chunk draining under the same held
+transaction, preserving committed reads independently of cleanup errors.
+Shutdown retains failed publication even when profile authority is unavailable.
+Persistent live checkpoint reserves and victim selection remain to be composed
 before exposure.
 Per-session retention separates raw/checkpoint output from independently bounded
 state and events, matching the pinned output-accounting boundary. Non-output
