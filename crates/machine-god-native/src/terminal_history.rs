@@ -12,9 +12,12 @@ use machine_god_core::{
 
 use crate::terminal_journal::{
     TerminalJournal, TerminalJournalCheckpoint, TerminalJournalCheckpointStatus,
-    TerminalJournalError, TerminalJournalEviction, TerminalJournalPage,
-    TerminalJournalPhysicalUsage,
+    TerminalJournalError, TerminalJournalEviction, TerminalJournalMutation, TerminalJournalPage,
+    TerminalJournalPhysicalUsage, TerminalJournalReceipt,
 };
+#[cfg(test)]
+use crate::terminal_profile::TerminalTestPersistence;
+use crate::terminal_profile::{TerminalJournalPersistence, TerminalProfileError};
 use crate::terminal_screen::{
     MAX_TERMINAL_SCREEN_FEED_BYTES, TerminalScreenEngine, TerminalScreenError, TerminalScreenMode,
 };
@@ -32,6 +35,10 @@ const MAX_REPLAY_PAGES: usize = 1024 + 128;
 pub(crate) enum TerminalHistoryError {
     ReadOnly,
     Journal(TerminalJournalError),
+    /// Rejected before dispatch; no journal publication was attempted.
+    Profile(TerminalProfileError),
+    /// The journal operation committed, but subsequent accounting failed.
+    Accounting(TerminalProfileError),
     Screen(TerminalScreenError),
     NativeResize,
 }
@@ -66,6 +73,7 @@ pub(crate) struct TerminalHistoryAppend {
     pub(crate) cursor: TerminalCursor,
     pub(crate) replies: Vec<Vec<u8>>,
     pub(crate) screen_unavailable: Option<Unavailable>,
+    pub(crate) accounting_error: Option<TerminalProfileError>,
 }
 impl fmt::Debug for TerminalHistoryAppend {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -86,20 +94,44 @@ pub(crate) struct TerminalHistory {
 /// draining even if a later journal append fails; it must not be interrupted.
 pub(crate) struct TerminalHistoryClosing<'a> {
     history: &'a mut TerminalHistory,
+    persistence: ClosingPersistence<'a>,
     projection: Option<TerminalScreenEngine>,
     failed: bool,
+    accounting_error: Option<TerminalProfileError>,
+}
+enum ClosingPersistence<'a> {
+    Borrowed(&'a mut dyn TerminalJournalPersistence),
+    #[cfg(test)]
+    Unmetered(TerminalTestPersistence),
+}
+impl ClosingPersistence<'_> {
+    fn get(&mut self) -> &mut dyn TerminalJournalPersistence {
+        match self {
+            Self::Borrowed(persistence) => *persistence,
+            #[cfg(test)]
+            Self::Unmetered(persistence) => persistence,
+        }
+    }
 }
 impl TerminalHistoryClosing<'_> {
     pub(crate) fn append(&mut self, bytes: &[u8]) -> Result<TerminalCursor> {
+        if let Some(error) = self.accounting_error {
+            return Err(TerminalHistoryError::Accounting(error));
+        }
         if self.failed {
             return Err(TerminalJournalError::Unavailable.into());
         }
-        let appended = self.history.append(bytes);
+        let appended = self.history.append_with(self.persistence.get(), bytes);
         match appended {
             Ok(receipt) => {
                 if let Some(screen) = &mut self.projection
                     && screen.feed(bytes).is_err()
                 {
+                    self.projection = None;
+                }
+                if let Some(error) = receipt.accounting_error {
+                    self.accounting_error = Some(error);
+                    self.failed = true;
                     self.projection = None;
                 }
                 Ok(receipt.cursor)
@@ -112,17 +144,17 @@ impl TerminalHistoryClosing<'_> {
         }
     }
 
-    pub(crate) fn finish(self, complete: bool) -> Result<()> {
+    pub(crate) fn finish(mut self, complete: bool) -> Result<()> {
+        if let Some(error) = self.accounting_error {
+            return Err(TerminalHistoryError::Accounting(error));
+        }
         if self.failed {
             return Err(TerminalJournalError::Unavailable.into());
         }
         if complete && let Some(screen) = self.projection {
             let bytes = encode_checkpoint(&screen)?;
-            let saved = self
-                .history
-                .journal
-                .publish_checkpoint(self.history.latest(), &bytes);
-            self.history.mutation(saved)?;
+            self.history
+                .publish_checkpoint_with(self.persistence.get(), &bytes)?;
             self.history.screen = Some(screen);
         }
         Ok(())
@@ -137,7 +169,16 @@ impl fmt::Debug for TerminalHistory {
 impl TerminalHistory {
     /// Takes an exclusively owned, newly created empty journal. The initial
     /// dimensions are checkpointed before any process may release output.
+    #[cfg(test)]
     pub(crate) fn create(
+        journal: TerminalJournal,
+        dimensions: &TerminalDimensions,
+    ) -> Result<Self> {
+        Self::create_with(&mut TerminalTestPersistence, journal, dimensions)
+    }
+
+    pub(crate) fn create_with(
+        persistence: &mut dyn TerminalJournalPersistence,
         journal: TerminalJournal,
         dimensions: &TerminalDimensions,
     ) -> Result<Self> {
@@ -154,7 +195,7 @@ impl TerminalHistory {
             unavailable: Unavailable::Missing,
             live: true,
         };
-        history.checkpoint()?;
+        history.checkpoint_with(persistence)?;
         Ok(history)
     }
 
@@ -234,23 +275,49 @@ impl TerminalHistory {
         Ok(self.journal.eviction_bytes(&request)?)
     }
 
+    #[cfg(test)]
     pub(crate) fn evict(&mut self, kind: TerminalHistoryEviction) -> Result<usize> {
+        self.evict_with(&mut TerminalTestPersistence, kind)
+    }
+
+    pub(crate) fn evict_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        kind: TerminalHistoryEviction,
+    ) -> Result<usize> {
         let Some(request) = self.retention_request(kind)? else {
             return Ok(0);
         };
-        let result = self.journal.evict(&request);
-        let bytes = self.mutation(result)?;
+        let (receipt, accounting) =
+            self.dispatch(persistence, TerminalJournalMutation::Evict(&request))?;
+        let TerminalJournalReceipt::Evicted(bytes) = receipt else {
+            return self.accounted(Err(TerminalProfileError::AccountingMismatch));
+        };
         if kind == TerminalHistoryEviction::CompletedCheckpoint && bytes != 0 {
             self.invalidate(Unavailable::RetentionEvicted);
         }
-        Ok(bytes)
+        self.accounted(accounting.map_or(Ok(bytes), Err))
     }
 
     /// Facts are independently durable from evictable screen checkpoints.
     /// Recovery may acknowledge observations without acquiring live authority.
+    #[cfg(test)]
     pub(crate) fn publish_state(&mut self, bytes: &[u8]) -> Result<()> {
-        let result = self.journal.publish_state(self.latest(), bytes);
-        self.mutation(result)
+        self.publish_state_with(&mut TerminalTestPersistence, bytes)
+    }
+
+    pub(crate) fn publish_state_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        bytes: &[u8],
+    ) -> Result<()> {
+        self.publish_with(
+            persistence,
+            TerminalJournalMutation::State {
+                source: self.latest(),
+                bytes,
+            },
+        )
     }
 
     pub(crate) fn load_state(&self) -> Result<Option<TerminalJournalCheckpoint>> {
@@ -276,10 +343,22 @@ impl TerminalHistory {
     /// Commits raw bytes before feeding the screen, so no query reply can be
     /// returned for an uncommitted append. The runtime dispatches each returned
     /// reply once; retrying dispatch must never repeat the append.
+    #[cfg(test)]
     pub(crate) fn append(&mut self, bytes: &[u8]) -> Result<TerminalHistoryAppend> {
+        self.append_with(&mut TerminalTestPersistence, bytes)
+    }
+
+    pub(crate) fn append_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        bytes: &[u8],
+    ) -> Result<TerminalHistoryAppend> {
         self.require_live()?;
-        let appended = self.journal.append(bytes);
-        let cursor = self.mutation(appended)?;
+        let (receipt, accounting_error) =
+            self.dispatch(persistence, TerminalJournalMutation::Append(bytes))?;
+        let TerminalJournalReceipt::Appended(cursor) = receipt else {
+            return self.accounted(Err(TerminalProfileError::AccountingMismatch));
+        };
         let replies = if let Some(screen) = &mut self.screen {
             if let Ok(replies) = screen.feed(bytes) {
                 replies
@@ -290,47 +369,83 @@ impl TerminalHistory {
         } else {
             Vec::new()
         };
+        if accounting_error.is_some() {
+            // Commitment and one projection feed already happened. Preserve
+            // their receipt, but forbid an accidental live replay after error.
+            self.live = false;
+        }
         Ok(TerminalHistoryAppend {
             cursor,
             replies,
             screen_unavailable: self.screen.is_none().then_some(self.unavailable),
+            accounting_error,
         })
     }
 
     /// Saves only a projection of the current committed cursor. Callers cannot
     /// pair a screen with an arbitrary earlier or later source position.
+    #[cfg(test)]
     pub(crate) fn checkpoint(&mut self) -> Result<()> {
+        self.checkpoint_with(&mut TerminalTestPersistence)
+    }
+
+    pub(crate) fn checkpoint_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+    ) -> Result<()> {
         self.require_live()?;
         let bytes = encode_checkpoint(self.projection()?)?;
-        let saved = self
-            .journal
-            .publish_checkpoint(self.journal.latest(), &bytes);
-        self.mutation(saved)
+        self.publish_checkpoint_with(persistence, &bytes)
     }
 
     /// Must succeed BEFORE an operation which may discard unobserved output
     /// (for example a platform signal that flushes the PTY). Future raw bytes
     /// remain readable but cannot repair the missing screen evidence.
+    #[cfg(test)]
     pub(crate) fn mark_output_gap(&mut self) -> Result<()> {
+        self.mark_output_gap_with(&mut TerminalTestPersistence)
+    }
+
+    pub(crate) fn mark_output_gap_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+    ) -> Result<()> {
         self.require_live()?;
-        self.save_unavailable(Unavailable::RawGap, RAW_GAP)
+        self.save_unavailable(persistence, Unavailable::RawGap, RAW_GAP)
     }
 
     /// Publishes a discontinuity barrier before native close can discard data.
     /// Only a positively complete native drain may restore the final screen.
     /// Closing projection feeds are replay-only: quiesced input cannot emit
     /// terminal replies, even when the final output contains many queries.
+    #[cfg(test)]
     pub(crate) fn begin_close(&mut self) -> Result<TerminalHistoryClosing<'_>> {
+        self.begin_close_context(ClosingPersistence::Unmetered(TerminalTestPersistence))
+    }
+
+    pub(crate) fn begin_close_with<'a>(
+        &'a mut self,
+        persistence: &'a mut dyn TerminalJournalPersistence,
+    ) -> Result<TerminalHistoryClosing<'a>> {
+        self.begin_close_context(ClosingPersistence::Borrowed(persistence))
+    }
+
+    fn begin_close_context<'a>(
+        &'a mut self,
+        mut persistence: ClosingPersistence<'a>,
+    ) -> Result<TerminalHistoryClosing<'a>> {
         self.require_live()?;
         let projection = self.screen.as_ref().and_then(|screen| {
             let checkpoint = screen.checkpoint().ok()?;
             TerminalScreenEngine::restore(&checkpoint, TerminalScreenMode::Replay).ok()
         });
-        self.save_unavailable(Unavailable::RawGap, RAW_GAP)?;
+        self.save_unavailable(persistence.get(), Unavailable::RawGap, RAW_GAP)?;
         Ok(TerminalHistoryClosing {
             history: self,
+            persistence,
             projection,
             failed: false,
+            accounting_error: None,
         })
     }
 
@@ -339,8 +454,18 @@ impl TerminalHistory {
     /// Crashes or ambiguous failures cannot expose a pre-resize checkpoint as
     /// if it described the post-resize terminal. The closure is called once,
     /// and only after all validation and the durable barrier succeed.
+    #[cfg(test)]
     pub(crate) fn resize(
         &mut self,
+        dimensions: &TerminalDimensions,
+        native_resize: impl FnOnce(&TerminalDimensions) -> std::result::Result<(), ()>,
+    ) -> Result<()> {
+        self.resize_with(&mut TerminalTestPersistence, dimensions, native_resize)
+    }
+
+    pub(crate) fn resize_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
         dimensions: &TerminalDimensions,
         native_resize: impl FnOnce(&TerminalDimensions) -> std::result::Result<(), ()>,
     ) -> Result<()> {
@@ -352,14 +477,24 @@ impl TerminalHistory {
         // Keep the old grid privately while publishing the unavailable marker;
         // no operation may observe it between the barrier and new checkpoint.
         let mut screen = self.screen.take().expect("validated projection");
-        self.save_unavailable(Unavailable::ResizeUncheckpointed, RESIZE_PENDING)?;
+        if let Err(error) = self.save_unavailable(
+            persistence,
+            Unavailable::ResizeUncheckpointed,
+            RESIZE_PENDING,
+        ) {
+            if matches!(
+                error,
+                TerminalHistoryError::Profile(_)
+                    | TerminalHistoryError::Journal(TerminalJournalError::Invalid)
+            ) {
+                self.screen = Some(screen);
+            }
+            return Err(error);
+        }
         native_resize(dimensions).map_err(|()| TerminalHistoryError::NativeResize)?;
         screen.resize(dimensions)?;
         let bytes = encode_checkpoint(&screen)?;
-        let saved = self
-            .journal
-            .publish_checkpoint(self.journal.latest(), &bytes);
-        self.mutation(saved)?;
+        self.publish_checkpoint_with(persistence, &bytes)?;
         self.screen = Some(screen);
         Ok(())
     }
@@ -383,14 +518,73 @@ impl TerminalHistory {
         self.unavailable = reason;
     }
 
-    fn save_unavailable(&mut self, reason: Unavailable, tag: u8) -> Result<()> {
-        self.invalidate(reason);
+    fn save_unavailable(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        reason: Unavailable,
+        tag: u8,
+    ) -> Result<()> {
         let mut bytes = MAGIC.to_vec();
         bytes.push(tag);
-        let saved = self
-            .journal
-            .publish_checkpoint(self.journal.latest(), &bytes);
-        self.mutation(saved)
+        let (receipt, accounting) = self.dispatch(
+            persistence,
+            TerminalJournalMutation::Checkpoint {
+                source: self.latest(),
+                bytes: &bytes,
+            },
+        )?;
+        if receipt != TerminalJournalReceipt::Published {
+            return self.accounted(Err(TerminalProfileError::AccountingMismatch));
+        }
+        self.invalidate(reason);
+        self.accounted(accounting.map_or(Ok(()), Err))
+    }
+
+    fn publish_checkpoint_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        bytes: &[u8],
+    ) -> Result<()> {
+        self.publish_with(
+            persistence,
+            TerminalJournalMutation::Checkpoint {
+                source: self.latest(),
+                bytes,
+            },
+        )
+    }
+
+    fn publish_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        mutation: TerminalJournalMutation<'_>,
+    ) -> Result<()> {
+        let (receipt, accounting) = self.dispatch(persistence, mutation)?;
+        if receipt != TerminalJournalReceipt::Published {
+            return self.accounted(Err(TerminalProfileError::AccountingMismatch));
+        }
+        self.accounted(accounting.map_or(Ok(()), Err))
+    }
+
+    fn dispatch(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        mutation: TerminalJournalMutation<'_>,
+    ) -> Result<(TerminalJournalReceipt, Option<TerminalProfileError>)> {
+        let completion = match persistence.mutate(&mut self.journal, mutation) {
+            Ok(completion) => completion,
+            Err(TerminalProfileError::Journal(error)) => return self.mutation(Err(error)),
+            Err(error) => return Err(TerminalHistoryError::Profile(error)),
+        };
+        let receipt = self.mutation(completion.operation)?;
+        Ok((receipt, completion.accounting.err()))
+    }
+
+    fn accounted<T>(&mut self, result: std::result::Result<T, TerminalProfileError>) -> Result<T> {
+        result.map_err(|error| {
+            self.live = false;
+            TerminalHistoryError::Accounting(error)
+        })
     }
 
     fn mutation<T>(&mut self, result: std::result::Result<T, TerminalJournalError>) -> Result<T> {
@@ -542,6 +736,249 @@ mod tests {
                 TerminalScreenError::Unavailable(reason)
             ))
         );
+    }
+
+    struct ScriptedPersistence {
+        calls: usize,
+        fail_on: usize,
+        reject: bool,
+    }
+    impl TerminalJournalPersistence for ScriptedPersistence {
+        fn mutate(
+            &mut self,
+            journal: &mut TerminalJournal,
+            mutation: TerminalJournalMutation<'_>,
+        ) -> std::result::Result<
+            crate::terminal_profile::TerminalProfileCompletion<
+                TerminalJournalReceipt,
+                TerminalJournalError,
+            >,
+            TerminalProfileError,
+        > {
+            self.calls += 1;
+            if self.reject && self.calls == self.fail_on {
+                return Err(TerminalProfileError::ResourceLimit);
+            }
+            let mut completion = TerminalTestPersistence.mutate(journal, mutation)?;
+            if self.calls == self.fail_on {
+                completion.accounting = Err(TerminalProfileError::AccountingMismatch);
+            }
+            Ok(completion)
+        }
+    }
+
+    #[test]
+    fn explicit_profile_context_binds_writes_and_rejects_before_output_commit() {
+        use crate::terminal_profile::{
+            TerminalProfileBudget, TerminalProfileLimits, TerminalProfileMutationContext,
+        };
+        use crate::terminal_profile_store::TerminalProfileStore;
+        use machine_god_core::{BackgroundOutputOwner, SessionId, SessionIncarnationId};
+
+        let fixture = Fixture::new(TerminalJournalLimits {
+            segment_bytes: 256,
+            session_bytes: 16 * 1024,
+        });
+        let store = TerminalProfileStore::prepare(fixture.fd()).unwrap();
+        let mut transaction = store.transaction().unwrap();
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("owner").unwrap(),
+            SessionIncarnationId::new("incarnation").unwrap(),
+        );
+        let mut catalog = transaction
+            .prepare_catalog("/workspace".into(), owner)
+            .unwrap();
+        let root = transaction
+            .create_session(&mut catalog, &session())
+            .unwrap();
+        let journal = TerminalJournal::create(root, session(), fixture.limits).unwrap();
+        let budget = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+        let mut history = {
+            let mut context = TerminalProfileMutationContext::new(
+                &mut transaction,
+                budget,
+                catalog.namespace_key(),
+            );
+            TerminalHistory::create_with(&mut context, journal, &dimensions()).unwrap()
+        };
+        let output = history.physical_usage().unwrap().output_bytes;
+        let mut limits = TerminalProfileLimits::default();
+        limits.retained.output_bytes = output + 1;
+        let budget = TerminalProfileBudget::new(limits).unwrap();
+        {
+            let mut context = TerminalProfileMutationContext::new(
+                &mut transaction,
+                budget,
+                catalog.namespace_key(),
+            );
+            let receipt = history.append_with(&mut context, b"a").unwrap();
+            assert!(receipt.accounting_error.is_none());
+            let screen = history.screen().unwrap();
+            let latest = history.latest();
+            assert!(matches!(
+                history.append_with(&mut context, b"b"),
+                Err(TerminalHistoryError::Profile(
+                    TerminalProfileError::ResourceLimit
+                ))
+            ));
+            assert_eq!(history.latest(), latest);
+            assert_eq!(history.screen().unwrap(), screen);
+            history.require_live().unwrap();
+            history
+                .publish_state_with(&mut context, b"independent facts")
+                .unwrap();
+            history
+                .evict_with(&mut context, TerminalHistoryEviction::CompletedOutput)
+                .unwrap();
+        }
+        assert_eq!(transaction.inventory().unwrap().usage.raw_bytes, 0);
+        assert_eq!(
+            history.load_state().unwrap().unwrap().bytes,
+            b"independent facts"
+        );
+    }
+
+    #[test]
+    fn committed_append_accounting_failure_preserves_cursor_and_one_query_reply() {
+        let fixture = Fixture::new(TerminalJournalLimits::default());
+        let mut history = fixture.history();
+        let mut persistence = ScriptedPersistence {
+            calls: 0,
+            fail_on: 1,
+            reject: false,
+        };
+        let receipt = history.append_with(&mut persistence, b"a\x1b[6n").unwrap();
+        assert_eq!(receipt.cursor, history.latest());
+        assert_eq!(receipt.replies, [b"\x1b[1;2R".to_vec()]);
+        assert_eq!(
+            receipt.accounting_error,
+            Some(TerminalProfileError::AccountingMismatch)
+        );
+        assert!(receipt.screen_unavailable.is_none());
+        assert_eq!(history.read(&origin(), 32).unwrap().bytes, b"a\x1b[6n");
+        assert!(matches!(
+            history.append_with(&mut persistence, b"a\x1b[6n"),
+            Err(TerminalHistoryError::ReadOnly)
+        ));
+        assert_eq!(persistence.calls, 1);
+        assert_eq!(history.latest(), receipt.cursor);
+    }
+
+    #[test]
+    fn predispatched_rejections_preserve_projection_and_skip_native_resize() {
+        let fixture = Fixture::new(TerminalJournalLimits::default());
+        let mut history = fixture.history();
+        let before = history.screen().unwrap();
+        let generation = std::fs::read(fixture.path.join("tj-meta")).unwrap();
+        for action in 0..4 {
+            let mut persistence = ScriptedPersistence {
+                calls: 0,
+                fail_on: 1,
+                reject: true,
+            };
+            let result = match action {
+                0 => history.checkpoint_with(&mut persistence),
+                1 => history.mark_output_gap_with(&mut persistence),
+                2 => history.begin_close_with(&mut persistence).map(|_| ()),
+                3 => history.resize_with(
+                    &mut persistence,
+                    &TerminalDimensions::new(3, 9).unwrap(),
+                    |_| panic!("rejected resize dispatched"),
+                ),
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                result,
+                Err(TerminalHistoryError::Profile(
+                    TerminalProfileError::ResourceLimit
+                ))
+            );
+            assert_eq!(history.screen().unwrap(), before);
+            history.require_live().unwrap();
+            assert_eq!(
+                std::fs::read(fixture.path.join("tj-meta")).unwrap(),
+                generation
+            );
+        }
+    }
+
+    #[test]
+    fn nonappend_postcommit_failures_are_accounting_not_admission_errors() {
+        for action in 0..4 {
+            let fixture = Fixture::new(TerminalJournalLimits::default());
+            let mut history = fixture.history();
+            let mut persistence = ScriptedPersistence {
+                calls: 0,
+                fail_on: 1,
+                reject: false,
+            };
+            let before = std::fs::read(fixture.path.join("tj-meta")).unwrap();
+            let result = match action {
+                0 => history.checkpoint_with(&mut persistence),
+                1 => history.publish_state_with(&mut persistence, b"committed facts"),
+                2 => history.mark_output_gap_with(&mut persistence),
+                3 => history.resize_with(
+                    &mut persistence,
+                    &TerminalDimensions::new(3, 9).unwrap(),
+                    |_| panic!("accounting failure bypassed barrier"),
+                ),
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                result,
+                Err(TerminalHistoryError::Accounting(
+                    TerminalProfileError::AccountingMismatch
+                ))
+            );
+            assert_ne!(std::fs::read(fixture.path.join("tj-meta")).unwrap(), before);
+            assert_eq!(history.require_live(), Err(TerminalHistoryError::ReadOnly));
+        }
+    }
+
+    #[test]
+    fn borrowed_close_guard_keeps_gap_on_drop_and_retains_accounting_failure() {
+        let fixture = Fixture::new(TerminalJournalLimits::default());
+        let mut history = fixture.history();
+        let mut persistence = ScriptedPersistence {
+            calls: 0,
+            fail_on: usize::MAX,
+            reject: false,
+        };
+        {
+            let mut capture = history.begin_close_with(&mut persistence).unwrap();
+            assert_eq!(capture.append(b"tail").unwrap().offset(), 4);
+        }
+        assert_eq!(persistence.calls, 2);
+        unavailable(&history, Unavailable::RawGap);
+        drop(history);
+        let recovered = TerminalHistory::recover(fixture.open()).unwrap();
+        unavailable(&recovered, Unavailable::RawGap);
+        drop(recovered);
+
+        let fixture = Fixture::new(TerminalJournalLimits::default());
+        let mut history = fixture.history();
+        let mut persistence = ScriptedPersistence {
+            calls: 0,
+            fail_on: 2,
+            reject: false,
+        };
+        let mut capture = history.begin_close_with(&mut persistence).unwrap();
+        let cursor = capture.append(b"committed tail").unwrap();
+        assert_eq!(
+            capture.append(b"later"),
+            Err(TerminalHistoryError::Accounting(
+                TerminalProfileError::AccountingMismatch
+            ))
+        );
+        assert_eq!(
+            capture.finish(true),
+            Err(TerminalHistoryError::Accounting(
+                TerminalProfileError::AccountingMismatch
+            ))
+        );
+        assert_eq!(history.latest(), cursor);
+        assert_eq!(persistence.calls, 2);
+        unavailable(&history, Unavailable::RawGap);
     }
 
     #[test]
