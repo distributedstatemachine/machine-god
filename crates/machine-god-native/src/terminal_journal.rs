@@ -141,6 +141,8 @@ redacted!(TerminalJournalEviction);
 
 pub(crate) enum TerminalJournalMutation<'a> {
     Append(&'a [u8]),
+    /// Persistent checkpoint capacity; zero releases the reservation.
+    CheckpointReserve(usize),
     Checkpoint {
         source: TerminalCursor,
         bytes: &'a [u8],
@@ -186,6 +188,7 @@ pub(crate) struct TerminalJournalWrite<'journal, 'input> {
     journal: &'journal mut TerminalJournal,
     mutation: TerminalJournalMutation<'input>,
     allocation: TerminalJournalAllocation,
+    output_charge_growth: u64,
 }
 
 impl fmt::Debug for TerminalJournalWrite<'_, '_> {
@@ -200,6 +203,12 @@ impl TerminalJournalWrite<'_, '_> {
         self.allocation
     }
 
+    /// Positive growth in raw bytes plus max(committed checkpoint, reserve).
+    /// Unlike physical allocation, replacing a checkpoint consumes its reserve.
+    pub(crate) const fn output_charge_growth(&self) -> u64 {
+        self.output_charge_growth
+    }
+
     pub(crate) fn session_id(&self) -> &TerminalSessionId {
         self.journal.session_id()
     }
@@ -209,7 +218,8 @@ impl TerminalJournalWrite<'_, '_> {
         matches!(
             self.mutation,
             TerminalJournalMutation::Acknowledge(_) | TerminalJournalMutation::Evict(_)
-        )
+        ) || matches!(self.mutation, TerminalJournalMutation::CheckpointReserve(bytes)
+            if bytes <= self.journal.checkpoint_reserve_bytes() && self.output_charge_growth == 0)
     }
 
     /// Identity binding only: the profile transaction supplies the directory
@@ -228,6 +238,10 @@ impl TerminalJournalWrite<'_, '_> {
             self.journal.validate_committed_sizes()?;
         }
         match self.mutation {
+            TerminalJournalMutation::CheckpointReserve(bytes) => self
+                .journal
+                .publish_checkpoint_reserve(bytes)
+                .map(|()| TerminalJournalReceipt::Published),
             TerminalJournalMutation::Append(bytes) => self
                 .journal
                 .append(bytes)
@@ -351,6 +365,9 @@ struct Manifest {
     // remains unchanged. Unlike screen checkpoints, session facts never evict.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     state: Option<Checkpoint>,
+    // Preserve the canonical encoding and hash of legacy manifests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    checkpoint_reserve: Option<usize>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -380,6 +397,9 @@ impl TerminalJournal {
         mutation: TerminalJournalMutation<'input>,
     ) -> Result<TerminalJournalWrite<'journal, 'input>> {
         let next = self.mutation_manifest(&mutation)?;
+        let output_charge_growth = next.as_ref().map_or(0, |next| {
+            output_charge(next).saturating_sub(output_charge(&self.manifest))
+        });
         let allocation = if let Some(next) = next {
             // Credit only descriptor-validated committed bytes. Orphan files
             // remain charged by the profile's separate physical inventory.
@@ -391,7 +411,9 @@ impl TerminalJournal {
                 | TerminalJournalMutation::Checkpoint { bytes, .. }
                 | TerminalJournalMutation::State { bytes, .. }
                 | TerminalJournalMutation::Event(bytes) => bytes.len(),
-                TerminalJournalMutation::Acknowledge(_) | TerminalJournalMutation::Evict(_) => 0,
+                TerminalJournalMutation::Acknowledge(_)
+                | TerminalJournalMutation::Evict(_)
+                | TerminalJournalMutation::CheckpointReserve(_) => 0,
             };
             TerminalJournalAllocation {
                 output_growth: after.output_bytes.saturating_sub(before.output_bytes) as u64,
@@ -408,6 +430,7 @@ impl TerminalJournal {
             journal: self,
             mutation,
             allocation,
+            output_charge_growth,
         })
     }
 
@@ -449,6 +472,17 @@ impl TerminalJournal {
         self.ready()?;
         let mut next = self.manifest.clone();
         match mutation {
+            TerminalJournalMutation::CheckpointReserve(bytes) => {
+                ensure(
+                    *bytes <= MAX_CHECKPOINT_BYTES && *bytes <= next.limits.session_bytes,
+                    TerminalJournalError::Invalid,
+                )?;
+                let reserve = (*bytes != 0).then_some(*bytes);
+                if next.checkpoint_reserve == reserve {
+                    return Ok(None);
+                }
+                next.checkpoint_reserve = reserve;
+            }
             TerminalJournalMutation::Append(bytes) => {
                 ensure(
                     !bytes.is_empty()
@@ -534,6 +568,20 @@ impl TerminalJournal {
         &self.manifest.session
     }
 
+    pub(crate) fn checkpoint_reserve_bytes(&self) -> usize {
+        self.manifest.checkpoint_reserve.unwrap_or(0)
+    }
+
+    fn publish_checkpoint_reserve(&mut self, bytes: usize) -> Result<()> {
+        let Some(next) =
+            self.mutation_manifest(&TerminalJournalMutation::CheckpointReserve(bytes))?
+        else {
+            return Ok(());
+        };
+        self.poisoned = true;
+        self.commit(next)
+    }
+
     /// Effect-free preflight for an operation which may publish several
     /// manifests after consuming native output. Each actual write still checks
     /// its request; the owner holds the profile transaction between calls.
@@ -573,6 +621,7 @@ impl TerminalJournal {
             event_gap: 0,
             events: Vec::new(),
             state: None,
+            checkpoint_reserve: None,
         };
         let mut journal = Self {
             root,
@@ -681,6 +730,64 @@ impl TerminalJournal {
         let usage = scan_physical(&root, MAX_SEGMENT_BYTES, BTreeSet::new());
         drop(root);
         usage
+    }
+
+    /// Inspect persistent virtual checkpoint headroom without taking a writer
+    /// lease. The caller holds the profile transaction throughout this and its
+    /// separate physical scan. Only checksum-covered committed checkpoint
+    /// lengths, validated against their exact descriptor, receive credit;
+    /// orphan checkpoints remain fully charged by physical accounting.
+    /// This reads bounded metadata, not checkpoint contents, and grants no
+    /// screen validity or recovery authority. It never repairs partial state.
+    pub(crate) fn inspect_checkpoint_reserve(
+        root: impl AsFd,
+        session: &TerminalSessionId,
+    ) -> Result<u64> {
+        private(root.as_fd(), true)?;
+        let file = match open_file(root.as_fd(), META, OFlags::RDONLY) {
+            Ok(file) => file,
+            Err(TerminalJournalError::NotFound) => {
+                // Recognized partial initialization has no committed reserve.
+                scan_physical(root.as_fd(), MAX_SEGMENT_BYTES, BTreeSet::new())?;
+                return Ok(0);
+            }
+            Err(error) => return Err(error),
+        };
+        let encoded = read_whole(&file, MAX_META)?;
+        let envelope: Envelope =
+            serde_json::from_slice(&encoded).map_err(|_| TerminalJournalError::Corrupt)?;
+        ensure(
+            envelope.version == 1
+                && &envelope.manifest.session == session
+                && manifest_hash(&envelope.manifest)? == envelope.sha256,
+            TerminalJournalError::Corrupt,
+        )?;
+        validate_manifest(&envelope.manifest)?;
+        let checkpoint_bytes = if let Some(checkpoint) = &envelope.manifest.checkpoint {
+            ensure(
+                checked_artifact_size(root.as_fd(), &checkpoint_name(checkpoint.blob.id))
+                    .map_err(missing_is_corrupt)?
+                    == checkpoint.blob.bytes,
+                TerminalJournalError::Corrupt,
+            )?;
+            checkpoint.blob.bytes
+        } else {
+            0
+        };
+        let held = rustix::fs::fstat(&file).map_err(io_error)?;
+        let visible = rustix::fs::statat(root.as_fd(), META, AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(io_error)
+            .map_err(missing_is_corrupt)?;
+        ensure(
+            held.st_dev == visible.st_dev && held.st_ino == visible.st_ino,
+            TerminalJournalError::Corrupt,
+        )?;
+        private(root.as_fd(), true)?;
+        Ok(envelope
+            .manifest
+            .checkpoint_reserve
+            .unwrap_or(0)
+            .saturating_sub(checkpoint_bytes) as u64)
     }
 
     pub(crate) fn eviction_bytes(&self, eviction: &TerminalJournalEviction) -> Result<usize> {
@@ -1231,6 +1338,14 @@ impl TerminalJournal {
     }
 }
 
+fn output_charge(manifest: &Manifest) -> u64 {
+    let usage = usage(manifest, 0);
+    (usage.raw_bytes
+        + usage
+            .checkpoint_bytes
+            .max(manifest.checkpoint_reserve.unwrap_or(0))) as u64
+}
+
 fn planned_checkpoint(
     generation: u64,
     source: &TerminalCursor,
@@ -1306,6 +1421,12 @@ fn validate_manifest(m: &Manifest) -> Result<()> {
     m.limits
         .validate()
         .map_err(|_| TerminalJournalError::Corrupt)?;
+    ensure(
+        m.checkpoint_reserve.is_none_or(|bytes| {
+            bytes > 0 && bytes <= MAX_CHECKPOINT_BYTES && bytes <= m.limits.session_bytes
+        }),
+        TerminalJournalError::Corrupt,
+    )?;
     ensure(
         m.generation > 0
             && m.next_segment > 0
@@ -1831,11 +1952,17 @@ mod tests {
         mutation: TerminalJournalMutation<'_>,
     ) -> (TerminalJournalAllocation, TerminalJournalReceipt) {
         let before = journal.usage();
+        let before_charge = output_charge(&journal.manifest);
         let plan = journal.prepare_mutation(mutation).unwrap();
         assert_eq!(format!("{plan:?}"), "TerminalJournalWrite { .. }");
         let allocation = plan.allocation();
+        let charge_growth = plan.output_charge_growth();
         let receipt = plan.execute().unwrap();
         let after = journal.usage();
+        assert_eq!(
+            charge_growth,
+            output_charge(&journal.manifest).saturating_sub(before_charge)
+        );
         assert_eq!(
             allocation.output_growth,
             after.output_bytes.saturating_sub(before.output_bytes) as u64
@@ -1856,6 +1983,302 @@ mod tests {
                     + allocation.metadata_growth
         );
         (allocation, receipt)
+    }
+
+    fn set_reserve(journal: &mut TerminalJournal, bytes: usize) {
+        assert_eq!(
+            journal
+                .prepare_mutation(TerminalJournalMutation::CheckpointReserve(bytes))
+                .unwrap()
+                .execute()
+                .unwrap(),
+            TerminalJournalReceipt::Published
+        );
+    }
+
+    fn replace_metadata(fixture: &Fixture, manifest: Manifest) {
+        let envelope = Envelope {
+            version: 1,
+            sha256: manifest_hash(&manifest).unwrap(),
+            manifest,
+        };
+        let encoded = serde_json::to_vec(&envelope).unwrap();
+        let mut file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(fixture.path.join(META))
+            .unwrap();
+        file.write_all(&encoded).unwrap();
+        file.sync_all().unwrap();
+    }
+
+    #[test]
+    fn checkpoint_reserve_absence_preserves_legacy_encoding_and_checksum() {
+        let fixture = Fixture::new();
+        let journal = fixture.create(limits(8, 64));
+        let encoded = serde_json::to_vec(&journal.manifest).unwrap();
+        let legacy = format!(
+            "{{\"session\":\"terminal-test\",\"limits\":{{\"segment_bytes\":8,\"session_bytes\":64}},\"generation\":1,\"next_segment\":1,\"latest\":{},\"segments\":[],\"checkpoint\":null,\"checkpoint_evicted\":false,\"next_event\":1,\"acknowledged\":0,\"event_gap\":0,\"events\":[]}}",
+            serde_json::to_string(&cursor(1, 0)).unwrap()
+        );
+        assert_eq!(encoded, legacy.as_bytes());
+        let mut hash = Sha256::new();
+        hash.update(DOMAIN);
+        hash.update(legacy.as_bytes());
+        assert_eq!(
+            manifest_hash(&journal.manifest).unwrap(),
+            <[u8; 32]>::from(hash.finalize())
+        );
+        assert_eq!(journal.checkpoint_reserve_bytes(), 0);
+        assert_eq!(
+            TerminalJournal::inspect_checkpoint_reserve(fixture.fd(), &session()).unwrap(),
+            0
+        );
+        drop(journal);
+        assert_eq!(
+            fixture
+                .open(limits(8, 64))
+                .unwrap()
+                .checkpoint_reserve_bytes(),
+            0
+        );
+    }
+
+    #[test]
+    fn checkpoint_reserve_persists_shrinks_releases_and_is_effect_free_when_dropped() {
+        let fixture = Fixture::new();
+        let mut journal = fixture.create(limits(8, 64));
+        let before = std::fs::read(fixture.path.join(META)).unwrap();
+        let plan = journal
+            .prepare_mutation(TerminalJournalMutation::CheckpointReserve(32))
+            .unwrap();
+        assert_eq!(plan.output_charge_growth(), 32);
+        assert_eq!(plan.allocation().output_growth, 0);
+        assert_eq!(plan.allocation().allocation_bytes, MAX_META as u64);
+        assert!(!plan.reclaims_only());
+        drop(plan);
+        assert_eq!(std::fs::read(fixture.path.join(META)).unwrap(), before);
+        assert_eq!(journal.checkpoint_reserve_bytes(), 0);
+        set_reserve(&mut journal, 32);
+        assert_eq!(
+            TerminalJournal::inspect_checkpoint_reserve(fixture.fd(), &session()).unwrap(),
+            32
+        );
+        drop(journal);
+        let mut journal = fixture.open(limits(8, 64)).unwrap();
+        assert_eq!(journal.checkpoint_reserve_bytes(), 32);
+        for bytes in [32, 16, 0] {
+            let plan = journal
+                .prepare_mutation(TerminalJournalMutation::CheckpointReserve(bytes))
+                .unwrap();
+            assert_eq!(plan.output_charge_growth(), 0);
+            assert!(plan.reclaims_only());
+            if bytes == 32 {
+                assert_eq!(plan.allocation(), TerminalJournalAllocation::default());
+            }
+            plan.execute().unwrap();
+            assert_eq!(
+                TerminalJournal::inspect_checkpoint_reserve(fixture.fd(), &session()).unwrap(),
+                bytes as u64
+            );
+        }
+        assert!(
+            !String::from_utf8(std::fs::read(fixture.path.join(META)).unwrap())
+                .unwrap()
+                .contains("checkpoint_reserve")
+        );
+        drop(journal);
+        assert_eq!(
+            fixture
+                .open(limits(8, 64))
+                .unwrap()
+                .checkpoint_reserve_bytes(),
+            0
+        );
+    }
+
+    #[test]
+    fn checkpoint_replacement_consumes_and_replenishes_reserve_without_orphan_credit() {
+        let fixture = Fixture::new();
+        let mut journal = fixture.create(limits(8, 64));
+        set_reserve(&mut journal, 16);
+        let plan = journal
+            .prepare_mutation(TerminalJournalMutation::Append(b"raw"))
+            .unwrap();
+        assert_eq!(plan.output_charge_growth(), 3);
+        plan.execute().unwrap();
+        fixture.put(&checkpoint_name(99), &[0; 32]);
+        assert_eq!(
+            TerminalJournal::inspect_checkpoint_reserve(fixture.fd(), &session()).unwrap(),
+            16
+        );
+        for (bytes, growth, physical_growth, remaining) in
+            [(8, 0, 8, 8), (24, 8, 16, 0), (4, 0, 0, 12)]
+        {
+            let payload = vec![0; bytes];
+            let source = journal.latest();
+            let plan = journal
+                .prepare_mutation(TerminalJournalMutation::Checkpoint {
+                    source,
+                    bytes: &payload,
+                })
+                .unwrap();
+            assert_eq!(plan.output_charge_growth(), growth);
+            assert_eq!(plan.allocation().output_growth, physical_growth);
+            assert!(!plan.reclaims_only());
+            plan.execute().unwrap();
+            assert_eq!(
+                TerminalJournal::inspect_checkpoint_reserve(fixture.fd(), &session()).unwrap(),
+                remaining
+            );
+            assert_eq!(journal.checkpoint_reserve_bytes(), 16);
+        }
+        assert_eq!(
+            TerminalJournal::inspect_physical(fixture.fd())
+                .unwrap()
+                .checkpoint_bytes,
+            36
+        );
+        let plan = journal
+            .prepare_mutation(TerminalJournalMutation::Evict(
+                &TerminalJournalEviction::CompletedCheckpoint,
+            ))
+            .unwrap();
+        assert_eq!(plan.output_charge_growth(), 0);
+        plan.execute().unwrap();
+        assert_eq!(
+            TerminalJournal::inspect_checkpoint_reserve(fixture.fd(), &session()).unwrap(),
+            16
+        );
+        assert!(fixture.path.join(checkpoint_name(99)).exists());
+    }
+
+    #[test]
+    fn checkpoint_reserve_scan_rejects_bad_metadata_identity_bounds_and_committed_sizes() {
+        for case in 0..8 {
+            let fixture = Fixture::new();
+            let mut journal = fixture.create(limits(8, 64));
+            journal
+                .publish_checkpoint(journal.latest(), b"grid")
+                .unwrap();
+            set_reserve(&mut journal, 32);
+            let mut manifest = journal.manifest.clone();
+            let checkpoint = checkpoint_name(manifest.checkpoint.as_ref().unwrap().blob.id);
+            match case {
+                0 => manifest.checkpoint_reserve = Some(0),
+                1 => manifest.checkpoint_reserve = Some(65),
+                2 => manifest.checkpoint_reserve = Some(MAX_CHECKPOINT_BYTES + 1),
+                3 => manifest.session = TerminalSessionId::new("other-session").unwrap(),
+                4 => manifest.checkpoint_evicted = true,
+                5 => {
+                    OpenOptions::new()
+                        .write(true)
+                        .open(fixture.path.join(&checkpoint))
+                        .unwrap()
+                        .set_len(3)
+                        .unwrap();
+                }
+                6 => {
+                    std::fs::remove_file(fixture.path.join(&checkpoint)).unwrap();
+                    fixture.put(&checkpoint_name(99), b"grid");
+                }
+                7 => manifest.checkpoint.as_mut().unwrap().blob.id = manifest.generation + 1,
+                _ => unreachable!(),
+            }
+            replace_metadata(&fixture, manifest);
+            assert_eq!(
+                TerminalJournal::inspect_checkpoint_reserve(fixture.fd(), &session()).unwrap_err(),
+                TerminalJournalError::Corrupt,
+                "case {case}"
+            );
+            // The original stat-only inventory must not start interpreting metadata.
+            assert!(TerminalJournal::inspect_physical(fixture.fd()).is_ok());
+            drop(journal);
+            assert_eq!(
+                fixture.open(limits(8, 64)).unwrap_err(),
+                TerminalJournalError::Corrupt
+            );
+        }
+    }
+
+    #[test]
+    fn checkpoint_reserve_scan_checks_checksum_and_never_repairs_partial_state() {
+        let fixture = Fixture::new();
+        assert_eq!(
+            TerminalJournal::inspect_checkpoint_reserve(fixture.fd(), &session()).unwrap(),
+            0
+        );
+        fixture.put(LOCK, b"");
+        fixture.put(TEMP, b"interrupted metadata");
+        assert_eq!(
+            TerminalJournal::inspect_checkpoint_reserve(fixture.fd(), &session()).unwrap(),
+            0
+        );
+        assert!(fixture.path.join(TEMP).exists());
+        let mut journal = fixture.create(limits(8, 64));
+        set_reserve(&mut journal, 32);
+        let mut encoded = std::fs::read(fixture.path.join(META)).unwrap();
+        let mut envelope: Envelope = serde_json::from_slice(&encoded).unwrap();
+        envelope.manifest.checkpoint_reserve = Some(31);
+        encoded = serde_json::to_vec(&envelope).unwrap();
+        let mut file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(fixture.path.join(META))
+            .unwrap();
+        file.write_all(&encoded).unwrap();
+        assert_eq!(
+            TerminalJournal::inspect_checkpoint_reserve(fixture.fd(), &session()).unwrap_err(),
+            TerminalJournalError::Corrupt
+        );
+        assert_eq!(std::fs::read(fixture.path.join(META)).unwrap(), encoded);
+    }
+
+    #[test]
+    fn checkpoint_reserve_invalid_counter_and_failed_commit_paths() {
+        let fixture = Fixture::new();
+        let mut journal = fixture.create(limits(8, 64));
+        for bytes in [65, MAX_CHECKPOINT_BYTES + 1, usize::MAX] {
+            assert_eq!(
+                journal
+                    .prepare_mutation(TerminalJournalMutation::CheckpointReserve(bytes))
+                    .unwrap_err(),
+                TerminalJournalError::Invalid
+            );
+            assert!(!journal.poisoned);
+        }
+        journal.manifest.generation = u64::MAX;
+        assert_eq!(
+            journal
+                .prepare_mutation(TerminalJournalMutation::CheckpointReserve(8))
+                .unwrap_err(),
+            TerminalJournalError::ResourceLimit
+        );
+        assert!(!journal.poisoned);
+        journal.manifest.generation = 1;
+        set_reserve(&mut journal, 8);
+        fixture.put(TEMP, b"interrupted");
+        let plan = journal
+            .prepare_mutation(TerminalJournalMutation::CheckpointReserve(16))
+            .unwrap();
+        assert_eq!(plan.execute().unwrap_err(), TerminalJournalError::Corrupt);
+        assert!(journal.poisoned);
+        assert_eq!(journal.checkpoint_reserve_bytes(), 8);
+        assert_eq!(
+            TerminalJournal::inspect_checkpoint_reserve(fixture.fd(), &session()).unwrap(),
+            8
+        );
+        assert_eq!(
+            journal
+                .prepare_mutation(TerminalJournalMutation::CheckpointReserve(0))
+                .unwrap_err(),
+            TerminalJournalError::Unavailable
+        );
+        drop(journal);
+        let mut journal = fixture.open(limits(8, 64)).unwrap();
+        assert_eq!(journal.checkpoint_reserve_bytes(), 8);
+        assert!(!fixture.path.join(TEMP).exists());
+        set_reserve(&mut journal, 0);
     }
 
     #[test]
