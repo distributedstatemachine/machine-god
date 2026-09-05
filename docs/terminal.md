@@ -195,11 +195,19 @@ Session dispatch binds retention to the exact owner and lifecycle: completed
 eviction requires closed/exited sessions without native ownership or unresolved
 state publication; recovered lost sessions are not assumed completed. The
 profile coordinator holds the transaction across selection and eviction. It
-orders candidates by completed raw output, completed checkpoints, then live
+retires completed crash-leftover checkpoint reserves before discarding payloads,
+including for resident recovered histories. It then orders candidates by
+completed raw output, completed checkpoints, then live
 checkpoint-covered raw prefixes; within each class it uses creation time,
 owner namespace and session ID. The active namespace/session pair is excluded.
-Nonresident candidates require their normal nonblocking journal writer lease
-and validated, current, namespace-bound facts, not recovered process authority.
+Discovery reads bounded manifest and facts-prefix hints, skips histories with
+neither output nor reserves, and does not recover or hash unselected payloads.
+Hints are selection data, not mutation authority: selected nonresident candidates
+require their normal nonblocking journal writer lease, full recovery, matching
+state identity, and validated, current, namespace-bound facts. Recovery-only
+orphan cleanup is re-accounted before discarding committed output. Legacy
+metadata-less histories remain readable but are ineligible for profile retention;
+they do not block other eligible victims. No recovered process authority is used.
 Busy foreign writers are skipped without bypassing their leases. Physical and
 reserved charges are rescanned after each metadata-first mutation; hypothetical
 reclaimed bytes never authorize a read. Eviction errors retain ordinary journal

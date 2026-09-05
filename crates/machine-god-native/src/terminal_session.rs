@@ -309,6 +309,10 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         Ok(self.history.required_profile_read_growth()?)
     }
 
+    pub(crate) fn checkpoint_reserve_bytes(&self) -> usize {
+        self.history.checkpoint_reserve_bytes()
+    }
+
     pub(crate) fn preflight_profile_read(
         &mut self,
         transaction: &mut TerminalProfileTransaction<'_>,
@@ -760,7 +764,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         self.release_completed_reserve_with(persistence)
     }
 
-    fn release_completed_reserve_with(
+    pub(crate) fn release_completed_reserve_with(
         &mut self,
         persistence: &mut dyn TerminalJournalPersistence,
     ) -> Result<()> {
@@ -1328,6 +1332,27 @@ impl TerminalRecoveredSession {
     pub(crate) fn facts(&self, owner: &BackgroundOutputOwner) -> Result<&TerminalSessionFacts> {
         self.authorize(owner)?;
         Ok(&self.facts)
+    }
+
+    pub(crate) fn checkpoint_reserve_bytes(&self) -> usize {
+        self.history.checkpoint_reserve_bytes()
+    }
+
+    pub(crate) fn retire_completed_checkpoint_reserve_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        owner: &BackgroundOutputOwner,
+    ) -> Result<()> {
+        self.authorize_retention(owner, TerminalHistoryEviction::CompletedOutput)?;
+        if self.facts.context.cursor != self.history.latest() {
+            return Err(TerminalSessionError::InvalidState);
+        }
+        let result = self
+            .history
+            .retire_completed_checkpoint_reserve_with(persistence)
+            .map_err(TerminalSessionError::from);
+        self.publication_error = result.as_ref().err().copied();
+        result
     }
 
     pub(crate) fn physical_usage(

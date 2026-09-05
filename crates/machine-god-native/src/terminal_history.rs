@@ -280,13 +280,22 @@ impl TerminalHistory {
         persistence: &mut dyn TerminalJournalPersistence,
     ) -> Result<()> {
         self.require_live()?;
+        self.retire_completed_checkpoint_reserve_with(persistence)
+    }
+
+    /// The session layer must establish completed facts and no unresolved
+    /// native/publication ownership. Like completed-output eviction, this is a
+    /// persistence mechanism, not a promotion of recovered process authority.
+    pub(crate) fn retire_completed_checkpoint_reserve_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+    ) -> Result<()> {
         if self.journal.checkpoint_reserve_bytes() != 0 {
             self.publish_with(persistence, TerminalJournalMutation::CheckpointReserve(0))?;
         }
         Ok(())
     }
 
-    #[cfg(test)]
     pub(crate) fn checkpoint_reserve_bytes(&self) -> usize {
         self.journal.checkpoint_reserve_bytes()
     }

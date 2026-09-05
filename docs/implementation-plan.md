@@ -110,8 +110,12 @@ Checkpoint reserves now persist in checksummed journal metadata; profile
 admission and reconciliation separately enforce physical usage and reserved
 output across busy and nonresident owners. Lifecycle registration precedes
 startup and growth resize; release follows native cleanup and durable completed
-facts. The profile owner is integrating bounded, oldest-first retention classes
-before reads, using resident authority or acquired nonresident writer leases.
+facts. The profile owner selects bounded, oldest-first retention classes before
+reads, using resident authority or acquired nonresident writer leases. Completed
+crash-leftover reserves retire before payload eviction, including after resident
+recovery. Discovery uses bounded facts-prefix hints without recovering unselected
+payloads; selected histories still require full validation before mutation.
+Legacy metadata-less records remain readable but do not block eligible victims.
 Per-session retention separates raw/checkpoint output from independently bounded
 state and events, matching the pinned output-accounting boundary. Non-output
 publications cannot evict output; recovery retains all ledger categories.
