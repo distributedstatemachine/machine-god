@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `connect durable launch facts to persistent host/catalog, implement attention and lease effects, startup control, tmux, and fully authorized tool/CLI actions before the full terminal feature gate`
+- Next gate: `connect resident registry and disk catalog to the continuous owner loop and profile payload accounting, then attention/lease effects, startup control, tmux and authorized tool/CLI actions before the full terminal feature gate`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark

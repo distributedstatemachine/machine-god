@@ -205,6 +205,9 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
     pub(crate) fn last_output_ms(&self) -> i64 {
         self.last_output_ms
     }
+    pub(crate) fn owns_backend(&self) -> bool {
+        self.backend.is_some()
+    }
     pub(crate) fn inspect(&self, owner: &BackgroundOutputOwner) -> Result<TerminalSessionFacts> {
         self.authorize(owner)?;
         self.facts()

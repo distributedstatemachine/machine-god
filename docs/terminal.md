@@ -166,6 +166,39 @@ observe started/exit/quiet/literal-match conditions without owning process
 lifetime. Runtime probe authorization, profile-wide persistence coordination and model-facing
 action routing remain separate composition responsibilities.
 
+## Resident registry and disk catalog components
+
+The resident registry owns at most sixteen sessions on the host's blocking
+worker. Tool calls borrow live sessions and cannot acquire ownership of their
+lifetime. Duplicate, full and closing admissions fail before invoking the
+launch/recovery factory. Owner-incarnation and workspace checks bind returned
+facts before residency is accepted. Recovered history has no live-control path.
+
+Bounded round-robin pumping advances at most the requested number of active
+sessions per step, continues past per-session failures, and returns raw chunks
+and unexecuted probe descriptions without adding another retained output queue.
+The injected clock cannot rewind any resident session. Resident listing is
+owner-scoped, lexically paged and optionally filtered by lifecycle/backend.
+Inactive residency may be released without deleting history, but a lost session
+with unfinished native cleanup remains owned. Shutdown stops admission before
+attempting every owned cleanup; it retains failed native cleanup for retry and
+keeps completed history readable. Final registry drop forces a cleanup pass on
+the blocking owner, not on a tool future's poll thread.
+
+The disk catalog receives a retained state-root descriptor and derives a framed
+SHA-256 namespace from the canonical workspace and exact logical owner and
+incarnation. Each namespace retains at most 256 validated session directories,
+listed in exact-spelling lexical order. Private directories, a permanent
+nonblocking owner lock, no-follow opens and retained inode checks confine access.
+New directory publication syncs the child and parent. Ambiguous post-creation
+failure poisons that catalog handle; reopening validates existing state without
+deleting or guessing repairs. Catalog reads never infer process authority.
+
+The sixteen-entry resident bound is not disk-history retention, and neither
+component yet enforces the 512 MiB profile payload budget. The continuous owner
+loop, publication-headroom accounting, trusted startup control, attention and
+lease effects, tmux, and model/CLI routing remain full-runtime integration work.
+
 ## Boundary
 
 The reference-host tool implements the `exec`, bounded `start`, bounded

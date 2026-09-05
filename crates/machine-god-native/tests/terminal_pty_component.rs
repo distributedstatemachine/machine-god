@@ -7,6 +7,8 @@
 mod background_input;
 #[path = "../src/background_process.rs"]
 mod background_process;
+#[path = "../src/terminal_catalog.rs"]
+mod terminal_catalog;
 #[path = "../src/terminal_display_width.rs"]
 mod terminal_display_width;
 #[path = "../src/terminal_grid.rs"]
@@ -21,6 +23,8 @@ mod terminal_journal;
 mod terminal_monitor;
 #[path = "../src/terminal_pty.rs"]
 mod terminal_pty;
+#[path = "../src/terminal_registry.rs"]
+mod terminal_registry;
 #[path = "../src/terminal_screen.rs"]
 mod terminal_screen;
 #[path = "../src/terminal_session.rs"]
