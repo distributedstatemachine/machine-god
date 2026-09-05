@@ -5401,6 +5401,7 @@ fn invariant_error() -> BackgroundProcessError {
 #[cfg(all(test, target_os = "linux"))]
 mod linux_proc_tests {
     use super::*;
+    use std::io::{BufRead, BufReader};
 
     const UNRESTRICTED_PROC: &[u8] =
         b"36 25 0:32 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw,hidepid=0\n";
@@ -5416,6 +5417,18 @@ mod linux_proc_tests {
             MAX_LINUX_PROC_SNAPSHOT_BYTES,
             MAX_LINUX_PROC_ENTRIES,
         )
+    }
+
+    struct SignalSnapshotFixture {
+        root: Child,
+        group: rustix::process::Pid,
+    }
+
+    impl Drop for SignalSnapshotFixture {
+        fn drop(&mut self) {
+            let _ = rustix::process::kill_process_group(self.group, rustix::process::Signal::KILL);
+            let _ = self.root.wait();
+        }
     }
 
     #[test]
@@ -6060,21 +6073,32 @@ mod linux_proc_tests {
     #[test]
     fn completed_signal_snapshot_retains_pidfds_without_descendant_proc_directories() {
         let authority = GroupSnapshotAuthority::open().expect("open proc authority");
-        let mut child = Command::new("/bin/sleep")
-            .arg("30")
+        let mut command = Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("/bin/sleep 30 & child=$!; printf '%s\\n' \"$child\"; wait \"$child\"")
+            .process_group(0)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn signal-snapshot fixture");
-        let child_pid = pid(i32::try_from(child.id()).expect("child PID fits signed range"));
-        let root = rustix::process::getpid();
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let mut root = command.spawn().expect("spawn signal-snapshot fixture");
+        let root_pid = pid(i32::try_from(root.id()).expect("root PID fits signed range"));
+        let mut child_line = String::new();
+        BufReader::new(root.stdout.take().expect("fixture readiness pipe"))
+            .read_line(&mut child_line)
+            .expect("read fixture child PID");
+        let child_pid = pid(child_line
+            .trim()
+            .parse()
+            .expect("fixture child PID is a signed integer"));
+        let _fixture = SignalSnapshotFixture {
+            root,
+            group: root_pid,
+        };
         let mut scratch = SignalProcessScratch::new();
 
-        let result = signal_process_snapshot(&authority, root, &mut scratch);
-        child.kill().expect("kill signal-snapshot fixture");
-        child.wait().expect("reap signal-snapshot fixture");
-        let (_, pinned) = result.expect("capture the current process descendants");
+        let (_, pinned) = signal_process_snapshot(&authority, root_pid, &mut scratch)
+            .expect("capture the isolated fixture descendants");
         assert!(
             pinned.contains_key(&child_pid),
             "the direct child receives an exact signal handle"
