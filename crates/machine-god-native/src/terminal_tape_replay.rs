@@ -1106,6 +1106,10 @@ fn map_grid_error(error: TerminalGridError) -> TerminalTapeReplayError {
         | TerminalGridError::ControlStringTooLarge
         | TerminalGridError::SynchronizedUpdateTooLarge
         | TerminalGridError::CombiningPoolCapacityExceeded
+        | TerminalGridError::HyperlinkPoolCapacityExceeded
+        | TerminalGridError::ReplyCapacityExceeded
+        | TerminalGridError::InvalidCheckpoint
+        | TerminalGridError::CheckpointTooLarge
         | TerminalGridError::SnapshotTooLarge => resource_limit(),
     }
 }

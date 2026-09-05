@@ -27,6 +27,18 @@ permission grants. This native API is available for terminal-runtime
 composition; existing noninteractive tool execution below retains its stated
 fixed-shell behavior until the complete interactive runtime is integrated.
 
+## Native screen projection
+
+`TerminalScreenEngine` projects bounded raw chunks into structured styled
+screens, cursor/modes and data-only hyperlink bytes. It performs no I/O.
+Live feeds return bounded protocol replies for exactly-once dispatch by the
+runtime; replay and restored history never replay past replies. Checkpoints
+retain parser state, including split Unicode and escape sequences. The journal
+owner must verify checkpoint integrity and feed only contiguous later output;
+an explicit raw gap invalidates the projection rather than inventing a screen.
+Oversized feeds are rejected without mutation. Resizing this projection alone
+does not resize a process: the runtime must also resize the actual PTY.
+
 ## Boundary
 
 The reference-host tool implements the `exec`, bounded `start`, bounded

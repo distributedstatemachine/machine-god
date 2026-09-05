@@ -496,7 +496,7 @@ fn piped_input_preserves_immediate_binary_unicode_bytes_and_explicit_eof() {
     let receipt = controller.write(bytes, true).unwrap();
     assert_eq!(receipt.bytes_written(), bytes.len());
     assert!(receipt.stdin_closed());
-    assert_eq!(receipt.status(), BackgroundInputStatus::Closed);
+    assert_eq!(receipt.status(), BackgroundInputStatus::Written);
     assert_eq!(controller.write(b"late", false).unwrap().bytes_written(), 0);
     assert_eq!(owned.wait().unwrap(), BackgroundProcessExit::Exited(0));
     assert_eq!(fs::read(directory.path().join("received")).unwrap(), bytes);

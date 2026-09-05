@@ -83,6 +83,7 @@ mod state_environment;
 mod terminal;
 mod terminal_display_width;
 mod terminal_grid;
+mod terminal_screen;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod terminal_shell;
 mod terminal_tape_replay;
@@ -440,6 +441,9 @@ pub use terminal::{
     TerminalConfigError, TerminalConfigErrorKind, TerminalExecution, TerminalExecutionOutcome,
     TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError,
     TerminalExecutorErrorKind, TerminalLimits, TerminalTool,
+};
+pub use terminal_screen::{
+    MAX_TERMINAL_SCREEN_FEED_BYTES, TerminalScreenEngine, TerminalScreenError, TerminalScreenMode,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use terminal_shell::{TerminalShell, TerminalShellError};
