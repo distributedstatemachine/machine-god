@@ -178,13 +178,22 @@ impl TerminalHistory {
         journal: TerminalJournal,
         dimensions: &TerminalDimensions,
     ) -> Result<Self> {
-        Self::create_with(&mut TerminalTestPersistence, journal, dimensions)
+        Self::create_inner(&mut TerminalTestPersistence, journal, dimensions, false)
     }
 
     pub(crate) fn create_with(
         persistence: &mut dyn TerminalJournalPersistence,
         journal: TerminalJournal,
         dimensions: &TerminalDimensions,
+    ) -> Result<Self> {
+        Self::create_inner(persistence, journal, dimensions, true)
+    }
+
+    fn create_inner(
+        persistence: &mut dyn TerminalJournalPersistence,
+        journal: TerminalJournal,
+        dimensions: &TerminalDimensions,
+        reserve: bool,
     ) -> Result<Self> {
         if journal.latest() != TerminalCursor::new(1, 0).expect("constant cursor")
             || journal.checkpoint_status() != TerminalJournalCheckpointStatus::Missing
@@ -199,8 +208,87 @@ impl TerminalHistory {
             unavailable: Unavailable::Missing,
             live: true,
         };
+        if reserve {
+            history.ensure_checkpoint_reserve_with(persistence)?;
+        }
         history.checkpoint_with(persistence)?;
         Ok(history)
+    }
+
+    /// Register the live encoder floor under an ordinary held transaction,
+    /// before obtaining a restricted one-read permit. An unavailable legacy
+    /// projection cannot invent the geometry whose future checkpoint is owed.
+    pub(crate) fn ensure_checkpoint_reserve_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+    ) -> Result<()> {
+        self.require_live()?;
+        let bound = match self.screen.as_ref() {
+            Some(screen) => screen.current_checkpoint_bound()? + MAGIC.len() + 1,
+            None if self.journal.checkpoint_reserve_bytes() > 0 => return Ok(()),
+            None => {
+                return Err(TerminalHistoryError::Profile(
+                    TerminalProfileError::ResourceLimit,
+                ));
+            }
+        };
+        self.grow_checkpoint_reserve_with(persistence, bound)
+    }
+
+    /// Output charge needed to register the live floor and admit one read.
+    /// The coordinator uses this before selecting any other history as a victim.
+    pub(crate) fn required_profile_read_growth(&self) -> Result<u64> {
+        self.require_live()?;
+        let required = match self.screen.as_ref() {
+            Some(screen) => screen.current_checkpoint_bound()? + MAGIC.len() + 1,
+            None if self.journal.checkpoint_reserve_bytes() > 0 => 0,
+            None => {
+                return Err(TerminalHistoryError::Profile(
+                    TerminalProfileError::ResourceLimit,
+                ));
+            }
+        };
+        let committed = self
+            .journal
+            .usage()
+            .checkpoint_bytes
+            .max(self.journal.checkpoint_reserve_bytes());
+        Ok(
+            (crate::terminal_monitor::MAX_MONITOR_FEED_BYTES + required.saturating_sub(committed))
+                as u64,
+        )
+    }
+
+    fn grow_checkpoint_reserve_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        bound: usize,
+    ) -> Result<()> {
+        if self.journal.checkpoint_reserve_bytes() < bound {
+            self.publish_with(
+                persistence,
+                TerminalJournalMutation::CheckpointReserve(bound),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// The session owner proves native cleanup and publishes completed facts
+    /// before calling this. Recovery never grants that proof on its own.
+    pub(crate) fn release_checkpoint_reserve_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+    ) -> Result<()> {
+        self.require_live()?;
+        if self.journal.checkpoint_reserve_bytes() != 0 {
+            self.publish_with(persistence, TerminalJournalMutation::CheckpointReserve(0))?;
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn checkpoint_reserve_bytes(&self) -> usize {
+        self.journal.checkpoint_reserve_bytes()
     }
 
     /// Reconstructs observation-only history. No API promotes recovered
@@ -259,6 +347,11 @@ impl TerminalHistory {
         let bound = checkpoint
             .checked_add(MAGIC.len() + 1)
             .ok_or(TerminalJournalError::ResourceLimit)?;
+        if self.journal.checkpoint_reserve_bytes() < bound {
+            return Err(TerminalHistoryError::Profile(
+                TerminalProfileError::ResourceLimit,
+            ));
+        }
         budget
             .reserve_read(
                 transaction,
@@ -490,7 +583,12 @@ impl TerminalHistory {
         dimensions: &TerminalDimensions,
         native_resize: impl FnOnce(&TerminalDimensions) -> std::result::Result<(), ()>,
     ) -> Result<()> {
-        self.resize_with(&mut TerminalTestPersistence, dimensions, native_resize)
+        self.resize_inner(
+            &mut TerminalTestPersistence,
+            dimensions,
+            native_resize,
+            false,
+        )
     }
 
     pub(crate) fn resize_with(
@@ -499,7 +597,22 @@ impl TerminalHistory {
         dimensions: &TerminalDimensions,
         native_resize: impl FnOnce(&TerminalDimensions) -> std::result::Result<(), ()>,
     ) -> Result<()> {
+        self.resize_inner(persistence, dimensions, native_resize, true)
+    }
+
+    fn resize_inner(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        dimensions: &TerminalDimensions,
+        native_resize: impl FnOnce(&TerminalDimensions) -> std::result::Result<(), ()>,
+        reserve: bool,
+    ) -> Result<()> {
         self.validate_resize(dimensions)?;
+        let bound = TerminalScreenEngine::checkpoint_bound(dimensions)? + MAGIC.len() + 1;
+        if reserve {
+            self.ensure_checkpoint_reserve_with(persistence)?;
+            self.grow_checkpoint_reserve_with(persistence, bound)?;
+        }
         // Keep the old grid privately while publishing the unavailable marker;
         // no operation may observe it between the barrier and new checkpoint.
         let mut screen = self.screen.take().expect("validated projection");
@@ -522,6 +635,12 @@ impl TerminalHistory {
         let bytes = encode_checkpoint(&screen)?;
         self.publish_checkpoint_with(persistence, &bytes)?;
         self.screen = Some(screen);
+        if reserve && self.journal.checkpoint_reserve_bytes() > bound {
+            self.publish_with(
+                persistence,
+                TerminalJournalMutation::CheckpointReserve(bound),
+            )?;
+        }
         Ok(())
     }
 
@@ -813,6 +932,84 @@ mod tests {
     }
 
     #[test]
+    fn live_read_requires_a_durable_geometry_reserve_before_the_read_permit() {
+        use crate::terminal_profile::{TerminalProfileLimits, TerminalProfileMutationContext};
+        use crate::terminal_profile_store::TerminalProfileStore;
+        use machine_god_core::{BackgroundOutputOwner, SessionId, SessionIncarnationId};
+        let fixture = Fixture::new(TerminalJournalLimits::default());
+        let store = TerminalProfileStore::prepare(fixture.fd()).unwrap();
+        let mut transaction = store.transaction().unwrap();
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("owner").unwrap(),
+            SessionIncarnationId::new("incarnation").unwrap(),
+        );
+        let mut catalog = transaction
+            .prepare_catalog("/workspace".into(), owner)
+            .unwrap();
+        let root = transaction
+            .create_session(&mut catalog, &session())
+            .unwrap();
+        let journal = TerminalJournal::create(root, session(), fixture.limits).unwrap();
+        // Explicit legacy fixture: coherent checkpoint, no persistent live floor.
+        let mut history = TerminalHistory::create(journal, &dimensions()).unwrap();
+        let budget = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+        let cursor = history.latest();
+        assert_eq!(history.checkpoint_reserve_bytes(), 0);
+        assert!(
+            history.required_profile_read_growth().unwrap()
+                > crate::terminal_monitor::MAX_MONITOR_FEED_BYTES as u64
+        );
+        assert!(matches!(
+            history.reserve_read(&mut transaction, &budget, catalog.namespace_key()),
+            Err(TerminalHistoryError::Profile(
+                TerminalProfileError::ResourceLimit
+            ))
+        ));
+        assert_eq!(history.latest(), cursor);
+        {
+            let mut context = TerminalProfileMutationContext::new(
+                &mut transaction,
+                budget,
+                catalog.namespace_key(),
+            );
+            history
+                .ensure_checkpoint_reserve_with(&mut context)
+                .unwrap();
+        }
+        let expected = TerminalScreenEngine::checkpoint_bound(&dimensions()).unwrap() + 9;
+        assert_eq!(history.checkpoint_reserve_bytes(), expected);
+        assert_eq!(
+            history.required_profile_read_growth().unwrap(),
+            crate::terminal_monitor::MAX_MONITOR_FEED_BYTES as u64
+        );
+        drop(
+            history
+                .reserve_read(&mut transaction, &budget, catalog.namespace_key())
+                .unwrap(),
+        );
+        assert_eq!(history.latest(), cursor);
+        history
+            .mark_output_gap_with(&mut TerminalTestPersistence)
+            .unwrap();
+        history
+            .ensure_checkpoint_reserve_with(&mut TerminalTestPersistence)
+            .unwrap();
+        assert_eq!(history.checkpoint_reserve_bytes(), expected);
+        history
+            .publish_with(
+                &mut TerminalTestPersistence,
+                TerminalJournalMutation::CheckpointReserve(0),
+            )
+            .unwrap();
+        assert!(matches!(
+            history.ensure_checkpoint_reserve_with(&mut TerminalTestPersistence),
+            Err(TerminalHistoryError::Profile(
+                TerminalProfileError::ResourceLimit
+            ))
+        ));
+    }
+
+    #[test]
     fn explicit_profile_context_binds_writes_and_rejects_before_output_commit() {
         use crate::terminal_profile::{
             TerminalProfileBudget, TerminalProfileLimits, TerminalProfileMutationContext,
@@ -820,10 +1017,7 @@ mod tests {
         use crate::terminal_profile_store::TerminalProfileStore;
         use machine_god_core::{BackgroundOutputOwner, SessionId, SessionIncarnationId};
 
-        let fixture = Fixture::new(TerminalJournalLimits {
-            segment_bytes: 256,
-            session_bytes: 16 * 1024,
-        });
+        let fixture = Fixture::new(TerminalJournalLimits::default());
         let store = TerminalProfileStore::prepare(fixture.fd()).unwrap();
         let mut transaction = store.transaction().unwrap();
         let owner = BackgroundOutputOwner::new(
@@ -846,9 +1040,9 @@ mod tests {
             );
             TerminalHistory::create_with(&mut context, journal, &dimensions()).unwrap()
         };
-        let output = history.physical_usage().unwrap().output_bytes;
+        let output = history.checkpoint_reserve_bytes();
         let mut limits = TerminalProfileLimits::default();
-        limits.retained.output_bytes = output + 1;
+        limits.retained.output_bytes = output as u64 + 1;
         let budget = TerminalProfileBudget::new(limits).unwrap();
         {
             let mut context = TerminalProfileMutationContext::new(
@@ -1379,6 +1573,32 @@ mod tests {
                 .is_err()
         );
         unavailable(&history, Unavailable::Corrupt);
+    }
+
+    #[test]
+    fn interrupted_growth_resize_retains_new_reserve_without_recovering_old_dimensions() {
+        let fixture = Fixture::new(TerminalJournalLimits::default());
+        let mut history = TerminalHistory::create_with(
+            &mut TerminalTestPersistence,
+            fixture.journal(),
+            &dimensions(),
+        )
+        .unwrap();
+        let larger = TerminalDimensions::new(24, 80).unwrap();
+        let expected = TerminalScreenEngine::checkpoint_bound(&larger).unwrap() + 9;
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = history.resize_with(&mut TerminalTestPersistence, &larger, |_| {
+                    panic!("interrupted native resize")
+                });
+            }))
+            .is_err()
+        );
+        assert_eq!(history.checkpoint_reserve_bytes(), expected);
+        drop(history);
+        let recovered = TerminalHistory::recover(fixture.open()).unwrap();
+        assert_eq!(recovered.checkpoint_reserve_bytes(), expected);
+        unavailable(&recovered, Unavailable::ResizeUncheckpointed);
     }
 
     #[test]

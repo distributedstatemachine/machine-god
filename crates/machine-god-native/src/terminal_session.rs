@@ -296,6 +296,19 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         self.publication_error = Some(error);
         Err(error)
     }
+    /// Register persistent capacity using ordinary authority before borrowing
+    /// that same transaction for the restricted one-read permit.
+    pub(crate) fn ensure_checkpoint_reserve_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+    ) -> Result<()> {
+        Ok(self.history.ensure_checkpoint_reserve_with(persistence)?)
+    }
+
+    pub(crate) fn required_profile_read_growth(&self) -> Result<u64> {
+        Ok(self.history.required_profile_read_growth()?)
+    }
+
     /// Reserve the whole bounded read before the owner invokes `pump_with`.
     /// The permit borrows the held profile transaction, not this session.
     pub(crate) fn reserve_profile_read<'a, 'store>(
@@ -498,6 +511,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
                     || self.lifecycle != before_lifecycle
                 {
                     self.persist_with(persistence)?;
+                    self.release_completed_reserve_with(persistence)?;
                 }
                 Ok(step)
             }
@@ -731,7 +745,28 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         {
             self.publication_error = Some(error);
         }
-        native.and(persisted)
+        native.and(persisted)?;
+        self.release_completed_reserve_with(persistence)
+    }
+
+    fn release_completed_reserve_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+    ) -> Result<()> {
+        if self.backend.is_none()
+            && self.publication_error.is_none()
+            && !self.pending_output_gap
+            && matches!(
+                self.lifecycle,
+                TerminalLifecycle::Exited | TerminalLifecycle::Closed
+            )
+            && let Err(error) = self.history.release_checkpoint_reserve_with(persistence)
+        {
+            let error = TerminalSessionError::from(error);
+            self.publication_error = Some(error);
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Last-resort owner cleanup when no profile authority can be obtained.
@@ -1737,6 +1772,7 @@ mod tests {
             let kind = match &mutation {
                 TerminalJournalMutation::Append(_) => "append",
                 TerminalJournalMutation::Checkpoint { .. } => "checkpoint",
+                TerminalJournalMutation::CheckpointReserve(_) => "reserve",
                 TerminalJournalMutation::State { .. } => "state",
                 TerminalJournalMutation::Event(_) => "event",
                 TerminalJournalMutation::Acknowledge(_) => "ack",
@@ -1767,11 +1803,129 @@ mod tests {
     }
 
     #[test]
-    fn resize_admission_refusal_distinguishes_before_and_after_native_effects() {
-        for denied_call in [1, 2] {
+    fn resize_registers_growth_before_effects_and_shrinks_only_after_new_checkpoint() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        let initial = session.history.checkpoint_reserve_bytes();
+        let mut persistence = Persistence::default();
+        let larger = TerminalDimensions::new(24, 80).unwrap();
+        session
+            .resize_with(&mut persistence, &owner("owner"), &larger, 1)
+            .unwrap();
+        assert_eq!(
+            persistence.calls,
+            ["reserve", "checkpoint", "checkpoint", "state"]
+        );
+        let bound =
+            crate::terminal_screen::TerminalScreenEngine::checkpoint_bound(&larger).unwrap() + 9;
+        assert_eq!(session.history.checkpoint_reserve_bytes(), bound);
+        assert!(bound > initial);
+        persistence.calls.clear();
+        session
+            .resize_with(
+                &mut persistence,
+                &owner("owner"),
+                &TerminalDimensions::new(3, 20).unwrap(),
+                2,
+            )
+            .unwrap();
+        assert_eq!(
+            persistence.calls,
+            ["checkpoint", "checkpoint", "reserve", "state"]
+        );
+        assert_eq!(session.history.checkpoint_reserve_bytes(), initial);
+        assert_eq!(fixture.state.lock().unwrap().resizes.len(), 2);
+        session
+            .close(&owner("owner"), TerminalClosePolicy::Force, 3)
+            .unwrap();
+        assert_eq!(session.history.checkpoint_reserve_bytes(), 0);
+    }
+
+    #[test]
+    fn final_facts_and_native_cleanup_both_precede_reserve_release() {
+        for failure in ["native", "state", "reserve"] {
             let fixture = Fixture::new();
             let mut session = fixture.session();
             session.shell_ready(0).unwrap();
+            let reserved = session.history.checkpoint_reserve_bytes();
+            assert!(reserved > 0);
+            fixture.state.lock().unwrap().close_fails = failure == "native";
+            let mut persistence = Persistence {
+                // Close publishes barrier, final checkpoint, final facts, release.
+                denied_call: match failure {
+                    "state" => Some(3),
+                    "reserve" => Some(4),
+                    _ => None,
+                },
+                ..Persistence::default()
+            };
+            assert!(
+                session
+                    .close_with(
+                        &mut persistence,
+                        &owner("owner"),
+                        TerminalClosePolicy::Force,
+                        1
+                    )
+                    .is_err()
+            );
+            assert_eq!(session.history.checkpoint_reserve_bytes(), reserved);
+            assert_eq!(session.owns_backend(), failure == "native");
+            assert_eq!(fixture.state.lock().unwrap().closes, 1);
+            if failure == "reserve" {
+                let stored = session.history.load_state().unwrap().unwrap();
+                let (facts, _) =
+                    TerminalSessionFacts::decode(&stored.bytes, &id(), &stored.source).unwrap();
+                assert_eq!(facts.context.lifecycle, TerminalLifecycle::Closed);
+            } else {
+                assert!(!persistence.calls.contains(&"reserve"));
+            }
+            fixture.state.lock().unwrap().close_fails = false;
+            persistence = Persistence::default();
+            session
+                .close_with(
+                    &mut persistence,
+                    &owner("owner"),
+                    TerminalClosePolicy::Force,
+                    2,
+                )
+                .unwrap();
+            assert_eq!(session.history.checkpoint_reserve_bytes(), 0);
+            assert_eq!(persistence.calls.last(), Some(&"reserve"));
+            assert!(session.publication_error.is_none());
+        }
+    }
+
+    #[test]
+    fn contextless_cleanup_and_observation_only_recovery_retain_live_reserve() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        let reserved = session.history.checkpoint_reserve_bytes();
+        assert_eq!(
+            session.teardown_without_persistence(true, 1, denied_error()),
+            Err(denied_error())
+        );
+        assert!(!session.owns_backend());
+        assert_eq!(session.history.checkpoint_reserve_bytes(), reserved);
+        drop(session);
+        let mut recovered = fixture.recover();
+        assert_eq!(recovered.checkpoint_reserve_bytes(), reserved);
+        assert_eq!(
+            recovered.release_checkpoint_reserve_with(&mut TerminalTestPersistence),
+            Err(TerminalHistoryError::ReadOnly)
+        );
+        assert_eq!(recovered.checkpoint_reserve_bytes(), reserved);
+    }
+
+    #[test]
+    fn resize_admission_refusal_distinguishes_before_and_after_native_effects() {
+        for denied_call in [1, 2, 3] {
+            let fixture = Fixture::new();
+            let mut session = fixture.session();
+            session.shell_ready(0).unwrap();
+            let old_reserve = session.history.checkpoint_reserve_bytes();
             add(&mut session, Condition::ProcessExit);
             let metadata = std::fs::read(fixture.path.join("tj-meta")).unwrap();
             let monitors = session.monitors.snapshot().unwrap();
@@ -1789,21 +1943,30 @@ mod tests {
                 Err(denied_error())
             );
             assert!(session.owns_backend());
-            if denied_call == 1 {
-                assert_eq!(persistence.calls, ["checkpoint"]);
+            if denied_call <= 2 {
+                assert_eq!(persistence.calls, ["reserve", "checkpoint"][..denied_call]);
                 assert!(fixture.state.lock().unwrap().resizes.is_empty());
                 assert_eq!(session.lifecycle, TerminalLifecycle::Running);
                 assert!(!session.input.is_quiesced());
                 assert!(session.publication_error.is_none());
                 assert_eq!(session.now_ms, 0);
                 assert_eq!(session.monitors.snapshot().unwrap(), monitors);
-                assert_eq!(
-                    std::fs::read(fixture.path.join("tj-meta")).unwrap(),
-                    metadata
-                );
+                if denied_call == 1 {
+                    assert_eq!(
+                        std::fs::read(fixture.path.join("tj-meta")).unwrap(),
+                        metadata
+                    );
+                    assert_eq!(session.history.checkpoint_reserve_bytes(), old_reserve);
+                } else {
+                    assert!(session.history.checkpoint_reserve_bytes() > old_reserve);
+                }
                 assert!(session.history.screen().is_ok());
             } else {
-                assert_eq!(persistence.calls, ["checkpoint", "checkpoint", "state"]);
+                assert_eq!(
+                    persistence.calls,
+                    ["reserve", "checkpoint", "checkpoint", "state"]
+                );
+                assert!(session.history.checkpoint_reserve_bytes() > old_reserve);
                 assert_eq!(fixture.state.lock().unwrap().resizes.len(), 1);
                 assert_eq!(session.lifecycle, TerminalLifecycle::Lost);
                 assert!(session.input.is_quiesced());
@@ -2043,7 +2206,7 @@ mod tests {
         let fixture = Fixture::new();
         let mut persistence = Persistence::default();
         let mut session = fixture.session_with(&mut persistence);
-        assert_eq!(persistence.calls, ["checkpoint", "state"]);
+        assert_eq!(persistence.calls, ["reserve", "checkpoint", "state"]);
         persistence.calls.clear();
         session.shell_ready_with(&mut persistence, 0).unwrap();
         session
@@ -2083,6 +2246,7 @@ mod tests {
             persistence.calls,
             [
                 "state",
+                "reserve",
                 "checkpoint",
                 "checkpoint",
                 "state",
@@ -2092,7 +2256,8 @@ mod tests {
                 "state",
                 "checkpoint",
                 "append",
-                "state"
+                "state",
+                "reserve"
             ]
         );
         assert_eq!(fixture.state.lock().unwrap().closes, 1);
@@ -2217,7 +2382,7 @@ mod tests {
         session
             .close_with(&mut allowed, &owner("owner"), TerminalClosePolicy::Force, 2)
             .unwrap();
-        assert_eq!(allowed.calls, ["checkpoint", "state"]);
+        assert_eq!(allowed.calls, ["checkpoint", "state", "reserve"]);
         assert!(!session.pending_output_gap);
         assert!(session.publication_error().is_none());
         drop(session);
