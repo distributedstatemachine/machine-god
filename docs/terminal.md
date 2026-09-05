@@ -63,7 +63,7 @@ Retention reports cursor/checkpoint gaps. Mutation failure poisons the writer
 until reopen, and one exclusive writer lease prevents concurrent publication.
 Session facts and monitor state have a separate protected, checksummed blob;
 output, event and screen-checkpoint eviction cannot silently remove it. Its
-33 MiB bound includes up to 32 MiB of monitor state and 64 KiB of framed facts.
+33 MiB bound includes up to 32 MiB of monitor state and 512 KiB of framed facts.
 Admission reserves at least one full raw segment inside the session payload
 budget, and impossible state/checkpoint combinations fail before publication.
 State-less journal records retain their existing checksum representation.
@@ -123,12 +123,28 @@ discarding the owned backend needed for explicit cleanup.
 Acknowledgements advance the in-memory record only after durable publication;
 a failed acknowledgement cannot become a successful memory-only retry.
 
+New driver sessions require trusted launch metadata: host and backend identity,
+resolved shell, workspace, working directory, optional command, backend kind
+and shell profile. Paths and backend identity are bounded to 4 KiB each;
+commands are bounded to 64 KiB. The facts envelope includes worst-case JSON
+escaping within its 512 KiB bound. Owner-authorized inspection and recovery
+retain those facts without executing paths or granting backend authority.
+Older records without launch metadata remain explicitly unidentified; recovery
+does not guess missing shell or command facts.
+
+Provider-neutral attention facts enforce that a human lease exists exactly
+when attention is user takeover. Role-specific cancellation clears only the
+caller's attention/lease, never terminal lifecycle. Native recovery clears stale
+attention and lease facts before publishing a formerly live record as lost;
+inactive records cannot claim an active attention/lease. These data contracts
+do not yet implement host-side human takeover or grant input authority.
+
 Native recovered-session views expose only owner-authorized facts, raw history,
 screens and durable event acknowledgements. A previously starting/running host
 record becomes lost, with pending monitors/probes stopped before publication.
 The host injects a non-rewinding recovery clock for that transition; known
 closed/exited records retain their observed outcome. Saved state never
-contains a PID, process capability or live input lease, and recovery never
+contains a PID, process capability or input lease capability, and recovery never
 replays input. If raw output committed after the last state snapshot, recovery
 records an observation gap instead of inventing monitor matches or output
 timestamps. That gap is distinct from missing raw bytes: retained output and

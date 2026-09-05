@@ -16,7 +16,9 @@ use crate::terminal_monitor::{
 use crate::terminal_pty::{
     TerminalPty, TerminalPtyClose, TerminalPtyDimensions, TerminalPtyRead, TerminalPtyStatus,
 };
-use crate::terminal_session_record::{TerminalSessionFacts, TerminalSessionRecordError};
+use crate::terminal_session_record::{
+    TerminalSessionFacts, TerminalSessionMetadata, TerminalSessionRecordError,
+};
 use machine_god_core::{
     BackgroundOutputOwner, TerminalClosePolicy, TerminalCursor, TerminalDimensions,
     TerminalEventQuery, TerminalGap, TerminalLifecycle, TerminalMonitorEvent,
@@ -125,6 +127,7 @@ pub(crate) struct TerminalSession<B: TerminalSessionBackend> {
     backend: Option<B>,
     history: TerminalHistory,
     owner: BackgroundOutputOwner,
+    metadata: TerminalSessionMetadata,
     input: TerminalInput,
     monitors: TerminalMonitorSet,
     lifecycle: TerminalLifecycle,
@@ -147,8 +150,10 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         history: TerminalHistory,
         owner: BackgroundOutputOwner,
         id: TerminalSessionId,
+        metadata: TerminalSessionMetadata,
         now_ms: i64,
     ) -> Result<Self> {
+        metadata.validate()?;
         history.require_live()?;
         if history.session_id() != &id {
             return Err(TerminalSessionError::InvalidState);
@@ -165,6 +170,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             backend: Some(backend),
             history,
             owner,
+            metadata,
             input: TerminalInput::new(),
             monitors,
             lifecycle: TerminalLifecycle::Starting,
@@ -198,6 +204,10 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
     }
     pub(crate) fn last_output_ms(&self) -> i64 {
         self.last_output_ms
+    }
+    pub(crate) fn inspect(&self, owner: &BackgroundOutputOwner) -> Result<TerminalSessionFacts> {
+        self.authorize(owner)?;
+        self.facts()
     }
     pub(crate) fn read(
         &self,
@@ -614,6 +624,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             self.outcome,
         )?;
         facts.monitor_notifications_incomplete = self.monitor_notifications_incomplete;
+        facts.metadata = Some(self.metadata.clone());
         Ok(facts)
     }
     fn persist(&mut self) -> Result<()> {
@@ -767,6 +778,7 @@ impl TerminalRecoveredSession {
         if was_live {
             facts.context.lifecycle = TerminalLifecycle::Lost;
             facts.outcome = None;
+            facts.attention = machine_god_core::TerminalAttentionState::default();
             match monitors.end_session(None, facts.context.clone()) {
                 Ok(()) => {}
                 Err(TerminalMonitorError::Counter) => {
@@ -1019,6 +1031,7 @@ mod tests {
                 history,
                 owner("owner"),
                 id(),
+                crate::terminal_session_record::test_metadata(),
                 0,
             )
             .unwrap()
@@ -1118,6 +1131,50 @@ mod tests {
             )
             .unwrap()
             .monitor_id
+    }
+
+    #[test]
+    fn owner_scoped_launch_facts_survive_recovery_without_stale_attention() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        assert!(matches!(
+            session.inspect(&owner("wrong")),
+            Err(TerminalSessionError::NotFound)
+        ));
+        let mut facts = session.inspect(&owner("owner")).unwrap();
+        let metadata = serde_json::to_value(facts.metadata.as_ref().unwrap()).unwrap();
+        facts.attention = machine_god_core::TerminalAttentionState::new(
+            machine_god_core::TerminalAttention::UserTakeover,
+            machine_god_core::TerminalWriteLease::Human,
+        )
+        .unwrap();
+        session
+            .history
+            .publish_state(&facts.encode(&session.monitors).unwrap())
+            .unwrap();
+        drop(session);
+        let recovered =
+            TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 100).unwrap();
+        let facts = recovered.facts(&owner("owner")).unwrap();
+        assert_eq!(
+            serde_json::to_value(facts.metadata.as_ref().unwrap()).unwrap(),
+            metadata
+        );
+        assert_eq!(
+            facts.attention,
+            machine_god_core::TerminalAttentionState::default()
+        );
+        assert_eq!(facts.context.lifecycle, TerminalLifecycle::Lost);
+        drop(recovered);
+        let recovered =
+            TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 100).unwrap();
+        assert_eq!(
+            recovered.facts(&owner("owner")).unwrap().attention,
+            machine_god_core::TerminalAttentionState::default()
+        );
+        assert!(fixture.state.lock().unwrap().writes.is_empty());
+        assert!(fixture.state.lock().unwrap().signals.is_empty());
     }
 
     #[test]
@@ -1690,6 +1747,7 @@ mod tests {
                 history,
                 owner("owner"),
                 TerminalSessionId::new("other-terminal").unwrap(),
+                crate::terminal_session_record::test_metadata(),
                 0
             ),
             Err(TerminalSessionError::InvalidState)
@@ -1700,6 +1758,7 @@ mod tests {
                 fixture.recover(),
                 owner("owner"),
                 id(),
+                crate::terminal_session_record::test_metadata(),
                 0
             ),
             Err(TerminalSessionError::History(

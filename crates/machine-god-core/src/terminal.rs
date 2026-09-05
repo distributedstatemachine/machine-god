@@ -345,6 +345,86 @@ scalar_enum!(TerminalLifecycle {
 });
 scalar_enum!(TerminalBackend { Native, Tmux });
 scalar_enum!(TerminalProfile { User, Clean });
+scalar_enum!(TerminalAttention {
+    Background,
+    AgentWait,
+    UserTakeover
+});
+scalar_enum!(TerminalActorRole { Human, Agent });
+scalar_enum!(TerminalWriteLease { None, Human, Agent });
+contract_struct! {
+    /// Descriptive attention and lease state, not a grant of write authority.
+    TerminalAttentionState { attention: TerminalAttention, write_lease: TerminalWriteLease }
+}
+impl Default for TerminalAttentionState {
+    fn default() -> Self {
+        Self {
+            attention: TerminalAttention::Background,
+            write_lease: TerminalWriteLease::None,
+        }
+    }
+}
+impl TerminalAttentionState {
+    /// Constructs a valid attention/lease pair.
+    ///
+    /// # Errors
+    /// Human leases require user takeover, and user takeover requires a human lease.
+    pub fn new(
+        attention: TerminalAttention,
+        write_lease: TerminalWriteLease,
+    ) -> Result<Self, TerminalContractError> {
+        let state = Self {
+            attention,
+            write_lease,
+        };
+        state.validate()?;
+        Ok(state)
+    }
+    /// Checks the attention/lease invariant.
+    ///
+    /// # Errors
+    /// Rejects inconsistent human lease and user takeover facts.
+    pub fn validate(&self) -> Result<(), TerminalContractError> {
+        require(
+            (self.attention == TerminalAttention::UserTakeover)
+                == (self.write_lease == TerminalWriteLease::Human),
+        )
+    }
+    /// Current attention category.
+    #[must_use]
+    pub const fn attention(&self) -> TerminalAttention {
+        self.attention
+    }
+    /// Descriptive lease holder role; this is not a capability.
+    #[must_use]
+    pub const fn write_lease(&self) -> TerminalWriteLease {
+        self.write_lease
+    }
+    /// Cancels only the caller's attention and lease. Lifecycle is unaffected.
+    #[must_use]
+    pub fn cancel(&self, actor: TerminalActorRole) -> Self {
+        let mut state = self.clone();
+        match actor {
+            TerminalActorRole::Human => {
+                if state.attention == TerminalAttention::UserTakeover {
+                    state.attention = TerminalAttention::Background;
+                }
+                if state.write_lease == TerminalWriteLease::Human {
+                    state.write_lease = TerminalWriteLease::None;
+                }
+            }
+            TerminalActorRole::Agent => {
+                if state.attention == TerminalAttention::AgentWait {
+                    state.attention = TerminalAttention::Background;
+                }
+                if state.write_lease == TerminalWriteLease::Agent {
+                    state.write_lease = TerminalWriteLease::None;
+                }
+            }
+        }
+        state
+    }
+}
 scalar_enum!(TerminalWriteLeaseIntent {
     Acquire,
     Use,
@@ -874,6 +954,74 @@ impl TerminalScreen {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attention_validates_every_pair_and_cancels_only_the_callers_role() {
+        for attention in [
+            TerminalAttention::Background,
+            TerminalAttention::AgentWait,
+            TerminalAttention::UserTakeover,
+        ] {
+            for lease in [
+                TerminalWriteLease::None,
+                TerminalWriteLease::Human,
+                TerminalWriteLease::Agent,
+            ] {
+                let valid = (attention == TerminalAttention::UserTakeover)
+                    == (lease == TerminalWriteLease::Human);
+                let state = TerminalAttentionState::new(attention, lease);
+                assert_eq!(state.is_ok(), valid);
+                let wire = serde_json::json!({ "attention": attention, "write_lease": lease });
+                let decoded = serde_json::from_value::<TerminalAttentionState>(wire);
+                assert_eq!(decoded.is_ok(), valid);
+                if let Ok(state) = state {
+                    assert_eq!(decoded.unwrap(), state);
+                    for actor in [TerminalActorRole::Human, TerminalActorRole::Agent] {
+                        let cancelled = state.cancel(actor);
+                        cancelled.validate().unwrap();
+                        let own_attention = match actor {
+                            TerminalActorRole::Human => TerminalAttention::UserTakeover,
+                            TerminalActorRole::Agent => TerminalAttention::AgentWait,
+                        };
+                        let own_lease = match actor {
+                            TerminalActorRole::Human => TerminalWriteLease::Human,
+                            TerminalActorRole::Agent => TerminalWriteLease::Agent,
+                        };
+                        assert_eq!(
+                            cancelled.attention(),
+                            if attention == own_attention {
+                                TerminalAttention::Background
+                            } else {
+                                attention
+                            }
+                        );
+                        assert_eq!(
+                            cancelled.write_lease(),
+                            if lease == own_lease {
+                                TerminalWriteLease::None
+                            } else {
+                                lease
+                            }
+                        );
+                        assert_eq!(cancelled.cancel(actor), cancelled);
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            TerminalAttentionState::default(),
+            TerminalAttentionState::new(TerminalAttention::Background, TerminalWriteLease::None)
+                .unwrap()
+        );
+        for wire in [
+            r#"{"attention":"background","write_lease":"none","authority":"secret"}"#,
+            r#"{"attention":"secret","write_lease":"none"}"#,
+            r#"{"attention":"background"}"#,
+        ] {
+            let error = serde_json::from_str::<TerminalAttentionState>(wire).unwrap_err();
+            assert!(!error.to_string().contains("secret"));
+        }
+    }
     use serde_json::json;
 
     fn roundtrip<T: Serialize + for<'de> Deserialize<'de> + Eq + fmt::Debug>(value: &T) {

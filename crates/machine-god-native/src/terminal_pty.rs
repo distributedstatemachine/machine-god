@@ -1058,7 +1058,15 @@ mod tests {
                 "stty -echo; printf READY; read answer; stty size; printf FINISHED; exit 23",
             ],
         );
-        let mut session = TerminalSession::new(pty, history, owner.clone(), id, 0).unwrap();
+        let mut session = TerminalSession::new(
+            pty,
+            history,
+            owner.clone(),
+            id,
+            crate::terminal_session_record::test_metadata(),
+            0,
+        )
+        .unwrap();
         let monitor = session
             .monitor(
                 &owner,
