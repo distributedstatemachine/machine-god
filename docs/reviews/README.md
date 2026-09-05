@@ -90,6 +90,7 @@ product behavior; they are not penetration tests.
 - [terminal `start`](m03-terminal-start-review-01.md)
 - [terminal `inspect`](m03-terminal-inspect-review-01.md)
 - [terminal `wait`](m03-terminal-wait-review-01.md)
+- [terminal `signal`](m03-terminal-signal-review-01.md)
 - [ask_user_question](m03-ask-user-question-review-01.md)
 - [read_tool_result](m03-read-tool-result-review-01.md)
 

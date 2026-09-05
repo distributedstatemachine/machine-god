@@ -21,25 +21,24 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `57`
-- Delivered main: `b1bbb81f5dbb5dcb4010cc2b49dbf95561c94811`
-- Main CI: `33905683447` (`GREEN`)
-- Main Benchmark evidence: `33905683324` (`GREEN`)
-- Active branch: `agent/m58-terminal-signal`
-- Active phase: `implementing exact-owner identity-safe terminal native signaling`
-- Next gate: `run the complete exact-1.94.1 replacement gate, then start three fresh adversarial reviews of the corrected candidate`
+- Delivered slices: `58`
+- Delivered main: `8545ea48623a40d412bce4f707c70a6be991d108`
+- Main CI: `33949137350` (`GREEN`)
+- Main Benchmark evidence: `33949136988` (`GREEN`)
+- Active branch: `main`
+- Active phase: `terminal signal delivered; next product slice is opt-in terminal input`
+- Next gate: `freeze terminal write contracts and begin the bounded input tool slice on agent/m59-terminal-input`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
-run retains both required unexpired exact-SHA artifacts. Slice 57 adds bounded
-process-local merged-output capture and same-session-incarnation cursor reads
-for managed terminal starts. Capture remains opt-in so callers without an
-output owner retain null output, and the registry has fixed live, closed, byte,
-page, and concurrency bounds. Linux cleanup now tolerates vanished proc entries
-and identity-verifiably reaps descendants adopted when machine-god is a
-container's PID 1. Three fresh final review tracks reported zero findings after
-earlier candidates closed proc-race, capture-overhead, copy, and PID-namespace
-lifecycle gaps. Detailed history is retained only in the linked review ledger.
+run retains both required unexpired exact-SHA artifacts. Slice 58 adds the
+closed five-value terminal `signal` action with exact session-incarnation
+ownership, separate custom authorization, bounded off-poll-thread Linux
+process-tree or macOS original-group delivery, and close-before-reap native
+authority. The main-CI fixture race is fixed with an isolated process group,
+independent pidfd assertions, bounded readiness, and owned cleanup. The exact
+Rust 1.94.1 local gate and three fresh correction-review tracks passed.
+Detailed history is retained only in the linked review ledger.
 
 The delivered non-product CI maintenance replaces binary
 full-versus-documentation routing with fail-closed dependency-aware concern
@@ -49,14 +48,27 @@ delivered-slice count. Documentation-only descendants now exercise only the
 bounded documentation checks and aggregate gates, without Rust, platform,
 audit, compatibility, or benchmark-artifact jobs.
 
-The active product slice adds the closed five-value terminal `signal` action
-with exact session-incarnation ownership, separate custom authorization,
-bounded off-poll-thread Linux process-tree or macOS original-group delivery,
-and close-before-reap native authority. Durable or
-restart-safe logs, persistent interactive handles, write actions, interactive
-terminal behavior, restart-safe control, ACP, teams, and extension slash
-commands remain separate until explicitly bounded.
+Next product work returns to terminal input/write. Durable or restart-safe
+logs, persistent interactive handles, interactive terminal behavior,
+restart-safe control, ACP, teams, and extension slash commands remain separate
+until explicitly bounded.
 Documentation-tool maintenance remains a separate non-product task.
+
+### Next tool slice: opt-in terminal input
+
+After signal delivery, implement `terminal write` and explicit piped stdin for
+background starts; null stdin remains the default. Freeze shared signatures,
+then parallelize core/permission contracts, native input ownership/transport,
+and terminal parsing/receipts in isolated worktrees with one integrator.
+Bound decoded writes to 8 KiB, report accepted byte counts and backpressure,
+and apply explicit EOF only after all supplied bytes are accepted. Bind writes
+to the exact session incarnation and separately authorized payload identity;
+close authority before process cleanup and preserve committed-write receipts
+across cancellation. Replace buffered helper protocol reads with exact reads
+before inheriting the pipe, so immediate post-commit input cannot be lost.
+Exercise binary/Unicode round trips, partial writes, EOF, ownership, concurrent
+cleanup, and cancellation. PTY/interactive terminal and live output behavior
+remain required later terminal work; piped input does not complete them.
 
 ## Architecture ownership
 
@@ -177,8 +189,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 55 | Bounded exact persisted-record `terminal` wait | [terminal](terminal.md), [background CLI](background-cli.md) | [review](reviews/m03-terminal-wait-review-01.md) | `f16f099` |
 | 56 | Bounded persisted-record `terminal` list | [terminal](terminal.md), [background CLI](background-cli.md) | [review](reviews/m03-terminal-list-review-01.md) | `a8f5af3` |
 | 57 | Bounded same-incarnation `terminal` background output read | [terminal](terminal.md), [supervisor](background-supervisor.md) | [review](reviews/m03-terminal-read-review-01.md) | `b1bbb81` |
+| 58 | Bounded same-incarnation `terminal` native signal | [terminal](terminal.md), [supervisor](background-supervisor.md) | [review](reviews/m03-terminal-signal-review-01.md) | `8545ea4` |
 
-The exact delivered-main record after slice 57 is in the canonical live-status
+The exact delivered-main record after slice 58 is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.
