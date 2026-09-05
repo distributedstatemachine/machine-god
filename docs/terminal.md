@@ -9,6 +9,24 @@ piped stdin after separate authorization, or lists, inspects, or boundedly
 waits on persisted background records without process authority. It is
 registered by the reference host and has no top-level CLI command.
 
+## Native shell resolution
+
+`TerminalShell` resolves explicitly injected account data or performs an
+explicit current-user account-database lookup on Linux/macOS. Hosts must run
+the latter on their bounded blocking executor; it never trusts the `SHELL`
+environment variable. Resolution does not execute a command or create a PTY.
+User and clean profiles select the pinned bash/zsh startup flags. Unsupported
+account login shells fall back to `/bin/bash` on Linux or `/bin/zsh` on macOS;
+unsupported explicitly requested shells fail. Relative and oversized paths,
+absent account data, and conflicting explicit shell/profile selectors fail
+with fixed errors. Interactive argv differs from captured argv: clean capture
+removes `-i`, user bash capture removes `-i` and enables `expand_aliases`, and
+user zsh capture retains `-i`. The command remains one exact `-c` argv item.
+The resolved program and arguments are inputs to permission identity, never
+permission grants. This native API is available for terminal-runtime
+composition; existing noninteractive tool execution below retains its stated
+fixed-shell behavior until the complete interactive runtime is integrated.
+
 ## Boundary
 
 The reference-host tool implements the `exec`, bounded `start`, bounded

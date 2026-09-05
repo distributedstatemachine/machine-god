@@ -83,6 +83,8 @@ mod state_environment;
 mod terminal;
 mod terminal_display_width;
 mod terminal_grid;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod terminal_shell;
 mod terminal_tape_replay;
 mod terminal_unicode_data;
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
@@ -439,6 +441,8 @@ pub use terminal::{
     TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError,
     TerminalExecutorErrorKind, TerminalLimits, TerminalTool,
 };
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use terminal_shell::{TerminalShell, TerminalShellError};
 pub use terminal_tape_replay::{
     MAX_TERMINAL_TAPE_ARTIFACT_BYTES, MAX_TERMINAL_TAPE_BYTES, MAX_TERMINAL_TAPE_FRAMES_DIR_FRAMES,
     MAX_TERMINAL_TAPE_RENDERED_OUTPUT_BYTES, TerminalTapeReplayError, TerminalTapeReplayErrorKind,

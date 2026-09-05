@@ -47,6 +47,9 @@ sha2.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 calcifer-macos-acl.workspace = true
 
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+nix = { version = "=0.31.3", default-features = false, features = ["user"] }
+
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 bytes = { workspace = true, optional = true }
 getrandom.workspace = true
