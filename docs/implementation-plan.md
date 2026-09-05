@@ -106,8 +106,10 @@ an otherwise running session or its raw-output pumping.
 Resize admission distinguishes initial barrier refusal from final checkpoint
 refusal after native effects; the latter loses/quiesces the session and retains
 the unresolved publication failure.
-Persistent live checkpoint reserves and victim selection remain to be composed
-before exposure.
+Checkpoint reserves now persist in checksummed journal metadata; profile
+admission and reconciliation separately enforce physical usage and reserved
+output across busy and nonresident owners. Lifecycle registration and validated
+victim selection are being composed before exposure.
 Per-session retention separates raw/checkpoint output from independently bounded
 state and events, matching the pinned output-accounting boundary. Non-output
 publications cannot evict output; recovery retains all ledger categories.

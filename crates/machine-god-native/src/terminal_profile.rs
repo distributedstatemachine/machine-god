@@ -220,6 +220,22 @@ pub(crate) struct TerminalProfileBudget {
 }
 
 impl TerminalProfileBudget {
+    pub(crate) fn output_limit(&self) -> u64 {
+        self.limits.retained.output_bytes
+    }
+
+    /// Physical output plus unspent committed live-checkpoint headroom. This
+    /// observation grants no journal authority and never repairs a directory.
+    pub(crate) fn output_charge(
+        &self,
+        transaction: &TerminalProfileTransaction<'_>,
+    ) -> Result<u64> {
+        add(
+            transaction.inventory()?.usage.output_bytes,
+            transaction.reserved_output_bytes()?,
+        )
+    }
+
     pub(crate) fn new(limits: TerminalProfileLimits) -> Result<Self> {
         let maximum = TerminalProfileLimits::default();
         if limits.retained.output_bytes == 0
@@ -318,8 +334,22 @@ impl TerminalProfileBudget {
             )?,
             ..TerminalProfileDemand::default()
         };
+        let charge_growth = add(
+            bounds.output_bytes as u64,
+            bounds.checkpoint_bytes.saturating_sub(
+                usage
+                    .checkpoint_bytes
+                    .max(journal.checkpoint_reserve_bytes()),
+            ) as u64,
+        )?;
         Ok(TerminalProfileReadPermit {
-            reservation: self.reserve_inner(transaction, demand, false, true)?,
+            reservation: self.reserve_inner(
+                transaction,
+                demand,
+                false,
+                true,
+                Some(charge_growth),
+            )?,
             owner_namespace: owner_namespace.to_owned(),
             session,
             directory,
@@ -360,8 +390,14 @@ impl TerminalProfileBudget {
             },
             allocation_bytes: allocation.allocation_bytes,
         };
-        self.reserve_inner(transaction, demand, write.reclaims_only(), false)?
-            .run(|| write.execute())
+        self.reserve_inner(
+            transaction,
+            demand,
+            write.reclaims_only(),
+            false,
+            Some(write.output_charge_growth()),
+        )?
+        .run(|| write.execute())
     }
 
     /// The exclusive mutable borrow prevents multiple outstanding reservations
@@ -372,7 +408,7 @@ impl TerminalProfileBudget {
         transaction: &'a mut TerminalProfileTransaction<'store>,
         demand: TerminalProfileDemand,
     ) -> Result<TerminalProfileReservation<'a, 'store>> {
-        self.reserve_inner(transaction, demand, false, false)
+        self.reserve_inner(transaction, demand, false, false, None)
     }
 
     fn reserve_inner<'a, 'store>(
@@ -381,6 +417,7 @@ impl TerminalProfileBudget {
         demand: TerminalProfileDemand,
         reclaiming: bool,
         sequential: bool,
+        output_charge_growth: Option<u64>,
     ) -> Result<TerminalProfileReservation<'a, 'store>> {
         // Only a sealed journal acknowledgement/eviction plan takes this path.
         // Metadata-first reclamation must remain possible above the payload
@@ -413,7 +450,14 @@ impl TerminalProfileBudget {
             .ok_or(TerminalProfileError::ResourceLimit)?;
         let baseline = TerminalProfileLedgers::physical(inventory.usage)?;
         let ceiling = baseline.plus(demand.retained_growth)?;
-        if !reclaiming && !ceiling.fits(self.limits.retained) {
+        let output_charge_ceiling = add(
+            add(baseline.output_bytes, transaction.reserved_output_bytes()?)?,
+            output_charge_growth.unwrap_or(demand.retained_growth.output_bytes),
+        )?;
+        if !reclaiming
+            && (!ceiling.fits(self.limits.retained)
+                || output_charge_ceiling > self.limits.retained.output_bytes)
+        {
             return Err(TerminalProfileError::ResourceLimit);
         }
         // Check the actual gross-allocation envelope, even though the separate
@@ -431,6 +475,7 @@ impl TerminalProfileBudget {
         Ok(TerminalProfileReservation {
             transaction,
             ceiling,
+            output_charge_ceiling,
             owners,
             sessions,
         })
@@ -558,6 +603,7 @@ impl TerminalProfileReadPermit<'_, '_> {
 pub(crate) struct TerminalProfileReservation<'a, 'store> {
     transaction: &'a mut TerminalProfileTransaction<'store>,
     ceiling: TerminalProfileLedgers,
+    output_charge_ceiling: u64,
     owners: usize,
     sessions: usize,
 }
@@ -584,7 +630,12 @@ impl TerminalProfileReservation<'_, '_> {
     fn reconcile(&self) -> Result<TerminalProfileLedgers> {
         let inventory = self.transaction.inventory()?;
         let actual = TerminalProfileLedgers::physical(inventory.usage)?;
+        let output_charge = add(
+            actual.output_bytes,
+            self.transaction.reserved_output_bytes()?,
+        )?;
         if !actual.fits(self.ceiling)
+            || output_charge > self.output_charge_ceiling
             || inventory.owner_count > self.owners
             || inventory.sessions.len() > self.sessions
         {
@@ -622,7 +673,7 @@ mod tests {
     };
     use crate::terminal_profile_store::TerminalProfileStore;
     use machine_god_core::{
-        BackgroundOutputOwner, SessionId, SessionIncarnationId, TerminalSessionId,
+        BackgroundOutputOwner, SessionId, SessionIncarnationId, TerminalCursor, TerminalSessionId,
     };
     use rustix::fd::{AsFd, OwnedFd};
     use rustix::fs::{Mode, OFlags};
@@ -711,6 +762,162 @@ mod tests {
             },
             allocation_bytes: new_blob_bytes + MAX_METADATA,
         }
+    }
+
+    fn admitted(
+        transaction: &mut TerminalProfileTransaction<'_>,
+        catalog: &TerminalCatalog,
+        journal: &mut TerminalJournal,
+        mutation: TerminalJournalMutation<'_>,
+    ) -> Result<TerminalProfileLedgers> {
+        let completion = budget().mutate_journal(
+            transaction,
+            catalog.namespace_key(),
+            journal.prepare_mutation(mutation)?,
+        )?;
+        completion.operation?;
+        completion.accounting
+    }
+
+    #[test]
+    fn live_reserves_charge_busy_foreign_and_nonresident_owners() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let (first_catalog, mut first) = fixture.journal("first");
+        let (second_catalog, mut second) = fixture.journal("second");
+        let mut transaction = begin_transaction(&store);
+        admitted(
+            &mut transaction,
+            &first_catalog,
+            &mut first,
+            TerminalJournalMutation::CheckpointReserve(6),
+        )
+        .unwrap();
+        assert_eq!(transaction.inventory().unwrap().usage.output_bytes, 0);
+        assert_eq!(transaction.reserved_output_bytes().unwrap(), 6);
+        assert_eq!(budget().output_charge(&transaction).unwrap(), 6);
+        let mut held_first = Some(first);
+        for nonresident in [false, true] {
+            if nonresident {
+                drop(held_first.take());
+            }
+            assert_eq!(
+                admitted(
+                    &mut transaction,
+                    &second_catalog,
+                    &mut second,
+                    TerminalJournalMutation::Append(b"over"),
+                ),
+                Err(TerminalProfileError::ResourceLimit)
+            );
+            assert_eq!(second.usage().raw_bytes, 0);
+        }
+        let mut first = reopen(&transaction, "first");
+        admitted(
+            &mut transaction,
+            &second_catalog,
+            &mut second,
+            TerminalJournalMutation::Append(b"ok"),
+        )
+        .unwrap();
+        assert_eq!(budget().output_charge(&transaction).unwrap(), 8);
+        // Checkpoint replacement consumes then replenishes the same reserved
+        // capacity, without double charging it or crediting another owner.
+        for (bytes, unspent) in [(&b"screen"[..], 0), (&b"x"[..], 5)] {
+            let source = first.latest();
+            admitted(
+                &mut transaction,
+                &first_catalog,
+                &mut first,
+                TerminalJournalMutation::Checkpoint { source, bytes },
+            )
+            .unwrap();
+            assert_eq!(transaction.reserved_output_bytes().unwrap(), unspent);
+            assert_eq!(budget().output_charge(&transaction).unwrap(), 8);
+        }
+        drop(first);
+        // Dropping the native owner or writer never grants virtual credit.
+        assert_eq!(transaction.reserved_output_bytes().unwrap(), 5);
+        assert_eq!(budget().output_charge(&transaction).unwrap(), 8);
+    }
+
+    #[test]
+    fn metadata_reserve_growth_is_admitted_and_release_can_reclaim_overquota() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let (catalog, mut journal) = fixture.journal("reserve");
+        let mut transaction = begin_transaction(&store);
+        assert_eq!(
+            admitted(
+                &mut transaction,
+                &catalog,
+                &mut journal,
+                TerminalJournalMutation::CheckpointReserve(9),
+            ),
+            Err(TerminalProfileError::ResourceLimit)
+        );
+        assert_eq!(journal.checkpoint_reserve_bytes(), 0);
+        admitted(
+            &mut transaction,
+            &catalog,
+            &mut journal,
+            TerminalJournalMutation::CheckpointReserve(8),
+        )
+        .unwrap();
+        let mut reduced = budget();
+        reduced.limits.retained.output_bytes = 1;
+        let release = journal
+            .prepare_mutation(TerminalJournalMutation::CheckpointReserve(0))
+            .unwrap();
+        assert!(release.reclaims_only());
+        let completion = reduced
+            .mutate_journal(&mut transaction, catalog.namespace_key(), release)
+            .unwrap();
+        completion.operation.unwrap();
+        completion.accounting.unwrap();
+        assert_eq!(transaction.reserved_output_bytes().unwrap(), 0);
+        assert_eq!(budget().output_charge(&transaction).unwrap(), 0);
+    }
+
+    #[test]
+    fn read_permit_uses_reserved_checkpoint_capacity_without_double_charging() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let (catalog, mut journal) = fixture.journal("read-reserve");
+        let mut transaction = begin_transaction(&store);
+        admitted(
+            &mut transaction,
+            &catalog,
+            &mut journal,
+            TerminalJournalMutation::CheckpointReserve(4),
+        )
+        .unwrap();
+        let mut permit = budget()
+            .reserve_read(
+                &mut transaction,
+                catalog.namespace_key(),
+                &mut journal,
+                TerminalProfileReadBounds {
+                    checkpoint_bytes: 4,
+                    ..read_bounds()
+                },
+            )
+            .unwrap();
+        for mutation in [
+            TerminalJournalMutation::Append(b"read"),
+            TerminalJournalMutation::Checkpoint {
+                source: TerminalCursor::new(1, 4).unwrap(),
+                bytes: b"grid",
+            },
+        ] {
+            let completion = permit.mutate(&mut journal, mutation).unwrap();
+            completion.operation.unwrap();
+            completion.accounting.unwrap();
+        }
+        drop(permit);
+        assert_eq!(budget().output_charge(&transaction).unwrap(), 8);
+        assert_eq!(transaction.inventory().unwrap().usage.output_bytes, 8);
+        assert_eq!(transaction.reserved_output_bytes().unwrap(), 0);
     }
 
     fn session_fd(transaction: &TerminalProfileTransaction<'_>, name: &str) -> OwnedFd {

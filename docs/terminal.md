@@ -134,6 +134,18 @@ write cannot become a retryable operation when accounting fails. Dropping or
 unwinding a reservation grants no capacity credit: later admission still counts
 all remaining artifacts until explicit journal recovery removes them.
 
+Optional checksum-covered journal metadata retains the live checkpoint reserve
+across writer and owner lifetimes. Profile admission separately charges physical
+output plus each reserve's excess over its referenced committed checkpoint.
+Only descriptor-validated committed checkpoint sizes offset the reserve;
+orphan checkpoints remain fully charged. Checkpoint replacement consumes that
+headroom and a smaller replacement replenishes it without double charging.
+Reserve growth passes ordinary metadata admission, while a sealed decrease or
+release can reclaim an overquota profile. Physical and charged-output ceilings
+are reconciled independently after each mutation. Inventory remains stat-only;
+the separate bounded reservation scan validates metadata without acquiring a
+writer lease, repairing files or asserting screen validity.
+
 Existing-journal mutation plans borrow the writer and immutable input through
 admission and execution. Shared effect-free planning derives positive ledger
 growth and charges the whole submitted payload plus bounded metadata. Committed

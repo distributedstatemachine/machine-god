@@ -299,6 +299,38 @@ impl TerminalProfileTransaction<'_> {
         Ok(inventory)
     }
 
+    /// Virtual output headroom retained by committed journal metadata across
+    /// every owner, including journals whose writer lease is currently busy.
+    /// This is separate from the stat-only physical inventory: malformed
+    /// committed reservation metadata fails admission without being repaired.
+    pub(crate) fn reserved_output_bytes(&self) -> Result<u64> {
+        let before = self.topology()?;
+        let mut reserved = 0_u64;
+        for owner in &before {
+            if owner.sessions.is_empty() {
+                continue;
+            }
+            let root = open_directory(&self.store.namespace, &owner.name)?;
+            let sessions = open_directory(&root, SESSIONS)?;
+            for session in &owner.sessions {
+                let directory = open_directory(&sessions, session.id.as_str())?;
+                if identity(&directory, true)? != session.identity {
+                    return Err(TerminalProfileStoreError::Corrupt);
+                }
+                reserved = reserved
+                    .checked_add(TerminalJournal::inspect_checkpoint_reserve(
+                        &directory,
+                        &session.id,
+                    )?)
+                    .ok_or(TerminalProfileStoreError::ResourceLimit)?;
+            }
+        }
+        if self.topology()? != before {
+            return Err(TerminalProfileStoreError::Corrupt);
+        }
+        Ok(reserved)
+    }
+
     pub(crate) fn open_session(
         &self,
         owner_namespace: &str,
