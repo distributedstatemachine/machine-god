@@ -139,6 +139,123 @@ pub(crate) enum TerminalJournalEviction {
 }
 redacted!(TerminalJournalEviction);
 
+pub(crate) enum TerminalJournalMutation<'a> {
+    Append(&'a [u8]),
+    Checkpoint {
+        source: TerminalCursor,
+        bytes: &'a [u8],
+    },
+    State {
+        source: TerminalCursor,
+        bytes: &'a [u8],
+    },
+    Event(&'a [u8]),
+    Acknowledge(u64),
+    Evict(&'a TerminalJournalEviction),
+}
+
+impl fmt::Debug for TerminalJournalMutation<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TerminalJournalMutation")
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct TerminalJournalAllocation {
+    pub(crate) output_growth: u64,
+    pub(crate) protected_growth: u64,
+    /// Conservative positive growth to the bounded metadata encoding ceiling.
+    pub(crate) metadata_growth: u64,
+    /// Whole submitted payload plus new metadata, without old-file credit.
+    pub(crate) allocation_bytes: u64,
+}
+
+#[derive(Eq, PartialEq)]
+pub(crate) enum TerminalJournalReceipt {
+    Appended(TerminalCursor),
+    Published,
+    Event(u64),
+    Evicted(usize),
+}
+redacted!(TerminalJournalReceipt);
+
+/// Holds the journal generation and input immutable until admission consumes
+/// the plan. Dropping an unexecuted plan performs no persistence effects.
+pub(crate) struct TerminalJournalWrite<'journal, 'input> {
+    journal: &'journal mut TerminalJournal,
+    mutation: TerminalJournalMutation<'input>,
+    allocation: TerminalJournalAllocation,
+}
+
+impl fmt::Debug for TerminalJournalWrite<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TerminalJournalWrite")
+            .finish_non_exhaustive()
+    }
+}
+
+impl TerminalJournalWrite<'_, '_> {
+    pub(crate) const fn allocation(&self) -> TerminalJournalAllocation {
+        self.allocation
+    }
+
+    pub(crate) fn session_id(&self) -> &TerminalSessionId {
+        self.journal.session_id()
+    }
+
+    /// Sealed maintenance classification, not a caller-supplied allocation hint.
+    pub(crate) fn reclaims_only(&self) -> bool {
+        matches!(
+            self.mutation,
+            TerminalJournalMutation::Acknowledge(_) | TerminalJournalMutation::Evict(_)
+        )
+    }
+
+    /// Identity binding only: the profile transaction supplies the directory
+    /// reached through its validated owner/session topology.
+    pub(crate) fn matches_directory(&self, root: impl AsFd) -> Result<bool> {
+        self.journal.ready()?;
+        private(root.as_fd(), true)?;
+        let supplied = rustix::fs::fstat(root).map_err(io_error)?;
+        let held = rustix::fs::fstat(&self.journal.root).map_err(io_error)?;
+        Ok(supplied.st_dev == held.st_dev && supplied.st_ino == held.st_ino)
+    }
+
+    pub(crate) fn execute(self) -> Result<TerminalJournalReceipt> {
+        self.journal.ready()?;
+        if self.allocation.allocation_bytes != 0 {
+            self.journal.validate_committed_sizes()?;
+        }
+        match self.mutation {
+            TerminalJournalMutation::Append(bytes) => self
+                .journal
+                .append(bytes)
+                .map(TerminalJournalReceipt::Appended),
+            TerminalJournalMutation::Checkpoint { source, bytes } => self
+                .journal
+                .publish_checkpoint(source, bytes)
+                .map(|()| TerminalJournalReceipt::Published),
+            TerminalJournalMutation::State { source, bytes } => self
+                .journal
+                .publish_state(source, bytes)
+                .map(|()| TerminalJournalReceipt::Published),
+            TerminalJournalMutation::Event(bytes) => self
+                .journal
+                .append_event(bytes)
+                .map(TerminalJournalReceipt::Event),
+            TerminalJournalMutation::Acknowledge(through) => self
+                .journal
+                .acknowledge_events(through)
+                .map(|()| TerminalJournalReceipt::Published),
+            TerminalJournalMutation::Evict(eviction) => self
+                .journal
+                .evict(eviction)
+                .map(TerminalJournalReceipt::Evicted),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TerminalJournalCheckpointStatus {
     Missing,
@@ -258,6 +375,161 @@ pub(crate) struct TerminalJournal {
 redacted!(TerminalJournal);
 
 impl TerminalJournal {
+    pub(crate) fn prepare_mutation<'journal, 'input>(
+        &'journal mut self,
+        mutation: TerminalJournalMutation<'input>,
+    ) -> Result<TerminalJournalWrite<'journal, 'input>> {
+        let next = self.mutation_manifest(&mutation)?;
+        let allocation = if let Some(next) = next {
+            // Credit only descriptor-validated committed bytes. Orphan files
+            // remain charged by the profile's separate physical inventory.
+            self.validate_committed_sizes()?;
+            let before = self.usage();
+            let after = usage(&next, 0);
+            let payload = match &mutation {
+                TerminalJournalMutation::Append(bytes)
+                | TerminalJournalMutation::Checkpoint { bytes, .. }
+                | TerminalJournalMutation::State { bytes, .. }
+                | TerminalJournalMutation::Event(bytes) => bytes.len(),
+                TerminalJournalMutation::Acknowledge(_) | TerminalJournalMutation::Evict(_) => 0,
+            };
+            TerminalJournalAllocation {
+                output_growth: after.output_bytes.saturating_sub(before.output_bytes) as u64,
+                protected_growth: (after.state_bytes + after.event_bytes)
+                    .saturating_sub(before.state_bytes + before.event_bytes)
+                    as u64,
+                metadata_growth: MAX_META.saturating_sub(before.metadata_bytes) as u64,
+                allocation_bytes: (payload + MAX_META) as u64,
+            }
+        } else {
+            TerminalJournalAllocation::default()
+        };
+        Ok(TerminalJournalWrite {
+            journal: self,
+            mutation,
+            allocation,
+        })
+    }
+
+    fn validate_committed_sizes(&self) -> Result<()> {
+        let mut blobs: Vec<_> = self
+            .manifest
+            .segments
+            .iter()
+            .map(|blob| (raw_name(blob.id), blob.bytes))
+            .chain(
+                self.manifest
+                    .events
+                    .iter()
+                    .map(|blob| (event_name(blob.id), blob.bytes)),
+            )
+            .collect();
+        if let Some(checkpoint) = &self.manifest.checkpoint {
+            blobs.push((checkpoint_name(checkpoint.blob.id), checkpoint.blob.bytes));
+        }
+        if let Some(state) = &self.manifest.state {
+            blobs.push((state_name(state.blob.id), state.blob.bytes));
+        }
+        blobs.push((META.to_owned(), self.metadata_bytes));
+        for (name, bytes) in blobs {
+            ensure(
+                checked_artifact_size(&self.root, &name).map_err(missing_is_corrupt)? == bytes,
+                TerminalJournalError::Corrupt,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Shared effect-free request, retention and counter planning. Blob hashes
+    /// here are placeholders; writes derive the real hashes before publication.
+    fn mutation_manifest(
+        &self,
+        mutation: &TerminalJournalMutation<'_>,
+    ) -> Result<Option<Manifest>> {
+        self.ready()?;
+        let mut next = self.manifest.clone();
+        match mutation {
+            TerminalJournalMutation::Append(bytes) => {
+                ensure(
+                    !bytes.is_empty()
+                        && bytes.len() <= MAX_PAGE_BYTES
+                        && bytes.len().div_ceil(next.limits.segment_bytes) < MAX_SEGMENTS,
+                    TerminalJournalError::Invalid,
+                )?;
+                plan_append(&mut next, bytes.len())?;
+                trim(&mut next, false)?;
+            }
+            TerminalJournalMutation::Checkpoint { source, bytes } => {
+                ensure(
+                    !bytes.is_empty()
+                        && bytes.len() <= MAX_CHECKPOINT_BYTES
+                        && bytes.len() <= next.limits.session_bytes
+                        && *source <= next.latest,
+                    TerminalJournalError::Invalid,
+                )?;
+                self.validate_position(source)?;
+                next.checkpoint = Some(planned_checkpoint(next.generation, source, bytes.len())?);
+                next.checkpoint_evicted = false;
+                trim(&mut next, true)?;
+            }
+            TerminalJournalMutation::State { source, bytes } => {
+                ensure(
+                    !bytes.is_empty() && bytes.len() <= MAX_STATE_BYTES && *source <= next.latest,
+                    TerminalJournalError::Invalid,
+                )?;
+                self.validate_position(source)?;
+                next.state = Some(planned_checkpoint(next.generation, source, bytes.len())?);
+            }
+            TerminalJournalMutation::Event(bytes) => {
+                ensure(
+                    !bytes.is_empty() && bytes.len() <= MAX_EVENT_BYTES,
+                    TerminalJournalError::Invalid,
+                )?;
+                let id = next.next_event;
+                next.next_event = id
+                    .checked_add(1)
+                    .ok_or(TerminalJournalError::ResourceLimit)?;
+                next.events.push(Blob {
+                    id,
+                    bytes: bytes.len(),
+                    sha256: [0; 32],
+                });
+                while next.events.len() > MAX_EVENTS {
+                    evict_event(&mut next);
+                }
+            }
+            TerminalJournalMutation::Acknowledge(through) => {
+                ensure(*through < next.next_event, TerminalJournalError::Invalid)?;
+                if *through <= next.acknowledged {
+                    return Ok(None);
+                }
+                next.acknowledged = *through;
+                while next
+                    .events
+                    .first()
+                    .is_some_and(|event| event.id <= *through)
+                {
+                    evict_event(&mut next);
+                }
+            }
+            TerminalJournalMutation::Evict(eviction) => {
+                let (planned, bytes) = self.eviction_plan(eviction)?;
+                if bytes == 0 {
+                    return Ok(None);
+                }
+                next = planned;
+            }
+        }
+        next.generation = self
+            .manifest
+            .generation
+            .checked_add(1)
+            .ok_or(TerminalJournalError::ResourceLimit)?;
+        validate_manifest(&next)?;
+        validate_metadata_bound(&next)?;
+        Ok(Some(next))
+    }
+
     pub(crate) fn session_id(&self) -> &TerminalSessionId {
         &self.manifest.session
     }
@@ -407,16 +679,10 @@ impl TerminalJournal {
     /// Publish explicit retention before unlinking payload. A failed commit
     /// poisons the writer and must be reconciled; bytes are not credited early.
     pub(crate) fn evict(&mut self, eviction: &TerminalJournalEviction) -> Result<usize> {
-        self.ready()?;
-        let (next, bytes) = self.eviction_plan(eviction)?;
-        if bytes == 0 {
+        let Some(next) = self.mutation_manifest(&TerminalJournalMutation::Evict(eviction))? else {
             return Ok(0);
-        }
-        ensure(
-            self.manifest.generation < u64::MAX,
-            TerminalJournalError::ResourceLimit,
-        )?;
-        validate_manifest(&next)?;
+        };
+        let bytes = self.usage().output_bytes - usage(&next, 0).output_bytes;
         self.poisoned = true;
         self.commit(next)?;
         Ok(bytes)
@@ -494,13 +760,7 @@ impl TerminalJournal {
     /// At most 64 KiB and 128 segment writes per call. Failure after effects
     /// requires reopen; success means bytes and metadata were synchronized.
     pub(crate) fn append(&mut self, bytes: &[u8]) -> Result<TerminalCursor> {
-        self.ready()?;
-        ensure(
-            !bytes.is_empty()
-                && bytes.len() <= MAX_PAGE_BYTES
-                && bytes.len().div_ceil(self.manifest.limits.segment_bytes) < MAX_SEGMENTS,
-            TerminalJournalError::Invalid,
-        )?;
+        self.mutation_manifest(&TerminalJournalMutation::Append(bytes))?;
         self.poisoned = true;
         let mut next = self.manifest.clone();
         let mut remaining = bytes;
@@ -636,26 +896,17 @@ impl TerminalJournal {
         source: TerminalCursor,
         bytes: &[u8],
     ) -> Result<()> {
-        self.ready()?;
-        ensure(
-            !bytes.is_empty()
-                && bytes.len() <= MAX_CHECKPOINT_BYTES
-                && bytes.len() <= self.manifest.limits.session_bytes
-                && source <= self.manifest.latest,
-            TerminalJournalError::Invalid,
-        )?;
-        self.validate_position(&source)?;
+        let mut next = self
+            .mutation_manifest(&TerminalJournalMutation::Checkpoint { source, bytes })?
+            .ok_or(TerminalJournalError::Corrupt)?;
         self.poisoned = true;
-        let mut next = self.manifest.clone();
-        let id = next
-            .generation
-            .checked_add(1)
-            .ok_or(TerminalJournalError::ResourceLimit)?;
+        let id = next.generation;
         let blob = write_blob(&self.root, &checkpoint_name(id), id, bytes)?;
         self.pending_files.insert(checkpoint_name(id));
-        next.checkpoint = Some(Checkpoint { blob, source });
-        next.checkpoint_evicted = false;
-        trim(&mut next, true)?;
+        next.checkpoint
+            .as_mut()
+            .ok_or(TerminalJournalError::Corrupt)?
+            .blob = blob;
         self.commit(next)
     }
 
@@ -700,29 +951,10 @@ impl TerminalJournal {
     /// the previous state atomically; output retention never removes it and state
     /// publication cannot consume or evict the separately budgeted output.
     pub(crate) fn publish_state(&mut self, source: TerminalCursor, bytes: &[u8]) -> Result<()> {
-        self.ready()?;
-        ensure(
-            !bytes.is_empty() && bytes.len() <= MAX_STATE_BYTES && source <= self.manifest.latest,
-            TerminalJournalError::Invalid,
-        )?;
-        self.validate_position(&source)?;
-        let mut next = self.manifest.clone();
-        let id = next
-            .generation
-            .checked_add(1)
-            .ok_or(TerminalJournalError::ResourceLimit)?;
-        next.generation = id;
-        next.state = Some(Checkpoint {
-            blob: Blob {
-                id,
-                bytes: bytes.len(),
-                sha256: [0; 32],
-            },
-            source,
-        });
-        // Finish capacity and counter checks before creating any file or
-        // poisoning this handle. Existing state is replaced, not double-counted.
-        validate_manifest(&next)?;
+        let mut next = self
+            .mutation_manifest(&TerminalJournalMutation::State { source, bytes })?
+            .ok_or(TerminalJournalError::Corrupt)?;
+        let id = next.generation;
         self.poisoned = true;
         let blob = write_blob(&self.root, &state_name(id), id, bytes)?;
         self.pending_files.insert(state_name(id));
@@ -754,23 +986,17 @@ impl TerminalJournal {
 
     /// Event payloads are opaque bytes supplied by a separately bounded codec.
     pub(crate) fn append_event(&mut self, payload: &[u8]) -> Result<u64> {
-        self.ready()?;
-        ensure(
-            !payload.is_empty() && payload.len() <= MAX_EVENT_BYTES,
-            TerminalJournalError::Invalid,
-        )?;
+        let mut next = self
+            .mutation_manifest(&TerminalJournalMutation::Event(payload))?
+            .ok_or(TerminalJournalError::Corrupt)?;
         self.poisoned = true;
-        let mut next = self.manifest.clone();
-        let id = next.next_event;
-        next.next_event = id
-            .checked_add(1)
-            .ok_or(TerminalJournalError::ResourceLimit)?;
-        next.events
-            .push(write_blob(&self.root, &event_name(id), id, payload)?);
+        let id = self.manifest.next_event;
+        let blob = write_blob(&self.root, &event_name(id), id, payload)?;
+        *next
+            .events
+            .last_mut()
+            .ok_or(TerminalJournalError::Corrupt)? = blob;
         self.pending_files.insert(event_name(id));
-        while next.events.len() > MAX_EVENTS {
-            evict_event(&mut next);
-        }
         self.commit(next)?;
         Ok(id)
     }
@@ -803,20 +1029,11 @@ impl TerminalJournal {
     }
 
     pub(crate) fn acknowledge_events(&mut self, through: u64) -> Result<()> {
-        self.ready()?;
-        ensure(
-            through < self.manifest.next_event,
-            TerminalJournalError::Invalid,
-        )?;
-        if through <= self.manifest.acknowledged {
+        let Some(next) = self.mutation_manifest(&TerminalJournalMutation::Acknowledge(through))?
+        else {
             return Ok(());
-        }
+        };
         self.poisoned = true;
-        let mut next = self.manifest.clone();
-        next.acknowledged = through;
-        while next.events.first().is_some_and(|event| event.id <= through) {
-            evict_event(&mut next);
-        }
         self.commit(next)
     }
 
@@ -1000,6 +1217,77 @@ impl TerminalJournal {
         open_file(&self.root, name, OFlags::RDONLY)?;
         rustix::fs::unlinkat(&self.root, name, AtFlags::empty()).map_err(io_error)
     }
+}
+
+fn planned_checkpoint(
+    generation: u64,
+    source: &TerminalCursor,
+    bytes: usize,
+) -> Result<Checkpoint> {
+    Ok(Checkpoint {
+        blob: Blob {
+            id: generation
+                .checked_add(1)
+                .ok_or(TerminalJournalError::ResourceLimit)?,
+            bytes,
+            sha256: [0; 32],
+        },
+        source: source.clone(),
+    })
+}
+
+fn plan_append(next: &mut Manifest, mut bytes: usize) -> Result<()> {
+    while bytes != 0 {
+        if next
+            .segments
+            .last()
+            .is_none_or(|blob| blob.bytes >= next.limits.segment_bytes)
+        {
+            let id = next.next_segment;
+            next.next_segment = id
+                .checked_add(1)
+                .ok_or(TerminalJournalError::ResourceLimit)?;
+            next.segments.push(Blob {
+                id,
+                bytes: 0,
+                sha256: [0; 32],
+            });
+        }
+        let blob = next
+            .segments
+            .last_mut()
+            .ok_or(TerminalJournalError::Corrupt)?;
+        let count = bytes.min(next.limits.segment_bytes - blob.bytes);
+        blob.bytes += count;
+        next.latest = cursor(blob.id, blob.bytes as u64);
+        bytes -= count;
+    }
+    Ok(())
+}
+
+fn validate_metadata_bound(next: &Manifest) -> Result<()> {
+    // Every checksum byte serializes to at most three decimal digits. Check
+    // that even the widest actual hashes fit before any payload is written.
+    let mut manifest = next.clone();
+    for blob in manifest.segments.iter_mut().chain(&mut manifest.events) {
+        blob.sha256 = [255; 32];
+    }
+    for checkpoint in [&mut manifest.checkpoint, &mut manifest.state]
+        .into_iter()
+        .flatten()
+    {
+        checkpoint.blob.sha256 = [255; 32];
+    }
+    let encoded = serde_json::to_vec(&Envelope {
+        version: 1,
+        manifest,
+        sha256: [255; 32],
+    })
+    .map_err(|_| TerminalJournalError::Corrupt)?;
+    ensure(
+        encoded.len() <= MAX_META,
+        TerminalJournalError::ResourceLimit,
+    )
 }
 
 fn validate_manifest(m: &Manifest) -> Result<()> {
@@ -1526,6 +1814,279 @@ mod tests {
         panic!("page traversal did not terminate");
     }
 
+    fn planned_write(
+        journal: &mut TerminalJournal,
+        mutation: TerminalJournalMutation<'_>,
+    ) -> (TerminalJournalAllocation, TerminalJournalReceipt) {
+        let before = journal.usage();
+        let plan = journal.prepare_mutation(mutation).unwrap();
+        assert_eq!(format!("{plan:?}"), "TerminalJournalWrite { .. }");
+        let allocation = plan.allocation();
+        let receipt = plan.execute().unwrap();
+        let after = journal.usage();
+        assert_eq!(
+            allocation.output_growth,
+            after.output_bytes.saturating_sub(before.output_bytes) as u64
+        );
+        assert_eq!(
+            allocation.protected_growth,
+            (after.state_bytes + after.event_bytes)
+                .saturating_sub(before.state_bytes + before.event_bytes) as u64
+        );
+        assert!(
+            allocation.metadata_growth
+                >= after.metadata_bytes.saturating_sub(before.metadata_bytes) as u64
+        );
+        assert!(
+            allocation.allocation_bytes
+                >= allocation.output_growth
+                    + allocation.protected_growth
+                    + allocation.metadata_growth
+        );
+        (allocation, receipt)
+    }
+
+    #[test]
+    fn borrowed_mutation_plans_derive_growth_and_whole_allocation_for_every_write() {
+        let fixture = Fixture::new();
+        let mut journal = fixture.create(limits(4, 8));
+        let (allocation, receipt) =
+            planned_write(&mut journal, TerminalJournalMutation::Append(b"abcd"));
+        assert_eq!(receipt, TerminalJournalReceipt::Appended(cursor(1, 4)));
+        assert_eq!(allocation.output_growth, 4);
+        assert_eq!(allocation.allocation_bytes, (MAX_META + 4) as u64);
+        let (allocation, _) =
+            planned_write(&mut journal, TerminalJournalMutation::Append(b"efghij"));
+        assert_eq!(allocation.output_growth, 2);
+        assert_eq!(allocation.allocation_bytes, (MAX_META + 6) as u64);
+        assert_eq!(collect(&journal, journal.earliest()), b"efghij");
+        let source = journal.latest();
+        let (allocation, receipt) = planned_write(
+            &mut journal,
+            TerminalJournalMutation::Checkpoint {
+                source,
+                bytes: b"12345678",
+            },
+        );
+        assert_eq!(allocation.output_growth, 2);
+        assert_eq!(receipt, TerminalJournalReceipt::Published);
+        assert_eq!(journal.usage().raw_bytes, 0);
+        // New raw pressure evicts the old checkpoint; its bytes are not counted
+        // as a negative reservation or subtracted from physical usage early.
+        let (allocation, _) = planned_write(&mut journal, TerminalJournalMutation::Append(b"raw"));
+        assert_eq!(allocation.output_growth, 0);
+        assert_eq!(
+            journal.checkpoint_status(),
+            TerminalJournalCheckpointStatus::RetentionEvicted
+        );
+        let source = journal.latest();
+        let (allocation, _) = planned_write(
+            &mut journal,
+            TerminalJournalMutation::State {
+                source: source.clone(),
+                bytes: b"independent state",
+            },
+        );
+        assert_eq!(allocation.protected_growth, 17);
+        let (allocation, _) = planned_write(
+            &mut journal,
+            TerminalJournalMutation::State {
+                source,
+                bytes: b"new",
+            },
+        );
+        assert_eq!(allocation.protected_growth, 0);
+        assert_eq!(allocation.allocation_bytes, (MAX_META + 3) as u64);
+        let (allocation, receipt) =
+            planned_write(&mut journal, TerminalJournalMutation::Event(b"event"));
+        assert_eq!(allocation.protected_growth, 5);
+        assert_eq!(receipt, TerminalJournalReceipt::Event(1));
+        let (allocation, receipt) =
+            planned_write(&mut journal, TerminalJournalMutation::Acknowledge(1));
+        assert_eq!(allocation.protected_growth, 0);
+        assert_eq!(allocation.allocation_bytes, MAX_META as u64);
+        assert_eq!(receipt, TerminalJournalReceipt::Published);
+        let (allocation, receipt) = planned_write(
+            &mut journal,
+            TerminalJournalMutation::Evict(&TerminalJournalEviction::CompletedOutput),
+        );
+        assert_eq!(allocation.output_growth, 0);
+        assert_eq!(receipt, TerminalJournalReceipt::Evicted(3));
+        assert_eq!(journal.load_state().unwrap().unwrap().bytes, b"new");
+    }
+
+    #[test]
+    fn mutation_plan_event_ring_replacement_has_no_retained_growth() {
+        let fixture = Fixture::new();
+        let mut journal = fixture.create(limits(4, 8));
+        for _ in 0..MAX_EVENTS {
+            journal.append_event(b"four").unwrap();
+        }
+        let (allocation, receipt) =
+            planned_write(&mut journal, TerminalJournalMutation::Event(b"next"));
+        assert_eq!(receipt, TerminalJournalReceipt::Event(257));
+        assert_eq!(allocation.protected_growth, 0);
+        assert_eq!(allocation.allocation_bytes, (MAX_META + 4) as u64);
+        assert_eq!(journal.read_events(0, MAX_EVENTS).unwrap().gap_through, 1);
+    }
+
+    #[test]
+    fn mutation_plan_noops_and_abandonment_are_inert_and_identity_bound() {
+        let fixture = Fixture::new();
+        let other = Fixture::new();
+        let mut journal = fixture.create(limits(4, 8));
+        let metadata = std::fs::read(fixture.path.join(META)).unwrap();
+        for mutation in [
+            TerminalJournalMutation::Acknowledge(0),
+            TerminalJournalMutation::Evict(&TerminalJournalEviction::CompletedOutput),
+            TerminalJournalMutation::Evict(&TerminalJournalEviction::CompletedCheckpoint),
+        ] {
+            let plan = journal.prepare_mutation(mutation).unwrap();
+            assert!(plan.reclaims_only());
+            assert_eq!(plan.session_id(), &session());
+            assert!(plan.matches_directory(fixture.fd()).unwrap());
+            assert!(!plan.matches_directory(other.fd()).unwrap());
+            assert_eq!(plan.allocation(), TerminalJournalAllocation::default());
+            plan.execute().unwrap();
+        }
+        {
+            let plan = journal
+                .prepare_mutation(TerminalJournalMutation::Append(b"private payload"))
+                .unwrap();
+            assert!(!plan.reclaims_only());
+        }
+        assert_eq!(std::fs::read(fixture.path.join(META)).unwrap(), metadata);
+        assert_eq!(std::fs::read_dir(&fixture.path).unwrap().count(), 2);
+        assert!(!journal.poisoned);
+    }
+
+    #[test]
+    fn mutation_plan_invalid_requests_and_counter_exhaustion_are_effect_free() {
+        for case in 0..13 {
+            let fixture = Fixture::new();
+            let mut journal = fixture.create(limits(4, 8));
+            journal.append(b"data").unwrap();
+            journal.append_event(b"event").unwrap();
+            let mutation = match case {
+                0 => TerminalJournalMutation::Append(b""),
+                1 => TerminalJournalMutation::Checkpoint {
+                    source: cursor(99, 0),
+                    bytes: b"x",
+                },
+                2 => TerminalJournalMutation::State {
+                    source: cursor(99, 0),
+                    bytes: b"x",
+                },
+                3 => TerminalJournalMutation::Event(b""),
+                4 => TerminalJournalMutation::Acknowledge(2),
+                5 => {
+                    journal.manifest.next_segment = u64::MAX;
+                    TerminalJournalMutation::Append(b"x")
+                }
+                6 => {
+                    journal.manifest.next_event = u64::MAX;
+                    TerminalJournalMutation::Event(b"x")
+                }
+                7 => {
+                    journal.manifest.generation = u64::MAX;
+                    TerminalJournalMutation::Append(b"x")
+                }
+                8 => {
+                    journal.manifest.generation = u64::MAX;
+                    TerminalJournalMutation::Acknowledge(1)
+                }
+                9 => {
+                    journal.manifest.generation = u64::MAX;
+                    TerminalJournalMutation::Evict(&TerminalJournalEviction::CompletedOutput)
+                }
+                10 => {
+                    journal.manifest.generation = u64::MAX;
+                    TerminalJournalMutation::Checkpoint {
+                        source: journal.latest(),
+                        bytes: b"x",
+                    }
+                }
+                11 => {
+                    journal.manifest.generation = u64::MAX;
+                    TerminalJournalMutation::State {
+                        source: journal.latest(),
+                        bytes: b"x",
+                    }
+                }
+                12 => {
+                    journal.manifest.generation = u64::MAX;
+                    TerminalJournalMutation::Event(b"x")
+                }
+                _ => unreachable!(),
+            };
+            let metadata = std::fs::read(fixture.path.join(META)).unwrap();
+            let count = std::fs::read_dir(&fixture.path).unwrap().count();
+            assert!(journal.prepare_mutation(mutation).is_err(), "case {case}");
+            assert_eq!(std::fs::read(fixture.path.join(META)).unwrap(), metadata);
+            assert_eq!(std::fs::read_dir(&fixture.path).unwrap().count(), count);
+            assert!(!journal.poisoned, "case {case}");
+        }
+    }
+
+    #[test]
+    fn mutation_plan_rejects_changed_committed_sizes_before_replacement_credit() {
+        for case in 0..5 {
+            let fixture = Fixture::new();
+            let mut journal = fixture.create(limits(8, 64));
+            journal.append(b"raw").unwrap();
+            journal
+                .publish_checkpoint(journal.latest(), b"grid")
+                .unwrap();
+            journal.publish_state(journal.latest(), b"facts").unwrap();
+            journal.append_event(b"event").unwrap();
+            let name = match case {
+                0 => raw_name(1),
+                1 => checkpoint_name(journal.manifest.checkpoint.as_ref().unwrap().blob.id),
+                2 => state_name(journal.manifest.state.as_ref().unwrap().blob.id),
+                3 => event_name(1),
+                4 => META.to_owned(),
+                _ => unreachable!(),
+            };
+            let file = OpenOptions::new()
+                .write(true)
+                .open(fixture.path.join(name))
+                .unwrap();
+            file.set_len(file.metadata().unwrap().len() - 1).unwrap();
+            let metadata = std::fs::read(fixture.path.join(META)).unwrap();
+            let source = journal.latest();
+            assert_eq!(
+                journal
+                    .prepare_mutation(TerminalJournalMutation::State {
+                        source,
+                        bytes: b"new"
+                    })
+                    .unwrap_err(),
+                TerminalJournalError::Corrupt
+            );
+            assert_eq!(std::fs::read(fixture.path.join(META)).unwrap(), metadata);
+            assert!(!journal.poisoned);
+        }
+        let fixture = Fixture::new();
+        let mut journal = fixture.create(limits(8, 64));
+        journal.publish_state(journal.latest(), b"facts").unwrap();
+        let name = state_name(journal.manifest.state.as_ref().unwrap().blob.id);
+        let source = journal.latest();
+        let plan = journal
+            .prepare_mutation(TerminalJournalMutation::State {
+                source,
+                bytes: b"new",
+            })
+            .unwrap();
+        OpenOptions::new()
+            .write(true)
+            .open(fixture.path.join(name))
+            .unwrap()
+            .set_len(1)
+            .unwrap();
+        assert_eq!(plan.execute().unwrap_err(), TerminalJournalError::Corrupt);
+        assert!(!journal.poisoned);
+    }
+
     #[test]
     fn physical_usage_counts_failed_suffixes_and_orphans_without_mutation() {
         let fixture = Fixture::new();
@@ -1865,7 +2426,10 @@ mod tests {
             checkpoint: identity.clone(),
         };
         assert_eq!(journal.eviction_bytes(&eviction).unwrap(), 4);
-        assert_eq!(journal.evict(&eviction).unwrap(), 4);
+        let (allocation, receipt) =
+            planned_write(&mut journal, TerminalJournalMutation::Evict(&eviction));
+        assert_eq!(receipt, TerminalJournalReceipt::Evicted(4));
+        assert_eq!(allocation.output_growth, 0);
         assert_eq!(journal.evict(&eviction).unwrap(), 0);
         assert_eq!(collect(&journal, cursor(1, 0)), b"efghijkl");
         journal
