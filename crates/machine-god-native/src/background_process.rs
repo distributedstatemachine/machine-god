@@ -5402,6 +5402,7 @@ fn invariant_error() -> BackgroundProcessError {
 mod linux_proc_tests {
     use super::*;
     use std::io::{BufRead, BufReader};
+    use std::process::ChildStdout;
 
     const UNRESTRICTED_PROC: &[u8] =
         b"36 25 0:32 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw,hidepid=0\n";
@@ -5420,14 +5421,69 @@ mod linux_proc_tests {
     }
 
     struct SignalSnapshotFixture {
-        root: Child,
+        root: Option<Child>,
         group: rustix::process::Pid,
+        child: Option<rustix::process::Pid>,
+    }
+
+    impl SignalSnapshotFixture {
+        fn new(root: Child) -> Self {
+            let group = pid(i32::try_from(root.id()).expect("root PID fits signed range"));
+            Self {
+                root: Some(root),
+                group,
+                child: None,
+            }
+        }
+
+        fn root(&self) -> rustix::process::Pid {
+            self.group
+        }
+
+        fn readiness(&mut self) -> ChildStdout {
+            self.root
+                .as_mut()
+                .expect("fixture root is retained")
+                .stdout
+                .take()
+                .expect("fixture readiness pipe")
+        }
+
+        fn bind_child(&mut self, child: rustix::process::Pid) {
+            self.child = Some(child);
+        }
+
+        fn cleanup(&mut self) -> Result<(), &'static str> {
+            if self.root.is_none() {
+                return Ok(());
+            }
+            let _ = rustix::process::kill_process_group(self.group, rustix::process::Signal::KILL);
+            if let Some(child) = self.child {
+                let _ = rustix::process::kill_process(child, rustix::process::Signal::KILL);
+            }
+
+            let deadline = Instant::now() + CHILD_REAP_PROBE_TIMEOUT;
+            loop {
+                match rustix::process::waitpgid(self.group, rustix::process::WaitOptions::NOHANG) {
+                    Ok(Some(_)) => continue,
+                    Err(rustix::io::Errno::CHILD) => {
+                        self.root = None;
+                        return Ok(());
+                    }
+                    Ok(None) | Err(rustix::io::Errno::INTR) => {}
+                    Err(_) => return Err("fixture process-group reap failed"),
+                }
+                if Instant::now() >= deadline {
+                    return Err("fixture process-group reap timed out");
+                }
+                thread::sleep(Duration::from_millis(2));
+            }
+        }
     }
 
     impl Drop for SignalSnapshotFixture {
         fn drop(&mut self) {
-            let _ = rustix::process::kill_process_group(self.group, rustix::process::Signal::KILL);
-            let _ = self.root.wait();
+            let _ = self.cleanup();
         }
     }
 
@@ -6081,37 +6137,57 @@ mod linux_proc_tests {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        let mut root = command.spawn().expect("spawn signal-snapshot fixture");
-        let root_pid = pid(i32::try_from(root.id()).expect("root PID fits signed range"));
+        let root = command.spawn().expect("spawn signal-snapshot fixture");
+        let mut fixture = SignalSnapshotFixture::new(root);
+        let root_pid = fixture.root();
         let mut child_line = String::new();
-        BufReader::new(root.stdout.take().expect("fixture readiness pipe"))
+        BufReader::new(fixture.readiness())
             .read_line(&mut child_line)
             .expect("read fixture child PID");
         let child_pid = pid(child_line
             .trim()
             .parse()
             .expect("fixture child PID is a signed integer"));
-        let _fixture = SignalSnapshotFixture {
-            root,
-            group: root_pid,
-        };
+        fixture.bind_child(child_pid);
+        let mut expected_scratch = SignalProcessScratch::new();
+        let expected_root = read_signal_process(&authority, root_pid, &mut expected_scratch)
+            .expect("read isolated fixture root")
+            .expect("isolated fixture root remains live");
+        let expected_child = read_signal_process(&authority, child_pid, &mut expected_scratch)
+            .expect("read isolated fixture child")
+            .expect("isolated fixture child remains live");
+        assert_eq!(expected_root.pid, root_pid);
+        assert_eq!(expected_root.group, Some(root_pid));
+        assert_eq!(expected_child.pid, child_pid);
+        assert_eq!(expected_child.parent, Some(root_pid));
+        assert_eq!(expected_child.group, Some(root_pid));
         let mut scratch = SignalProcessScratch::new();
 
-        let (_, pinned) = signal_process_snapshot(&authority, root_pid, &mut scratch)
+        let (snapshot, pinned) = signal_process_snapshot(&authority, root_pid, &mut scratch)
             .expect("capture the isolated fixture descendants");
-        assert!(
-            pinned.contains_key(&child_pid),
-            "the direct child receives an exact signal handle"
+        assert_eq!(snapshot, [expected_root, expected_child]);
+        assert_eq!(pinned.keys().copied().collect::<Vec<_>>(), [child_pid]);
+        let process = pinned
+            .get(&child_pid)
+            .expect("the direct child receives an exact signal handle");
+        let target = std::fs::read_link(format!("/proc/self/fd/{}", process.as_raw_fd()))
+            .expect("inspect retained signal descriptor");
+        assert_eq!(
+            target.as_os_str().as_bytes(),
+            b"anon_inode:[pidfd]",
+            "completed preparation must not retain a descendant proc directory"
         );
-        for process in pinned.values() {
-            let target = std::fs::read_link(format!("/proc/self/fd/{}", process.as_raw_fd()))
-                .expect("inspect retained signal descriptor");
-            assert_eq!(
-                target.as_os_str().as_bytes(),
-                b"anon_inode:[pidfd]",
-                "completed preparation must not retain a descendant proc directory"
-            );
-        }
+        let fdinfo = std::fs::read_to_string(format!("/proc/self/fdinfo/{}", process.as_raw_fd()))
+            .expect("inspect retained pidfd identity");
+        let retained_pid = fdinfo
+            .lines()
+            .find_map(|line| line.strip_prefix("Pid:\t"))
+            .expect("pidfd info contains one process identity")
+            .parse::<i32>()
+            .expect("pidfd process identity is a signed integer");
+        assert_eq!(pid(retained_pid), child_pid);
+        drop(pinned);
+        fixture.cleanup().expect("reap isolated fixture group");
     }
 
     #[test]
