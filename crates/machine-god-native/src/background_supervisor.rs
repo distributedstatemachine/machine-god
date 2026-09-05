@@ -1142,7 +1142,7 @@ fn spawn_lazy_background_initializer(
         );
         return;
     };
-    let Ok((mut initializer_ownership, supervisor_ownership)) =
+    let Ok((initializer_ownership, supervisor_ownership)) =
         SupervisorWorkerOwnership::reserve_lazy_default(registry)
     else {
         publish_lazy_background_initialization(
@@ -1151,16 +1151,9 @@ fn spawn_lazy_background_initializer(
         );
         return;
     };
-    let (release_sender, release_receiver) = sync_channel(1);
-    let (completion_guard, completed) = registry.completion_guard();
     let worker_shared = Arc::clone(shared);
-    let Ok(handle) = thread::Builder::new()
-        .name("machine-god-bg-initialize".to_owned())
-        .spawn(move || {
-            let _completion_guard = completion_guard;
-            if release_receiver.recv().is_err() {
-                return;
-            }
+    if initializer_ownership
+        .spawn_one(registry, "machine-god-bg-initialize", move || {
             let result = catch_unwind(AssertUnwindSafe(|| initializer(supervisor_ownership)))
                 .unwrap_or_else(|_| {
                     Err(NativeBackgroundSupervisorError::new(
@@ -1170,23 +1163,8 @@ fn spawn_lazy_background_initializer(
                 .map_err(lazy_initialization_error);
             publish_lazy_background_initialization(&worker_shared, result);
         })
-    else {
-        publish_lazy_background_initialization(
-            shared,
-            Err(start_error(BackgroundStartErrorKind::Process)),
-        );
-        return;
-    };
-    if let Err(owned) = registry.register(handle, completed, initializer_ownership.take()) {
-        drop(release_sender);
-        let _ = owned.handle.join();
-        publish_lazy_background_initialization(
-            shared,
-            Err(start_error(BackgroundStartErrorKind::Process)),
-        );
-        return;
-    }
-    if release_sender.try_send(()).is_err() {
+        .is_err()
+    {
         publish_lazy_background_initialization(
             shared,
             Err(start_error(BackgroundStartErrorKind::Process)),
@@ -1236,7 +1214,7 @@ type BlockingJob = Box<dyn FnOnce() + Send + 'static>;
 
 const WORKER_OWNERSHIP_CAPACITY: usize = 256;
 
-struct WorkerOwnershipRegistry {
+pub(crate) struct WorkerOwnershipRegistry {
     state: Arc<WorkerOwnershipState>,
     retained: Arc<AtomicUsize>,
     collector: Option<JoinHandle<()>>,
@@ -1258,7 +1236,7 @@ struct WorkerOwnershipState {
     continue_wait: AtomicBool,
 }
 
-struct WorkerOwnershipReservation {
+pub(crate) struct WorkerOwnershipReservation {
     permits: Vec<WorkerOwnershipPermit>,
     cohort: Arc<AtomicUsize>,
 }
@@ -1326,7 +1304,10 @@ impl WorkerOwnershipRegistry {
         self.reserve_partitioned(&[count])?.pop().ok_or(())
     }
 
-    fn reserve_partitioned(&self, counts: &[usize]) -> Result<Vec<WorkerOwnershipReservation>, ()> {
+    pub(crate) fn reserve_partitioned(
+        &self,
+        counts: &[usize],
+    ) -> Result<Vec<WorkerOwnershipReservation>, ()> {
         let total = counts
             .iter()
             .try_fold(0_usize, |total, count| total.checked_add(*count))
@@ -1417,6 +1398,61 @@ impl Drop for WorkerOwnershipRegistry {
 }
 
 impl WorkerOwnershipReservation {
+    /// Starts one reserved worker only after its handle belongs to the shared
+    /// collector. This consumes exactly one permit from this registry; dropping
+    /// an unused reservation releases capacity without spawning a worker.
+    pub(crate) fn spawn_one(
+        self,
+        registry: &WorkerOwnershipRegistry,
+        name: &'static str,
+        operation: impl FnOnce() + Send + 'static,
+    ) -> Result<(), ()> {
+        self.spawn_one_with(registry, name, operation, |handle, completed, permit| {
+            registry.register(handle, completed, permit)
+        })
+    }
+
+    fn spawn_one_with(
+        mut self,
+        registry: &WorkerOwnershipRegistry,
+        name: &'static str,
+        operation: impl FnOnce() + Send + 'static,
+        register: impl FnOnce(
+            JoinHandle<()>,
+            Arc<AtomicBool>,
+            WorkerOwnershipPermit,
+        ) -> Result<(), OwnedWorkerHandle>,
+    ) -> Result<(), ()> {
+        if self.permits.len() != 1 || !Arc::ptr_eq(&self.permits[0].retained, &registry.retained) {
+            return Err(());
+        }
+        let (release_sender, release_receiver) = sync_channel(1);
+        let (completion_guard, completed) = registry.completion_guard();
+        let handle = thread::Builder::new()
+            .name(name.to_owned())
+            .spawn(move || {
+                let _completion_guard = completion_guard;
+                if release_receiver.recv().is_ok() {
+                    operation();
+                }
+            })
+            .map_err(|_| ())?;
+        if let Err(owned) = register(handle, completed, self.take()) {
+            // Never drop/detach a failed-registration handle. Disconnecting the
+            // gate prevents task execution and lets the unstarted worker exit.
+            drop(release_sender);
+            if let Err(payload) = owned.handle.join() {
+                // A captured destructor may panic even when the task never ran.
+                // Suppressing an opaque payload must not invoke another Drop.
+                std::mem::forget(payload);
+            }
+            return Err(());
+        }
+        // Registration transferred the permit to the collector, which releases
+        // it only after join, including thread-local destructor completion.
+        release_sender.try_send(()).map_err(|_| ())
+    }
+
     fn take(&mut self) -> WorkerOwnershipPermit {
         self.permits
             .pop()
@@ -1479,7 +1515,7 @@ impl Drop for WorkerCompletionGuard {
     }
 }
 
-fn worker_ownership_registry() -> Result<&'static WorkerOwnershipRegistry, ()> {
+pub(crate) fn worker_ownership_registry() -> Result<&'static WorkerOwnershipRegistry, ()> {
     static REGISTRY: OnceLock<Option<WorkerOwnershipRegistry>> = OnceLock::new();
     REGISTRY
         .get_or_init(|| WorkerOwnershipRegistry::new().ok())
@@ -1531,7 +1567,11 @@ fn worker_collector_loop(state: &WorkerOwnershipState) {
             .expect("completion notification identifies one retained worker");
         let worker = handles.swap_remove(completed);
         drop(handles);
-        let _ = worker.handle.join();
+        if let Err(payload) = worker.handle.join() {
+            // A worker's opaque panic payload can itself panic on destruction.
+            // The shared collector must remain available for all other owners.
+            std::mem::forget(payload);
+        }
     }
 }
 
@@ -4307,6 +4347,206 @@ mod tests {
                 .reserve(WORKER_OWNERSHIP_CAPACITY + 1)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn reserved_one_worker_waits_for_registration_and_releases_capacity_after_collection() {
+        let registry = WorkerOwnershipRegistry::new().expect("worker registry");
+        let mut partitions = registry
+            .reserve_partitioned(&[1, WORKER_OWNERSHIP_CAPACITY - 1])
+            .expect("complete capacity reservation");
+        let held = partitions.pop().unwrap();
+        let worker = partitions.pop().unwrap();
+        let cohort = Arc::clone(&worker.cohort);
+        assert!(registry.reserve(1).is_err());
+        let ran = Arc::new(AtomicBool::new(false));
+        let worker_ran = Arc::clone(&ran);
+        let (started, started_receiver) = mpsc::sync_channel(1);
+        let (release, release_receiver) = mpsc::sync_channel(1);
+        worker
+            .spawn_one_with(
+                &registry,
+                "test-reserved-one",
+                move || {
+                    worker_ran.store(true, Ordering::Release);
+                    started.send(()).unwrap();
+                    release_receiver
+                        .recv_timeout(Duration::from_secs(2))
+                        .unwrap();
+                },
+                |handle, completed, permit| {
+                    assert!(!ran.load(Ordering::Acquire));
+                    assert!(!completed.load(Ordering::Acquire));
+                    registry.register(handle, completed, permit)?;
+                    assert!(
+                        !ran.load(Ordering::Acquire),
+                        "registration alone must not release the gate"
+                    );
+                    assert_eq!(
+                        registry.retained.load(Ordering::Acquire),
+                        WORKER_OWNERSHIP_CAPACITY
+                    );
+                    Ok(())
+                },
+            )
+            .unwrap();
+        started_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        assert!(registry.reserve(1).is_err());
+        release.send(()).unwrap();
+        wait_for_zero(&cohort, "single worker was not joined");
+        drop(held);
+        wait_for_zero(
+            &registry.retained,
+            "collected worker retained global capacity",
+        );
+        assert_eq!(registry.retained.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn reserved_one_worker_payload_panic_does_not_stop_shared_collection() {
+        struct Payload(Arc<AtomicBool>);
+        impl Drop for Payload {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+                panic!("opaque payload destructor must not stop collector");
+            }
+        }
+        let registry = WorkerOwnershipRegistry::new().unwrap();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let payload = Payload(Arc::clone(&dropped));
+        let first = registry.reserve(1).unwrap();
+        let first_cohort = Arc::clone(&first.cohort);
+        first
+            .spawn_one(&registry, "test-panic-payload", move || {
+                std::panic::panic_any(payload)
+            })
+            .unwrap();
+        wait_for_zero(&first_cohort, "panicking worker was not collected");
+        assert!(!dropped.load(Ordering::Acquire));
+        let next = registry.reserve(1).unwrap();
+        let next_cohort = Arc::clone(&next.cohort);
+        next.spawn_one(&registry, "test-after-panic", || {})
+            .unwrap();
+        wait_for_zero(
+            &next_cohort,
+            "collector did not survive worker panic payload",
+        );
+        wait_for_zero(&registry.retained, "collector retained worker permits");
+    }
+
+    #[test]
+    fn reserved_one_worker_registration_failure_disconnects_gate_and_joins() {
+        struct Capture(Arc<AtomicBool>);
+        impl Drop for Capture {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        let registry = WorkerOwnershipRegistry::new().expect("worker registry");
+        let worker = registry.reserve(1).unwrap();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let ran = Arc::new(AtomicBool::new(false));
+        let capture = Capture(Arc::clone(&dropped));
+        let worker_ran = Arc::clone(&ran);
+        let result = worker.spawn_one_with(
+            &registry,
+            "test-rejected-one",
+            move || {
+                worker_ran.store(true, Ordering::Release);
+                drop(capture);
+            },
+            |handle, completed, permit| {
+                registry.state.shutdown.store(true, Ordering::Release);
+                registry.register(handle, completed, permit)
+            },
+        );
+        assert!(result.is_err());
+        assert!(!ran.load(Ordering::Acquire));
+        assert!(
+            dropped.load(Ordering::Acquire),
+            "failed spawn must join captured cleanup"
+        );
+        assert_eq!(registry.retained.load(Ordering::Acquire), 0);
+        assert!(registry.state.handles.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn reserved_one_worker_rejects_foreign_and_non_single_reservations_without_spawning() {
+        let registry = WorkerOwnershipRegistry::new().unwrap();
+        let foreign = WorkerOwnershipRegistry::new().unwrap();
+        let ran = Arc::new(AtomicBool::new(false));
+        for (source, count) in [(&foreign, 1), (&registry, 0), (&registry, 2)] {
+            let worker = source.reserve(count).unwrap();
+            let worker_ran = Arc::clone(&ran);
+            assert!(
+                worker
+                    .spawn_one_with(
+                        &registry,
+                        "test-invalid-one",
+                        move || {
+                            worker_ran.store(true, Ordering::Release);
+                        },
+                        |_, _, _| panic!(
+                            "invalid reservation must fail before spawning or registration"
+                        )
+                    )
+                    .is_err()
+            );
+            assert!(!ran.load(Ordering::Acquire));
+            assert_eq!(registry.retained.load(Ordering::Acquire), 0);
+            assert_eq!(foreign.retained.load(Ordering::Acquire), 0);
+            assert!(registry.state.handles.lock().unwrap().is_empty());
+            assert!(foreign.state.handles.lock().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn reserved_one_worker_permit_outlives_completion_until_thread_local_cleanup_joins() {
+        struct ExitBlocker {
+            entered: mpsc::SyncSender<()>,
+            release: mpsc::Receiver<()>,
+        }
+        impl Drop for ExitBlocker {
+            fn drop(&mut self) {
+                self.entered.send(()).unwrap();
+                self.release.recv_timeout(Duration::from_secs(2)).unwrap();
+            }
+        }
+        thread_local! {
+            static EXIT_BLOCKER: std::cell::RefCell<Option<ExitBlocker>> = const {
+                std::cell::RefCell::new(None)
+            };
+        }
+        let registry = WorkerOwnershipRegistry::new().unwrap();
+        let worker = registry.reserve(1).unwrap();
+        let cohort = Arc::clone(&worker.cohort);
+        let (entered, entered_receiver) = mpsc::sync_channel(1);
+        let (release, release_receiver) = mpsc::sync_channel(1);
+        worker
+            .spawn_one(&registry, "test-join-one", move || {
+                EXIT_BLOCKER.with(|slot| {
+                    *slot.borrow_mut() = Some(ExitBlocker {
+                        entered,
+                        release: release_receiver,
+                    });
+                });
+            })
+            .unwrap();
+        entered_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        assert_eq!(registry.retained.load(Ordering::Acquire), 1);
+        assert_eq!(cohort.load(Ordering::Acquire), 1);
+        assert!(registry.reserve(WORKER_OWNERSHIP_CAPACITY).is_err());
+        release.send(()).unwrap();
+        wait_for_zero(
+            &cohort,
+            "collector released completion without joining TLS cleanup",
+        );
+        wait_for_zero(&registry.retained, "joined worker retained global capacity");
+        assert_eq!(registry.retained.load(Ordering::Acquire), 0);
     }
 
     #[test]

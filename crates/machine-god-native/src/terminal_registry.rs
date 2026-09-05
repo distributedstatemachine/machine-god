@@ -3,7 +3,8 @@
 //! disk catalog is separate, so releasing inactive residency never deletes history.
 
 use crate::terminal_catalog::canonical_workspace;
-use crate::terminal_journal::TerminalJournalPage;
+use crate::terminal_history::TerminalHistoryEviction;
+use crate::terminal_journal::{TerminalJournalPage, TerminalJournalPhysicalUsage};
 use crate::terminal_session::{
     TerminalRecoveredSession, TerminalSession, TerminalSessionBackend, TerminalSessionError,
     TerminalSessionStep,
@@ -283,6 +284,42 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         Ok(match &mut self.entries[index].resident {
             Resident::Live(session) => session.events(owner, query)?,
             Resident::Recovered(session) => session.events(owner, query)?,
+        })
+    }
+
+    pub(crate) fn physical_usage(
+        &self,
+        owner: &BackgroundOutputOwner,
+        id: &TerminalSessionId,
+    ) -> Result<TerminalJournalPhysicalUsage> {
+        Ok(match &self.entries[self.index(owner, id)?].resident {
+            Resident::Live(session) => session.physical_usage(owner)?,
+            Resident::Recovered(session) => session.physical_usage(owner)?,
+        })
+    }
+    pub(crate) fn eviction_bytes(
+        &self,
+        owner: &BackgroundOutputOwner,
+        id: &TerminalSessionId,
+        kind: TerminalHistoryEviction,
+    ) -> Result<usize> {
+        Ok(match &self.entries[self.index(owner, id)?].resident {
+            Resident::Live(session) => session.eviction_bytes(owner, kind)?,
+            Resident::Recovered(session) => session.eviction_bytes(owner, kind)?,
+        })
+    }
+    /// Only the profile coordinator selects a victim and holds the profile
+    /// transaction. Session dispatch additionally enforces exact owner/lifecycle.
+    pub(crate) fn evict(
+        &mut self,
+        owner: &BackgroundOutputOwner,
+        id: &TerminalSessionId,
+        kind: TerminalHistoryEviction,
+    ) -> Result<usize> {
+        let index = self.index(owner, id)?;
+        Ok(match &mut self.entries[index].resident {
+            Resident::Live(session) => session.evict(owner, kind)?,
+            Resident::Recovered(session) => session.evict(owner, kind)?,
         })
     }
 
@@ -585,6 +622,138 @@ mod tests {
         use std::future::Future;
         std::pin::Pin::new(future)
             .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+    }
+
+    #[test]
+    fn retention_dispatch_checks_owner_lifecycle_and_preserves_facts_across_recovery() {
+        use TerminalHistoryEviction::{CompletedCheckpoint, CompletedOutput, LiveCoveredOutput};
+        let fixture = Fixture::new();
+        let mut registry = registry();
+        let other_owner = owner("other");
+        let owner = owner("one");
+        let id = id("retention");
+        registry
+            .start(owner.clone(), id.clone(), || fixture.live(&owner, &id, 0))
+            .unwrap();
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"retain facts".to_vec());
+        registry.pump(1, 1).unwrap()[0].result.as_ref().unwrap();
+        let before = registry.physical_usage(&owner, &id).unwrap();
+        for kind in [CompletedOutput, CompletedCheckpoint] {
+            assert!(matches!(
+                registry.eviction_bytes(&owner, &id, kind),
+                Err(TerminalRegistryError::Session(
+                    TerminalSessionError::InvalidState
+                ))
+            ));
+            assert!(matches!(
+                registry.evict(&owner, &id, kind),
+                Err(TerminalRegistryError::Session(
+                    TerminalSessionError::InvalidState
+                ))
+            ));
+        }
+        assert!(matches!(
+            registry.physical_usage(&other_owner, &id),
+            Err(TerminalRegistryError::NotFound)
+        ));
+        assert!(matches!(
+            registry.evict(&other_owner, &id, LiveCoveredOutput),
+            Err(TerminalRegistryError::NotFound)
+        ));
+        assert_eq!(registry.physical_usage(&owner, &id).unwrap(), before);
+        registry
+            .live_mut(&owner, &id)
+            .unwrap()
+            .close(&owner, TerminalClosePolicy::Force, 2)
+            .unwrap();
+        let facts = serde_json::to_value(registry.inspect(&owner, &id).unwrap()).unwrap();
+        assert_eq!(
+            registry
+                .eviction_bytes(&owner, &id, CompletedOutput)
+                .unwrap(),
+            b"retain facts".len()
+        );
+        assert_eq!(
+            registry.evict(&owner, &id, CompletedOutput).unwrap(),
+            b"retain facts".len()
+        );
+        assert_eq!(registry.physical_usage(&owner, &id).unwrap().raw_bytes, 0);
+        assert!(matches!(
+            registry.evict(&owner, &id, LiveCoveredOutput),
+            Err(TerminalRegistryError::Session(
+                TerminalSessionError::InvalidState
+            ))
+        ));
+        registry.release(&owner, &id).unwrap();
+        registry
+            .recover(owner.clone(), id.clone(), || {
+                fixture.recovered(&owner, &id, 2)
+            })
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(registry.inspect(&owner, &id).unwrap()).unwrap(),
+            facts
+        );
+        assert!(registry.evict(&owner, &id, CompletedCheckpoint).unwrap() > 0);
+        let retained = registry.physical_usage(&owner, &id).unwrap();
+        assert_eq!(retained.checkpoint_bytes, 0);
+        assert_eq!(
+            serde_json::to_value(registry.inspect(&owner, &id).unwrap()).unwrap(),
+            facts
+        );
+        registry.release(&owner, &id).unwrap();
+        registry
+            .recover(owner.clone(), id.clone(), || {
+                fixture.recovered(&owner, &id, 2)
+            })
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(registry.inspect(&owner, &id).unwrap()).unwrap(),
+            facts
+        );
+        assert!(matches!(
+            registry.screen(&owner, &id),
+            Err(TerminalRegistryError::Session(
+                TerminalSessionError::History(_)
+            ))
+        ));
+    }
+
+    #[test]
+    fn failed_publication_is_not_completed_retention_authority() {
+        let fixture = Fixture::new();
+        let mut registry = registry();
+        let owner = owner("one");
+        let id = id("failed-retention");
+        registry
+            .start(owner.clone(), id.clone(), || fixture.live(&owner, &id, 0))
+            .unwrap();
+        let _temporary = rustix::fs::openat(
+            fixture.fd(),
+            "tj-meta.tmp",
+            OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::from_bits_retain(0o600),
+        )
+        .unwrap();
+        assert!(
+            registry
+                .live_mut(&owner, &id)
+                .unwrap()
+                .close(&owner, TerminalClosePolicy::Force, 1)
+                .is_err()
+        );
+        assert!(matches!(
+            registry.evict(&owner, &id, TerminalHistoryEviction::CompletedOutput),
+            Err(TerminalRegistryError::Session(
+                TerminalSessionError::History(_)
+            ))
+        ));
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
     }
 
     #[test]

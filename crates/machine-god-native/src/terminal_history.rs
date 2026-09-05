@@ -12,7 +12,8 @@ use machine_god_core::{
 
 use crate::terminal_journal::{
     TerminalJournal, TerminalJournalCheckpoint, TerminalJournalCheckpointStatus,
-    TerminalJournalError, TerminalJournalPage,
+    TerminalJournalError, TerminalJournalEviction, TerminalJournalPage,
+    TerminalJournalPhysicalUsage,
 };
 use crate::terminal_screen::{
     MAX_TERMINAL_SCREEN_FEED_BYTES, TerminalScreenEngine, TerminalScreenError, TerminalScreenMode,
@@ -50,6 +51,13 @@ impl From<TerminalScreenError> for TerminalHistoryError {
     }
 }
 type Result<T> = std::result::Result<T, TerminalHistoryError>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TerminalHistoryEviction {
+    CompletedOutput,
+    CompletedCheckpoint,
+    LiveCoveredOutput,
+}
 
 /// Raw commitment is independent of projection availability. An unavailable
 /// screen must not turn a successful raw append into an ambiguous retry.
@@ -183,6 +191,58 @@ impl TerminalHistory {
 
     pub(crate) fn session_id(&self) -> &TerminalSessionId {
         self.journal.session_id()
+    }
+
+    pub(crate) fn physical_usage(&self) -> Result<TerminalJournalPhysicalUsage> {
+        Ok(self.journal.physical_usage()?)
+    }
+
+    /// Session/registry owners establish lifecycle and profile transaction
+    /// authority. The history layer alone can validate usable screen coverage.
+    fn retention_request(
+        &self,
+        kind: TerminalHistoryEviction,
+    ) -> Result<Option<TerminalJournalEviction>> {
+        match kind {
+            TerminalHistoryEviction::CompletedOutput => {
+                Ok(Some(TerminalJournalEviction::CompletedOutput))
+            }
+            TerminalHistoryEviction::CompletedCheckpoint => {
+                Ok(Some(TerminalJournalEviction::CompletedCheckpoint))
+            }
+            TerminalHistoryEviction::LiveCoveredOutput => {
+                let Some((identity, checkpoint)) = self.journal.load_checkpoint_with_identity()?
+                else {
+                    return Ok(None);
+                };
+                match decode_checkpoint(&checkpoint.bytes) {
+                    Ok(_) => Ok(Some(TerminalJournalEviction::LiveCoveredOutput {
+                        checkpoint: identity,
+                    })),
+                    Err(Unavailable::RawGap | Unavailable::ResizeUncheckpointed) => Ok(None),
+                    Err(reason) => Err(TerminalScreenError::Unavailable(reason).into()),
+                }
+            }
+        }
+    }
+
+    pub(crate) fn eviction_bytes(&self, kind: TerminalHistoryEviction) -> Result<usize> {
+        let Some(request) = self.retention_request(kind)? else {
+            return Ok(0);
+        };
+        Ok(self.journal.eviction_bytes(&request)?)
+    }
+
+    pub(crate) fn evict(&mut self, kind: TerminalHistoryEviction) -> Result<usize> {
+        let Some(request) = self.retention_request(kind)? else {
+            return Ok(0);
+        };
+        let result = self.journal.evict(&request);
+        let bytes = self.mutation(result)?;
+        if kind == TerminalHistoryEviction::CompletedCheckpoint && bytes != 0 {
+            self.invalidate(Unavailable::RetentionEvicted);
+        }
+        Ok(bytes)
     }
 
     /// Facts are independently durable from evictable screen checkpoints.
@@ -481,6 +541,116 @@ mod tests {
                 TerminalScreenError::Unavailable(reason)
             ))
         );
+    }
+
+    #[test]
+    fn profile_retention_preserves_covered_replay_and_protected_records() {
+        let fixture = Fixture::new(TerminalJournalLimits {
+            segment_bytes: 1024,
+            session_bytes: 64 * 1024,
+        });
+        let mut history = fixture.history();
+        history.append(&vec![b'a'; 2048]).unwrap();
+        history.checkpoint().unwrap();
+        let covered = history.latest();
+        history.append(b"z").unwrap();
+        history.publish_state(b"protected state").unwrap();
+        history.journal.append_event(b"protected event").unwrap();
+        let latest = history.latest();
+        let screen = history.screen().unwrap();
+        let before = history.physical_usage().unwrap();
+        assert_eq!(before.raw_bytes, 2049);
+        assert_eq!(
+            history
+                .eviction_bytes(TerminalHistoryEviction::LiveCoveredOutput)
+                .unwrap(),
+            2048
+        );
+        assert_eq!(
+            history
+                .evict(TerminalHistoryEviction::LiveCoveredOutput)
+                .unwrap(),
+            2048
+        );
+        assert_eq!(history.latest(), latest);
+        assert_eq!(history.screen().unwrap(), screen);
+        let after = history.physical_usage().unwrap();
+        assert_eq!(after.raw_bytes, 1);
+        assert_eq!(after.state_bytes, before.state_bytes);
+        assert_eq!(after.event_bytes, before.event_bytes);
+        let page = history.read(&covered, 64).unwrap();
+        assert!(page.gap.is_none());
+        assert_eq!(page.bytes, b"z");
+        drop(history);
+        let mut recovered = TerminalHistory::recover(fixture.open()).unwrap();
+        assert_eq!(recovered.screen().unwrap(), screen);
+        assert!(
+            recovered
+                .evict(TerminalHistoryEviction::CompletedCheckpoint)
+                .unwrap()
+                > 0
+        );
+        unavailable(&recovered, Unavailable::RetentionEvicted);
+        assert_eq!(
+            recovered.load_state().unwrap().unwrap().bytes,
+            b"protected state"
+        );
+        let after = recovered.physical_usage().unwrap();
+        assert_eq!(after.checkpoint_bytes, 0);
+        assert_eq!(after.state_bytes, before.state_bytes);
+        assert_eq!(after.event_bytes, before.event_bytes);
+        drop(recovered);
+        unavailable(
+            &TerminalHistory::recover(fixture.open()).unwrap(),
+            Unavailable::RetentionEvicted,
+        );
+    }
+
+    #[test]
+    fn profile_live_retention_never_uses_gap_resize_or_malformed_checkpoints() {
+        for marker in [RAW_GAP, RESIZE_PENDING, 255] {
+            let fixture = Fixture::new(TerminalJournalLimits {
+                segment_bytes: 1024,
+                session_bytes: 64 * 1024,
+            });
+            let mut history = fixture.history();
+            history.append(&vec![b'a'; 2048]).unwrap();
+            history.checkpoint().unwrap();
+            history.append(b"z").unwrap();
+            let mut bytes = MAGIC.to_vec();
+            bytes.push(marker);
+            history
+                .journal
+                .publish_checkpoint(history.latest(), &bytes)
+                .unwrap();
+            let before = history.physical_usage().unwrap();
+            if marker == 255 {
+                assert!(
+                    history
+                        .eviction_bytes(TerminalHistoryEviction::LiveCoveredOutput)
+                        .is_err()
+                );
+                assert!(
+                    history
+                        .evict(TerminalHistoryEviction::LiveCoveredOutput)
+                        .is_err()
+                );
+            } else {
+                assert_eq!(
+                    history
+                        .eviction_bytes(TerminalHistoryEviction::LiveCoveredOutput)
+                        .unwrap(),
+                    0
+                );
+                assert_eq!(
+                    history
+                        .evict(TerminalHistoryEviction::LiveCoveredOutput)
+                        .unwrap(),
+                    0
+                );
+            }
+            assert_eq!(history.physical_usage().unwrap(), before);
+        }
     }
 
     #[test]

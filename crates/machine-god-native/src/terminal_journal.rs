@@ -111,6 +111,32 @@ pub(crate) struct TerminalJournalCheckpoint {
 }
 redacted!(TerminalJournalCheckpoint);
 
+/// A validated opaque checkpoint's exact journal and publication identity.
+/// The history layer must validate screen usability before presenting this
+/// identity for live retention; a journal cannot interpret opaque screen bytes.
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct TerminalJournalCheckpointIdentity {
+    directory: [u8; 32],
+    session: TerminalSessionId,
+    generation: u64,
+    source: TerminalCursor,
+}
+redacted!(TerminalJournalCheckpointIdentity);
+
+#[derive(Clone)]
+pub(crate) enum TerminalJournalEviction {
+    /// The coordinator has established that this session is completed.
+    CompletedOutput,
+    /// The coordinator has established that this session is completed.
+    CompletedCheckpoint,
+    /// The caller decoded this exact checkpoint as a usable screen. Only full
+    /// covered prefix segments are eligible, and the newest segment is retained.
+    LiveCoveredOutput {
+        checkpoint: TerminalJournalCheckpointIdentity,
+    },
+}
+redacted!(TerminalJournalEviction);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TerminalJournalCheckpointStatus {
     Missing,
@@ -145,6 +171,23 @@ pub(crate) struct TerminalJournalUsage {
     pub(crate) payload_bytes: usize,
     /// Encoded metadata bytes, separate from the profile payload budget.
     pub(crate) metadata_bytes: usize,
+}
+
+/// Actual file lengths, including uncommitted suffixes and orphan generations.
+/// These are accounting observations, not assertions of payload integrity.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[allow(
+    clippy::struct_field_names,
+    reason = "accounting fields retain explicit byte units"
+)]
+pub(crate) struct TerminalJournalPhysicalUsage {
+    pub(crate) raw_bytes: u64,
+    pub(crate) checkpoint_bytes: u64,
+    pub(crate) state_bytes: u64,
+    pub(crate) event_bytes: u64,
+    pub(crate) metadata_bytes: u64,
+    pub(crate) output_bytes: u64,
+    pub(crate) total_bytes: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -325,6 +368,189 @@ impl TerminalJournal {
         usage(&self.manifest, self.metadata_bytes)
     }
 
+    /// Inspect actual artifacts without cleanup or publication. Poisoned
+    /// journals remain measurable while their retained writer lock is valid.
+    /// Unexplained entries fail accounting instead of silently undercounting.
+    pub(crate) fn physical_usage(&self) -> Result<TerminalJournalPhysicalUsage> {
+        self.validate_lock()?;
+        let duplicate = rustix::fs::openat(
+            &self.root,
+            ".",
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::empty(),
+        )
+        .map_err(io_error)?;
+        let mut directory = Dir::new(duplicate).map_err(io_error)?;
+        let mut usage = TerminalJournalPhysicalUsage::default();
+        let mut count = 0;
+        let mut saw_metadata = false;
+        let mut saw_lock = false;
+        let mut expected = owned_names(&self.manifest);
+        for entry in &mut directory {
+            let entry = entry.map_err(io_error)?;
+            let name = entry.file_name().to_bytes();
+            if name == b"." || name == b".." {
+                continue;
+            }
+            count += 1;
+            ensure(
+                count <= MAX_DIRECTORY_ENTRIES,
+                TerminalJournalError::ResourceLimit,
+            )?;
+            let name = std::str::from_utf8(name).map_err(|_| TerminalJournalError::Corrupt)?;
+            expected.remove(name);
+            let size = checked_artifact_size(&self.root, name)?;
+            let (total, maximum) = match name {
+                META => {
+                    saw_metadata = true;
+                    (&mut usage.metadata_bytes, MAX_META)
+                }
+                TEMP => (&mut usage.metadata_bytes, MAX_META),
+                LOCK => {
+                    saw_lock = true;
+                    ensure(size == 0, TerminalJournalError::Corrupt)?;
+                    continue;
+                }
+                _ => {
+                    ensure(
+                        recognized_blob_name(name.as_bytes()),
+                        TerminalJournalError::Corrupt,
+                    )?;
+                    let (_, generation) =
+                        name.rsplit_once('-').ok_or(TerminalJournalError::Corrupt)?;
+                    ensure(
+                        generation.parse::<u64>().is_ok_and(|id| id > 0),
+                        TerminalJournalError::Corrupt,
+                    )?;
+                    if name.starts_with("tj-raw-") {
+                        (&mut usage.raw_bytes, self.manifest.limits.segment_bytes)
+                    } else if name.starts_with("tj-checkpoint-") {
+                        (&mut usage.checkpoint_bytes, MAX_CHECKPOINT_BYTES)
+                    } else if name.starts_with("tj-state-") {
+                        (&mut usage.state_bytes, MAX_STATE_BYTES)
+                    } else {
+                        (&mut usage.event_bytes, MAX_EVENT_BYTES)
+                    }
+                }
+            };
+            ensure(size <= maximum, TerminalJournalError::ResourceLimit)?;
+            *total = total
+                .checked_add(size as u64)
+                .ok_or(TerminalJournalError::ResourceLimit)?;
+        }
+        ensure(
+            saw_metadata && saw_lock && expected.is_empty(),
+            TerminalJournalError::Corrupt,
+        )?;
+        self.validate_lock()?;
+        usage.output_bytes = usage
+            .raw_bytes
+            .checked_add(usage.checkpoint_bytes)
+            .ok_or(TerminalJournalError::ResourceLimit)?;
+        usage.total_bytes = [
+            usage.output_bytes,
+            usage.state_bytes,
+            usage.event_bytes,
+            usage.metadata_bytes,
+        ]
+        .into_iter()
+        .try_fold(0_u64, u64::checked_add)
+        .ok_or(TerminalJournalError::ResourceLimit)?;
+        Ok(usage)
+    }
+
+    pub(crate) fn eviction_bytes(&self, eviction: &TerminalJournalEviction) -> Result<usize> {
+        self.ready()?;
+        Ok(self.eviction_plan(eviction)?.1)
+    }
+
+    /// Publish explicit retention before unlinking payload. A failed commit
+    /// poisons the writer and must be reconciled; bytes are not credited early.
+    pub(crate) fn evict(&mut self, eviction: &TerminalJournalEviction) -> Result<usize> {
+        self.ready()?;
+        let (next, bytes) = self.eviction_plan(eviction)?;
+        if bytes == 0 {
+            return Ok(0);
+        }
+        ensure(
+            self.manifest.generation < u64::MAX,
+            TerminalJournalError::ResourceLimit,
+        )?;
+        validate_manifest(&next)?;
+        self.poisoned = true;
+        self.commit(next)?;
+        Ok(bytes)
+    }
+
+    fn eviction_plan(&self, eviction: &TerminalJournalEviction) -> Result<(Manifest, usize)> {
+        let mut next = self.manifest.clone();
+        let bytes = match eviction {
+            TerminalJournalEviction::CompletedOutput => {
+                let bytes = next.segments.iter().map(|blob| blob.bytes).sum();
+                next.segments.clear();
+                bytes
+            }
+            TerminalJournalEviction::CompletedCheckpoint => {
+                next.checkpoint.take().map_or(0, |checkpoint| {
+                    next.checkpoint_evicted = true;
+                    checkpoint.blob.bytes
+                })
+            }
+            TerminalJournalEviction::LiveCoveredOutput {
+                checkpoint: identity,
+            } => {
+                let checkpoint = self
+                    .manifest
+                    .checkpoint
+                    .as_ref()
+                    .ok_or(TerminalJournalError::Invalid)?;
+                ensure(
+                    self.checkpoint_identity(checkpoint)? == *identity,
+                    TerminalJournalError::Invalid,
+                )?;
+                let file = open_file(
+                    &self.root,
+                    &checkpoint_name(checkpoint.blob.id),
+                    OFlags::RDONLY,
+                )
+                .map_err(missing_is_corrupt)?;
+                ensure(
+                    file_size(&file)? == checkpoint.blob.bytes,
+                    TerminalJournalError::Corrupt,
+                )?;
+                verify_prefix(&file, &checkpoint.blob)?;
+                let count = next
+                    .segments
+                    .iter()
+                    .take(next.segments.len().saturating_sub(1))
+                    .take_while(|blob| {
+                        blob.bytes == next.limits.segment_bytes
+                            && cursor(blob.id, blob.bytes as u64) <= checkpoint.source
+                    })
+                    .count();
+                next.segments.drain(..count).map(|blob| blob.bytes).sum()
+            }
+        };
+        Ok((next, bytes))
+    }
+
+    fn checkpoint_identity(
+        &self,
+        checkpoint: &Checkpoint,
+    ) -> Result<TerminalJournalCheckpointIdentity> {
+        let stat = rustix::fs::fstat(&self.root).map_err(io_error)?;
+        let mut digest = Sha256::new();
+        digest.update(b"machine-god:terminal-checkpoint-directory:v1:");
+        digest.update(stat.st_dev.to_le_bytes());
+        digest.update(stat.st_ino.to_le_bytes());
+        Ok(TerminalJournalCheckpointIdentity {
+            directory: digest.finalize().into(),
+            session: self.manifest.session.clone(),
+            generation: checkpoint.blob.id,
+            source: checkpoint.source.clone(),
+        })
+    }
+
     /// At most 64 KiB and 128 segment writes per call. Failure after effects
     /// requires reopen; success means bytes and metadata were synchronized.
     pub(crate) fn append(&mut self, bytes: &[u8]) -> Result<TerminalCursor> {
@@ -403,7 +629,13 @@ impl TerminalJournal {
             TerminalJournalError::Invalid,
         )?;
         let earliest = self.earliest();
-        let gap = if requested < &earliest {
+        // A full segment's end and the next segment's start are the same
+        // byte position. Retention may remove the former while preserving all
+        // bytes after a checkpoint there; this is not a replay discontinuity.
+        let adjacent_end = requested.segment().checked_add(1) == Some(earliest.segment())
+            && requested.offset() == self.manifest.limits.segment_bytes as u64
+            && earliest.offset() == 0;
+        let gap = if requested < &earliest && !adjacent_end {
             Some(
                 TerminalGap::new(requested.clone(), earliest.clone())
                     .map_err(|_| TerminalJournalError::Corrupt)?,
@@ -411,7 +643,7 @@ impl TerminalJournal {
         } else {
             None
         };
-        let mut position = if gap.is_some() {
+        let mut position = if gap.is_some() || adjacent_end {
             earliest.clone()
         } else {
             requested.clone()
@@ -502,6 +734,24 @@ impl TerminalJournal {
                         MAX_CHECKPOINT_BYTES,
                     )?,
                 })
+            })
+            .transpose()
+    }
+
+    /// The caller validates screen decoding before using the accompanying
+    /// identity as a live-retention proof. Replacement invalidates old proofs,
+    /// even when a new checkpoint or unavailable marker has the same cursor.
+    pub(crate) fn load_checkpoint_with_identity(
+        &self,
+    ) -> Result<Option<(TerminalJournalCheckpointIdentity, TerminalJournalCheckpoint)>> {
+        self.load_checkpoint()?
+            .map(|loaded| {
+                let checkpoint = self
+                    .manifest
+                    .checkpoint
+                    .as_ref()
+                    .ok_or(TerminalJournalError::Corrupt)?;
+                Ok((self.checkpoint_identity(checkpoint)?, loaded))
             })
             .transpose()
     }
@@ -652,6 +902,10 @@ impl TerminalJournal {
 
     fn ready(&self) -> Result<()> {
         ensure(!self.poisoned, TerminalJournalError::Unavailable)?;
+        self.validate_lock()
+    }
+
+    fn validate_lock(&self) -> Result<()> {
         private(&self.root, true)?;
         private(&self.lock, false)?;
         let visible = open_file(&self.root, LOCK, OFlags::RDONLY)?;
@@ -1041,6 +1295,17 @@ fn open_file(root: impl AsFd, name: &str, flags: OFlags) -> Result<OwnedFd> {
     private(&fd, false)?;
     Ok(fd)
 }
+
+fn checked_artifact_size(root: impl AsFd, name: &str) -> Result<usize> {
+    let file = open_file(root.as_fd(), name, OFlags::RDONLY)?;
+    let held = rustix::fs::fstat(&file).map_err(io_error)?;
+    let visible = rustix::fs::statat(root, name, AtFlags::SYMLINK_NOFOLLOW).map_err(io_error)?;
+    ensure(
+        held.st_dev == visible.st_dev && held.st_ino == visible.st_ino,
+        TerminalJournalError::Corrupt,
+    )?;
+    usize::try_from(held.st_size).map_err(|_| TerminalJournalError::Corrupt)
+}
 fn create_file(root: impl AsFd, name: &str) -> Result<OwnedFd> {
     let fd = rustix::fs::openat(
         root,
@@ -1238,6 +1503,330 @@ mod tests {
             position = page.next;
         }
         panic!("page traversal did not terminate");
+    }
+
+    #[test]
+    fn physical_usage_counts_failed_suffixes_and_orphans_without_mutation() {
+        let fixture = Fixture::new();
+        let limits = limits(8, 64);
+        let mut journal = fixture.create(limits);
+        journal.append(b"old").unwrap();
+        journal
+            .publish_checkpoint(journal.latest(), b"grid")
+            .unwrap();
+        journal.publish_state(journal.latest(), b"facts").unwrap();
+        journal.append_event(b"event").unwrap();
+        let metadata = std::fs::read(fixture.path.join(META)).unwrap();
+        fixture.put(TEMP, b"interrupted");
+        assert!(journal.append(b"new").is_err());
+        fixture.put(&raw_name(99), b"raw!");
+        fixture.put(&checkpoint_name(99), b"old-grid");
+        fixture.put(&state_name(99), b"old-facts");
+        fixture.put(&event_name(99), b"old-event");
+        let measured = journal.physical_usage().unwrap();
+        assert_eq!(measured.raw_bytes, 10);
+        assert_eq!(measured.checkpoint_bytes, 12);
+        assert_eq!(measured.state_bytes, 14);
+        assert_eq!(measured.event_bytes, 14);
+        assert_eq!(measured.metadata_bytes, metadata.len() as u64 + 11);
+        assert_eq!(measured.output_bytes, 22);
+        assert_eq!(measured.total_bytes, 50 + measured.metadata_bytes);
+        assert_eq!(journal.physical_usage().unwrap(), measured);
+        assert!(fixture.path.join(state_name(99)).exists());
+        assert_eq!(std::fs::read(fixture.path.join(META)).unwrap(), metadata);
+        assert_eq!(journal.usage().raw_bytes, 3);
+        assert!(journal.poisoned);
+        assert_eq!(
+            TerminalJournal::open_existing(fixture.fd(), &session(), limits).unwrap_err(),
+            TerminalJournalError::Busy
+        );
+        drop(journal);
+        let reopened = fixture.open(limits).unwrap();
+        let measured = reopened.physical_usage().unwrap();
+        assert_eq!(measured.raw_bytes, 3);
+        assert_eq!(measured.checkpoint_bytes, 4);
+        assert_eq!(measured.state_bytes, 5);
+        assert_eq!(measured.event_bytes, 5);
+        assert_eq!(measured.metadata_bytes, metadata.len() as u64);
+        assert_eq!(reopened.recovery().discarded_uncommitted_bytes, 3);
+        assert_eq!(reopened.recovery().removed_orphan_files, 5);
+    }
+
+    #[test]
+    fn physical_usage_rejects_unexplained_unsafe_and_oversized_artifacts() {
+        for case in 0..7 {
+            let fixture = Fixture::new();
+            let journal = fixture.create(limits(8, 64));
+            match case {
+                0 => fixture.put("unexplained", b"data"),
+                1 => symlink(META, fixture.path.join(raw_name(99))).unwrap(),
+                2 => std::fs::hard_link(fixture.path.join(META), fixture.path.join(raw_name(99)))
+                    .unwrap(),
+                3 => fixture.put(&raw_name(99), b"oversized"),
+                4 => {
+                    fixture.put(&state_name(99), b"data");
+                    std::fs::set_permissions(
+                        fixture.path.join(state_name(99)),
+                        std::fs::Permissions::from_mode(0o644),
+                    )
+                    .unwrap();
+                }
+                5 => fixture.put("tj-raw-99999999999999999999", b"data"),
+                6 => {
+                    std::fs::rename(fixture.path.join(LOCK), fixture.path.join("old-lock"))
+                        .unwrap();
+                    fixture.put(LOCK, b"");
+                }
+                _ => unreachable!(),
+            }
+            let before = std::fs::read(fixture.path.join(META)).unwrap();
+            assert!(journal.physical_usage().is_err(), "case {case}");
+            assert_eq!(std::fs::read(fixture.path.join(META)).unwrap(), before);
+            assert!(!journal.poisoned);
+        }
+        let fixture = Fixture::new();
+        let mut journal = fixture.create(limits(8, 64));
+        journal.append(b"raw").unwrap();
+        std::fs::remove_file(fixture.path.join(raw_name(1))).unwrap();
+        assert_eq!(
+            journal.physical_usage().unwrap_err(),
+            TerminalJournalError::Corrupt
+        );
+    }
+
+    #[test]
+    fn physical_usage_bounds_the_complete_artifact_inventory() {
+        let fixture = Fixture::new();
+        let journal = fixture.create(limits(8, 64));
+        for id in 1..=MAX_DIRECTORY_ENTRIES - 2 {
+            fixture.put(&event_name(id as u64), b"");
+        }
+        assert!(journal.physical_usage().is_ok());
+        fixture.put(&event_name(MAX_DIRECTORY_ENTRIES as u64), b"");
+        assert_eq!(
+            journal.physical_usage().unwrap_err(),
+            TerminalJournalError::ResourceLimit
+        );
+    }
+
+    #[test]
+    fn completed_eviction_preserves_state_events_cursor_and_reopens() {
+        let fixture = Fixture::new();
+        let limits = limits(4, 64);
+        let mut journal = fixture.create(limits);
+        journal.append(b"abcdefghij").unwrap();
+        journal
+            .publish_checkpoint(journal.latest(), b"grid")
+            .unwrap();
+        journal.publish_state(journal.latest(), b"facts").unwrap();
+        journal.append_event(b"event").unwrap();
+        let latest = journal.latest();
+        let output = TerminalJournalEviction::CompletedOutput;
+        assert_eq!(journal.eviction_bytes(&output).unwrap(), 10);
+        assert_eq!(journal.evict(&output).unwrap(), 10);
+        let metadata = std::fs::read(fixture.path.join(META)).unwrap();
+        assert_eq!(journal.evict(&output).unwrap(), 0);
+        assert_eq!(std::fs::read(fixture.path.join(META)).unwrap(), metadata);
+        assert_eq!(journal.earliest(), latest);
+        assert_eq!(journal.latest(), latest);
+        let page = journal.read(&cursor(1, 0), 4).unwrap();
+        assert!(page.bytes.is_empty());
+        assert_eq!(page.gap.unwrap().available_from, latest);
+        assert_eq!(journal.load_checkpoint().unwrap().unwrap().bytes, b"grid");
+        let checkpoint = TerminalJournalEviction::CompletedCheckpoint;
+        assert_eq!(journal.eviction_bytes(&checkpoint).unwrap(), 4);
+        assert_eq!(journal.evict(&checkpoint).unwrap(), 4);
+        assert_eq!(journal.evict(&checkpoint).unwrap(), 0);
+        assert_eq!(journal.usage().state_bytes, 5);
+        assert_eq!(journal.usage().event_bytes, 5);
+        drop(journal);
+        let mut reopened = fixture.open(limits).unwrap();
+        assert_eq!(reopened.latest(), latest);
+        assert_eq!(
+            reopened.checkpoint_status(),
+            TerminalJournalCheckpointStatus::RetentionEvicted
+        );
+        assert_eq!(reopened.load_state().unwrap().unwrap().bytes, b"facts");
+        assert_eq!(
+            reopened.read_events(0, 1).unwrap().events[0].payload,
+            b"event"
+        );
+        assert_eq!(reopened.append(b"new").unwrap(), cursor(4, 3));
+        assert_eq!(collect(&reopened, cursor(1, 0)), b"new");
+    }
+
+    #[test]
+    fn live_eviction_requires_exact_validated_checkpoint_and_preserves_newest() {
+        let fixture = Fixture::new();
+        let limits = limits(4, 64);
+        let mut journal = fixture.create(limits);
+        journal.append(b"abcdefghijkl").unwrap();
+        journal.publish_checkpoint(cursor(2, 2), b"grid").unwrap();
+        journal.publish_state(journal.latest(), b"facts").unwrap();
+        journal.append_event(b"event").unwrap();
+        let (identity, _) = journal.load_checkpoint_with_identity().unwrap().unwrap();
+        let eviction = TerminalJournalEviction::LiveCoveredOutput {
+            checkpoint: identity.clone(),
+        };
+        assert_eq!(journal.eviction_bytes(&eviction).unwrap(), 4);
+        assert_eq!(journal.evict(&eviction).unwrap(), 4);
+        assert_eq!(journal.evict(&eviction).unwrap(), 0);
+        assert_eq!(collect(&journal, cursor(1, 0)), b"efghijkl");
+        journal
+            .publish_checkpoint(cursor(2, 2), b"unavailable-marker")
+            .unwrap();
+        let metadata = std::fs::read(fixture.path.join(META)).unwrap();
+        assert_eq!(
+            journal.eviction_bytes(&eviction).unwrap_err(),
+            TerminalJournalError::Invalid
+        );
+        assert_eq!(
+            journal.evict(&eviction).unwrap_err(),
+            TerminalJournalError::Invalid
+        );
+        assert_eq!(std::fs::read(fixture.path.join(META)).unwrap(), metadata);
+        assert!(!journal.poisoned);
+        journal
+            .publish_checkpoint(journal.latest(), b"new-valid-grid")
+            .unwrap();
+        let (identity, _) = journal.load_checkpoint_with_identity().unwrap().unwrap();
+        let eviction = TerminalJournalEviction::LiveCoveredOutput {
+            checkpoint: identity,
+        };
+        assert_eq!(journal.evict(&eviction).unwrap(), 4);
+        assert_eq!(journal.earliest(), cursor(3, 0));
+        assert_eq!(journal.latest(), cursor(3, 4));
+        assert_eq!(journal.usage().raw_bytes, 4);
+        assert_eq!(journal.load_state().unwrap().unwrap().bytes, b"facts");
+        assert_eq!(journal.usage().event_bytes, 5);
+        drop(journal);
+        let mut reopened = fixture.open(limits).unwrap();
+        assert_eq!(reopened.evict(&eviction).unwrap(), 0);
+        assert_eq!(reopened.append(b"m").unwrap(), cursor(4, 1));
+    }
+
+    #[test]
+    fn live_retention_preserves_exact_full_segment_end_replay_boundary() {
+        let fixture = Fixture::new();
+        let limits = limits(4, 64);
+        let mut journal = fixture.create(limits);
+        journal.append(b"abcdefghijkl").unwrap();
+        journal.publish_checkpoint(cursor(2, 4), b"grid").unwrap();
+        let (identity, _) = journal.load_checkpoint_with_identity().unwrap().unwrap();
+        let eviction = TerminalJournalEviction::LiveCoveredOutput {
+            checkpoint: identity,
+        };
+        assert_eq!(journal.evict(&eviction).unwrap(), 8);
+        for reopened in [false, true] {
+            if reopened {
+                drop(journal);
+                journal = fixture.open(limits).unwrap();
+            }
+            let page = journal.read(&cursor(2, 4), 4).unwrap();
+            assert!(page.gap.is_none());
+            assert_eq!(page.bytes, b"ijkl");
+            assert_eq!(page.next, cursor(3, 4));
+            assert!(journal.read(&cursor(2, 3), 4).unwrap().gap.is_some());
+            assert!(journal.read(&cursor(1, 4), 4).unwrap().gap.is_some());
+            assert_eq!(
+                journal.read(&cursor(u64::MAX, 4), 4).unwrap_err(),
+                TerminalJournalError::Invalid
+            );
+        }
+    }
+
+    #[test]
+    fn retention_does_not_guess_short_segment_end_equivalence() {
+        let fixture = Fixture::new();
+        let mut journal = fixture.create(limits(4, 64));
+        journal.append(b"ab").unwrap();
+        journal
+            .evict(&TerminalJournalEviction::CompletedOutput)
+            .unwrap();
+        journal.append(b"cd").unwrap();
+        let page = journal.read(&cursor(1, 2), 4).unwrap();
+        assert!(page.gap.is_some());
+        assert_eq!(page.bytes, b"cd");
+    }
+
+    #[test]
+    fn live_eviction_rejects_other_journal_identity_and_corrupt_checkpoint() {
+        let first = Fixture::new();
+        let second = Fixture::new();
+        let limits = limits(4, 64);
+        let mut one = first.create(limits);
+        let mut two = second.create(limits);
+        for journal in [&mut one, &mut two] {
+            journal.append(b"abcdefgh").unwrap();
+            journal
+                .publish_checkpoint(journal.latest(), b"grid")
+                .unwrap();
+        }
+        let (identity, _) = one.load_checkpoint_with_identity().unwrap().unwrap();
+        let eviction = TerminalJournalEviction::LiveCoveredOutput {
+            checkpoint: identity,
+        };
+        assert_eq!(
+            two.evict(&eviction).unwrap_err(),
+            TerminalJournalError::Invalid
+        );
+        let generation = one.manifest.checkpoint.as_ref().unwrap().blob.id;
+        OpenOptions::new()
+            .write(true)
+            .open(first.path.join(checkpoint_name(generation)))
+            .unwrap()
+            .write_all(b"X")
+            .unwrap();
+        assert_eq!(
+            one.evict(&eviction).unwrap_err(),
+            TerminalJournalError::Corrupt
+        );
+        assert_eq!(one.usage().raw_bytes, 8);
+        assert!(!one.poisoned);
+    }
+
+    #[test]
+    fn eviction_failure_before_publication_and_after_commit_reconciles_without_losing_facts() {
+        for after_commit in [false, true] {
+            let fixture = Fixture::new();
+            let limits = limits(4, 64);
+            let mut journal = fixture.create(limits);
+            journal.append(b"abcdefgh").unwrap();
+            journal.publish_state(journal.latest(), b"facts").unwrap();
+            journal.append_event(b"event").unwrap();
+            let output = TerminalJournalEviction::CompletedOutput;
+            if after_commit {
+                std::fs::hard_link(
+                    fixture.path.join(raw_name(1)),
+                    fixture.path.join("external-link"),
+                )
+                .unwrap();
+            } else {
+                fixture.put(TEMP, b"conflict");
+            }
+            assert!(journal.evict(&output).is_err());
+            assert!(journal.poisoned);
+            assert_eq!(
+                journal.evict(&output).unwrap_err(),
+                TerminalJournalError::Unavailable
+            );
+            if after_commit {
+                std::fs::remove_file(fixture.path.join("external-link")).unwrap();
+            }
+            assert_eq!(journal.physical_usage().unwrap().raw_bytes, 8);
+            assert_eq!(journal.usage().raw_bytes, if after_commit { 0 } else { 8 });
+            drop(journal);
+            let mut reopened = fixture.open(limits).unwrap();
+            assert_eq!(reopened.usage().raw_bytes, if after_commit { 0 } else { 8 });
+            assert_eq!(reopened.load_state().unwrap().unwrap().bytes, b"facts");
+            assert_eq!(reopened.usage().event_bytes, 5);
+            assert_eq!(reopened.latest(), cursor(2, 4));
+            assert_eq!(
+                reopened.evict(&output).unwrap(),
+                if after_commit { 0 } else { 8 }
+            );
+            assert_eq!(reopened.physical_usage().unwrap().raw_bytes, 0);
+        }
     }
 
     #[test]

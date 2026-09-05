@@ -68,6 +68,28 @@ Admission reserves at least one full raw segment inside the session payload
 budget, and impossible state/checkpoint combinations fail before publication.
 State-less journal records retain their existing checksum representation.
 
+The journal exposes a non-mutating physical inventory through its retained
+writer: actual raw/checkpoint, protected state/event, and metadata bytes remain
+separate, including uncommitted suffixes, recognized orphan generations and
+temporary metadata. Poisoned writers may be inspected, but unknown, oversized,
+missing or unsafe artifacts and a replaced lock fail accounting. This inventory
+is not screen validation or a profile-wide quota enforcement claim.
+
+Profile retention uses explicit metadata-first eviction operations rather than
+rewriting session limits. Completed output/checkpoint eviction preserves facts,
+events and the latest cursor. Live eviction only removes full, checkpoint-covered
+prefix segments, preserving the newest segment. The history layer must decode a
+usable screen checkpoint; unavailable markers grant no coverage. A checkpoint
+identity binds its generation, source and journal so replacement invalidates a
+previous selection. Equivalent full-segment end/next-segment start cursors remain
+gap-free when replaying immediately adjacent retained bytes.
+
+Session dispatch binds retention to the exact owner and lifecycle: completed
+eviction requires closed/exited sessions without native ownership or unresolved
+state publication; recovered lost sessions are not assumed completed. The
+profile coordinator remains responsible for transaction ownership and victim
+selection. Eviction errors retain ordinary journal poison/recovery behavior.
+
 The history owner binds the live screen to the journal's committed cursor.
 Raw bytes commit before screen processing can return a protocol reply; a screen
 failure does not turn committed output into a retryable append. Recovery uses
@@ -210,6 +232,17 @@ slots. Cancellation before execution prevents effects; cancellation after
 execution begins does not discard a committed receipt. Dropping a tool future
 does not shut down the registry. Last-host-handle drop requests shutdown without
 joining or running native cleanup on the polling thread.
+
+The native host's reusable reserved-worker spawn path shares the existing
+bounded worker collector. It rejects foreign/non-single reservations before
+spawning and releases a task only after registering the owned thread handle.
+Failed registration disconnects the release gate and joins that handle; normal
+collection retains the capacity permit through join and thread-local cleanup.
+Opaque worker panic payloads are suppressed without destructor execution, so
+one failing worker cannot stop collection for unrelated owners.
+Lazy background initialization uses the same path while preserving its atomic
+whole-cohort reservation. Terminal worker construction can reuse this seam
+without adding a detached-thread or separate-collector lifecycle.
 
 The loop pumps immediately while output is available and polls idle timers at
 10 ms intervals, with at most one command between pump opportunities. Output

@@ -78,6 +78,10 @@ barriers. These remain internal integration components, not a delivery.
 The continuous loop now composes resident pumping with bounded asynchronous
 requests and retained shutdown failures. Profile storage integration must cover
 nonresident histories and concurrent owner namespaces, not just resident totals.
+Reusable owned-worker spawning now shares the production collector. Retention
+integration routes physical inventory and explicit eviction through registry,
+session and validated history boundaries; profile-wide admission and victim
+selection remain to be composed before the terminal runtime is exposed.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:

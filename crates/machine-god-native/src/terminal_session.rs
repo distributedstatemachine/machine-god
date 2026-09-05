@@ -3,11 +3,11 @@
 
 use crate::background_input::BackgroundInputReceipt;
 use crate::background_process::BackgroundProcessSignal;
-use crate::terminal_history::{TerminalHistory, TerminalHistoryError};
+use crate::terminal_history::{TerminalHistory, TerminalHistoryError, TerminalHistoryEviction};
 use crate::terminal_input::{
     TerminalInput, TerminalInputError, TerminalInputReceipt, TerminalWriterId,
 };
-use crate::terminal_journal::TerminalJournalPage;
+use crate::terminal_journal::{TerminalJournalPage, TerminalJournalPhysicalUsage};
 use crate::terminal_monitor::{
     MAX_MONITOR_FEED_BYTES, TerminalMonitorActivation, TerminalMonitorContext,
     TerminalMonitorError, TerminalMonitorMutation, TerminalMonitorSet, TerminalProbeEvidence,
@@ -217,6 +217,63 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
     pub(crate) fn inspect(&self, owner: &BackgroundOutputOwner) -> Result<TerminalSessionFacts> {
         self.authorize(owner)?;
         self.facts()
+    }
+    pub(crate) fn physical_usage(
+        &self,
+        owner: &BackgroundOutputOwner,
+    ) -> Result<TerminalJournalPhysicalUsage> {
+        self.authorize(owner)?;
+        Ok(self.history.physical_usage()?)
+    }
+    fn authorize_retention(
+        &self,
+        owner: &BackgroundOutputOwner,
+        kind: TerminalHistoryEviction,
+    ) -> Result<()> {
+        self.authorize(owner)?;
+        if let Some(error) = self.publication_error {
+            return Err(error);
+        }
+        let eligible = match kind {
+            TerminalHistoryEviction::LiveCoveredOutput => {
+                self.owns_backend()
+                    && matches!(
+                        self.lifecycle,
+                        TerminalLifecycle::Starting | TerminalLifecycle::Running
+                    )
+            }
+            TerminalHistoryEviction::CompletedOutput
+            | TerminalHistoryEviction::CompletedCheckpoint => {
+                !self.owns_backend()
+                    && matches!(
+                        self.lifecycle,
+                        TerminalLifecycle::Closed | TerminalLifecycle::Exited
+                    )
+            }
+        };
+        if eligible {
+            Ok(())
+        } else {
+            Err(TerminalSessionError::InvalidState)
+        }
+    }
+    pub(crate) fn eviction_bytes(
+        &self,
+        owner: &BackgroundOutputOwner,
+        kind: TerminalHistoryEviction,
+    ) -> Result<usize> {
+        self.authorize_retention(owner, kind)?;
+        Ok(self.history.eviction_bytes(kind)?)
+    }
+    pub(crate) fn evict(
+        &mut self,
+        owner: &BackgroundOutputOwner,
+        kind: TerminalHistoryEviction,
+    ) -> Result<usize> {
+        self.authorize_retention(owner, kind)?;
+        self.history
+            .evict(kind)
+            .map_err(|error| self.failed_observation(error.into()))
     }
     pub(crate) fn read(
         &self,
@@ -818,6 +875,46 @@ impl TerminalRecoveredSession {
     pub(crate) fn facts(&self, owner: &BackgroundOutputOwner) -> Result<&TerminalSessionFacts> {
         self.authorize(owner)?;
         Ok(&self.facts)
+    }
+
+    pub(crate) fn physical_usage(
+        &self,
+        owner: &BackgroundOutputOwner,
+    ) -> Result<TerminalJournalPhysicalUsage> {
+        self.authorize(owner)?;
+        Ok(self.history.physical_usage()?)
+    }
+    fn authorize_retention(
+        &self,
+        owner: &BackgroundOutputOwner,
+        kind: TerminalHistoryEviction,
+    ) -> Result<()> {
+        self.authorize(owner)?;
+        if kind == TerminalHistoryEviction::LiveCoveredOutput
+            || !matches!(
+                self.facts.context.lifecycle,
+                TerminalLifecycle::Closed | TerminalLifecycle::Exited
+            )
+        {
+            return Err(TerminalSessionError::InvalidState);
+        }
+        Ok(())
+    }
+    pub(crate) fn eviction_bytes(
+        &self,
+        owner: &BackgroundOutputOwner,
+        kind: TerminalHistoryEviction,
+    ) -> Result<usize> {
+        self.authorize_retention(owner, kind)?;
+        Ok(self.history.eviction_bytes(kind)?)
+    }
+    pub(crate) fn evict(
+        &mut self,
+        owner: &BackgroundOutputOwner,
+        kind: TerminalHistoryEviction,
+    ) -> Result<usize> {
+        self.authorize_retention(owner, kind)?;
+        Ok(self.history.evict(kind)?)
     }
 
     pub(crate) fn read(
