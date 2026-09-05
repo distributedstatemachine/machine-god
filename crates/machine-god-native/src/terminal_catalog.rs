@@ -67,6 +67,22 @@ impl fmt::Debug for TerminalCatalog {
 }
 
 impl TerminalCatalog {
+    pub(crate) fn namespace_key(&self) -> &str {
+        &self.owner_name
+    }
+
+    /// Bind a cooperating profile transaction to this exact retained catalog.
+    /// Comparing an owner key alone is insufficient across separate profiles.
+    pub(crate) fn validate_profile_binding(&self, state_root: impl AsFd) -> Result<()> {
+        self.validate()?;
+        let expected = private(state_root, true)?;
+        let actual = private(&self.state_root, true)?;
+        if expected.st_dev != actual.st_dev || expected.st_ino != actual.st_ino {
+            return Err(TerminalCatalogError::Invalid);
+        }
+        Ok(())
+    }
+
     pub(crate) fn prepare(
         state_root: OwnedFd,
         workspace: String,
@@ -163,7 +179,7 @@ pub(crate) fn canonical_workspace(workspace: &str) -> bool {
                 .all(|part| !matches!(part, "" | "." | "..")))
 }
 
-fn owner_name(workspace: &str, owner: &BackgroundOutputOwner) -> String {
+pub(crate) fn owner_name(workspace: &str, owner: &BackgroundOutputOwner) -> String {
     let mut digest = Sha256::new();
     digest.update(b"machine-god:terminal-catalog:v1\0");
     for part in [
@@ -469,6 +485,35 @@ mod tests {
     }
     fn id(value: &str) -> TerminalSessionId {
         TerminalSessionId::new(value).unwrap()
+    }
+
+    #[test]
+    fn profile_mediated_create_preserves_failed_publication_and_catalog_poison() {
+        use crate::terminal_profile_store::{TerminalProfileStore, TerminalProfileStoreError};
+
+        let fixture = Fixture::new();
+        let store = TerminalProfileStore::prepare(fixture.fd()).unwrap();
+        let transaction = store.transaction().unwrap();
+        let mut catalog = transaction
+            .prepare_catalog("/workspace".into(), owner("session", "incarnation"))
+            .unwrap();
+        FAIL_PARENT_SYNC.with(|failure| failure.set(true));
+        assert_eq!(
+            transaction
+                .create_session(&mut catalog, &id("partial"))
+                .unwrap_err(),
+            TerminalProfileStoreError::Unavailable
+        );
+        assert!(fixture.sessions().join("partial").is_dir());
+        assert_eq!(catalog.list(), Err(TerminalCatalogError::Unavailable));
+        assert_eq!(transaction.inventory().unwrap().sessions.len(), 1);
+        assert_eq!(
+            transaction
+                .create_session(&mut catalog, &id("later"))
+                .unwrap_err(),
+            TerminalProfileStoreError::Unavailable
+        );
+        assert!(!fixture.sessions().join("later").exists());
     }
 
     #[test]

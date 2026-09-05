@@ -9,13 +9,13 @@
 
 use std::fmt;
 
-use machine_god_core::TerminalSessionId;
+use machine_god_core::{BackgroundOutputOwner, TerminalSessionId};
 use rustix::fd::{AsFd, OwnedFd};
 use rustix::fs::{FlockOperation, Mode, OFlags};
 
 use crate::terminal_catalog::{
-    TerminalCatalogError, names, open_directory, prepare_directory, private, same_entry,
-    sync_child, sync_parent,
+    TerminalCatalog, TerminalCatalogError, canonical_workspace, names, open_directory, owner_name,
+    prepare_directory, private, same_entry, sync_child, sync_parent,
 };
 use crate::terminal_journal::{
     TerminalJournal, TerminalJournalError, TerminalJournalPhysicalUsage,
@@ -38,6 +38,7 @@ pub(crate) enum TerminalProfileStoreError {
     Invalid,
     NotFound,
     Busy,
+    Conflict,
     Corrupt,
     ResourceLimit,
     Unavailable,
@@ -50,6 +51,7 @@ impl fmt::Display for TerminalProfileStoreError {
             Self::Invalid => "invalid terminal profile request",
             Self::NotFound => "terminal profile entry unavailable",
             Self::Busy => "terminal profile transaction busy",
+            Self::Conflict => "terminal profile entry already exists",
             Self::Corrupt => "terminal profile corrupt",
             Self::ResourceLimit => "terminal profile resource limit",
             Self::Unavailable => "terminal profile operation unavailable",
@@ -66,7 +68,8 @@ impl From<TerminalCatalogError> for TerminalProfileStoreError {
             TerminalCatalogError::Invalid => Self::Invalid,
             TerminalCatalogError::NotFound => Self::NotFound,
             TerminalCatalogError::Busy => Self::Busy,
-            TerminalCatalogError::Conflict | TerminalCatalogError::Corrupt => Self::Corrupt,
+            TerminalCatalogError::Conflict => Self::Conflict,
+            TerminalCatalogError::Corrupt => Self::Corrupt,
             TerminalCatalogError::ResourceLimit => Self::ResourceLimit,
             TerminalCatalogError::Unavailable => Self::Unavailable,
         }
@@ -187,6 +190,59 @@ impl TerminalProfileTransaction<'_> {
         self.store.validate()?;
         same_entry(&self.store.namespace, LOCK, &self.lock, false)?;
         Ok(())
+    }
+
+    /// Prepare one owner catalog under the already-held profile transaction.
+    /// Existing and partial owner namespaces already consume their count slot.
+    /// The returned catalog retains its independent owner lock after this short
+    /// transaction ends. No journal payload is created by this operation.
+    pub(crate) fn prepare_catalog(
+        &self,
+        workspace: String,
+        owner: BackgroundOutputOwner,
+    ) -> Result<TerminalCatalog> {
+        if !canonical_workspace(&workspace) {
+            return Err(TerminalProfileStoreError::Invalid);
+        }
+        // Owner IDs are validated core types; use the catalog's one canonical
+        // length-framed hash instead of introducing another identity scheme.
+        let key = owner_name(&workspace, &owner);
+        let topology = self.topology()?;
+        if !topology.iter().any(|entry| entry.name == key) && topology.len() == MAX_PROFILE_OWNERS {
+            return Err(TerminalProfileStoreError::ResourceLimit);
+        }
+        self.validate()?;
+        let root = rustix::io::fcntl_dupfd_cloexec(&self.store.state_root, 3).map_err(io_error)?;
+        let result = TerminalCatalog::prepare(root, workspace, owner).map_err(Into::into);
+        // Also revalidate after an error: preparation may have published known
+        // partial directories. Never delete those or disguise catalog errors.
+        self.validate()?;
+        result
+    }
+
+    /// Admit an empty retained-session directory before mkdir. The catalog's
+    /// existing per-owner limit, duplicate errors, fsync and poison rules remain
+    /// authoritative; this adds exact profile binding and the global limit.
+    pub(crate) fn create_session(
+        &self,
+        catalog: &mut TerminalCatalog,
+        id: &TerminalSessionId,
+    ) -> Result<OwnedFd> {
+        self.validate()?;
+        catalog.validate_profile_binding(&self.store.state_root)?;
+        let topology = self.topology()?;
+        let existing = topology
+            .iter()
+            .find(|entry| entry.name == catalog.namespace_key())
+            .is_some_and(|entry| entry.sessions.iter().any(|session| session.id == *id));
+        let count: usize = topology.iter().map(|entry| entry.sessions.len()).sum();
+        if !existing && count == MAX_PROFILE_SESSIONS {
+            return Err(TerminalProfileStoreError::ResourceLimit);
+        }
+        self.validate()?;
+        let result = catalog.create(id).map_err(Into::into);
+        self.validate()?;
+        result
     }
 
     pub(crate) fn inventory(&self) -> Result<TerminalProfileInventory> {
@@ -509,6 +565,242 @@ mod tests {
                 result => return result.unwrap(),
             }
         }
+    }
+
+    fn logical_owner(name: &str) -> BackgroundOutputOwner {
+        BackgroundOutputOwner::new(
+            SessionId::new(name).unwrap(),
+            SessionIncarnationId::new("incarnation").unwrap(),
+        )
+    }
+
+    fn catalog(transaction: &TerminalProfileTransaction<'_>, name: &str) -> TerminalCatalog {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match transaction.prepare_catalog("/workspace".into(), logical_owner(name)) {
+                Err(TerminalProfileStoreError::Busy) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                result => return result.unwrap(),
+            }
+        }
+    }
+
+    #[test]
+    fn catalog_preparation_and_creation_share_transaction_but_retain_owner_lifetime() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let transaction = begin(&store);
+        let mut prepared = catalog(&transaction, "owner");
+        assert_eq!(
+            prepared.namespace_key(),
+            owner_name("/workspace", &logical_owner("owner"))
+        );
+        let session = transaction
+            .create_session(&mut prepared, &id("session"))
+            .unwrap();
+        assert_eq!(names(&session, 1).unwrap(), Vec::<String>::new());
+        assert_eq!(prepared.list().unwrap(), [id("session")]);
+        assert_eq!(
+            transaction.inventory().unwrap().usage,
+            TerminalJournalPhysicalUsage::default()
+        );
+        assert_eq!(
+            store.transaction().unwrap_err(),
+            TerminalProfileStoreError::Busy
+        );
+        drop(transaction);
+        let next = begin(&store);
+        assert_eq!(
+            next.prepare_catalog("/workspace".into(), logical_owner("owner"))
+                .unwrap_err(),
+            TerminalProfileStoreError::Busy
+        );
+        drop(prepared);
+        let reopened = catalog(&next, "owner");
+        assert_eq!(reopened.list().unwrap(), [id("session")]);
+    }
+
+    #[test]
+    fn invalid_workspace_rejects_before_catalog_filesystem_effects() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let transaction = begin(&store);
+        for workspace in ["relative", "/a/..", "/a//b", "/a/", "/a\0b"] {
+            assert_eq!(
+                transaction
+                    .prepare_catalog(workspace.into(), logical_owner("owner"))
+                    .unwrap_err(),
+                TerminalProfileStoreError::Invalid
+            );
+        }
+        assert_eq!(sorted_names(&store.namespace, 1).unwrap(), [LOCK]);
+        assert_eq!(transaction.inventory().unwrap().owner_count, 0);
+    }
+
+    #[test]
+    fn existing_partial_owner_at_cap_is_prepared_without_another_slot() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let key = owner_name("/workspace", &logical_owner("existing"));
+        let owner_root = fixture.namespace().join(&key);
+        directory(&owner_root);
+        fixture.session(&owner_root, "retained");
+        let inode = fs::metadata(&owner_root).unwrap().ino();
+        for number in 0..MAX_PROFILE_OWNERS - 1 {
+            fixture.owner(number);
+        }
+        let transaction = begin(&store);
+        let prepared = catalog(&transaction, "existing");
+        assert_eq!(prepared.namespace_key(), key);
+        assert_eq!(prepared.list().unwrap(), [id("retained")]);
+        assert_eq!(fs::metadata(&owner_root).unwrap().ino(), inode);
+        assert_eq!(
+            transaction.inventory().unwrap().owner_count,
+            MAX_PROFILE_OWNERS
+        );
+        let new_key = owner_name("/workspace", &logical_owner("new"));
+        assert_eq!(
+            transaction
+                .prepare_catalog("/workspace".into(), logical_owner("new"))
+                .unwrap_err(),
+            TerminalProfileStoreError::ResourceLimit
+        );
+        assert!(!fixture.namespace().join(new_key).exists());
+        drop(prepared);
+        assert_eq!(
+            catalog(&transaction, "existing").list().unwrap(),
+            [id("retained")]
+        );
+    }
+
+    #[test]
+    fn empty_partial_owner_is_completed_without_discarding_known_entries() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let key = owner_name("/workspace", &logical_owner("empty"));
+        let owner_root = fixture.namespace().join(&key);
+        directory(&owner_root);
+        let transaction = begin(&store);
+        let mut prepared = catalog(&transaction, "empty");
+        assert_eq!(transaction.inventory().unwrap().owner_count, 1);
+        transaction
+            .create_session(&mut prepared, &id("new"))
+            .unwrap();
+        assert_eq!(prepared.list().unwrap(), [id("new")]);
+        assert_eq!(fs::read_dir(owner_root).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn global_session_cap_preflights_mkdir_and_duplicates_keep_conflict() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let transaction = begin(&store);
+        let mut full = catalog(&transaction, "full");
+        let full_root = fixture.namespace().join(full.namespace_key());
+        for number in 0..MAX_OWNER_SESSIONS {
+            fixture.session(&full_root, &format!("s{number}"));
+        }
+        // The existing catalog enforces its own limit while profile capacity
+        // remains available; the wrapper does not temporarily rewrite it.
+        assert_eq!(
+            transaction
+                .create_session(&mut full, &id("overflow"))
+                .unwrap_err(),
+            TerminalProfileStoreError::ResourceLimit
+        );
+        for number in 0..3 {
+            let owner = fixture.owner(number);
+            for session in 0..MAX_OWNER_SESSIONS {
+                fixture.session(&owner, &format!("s{session}"));
+            }
+        }
+        let mut empty = catalog(&transaction, "empty");
+        assert_eq!(
+            transaction.inventory().unwrap().sessions.len(),
+            MAX_PROFILE_SESSIONS
+        );
+        assert_eq!(
+            transaction
+                .create_session(&mut empty, &id("overflow"))
+                .unwrap_err(),
+            TerminalProfileStoreError::ResourceLimit
+        );
+        assert!(empty.list().unwrap().is_empty());
+        assert!(
+            !fixture
+                .namespace()
+                .join(empty.namespace_key())
+                .join(SESSIONS)
+                .join("overflow")
+                .exists()
+        );
+        assert_eq!(
+            transaction
+                .create_session(&mut full, &id("s0"))
+                .unwrap_err(),
+            TerminalProfileStoreError::Conflict
+        );
+        assert_eq!(full.list().unwrap().len(), MAX_OWNER_SESSIONS);
+    }
+
+    #[test]
+    fn cross_profile_catalog_with_identical_owner_key_rejects_before_mkdir() {
+        let local = Fixture::new();
+        let foreign = Fixture::new();
+        let local_store = local.store();
+        let foreign_store = foreign.store();
+        let local_transaction = begin(&local_store);
+        let foreign_transaction = begin(&foreign_store);
+        let mut local_catalog = catalog(&local_transaction, "same-owner");
+        let mut foreign_catalog = catalog(&foreign_transaction, "same-owner");
+        assert_eq!(
+            local_catalog.namespace_key(),
+            foreign_catalog.namespace_key()
+        );
+        assert_eq!(
+            local_transaction
+                .create_session(&mut foreign_catalog, &id("wrong-profile"))
+                .unwrap_err(),
+            TerminalProfileStoreError::Invalid
+        );
+        assert!(local_catalog.list().unwrap().is_empty());
+        assert!(foreign_catalog.list().unwrap().is_empty());
+        local_transaction
+            .create_session(&mut local_catalog, &id("local"))
+            .unwrap();
+        assert_eq!(local_catalog.list().unwrap(), [id("local")]);
+        assert!(foreign_catalog.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn replaced_profile_lock_rejects_both_catalog_mutations_before_effects() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let transaction = begin(&store);
+        let mut prepared = catalog(&transaction, "existing");
+        let lock = fixture.namespace().join(LOCK);
+        fs::rename(&lock, fixture.0.join("old-profile-lock")).unwrap();
+        file(&lock, b"");
+        assert_eq!(
+            transaction
+                .prepare_catalog("/workspace".into(), logical_owner("new"))
+                .unwrap_err(),
+            TerminalProfileStoreError::Corrupt
+        );
+        assert_eq!(
+            transaction
+                .create_session(&mut prepared, &id("new"))
+                .unwrap_err(),
+            TerminalProfileStoreError::Corrupt
+        );
+        assert!(prepared.list().unwrap().is_empty());
+        assert!(
+            !fixture
+                .namespace()
+                .join(owner_name("/workspace", &logical_owner("new")))
+                .exists()
+        );
     }
 
     #[test]
