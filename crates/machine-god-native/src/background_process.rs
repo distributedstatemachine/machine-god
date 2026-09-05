@@ -2037,15 +2037,7 @@ fn write_input_bounded(
     // lifecycle authority, even under repeated EINTR or one-byte short writes.
     for _ in 0..32 {
         if accepted == data.len() {
-            return BackgroundInputReceipt::new(
-                accepted,
-                eof,
-                if eof {
-                    BackgroundInputStatus::Closed
-                } else {
-                    BackgroundInputStatus::Written
-                },
-            );
+            return BackgroundInputReceipt::new(accepted, eof, BackgroundInputStatus::Written);
         }
         match writer.write(&data[accepted..]) {
             Ok(0) => break,
@@ -2066,15 +2058,7 @@ fn write_input_bounded(
         }
     }
     if accepted == data.len() {
-        BackgroundInputReceipt::new(
-            accepted,
-            eof,
-            if eof {
-                BackgroundInputStatus::Closed
-            } else {
-                BackgroundInputStatus::Written
-            },
-        )
+        BackgroundInputReceipt::new(accepted, eof, BackgroundInputStatus::Written)
     } else {
         BackgroundInputReceipt::new(accepted, false, BackgroundInputStatus::Backpressure)
     }
@@ -2152,7 +2136,7 @@ mod input_tests {
         let receipt = write_input_bounded(&mut writer, &[0; 32], true);
         assert_eq!(receipt.bytes_written(), 32);
         assert!(receipt.stdin_closed());
-        assert_eq!(receipt.status(), BackgroundInputStatus::Closed);
+        assert_eq!(receipt.status(), BackgroundInputStatus::Written);
     }
 
     #[test]

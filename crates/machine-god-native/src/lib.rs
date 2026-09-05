@@ -33,6 +33,8 @@ mod ask_permission;
 mod ask_user_question;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod background_control;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod background_input;
 mod background_inspection;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) mod background_output;
@@ -413,22 +415,26 @@ pub use skill::{
     SkillToolOpenErrorKind,
 };
 pub use terminal::{
-    MAX_TERMINAL_BACKGROUND_READ_BYTES, MAX_TERMINAL_COMMAND_BYTES, MAX_TERMINAL_CWD_BYTES,
-    MAX_TERMINAL_CWD_COMPONENT_BYTES, MAX_TERMINAL_CWD_COMPONENTS, MAX_TERMINAL_ENVIRONMENT_BYTES,
-    MAX_TERMINAL_ENVIRONMENT_ENTRIES, MAX_TERMINAL_ENVIRONMENT_KEY_BYTES,
-    MAX_TERMINAL_ENVIRONMENT_VALUE_BYTES, MAX_TERMINAL_PRODUCED_OUTPUT_BYTES,
-    MAX_TERMINAL_RETAINED_OUTPUT_BYTES, MAX_TERMINAL_SERIALIZED_ARGUMENT_BYTES,
-    MAX_TERMINAL_SERIALIZED_RESULT_BYTES, TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE,
-    TERMINAL_DEFAULT_MAX_ACTIVE_EXECUTIONS, TERMINAL_DEFAULT_TIMEOUT, TERMINAL_ENVIRONMENT_PROFILE,
-    TERMINAL_MAX_ACTIVE_EXECUTIONS, TERMINAL_MAX_ACTIVE_LISTS, TERMINAL_MAX_ACTIVE_SIGNALS,
-    TERMINAL_MAX_ACTIVE_WAITS, TERMINAL_MAX_TIMEOUT, TERMINAL_MAX_WAIT_CEILING_MS,
+    MAX_TERMINAL_BACKGROUND_READ_BYTES, MAX_TERMINAL_BACKGROUND_WRITE_BYTES,
+    MAX_TERMINAL_COMMAND_BYTES, MAX_TERMINAL_CWD_BYTES, MAX_TERMINAL_CWD_COMPONENT_BYTES,
+    MAX_TERMINAL_CWD_COMPONENTS, MAX_TERMINAL_ENVIRONMENT_BYTES, MAX_TERMINAL_ENVIRONMENT_ENTRIES,
+    MAX_TERMINAL_ENVIRONMENT_KEY_BYTES, MAX_TERMINAL_ENVIRONMENT_VALUE_BYTES,
+    MAX_TERMINAL_PRODUCED_OUTPUT_BYTES, MAX_TERMINAL_RETAINED_OUTPUT_BYTES,
+    MAX_TERMINAL_SERIALIZED_ARGUMENT_BYTES, MAX_TERMINAL_SERIALIZED_RESULT_BYTES,
+    TERMINAL_BACKGROUND_ENVIRONMENT_PROFILE, TERMINAL_DEFAULT_MAX_ACTIVE_EXECUTIONS,
+    TERMINAL_DEFAULT_TIMEOUT, TERMINAL_ENVIRONMENT_PROFILE, TERMINAL_MAX_ACTIVE_EXECUTIONS,
+    TERMINAL_MAX_ACTIVE_LISTS, TERMINAL_MAX_ACTIVE_SIGNALS, TERMINAL_MAX_ACTIVE_WAITS,
+    TERMINAL_MAX_ACTIVE_WRITES, TERMINAL_MAX_TIMEOUT, TERMINAL_MAX_WAIT_CEILING_MS,
     TERMINAL_MAX_WAIT_OBSERVATIONS, TERMINAL_PROGRAM, TERMINAL_TOOL_NAME,
     TerminalBackgroundCatalog, TerminalBackgroundInspector, TerminalBackgroundOutcome,
     TerminalBackgroundOutputReader, TerminalBackgroundReadError, TerminalBackgroundReadErrorKind,
     TerminalBackgroundReadSnapshot, TerminalBackgroundSignal, TerminalBackgroundSignalCompletion,
     TerminalBackgroundSignalError, TerminalBackgroundSignalErrorKind,
     TerminalBackgroundSignalOutcome, TerminalBackgroundSignaler, TerminalBackgroundStarter,
-    TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError, TerminalCapturedOutput,
+    TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError,
+    TerminalBackgroundWriteCompletion, TerminalBackgroundWriteError,
+    TerminalBackgroundWriteErrorKind, TerminalBackgroundWriteOutcome,
+    TerminalBackgroundWriteStatus, TerminalBackgroundWriter, TerminalCapturedOutput,
     TerminalConfigError, TerminalConfigErrorKind, TerminalExecution, TerminalExecutionOutcome,
     TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError,
     TerminalExecutorErrorKind, TerminalLimits, TerminalTool,

@@ -115,6 +115,10 @@ Every successful host contains:
   registry and blocking-worker allocation. It binds delivery to the current
   session incarnation, never treats the displayed PID as authority, and does
   not initialize the supervisor merely to reject an unknown target;
+- one input writer sharing the lazy starter's exact input registry and existing
+  blocking pool. Writes require opt-in piped stdin and the current session
+  incarnation. Unknown writes do not initialize the supervisor. Nonblocking
+  writes preserve accepted-byte receipts, and explicit EOF closes only stdin;
 - one background-history reader over a separate clone of the same retained
   state-root descriptor and frozen canonical workspace identity. It creates no
   namespace or worker during composition, listing, or inspection, never

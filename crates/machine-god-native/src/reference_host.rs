@@ -25,9 +25,10 @@ use crate::{
     PermissionPrompter, PreparedNativeRoots, QuestionPrompter, ReadToolResultTool,
     TerminalBackgroundCatalog, TerminalBackgroundInspector, TerminalBackgroundOutputReader,
     TerminalBackgroundSignaler, TerminalBackgroundStarter, TerminalBackgroundWaitDelay,
-    TerminalBackgroundWaitDelayError, TerminalTool, VisionDeadline, VisionLimits, VisionTool,
-    VisionTransportError, VisionTransportErrorKind, WebFetchTool, WebSearchDeadline,
-    WebSearchLimits, WebSearchTool, WebSearchTransportErrorKind, discover_ai_gateway_credential,
+    TerminalBackgroundWaitDelayError, TerminalBackgroundWriter, TerminalTool, VisionDeadline,
+    VisionLimits, VisionTool, VisionTransportError, VisionTransportErrorKind, WebFetchTool,
+    WebSearchDeadline, WebSearchLimits, WebSearchTool, WebSearchTransportErrorKind,
+    discover_ai_gateway_credential,
 };
 
 /// Stable stage at which native reference-host composition failed.
@@ -761,6 +762,7 @@ fn compose_terminal(
     let environment = background.environment_identity();
     let output_reader: Arc<dyn TerminalBackgroundOutputReader> = background.clone();
     let signaler: Arc<dyn TerminalBackgroundSignaler> = background.clone();
+    let writer: Arc<dyn TerminalBackgroundWriter> = background.clone();
     let background: Arc<dyn TerminalBackgroundStarter> = background;
     let catalog: Arc<dyn TerminalBackgroundCatalog> = inspector.clone();
     let inspector: Arc<dyn TerminalBackgroundInspector> = inspector;
@@ -768,6 +770,7 @@ fn compose_terminal(
         .with_background(canonical_workspace, environment, background)
         .and_then(|terminal| terminal.with_output_reader(output_reader))
         .and_then(|terminal| terminal.with_signaler(signaler))
+        .and_then(|terminal| terminal.with_writer(writer))
         .and_then(|terminal| terminal.with_catalog(catalog))
         .and_then(|terminal| terminal.with_inspector(inspector))
         .and_then(|terminal| terminal.with_wait_delay(wait_delay))

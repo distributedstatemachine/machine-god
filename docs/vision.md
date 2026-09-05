@@ -314,11 +314,14 @@ or provider diagnostics.
 The provider-neutral portable media, request, response, error, limit, and
 injected transport/deadline contracts are available without `vision`,
 `ai-gateway-http`, HTTP, or Tokio, including on WebAssembly. The narrow
-`vision` feature enables only Base64 encoding and Tokio and does not enable an
+`vision` feature enables only Tokio and does not enable an
 HTTP or TLS stack. On a non-WebAssembly native target it exposes the concrete
 `VisionTool`, its injected AI Gateway adapter, and the unsupported-platform
 constructor stub. `ai-gateway-http` includes this feature for reference-host
 composition.
+
+Base64 encoding is a shared native dependency used by terminal input as well
+as vision; it is available without the `vision` feature.
 
 On that feature surface, descriptor-backed execution works on Linux with
 `openat2` support and macOS with `O_NOFOLLOW_ANY`; reference-host composition

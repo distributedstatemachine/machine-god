@@ -34,6 +34,10 @@ use crate::background_control::{
     BackgroundControlError, BackgroundControlErrorKind, BackgroundControlLease,
     BackgroundControlRegistry, BackgroundControlTarget, BackgroundSignal,
 };
+use crate::background_input::{
+    BackgroundInputError, BackgroundInputErrorKind, BackgroundInputLease, BackgroundInputRegistry,
+    BackgroundInputStatus,
+};
 use crate::background_inspection::{NativeBackgroundState, StoredBackgroundRecord};
 use crate::background_output::{BackgroundOutputErrorKind, BackgroundOutputRegistry};
 use crate::background_process::BackgroundProcessHelper;
@@ -53,6 +57,9 @@ use crate::terminal::{
     TerminalBackgroundReadSnapshot, TerminalBackgroundSignal, TerminalBackgroundSignalCompletion,
     TerminalBackgroundSignalError, TerminalBackgroundSignalErrorKind,
     TerminalBackgroundSignalOutcome, TerminalBackgroundSignaler, TerminalBackgroundStarter,
+    TerminalBackgroundWriteCompletion, TerminalBackgroundWriteError,
+    TerminalBackgroundWriteErrorKind, TerminalBackgroundWriteOutcome,
+    TerminalBackgroundWriteStatus, TerminalBackgroundWriter,
 };
 
 /// Default number of concurrently retained background processes.
@@ -194,6 +201,7 @@ pub struct NativeBackgroundSupervisor {
     environment_identity: ProcessEnvironment,
     output: BackgroundOutputRegistry,
     control: BackgroundControlRegistry,
+    input: BackgroundInputRegistry,
 }
 
 impl NativeBackgroundSupervisor {
@@ -352,6 +360,7 @@ impl NativeBackgroundSupervisor {
                 ownership,
                 output: BackgroundOutputRegistry::new(),
                 control: BackgroundControlRegistry::new(),
+                input: BackgroundInputRegistry::new(),
             },
         )
     }
@@ -369,6 +378,7 @@ impl NativeBackgroundSupervisor {
             ownership,
             output,
             control,
+            input,
         } = resources;
         let environment_identity = background_environment_identity(&environment);
         let store = Arc::new(NativeStore {
@@ -391,6 +401,7 @@ impl NativeBackgroundSupervisor {
             adapter,
             output: output.clone(),
             control: control.clone(),
+            input: input.clone(),
         });
         let blocking = BlockingExecutor::with_ownership(limits.max_active(), ownership.blocking)?;
         let retainer = Arc::new(WorkerRetainer::with_ownership(
@@ -411,6 +422,7 @@ impl NativeBackgroundSupervisor {
             environment_identity,
             output,
             control,
+            input,
         })
     }
 
@@ -549,6 +561,30 @@ impl fmt::Debug for NativeBackgroundSupervisor {
     }
 }
 
+impl TerminalBackgroundWriter for NativeBackgroundSupervisor {
+    fn write(
+        &self,
+        owner: machine_god_core::BackgroundOutputOwner,
+        background_id: u64,
+        data: Vec<u8>,
+        eof: bool,
+        completion: TerminalBackgroundWriteCompletion,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundWriteOutcome, TerminalBackgroundWriteError>>
+    {
+        write_background_process(
+            self.input.clone(),
+            Some(self.blocking.handle()),
+            owner,
+            background_id,
+            data,
+            eof,
+            completion,
+            cancellation,
+        )
+    }
+}
+
 impl Drop for NativeBackgroundSupervisor {
     fn drop(&mut self) {
         self.retainer.shutdown();
@@ -572,6 +608,7 @@ pub(crate) struct LazyProductionBackgroundStarter {
     shared: Arc<LazyBackgroundInitialization>,
     output: BackgroundOutputRegistry,
     control: BackgroundControlRegistry,
+    input: BackgroundInputRegistry,
     signal_executor: Arc<OnceLock<BlockingExecutorHandle>>,
 }
 
@@ -624,9 +661,11 @@ impl LazyProductionBackgroundStarter {
         let environment_identity = production_environment_identity();
         let output = BackgroundOutputRegistry::new();
         let control = BackgroundControlRegistry::new();
+        let input = BackgroundInputRegistry::new();
         let signal_executor = Arc::new(OnceLock::new());
         let initializer_output = output.clone();
         let initializer_control = control.clone();
+        let initializer_input = input.clone();
         let initializer_signal_executor = Arc::clone(&signal_executor);
         let initializer: LazyTerminalInitializer = Box::new(move |ownership| {
             let adapter = system_process_adapter()?;
@@ -641,6 +680,7 @@ impl LazyProductionBackgroundStarter {
                     ownership,
                     output: initializer_output,
                     control: initializer_control,
+                    input: initializer_input,
                 },
             )?;
             initializer_signal_executor
@@ -657,6 +697,7 @@ impl LazyProductionBackgroundStarter {
             initializer,
             output,
             control,
+            input,
             signal_executor,
         ))
     }
@@ -666,12 +707,14 @@ impl LazyProductionBackgroundStarter {
         initializer: LazyTerminalInitializer,
         output: BackgroundOutputRegistry,
         control: BackgroundControlRegistry,
+        input: BackgroundInputRegistry,
         signal_executor: Arc<OnceLock<BlockingExecutorHandle>>,
     ) -> Self {
         Self {
             environment_identity,
             output,
             control,
+            input,
             signal_executor,
             shared: Arc::new(LazyBackgroundInitialization {
                 state: Mutex::new(LazyBackgroundInitializationState {
@@ -802,6 +845,97 @@ fn signal_background_process(
             )),
             Err(BlockingTaskFailure::CancelledBeforeSubmission) => Err(
                 TerminalBackgroundSignalError::new(TerminalBackgroundSignalErrorKind::Cancelled),
+            ),
+        }
+    })
+}
+
+impl TerminalBackgroundWriter for LazyProductionBackgroundStarter {
+    fn write(
+        &self,
+        owner: machine_god_core::BackgroundOutputOwner,
+        background_id: u64,
+        data: Vec<u8>,
+        eof: bool,
+        completion: TerminalBackgroundWriteCompletion,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundWriteOutcome, TerminalBackgroundWriteError>>
+    {
+        write_background_process(
+            self.input.clone(),
+            self.signal_executor.get().cloned(),
+            owner,
+            background_id,
+            data,
+            eof,
+            completion,
+            cancellation,
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_background_process(
+    input: BackgroundInputRegistry,
+    blocking: Option<BlockingExecutorHandle>,
+    owner: machine_god_core::BackgroundOutputOwner,
+    background_id: u64,
+    data: Vec<u8>,
+    eof: bool,
+    completion: TerminalBackgroundWriteCompletion,
+    cancellation: CancellationToken,
+) -> BoxFuture<'static, Result<TerminalBackgroundWriteOutcome, TerminalBackgroundWriteError>> {
+    let Some((blocking, id)) = blocking.zip(NonZeroU64::new(background_id)) else {
+        return Box::pin(async move {
+            drop(completion);
+            Err(TerminalBackgroundWriteError::new(
+                TerminalBackgroundWriteErrorKind::NotFound,
+            ))
+        });
+    };
+    let operation_cancellation = CancellationToken::new();
+    let caller_cancellation = cancellation.cancelled();
+    drop(cancellation);
+    let delivery = blocking.run_cancellable(
+        move || {
+            let _completion = completion;
+            catch_unwind(AssertUnwindSafe(|| input.write(id, &owner, &data, eof))).unwrap_or_else(
+                |_| Err(BackgroundInputError::new(BackgroundInputErrorKind::Process)),
+            )
+        },
+        caller_cancellation,
+        operation_cancellation,
+    );
+    Box::pin(async move {
+        match delivery.await {
+            Ok(Ok(receipt)) => TerminalBackgroundWriteOutcome::new(
+                background_id,
+                receipt.bytes_written(),
+                receipt.stdin_closed(),
+                match receipt.status() {
+                    BackgroundInputStatus::Written => TerminalBackgroundWriteStatus::Written,
+                    BackgroundInputStatus::Backpressure => {
+                        TerminalBackgroundWriteStatus::Backpressure
+                    }
+                    BackgroundInputStatus::Closed => TerminalBackgroundWriteStatus::Closed,
+                    BackgroundInputStatus::Failed => TerminalBackgroundWriteStatus::Failed,
+                },
+            ),
+            Ok(Err(error)) => Err(TerminalBackgroundWriteError::new(match error.kind() {
+                BackgroundInputErrorKind::NotFound => TerminalBackgroundWriteErrorKind::NotFound,
+                BackgroundInputErrorKind::Busy => TerminalBackgroundWriteErrorKind::Busy,
+                BackgroundInputErrorKind::Process
+                | BackgroundInputErrorKind::Capacity
+                | BackgroundInputErrorKind::Conflict
+                | BackgroundInputErrorKind::InvalidRequest => {
+                    TerminalBackgroundWriteErrorKind::Unavailable
+                }
+            })),
+            Err(BlockingTaskFailure::Admission) => Err(TerminalBackgroundWriteError::new(
+                TerminalBackgroundWriteErrorKind::Busy,
+            )),
+            Err(BlockingTaskFailure::CancelledBeforeSubmission) => Err(
+                TerminalBackgroundWriteError::new(TerminalBackgroundWriteErrorKind::Cancelled),
             ),
         }
     })
@@ -1138,6 +1272,7 @@ struct SupervisorConstructionResources {
     ownership: SupervisorWorkerOwnership,
     output: BackgroundOutputRegistry,
     control: BackgroundControlRegistry,
+    input: BackgroundInputRegistry,
 }
 
 struct WorkerOwnershipPermit {
@@ -2010,6 +2145,7 @@ struct NativeSpawner {
     adapter: SystemBackgroundProcessAdapter,
     output: BackgroundOutputRegistry,
     control: BackgroundControlRegistry,
+    input: BackgroundInputRegistry,
 }
 
 impl BackgroundProcessSpawner for NativeSpawner {
@@ -2050,6 +2186,7 @@ impl NativeSpawner {
                 self.environment.clone(),
                 directory,
             )
+            .and_then(|request_native| request_native.with_stdin(request.stdin()))
             .map_err(|_| start_error(BackgroundStartErrorKind::Process))?;
             check_cancelled(&cancellation)?;
             let process = self
@@ -2061,7 +2198,7 @@ impl NativeSpawner {
                 &cancellation,
                 PreparedBackgroundProcess::abort_and_reap,
             )?;
-            let (capture, control) = if let Some(owner) = request.output_owner() {
+            let (capture, control, input) = if let Some(owner) = request.output_owner() {
                 let background_id = background_id
                     .filter(|background_id| *background_id != 0)
                     .ok_or_else(|| start_error(BackgroundStartErrorKind::Process))?;
@@ -2074,6 +2211,24 @@ impl NativeSpawner {
                     .control
                     .register(id, owner, Arc::new(controller))
                     .map_err(|error| start_error(control_registration_error_kind(error.kind())))?;
+                let input = if request.stdin() == machine_god_core::ProcessInput::Pipe {
+                    let controller = process
+                        .attach_input_controller()
+                        .map_err(|_| start_error(BackgroundStartErrorKind::Process))?;
+                    Some(
+                        self.input
+                            .register(id, owner, Arc::new(controller))
+                            .map_err(|error| {
+                                start_error(if error.kind() == BackgroundInputErrorKind::Capacity {
+                                    BackgroundStartErrorKind::Capacity
+                                } else {
+                                    BackgroundStartErrorKind::Process
+                                })
+                            })?,
+                    )
+                } else {
+                    None
+                };
                 self.output
                     .register(background_id, owner.clone())
                     .map_err(|error| start_error(output_registration_error_kind(error.kind())))?;
@@ -2084,14 +2239,16 @@ impl NativeSpawner {
                         phase: NativeCapturePhase::Hidden,
                     }),
                     Some(control),
+                    input,
                 )
             } else {
-                (None, None)
+                (None, None, None)
             };
             Ok(Box::new(NativePrepared {
                 process: Some(process),
                 capture,
                 control,
+                input,
             }) as Box<dyn CorePreparedProcess>)
         })
     }
@@ -2224,6 +2381,7 @@ struct NativePrepared {
     process: Option<PreparedBackgroundProcess>,
     capture: Option<NativeCapture>,
     control: Option<BackgroundControlLease>,
+    input: Option<BackgroundInputLease>,
 }
 
 impl CorePreparedProcess for NativePrepared {
@@ -2252,6 +2410,7 @@ impl CorePreparedProcess for NativePrepared {
             process: Some(owned),
             capture: self.capture.take(),
             control: self.control.take(),
+            input: self.input.take(),
         }))
     }
 
@@ -2277,6 +2436,7 @@ struct NativeOwned {
     process: Option<OwnedBackgroundProcess>,
     capture: Option<NativeCapture>,
     control: Option<BackgroundControlLease>,
+    input: Option<BackgroundInputLease>,
 }
 
 fn core_process_outcome(
@@ -2300,14 +2460,21 @@ impl CoreOwnedProcess for NativeOwned {
     }
 
     fn activate_retention(&mut self) -> Result<(), BackgroundStartError> {
-        if self.control.is_none() {
-            return Ok(());
+        if self.control.is_some() {
+            self.process
+                .as_mut()
+                .ok_or_else(|| start_error(BackgroundStartErrorKind::Process))?
+                .activate_signal_controller()
+                .map_err(|_| start_error(BackgroundStartErrorKind::Process))?;
         }
-        self.process
-            .as_mut()
-            .ok_or_else(|| start_error(BackgroundStartErrorKind::Process))?
-            .activate_signal_controller()
-            .map_err(|_| start_error(BackgroundStartErrorKind::Process))
+        if self.input.is_some() {
+            self.process
+                .as_mut()
+                .ok_or_else(|| start_error(BackgroundStartErrorKind::Process))?
+                .activate_input_controller()
+                .map_err(|_| start_error(BackgroundStartErrorKind::Process))?;
+        }
+        Ok(())
     }
 
     fn wait(
@@ -2317,8 +2484,10 @@ impl CoreOwnedProcess for NativeOwned {
         let process = self.process.take();
         let mut capture = self.capture.take();
         let control = self.control.take();
+        let input = self.input.take();
         Box::pin(async move {
             let _control = control;
+            let _input = input;
             let process = process.ok_or_else(|| start_error(BackgroundStartErrorKind::Process))?;
             let result = if let Some(capture) = capture.as_ref() {
                 process.wait_with_stop_and_captured_output(&stop, |bytes| capture.append(bytes))
@@ -2797,16 +2966,16 @@ const fn start_error(kind: BackgroundStartErrorKind) -> BackgroundStartError {
 #[cfg(test)]
 mod tests {
     use super::{
-        BackgroundControlRegistry, BackgroundOutputRegistry, BlockingExecutor, BlockingResult,
-        BlockingTaskFailure, LAZY_BACKGROUND_INITIALIZATION_WAITERS,
-        LazyBackgroundInitializationPhase, LazyProductionBackgroundStarter,
-        NATIVE_BACKGROUND_DEFAULT_MAX_ACTIVE, NativeBackgroundLimits, NativeBackgroundSupervisor,
-        NativeBackgroundSupervisorError, NativeBackgroundSupervisorErrorKind, NativeCapture,
-        NativeCapturePhase, NativeSpawner, NativeStore, PRODUCTION_BACKGROUND_LANGUAGE,
-        PRODUCTION_BACKGROUND_PATH, RetainedJob, SupervisorWorkerOwnership,
-        SystemBackgroundProcessAdapter, SystemClock, WORKER_OWNERSHIP_CAPACITY,
-        WorkerOwnershipRegistry, WorkerRetainer, accept_bounded_environment,
-        background_environment_identity, build_production_environment,
+        BackgroundControlRegistry, BackgroundInputRegistry, BackgroundOutputRegistry,
+        BlockingExecutor, BlockingResult, BlockingTaskFailure,
+        LAZY_BACKGROUND_INITIALIZATION_WAITERS, LazyBackgroundInitializationPhase,
+        LazyProductionBackgroundStarter, NATIVE_BACKGROUND_DEFAULT_MAX_ACTIVE,
+        NativeBackgroundLimits, NativeBackgroundSupervisor, NativeBackgroundSupervisorError,
+        NativeBackgroundSupervisorErrorKind, NativeCapture, NativeCapturePhase, NativeSpawner,
+        NativeStore, PRODUCTION_BACKGROUND_LANGUAGE, PRODUCTION_BACKGROUND_PATH, RetainedJob,
+        SupervisorWorkerOwnership, SystemBackgroundProcessAdapter, SystemClock,
+        WORKER_OWNERSHIP_CAPACITY, WorkerOwnershipRegistry, WorkerRetainer,
+        accept_bounded_environment, background_environment_identity, build_production_environment,
         finish_prepared_after_readiness, map_control_signal_error, open_directory,
         process_error_kind, production_environment, production_environment_identity,
         retain_canonical_directory_with, signal_background_process, worker_ownership_registry,
@@ -2863,6 +3032,8 @@ mod tests {
         TerminalBackgroundOutcome, TerminalBackgroundOutputReader, TerminalBackgroundReadErrorKind,
         TerminalBackgroundSignal, TerminalBackgroundSignalCompletion,
         TerminalBackgroundSignalErrorKind, TerminalBackgroundSignaler, TerminalBackgroundStarter,
+        TerminalBackgroundWriteCompletion, TerminalBackgroundWriteErrorKind,
+        TerminalBackgroundWriteStatus, TerminalBackgroundWriter,
     };
 
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -3348,6 +3519,157 @@ mod tests {
     }
 
     #[test]
+    fn production_supervisor_input_round_trip_and_eof_preserve_exact_bytes() {
+        let fixture = Fixture::new();
+        let supervisor = fixture.supervisor(2);
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("input-session").unwrap(),
+            SessionIncarnationId::new("input-incarnation").unwrap(),
+        );
+        let request = BackgroundStartRequest::new("/bin/cat", &fixture.workspace)
+            .unwrap()
+            .with_output_owner(owner.clone())
+            .with_stdin(machine_god_core::ProcessInput::Pipe)
+            .unwrap();
+        let handle = start_eventually(&supervisor, &request);
+        let data = b"first bytes\0\xff\nUTF-8: \xe2\x98\x83\n".to_vec();
+        let receipt = futures_executor::block_on(TerminalBackgroundWriter::write(
+            &supervisor,
+            owner.clone(),
+            handle.id(),
+            data.clone(),
+            true,
+            TerminalBackgroundWriteCompletion::for_test(),
+            CancellationToken::new(),
+        ))
+        .expect("bounded write and EOF");
+        assert_eq!(receipt.bytes_written(), data.len());
+        assert_eq!(receipt.status(), TerminalBackgroundWriteStatus::Written);
+        assert!(receipt.stdin_closed());
+        let detail = fixture.inspect_after_terminal_publication(&supervisor.retainer, handle.id());
+        assert_eq!(detail.exit_code(), Some(0));
+        let snapshot = futures_executor::block_on(TerminalBackgroundOutputReader::read(
+            &supervisor,
+            owner.clone(),
+            handle.id(),
+            1,
+            0,
+            CancellationToken::new(),
+        ))
+        .expect("retained output");
+        assert_eq!(snapshot.bytes(), data);
+        assert!(snapshot.closed());
+        let error = futures_executor::block_on(TerminalBackgroundWriter::write(
+            &supervisor,
+            owner,
+            handle.id(),
+            vec![],
+            true,
+            TerminalBackgroundWriteCompletion::for_test(),
+            CancellationToken::new(),
+        ))
+        .expect_err("completed process cannot retain input authority");
+        assert_eq!(error.kind(), TerminalBackgroundWriteErrorKind::NotFound);
+    }
+
+    #[test]
+    fn production_supervisor_input_rejects_other_incarnation_and_cancelled_submission() {
+        let fixture = Fixture::new();
+        let supervisor = fixture.supervisor(2);
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("input-owner").unwrap(),
+            SessionIncarnationId::new("input-current").unwrap(),
+        );
+        let request = BackgroundStartRequest::new("/bin/cat", &fixture.workspace)
+            .unwrap()
+            .with_output_owner(owner.clone())
+            .with_stdin(machine_god_core::ProcessInput::Pipe)
+            .unwrap();
+        let handle = start_eventually(&supervisor, &request);
+        let wrong_owner = BackgroundOutputOwner::new(
+            owner.session_id().clone(),
+            SessionIncarnationId::new("input-old").unwrap(),
+        );
+        let error = futures_executor::block_on(TerminalBackgroundWriter::write(
+            &supervisor,
+            wrong_owner,
+            handle.id(),
+            b"wrong".to_vec(),
+            false,
+            TerminalBackgroundWriteCompletion::for_test(),
+            CancellationToken::new(),
+        ))
+        .expect_err("incarnation mismatch");
+        assert_eq!(error.kind(), TerminalBackgroundWriteErrorKind::NotFound);
+        let cancelled = CancellationToken::new();
+        cancelled.cancel();
+        let error = futures_executor::block_on(TerminalBackgroundWriter::write(
+            &supervisor,
+            owner.clone(),
+            handle.id(),
+            b"cancelled".to_vec(),
+            false,
+            TerminalBackgroundWriteCompletion::for_test(),
+            cancelled,
+        ))
+        .expect_err("cancel before submission");
+        assert_eq!(error.kind(), TerminalBackgroundWriteErrorKind::Cancelled);
+        let receipt = futures_executor::block_on(TerminalBackgroundWriter::write(
+            &supervisor,
+            owner.clone(),
+            handle.id(),
+            vec![],
+            true,
+            TerminalBackgroundWriteCompletion::for_test(),
+            CancellationToken::new(),
+        ))
+        .expect("EOF-only closes stdin");
+        assert_eq!(receipt.bytes_written(), 0);
+        assert!(receipt.stdin_closed());
+        let detail = fixture.inspect_after_terminal_publication(&supervisor.retainer, handle.id());
+        assert_eq!(detail.exit_code(), Some(0));
+        let snapshot = futures_executor::block_on(TerminalBackgroundOutputReader::read(
+            &supervisor,
+            owner,
+            handle.id(),
+            1,
+            0,
+            CancellationToken::new(),
+        ))
+        .unwrap();
+        assert!(
+            snapshot.bytes().is_empty(),
+            "rejected writes must have zero effects"
+        );
+    }
+
+    #[test]
+    fn production_supervisor_null_input_cannot_be_written() {
+        let fixture = Fixture::new();
+        let supervisor = fixture.supervisor(2);
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("null-input").unwrap(),
+            SessionIncarnationId::new("null-incarnation").unwrap(),
+        );
+        let request = BackgroundStartRequest::new("/bin/sleep 30", &fixture.workspace)
+            .unwrap()
+            .with_output_owner(owner.clone());
+        let handle = start_eventually(&supervisor, &request);
+        let error = futures_executor::block_on(TerminalBackgroundWriter::write(
+            &supervisor,
+            owner,
+            handle.id(),
+            b"ignored".to_vec(),
+            false,
+            TerminalBackgroundWriteCompletion::for_test(),
+            CancellationToken::new(),
+        ))
+        .expect_err("default null input has no writer");
+        assert_eq!(error.kind(), TerminalBackgroundWriteErrorKind::NotFound);
+        drop(supervisor);
+    }
+
+    #[test]
     fn production_supervisor_signals_only_the_exact_live_owner() {
         let fixture = Fixture::new();
         let supervisor = fixture.supervisor(2);
@@ -3613,6 +3935,7 @@ mod tests {
             }),
             BackgroundOutputRegistry::new(),
             BackgroundControlRegistry::new(),
+            BackgroundInputRegistry::new(),
             Arc::new(OnceLock::new()),
         );
         let request = BackgroundStartRequest::new(":", "/tmp").expect("request");
@@ -3661,6 +3984,7 @@ mod tests {
             }),
             BackgroundOutputRegistry::new(),
             BackgroundControlRegistry::new(),
+            BackgroundInputRegistry::new(),
             Arc::new(OnceLock::new()),
         );
 
@@ -3692,6 +4016,7 @@ mod tests {
             }),
             BackgroundOutputRegistry::new(),
             BackgroundControlRegistry::new(),
+            BackgroundInputRegistry::new(),
             Arc::new(OnceLock::new()),
         );
         let cancellation = CancellationToken::new();
@@ -3719,6 +4044,7 @@ mod tests {
             }),
             BackgroundOutputRegistry::new(),
             BackgroundControlRegistry::new(),
+            BackgroundInputRegistry::new(),
             Arc::new(OnceLock::new()),
         );
         let owner = BackgroundOutputOwner::new(
@@ -3741,6 +4067,42 @@ mod tests {
     }
 
     #[test]
+    fn lazy_terminal_background_write_does_not_initialize_supervisor() {
+        let initializations = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::clone(&initializations);
+        let starter = LazyProductionBackgroundStarter::with_initializer(
+            ProcessEnvironment {
+                profile: "input-test".to_owned(),
+                sha256: "0".repeat(64),
+            },
+            Box::new(move |_| {
+                calls.fetch_add(1, Ordering::AcqRel);
+                unreachable!("unknown input must not initialize supervisor")
+            }),
+            BackgroundOutputRegistry::new(),
+            BackgroundControlRegistry::new(),
+            BackgroundInputRegistry::new(),
+            Arc::new(OnceLock::new()),
+        );
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("lazy-input").unwrap(),
+            SessionIncarnationId::new("lazy-incarnation").unwrap(),
+        );
+        let error = futures_executor::block_on(TerminalBackgroundWriter::write(
+            &starter,
+            owner,
+            1,
+            b"unwritten".to_vec(),
+            false,
+            TerminalBackgroundWriteCompletion::for_test(),
+            CancellationToken::new(),
+        ))
+        .expect_err("no registered writer");
+        assert_eq!(error.kind(), TerminalBackgroundWriteErrorKind::NotFound);
+        assert_eq!(initializations.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
     fn lazy_terminal_background_admits_exactly_sixteen_initialization_waiters() {
         let starter = LazyProductionBackgroundStarter::with_initializer(
             ProcessEnvironment {
@@ -3750,6 +4112,7 @@ mod tests {
             Box::new(|_ownership| unreachable!("the test holds initialization in progress")),
             BackgroundOutputRegistry::new(),
             BackgroundControlRegistry::new(),
+            BackgroundInputRegistry::new(),
             Arc::new(OnceLock::new()),
         );
         {
@@ -4476,6 +4839,7 @@ mod tests {
             ),
             output: BackgroundOutputRegistry::new(),
             control: BackgroundControlRegistry::new(),
+            input: BackgroundInputRegistry::new(),
         };
         let request =
             BackgroundStartRequest::new("must-not-execute", &fixture.workspace).expect("request");
@@ -4740,6 +5104,7 @@ mod tests {
             adapter: test_adapter(),
             output: BackgroundOutputRegistry::new(),
             control: BackgroundControlRegistry::new(),
+            input: BackgroundInputRegistry::new(),
         });
         let supervisor = BackgroundSupervisor::new(
             Arc::new(SystemClock),

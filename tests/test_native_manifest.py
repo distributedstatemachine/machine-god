@@ -512,7 +512,7 @@ class NativeManifestTests(unittest.TestCase):
         )
         self.assertIn(
             "The narrow\n"
-            "`vision` feature enables only Base64 encoding and Tokio and does not enable an\n"
+            "`vision` feature enables only Tokio and does not enable an\n"
             "HTTP or TLS stack",
             vision_document,
         )
@@ -551,7 +551,7 @@ class NativeManifestTests(unittest.TestCase):
             1,
         )
 
-        self.assertEqual(set(features["vision"]), {"dep:base64", "dep:tokio"})
+        self.assertEqual(set(features["vision"]), {"dep:tokio"})
         self.assertEqual(features["ai-gateway-http"].count("vision"), 1)
         self.assertNotIn("dep:base64", features["ai-gateway-http"])
         self.assertEqual(
@@ -561,11 +561,11 @@ class NativeManifestTests(unittest.TestCase):
                 for dependency in dependencies
                 if "base64" in dependency
             ],
-            [("vision", "dep:base64")],
+            [],
         )
         self.assertEqual(
             self.manifest["dependencies"]["base64"],
-            {"workspace": True, "optional": True, "features": ["alloc"]},
+            {"workspace": True, "features": ["alloc"]},
         )
 
         completed = subprocess.run(
@@ -599,10 +599,11 @@ class NativeManifestTests(unittest.TestCase):
             if line
         }
         self.assertTrue(
-            {"base64", "bytes", "reqwest", "tokio"}.isdisjoint(
+            {"bytes", "reqwest", "tokio"}.isdisjoint(
                 direct_dependencies
             )
         )
+        self.assertIn("base64", direct_dependencies)
 
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
         unsupported_job = """  unsupported-native-tools:

@@ -25,9 +25,9 @@ input; it is not a machine-god product language or runtime dependency.
 - Delivered main: `8545ea48623a40d412bce4f707c70a6be991d108`
 - Main CI: `33949137350` (`GREEN`)
 - Main Benchmark evidence: `33949136988` (`GREEN`)
-- Active branch: `main`
-- Active phase: `terminal signal delivered; next product slice is opt-in terminal input`
-- Next gate: `freeze terminal write contracts and begin the bounded input tool slice on agent/m59-terminal-input`
+- Active branch: `agent/m59-terminal-input`
+- Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
+- Next gate: `integrate input contracts and transport, map remaining pinned terminal actions, and complete the interactive terminal backend before the feature gate`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -54,9 +54,44 @@ restart-safe control, ACP, teams, and extension slash commands remain separate
 until explicitly bounded.
 Documentation-tool maintenance remains a separate non-product task.
 
-### Next tool slice: opt-in terminal input
+### Active feature: complete terminal behavior
 
-After signal delivery, implement `terminal write` and explicit piped stdin for
+Deliver complete features, not separately counted action-sized slices. The
+terminal branch stays open across input/write, interactive PTY lifecycle,
+screen/monitor/resize/close, and the composed-host behavior needed to complete
+the pinned terminal action contract. Internal component commits may be tested
+and integrated independently; they are not deliveries or compatibility claims.
+Review and exact local/remote delivery gates apply to the complete feature.
+
+Completion is measured against the pinned upstream terminal schema and native
+session contracts, not the existing numeric background-record subset:
+
+- All twelve actions: `exec`, `start`, `read`, `screen`, `write`, `wait`,
+  `monitor`, `inspect`, `list`, `resize`, `signal`, and `close`.
+- Interactive start without a command, optional command startup, native PTY
+  and tmux backends, user/clean profiles and supported bash/zsh resolution,
+  actual terminal dimensions, and sessions that outlive individual tool calls.
+- Durable segmented raw output with explicit cursor gaps, retained events and
+  acknowledgements, validated screen checkpoints/recovery, and owner-authorized
+  session facts/catalog filters. The pinned defaults are 1 MiB segments,
+  64 MiB per session, 512 MiB per profile, and 256 retained events.
+- Styled structured screens, cursor/modes, Unicode/wide cells, terminal query
+  replies in live execution only, and real PTY resize verified by `stty size`.
+- Text, paste, named keys and control-character input; acquire/use/release/revoke
+  write leases; bounded accepted-byte receipts and input quiescence.
+- Started/exit/quiet/match waits with safety ceilings; all thirteen monitor
+  conditions, operations, schedules, notifications and lifetimes. Repeated
+  network, filesystem and custom-probe effects require explicit authorization.
+- Graceful close (terminate, up to 800 ms, then kill) and force close, monitor
+  shutdown, retained readable history, restart/recovery and backend-failure
+  behavior, without granting control from a persisted numeric PID.
+
+Reference:
+[pinned terminal schema](https://github.com/vercel-labs/fx/blob/b1774fbf6c7602b503026f96f6e960e946c692ef/src/tools/terminal/terminal.zig),
+[native sessions](https://github.com/vercel-labs/fx/blob/b1774fbf6c7602b503026f96f6e960e946c692ef/src/core/terminal/native_session.zig),
+[monitor contracts](https://github.com/vercel-labs/fx/blob/b1774fbf6c7602b503026f96f6e960e946c692ef/src/core/terminal/monitor.zig).
+
+As an internal component, implement `terminal write` and explicit piped stdin for
 background starts; null stdin remains the default. Freeze shared signatures,
 then parallelize core/permission contracts, native input ownership/transport,
 and terminal parsing/receipts in isolated worktrees with one integrator.
@@ -68,7 +103,7 @@ across cancellation. Replace buffered helper protocol reads with exact reads
 before inheriting the pipe, so immediate post-commit input cannot be lost.
 Exercise binary/Unicode round trips, partial writes, EOF, ownership, concurrent
 cleanup, and cancellation. PTY/interactive terminal and live output behavior
-remain required later terminal work; piped input does not complete them.
+remain part of this feature; piped input does not complete it.
 
 ## Architecture ownership
 
