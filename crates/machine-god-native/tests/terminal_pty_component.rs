@@ -21,6 +21,8 @@ mod terminal_input;
 mod terminal_journal;
 #[path = "../src/terminal_monitor.rs"]
 mod terminal_monitor;
+#[path = "../src/terminal_owner.rs"]
+mod terminal_owner;
 #[path = "../src/terminal_pty.rs"]
 mod terminal_pty;
 #[path = "../src/terminal_registry.rs"]

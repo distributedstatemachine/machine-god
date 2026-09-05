@@ -202,10 +202,30 @@ a session explicitly also reconciles its directory barriers; listing remains
 validation-only and does not sync every retained session. No path deletes or
 guesses repairs. Catalog reads never infer process authority.
 
-The sixteen-entry resident bound is not disk-history retention, and neither
-component yet enforces the 512 MiB profile payload budget. The continuous owner
-loop, publication-headroom accounting, trusted startup control, attention and
-lease effects, tmux, and model/CLI routing remain full-runtime integration work.
+The continuous owner-loop component runs on an explicitly owned blocking
+worker; its constructor spawns no thread. Its host handle owns admission,
+while inert-before-poll tool futures submit bounded authorized commands.
+At most 32 submitted requests, including unconsumed results, retain admission
+slots. Cancellation before execution prevents effects; cancellation after
+execution begins does not discard a committed receipt. Dropping a tool future
+does not shut down the registry. Last-host-handle drop requests shutdown without
+joining or running native cleanup on the polling thread.
+
+The loop pumps immediately while output is available and polls idle timers at
+10 ms intervals, with at most one command between pump opportunities. Output
+and probe descriptions go directly to a bounded synchronous host observer,
+not another retained queue. Clock failure or a panicking command/observer stops
+admission and initiates cleanup. Exit reports include every unresolved shutdown
+failure; the blocking host retains registry ownership for recovery disposition.
+External probes remain separately authorized, off-loop effects.
+
+The sixteen-entry resident bound is not disk-history retention. Profile
+accounting still needs a profile-wide coordinator covering nonresident
+histories and concurrent owner namespaces, with raw/checkpoint retention
+accounting separate from bounded state/event metadata and atomic replacement
+headroom. Production worker ownership, disk-catalog composition, trusted
+startup control, attention and lease effects, tmux, and model/CLI routing
+remain full-runtime integration work.
 
 ## Boundary
 

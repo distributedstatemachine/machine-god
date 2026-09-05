@@ -327,6 +327,13 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         }
         Ok(())
     }
+    /// Safe lower bound for owner-loop cleanup after a rejected clock reading.
+    pub(crate) fn minimum_time_ms(&self) -> i64 {
+        self.entries
+            .iter()
+            .map(Entry::now_ms)
+            .fold(self.now_ms, i64::max)
+    }
     /// Release only inactive residency. Its journal remains on disk. Lost
     /// sessions with unfinished native cleanup cannot be evicted as mere history.
     pub(crate) fn release(
@@ -398,11 +405,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
 }
 impl<B: TerminalSessionBackend> Drop for TerminalRegistry<B> {
     fn drop(&mut self) {
-        let now_ms = self
-            .entries
-            .iter()
-            .map(Entry::now_ms)
-            .fold(self.now_ms, i64::max);
+        let now_ms = self.minimum_time_ms();
         let _ = self.shutdown(now_ms, TerminalClosePolicy::Force);
     }
 }
@@ -574,6 +577,244 @@ mod tests {
     }
     fn registry() -> TerminalRegistry<Backend> {
         TerminalRegistry::new("/workspace".into()).unwrap()
+    }
+
+    fn poll_owner<T: Send + 'static>(
+        future: &mut crate::terminal_owner::TerminalOwnerFuture<Backend, T>,
+    ) -> std::task::Poll<std::result::Result<T, crate::terminal_owner::TerminalOwnerError>> {
+        use std::future::Future;
+        std::pin::Pin::new(future)
+            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+    }
+
+    #[test]
+    fn owner_pumps_between_tool_calls_and_closes_native_only_on_host_shutdown() {
+        use crate::terminal_owner::TerminalOwnerLoop;
+        use machine_god_core::CancellationToken;
+        let fixture = Fixture::new();
+        let mut registry = registry();
+        let owner = owner("one");
+        let id = id("continuous");
+        registry
+            .start(owner.clone(), id.clone(), || fixture.live(&owner, &id, 0))
+            .unwrap();
+        let (worker, handle) = TerminalOwnerLoop::new();
+        let (output_sender, output_receiver) = std::sync::mpsc::sync_channel(1);
+        let thread = std::thread::spawn(move || {
+            let start = std::time::Instant::now();
+            let exit = worker.run(
+                &mut registry,
+                || i64::try_from(start.elapsed().as_millis()).unwrap(),
+                |steps| {
+                    for step in steps {
+                        if let Ok(step) = step.result
+                            && !step.output.is_empty()
+                        {
+                            output_sender.try_send(step.output).unwrap();
+                        }
+                    }
+                },
+            );
+            assert!(exit.error.is_none());
+            assert!(exit.shutdown.unwrap().is_empty());
+            registry.inspect(&owner, &id).unwrap()
+        });
+        let mut request = handle.request(CancellationToken::new(), |_, _, _| 17);
+        assert_eq!(futures_executor::block_on(&mut request), Ok(17));
+        drop(request);
+        assert_eq!(fixture.state.lock().unwrap().closes, 0);
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"between calls".to_vec());
+        assert_eq!(
+            output_receiver
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap(),
+            b"between calls"
+        );
+        assert_eq!(fixture.state.lock().unwrap().closes, 0);
+        drop(handle);
+        assert_eq!(
+            thread.join().unwrap().context.lifecycle,
+            TerminalLifecycle::Closed
+        );
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
+    }
+
+    #[test]
+    fn owner_requests_are_inert_cancel_before_effect_and_preserve_committed_results() {
+        use crate::terminal_owner::{TerminalOwnerError, TerminalOwnerLoop};
+        use machine_god_core::CancellationToken;
+        let (worker, handle) = TerminalOwnerLoop::<Backend>::new();
+        let unpolled = handle.request(CancellationToken::new(), |_, _, _| panic!("unpolled"));
+        drop(unpolled);
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let mut cancelled = handle.request(cancellation, |_, _, _| {
+            panic!("cancelled before submission")
+        });
+        assert!(matches!(
+            poll_owner(&mut cancelled),
+            std::task::Poll::Ready(Err(TerminalOwnerError::Cancelled))
+        ));
+        let cancellation = CancellationToken::new();
+        let mut queued =
+            handle.request(cancellation.clone(), |_, _, _| panic!("cancelled in queue"));
+        assert!(poll_owner(&mut queued).is_pending());
+        cancellation.cancel();
+        let mut abandoned = handle.request(CancellationToken::new(), |_, _, _| {
+            panic!("abandoned in queue")
+        });
+        assert!(poll_owner(&mut abandoned).is_pending());
+        drop(abandoned);
+        let thread = std::thread::spawn(move || worker.run(&mut registry(), || 0, |_| {}));
+        assert_eq!(
+            futures_executor::block_on(queued),
+            Err(TerminalOwnerError::Cancelled)
+        );
+        let (started_sender, started_receiver) = std::sync::mpsc::sync_channel(1);
+        let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(1);
+        let cancellation = CancellationToken::new();
+        let mut committed = handle.request(cancellation.clone(), move |_, _, operation| {
+            started_sender.send(()).unwrap();
+            release_receiver
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap();
+            assert!(operation.is_cancelled());
+            42 // committed receipts must not be relabelled as cancellation
+        });
+        assert!(poll_owner(&mut committed).is_pending());
+        started_receiver
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        cancellation.cancel();
+        assert!(poll_owner(&mut committed).is_pending());
+        release_sender.send(()).unwrap();
+        assert_eq!(futures_executor::block_on(committed), Ok(42));
+        handle.shutdown();
+        assert!(thread.join().unwrap().shutdown.unwrap().is_empty());
+    }
+
+    #[test]
+    fn owner_bounds_queued_and_unconsumed_results_and_resolves_closed_requests() {
+        use crate::terminal_owner::{TerminalOwnerError, TerminalOwnerLoop};
+        use machine_god_core::CancellationToken;
+        let (worker, handle) = TerminalOwnerLoop::<Backend>::new();
+        let (sent, received) = std::sync::mpsc::sync_channel(32);
+        let mut requests: Vec<_> = (0..32)
+            .map(|n| {
+                let sent = sent.clone();
+                let mut request = handle.request(CancellationToken::new(), move |_, _, _| {
+                    sent.send(()).unwrap();
+                    n
+                });
+                assert!(poll_owner(&mut request).is_pending());
+                request
+            })
+            .collect();
+        let mut excess = handle.request(CancellationToken::new(), |_, _, _| ());
+        assert_eq!(
+            poll_owner(&mut excess),
+            std::task::Poll::Ready(Err(TerminalOwnerError::Busy))
+        );
+        let thread = std::thread::spawn(move || worker.run(&mut registry(), || 0, |_| {}));
+        for _ in 0..32 {
+            received
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap();
+        }
+        let mut excess = handle.request(CancellationToken::new(), |_, _, _| ());
+        assert_eq!(
+            poll_owner(&mut excess),
+            std::task::Poll::Ready(Err(TerminalOwnerError::Busy))
+        );
+        assert_eq!(futures_executor::block_on(requests.remove(0)), Ok(0));
+        assert_eq!(
+            futures_executor::block_on(handle.request(CancellationToken::new(), |_, _, _| 33)),
+            Ok(33)
+        );
+        handle.shutdown();
+        assert!(thread.join().unwrap().shutdown.unwrap().is_empty());
+        for (n, request) in requests.into_iter().enumerate() {
+            assert_eq!(futures_executor::block_on(request), Ok(n + 1));
+        }
+        let mut closed = handle.request(CancellationToken::new(), |_, _, _| panic!("closed"));
+        assert!(matches!(
+            poll_owner(&mut closed),
+            std::task::Poll::Ready(Err(TerminalOwnerError::Closed))
+        ));
+        let (worker, handle) = TerminalOwnerLoop::<Backend>::new();
+        let mut request = handle.request(CancellationToken::new(), |_, _, _| ());
+        assert!(poll_owner(&mut request).is_pending());
+        drop(worker);
+        assert_eq!(
+            futures_executor::block_on(request),
+            Err(TerminalOwnerError::Closed)
+        );
+    }
+
+    #[test]
+    fn owner_panic_and_clock_failure_stop_admissions_and_cleanup() {
+        use crate::terminal_owner::{TerminalOwnerError, TerminalOwnerLoop};
+        use machine_god_core::CancellationToken;
+        for panic_in_observer in [false, true] {
+            let fixture = Fixture::new();
+            let mut registry = registry();
+            let owner = owner("one");
+            let id = id("panic");
+            registry
+                .start(owner.clone(), id.clone(), || fixture.live(&owner, &id, 0))
+                .unwrap();
+            let (worker, handle) = TerminalOwnerLoop::new();
+            let mut request = handle.request(CancellationToken::new(), |_, _, _| {
+                panic!("operation panic")
+            });
+            assert!(poll_owner(&mut request).is_pending());
+            let mut rejected = handle.request(CancellationToken::new(), |_, _, _| {
+                panic!("must not execute after failure")
+            });
+            assert!(poll_owner(&mut rejected).is_pending());
+            let exit = worker.run(
+                &mut registry,
+                || 0,
+                |_| {
+                    assert!(!panic_in_observer, "observer panic");
+                },
+            );
+            assert_eq!(exit.error, Some(TerminalOwnerError::Panicked));
+            assert!(exit.shutdown.unwrap().is_empty());
+            assert_eq!(fixture.state.lock().unwrap().closes, 1);
+            assert_eq!(
+                futures_executor::block_on(request),
+                Err(if panic_in_observer {
+                    TerminalOwnerError::Closed
+                } else {
+                    TerminalOwnerError::Panicked
+                })
+            );
+            assert_eq!(
+                futures_executor::block_on(rejected),
+                Err(TerminalOwnerError::Closed)
+            );
+        }
+        let (worker, _handle) = TerminalOwnerLoop::<Backend>::new();
+        let mut time = 2;
+        let exit = worker.run(
+            &mut registry(),
+            || {
+                time -= 1;
+                time
+            },
+            |_| {},
+        );
+        assert_eq!(
+            exit.error,
+            Some(TerminalOwnerError::Registry(TerminalRegistryError::Clock))
+        );
+        assert!(exit.shutdown.unwrap().is_empty());
     }
 
     #[test]

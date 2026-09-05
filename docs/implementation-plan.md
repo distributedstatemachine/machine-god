@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `connect resident registry and disk catalog to the continuous owner loop and profile payload accounting, then attention/lease effects, startup control, tmux and authorized tool/CLI actions before the full terminal feature gate`
+- Next gate: `compose the continuous owner loop with production worker ownership, disk catalog and profile payload accounting, then attention/lease effects, startup control, tmux and authorized tool/CLI actions before the full terminal feature gate`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -75,6 +75,9 @@ or a new IPC protocol. Recovered numeric PIDs never grant process authority.
 Registry shutdown tracks final-state publication independently of native
 cleanup, and catalog reopening retries interrupted directory durability
 barriers. These remain internal integration components, not a delivery.
+The continuous loop now composes resident pumping with bounded asynchronous
+requests and retained shutdown failures. Profile storage integration must cover
+nonresident histories and concurrent owner namespaces, not just resident totals.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:
