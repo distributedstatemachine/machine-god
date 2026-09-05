@@ -53,6 +53,12 @@ logs, restart/recovery and the action contract below. ACP, teams and extension
 slash commands retain their later milestone ownership.
 Documentation-tool maintenance remains a separate non-product task.
 
+The terminal integration now explicitly routes terminal-sys changes through
+their package and native/CLI consumers, including Apple-only binding lint,
+and verifies Unicode generation against the pinned upstream source. This is
+an internal CI integration correction, not a new delivery; full-feature
+review and exact remote gates remain pending.
+
 ### Active feature: complete terminal behavior
 
 Deliver complete features, not separately counted action-sized slices. The

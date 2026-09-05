@@ -30,6 +30,8 @@ CI_ROUTE_INPUTS = (
     "TESTKIT_SOURCE",
     "NATIVE_ANY",
     "NATIVE_SOURCE",
+    "TERMINAL_SYS_ANY",
+    "TERMINAL_SYS_SOURCE",
     "CLI_ANY",
     "CLI_SOURCE",
     "TEST_SUPPORT",
@@ -38,6 +40,7 @@ CI_ROUTE_INPUTS = (
     "CI_CLASSIFIER_TEST_INPUTS",
     "NATIVE_MANIFEST_TEST_INPUTS",
     "PROVISION_ZIG_TEST_INPUTS",
+    "TERMINAL_UNICODE_TEST_INPUTS",
     "COMPATIBILITY_INPUTS",
     "DEPENDENCY_INPUTS",
     "DOCUMENTATION_POLICY",
@@ -51,6 +54,7 @@ CI_ROUTE_OUTPUTS = (
     "core",
     "testkit",
     "native",
+    "terminal_sys",
     "cli",
     "format",
     "quality",
@@ -60,6 +64,7 @@ CI_ROUTE_OUTPUTS = (
     "ci_classifier_tests",
     "native_manifest_tests",
     "provision_zig_tests",
+    "terminal_unicode_tests",
     "compatibility",
     "release_smoke",
     "dependency_audit",
@@ -224,6 +229,7 @@ class CiChangeClassificationTests(unittest.TestCase):
             "!crates/machine-god-core/**",
             "!crates/machine-god-native/**",
             "!crates/machine-god-testkit/**",
+            "!crates/machine-god-terminal-sys/**",
             "!test-support/reentrant-waker/**",
         ):
             self.assertIn(f"              - '{admitted}'", classifier)
@@ -236,7 +242,7 @@ class CiChangeClassificationTests(unittest.TestCase):
             self.assertNotIn(
                 f"              - '{unsafe_exclusion}'", classifier
             )
-        self.assertNotIn(
+        self.assertIn(
             "              - '!scripts/generate_terminal_unicode_data.py'",
             classifier,
         )
@@ -384,6 +390,51 @@ class CiChangeClassificationTests(unittest.TestCase):
                 },
             ),
             (
+                "terminal bindings source reaches native and cli",
+                {
+                    "NON_DOCUMENTATION": "true",
+                    "TERMINAL_SYS_ANY": "true",
+                    "TERMINAL_SYS_SOURCE": "true",
+                },
+                {
+                    **false,
+                    "terminal_sys": "true",
+                    "native": "true",
+                    "cli": "true",
+                    "quality": "true",
+                    "release_smoke": "true",
+                    "native_matrix": "true",
+                    "unsupported": "true",
+                },
+            ),
+            (
+                "terminal bindings tests stay in their owner",
+                {
+                    "NON_DOCUMENTATION": "true",
+                    "TERMINAL_SYS_ANY": "true",
+                },
+                {
+                    **false,
+                    "terminal_sys": "true",
+                    "quality": "true",
+                    "native_matrix": "true",
+                },
+            ),
+            (
+                "terminal generator checks regeneration without product tests",
+                {
+                    "NON_DOCUMENTATION": "true",
+                    "TERMINAL_UNICODE_TEST_INPUTS": "true",
+                    "COMPATIBILITY_INPUTS": "true",
+                },
+                {
+                    **false,
+                    "terminal_unicode_tests": "true",
+                    "compatibility": "true",
+                    "quality": "true",
+                },
+            ),
+            (
                 "cli test stays in its owner",
                 {
                     "NON_DOCUMENTATION": "true",
@@ -428,6 +479,7 @@ class CiChangeClassificationTests(unittest.TestCase):
                     "cli": "true",
                     "quality": "true",
                     "full_workspace": "true",
+                    "terminal_sys": "true",
                     "native_manifest_tests": "true",
                     "release_smoke": "true",
                     "dependency_audit": "true",
@@ -727,6 +779,69 @@ class CiChangeClassificationTests(unittest.TestCase):
         assert non_apple_step is not None
         self.assertIn(non_apple_condition, non_apple_step.group("body"))
         self.assertNotIn("--test-threads=1", non_apple_step.group("body"))
+
+    def test_terminal_inputs_have_explicit_filters_and_consumers(self) -> None:
+        classifier = job(self.ci, "change-classification")
+
+        def patterns(name: str) -> str:
+            match = re.search(
+                rf"(?ms)^            {name}:\n(.*?)(?=^            \w+:|^      - name:)",
+                classifier,
+            )
+            self.assertIsNotNone(match, name)
+            return match.group(1)
+
+        sys_path = "crates/machine-god-terminal-sys"
+        self.assertIn(f"'{sys_path}/**'", patterns("terminal_sys_any"))
+        sys_source = patterns("terminal_sys_source")
+        self.assertIn(f"'{sys_path}/**'", sys_source)
+        for directory in ("tests", "examples", "benches"):
+            self.assertIn(f"'!{sys_path}/{directory}/**'", sys_source)
+
+        for path in (
+            "scripts/generate_terminal_unicode_data.py",
+            "tests/test_terminal_unicode_generator.py",
+            "crates/machine-god-native/src/terminal_unicode_data.rs",
+            "benchmarks/upstream.lock",
+        ):
+            self.assertIn(f"'{path}'", patterns("terminal_unicode_test_inputs"))
+            self.assertIn(f"'{path}'", patterns("compatibility_inputs"))
+
+        for crate in ("core", "native", "cli", "testkit", "terminal-sys"):
+            self.assertIn(
+                f"'crates/machine-god-{crate}/Cargo.toml'",
+                patterns("native_manifest_test_inputs"),
+            )
+
+        quality = job(self.ci, "quality")
+        matrix = job(self.ci, "native-target-tests")
+        package_selection = (
+            '[[ "${TERMINAL_SYS}" == "true" ]] && '
+            'packages+=(--package machine-god-terminal-sys)'
+        )
+        self.assertEqual(quality.count(package_selection), 4)
+        self.assertEqual(matrix.count(package_selection), 2)
+        apple_lint_condition = (
+            "endsWith(matrix.target, '-apple-darwin') && "
+            "needs.change-classification.outputs.terminal_sys == 'true'"
+        )
+        self.assertEqual(matrix.count(apple_lint_condition), 2)
+        self.assertIn('rustup component add clippy --toolchain "$RUST_TOOLCHAIN"', matrix)
+        self.assertIn(
+            'clippy --locked -p machine-god-terminal-sys --all-targets '
+            '--all-features --target "${{ matrix.target }}" -- -D warnings',
+            matrix,
+        )
+        self.assertIn("terminal_unicode_tests == 'true'", quality)
+        self.assertIn("tests/test_terminal_unicode_generator.py", quality)
+        pinned = step_script(quality, "Check pinned upstream compatibility inventory")
+        self.assertIn('"scripts/generate_terminal_unicode_data.py"', pinned)
+        self.assertIn('upstream / "src/core/shared/unicode_display_data.zig"', pinned)
+        self.assertIn('"crates/machine-god-native/src/terminal_unicode_data.rs"', pinned)
+        self.assertIn('"--check"', pinned)
+        self.assertNotIn(
+            "terminal_unicode_tests", job(self.ci, "documentation-policy")
+        )
 
     def test_release_smoke_canonicalizes_its_temporary_workspace(self) -> None:
         release_smoke = step_script(self.ci, "Release smoke test")

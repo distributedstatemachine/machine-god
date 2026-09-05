@@ -31,7 +31,14 @@ Rust routing follows source dependency closure. A core source or manifest
 change selects core, testkit, native, and CLI packages. A testkit source or
 manifest change selects testkit and its native test consumer. A native source
 or manifest change selects native and CLI. A CLI change selects CLI. Changes
-confined to a crate's tests, examples, or benchmarks select that crate only.
+to the terminal-sys source or manifest select terminal-sys, native, and CLI;
+its tests, examples, and benchmarks select terminal-sys only. Selected
+terminal-sys checks include warnings-denied Clippy on both Apple runners, where
+the macOS-only implementation and its unsafe-block lint are actually compiled.
+All workspace manifests select the native-manifest agreement tests, which
+verify the isolated binding exception and product lint inheritance.
+Changes confined to a crate's tests, examples, or benchmarks select that crate
+only.
 Root Cargo, lockfile, or toolchain inputs select the actual workspace;
 formatting configuration selects workspace and standalone-fixture formatting
 without package tests. The standalone
@@ -39,12 +46,16 @@ reentrant-waker fixture is formatted, linted, and tested through its own
 manifest while also selecting its core and native consumers.
 
 Python tests are selected by bounded ownership: benchmark, compatibility, CI
-classification, native-manifest agreement, and Zig provisioning each have an
-explicit input set and step. The native-manifest step installs Rust 1.94.1 and
+classification, native-manifest agreement, terminal Unicode generation, and
+Zig provisioning each have an explicit input set and step. The native-manifest
+step installs Rust 1.94.1 and
 fetches the locked dependencies before tests that deliberately use offline
-Cargo commands. The terminal Unicode generator is not treated as generic
-Python maintenance; changing it fails classification until a deterministic
-focused verification input is available.
+Cargo commands. The terminal Unicode generator, its focused test, generated
+Rust table, and pinned upstream lock select deterministic generator tests and
+the pinned-upstream agreement check. That check compares regeneration against
+the checked-in table using the exact verified fx checkout; it does not build
+Zig. Generator-only changes do not select Rust package tests, while generated
+Rust table changes also select native and CLI through ordinary source routing.
 Compatibility, release-smoke, dependency-audit, native-matrix, and
 unsupported-platform concerns remain independent. Dependency policy alone does
 not run product tests, while shipped core/native/CLI source selects release
