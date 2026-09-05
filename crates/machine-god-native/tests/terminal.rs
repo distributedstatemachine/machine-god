@@ -9,15 +9,21 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
 use std::time::{Duration, Instant};
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use machine_god_core::{
     BackgroundOutputOwner, BackgroundStartError, BackgroundStartErrorKind, BackgroundStartRequest,
-    BoxFuture, CancellationToken, Capability, MAX_BACKGROUND_CWD_BYTES, ProcessEnvironment, Tool,
-    ToolError, ToolErrorKind, ToolOutput,
+    BoxFuture, CancellationToken, Capability, MAX_BACKGROUND_CWD_BYTES, ProcessEnvironment,
+    ProcessInput, Tool, ToolError, ToolErrorKind, ToolOutput,
 };
 use machine_god_native::{
     MAX_TERMINAL_BACKGROUND_READ_BYTES, MAX_TERMINAL_COMMAND_BYTES,
     MAX_TERMINAL_CWD_COMPONENT_BYTES, MAX_TERMINAL_CWD_COMPONENTS,
     MAX_TERMINAL_PRODUCED_OUTPUT_BYTES,
+};
+use machine_god_native::{
+    MAX_TERMINAL_BACKGROUND_WRITE_BYTES, TerminalBackgroundWriteCompletion,
+    TerminalBackgroundWriteError, TerminalBackgroundWriteErrorKind, TerminalBackgroundWriteOutcome,
+    TerminalBackgroundWriteStatus, TerminalBackgroundWriter,
 };
 use machine_god_native::{
     NativeBackgroundDetail, NativeBackgroundInspectionError, NativeBackgroundInspectionErrorKind,
@@ -34,6 +40,7 @@ use machine_god_native::{
 };
 use machine_god_reentrant_waker_test::{Callback, new as reentrant_waker};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 mod terminal_test_support;
 
@@ -174,6 +181,7 @@ struct BackgroundState {
     calls: AtomicUsize,
     requests: Mutex<Vec<(String, String, String)>>,
     owners: Mutex<Vec<Option<(String, String)>>>,
+    inputs: Mutex<Vec<ProcessInput>>,
 }
 
 #[derive(Clone)]
@@ -213,6 +221,7 @@ impl TerminalBackgroundStarter for FakeBackgroundStarter {
         let state = Arc::clone(&self.state);
         Box::pin(async move {
             state.calls.fetch_add(1, Ordering::SeqCst);
+            state.inputs.lock().unwrap().push(request.stdin());
             state.requests.lock().unwrap().push((
                 request.command().to_owned(),
                 request.cwd().to_owned(),
@@ -393,6 +402,83 @@ struct FakeBackgroundSignaler {
     mode: BackgroundSignalMode,
     requests: Arc<Mutex<Vec<BackgroundSignalRequest>>>,
     committed: Arc<Mutex<Vec<TerminalBackgroundSignalCompletion>>>,
+}
+
+#[derive(Clone, Copy)]
+enum WriteMode {
+    Success { cancel: bool },
+    Receipt(TerminalBackgroundWriteOutcome),
+    Error(TerminalBackgroundWriteErrorKind),
+    Pending,
+}
+
+type WriteRequest = (String, String, u64, Vec<u8>, bool);
+
+#[derive(Clone)]
+struct FakeBackgroundWriter {
+    mode: WriteMode,
+    requests: Arc<Mutex<Vec<WriteRequest>>>,
+    committed: Arc<Mutex<Vec<TerminalBackgroundWriteCompletion>>>,
+}
+
+impl FakeBackgroundWriter {
+    fn new(mode: WriteMode) -> Self {
+        Self {
+            mode,
+            requests: Arc::new(Mutex::new(Vec::new())),
+            committed: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
+impl TerminalBackgroundWriter for FakeBackgroundWriter {
+    fn write(
+        &self,
+        owner: BackgroundOutputOwner,
+        background_id: u64,
+        data: Vec<u8>,
+        eof: bool,
+        completion: TerminalBackgroundWriteCompletion,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundWriteOutcome, TerminalBackgroundWriteError>>
+    {
+        let this = self.clone();
+        Box::pin(async move {
+            this.requests.lock().unwrap().push((
+                owner.session_id().to_string(),
+                owner.session_incarnation_id().to_string(),
+                background_id,
+                data.clone(),
+                eof,
+            ));
+            match this.mode {
+                WriteMode::Success { cancel } => {
+                    let _completion = completion;
+                    if cancel {
+                        let _ = cancellation.cancel();
+                    }
+                    TerminalBackgroundWriteOutcome::new(
+                        background_id,
+                        data.len(),
+                        eof,
+                        TerminalBackgroundWriteStatus::Written,
+                    )
+                }
+                WriteMode::Receipt(outcome) => {
+                    let _completion = completion;
+                    Ok(outcome)
+                }
+                WriteMode::Error(kind) => {
+                    let _completion = completion;
+                    Err(TerminalBackgroundWriteError::new(kind))
+                }
+                WriteMode::Pending => {
+                    this.committed.lock().unwrap().push(completion);
+                    std::future::pending().await
+                }
+            }
+        })
+    }
 }
 
 impl FakeBackgroundSignaler {
@@ -1921,6 +2007,7 @@ fn spec_and_defaults_are_strict_and_prepare_exact_process_identity() {
         arguments,
         working_directory,
         environment,
+        stdin: ProcessInput::Null,
     } = prepared
         .capability()
         .expect("terminal requires permission authority")
@@ -1947,6 +2034,7 @@ fn spec_and_defaults_are_strict_and_prepare_exact_process_identity() {
         .unwrap(),
         json!({
             "type": "process",
+            "stdin": "null",
             "program": "/bin/sh",
             "arguments": ["-c", "printf '%s' hello"],
             "working_directory": ".",
@@ -1997,6 +2085,7 @@ fn background_start_has_exact_permission_identity_and_bypasses_foreground_execut
         arguments,
         working_directory,
         environment,
+        stdin: ProcessInput::Null,
     } = prepared
         .capability()
         .expect("start requires process permission")
@@ -2514,6 +2603,314 @@ fn background_read_same_poll_cancellation_wins_ready_snapshot() {
 
     assert_eq!(error.kind, ToolErrorKind::Cancelled);
     assert_eq!(error.code, "terminal_cancelled");
+}
+
+#[test]
+fn background_write_binds_binary_payload_and_exact_owner() {
+    let temporary = TemporaryDirectory::new("background-write");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let writer = FakeBackgroundWriter::new(WriteMode::Success { cancel: true });
+    let tool = background_tool(temporary.path(), &executor, &starter)
+        .with_writer(Arc::new(writer.clone()))
+        .unwrap();
+    let forms = tool.spec().input_schema["oneOf"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(forms.len(), 3);
+    assert_eq!(
+        forms[1]["properties"]["stdin"]["enum"],
+        json!(["null", "pipe"])
+    );
+    assert_eq!(forms[2]["properties"]["action"]["const"], "write");
+    for data in [
+        b"hello\0".to_vec(),
+        "🥳你好".as_bytes().to_vec(),
+        vec![0, 255, 254, 10],
+        Vec::new(),
+        vec![0; MAX_TERMINAL_BACKGROUND_WRITE_BYTES],
+    ] {
+        let eof = true;
+        let prepared = tool.prepare(call("terminal", json!({"action":"write", "background_id":7, "data": STANDARD.encode(&data), "encoding":"base64", "eof": eof}))).unwrap();
+        assert_eq!(
+            prepared.capability(),
+            Some(&Capability::Custom {
+                name: "terminal_write".to_owned(),
+                details: json!({ "background_id": 7, "byte_length": data.len(), "sha256": format!("{:x}", Sha256::digest(&data)), "eof": true })
+            })
+        );
+        let output = poll_ready(tool.execute(
+            context(),
+            prepared.arguments().clone(),
+            CancellationToken::new(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.content,
+            json!({"action":"write", "background_id":7, "bytes_written":data.len(), "stdin_closed":true, "status":"written"})
+        );
+        assert_eq!(
+            writer.requests.lock().unwrap().last().unwrap(),
+            &(
+                "terminal-session".to_owned(),
+                "terminal-incarnation".to_owned(),
+                7,
+                data,
+                eof
+            )
+        );
+    }
+    let utf8 = tool
+        .prepare(call(
+            "terminal",
+            json!({"action":"write", "background_id":7, "data":"secret\0🥳"}),
+        ))
+        .unwrap();
+    let binary = tool.prepare(call("terminal", json!({"action":"write", "background_id":7, "data": STANDARD.encode("secret\0🥳"), "encoding":"base64"}))).unwrap();
+    assert_eq!(utf8.arguments(), binary.arguments());
+    assert_eq!(utf8.capability(), binary.capability());
+    assert!(!format!("{:?}", utf8.capability()).contains("secret"));
+    assert_eq!(executor.calls(), 0);
+    assert_eq!(starter.calls(), 0);
+}
+
+#[test]
+fn background_write_start_input_is_opt_in_and_permission_bound() {
+    let temporary = TemporaryDirectory::new("background-write-start");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let writer = FakeBackgroundWriter::new(WriteMode::Success { cancel: false });
+    let starter_only = background_tool(temporary.path(), &executor, &starter);
+    assert!(
+        starter_only
+            .prepare(call(
+                "terminal",
+                json!({"action":"start","command":"cat","stdin":"pipe"})
+            ))
+            .is_err()
+    );
+    assert!(
+        starter_only
+            .prepare(call(
+                "terminal",
+                json!({"action":"write","background_id":7,"data":"a"})
+            ))
+            .is_err()
+    );
+    let tool = starter_only.with_writer(Arc::new(writer)).unwrap();
+    for (input, mode) in [("null", ProcessInput::Null), ("pipe", ProcessInput::Pipe)] {
+        let prepared = tool
+            .prepare(call(
+                "terminal",
+                json!({"action":"start","command":"cat","stdin": input}),
+            ))
+            .unwrap();
+        assert!(
+            matches!(prepared.capability(), Some(Capability::Process { stdin, .. }) if *stdin == mode)
+        );
+        assert_eq!(prepared.arguments()["stdin"], input);
+        poll_ready(tool.execute(
+            context(),
+            prepared.arguments().clone(),
+            CancellationToken::new(),
+        ))
+        .unwrap();
+        assert_eq!(starter.state.inputs.lock().unwrap().last(), Some(&mode));
+    }
+    let default = tool
+        .prepare(call("terminal", json!({"action":"start","command":"cat"})))
+        .unwrap();
+    assert_eq!(default.arguments()["stdin"], "null");
+    assert!(
+        tool.prepare(call(
+            "terminal",
+            json!({"action":"exec","command":"cat","stdin":"pipe"})
+        ))
+        .is_err()
+    );
+}
+
+#[test]
+fn background_write_rejects_noncanonical_invalid_and_oversized_payloads() {
+    let temporary = TemporaryDirectory::new("background-write-invalid");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let writer = FakeBackgroundWriter::new(WriteMode::Success { cancel: false });
+    let tool = background_tool(temporary.path(), &executor, &starter)
+        .with_writer(Arc::new(writer.clone()))
+        .unwrap();
+    for args in [
+        json!({"action":"write","background_id":0,"data":"x"}),
+        json!({"action":"write","background_id":7,"data":""}),
+        json!({"action":"write","background_id":7,"data":"x","eof":1}),
+        json!({"action":"write","background_id":7,"data":"x","owner":"spoof"}),
+        json!({"action":"write","background_id":7,"data":"x","encoding":"hex"}),
+        json!({"action":"write","background_id":7,"data":"a".repeat(8193)}),
+        json!({"action":"write","background_id":7,"data":STANDARD.encode(vec![0;8193]),"encoding":"base64"}),
+        json!({"action":"write","background_id":7,"data":"a".repeat(65537)}),
+    ] {
+        assert!(tool.prepare(call("terminal", args)).is_err());
+    }
+    for data in ["Zg", "Zh==", "Zg===", "Zg==\n", "_w==", "Z g=="] {
+        assert!(
+            tool.prepare(call(
+                "terminal",
+                json!({"action":"write","background_id":7,"data":data,"encoding":"base64"})
+            ))
+            .is_err()
+        );
+    }
+    let prepared = tool
+        .prepare(call(
+            "terminal",
+            json!({"action":"write","background_id":7,"data":"test"}),
+        ))
+        .unwrap();
+    for key in ["eof", "encoding"] {
+        let mut incomplete = prepared.arguments().clone();
+        incomplete.as_object_mut().unwrap().remove(key);
+        assert!(poll_ready(tool.execute(context(), incomplete, CancellationToken::new())).is_err());
+    }
+    assert!(writer.requests.lock().unwrap().is_empty());
+}
+
+#[test]
+fn background_write_reports_partial_and_closed_receipts_without_retry_errors() {
+    let temporary = TemporaryDirectory::new("background-write-receipts");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    for (count, closed, status, valid) in [
+        (4, true, TerminalBackgroundWriteStatus::Written, true),
+        (2, false, TerminalBackgroundWriteStatus::Backpressure, true),
+        (0, true, TerminalBackgroundWriteStatus::Closed, true),
+        (2, true, TerminalBackgroundWriteStatus::Failed, true),
+        (5, true, TerminalBackgroundWriteStatus::Written, false),
+        (4, false, TerminalBackgroundWriteStatus::Backpressure, false),
+        (3, true, TerminalBackgroundWriteStatus::Written, false),
+        (4, false, TerminalBackgroundWriteStatus::Written, false),
+    ] {
+        let writer = FakeBackgroundWriter::new(WriteMode::Receipt(
+            TerminalBackgroundWriteOutcome::new(7, count, closed, status).unwrap(),
+        ));
+        let tool = background_tool(temporary.path(), &executor, &starter)
+            .with_writer(Arc::new(writer))
+            .unwrap();
+        let args = tool
+            .prepare(call(
+                "terminal",
+                json!({"action":"write","background_id":7,"data":"test","eof":true}),
+            ))
+            .unwrap()
+            .arguments()
+            .clone();
+        let result = poll_ready(tool.execute(context(), args, CancellationToken::new()));
+        assert_eq!(result.is_ok(), valid, "{count} {closed} {status:?}");
+        if let Ok(result) = result {
+            assert!(!result.is_error);
+            assert_eq!(result.content["bytes_written"], count);
+        }
+    }
+    for (kind, code) in [
+        (
+            TerminalBackgroundWriteErrorKind::NotFound,
+            "terminal_write_not_found",
+        ),
+        (
+            TerminalBackgroundWriteErrorKind::Busy,
+            "terminal_write_busy",
+        ),
+        (
+            TerminalBackgroundWriteErrorKind::Unavailable,
+            "terminal_write_failed",
+        ),
+        (
+            TerminalBackgroundWriteErrorKind::Cancelled,
+            "terminal_cancelled",
+        ),
+    ] {
+        let writer = FakeBackgroundWriter::new(WriteMode::Error(kind));
+        let tool = background_tool(temporary.path(), &executor, &starter)
+            .with_writer(Arc::new(writer))
+            .unwrap();
+        let args = tool
+            .prepare(call(
+                "terminal",
+                json!({"action":"write","background_id":7,"data":"test"}),
+            ))
+            .unwrap()
+            .arguments()
+            .clone();
+        assert_eq!(
+            poll_ready(tool.execute(context(), args, CancellationToken::new()))
+                .unwrap_err()
+                .code,
+            code
+        );
+    }
+    for (id, count, closed, status) in [
+        (0, 0, true, TerminalBackgroundWriteStatus::Written),
+        (7, 8193, true, TerminalBackgroundWriteStatus::Written),
+        (7, 0, true, TerminalBackgroundWriteStatus::Backpressure),
+        (7, 0, false, TerminalBackgroundWriteStatus::Closed),
+        (7, 1, false, TerminalBackgroundWriteStatus::Failed),
+    ] {
+        assert!(TerminalBackgroundWriteOutcome::new(id, count, closed, status).is_err());
+    }
+}
+
+#[test]
+fn background_write_admission_survives_submitted_cancellation_and_drop() {
+    let temporary = TemporaryDirectory::new("background-write-admission");
+    let executor = FakeExecutor::new(Mode::Exited(0));
+    let starter = FakeBackgroundStarter::new(BackgroundMode::Success {
+        cancel_before_return: false,
+    });
+    let writer = FakeBackgroundWriter::new(WriteMode::Pending);
+    let tool = background_tool(temporary.path(), &executor, &starter)
+        .with_writer(Arc::new(writer.clone()))
+        .unwrap();
+    let args = tool
+        .prepare(call(
+            "terminal",
+            json!({"action":"write","background_id":7,"data":"test"}),
+        ))
+        .unwrap()
+        .arguments()
+        .clone();
+    let cancelled = CancellationToken::new();
+    let _ = cancelled.cancel();
+    assert!(poll_ready(tool.execute(context(), args.clone(), cancelled)).is_err());
+    drop(tool.execute(context(), args.clone(), CancellationToken::new()));
+    assert!(writer.requests.lock().unwrap().is_empty());
+    for _ in 0..4 {
+        let token = CancellationToken::new();
+        let mut future = tool.execute(context(), args.clone(), token.clone());
+        assert!(poll_once(future.as_mut()).is_pending());
+        let _ = token.cancel();
+        assert!(poll_once(future.as_mut()).is_pending());
+        drop(future);
+    }
+    assert_eq!(
+        poll_ready(tool.execute(context(), args.clone(), CancellationToken::new()))
+            .unwrap_err()
+            .code,
+        "terminal_write_busy"
+    );
+    assert_eq!(writer.requests.lock().unwrap().len(), 4);
+    writer.committed.lock().unwrap().pop().unwrap();
+    let mut resumed = tool.execute(context(), args, CancellationToken::new());
+    assert!(poll_once(resumed.as_mut()).is_pending());
+    drop(resumed);
+    writer.committed.lock().unwrap().clear();
 }
 
 #[test]

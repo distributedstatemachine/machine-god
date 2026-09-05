@@ -30,11 +30,16 @@ use machine_god_native::{
     TerminalExecution, TerminalExecutionOutcome, TerminalExecutionRequest, TerminalExecutionStatus,
     TerminalExecutor, TerminalLimits, TerminalTool,
 };
+use machine_god_native::{
+    TerminalBackgroundWriteCompletion, TerminalBackgroundWriteError,
+    TerminalBackgroundWriteOutcome, TerminalBackgroundWriteStatus, TerminalBackgroundWriter,
+};
 use machine_god_testkit::{
     InMemorySessionStore, ModelProviderStep, PermissionStep, ScriptedModelProvider,
     ScriptedPermissionHandler,
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 mod terminal_test_support;
 
@@ -911,6 +916,115 @@ fn background_read_bypasses_permission_and_persists_same_incarnation_output() {
         }
     );
     assert_eq!(store.record(&session_id).unwrap().messages[2], message);
+}
+
+#[derive(Clone)]
+struct FakeBackgroundWriter {
+    calls: Arc<AtomicUsize>,
+    cancel: bool,
+}
+impl TerminalBackgroundWriter for FakeBackgroundWriter {
+    fn write(
+        &self,
+        owner: BackgroundOutputOwner,
+        id: u64,
+        data: Vec<u8>,
+        eof: bool,
+        completion: TerminalBackgroundWriteCompletion,
+        cancellation: machine_god_core::CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundWriteOutcome, TerminalBackgroundWriteError>>
+    {
+        let this = self.clone();
+        Box::pin(async move {
+            let _completion = completion;
+            assert_eq!(owner.session_id().as_str(), "terminal-write-session");
+            assert_eq!(
+                owner.session_incarnation_id().as_str(),
+                "incarnation-terminal-write-session"
+            );
+            assert_eq!(data, b"PRIVATE_INPUT\0");
+            assert!(eof);
+            this.calls.fetch_add(1, Ordering::SeqCst);
+            if this.cancel {
+                let _ = cancellation.cancel();
+            }
+            TerminalBackgroundWriteOutcome::new(
+                id,
+                data.len(),
+                true,
+                TerminalBackgroundWriteStatus::Written,
+            )
+        })
+    }
+}
+#[test]
+fn background_write_permission_denial_and_committed_cancellation_are_effect_exact() {
+    for (allowed, cancel) in [(false, false), (true, false), (true, true)] {
+        let temporary = TemporaryDirectory::new("engine-write");
+        let provider = provider_with_arguments(
+            "terminal-write",
+            json!({"action":"write","background_id":17,"data":"PRIVATE_INPUT\0","eof":true}),
+        );
+        let store = InMemorySessionStore::new();
+        let policy = ScriptedPermissionHandler::new([PermissionStep::Decision(if allowed {
+            PermissionDecision::Allow {
+                scope: PermissionGrantScope::Once,
+            }
+        } else {
+            PermissionDecision::Deny {
+                reason: "denied".to_owned(),
+            }
+        })]);
+        let executor = FakeExecutor::default();
+        let starter = FakeBackgroundStarter::default();
+        let writer = FakeBackgroundWriter {
+            calls: Arc::new(AtomicUsize::new(0)),
+            cancel,
+        };
+        let tool = terminal_with_background(temporary.path(), executor.clone(), starter.clone())
+            .with_writer(Arc::new(writer.clone()))
+            .unwrap();
+        let engine = Engine::builder()
+            .provider(provider.clone())
+            .session_store(store.clone())
+            .permission_handler(policy.clone())
+            .tool(tool)
+            .build()
+            .unwrap();
+        let (id, events) = collect(&engine, "terminal-write-session");
+        assert_eq!(
+            policy.requests()[0].capability,
+            Capability::Custom {
+                name: "terminal_write".to_owned(),
+                details: json!({"background_id":17,"byte_length":14,"sha256":format!("{:x}",Sha256::digest(b"PRIVATE_INPUT\0")),"eof":true})
+            }
+        );
+        assert_eq!(writer.calls.load(Ordering::SeqCst), usize::from(allowed));
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(starter.calls.load(Ordering::SeqCst), 0);
+        if allowed {
+            assert!(events.iter().any(|event| matches!(&event.payload,TurnEvent::ToolFinished { output, .. } if output.content["bytes_written"] == 14 && output.content["status"] == "written")));
+            let record = store.record(&id).unwrap();
+            let ContentBlock::ToolResult { output, .. } = &record.messages[2].content[0] else {
+                panic!("durable input receipt")
+            };
+            assert_eq!(output.content["bytes_written"], 14);
+            if cancel {
+                assert!(matches!(
+                    events.last().map(|event| &event.payload),
+                    Some(TurnEvent::Completed {
+                        reason: StopReason::Cancelled,
+                        ..
+                    })
+                ));
+            }
+        } else {
+            assert!(events.iter().all(|event| !matches!(
+                event.payload,
+                TurnEvent::ToolStarted { .. } | TurnEvent::ToolFinished { .. }
+            )));
+        }
+    }
 }
 
 #[test]

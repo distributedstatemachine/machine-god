@@ -22,13 +22,13 @@ use crate::background_inspection::{
     NativeBackgroundInspectionErrorKind, NativeBackgroundList, NativeBackgroundState,
 };
 use crate::utf8_boundary::incomplete_utf8_suffix_len;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use machine_god_core::{
     BackgroundOutputOwner, BackgroundStartError, BackgroundStartErrorKind, BackgroundStartRequest,
-    BoxFuture, CancellationToken, Capability, PreparedToolCall, ProcessEnvironment, Tool, ToolCall,
-    ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
+    BoxFuture, CancellationToken, Capability, PreparedToolCall, ProcessEnvironment, ProcessInput,
+    Tool, ToolCall, ToolContext, ToolError, ToolErrorKind, ToolName, ToolOutput, ToolSpec,
 };
 use serde_json::{Map, Value, json};
-#[cfg(unix)]
 use sha2::{Digest, Sha256};
 #[cfg(target_os = "linux")]
 use std::io::Read;
@@ -99,6 +99,10 @@ pub const TERMINAL_MAX_ACTIVE_WAITS: usize = 4;
 pub const TERMINAL_MAX_ACTIVE_LISTS: usize = 4;
 /// Maximum simultaneous process-local background signal operations.
 pub const TERMINAL_MAX_ACTIVE_SIGNALS: usize = 4;
+/// Maximum decoded bytes in one process-local input write.
+pub const MAX_TERMINAL_BACKGROUND_WRITE_BYTES: usize = 8192;
+/// Maximum simultaneous process-local input writes.
+pub const TERMINAL_MAX_ACTIVE_WRITES: usize = 4;
 /// Maximum exact record observations made by one persisted-background wait.
 pub const TERMINAL_MAX_WAIT_OBSERVATIONS: usize = 128;
 
@@ -722,6 +726,180 @@ impl Drop for TerminalBackgroundSignalCompletion {
     }
 }
 
+/// Stable category for a failure before input bytes or EOF were committed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum TerminalBackgroundWriteErrorKind {
+    NotFound,
+    Busy,
+    Unavailable,
+    Cancelled,
+}
+
+/// Fixed, data-free input transport failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TerminalBackgroundWriteError {
+    kind: TerminalBackgroundWriteErrorKind,
+}
+
+impl TerminalBackgroundWriteError {
+    #[must_use]
+    pub const fn new(kind: TerminalBackgroundWriteErrorKind) -> Self {
+        Self { kind }
+    }
+    #[must_use]
+    pub const fn kind(self) -> TerminalBackgroundWriteErrorKind {
+        self.kind
+    }
+}
+
+impl fmt::Display for TerminalBackgroundWriteError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("terminal background input is unavailable")
+    }
+}
+impl Error for TerminalBackgroundWriteError {}
+
+/// Exact outcome of a bounded input attempt; partial effects remain visible.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum TerminalBackgroundWriteStatus {
+    Written,
+    Backpressure,
+    Closed,
+    Failed,
+}
+
+impl TerminalBackgroundWriteStatus {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Written => "written",
+            Self::Backpressure => "backpressure",
+            Self::Closed => "closed",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+/// Validated input receipt. Counts measure pipe acceptance, not command consumption.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct TerminalBackgroundWriteOutcome {
+    background_id: u64,
+    bytes_written: usize,
+    stdin_closed: bool,
+    status: TerminalBackgroundWriteStatus,
+}
+
+impl TerminalBackgroundWriteOutcome {
+    /// Constructs a bounded receipt; terminal additionally checks it against the request.
+    ///
+    /// # Errors
+    /// Returns a fixed error for zero identity, oversized counts, or inconsistent closure.
+    pub fn new(
+        background_id: u64,
+        bytes_written: usize,
+        stdin_closed: bool,
+        status: TerminalBackgroundWriteStatus,
+    ) -> Result<Self, TerminalBackgroundWriteError> {
+        if background_id == 0
+            || bytes_written > MAX_TERMINAL_BACKGROUND_WRITE_BYTES
+            || matches!(status, TerminalBackgroundWriteStatus::Backpressure) && stdin_closed
+            || matches!(
+                status,
+                TerminalBackgroundWriteStatus::Closed | TerminalBackgroundWriteStatus::Failed
+            ) && !stdin_closed
+        {
+            return Err(TerminalBackgroundWriteError::new(
+                TerminalBackgroundWriteErrorKind::Unavailable,
+            ));
+        }
+        Ok(Self {
+            background_id,
+            bytes_written,
+            stdin_closed,
+            status,
+        })
+    }
+    #[must_use]
+    pub const fn background_id(self) -> u64 {
+        self.background_id
+    }
+    #[must_use]
+    pub const fn bytes_written(self) -> usize {
+        self.bytes_written
+    }
+    #[must_use]
+    pub const fn stdin_closed(self) -> bool {
+        self.stdin_closed
+    }
+    #[must_use]
+    pub const fn status(self) -> TerminalBackgroundWriteStatus {
+        self.status
+    }
+}
+
+impl fmt::Debug for TerminalBackgroundWriteOutcome {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TerminalBackgroundWriteOutcome")
+            .finish_non_exhaustive()
+    }
+}
+
+/// Trusted input boundary bound to an exact session incarnation.
+pub trait TerminalBackgroundWriter: Send + Sync + 'static {
+    /// Returns an inert future. First poll submits an ordered mutation. Retain
+    /// completion through native completion even if the caller future drops.
+    /// Errors are permitted only before effects; return a counted receipt after
+    /// any bytes were accepted. EOF closes only after all supplied bytes succeed.
+    fn write(
+        &self,
+        owner: BackgroundOutputOwner,
+        background_id: u64,
+        data: Vec<u8>,
+        eof: bool,
+        completion: TerminalBackgroundWriteCompletion,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalBackgroundWriteOutcome, TerminalBackgroundWriteError>>;
+}
+
+/// Opaque admission retained until a committed input operation finishes.
+pub struct TerminalBackgroundWriteCompletion {
+    active: Arc<AtomicUsize>,
+}
+
+impl TerminalBackgroundWriteCompletion {
+    fn try_acquire(active: &Arc<AtomicUsize>) -> Result<Self, ToolError> {
+        active
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current < TERMINAL_MAX_ACTIVE_WRITES).then_some(current + 1)
+            })
+            .map_err(|_| write_busy())?;
+        Ok(Self {
+            active: Arc::clone(active),
+        })
+    }
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        Self {
+            active: Arc::new(AtomicUsize::new(1)),
+        }
+    }
+}
+impl fmt::Debug for TerminalBackgroundWriteCompletion {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TerminalBackgroundWriteCompletion")
+            .finish_non_exhaustive()
+    }
+}
+impl Drop for TerminalBackgroundWriteCompletion {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 /// Stable category returned by an injected process-local output reader.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -1040,6 +1218,8 @@ pub struct TerminalTool {
     active_reads: Arc<AtomicUsize>,
     signaler: Option<Arc<dyn TerminalBackgroundSignaler>>,
     active_signals: Arc<AtomicUsize>,
+    writer: Option<Arc<dyn TerminalBackgroundWriter>>,
+    active_writes: Arc<AtomicUsize>,
     catalog: Option<Arc<dyn TerminalBackgroundCatalog>>,
     active_lists: Arc<AtomicUsize>,
     inspector: Option<Arc<dyn TerminalBackgroundInspector>>,
@@ -1277,6 +1457,24 @@ impl TerminalTool {
         Ok(self)
     }
 
+    /// Adds opt-in background piped stdin and bounded same-session writes.
+    ///
+    /// # Errors
+    /// Returns a fixed configuration failure when background start is absent.
+    #[cfg(unix)]
+    pub fn with_writer(
+        mut self,
+        writer: Arc<dyn TerminalBackgroundWriter>,
+    ) -> Result<Self, TerminalConfigError> {
+        if self.background.is_none() {
+            return Err(TerminalConfigError::new(
+                TerminalConfigErrorKind::InvalidRoot,
+            ));
+        }
+        self.writer = Some(writer);
+        Ok(self)
+    }
+
     /// Adds bounded persisted-background listing support.
     ///
     /// # Errors
@@ -1339,6 +1537,8 @@ impl TerminalTool {
             active_reads: Arc::new(AtomicUsize::new(0)),
             signaler: None,
             active_signals: Arc::new(AtomicUsize::new(0)),
+            writer: None,
+            active_writes: Arc::new(AtomicUsize::new(0)),
             catalog: None,
             active_lists: Arc::new(AtomicUsize::new(0)),
             inspector: None,
@@ -1496,6 +1696,7 @@ impl TerminalActionAvailability {
     const WAIT: u8 = 1 << 3;
     const READ: u8 = 1 << 4;
     const SIGNAL: u8 = 1 << 5;
+    const WRITE: u8 = 1 << 6;
 
     fn for_tool(tool: &TerminalTool) -> Self {
         let mut flags = 0;
@@ -1516,6 +1717,9 @@ impl TerminalActionAvailability {
         }
         if tool.signaler.is_some() {
             flags |= Self::SIGNAL;
+        }
+        if tool.writer.is_some() {
+            flags |= Self::WRITE;
         }
         Self(flags)
     }
@@ -1556,6 +1760,9 @@ fn parse_arguments(
         Some("signal") if available.contains(TerminalActionAvailability::SIGNAL) => {
             TerminalAction::Signal
         }
+        Some("write") if available.contains(TerminalActionAvailability::WRITE) => {
+            TerminalAction::Write
+        }
         _ => return Err(invalid_arguments()),
     };
     match action {
@@ -1564,10 +1771,69 @@ fn parse_arguments(
         TerminalAction::Wait => parse_wait_arguments(object),
         TerminalAction::Read => parse_read_arguments(object),
         TerminalAction::Signal => parse_signal_arguments(object),
-        TerminalAction::Exec | TerminalAction::Start => {
-            parse_command_arguments(object, action, require_complete)
-        }
+        TerminalAction::Write => parse_write_arguments(object),
+        TerminalAction::Exec | TerminalAction::Start => parse_command_arguments(
+            object,
+            action,
+            require_complete,
+            available.contains(TerminalActionAvailability::WRITE),
+        ),
     }
+}
+
+fn parse_write_arguments(object: &Map<String, Value>) -> Result<TerminalArguments, ToolError> {
+    if !(3..=5).contains(&object.len())
+        || object.keys().any(|key| {
+            !matches!(
+                key.as_str(),
+                "action" | "background_id" | "data" | "encoding" | "eof"
+            )
+        })
+    {
+        return Err(invalid_arguments());
+    }
+    let background_id = object
+        .get("background_id")
+        .and_then(Value::as_u64)
+        .filter(|id| *id != 0)
+        .ok_or_else(invalid_arguments)?;
+    let encoded = object
+        .get("data")
+        .and_then(Value::as_str)
+        .ok_or_else(invalid_arguments)?;
+    let encoding = match object.get("encoding") {
+        None => "utf8",
+        Some(Value::String(value)) if matches!(value.as_str(), "utf8" | "base64") => value.as_str(),
+        _ => return Err(invalid_arguments()),
+    };
+    let eof = match object.get("eof") {
+        None => false,
+        Some(Value::Bool(value)) => *value,
+        _ => return Err(invalid_arguments()),
+    };
+    let data = if encoding == "utf8" {
+        if encoded.len() > MAX_TERMINAL_BACKGROUND_WRITE_BYTES {
+            return Err(invalid_arguments());
+        }
+        encoded.as_bytes().to_vec()
+    } else {
+        if encoded.len() > MAX_TERMINAL_BACKGROUND_WRITE_BYTES.div_ceil(3) * 4 {
+            return Err(invalid_arguments());
+        }
+        let data = STANDARD.decode(encoded).map_err(|_| invalid_arguments())?;
+        if data.len() > MAX_TERMINAL_BACKGROUND_WRITE_BYTES || STANDARD.encode(&data) != encoded {
+            return Err(invalid_arguments());
+        }
+        data
+    };
+    if data.is_empty() && !eof {
+        return Err(invalid_arguments());
+    }
+    Ok(TerminalArguments::Write {
+        background_id,
+        data,
+        eof,
+    })
 }
 
 fn parse_signal_arguments(object: &Map<String, Value>) -> Result<TerminalArguments, ToolError> {
@@ -1687,13 +1953,16 @@ fn parse_command_arguments(
     object: &Map<String, Value>,
     action: TerminalAction,
     require_complete: bool,
+    writer_available: bool,
 ) -> Result<TerminalArguments, ToolError> {
-    let expected_len = if require_complete { 4 } else { object.len() };
-    if (require_complete && expected_len != 4)
-        || (!require_complete && !(2..=4).contains(&expected_len))
-        || object
-            .keys()
-            .any(|key| !matches!(key.as_str(), "action" | "command" | "cwd" | "profile"))
+    let input_allowed = action == TerminalAction::Start && writer_available;
+    let max_fields = if input_allowed { 5 } else { 4 };
+    if (require_complete && object.len() != max_fields)
+        || (!require_complete && !(2..=max_fields).contains(&object.len()))
+        || object.keys().any(|key| {
+            !(matches!(key.as_str(), "action" | "command" | "cwd" | "profile")
+                || input_allowed && key == "stdin")
+        })
     {
         return Err(invalid_arguments());
     }
@@ -1715,20 +1984,44 @@ fn parse_command_arguments(
         None if !require_complete => {}
         _ => return Err(invalid_arguments()),
     }
+    let stdin = match object.get("stdin") {
+        None if !input_allowed || !require_complete => ProcessInput::Null,
+        Some(Value::String(value)) if input_allowed && value == "null" => ProcessInput::Null,
+        Some(Value::String(value)) if input_allowed && value == "pipe" => ProcessInput::Pipe,
+        _ => return Err(invalid_arguments()),
+    };
     Ok(TerminalArguments::Command(TerminalCommandArguments {
         action,
         command: command.to_owned(),
         cwd: cwd.to_owned(),
+        stdin,
+        explicit_stdin: input_allowed,
     }))
 }
 
 fn canonical_arguments(arguments: &TerminalArguments) -> Value {
     match arguments {
-        TerminalArguments::Command(arguments) => json!({
-            "action": arguments.action.as_str(),
-            "command": arguments.command,
-            "cwd": arguments.cwd,
-            "profile": "clean"
+        TerminalArguments::Command(arguments) => {
+            let mut value = json!({
+                "action": arguments.action.as_str(),
+                "command": arguments.command,
+                "cwd": arguments.cwd,
+                "profile": "clean"
+            });
+            if arguments.explicit_stdin {
+                value["stdin"] = json!(match arguments.stdin {
+                    ProcessInput::Null => "null",
+                    ProcessInput::Pipe => "pipe",
+                });
+            }
+            value
+        }
+        TerminalArguments::Write {
+            background_id,
+            data,
+            eof,
+        } => json!({
+            "action": "write", "background_id": background_id, "data": STANDARD.encode(data), "encoding": "base64", "eof": eof
         }),
         TerminalArguments::Read {
             background_id,
@@ -2580,6 +2873,7 @@ enum TerminalAction {
     Start,
     Read,
     Signal,
+    Write,
     List,
     Inspect,
     Wait,
@@ -2592,6 +2886,7 @@ impl TerminalAction {
             Self::Start => "start",
             Self::Read => "read",
             Self::Signal => "signal",
+            Self::Write => "write",
             Self::List => "list",
             Self::Inspect => "inspect",
             Self::Wait => "wait",
@@ -2604,11 +2899,18 @@ struct TerminalCommandArguments {
     action: TerminalAction,
     command: String,
     cwd: String,
+    stdin: ProcessInput,
+    explicit_stdin: bool,
 }
 
 #[derive(Clone)]
 enum TerminalArguments {
     Command(TerminalCommandArguments),
+    Write {
+        background_id: u64,
+        data: Vec<u8>,
+        eof: bool,
+    },
     Read {
         background_id: u64,
         cursor_segment: u64,
@@ -2638,6 +2940,7 @@ impl TerminalTool {
         let cwd = absolute_background_cwd(&background.workspace, &arguments.cwd)?;
         BackgroundStartRequest::new(arguments.command, cwd)
             .map(|request| request.with_output_owner(owner))
+            .and_then(|request| request.with_stdin(arguments.stdin))
             .map_err(|_| invalid_cwd())
     }
 
@@ -2800,6 +3103,66 @@ impl TerminalTool {
         }
         check_cancellation(&cancellation)?;
         Ok(output)
+    }
+
+    async fn execute_write(
+        &self,
+        owner: BackgroundOutputOwner,
+        background_id: u64,
+        data: Vec<u8>,
+        eof: bool,
+        cancellation: CancellationToken,
+    ) -> Result<ToolOutput, ToolError> {
+        check_cancellation(&cancellation)?;
+        let completion = TerminalBackgroundWriteCompletion::try_acquire(&self.active_writes)?;
+        let writer = self.writer.as_ref().ok_or_else(invalid_arguments)?;
+        let requested = data.len();
+        let mut future = writer.write(
+            owner,
+            background_id,
+            data,
+            eof,
+            completion,
+            cancellation.clone(),
+        );
+        let mut submitted = false;
+        let outcome = poll_fn(|context| {
+            if !submitted && cancellation.is_cancelled() {
+                return Poll::Ready(Err(TerminalBackgroundWriteError::new(
+                    TerminalBackgroundWriteErrorKind::Cancelled,
+                )));
+            }
+            submitted = true;
+            Pin::new(&mut future).poll(context)
+        })
+        .await
+        .map_err(map_background_write_error)?;
+        let valid_status = match outcome.status() {
+            TerminalBackgroundWriteStatus::Written => {
+                outcome.bytes_written() == requested && outcome.stdin_closed() == eof
+            }
+            TerminalBackgroundWriteStatus::Backpressure => {
+                outcome.bytes_written() < requested && !outcome.stdin_closed()
+            }
+            TerminalBackgroundWriteStatus::Closed | TerminalBackgroundWriteStatus::Failed => {
+                outcome.stdin_closed()
+            }
+        };
+        if outcome.background_id() != background_id
+            || outcome.bytes_written() > requested
+            || !valid_status
+        {
+            return Err(fixed_tool_error(
+                ToolErrorKind::Execution,
+                "terminal_writer_failed",
+                "terminal input writer returned an invalid acknowledgement",
+                false,
+            ));
+        }
+        Ok(ToolOutput {
+            content: json!({ "action": "write", "background_id": background_id, "bytes_written": outcome.bytes_written(), "stdin_closed": outcome.stdin_closed(), "status": outcome.status().as_str() }),
+            is_error: false,
+        })
     }
 
     async fn execute_signal(
@@ -3486,6 +3849,14 @@ fn terminal_signal_schema() -> Value {
     })
 }
 
+fn terminal_write_schema() -> Value {
+    json!({ "type": "object", "properties": {
+        "action": { "const": "write" }, "background_id": { "type": "integer", "minimum": 1 },
+        "data": { "type": "string" }, "encoding": { "type": "string", "enum": ["utf8", "base64"], "default": "utf8" },
+        "eof": { "type": "boolean", "default": false }
+    }, "required": ["action", "background_id", "data"], "additionalProperties": false })
+}
+
 fn terminal_wait_schema() -> Value {
     json!({
         "type": "object",
@@ -3530,6 +3901,9 @@ impl TerminalTool {
         if self.signaler.is_some() {
             actions.push("signal one live same-session background process scope");
         }
+        if self.writer.is_some() {
+            actions.push("write bounded same-session background input");
+        }
         if self.catalog.is_some() {
             actions.push("list persisted background records");
         }
@@ -3556,6 +3930,7 @@ impl Tool for TerminalTool {
             && self.inspector.is_none()
             && self.output_reader.is_none()
             && self.signaler.is_none()
+            && self.writer.is_none()
         {
             let actions = if self.background.is_some() {
                 json!(["exec", "start"])
@@ -3584,13 +3959,21 @@ impl Tool for TerminalTool {
         }
         let mut forms = vec![terminal_command_schema("exec")];
         if self.background.is_some() {
-            forms.push(terminal_command_schema("start"));
+            let mut start = terminal_command_schema("start");
+            if self.writer.is_some() {
+                start["properties"]["stdin"] =
+                    json!({ "type": "string", "enum": ["null", "pipe"], "default": "null" });
+            }
+            forms.push(start);
         }
         if self.output_reader.is_some() {
             forms.push(terminal_read_schema());
         }
         if self.signaler.is_some() {
             forms.push(terminal_signal_schema());
+        }
+        if self.writer.is_some() {
+            forms.push(terminal_write_schema());
         }
         if self.inspector.is_some() {
             forms.push(terminal_inspect_schema());
@@ -3621,6 +4004,9 @@ impl Tool for TerminalTool {
         )?;
         let canonical = canonical_arguments(&parsed);
         match parsed {
+            TerminalArguments::Write { background_id, data, eof } => Ok(PreparedToolCall::new(
+                Capability::Custom { name: "terminal_write".to_owned(), details: json!({ "background_id": background_id, "byte_length": data.len(), "sha256": format!("{:x}", Sha256::digest(&data)), "eof": eof }) }, canonical,
+            ).completion_wins_after_first_poll()),
             TerminalArguments::List
             | TerminalArguments::Read { .. }
             | TerminalArguments::Inspect { .. }
@@ -3654,7 +4040,8 @@ impl Tool for TerminalTool {
                     | TerminalAction::Inspect
                     | TerminalAction::Wait
                     | TerminalAction::Read
-                    | TerminalAction::Signal => return Err(invalid_arguments()),
+                    | TerminalAction::Signal
+                    | TerminalAction::Write => return Err(invalid_arguments()),
                 };
                 Ok(PreparedToolCall::new(
                     Capability::Process {
@@ -3662,6 +4049,7 @@ impl Tool for TerminalTool {
                         arguments: vec!["-c".to_owned(), parsed.command],
                         working_directory: parsed.cwd,
                         environment,
+                        stdin: parsed.stdin,
                     },
                     canonical,
                 ))
@@ -3684,6 +4072,19 @@ impl Tool for TerminalTool {
                 return Err(invalid_arguments());
             }
             let parsed = match parsed {
+                TerminalArguments::Write {
+                    background_id,
+                    data,
+                    eof,
+                } => {
+                    let owner = BackgroundOutputOwner::new(
+                        context.session_id,
+                        context.session_incarnation_id,
+                    );
+                    return self
+                        .execute_write(owner, background_id, data, eof, cancellation)
+                        .await;
+                }
                 TerminalArguments::Read {
                     background_id,
                     cursor_segment,
@@ -4695,6 +5096,34 @@ fn map_background_read_error(error: TerminalBackgroundReadError) -> ToolError {
             "terminal background output is unavailable",
             true,
         ),
+    }
+}
+
+fn write_busy() -> ToolError {
+    fixed_tool_error(
+        ToolErrorKind::Unavailable,
+        "terminal_write_busy",
+        "terminal background input capacity is busy",
+        true,
+    )
+}
+
+fn map_background_write_error(error: TerminalBackgroundWriteError) -> ToolError {
+    match error.kind() {
+        TerminalBackgroundWriteErrorKind::NotFound => fixed_tool_error(
+            ToolErrorKind::InvalidInput,
+            "terminal_write_not_found",
+            "terminal background input was not found",
+            false,
+        ),
+        TerminalBackgroundWriteErrorKind::Busy => write_busy(),
+        TerminalBackgroundWriteErrorKind::Unavailable => fixed_tool_error(
+            ToolErrorKind::Execution,
+            "terminal_write_failed",
+            "terminal background input failed before delivery",
+            false,
+        ),
+        TerminalBackgroundWriteErrorKind::Cancelled => cancelled_error(),
     }
 }
 

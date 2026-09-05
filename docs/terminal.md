@@ -4,7 +4,8 @@ The native tool executes one bounded foreground shell command, starts one
 noninteractive background shell command after explicit process authorization,
 reads bounded process-local output from a command started by the same session
 incarnation, sends one explicit signal to that live process's supported native
-control scope after separate authorization, or lists, inspects, or boundedly
+control scope after separate authorization, writes bounded bytes to explicitly
+piped stdin after separate authorization, or lists, inspects, or boundedly
 waits on persisted background records without process authority. It is
 registered by the reference host and has no top-level CLI command.
 
@@ -12,7 +13,7 @@ registered by the reference host and has no top-level CLI command.
 
 The reference-host tool implements the `exec`, bounded `start`, bounded
 process-local `read`, bounded persisted-record `list`, bounded persisted-record
-`inspect`, bounded persisted-record `wait`, and bounded process-local `signal`
+`inspect`, bounded persisted-record `wait`, and bounded process-local `signal` and `write`
 subsets of fx's `terminal` tool.
 `exec` captures bounded standard output and error and waits for the direct
 child. `start` durably records and releases one noninteractive command through
@@ -36,6 +37,9 @@ separately bounded waiter is also injected. `read` appears only when a trusted
 process-local output reader is explicitly injected alongside a starter.
 `signal` appears only when a trusted process-local signal controller is
 explicitly injected alongside a starter.
+`write` and the optional `start.stdin` field appear only when a trusted
+process-local input writer is injected alongside a starter. Stdin defaults to
+`"null"`; only an explicit `"pipe"` start retains writable input authority.
 
 The model-facing input is:
 
@@ -120,11 +124,11 @@ without constructing the absolute path or a background request.
 The reference-host tool description is:
 
 ```text
-Run a foreground command, start a background command, read bounded same-session background output, signal one live same-session background process scope, list persisted background records, inspect one persisted background record, or wait for its recorded exit
+Run a foreground command, start a background command, read bounded same-session background output, signal one live same-session background process scope, write bounded same-session background input, list persisted background records, inspect one persisted background record, or wait for its recorded exit
 ```
 
 An exec-only construction retains its earlier foreground-only description and
-schema. All forms deliberately exclude `screen`, `write`, `monitor`, `resize`,
+schema. All forms deliberately exclude `screen`, `monitor`, `resize`,
 `close`; list filters and pagination; PTYs; interactive stdin;
 durable or restart-safe output; output tail retention; separate background
 stdout/stderr channels; artifacts; custom or login shells; user shell profiles;
@@ -141,6 +145,7 @@ Capability::Process {
     program: "/bin/sh",
     arguments: ["-c", canonical_command],
     working_directory: authorized_cwd,
+    stdin: "null", // "pipe" only for an explicitly opted-in background start
     environment: {
         profile: "construction_snapshot",
         sha256: lower_hex_digest,
@@ -176,7 +181,7 @@ therefore cannot make the process permission describe the replacement
 directory.
 
 The stable serialized process capability therefore contains the fixed program, exact
-two arguments, authorized cwd, profile name, and digest. Successful preparation
+two arguments, authorized cwd, stdin mode, profile name, and digest. Successful preparation
 returns those same canonical model arguments. Direct `execute` reparses and
 revalidates all fields and rejects any canonical-argument, program, argument,
 cwd, profile, or digest divergence before filesystem access, worker creation,
@@ -186,6 +191,11 @@ exact custom capability
 `{"name":"terminal_signal","details":{"background_id":7,"signal":"terminate"}}`;
 the requested identity and signal cannot change after authorization, and
 denial performs no registry lookup, process-table scan, or signal syscall.
+`write` similarly requests critical custom `terminal_write` authority with
+exact `background_id`, decoded `byte_length`, lowercase SHA-256 `sha256`, and
+`eof` fields. Permission details never contain plaintext or encoded input.
+Canonical prepared arguments use padded standard base64, so UTF-8 and base64
+spellings of identical bytes have the same authorized payload identity.
 `read`, `list`, `inspect`, and `wait` prepare with no authority because they can read only through
 explicitly injected owner-scoped output or persisted-history boundaries; none
 requests process permission.
@@ -238,8 +248,10 @@ read contract.
 
 ## Background start protocol
 
-`start` accepts exactly the common `action`, `command`, `cwd`, and `profile`
-fields. Shell, backend, return condition, wait ceiling, dimensions, initial
+`start` accepts the common `action`, `command`, `cwd`, and `profile`
+fields and, only with an injected writer, optional string `stdin` (`"null"`
+or `"pipe"`, default `"null"`). Foreground `exec` never accepts stdin.
+Shell, backend, return condition, wait ceiling, dimensions, initial
 monitors, caller-selected session IDs, and every interactive or control field
 reject as unknown. Preparation is effect-free, checks the eventual combined
 absolute-cwd byte length without allocation, and does not build a background
@@ -281,7 +293,8 @@ and invariant failures are fixed redacted execution errors.
 For a start carrying output ownership, the helper keeps one pipe whose bytes
 combine the final shell's standard output and standard error. The private
 readiness marker is consumed before capture begins and can never appear in the
-stream. Standard input remains `/dev/null`. The supervisor continuously drains
+stream. Standard input is `/dev/null` unless `start` explicitly requested
+`stdin: "pipe"`. The supervisor continuously drains
 the pipe while the command runs, including after the retained prefix is full,
 so an output flood cannot block command completion.
 
@@ -344,6 +357,71 @@ publication. The four-slot permit is released on success, error, cancellation,
 drop, or unwind. Output exists only in this host process: restart, host exit,
 closed-entry eviction, or use from another composed host loses it. Persisted
 records remain independently inspectable but cannot reconstruct these bytes.
+
+## Process-local background input
+
+The separate write form is:
+
+```json
+{
+  "action": "write",
+  "background_id": 7,
+  "data": "hello\n",
+  "encoding": "utf8",
+  "eof": false
+}
+```
+
+`action`, nonzero JSON-u64 `background_id`, and string `data` are required.
+`encoding` is exactly `utf8` (default) or `base64`; `eof` is a boolean defaulting
+to false. Unknown or mistyped fields reject. UTF-8 is sent exactly, without
+newline insertion, Unicode normalization, or NUL filtering. Base64 requires
+canonical padded RFC 4648 standard-alphabet spelling: whitespace, URL-safe
+characters, missing padding, and nonzero unused bits reject. The decoded
+payload is at most 8,192 bytes; the existing 64 KiB serialized argument cap
+also applies. An empty payload is allowed only with `eof: true`.
+
+The writer privately receives the exact caller session ID and incarnation,
+not a model-selected owner or display PID. Preparation is effect-free;
+permission denial performs no input lookup or write. The execution future is
+inert until polled, and cancellation before submission has no effect. After
+the first writer poll, committed completion wins over cancellation, including
+durable tool-result replacement in core. Four independent write admissions
+are available. The trusted writer retains the opaque admission through actual
+native completion even when its caller drops the future.
+
+One bounded native attempt returns an exact receipt:
+
+```json
+{
+  "action": "write",
+  "background_id": 7,
+  "bytes_written": 6,
+  "stdin_closed": false,
+  "status": "written"
+}
+```
+
+`bytes_written` counts bytes accepted by the pipe, not bytes consumed by the
+command. `written` means all supplied bytes were accepted and requested EOF
+was applied; without EOF the writer remains open. `backpressure` reports a
+strictly shorter accepted prefix and leaves input open without applying EOF.
+Callers may submit only the unaccepted suffix and repeat their EOF request.
+`closed` means input was already closed or its reader disappeared; `failed`
+means a transport failure closed input. Both retain any accepted prefix count,
+and neither promises the suffix can be retried. A partial side effect is never
+converted into a generic retryable error. EOF is a half-close of the sole
+input writer, never an implicit newline or process termination; it is applied
+only after every supplied byte was accepted. Output remains separately readable.
+
+Unknown and wrong-owner targets share fixed `terminal_write_not_found`;
+capacity/contention returns retryable `terminal_write_busy`. Other pre-effect
+failures are fixed non-retryable `terminal_write_failed`. Invalid trusted
+receipts return fixed non-retryable `terminal_writer_failed`. Every receipt
+is validated against the requested identity, byte count, and EOF semantics;
+error and Debug values contain no input, command, path, or owner details.
+This process-local pipe is not a PTY, restart-safe handle, or interactive
+terminal emulation. Process cleanup revokes input authority before reap.
 
 ## Process-local background signal
 
