@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::task::Poll;
 
 /// Maximum UTF-8 bytes in one background shell command.
-pub const MAX_BACKGROUND_COMMAND_BYTES: usize = 32 * 1024;
+pub const MAX_BACKGROUND_COMMAND_BYTES: usize = crate::MAX_TERMINAL_ACTION_COMMAND_BYTES;
 /// Maximum UTF-8 bytes in one canonical background working directory.
 pub const MAX_BACKGROUND_CWD_BYTES: usize = 4 * 1024;
 

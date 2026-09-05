@@ -120,6 +120,10 @@ Legacy metadata-less records remain readable but do not block eligible victims.
 Profile-aware owner requests now pass the worker's exact store and budget into
 bounded mutation dispatch; transaction guards end before reply wakes. Production
 worker startup, complete tool request contracts and host assembly remain open.
+The complete normalized twelve-action core contract is now present, including
+request/result identity checks and lossless foreground execution outcomes. The
+public decoder and native command/transport alignment are being integrated;
+these contracts do not yet replace the reference host's legacy terminal adapter.
 Per-session retention separates raw/checkpoint output from independently bounded
 state and events, matching the pinned output-accounting boundary. Non-output
 publications cannot evict output; recovery retains all ledger categories.

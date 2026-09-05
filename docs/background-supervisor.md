@@ -16,7 +16,7 @@ process implementations. While a supervisor is live it accepts work; dropping
 it closes admission and requests stop without abandoning already-acquired
 ownership.
 
-One start request contains a nonempty command of at most 32 KiB and one
+One start request contains a nonempty command of at most 64 KiB and one
 absolute canonical Unicode cwd of at most 4,096 bytes. Both reject NUL. The
 fixed program is `/bin/sh` with arguments `[-c, command]`; the command is an
 argument and is never interpolated into a machine-god wrapper script.
