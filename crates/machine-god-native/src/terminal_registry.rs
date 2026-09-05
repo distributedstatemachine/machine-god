@@ -2527,6 +2527,283 @@ mod tests {
     }
 
     #[test]
+    fn profile_owner_passes_exact_authority_for_durable_mutation() {
+        use crate::terminal_owner::TerminalOwnerLoop;
+        use machine_god_core::CancellationToken;
+        let fixture = Fixture::new();
+        let owner = owner("profile");
+        let id = id("profile-mutation");
+        let (store, session) = fixture.profile_live(&owner, &id);
+        let store = Arc::new(store);
+        let budget = Arc::new(
+            TerminalProfileBudget::new(TerminalProfileLimits {
+                temporary_bytes: 32 * 1024 * 1024,
+                ..TerminalProfileLimits::default()
+            })
+            .unwrap(),
+        );
+        let mut registry = registry();
+        registry
+            .start(owner.clone(), id.clone(), || Ok(session))
+            .unwrap();
+        let (worker, handle) = TerminalOwnerLoop::new();
+        let expected_store = Arc::clone(&store);
+        let expected_budget = Arc::clone(&budget);
+        let request_owner = owner.clone();
+        let request_id = id.clone();
+        let stop = handle.clone();
+        let mut request = handle.request_with_profile(
+            CancellationToken::new(),
+            move |registry, store, budget, now_ms, cancellation| {
+                assert!(std::ptr::eq(store, Arc::as_ptr(&expected_store)));
+                assert!(std::ptr::eq(budget, Arc::as_ptr(&expected_budget)));
+                assert_eq!(now_ms, 17);
+                assert!(!cancellation.is_cancelled());
+                let mut transaction = store.transaction().unwrap();
+                let namespace = owner_name("/workspace", &request_owner);
+                let mut context =
+                    TerminalProfileMutationContext::new(&mut transaction, *budget, &namespace);
+                registry
+                    .live_mut(&request_owner, &request_id)
+                    .unwrap()
+                    .close_with(
+                        &mut context,
+                        &request_owner,
+                        TerminalClosePolicy::Force,
+                        now_ms,
+                    )
+                    .unwrap();
+                let facts = registry.inspect(&request_owner, &request_id).unwrap();
+                assert_eq!(facts.context.lifecycle, TerminalLifecycle::Closed);
+                stop.shutdown();
+                facts.context.lifecycle
+            },
+        );
+        assert!(poll_owner(&mut request).is_pending());
+        assert_eq!(fixture.state.lock().unwrap().closes, 0);
+        let exit = worker.run_with_profile(&mut registry, &store, &budget, || 17, |_| {});
+        assert!(exit.error.is_none());
+        assert!(exit.shutdown.unwrap().is_empty());
+        assert_eq!(
+            poll_owner(&mut request),
+            std::task::Poll::Ready(Ok(TerminalLifecycle::Closed))
+        );
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
+        assert!(registry.live_mut(&owner, &id).is_err());
+        drop(registry);
+        let transaction = store.transaction().unwrap();
+        let namespace = owner_name("/workspace", &owner);
+        let journal = TerminalJournal::open_existing(
+            transaction.open_session(&namespace, &id).unwrap(),
+            &id,
+            TerminalJournalLimits::default(),
+        )
+        .unwrap();
+        let recovered = TerminalRecoveredSession::recover(
+            TerminalHistory::recover(journal).unwrap(),
+            &owner,
+            17,
+        )
+        .unwrap();
+        assert_eq!(
+            recovered.facts(&owner).unwrap().context.lifecycle,
+            TerminalLifecycle::Closed
+        );
+    }
+
+    #[test]
+    fn profile_owner_refuses_unmetered_dispatch_without_invoking_callback() {
+        use crate::terminal_owner::{TerminalOwnerError, TerminalOwnerLoop};
+        use machine_god_core::CancellationToken;
+        let (worker, handle) = TerminalOwnerLoop::<Backend>::new();
+        let mut request = handle.request_with_profile(CancellationToken::new(), |_, _, _, _, _| {
+            panic!("profile-free worker must not invoke a profile mutation");
+        });
+        assert!(poll_owner(&mut request).is_pending());
+        let stop = handle.clone();
+        let mut stopping = handle.request(CancellationToken::new(), move |_, _, _| stop.shutdown());
+        assert!(poll_owner(&mut stopping).is_pending());
+        let exit = worker.run(&mut registry(), || 0, |_| {});
+        assert!(exit.error.is_none());
+        assert!(exit.shutdown.unwrap().is_empty());
+        assert_eq!(
+            poll_owner(&mut request),
+            std::task::Poll::Ready(Err(TerminalOwnerError::ProfileRequired))
+        );
+        assert_eq!(poll_owner(&mut stopping), std::task::Poll::Ready(Ok(())));
+    }
+
+    #[test]
+    fn profile_owner_cancellation_skips_effects_but_preserves_committed_receipt() {
+        use crate::terminal_owner::{TerminalOwnerError, TerminalOwnerLoop};
+        use machine_god_core::CancellationToken;
+        let fixture = Fixture::new();
+        let owner = owner("profile");
+        let id = id("profile-cancel");
+        let (store, session) = fixture.profile_live(&owner, &id);
+        let budget = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+        let mut registry = registry();
+        registry
+            .start(owner.clone(), id.clone(), || Ok(session))
+            .unwrap();
+        let (worker, handle) = TerminalOwnerLoop::new();
+        drop(
+            handle.request_with_profile(CancellationToken::new(), |_, _, _, _, _| {
+                panic!("unpolled mutation");
+            }),
+        );
+        let precancelled = CancellationToken::new();
+        precancelled.cancel();
+        let mut precancelled = handle.request_with_profile(precancelled, |_, _, _, _, _| {
+            panic!("cancelled before submission");
+        });
+        assert_eq!(
+            poll_owner(&mut precancelled),
+            std::task::Poll::Ready(Err(TerminalOwnerError::Cancelled))
+        );
+        let queued_cancel = CancellationToken::new();
+        let mut queued = handle.request_with_profile(queued_cancel.clone(), |_, _, _, _, _| {
+            panic!("cancelled before mutation");
+        });
+        assert!(poll_owner(&mut queued).is_pending());
+        queued_cancel.cancel();
+        let mut abandoned =
+            handle.request_with_profile(CancellationToken::new(), |_, _, _, _, _| {
+                panic!("abandoned queued mutation");
+            });
+        assert!(poll_owner(&mut abandoned).is_pending());
+        drop(abandoned);
+        let cancellation = CancellationToken::new();
+        let cancel_after_commit = cancellation.clone();
+        let stop = handle.clone();
+        let state = Arc::clone(&fixture.state);
+        let mut committed =
+            handle.request_with_profile(cancellation, move |registry, store, budget, now_ms, _| {
+                assert_eq!(state.lock().unwrap().closes, 0);
+                let mut transaction = store.transaction().unwrap();
+                let namespace = owner_name("/workspace", &owner);
+                let mut context =
+                    TerminalProfileMutationContext::new(&mut transaction, *budget, &namespace);
+                let receipt = registry.live_mut(&owner, &id).unwrap().close_with(
+                    &mut context,
+                    &owner,
+                    TerminalClosePolicy::Force,
+                    now_ms,
+                );
+                assert_eq!(state.lock().unwrap().closes, 1);
+                cancel_after_commit.cancel();
+                stop.shutdown();
+                receipt
+            });
+        assert!(poll_owner(&mut committed).is_pending());
+        assert_eq!(fixture.state.lock().unwrap().closes, 0);
+        let exit = worker.run_with_profile(&mut registry, &store, &budget, || 1, |_| {});
+        assert!(exit.error.is_none());
+        assert!(exit.shutdown.unwrap().is_empty());
+        assert_eq!(
+            poll_owner(&mut queued),
+            std::task::Poll::Ready(Err(TerminalOwnerError::Cancelled))
+        );
+        assert_eq!(
+            poll_owner(&mut committed),
+            std::task::Poll::Ready(Ok(Ok(())))
+        );
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
+    }
+
+    #[test]
+    fn profile_owner_reply_wake_can_reenter_profile_after_return_or_panic() {
+        use crate::terminal_owner::{TerminalOwnerError, TerminalOwnerLoop};
+        use machine_god_core::CancellationToken;
+        use std::future::Future;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::task::{Context, Wake, Waker};
+        struct ProfileWake {
+            store: Arc<TerminalProfileStore>,
+            state: Arc<Mutex<State>>,
+            acquired: AtomicUsize,
+        }
+        impl Wake for ProfileWake {
+            fn wake(self: Arc<Self>) {
+                let transaction = self.store.transaction().unwrap();
+                assert!(matches!(
+                    self.store.transaction(),
+                    Err(TerminalProfileStoreError::Busy)
+                ));
+                assert_eq!(self.state.lock().unwrap().closes, 0);
+                self.acquired.fetch_add(1, Ordering::SeqCst);
+                drop(transaction);
+            }
+        }
+        for panic_in_operation in [false, true] {
+            let fixture = Fixture::new();
+            let owner = owner("profile");
+            let id = id("profile-wake");
+            let (store, session) = fixture.profile_live(&owner, &id);
+            let store = Arc::new(store);
+            let budget = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+            let mut registry = registry();
+            registry
+                .start(owner.clone(), id.clone(), || Ok(session))
+                .unwrap();
+            let (worker, handle) = TerminalOwnerLoop::new();
+            let stop = handle.clone();
+            let mut request = handle.request_with_profile(
+                CancellationToken::new(),
+                move |registry, store, budget, now_ms, _| {
+                    let mut transaction = store.transaction().unwrap();
+                    let namespace = owner_name("/workspace", &owner);
+                    let mut context =
+                        TerminalProfileMutationContext::new(&mut transaction, *budget, &namespace);
+                    let session = registry.live_mut(&owner, &id).unwrap();
+                    session.shell_ready_with(&mut context, now_ms).unwrap();
+                    session
+                        .resize_with(
+                            &mut context,
+                            &owner,
+                            &TerminalDimensions::new(4, 24).unwrap(),
+                            now_ms,
+                        )
+                        .unwrap();
+                    assert!(
+                        !panic_in_operation,
+                        "panic while holding profile transaction"
+                    );
+                    stop.shutdown();
+                },
+            );
+            let wake = Arc::new(ProfileWake {
+                store: Arc::clone(&store),
+                state: Arc::clone(&fixture.state),
+                acquired: AtomicUsize::new(0),
+            });
+            let waker = Waker::from(Arc::clone(&wake));
+            assert!(
+                std::pin::Pin::new(&mut request)
+                    .poll(&mut Context::from_waker(&waker))
+                    .is_pending()
+            );
+            let exit = worker.run_with_profile(&mut registry, &store, &budget, || 1, |_| {});
+            assert_eq!(
+                exit.error,
+                panic_in_operation.then_some(TerminalOwnerError::Panicked)
+            );
+            assert!(exit.shutdown.unwrap().is_empty());
+            assert_eq!(wake.acquired.load(Ordering::SeqCst), 1);
+            assert_eq!(fixture.state.lock().unwrap().closes, 1);
+            assert_eq!(
+                poll_owner(&mut request),
+                std::task::Poll::Ready(if panic_in_operation {
+                    Err(TerminalOwnerError::Panicked)
+                } else {
+                    Ok(())
+                })
+            );
+            assert!(store.transaction().is_ok());
+        }
+    }
+
+    #[test]
     fn recovered_publication_failure_requires_explicit_transfer() {
         struct Denied;
         impl TerminalJournalPersistence for Denied {
