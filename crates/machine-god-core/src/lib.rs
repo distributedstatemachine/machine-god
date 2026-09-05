@@ -42,7 +42,7 @@ pub use model_catalog::{
 };
 pub use permission::{
     Capability, FilesystemAccess, NetworkTarget, PermissionDecision, PermissionGrantScope,
-    PermissionHandler, PermissionRequest, PermissionRisk, ProcessEnvironment,
+    PermissionHandler, PermissionRequest, PermissionRisk, ProcessEnvironment, ProcessInput,
 };
 pub use session::{
     Prompt, Session, SessionRecord, SessionRevision, SessionStore, Turn, TurnHandle,

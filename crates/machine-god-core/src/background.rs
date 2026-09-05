@@ -1,6 +1,6 @@
 //! Provider-neutral admission for durably recorded background processes.
 
-use crate::{BoxFuture, CancellationToken, SessionId, SessionIncarnationId};
+use crate::{BoxFuture, CancellationToken, ProcessInput, SessionId, SessionIncarnationId};
 use core::fmt;
 use core::future::Future;
 use core::num::NonZeroU32;
@@ -65,7 +65,7 @@ impl fmt::Display for BackgroundStartError {
 
 impl std::error::Error for BackgroundStartError {}
 
-/// Bounded session ownership for one background process's captured output.
+/// Bounded session ownership for one background process's output and input.
 ///
 /// Both identifiers retain their validated 128-byte bounds. Debug output is
 /// deliberately data-free because session identities may be sensitive.
@@ -76,7 +76,7 @@ pub struct BackgroundOutputOwner {
 }
 
 impl BackgroundOutputOwner {
-    /// Constructs output ownership from validated session identities.
+    /// Constructs process I/O ownership from validated session identities.
     #[must_use]
     pub const fn new(session_id: SessionId, session_incarnation_id: SessionIncarnationId) -> Self {
         Self {
@@ -117,6 +117,7 @@ pub struct BackgroundStartRequest {
     command: Box<str>,
     cwd: Box<str>,
     output_owner: Option<BackgroundOutputOwner>,
+    stdin: ProcessInput,
 }
 
 impl BackgroundStartRequest {
@@ -145,14 +146,37 @@ impl BackgroundStartRequest {
             command: command.into_boxed_str(),
             cwd: cwd.into_boxed_str(),
             output_owner: None,
+            stdin: ProcessInput::Null,
         })
     }
 
-    /// Associates captured output with one validated session incarnation.
+    /// Associates captured output and any pipe input with one session incarnation.
     #[must_use]
     pub fn with_output_owner(mut self, output_owner: BackgroundOutputOwner) -> Self {
         self.output_owner = Some(output_owner);
         self
+    }
+
+    /// Selects standard input without exercising external authority.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixed invalid-request failure if pipe input is selected before
+    /// attaching an output owner. That exact session incarnation also owns input.
+    pub fn with_stdin(mut self, stdin: ProcessInput) -> Result<Self, BackgroundStartError> {
+        if stdin == ProcessInput::Pipe && self.output_owner.is_none() {
+            return Err(BackgroundStartError::new(
+                BackgroundStartErrorKind::InvalidRequest,
+            ));
+        }
+        self.stdin = stdin;
+        Ok(self)
+    }
+
+    /// Returns the exact input mode; new requests default to null input.
+    #[must_use]
+    pub const fn stdin(&self) -> ProcessInput {
+        self.stdin
     }
 
     /// Returns the exact bounded shell command.
@@ -167,7 +191,7 @@ impl BackgroundStartRequest {
         &self.cwd
     }
 
-    /// Returns the session incarnation allowed to own captured output, if any.
+    /// Returns the session incarnation owning captured output and pipe input, if any.
     #[must_use]
     pub const fn output_owner(&self) -> Option<&BackgroundOutputOwner> {
         self.output_owner.as_ref()
@@ -944,7 +968,7 @@ mod tests {
         MAX_BACKGROUND_CWD_BYTES, OwnedBackgroundProcess, PreparedBackgroundProcess,
         await_commit_or_cancel, await_or_cancel, await_prepared_or_cancel,
     };
-    use crate::{BoxFuture, CancellationToken, SessionId, SessionIncarnationId};
+    use crate::{BoxFuture, CancellationToken, ProcessInput, SessionId, SessionIncarnationId};
     use core::future::Future;
     use core::num::NonZeroU32;
     use core::pin::Pin;
@@ -969,10 +993,17 @@ mod tests {
         abort: bool,
     }
 
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    struct Preparation {
+        id: u64,
+        owner: Option<BackgroundOutputOwner>,
+        stdin: ProcessInput,
+    }
+
     #[derive(Debug, Default)]
     struct Observations {
         events: Mutex<Vec<&'static str>>,
-        preparation: Mutex<Option<(u64, Option<BackgroundOutputOwner>)>>,
+        preparation: Mutex<Option<Preparation>>,
         aborted: AtomicUsize,
         executed: AtomicUsize,
         owned_dropped: AtomicUsize,
@@ -996,7 +1027,7 @@ mod tests {
                 .clone()
         }
 
-        fn preparation(&self) -> Option<(u64, Option<BackgroundOutputOwner>)> {
+        fn preparation(&self) -> Option<Preparation> {
             self.preparation
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1268,8 +1299,11 @@ mod tests {
                     .observations
                     .preparation
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                    Some((background_id, request.output_owner().cloned()));
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Preparation {
+                    id: background_id,
+                    owner: request.output_owner().cloned(),
+                    stdin: request.stdin(),
+                });
                 let _drop_probe = DropCounter(Arc::clone(&self.pending_dropped));
                 if self.stay_pending {
                     std::future::pending::<()>().await;
@@ -1696,6 +1730,7 @@ mod tests {
     fn request_is_unowned_until_an_output_owner_is_attached() {
         let request = BackgroundStartRequest::new("echo ready", "/workspace").unwrap();
         assert_eq!(request.output_owner(), None);
+        assert_eq!(request.stdin(), ProcessInput::Null);
 
         let owner = BackgroundOutputOwner::new(
             SessionId::new("session-owner").unwrap(),
@@ -1709,6 +1744,26 @@ mod tests {
     }
 
     #[test]
+    fn pipe_input_requires_an_already_attached_owner_and_can_be_reset_to_null() {
+        assert_eq!(
+            request().with_stdin(ProcessInput::Pipe).unwrap_err().kind(),
+            BackgroundStartErrorKind::InvalidRequest
+        );
+        assert_eq!(request().with_stdin(ProcessInput::Null).unwrap(), request());
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("input-owner").unwrap(),
+            SessionIncarnationId::new("input-incarnation").unwrap(),
+        );
+        let null = request().with_output_owner(owner.clone());
+        let pipe = null.clone().with_stdin(ProcessInput::Pipe).unwrap();
+        assert_eq!(pipe.stdin(), ProcessInput::Pipe);
+        assert_eq!(pipe.output_owner(), Some(&owner));
+        assert_ne!(pipe, null);
+        assert_eq!(pipe.clone().with_stdin(ProcessInput::Pipe).unwrap(), pipe);
+        assert_eq!(pipe.with_stdin(ProcessInput::Null).unwrap(), null);
+    }
+
+    #[test]
     fn request_record_and_errors_do_not_debug_secrets() {
         let owner = BackgroundOutputOwner::new(
             SessionId::new("PRIVATE_SESSION").unwrap(),
@@ -1717,8 +1772,10 @@ mod tests {
         assert_eq!(format!("{owner:?}"), "BackgroundOutputOwner { .. }");
         let request = BackgroundStartRequest::new("PRIVATE_COMMAND", "/PRIVATE_CWD")
             .unwrap()
-            .with_output_owner(owner);
-        assert!(!format!("{request:?}").contains("PRIVATE"));
+            .with_output_owner(owner)
+            .with_stdin(ProcessInput::Pipe)
+            .unwrap();
+        assert_eq!(format!("{request:?}"), "BackgroundStartRequest { .. }");
         let record = BackgroundRunningRecord::new(
             9_876_543_210,
             8_765_432_109,
@@ -1832,7 +1889,41 @@ mod tests {
         let handle = block_on(supervisor.start(request, CancellationToken::new())).unwrap();
 
         assert_eq!(handle.id(), 7);
-        assert_eq!(observations.preparation(), Some((7, Some(owner))));
+        assert_eq!(
+            observations.preparation(),
+            Some(Preparation {
+                id: 7,
+                owner: Some(owner),
+                stdin: ProcessInput::Null,
+            })
+        );
+    }
+
+    #[test]
+    fn piped_input_start_is_inert_and_forwards_the_exact_mode_and_owner() {
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("input-spawner").unwrap(),
+            SessionIncarnationId::new("input-incarnation-spawner").unwrap(),
+        );
+        let request = request()
+            .with_output_owner(owner.clone())
+            .with_stdin(ProcessInput::Pipe)
+            .unwrap();
+        let (supervisor, observations, _) = fixture(Failures::default(), None, None, false);
+        let start = supervisor.start(request, CancellationToken::new());
+        assert!(observations.events().is_empty());
+        assert_eq!(observations.preparation(), None);
+
+        let handle = block_on(start).unwrap();
+        assert_eq!(handle.id(), 7);
+        assert_eq!(
+            observations.preparation(),
+            Some(Preparation {
+                id: 7,
+                owner: Some(owner),
+                stdin: ProcessInput::Pipe,
+            })
+        );
     }
 
     #[test]

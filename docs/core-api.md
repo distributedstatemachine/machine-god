@@ -16,8 +16,13 @@ and `Sync`.
 
 The native [`terminal` tool](terminal.md) extends the existing
 provider-neutral `Capability::Process` with exact `working_directory` and a
-`ProcessEnvironment { profile, sha256 }` identity. Core receives strings and a
-digest only; it gains no process, filesystem, environment, timer, or executor
+`ProcessEnvironment { profile, sha256 }` identity, plus an explicit
+`stdin: ProcessInput` mode. `ProcessInput::{Null, Pipe}` serializes as `"null"`
+or `"pipe"`; absent `stdin` in older serialized process capabilities defaults
+to `Null`. Pipe and null input are distinct permission identities. Authorizing
+a pipe-capable start does not authorize later input payloads. Core receives
+strings, a digest, and the closed input mode only; it gains no process,
+filesystem, environment, timer, or executor
 authority. Native effect-free preparation fixes `/bin/sh`, `[-c, command]`, the
 authorized cwd, and a bounded environment digest before the existing
 critical-risk authorization. Both foreground `exec` and noninteractive `start`
@@ -224,7 +229,12 @@ process, signal, or persistence authority.
 
 [`BackgroundStartRequest`](crate::BackgroundStartRequest) owns one bounded
 command, an absolute canonical persisted cwd of at most 4,096 UTF-8 bytes, and
-an optional bounded session-incarnation owner for process-local output. Its
+an optional bounded session-incarnation owner for process-local output and input.
+New requests use `ProcessInput::Null`. The effect-free `with_stdin` builder
+accepts `Pipe` only after `with_output_owner` attaches an owner; otherwise it
+returns the fixed `InvalidRequest` error. The request's `stdin()` and owner
+reach the injected spawner unchanged. Input modes and ownership carry no native
+pipe or write authority in core, and request debugging remains data-free. Its
 start future is inert until poll. On poll, core admits capacity fail-fast,
 reserves one durable nonzero ID and passes it through the spawner's defaulted
 ID-aware extension point,
