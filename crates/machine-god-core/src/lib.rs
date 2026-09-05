@@ -13,6 +13,7 @@ mod permission;
 mod session;
 mod subagent;
 mod terminal;
+mod terminal_action;
 mod tool;
 
 pub use background::{
@@ -69,6 +70,17 @@ pub use terminal::{
     TerminalScreen, TerminalScreenCursor, TerminalScreenUnavailableReason, TerminalSessionId,
     TerminalSignal, TerminalWaitRequest, TerminalWriteLease, TerminalWriteLeaseIntent,
     TerminalWritePayload, TerminalWriteRequest,
+};
+pub use terminal_action::{
+    MAX_TERMINAL_ACTION_COMMAND_BYTES, MAX_TERMINAL_ACTION_OUTPUT_BYTES,
+    MAX_TERMINAL_ACTION_RESULTS, MAX_TERMINAL_ACTION_TEXT_BYTES,
+    MAX_TERMINAL_CHECKPOINT_PAYLOAD_BYTES, MAX_TERMINAL_EXEC_DURATION,
+    MAX_TERMINAL_EXEC_STREAM_BYTES, MAX_TERMINAL_INITIAL_MONITORS, TerminalAction,
+    TerminalActionErrorCode, TerminalActionRequest, TerminalActionResponse, TerminalActionResult,
+    TerminalAllowedControls, TerminalCheckpointEnvelope, TerminalExecCapturedOutput,
+    TerminalExecRequest, TerminalExecResult, TerminalExecStatus, TerminalListFilters,
+    TerminalMonitorSummary, TerminalPersistenceLevel, TerminalRawRange, TerminalReturnOutcome,
+    TerminalScreenRecovery, TerminalSessionFacts, TerminalShellSpec, TerminalStartRequest,
 };
 pub use tool::{
     PreparedToolAuthorization, PreparedToolCall, Tool, ToolCall, ToolContext, ToolExecution,
