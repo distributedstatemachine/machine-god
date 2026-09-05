@@ -12,6 +12,7 @@ mod model_catalog;
 mod permission;
 mod session;
 mod subagent;
+mod terminal;
 mod tool;
 
 pub use background::{
@@ -53,6 +54,20 @@ pub use subagent::{
     MAX_SUBAGENT_NAME_BYTES, MAX_SUBAGENT_OUTCOME_BYTES, MAX_SUBAGENT_OUTPUT_BYTES,
     MAX_SUBAGENT_PROMPT_BYTES, SUBAGENT_TOOL_NAME, SubagentAuthority, SubagentAuthorityError,
     SubagentAuthorityErrorKind, SubagentOutcome, SubagentRequest, SubagentTool,
+};
+pub use terminal::{
+    MAX_TERMINAL_HYPERLINK_BYTES, MAX_TERMINAL_HYPERLINKS, MAX_TERMINAL_ID_BYTES,
+    MAX_TERMINAL_MONITOR_ID_BYTES, MAX_TERMINAL_MONITOR_PATTERN_BYTES, MAX_TERMINAL_SCREEN_CELLS,
+    MAX_TERMINAL_SCREEN_TEXT_BYTES, MAX_TERMINAL_WRITE_BYTES, MAX_TERMINAL_WRITE_ITEMS,
+    TerminalBackend, TerminalCell, TerminalCellKind, TerminalCellStyle, TerminalClosePolicy,
+    TerminalColor, TerminalContractError, TerminalCursor, TerminalCursorShape, TerminalDimensions,
+    TerminalEventQuery, TerminalGap, TerminalHyperlink, TerminalLifecycle, TerminalModes,
+    TerminalMonitorCondition, TerminalMonitorDefinition, TerminalMonitorEvent,
+    TerminalMonitorEventReason, TerminalMonitorId, TerminalMonitorLifetime,
+    TerminalMonitorOperation, TerminalMonitorState, TerminalNamedKey, TerminalNotifySchedule,
+    TerminalProfile, TerminalReturnCondition, TerminalSchedule, TerminalScreen,
+    TerminalScreenCursor, TerminalScreenUnavailableReason, TerminalSessionId, TerminalSignal,
+    TerminalWaitRequest, TerminalWriteLeaseIntent, TerminalWritePayload, TerminalWriteRequest,
 };
 pub use tool::{
     PreparedToolAuthorization, PreparedToolCall, Tool, ToolCall, ToolContext, ToolExecution,

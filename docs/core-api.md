@@ -216,6 +216,48 @@ to 48 KiB each; and tool-local JSON to 8 container levels and 64 nodes. See the
 complete [subagent contract](subagent.md) for failure, drop, reference-host, and
 intentional pinned-manager divergence semantics.
 
+## Terminal session value contracts
+
+The `Terminal*` values model durable interactive terminal sessions separately
+from background display IDs. They contain no filesystem, process, IPC, clock,
+network, permission grant, or runtime authority. `TerminalSessionId` accepts
+1–255 ASCII letters, digits, dots, underscores or hyphens, excluding the exact
+names `.` and `..`. `TerminalMonitorId` is opaque nonempty NUL-free UTF-8 of
+at most 128 bytes, never a filesystem name. Their Debug forms are redacted.
+Dimensions are positive, at most 4,096 per axis and 262,144 cells in aggregate.
+Segmented cursors require a nonzero segment, and gaps require strictly
+increasing endpoints. Neither establishes journal availability or live ownership.
+
+The contracts include native/tmux backends, user/clean profiles, lifecycle,
+four semantic write payloads and four lease operations, all four return
+conditions, all thirteen monitor conditions, check/notification/lifetime
+schedules, monitor operations and event replay/acknowledgement. Text and paste
+are bounded to 64 KiB; keys and controls to 4,096 items. Payloads are required
+only for the `Use` lease operation. Monitor patterns are bounded to 256 bytes;
+probe check intervals to 10 ms–24 hours and lifetime durations to 365 days.
+Only polling probe conditions require a check schedule. Native adapters must
+separately resolve and authorize paths, network targets and repeated commands.
+
+`TerminalScreen` is a structured row-major cell projection with zero-based
+cursor, colors, styles and terminal modes. Validation enforces exact dimensions,
+cursor containment, adjacent wide/continuation cells, 64 bytes per UTF-8 cell,
+and at most 8 MiB aggregate cell text. Hyperlinks are an opaque data-only table,
+never open/fetch authority: at most 65,535 entries with strictly increasing
+nonzero IDs, at most 4 KiB per URI and 4 MiB aggregate URI bytes. URI byte
+vectors preserve non-UTF-8 input without claiming URI validity. Every cell
+link reference must resolve in that table. Screen-unavailable reasons preserve
+missing, corrupt, incompatible, evicted, gapped and uncheckpointed distinctions.
+These values do not implement screen capture, protocol replies or persistence.
+
+Data-bearing values have redacted Debug implementations and fixed validation
+errors. Their closed serde objects reject unknown fields and run structural
+validation during deserialization. Native and tool boundaries must bound the
+encoded input before deserialization: these owned values do not impose an
+allocation cap on the serializer's input reader. Public aggregate fields permit
+trusted construction; callers must invoke `validate()` before crossing an
+authority, persistence or output boundary. Constructors for private identity,
+dimension and cursor fields preserve their invariants directly.
+
 ## Background admission boundary
 
 The provider-neutral [`BackgroundSupervisor`](crate::BackgroundSupervisor)
