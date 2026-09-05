@@ -177,7 +177,7 @@ fn owner_name(workspace: &str, owner: &BackgroundOutputOwner) -> String {
     format!("{:x}", digest.finalize())
 }
 
-fn private(fd: impl AsFd, directory: bool) -> Result<rustix::fs::Stat> {
+pub(crate) fn private(fd: impl AsFd, directory: bool) -> Result<rustix::fs::Stat> {
     let stat = rustix::fs::fstat(fd.as_fd()).map_err(io_error)?;
     let kind = FileType::from_raw_mode(stat.st_mode);
     let valid = stat.st_uid == rustix::process::geteuid().as_raw()
@@ -209,7 +209,12 @@ fn private(fd: impl AsFd, directory: bool) -> Result<rustix::fs::Stat> {
     Ok(stat)
 }
 
-fn same_entry(parent: impl AsFd, name: &str, fd: impl AsFd, directory: bool) -> Result<()> {
+pub(crate) fn same_entry(
+    parent: impl AsFd,
+    name: &str,
+    fd: impl AsFd,
+    directory: bool,
+) -> Result<()> {
     let before = rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW).map_err(io_error)?;
     let after = private(fd, directory)?;
     if before.st_dev != after.st_dev || before.st_ino != after.st_ino {
@@ -218,7 +223,7 @@ fn same_entry(parent: impl AsFd, name: &str, fd: impl AsFd, directory: bool) -> 
     Ok(())
 }
 
-fn open_directory(parent: impl AsFd, name: &str) -> Result<OwnedFd> {
+pub(crate) fn open_directory(parent: impl AsFd, name: &str) -> Result<OwnedFd> {
     let fd = rustix::fs::openat(
         parent.as_fd(),
         name,
@@ -230,7 +235,7 @@ fn open_directory(parent: impl AsFd, name: &str) -> Result<OwnedFd> {
     Ok(fd)
 }
 
-fn prepare_directory(parent: impl AsFd, name: &str) -> Result<OwnedFd> {
+pub(crate) fn prepare_directory(parent: impl AsFd, name: &str) -> Result<OwnedFd> {
     match rustix::fs::mkdirat(parent.as_fd(), name, DIRECTORY_MODE) {
         Ok(()) => finish_created_directory(parent, name),
         Err(rustix::io::Errno::EXIST) => seal_existing_directory(parent, name),
@@ -305,7 +310,7 @@ fn acquire_lock(parent: impl AsFd) -> Result<OwnedFd> {
     Ok(lock)
 }
 
-fn names(root: impl AsFd, maximum: usize) -> Result<Vec<String>> {
+pub(crate) fn names(root: impl AsFd, maximum: usize) -> Result<Vec<String>> {
     let mut directory = Dir::new(open_directory(root, ".")?).map_err(io_error)?;
     let mut names = Vec::new();
     for entry in &mut directory {
@@ -322,7 +327,7 @@ fn names(root: impl AsFd, maximum: usize) -> Result<Vec<String>> {
     Ok(names)
 }
 
-fn sync_parent(parent: impl AsFd) -> Result<()> {
+pub(crate) fn sync_parent(parent: impl AsFd) -> Result<()> {
     #[cfg(test)]
     if FAIL_PARENT_SYNC.with(|failure| failure.replace(false)) {
         return Err(TerminalCatalogError::Unavailable);
@@ -332,7 +337,7 @@ fn sync_parent(parent: impl AsFd) -> Result<()> {
     rustix::fs::fsync(parent).map_err(io_error)
 }
 
-fn sync_child(child: impl AsFd) -> Result<()> {
+pub(crate) fn sync_child(child: impl AsFd) -> Result<()> {
     #[cfg(test)]
     probe_sync(child.as_fd(), false)?;
     rustix::fs::fsync(child).map_err(io_error)

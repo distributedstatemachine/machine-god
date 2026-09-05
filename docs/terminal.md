@@ -81,6 +81,41 @@ temporary metadata. Poisoned writers may be inspected, but unknown, oversized,
 missing or unsafe artifacts and a replaced lock fail accounting. This inventory
 is not screen validation or a profile-wide quota enforcement claim.
 
+A separate stat-only scan counts a session directory without taking its writer
+lease. It uses global artifact-size bounds and includes recognized partial
+creation state, rather than trusting or reconciling a manifest. An empty or
+partially initialized directory can be counted without being declared a valid
+journal. The caller holds the exclusive profile transaction throughout.
+
+The profile store retains `terminal-v1` and a permanent private `profile-lock`.
+Each short nonblocking transaction acquires a fresh lock-file description, so
+independent handles and processes cannot overlap admission. Inventory traverses
+all owner namespaces, including busy writers and nonresident histories, with
+limits of 256 owners, 256 sessions per owner and 1,024 sessions overall. Exact
+spelling, private descriptors and before/after topology checks reject replaced
+or unexplained entries. Recognized incomplete namespaces are counted without
+granting recovery or process authority.
+
+Profile admission separates the default 512 MiB output budget from protected
+state/events and metadata. Their ceilings derive from the journal bounds and
+the total session-count limit; metadata allows two 128 KiB files per session.
+One reservation admits positive retained growth plus the full temporary
+allocation, bounded at 64 MiB plus 128 KiB, rather than treating replacement
+size differences as temporary headroom. Its mutable transaction borrow permits
+only one outstanding reservation. Owner and session additions are admitted
+against the profile count limits before creation; incomplete owner namespaces
+still consume a slot. The transaction is revalidated immediately
+before dispatch; completion rescans physical usage even after a mutation error.
+The mutation receipt and accounting result remain separate, so a committed
+write cannot become a retryable operation when accounting fails. Dropping or
+unwinding a reservation grants no capacity credit: later admission still counts
+all remaining artifacts until explicit journal recovery removes them.
+
+Mutation owners must derive allocation demand from validated current journal
+state and obey it while holding the transaction. This admission component does
+not intercept unguarded journal calls; runtime-wide mutation routing and victim
+selection must be composed before exposing the full terminal runtime.
+
 Profile retention uses explicit metadata-first eviction operations rather than
 rewriting session limits. Completed output/checkpoint eviction preserves facts,
 events and the latest cursor. Live eviction only removes full, checkpoint-covered
@@ -262,11 +297,11 @@ Suppressed opaque panic payloads are deliberately retained without invoking
 their potentially panicking destructors, matching the host's cleanup policy.
 External probes remain separately authorized, off-loop effects.
 
-The sixteen-entry resident bound is not disk-history retention. Profile
-accounting still needs a profile-wide coordinator covering nonresident
-histories and concurrent owner namespaces, with raw/checkpoint retention
-accounting separate from bounded state/event metadata and atomic replacement
-headroom. Production worker ownership, disk-catalog composition, trusted
+The sixteen-entry resident bound is not disk-history retention. The profile
+transaction and admission components cover nonresident histories and concurrent
+owner namespaces; runtime-wide routing, validated live checkpoint reserves and
+retention victim selection still require coordinator composition.
+Production worker ownership, disk-catalog composition, trusted
 startup control, attention and lease effects, tmux, and model/CLI routing
 remain full-runtime integration work.
 

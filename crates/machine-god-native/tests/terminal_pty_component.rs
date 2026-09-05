@@ -23,6 +23,10 @@ mod terminal_journal;
 mod terminal_monitor;
 #[path = "../src/terminal_owner.rs"]
 mod terminal_owner;
+#[path = "../src/terminal_profile.rs"]
+mod terminal_profile;
+#[path = "../src/terminal_profile_store.rs"]
+mod terminal_profile_store;
 #[path = "../src/terminal_pty.rs"]
 mod terminal_pty;
 #[path = "../src/terminal_registry.rs"]

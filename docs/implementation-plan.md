@@ -80,8 +80,11 @@ requests and retained shutdown failures. Profile storage integration must cover
 nonresident histories and concurrent owner namespaces, not just resident totals.
 Reusable owned-worker spawning now shares the production collector. Retention
 integration routes physical inventory and explicit eviction through registry,
-session and validated history boundaries; profile-wide admission and victim
-selection remain to be composed before the terminal runtime is exposed.
+session and validated history boundaries. Profile transactions now inventory
+nonresident and busy foreign histories; admission accounts separately for
+retained growth and whole temporary allocations, preserving committed receipts
+across accounting failures. Runtime-wide mutation routing, live checkpoint
+reserves and victim selection remain to be composed before exposure.
 Per-session retention separates raw/checkpoint output from independently bounded
 state and events, matching the pinned output-accounting boundary. Non-output
 publications cannot evict output; recovery retains all ledger categories.

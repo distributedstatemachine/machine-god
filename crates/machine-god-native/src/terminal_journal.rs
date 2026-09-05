@@ -26,6 +26,7 @@ const TEMP: &str = "tj-meta.tmp";
 const LOCK: &str = "tj-lock";
 const MAX_META: usize = 128 * 1024;
 const MAX_SEGMENTS: usize = 128;
+const MAX_SEGMENT_BYTES: usize = 1024 * 1024;
 const MAX_EVENTS: usize = 256;
 const MAX_EVENT_BYTES: usize = 4096;
 const MAX_PAGE_BYTES: usize = 64 * 1024;
@@ -69,7 +70,7 @@ pub(crate) struct TerminalJournalLimits {
 impl Default for TerminalJournalLimits {
     fn default() -> Self {
         Self {
-            segment_bytes: 1024 * 1024,
+            segment_bytes: MAX_SEGMENT_BYTES,
             session_bytes: 64 * 1024 * 1024,
         }
     }
@@ -78,7 +79,7 @@ impl TerminalJournalLimits {
     fn validate(self) -> Result<()> {
         ensure(
             self.segment_bytes > 0
-                && self.segment_bytes <= 1024 * 1024
+                && self.segment_bytes <= MAX_SEGMENT_BYTES
                 && self.session_bytes >= self.segment_bytes
                 && self.session_bytes <= MAX_CHECKPOINT_BYTES
                 && self.session_bytes.div_ceil(self.segment_bytes) <= MAX_SEGMENTS,
@@ -376,90 +377,26 @@ impl TerminalJournal {
     /// Unexplained entries fail accounting instead of silently undercounting.
     pub(crate) fn physical_usage(&self) -> Result<TerminalJournalPhysicalUsage> {
         self.validate_lock()?;
-        let duplicate = rustix::fs::openat(
-            &self.root,
-            ".",
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
-            Mode::empty(),
-        )
-        .map_err(io_error)?;
-        let mut directory = Dir::new(duplicate).map_err(io_error)?;
-        let mut usage = TerminalJournalPhysicalUsage::default();
-        let mut count = 0;
-        let mut saw_metadata = false;
-        let mut saw_lock = false;
         let mut expected = owned_names(&self.manifest);
-        for entry in &mut directory {
-            let entry = entry.map_err(io_error)?;
-            let name = entry.file_name().to_bytes();
-            if name == b"." || name == b".." {
-                continue;
-            }
-            count += 1;
-            ensure(
-                count <= MAX_DIRECTORY_ENTRIES,
-                TerminalJournalError::ResourceLimit,
-            )?;
-            let name = std::str::from_utf8(name).map_err(|_| TerminalJournalError::Corrupt)?;
-            expected.remove(name);
-            let size = checked_artifact_size(&self.root, name)?;
-            let (total, maximum) = match name {
-                META => {
-                    saw_metadata = true;
-                    (&mut usage.metadata_bytes, MAX_META)
-                }
-                TEMP => (&mut usage.metadata_bytes, MAX_META),
-                LOCK => {
-                    saw_lock = true;
-                    ensure(size == 0, TerminalJournalError::Corrupt)?;
-                    continue;
-                }
-                _ => {
-                    ensure(
-                        recognized_blob_name(name.as_bytes()),
-                        TerminalJournalError::Corrupt,
-                    )?;
-                    let (_, generation) =
-                        name.rsplit_once('-').ok_or(TerminalJournalError::Corrupt)?;
-                    ensure(
-                        generation.parse::<u64>().is_ok_and(|id| id > 0),
-                        TerminalJournalError::Corrupt,
-                    )?;
-                    if name.starts_with("tj-raw-") {
-                        (&mut usage.raw_bytes, self.manifest.limits.segment_bytes)
-                    } else if name.starts_with("tj-checkpoint-") {
-                        (&mut usage.checkpoint_bytes, MAX_CHECKPOINT_BYTES)
-                    } else if name.starts_with("tj-state-") {
-                        (&mut usage.state_bytes, MAX_STATE_BYTES)
-                    } else {
-                        (&mut usage.event_bytes, MAX_EVENT_BYTES)
-                    }
-                }
-            };
-            ensure(size <= maximum, TerminalJournalError::ResourceLimit)?;
-            *total = total
-                .checked_add(size as u64)
-                .ok_or(TerminalJournalError::ResourceLimit)?;
-        }
-        ensure(
-            saw_metadata && saw_lock && expected.is_empty(),
-            TerminalJournalError::Corrupt,
-        )?;
+        expected.insert(META.to_owned());
+        expected.insert(LOCK.to_owned());
+        let usage = scan_physical(&self.root, self.manifest.limits.segment_bytes, expected)?;
         self.validate_lock()?;
-        usage.output_bytes = usage
-            .raw_bytes
-            .checked_add(usage.checkpoint_bytes)
-            .ok_or(TerminalJournalError::ResourceLimit)?;
-        usage.total_bytes = [
-            usage.output_bytes,
-            usage.state_bytes,
-            usage.event_bytes,
-            usage.metadata_bytes,
-        ]
-        .into_iter()
-        .try_fold(0_u64, u64::checked_add)
-        .ok_or(TerminalJournalError::ResourceLimit)?;
         Ok(usage)
+    }
+
+    /// Account for every recognized artifact using global per-kind bounds,
+    /// without acquiring a journal writer lock or interpreting the manifest.
+    /// The caller must hold the exclusive profile transaction, and every
+    /// cooperating mutation must participate in that transaction. An idle
+    /// foreign writer may retain its journal lock while this scan runs.
+    /// Empty or partially initialized directories are measurable; success
+    /// grants no journal validity, recovery, or process authority. No file is
+    /// created, reconciled, removed, or read for its contents.
+    pub(crate) fn inspect_physical(root: OwnedFd) -> Result<TerminalJournalPhysicalUsage> {
+        let usage = scan_physical(&root, MAX_SEGMENT_BYTES, BTreeSet::new());
+        drop(root);
+        usage
     }
 
     pub(crate) fn eviction_bytes(&self, eviction: &TerminalJournalEviction) -> Result<usize> {
@@ -1289,6 +1226,97 @@ fn open_file(root: impl AsFd, name: &str, flags: OFlags) -> Result<OwnedFd> {
     Ok(fd)
 }
 
+fn scan_physical(
+    root: impl AsFd,
+    maximum_raw: usize,
+    mut expected: BTreeSet<String>,
+) -> Result<TerminalJournalPhysicalUsage> {
+    private(root.as_fd(), true)?;
+    let held = rustix::fs::fstat(root.as_fd()).map_err(io_error)?;
+    let duplicate = rustix::fs::openat(
+        root.as_fd(),
+        ".",
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+        Mode::empty(),
+    )
+    .map_err(io_error)?;
+    let scanned = rustix::fs::fstat(&duplicate).map_err(io_error)?;
+    ensure(
+        held.st_dev == scanned.st_dev && held.st_ino == scanned.st_ino,
+        TerminalJournalError::Corrupt,
+    )?;
+    let mut directory = Dir::new(duplicate).map_err(io_error)?;
+    let mut usage = TerminalJournalPhysicalUsage::default();
+    let mut count = 0;
+    for entry in &mut directory {
+        let entry = entry.map_err(io_error)?;
+        let name = entry.file_name().to_bytes();
+        if name == b"." || name == b".." {
+            continue;
+        }
+        count += 1;
+        ensure(
+            count <= MAX_DIRECTORY_ENTRIES,
+            TerminalJournalError::ResourceLimit,
+        )?;
+        let name = std::str::from_utf8(name).map_err(|_| TerminalJournalError::Corrupt)?;
+        expected.remove(name);
+        let size = checked_artifact_size(root.as_fd(), name)?;
+        let (total, maximum) = match name {
+            META | TEMP => (&mut usage.metadata_bytes, MAX_META),
+            LOCK => {
+                ensure(size == 0, TerminalJournalError::Corrupt)?;
+                continue;
+            }
+            _ => {
+                ensure(
+                    recognized_blob_name(name.as_bytes()),
+                    TerminalJournalError::Corrupt,
+                )?;
+                let (_, generation) = name.rsplit_once('-').ok_or(TerminalJournalError::Corrupt)?;
+                ensure(
+                    generation.parse::<u64>().is_ok_and(|id| id > 0),
+                    TerminalJournalError::Corrupt,
+                )?;
+                if name.starts_with("tj-raw-") {
+                    (&mut usage.raw_bytes, maximum_raw)
+                } else if name.starts_with("tj-checkpoint-") {
+                    (&mut usage.checkpoint_bytes, MAX_CHECKPOINT_BYTES)
+                } else if name.starts_with("tj-state-") {
+                    (&mut usage.state_bytes, MAX_STATE_BYTES)
+                } else {
+                    (&mut usage.event_bytes, MAX_EVENT_BYTES)
+                }
+            }
+        };
+        ensure(size <= maximum, TerminalJournalError::ResourceLimit)?;
+        *total = total
+            .checked_add(size as u64)
+            .ok_or(TerminalJournalError::ResourceLimit)?;
+    }
+    ensure(expected.is_empty(), TerminalJournalError::Corrupt)?;
+    private(root.as_fd(), true)?;
+    let after = rustix::fs::fstat(root).map_err(io_error)?;
+    ensure(
+        held.st_dev == after.st_dev && held.st_ino == after.st_ino,
+        TerminalJournalError::Corrupt,
+    )?;
+    usage.output_bytes = usage
+        .raw_bytes
+        .checked_add(usage.checkpoint_bytes)
+        .ok_or(TerminalJournalError::ResourceLimit)?;
+    usage.total_bytes = [
+        usage.output_bytes,
+        usage.state_bytes,
+        usage.event_bytes,
+        usage.metadata_bytes,
+    ]
+    .into_iter()
+    .try_fold(0_u64, u64::checked_add)
+    .ok_or(TerminalJournalError::ResourceLimit)?;
+    Ok(usage)
+}
+
 fn checked_artifact_size(root: impl AsFd, name: &str) -> Result<usize> {
     let file = open_file(root.as_fd(), name, OFlags::RDONLY)?;
     let held = rustix::fs::fstat(&file).map_err(io_error)?;
@@ -1525,6 +1553,10 @@ mod tests {
         assert_eq!(measured.output_bytes, 22);
         assert_eq!(measured.total_bytes, 50 + measured.metadata_bytes);
         assert_eq!(journal.physical_usage().unwrap(), measured);
+        assert_eq!(
+            TerminalJournal::inspect_physical(fixture.fd()).unwrap(),
+            measured
+        );
         assert!(fixture.path.join(state_name(99)).exists());
         assert_eq!(std::fs::read(fixture.path.join(META)).unwrap(), metadata);
         assert_eq!(journal.usage().raw_bytes, 3);
@@ -1574,6 +1606,12 @@ mod tests {
             }
             let before = std::fs::read(fixture.path.join(META)).unwrap();
             assert!(journal.physical_usage().is_err(), "case {case}");
+            if case != 3 {
+                assert!(
+                    TerminalJournal::inspect_physical(fixture.fd()).is_err(),
+                    "case {case}"
+                );
+            }
             assert_eq!(std::fs::read(fixture.path.join(META)).unwrap(), before);
             assert!(!journal.poisoned);
         }
@@ -1585,6 +1623,12 @@ mod tests {
             journal.physical_usage().unwrap_err(),
             TerminalJournalError::Corrupt
         );
+        assert_eq!(
+            TerminalJournal::inspect_physical(fixture.fd())
+                .unwrap()
+                .raw_bytes,
+            0
+        );
     }
 
     #[test]
@@ -1595,10 +1639,169 @@ mod tests {
             fixture.put(&event_name(id as u64), b"");
         }
         assert!(journal.physical_usage().is_ok());
+        assert!(TerminalJournal::inspect_physical(fixture.fd()).is_ok());
         fixture.put(&event_name(MAX_DIRECTORY_ENTRIES as u64), b"");
         assert_eq!(
             journal.physical_usage().unwrap_err(),
             TerminalJournalError::ResourceLimit
+        );
+        assert_eq!(
+            TerminalJournal::inspect_physical(fixture.fd()).unwrap_err(),
+            TerminalJournalError::ResourceLimit
+        );
+    }
+
+    #[test]
+    fn inspect_physical_accepts_empty_and_partial_creation_without_repair() {
+        let fixture = Fixture::new();
+        assert_eq!(
+            TerminalJournal::inspect_physical(fixture.fd()).unwrap(),
+            TerminalJournalPhysicalUsage::default()
+        );
+        assert_eq!(std::fs::read_dir(&fixture.path).unwrap().count(), 0);
+        fixture.put(TEMP, b"uncommitted metadata");
+        fixture.put(&raw_name(1), b"uncommitted raw");
+        fixture.put(&checkpoint_name(2), b"orphan checkpoint");
+        fixture.put(&state_name(3), b"orphan state");
+        fixture.put(&event_name(4), b"orphan event");
+        let measured = TerminalJournal::inspect_physical(fixture.fd()).unwrap();
+        assert_eq!(measured.raw_bytes, 15);
+        assert_eq!(measured.checkpoint_bytes, 17);
+        assert_eq!(measured.state_bytes, 12);
+        assert_eq!(measured.event_bytes, 12);
+        assert_eq!(measured.metadata_bytes, 20);
+        assert_eq!(measured.output_bytes, 32);
+        assert_eq!(measured.total_bytes, 76);
+        assert_eq!(std::fs::read_dir(&fixture.path).unwrap().count(), 5);
+        assert!(!fixture.path.join(META).exists());
+        assert!(!fixture.path.join(LOCK).exists());
+        fixture.put(LOCK, b"");
+        assert_eq!(
+            TerminalJournal::inspect_physical(fixture.fd()).unwrap(),
+            measured
+        );
+        // Stat accounting does not decode, authenticate, or recover metadata.
+        fixture.put(META, b"not a manifest");
+        let measured = TerminalJournal::inspect_physical(fixture.fd()).unwrap();
+        assert_eq!(measured.metadata_bytes, 34);
+        assert_eq!(measured.total_bytes, 90);
+        assert_eq!(
+            std::fs::read(fixture.path.join(TEMP)).unwrap(),
+            b"uncommitted metadata"
+        );
+        assert_eq!(
+            std::fs::read(fixture.path.join(META)).unwrap(),
+            b"not a manifest"
+        );
+    }
+
+    #[test]
+    fn inspect_physical_uses_global_bounds_without_weakening_writer_checks() {
+        let fixture = Fixture::new();
+        let journal = fixture.create(limits(8, 64));
+        fixture.put(&raw_name(99), b"ninebytes");
+        assert_eq!(
+            TerminalJournal::inspect_physical(fixture.fd())
+                .unwrap()
+                .raw_bytes,
+            9
+        );
+        assert_eq!(
+            journal.physical_usage().unwrap_err(),
+            TerminalJournalError::ResourceLimit
+        );
+        assert_eq!(
+            TerminalJournal::open_existing(fixture.fd(), &session(), limits(8, 64)).unwrap_err(),
+            TerminalJournalError::Busy
+        );
+        for (name, maximum) in [
+            (raw_name(1), MAX_SEGMENT_BYTES),
+            (checkpoint_name(1), MAX_CHECKPOINT_BYTES),
+            (state_name(1), MAX_STATE_BYTES),
+            (event_name(1), MAX_EVENT_BYTES),
+            (META.to_owned(), MAX_META),
+            (TEMP.to_owned(), MAX_META),
+        ] {
+            let fixture = Fixture::new();
+            fixture.put(&name, b"");
+            let file = OpenOptions::new()
+                .write(true)
+                .open(fixture.path.join(&name))
+                .unwrap();
+            file.set_len(maximum as u64).unwrap();
+            assert_eq!(
+                TerminalJournal::inspect_physical(fixture.fd())
+                    .unwrap()
+                    .total_bytes,
+                maximum as u64,
+                "{name}"
+            );
+            file.set_len(maximum as u64 + 1).unwrap();
+            assert_eq!(
+                TerminalJournal::inspect_physical(fixture.fd()).unwrap_err(),
+                TerminalJournalError::ResourceLimit,
+                "{name}"
+            );
+            assert_eq!(file.metadata().unwrap().len(), maximum as u64 + 1);
+        }
+    }
+
+    #[test]
+    fn inspect_physical_rejects_nonfiles_invalid_ids_and_nonempty_lock() {
+        for name in [
+            raw_name(0),
+            "tj-event-1".to_owned(),
+            "unknown".to_owned(),
+            LOCK.to_owned(),
+        ] {
+            let fixture = Fixture::new();
+            fixture.put(&name, b"data");
+            assert_eq!(
+                TerminalJournal::inspect_physical(fixture.fd()).unwrap_err(),
+                TerminalJournalError::Corrupt,
+                "{name}"
+            );
+        }
+        let fixture = Fixture::new();
+        DirBuilder::new()
+            .mode(0o700)
+            .create(fixture.path.join(raw_name(1)))
+            .unwrap();
+        assert_eq!(
+            TerminalJournal::inspect_physical(fixture.fd()).unwrap_err(),
+            TerminalJournalError::Corrupt
+        );
+    }
+
+    #[test]
+    fn inspect_physical_validates_and_retains_the_directory_descriptor() {
+        let fixture = Fixture::new();
+        let retained = fixture.fd();
+        std::fs::set_permissions(&fixture.path, std::fs::Permissions::from_mode(0o750)).unwrap();
+        assert_eq!(
+            TerminalJournal::inspect_physical(retained).unwrap_err(),
+            TerminalJournalError::Corrupt
+        );
+        std::fs::set_permissions(&fixture.path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        fixture.put(&raw_name(1), b"original");
+        let retained = fixture.fd();
+        let moved = Fixture::new();
+        std::fs::rename(&fixture.path, &moved.path).unwrap();
+        DirBuilder::new().mode(0o700).create(&fixture.path).unwrap();
+        fixture.put("unknown replacement", b"ignored");
+        assert_eq!(
+            TerminalJournal::inspect_physical(retained)
+                .unwrap()
+                .raw_bytes,
+            8
+        );
+        assert_eq!(
+            TerminalJournal::inspect_physical(fixture.fd()).unwrap_err(),
+            TerminalJournalError::Corrupt
+        );
+        assert_eq!(
+            std::fs::read(moved.path.join(raw_name(1))).unwrap(),
+            b"original"
         );
     }
 
