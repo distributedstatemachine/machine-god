@@ -315,8 +315,8 @@ mod tests {
         );
     }
 
-    fn reframe(facts: serde_json::Value, monitors: &TerminalMonitorSet) -> Vec<u8> {
-        let facts = serde_json::to_vec(&facts).unwrap();
+    fn reframe(facts: &serde_json::Value, monitors: &TerminalMonitorSet) -> Vec<u8> {
+        let facts = serde_json::to_vec(facts).unwrap();
         let mut bytes = MAGIC.to_vec();
         bytes.extend_from_slice(&u32::try_from(facts.len()).unwrap().to_le_bytes());
         bytes.extend_from_slice(&facts);
@@ -343,7 +343,7 @@ mod tests {
             candidate["metadata"][field] = value;
             assert!(
                 TerminalSessionFacts::decode(
-                    &reframe(candidate, &monitors),
+                    &reframe(&candidate, &monitors),
                     &facts.session_id,
                     &facts.context.cursor
                 )
@@ -354,7 +354,7 @@ mod tests {
         let mut legacy = wire;
         legacy.as_object_mut().unwrap().remove("metadata");
         legacy.as_object_mut().unwrap().remove("attention");
-        let bytes = reframe(legacy, &monitors);
+        let bytes = reframe(&legacy, &monitors);
         let (decoded, _) =
             TerminalSessionFacts::decode(&bytes, &facts.session_id, &facts.context.cursor).unwrap();
         assert!(decoded.metadata.is_none());

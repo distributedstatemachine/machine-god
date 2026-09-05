@@ -1027,6 +1027,7 @@ mod tests {
         use crate::terminal_journal::{TerminalJournal, TerminalJournalLimits};
         use crate::terminal_monitor::{TerminalMonitorActivation, TerminalProcessOutcome};
         use crate::terminal_session::TerminalSession;
+        use crate::terminal_session_record::test_metadata as meta;
         use machine_god_core::{
             BackgroundOutputOwner, SessionId, SessionIncarnationId, TerminalCursor,
             TerminalDimensions, TerminalEventQuery, TerminalLifecycle, TerminalMonitorCondition,
@@ -1058,15 +1059,7 @@ mod tests {
                 "stty -echo; printf READY; read answer; stty size; printf FINISHED; exit 23",
             ],
         );
-        let mut session = TerminalSession::new(
-            pty,
-            history,
-            owner.clone(),
-            id,
-            crate::terminal_session_record::test_metadata(),
-            0,
-        )
-        .unwrap();
+        let mut session = TerminalSession::new(pty, history, owner.clone(), id, meta(), 0).unwrap();
         let monitor = session
             .monitor(
                 &owner,
