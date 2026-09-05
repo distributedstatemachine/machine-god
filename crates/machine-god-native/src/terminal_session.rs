@@ -16,10 +16,12 @@ use crate::terminal_monitor::{
 use crate::terminal_pty::{
     TerminalPty, TerminalPtyClose, TerminalPtyDimensions, TerminalPtyRead, TerminalPtyStatus,
 };
+use crate::terminal_session_record::{TerminalSessionFacts, TerminalSessionRecordError};
 use machine_god_core::{
     BackgroundOutputOwner, TerminalClosePolicy, TerminalCursor, TerminalDimensions,
-    TerminalEventQuery, TerminalLifecycle, TerminalMonitorEvent, TerminalMonitorOperation,
-    TerminalScreen, TerminalSessionId, TerminalSignal, TerminalWriteRequest,
+    TerminalEventQuery, TerminalGap, TerminalLifecycle, TerminalMonitorEvent,
+    TerminalMonitorOperation, TerminalScreen, TerminalSessionId, TerminalSignal,
+    TerminalWriteRequest,
 };
 use std::fmt;
 use std::num::NonZeroU64;
@@ -87,6 +89,7 @@ pub(crate) enum TerminalSessionError {
     Input(TerminalInputError),
     History(TerminalHistoryError),
     Monitor(TerminalMonitorError),
+    Record(TerminalSessionRecordError),
 }
 type Result<T> = std::result::Result<T, TerminalSessionError>;
 impl From<TerminalHistoryError> for TerminalSessionError {
@@ -102,6 +105,11 @@ impl From<TerminalInputError> for TerminalSessionError {
 impl From<TerminalMonitorError> for TerminalSessionError {
     fn from(error: TerminalMonitorError) -> Self {
         Self::Monitor(error)
+    }
+}
+impl From<TerminalSessionRecordError> for TerminalSessionError {
+    fn from(error: TerminalSessionRecordError) -> Self {
+        Self::Record(error)
     }
 }
 
@@ -121,6 +129,7 @@ pub(crate) struct TerminalSession<B: TerminalSessionBackend> {
     monitors: TerminalMonitorSet,
     lifecycle: TerminalLifecycle,
     outcome: Option<TerminalProcessOutcome>,
+    created_at_ms: i64,
     now_ms: i64,
     last_output_ms: i64,
 }
@@ -151,7 +160,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
                 lifecycle: TerminalLifecycle::Starting,
             },
         )?;
-        Ok(Self {
+        let mut session = Self {
             backend: Some(backend),
             history,
             owner,
@@ -159,9 +168,12 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             monitors,
             lifecycle: TerminalLifecycle::Starting,
             outcome: None,
+            created_at_ms: now_ms,
             now_ms,
             last_output_ms: now_ms,
-        })
+        };
+        session.persist()?;
+        Ok(session)
     }
     pub(crate) fn shell_ready(&mut self, now_ms: i64) -> Result<()> {
         self.check_time(now_ms)?;
@@ -170,7 +182,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         }
         self.now_ms = now_ms;
         self.lifecycle = TerminalLifecycle::Running;
-        Ok(())
+        self.persist()
     }
     pub(crate) fn context(&self) -> TerminalMonitorContext {
         TerminalMonitorContext {
@@ -248,6 +260,11 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
     /// Cancelling an attention future does not drop a committed input suffix.
     pub(crate) fn pump(&mut self, now_ms: i64) -> Result<TerminalSessionStep> {
         self.check_time(now_ms)?;
+        let before_lifecycle = self.lifecycle;
+        let timer_due = self
+            .monitors
+            .next_deadline()
+            .is_some_and(|deadline| deadline <= now_ms);
         self.now_ms = now_ms;
         if !matches!(
             self.lifecycle,
@@ -255,11 +272,23 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         ) {
             return Ok(self.step(Vec::new(), Vec::new()));
         }
-        let result = self.pump_inner();
-        if result.is_err() {
-            self.lose();
+        match self.pump_inner() {
+            Ok(step) => {
+                if timer_due
+                    || !step.output.is_empty()
+                    || !step.probes.is_empty()
+                    || self.lifecycle != before_lifecycle
+                {
+                    self.persist()?;
+                }
+                Ok(step)
+            }
+            Err(error) => {
+                self.lose();
+                let _ = self.persist();
+                Err(error)
+            }
         }
-        result
     }
     fn pump_inner(&mut self) -> Result<TerminalSessionStep> {
         let status = self
@@ -334,7 +363,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             self.monitors
                 .screen(&self.history.screen()?, self.context())?;
         }
-        Ok(())
+        self.persist()
     }
     pub(crate) fn signal(
         &mut self,
@@ -352,6 +381,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             self.history.mark_output_gap()?;
             self.now_ms = now_ms;
             self.monitors.raw_gap(self.context())?;
+            self.persist()?;
         }
         // A failed signal is not retried and never escalates into close/kill.
         self.backend
@@ -371,10 +401,14 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         self.authorize(owner)?;
         self.check_time(now_ms)?;
         self.now_ms = now_ms;
-        self.finish_native(
+        let native = self.finish_native(
             policy == TerminalClosePolicy::Force,
             TerminalLifecycle::Closed,
-        )
+        );
+        // Persist the observed result after cleanup, even when cleanup failed.
+        // Persistence failure must never prevent the first native cleanup attempt.
+        let persisted = self.persist();
+        native.and(persisted)
     }
 
     /// Native cleanup proceeds even if history publication fails. The error is
@@ -423,13 +457,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
                             }
                         }
                     })
-                    .and_then(|closed| {
-                        if closed.status == TerminalPtyStatus::Running {
-                            Err(())
-                        } else {
-                            Ok(closed)
-                        }
-                    });
+                    .and_then(require_closed_status);
                 if let Err(error) = capture.finish(
                     result
                         .as_ref()
@@ -441,7 +469,9 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             }
             Err(error) => {
                 history_error = Some(error);
-                backend.close(force, &mut |_| {})
+                backend
+                    .close(force, &mut |_| {})
+                    .and_then(require_closed_status)
             }
         };
         if observed_output {
@@ -499,6 +529,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             .monitors
             .apply_with_activation(operation, activation, context)?;
         self.now_ms = now_ms;
+        self.persist()?;
         Ok(mutation)
     }
     pub(crate) fn complete_probe(
@@ -515,11 +546,20 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         let mut context = self.context();
         context.now_ms = now_ms;
         let mut candidate = self.monitors.clone();
-        let accepted = candidate.complete_probe(evidence, context)?;
+        let accepted = candidate
+            .complete_probe(evidence, context)
+            .map_err(|error| {
+                if error == TerminalMonitorError::Clock {
+                    TerminalSessionError::Clock
+                } else {
+                    TerminalSessionError::Monitor(error)
+                }
+            })?;
         if accepted {
             self.check_time(now_ms)?;
             self.monitors = candidate;
             self.now_ms = now_ms;
+            self.persist()?;
         }
         Ok(accepted)
     }
@@ -529,7 +569,37 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         query: &TerminalEventQuery,
     ) -> Result<Vec<TerminalMonitorEvent>> {
         self.authorize(owner)?;
-        Ok(self.monitors.events(query)?)
+        let before_ack = self.monitors.acknowledged_event_id();
+        let events = self.monitors.events(query)?;
+        if self.monitors.acknowledged_event_id() != before_ack {
+            self.persist()?;
+        }
+        Ok(events)
+    }
+    fn persist(&mut self) -> Result<()> {
+        let result = (|| {
+            self.monitors.checkpoint_context(self.context())?;
+            let facts = TerminalSessionFacts::new(
+                self.history.session_id().clone(),
+                &self.owner,
+                self.context(),
+                self.created_at_ms,
+                self.last_output_ms,
+                self.outcome,
+            )?;
+            let bytes = facts.encode(&self.monitors)?;
+            self.history.publish_state(&bytes)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            if self.backend.is_some() {
+                self.lose();
+            } else {
+                self.input.quiesce();
+                self.monitors.quiesce();
+            }
+        }
+        result
     }
     fn authorize(&self, owner: &BackgroundOutputOwner) -> Result<()> {
         if owner == &self.owner {
@@ -575,8 +645,16 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
     fn lose(&mut self) {
         self.input.quiesce();
         self.lifecycle = TerminalLifecycle::Lost;
+        self.outcome = None;
         let _ = self.monitors.end_session(None, self.context());
         self.monitors.quiesce();
+    }
+}
+fn require_closed_status(closed: TerminalPtyClose) -> std::result::Result<TerminalPtyClose, ()> {
+    if closed.status == TerminalPtyStatus::Running {
+        Err(())
+    } else {
+        Ok(closed)
     }
 }
 fn outcome(status: TerminalPtyStatus) -> Option<TerminalProcessOutcome> {
@@ -584,6 +662,122 @@ fn outcome(status: TerminalPtyStatus) -> Option<TerminalProcessOutcome> {
         TerminalPtyStatus::Running => None,
         TerminalPtyStatus::Exited(code) => Some(TerminalProcessOutcome::Exited(code)),
         TerminalPtyStatus::Signalled(signal) => Some(TerminalProcessOutcome::Signaled(signal)),
+    }
+}
+
+/// Owner-authorized durable observations with no native backend or input path.
+/// Native recovery marks a formerly live host record lost and revokes pending
+/// monitor probes. It does not probe, signal, or reconnect a persisted PID.
+pub(crate) struct TerminalRecoveredSession {
+    history: TerminalHistory,
+    facts: TerminalSessionFacts,
+    monitors: TerminalMonitorSet,
+}
+impl fmt::Debug for TerminalRecoveredSession {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TerminalRecoveredSession")
+            .finish_non_exhaustive()
+    }
+}
+impl TerminalRecoveredSession {
+    pub(crate) fn recover(
+        mut history: TerminalHistory,
+        owner: &BackgroundOutputOwner,
+        now_ms: i64,
+    ) -> Result<Self> {
+        if history.require_live().is_ok() {
+            return Err(TerminalSessionError::InvalidState);
+        }
+        let state = history
+            .load_state()?
+            .ok_or(TerminalSessionError::NotFound)?;
+        let (mut facts, monitor_bytes) =
+            TerminalSessionFacts::decode(&state.bytes, history.session_id(), &state.source)?;
+        if !facts.owned_by(owner) {
+            return Err(TerminalSessionError::NotFound);
+        }
+        if now_ms < facts.context.now_ms {
+            return Err(TerminalSessionError::Clock);
+        }
+        let mut monitors = facts.restore_monitors(monitor_bytes)?;
+        let latest = history.latest();
+        if state.source > latest {
+            return Err(TerminalSessionRecordError::Invalid.into());
+        }
+        let incomplete = state.source < latest;
+        if incomplete {
+            facts.observation_gap = Some(
+                TerminalGap::new(state.source, latest.clone())
+                    .map_err(|_| TerminalSessionRecordError::Invalid)?,
+            );
+            facts.context.cursor = latest;
+        }
+        let was_live = matches!(
+            facts.context.lifecycle,
+            TerminalLifecycle::Starting | TerminalLifecycle::Running,
+        );
+        if was_live || incomplete {
+            facts.context.now_ms = now_ms;
+        }
+        if was_live {
+            facts.context.lifecycle = TerminalLifecycle::Lost;
+            facts.outcome = None;
+            monitors.end_session(None, facts.context.clone())?;
+        } else {
+            monitors.checkpoint_context(facts.context.clone())?;
+        }
+        if was_live || incomplete {
+            history.publish_state(&facts.encode(&monitors)?)?;
+        }
+        Ok(Self {
+            history,
+            facts,
+            monitors,
+        })
+    }
+
+    pub(crate) fn facts(&self, owner: &BackgroundOutputOwner) -> Result<&TerminalSessionFacts> {
+        self.authorize(owner)?;
+        Ok(&self.facts)
+    }
+
+    pub(crate) fn read(
+        &self,
+        owner: &BackgroundOutputOwner,
+        cursor: &TerminalCursor,
+        maximum: usize,
+    ) -> Result<TerminalJournalPage> {
+        self.authorize(owner)?;
+        Ok(self.history.read(cursor, maximum)?)
+    }
+
+    pub(crate) fn screen(&self, owner: &BackgroundOutputOwner) -> Result<TerminalScreen> {
+        self.authorize(owner)?;
+        Ok(self.history.screen()?)
+    }
+
+    pub(crate) fn events(
+        &mut self,
+        owner: &BackgroundOutputOwner,
+        query: &TerminalEventQuery,
+    ) -> Result<Vec<TerminalMonitorEvent>> {
+        self.authorize(owner)?;
+        let mut candidate = self.monitors.clone();
+        let events = candidate.events(query)?;
+        if candidate.acknowledged_event_id() != self.monitors.acknowledged_event_id() {
+            self.history
+                .publish_state(&self.facts.encode(&candidate)?)?;
+            self.monitors = candidate;
+        }
+        Ok(events)
+    }
+
+    fn authorize(&self, owner: &BackgroundOutputOwner) -> Result<()> {
+        if self.facts.owned_by(owner) {
+            Ok(())
+        } else {
+            Err(TerminalSessionError::NotFound)
+        }
     }
 }
 
@@ -854,6 +1048,271 @@ mod tests {
             )
             .unwrap()
             .monitor_id
+    }
+
+    #[test]
+    fn idle_pumps_do_not_republish_unchanged_durable_state() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        let metadata = std::fs::read(fixture.path.join("tj-meta")).unwrap();
+        for time in 1..=20 {
+            session.pump(time).unwrap();
+        }
+        assert_eq!(
+            std::fs::read(fixture.path.join("tj-meta")).unwrap(),
+            metadata
+        );
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"changed".to_vec());
+        session.pump(21).unwrap();
+        assert_ne!(
+            std::fs::read(fixture.path.join("tj-meta")).unwrap(),
+            metadata
+        );
+        let state = session.history.load_state().unwrap().unwrap();
+        let (facts, _) = TerminalSessionFacts::decode(&state.bytes, &id(), &state.source).unwrap();
+        assert_eq!(facts.context.cursor, session.context().cursor);
+        assert_eq!(facts.last_output_ms, 21);
+    }
+
+    #[test]
+    fn closed_facts_monitor_events_and_acknowledgements_survive_reopen() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(5).unwrap();
+        add(
+            &mut session,
+            Condition::OutputContains {
+                pattern: "ready".into(),
+            },
+        );
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"ready".to_vec());
+        session.pump(10).unwrap();
+        let events = session.events(&owner("owner"), &query()).unwrap();
+        let acknowledged = events.last().unwrap().event_id;
+        session
+            .events(
+                &owner("owner"),
+                &TerminalEventQuery {
+                    acknowledge_event_id: Some(acknowledged),
+                    ..query()
+                },
+            )
+            .unwrap();
+        session
+            .close(&owner("owner"), TerminalClosePolicy::Graceful, 11)
+            .unwrap();
+        let screen = session.screen(&owner("owner")).unwrap();
+        drop(session);
+        let mut recovered =
+            TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 100).unwrap();
+        assert_eq!(
+            recovered.facts(&owner("owner")).unwrap().context.lifecycle,
+            TerminalLifecycle::Closed
+        );
+        assert_eq!(
+            recovered.facts.outcome,
+            Some(TerminalProcessOutcome::Exited(0))
+        );
+        assert_eq!(recovered.monitors.acknowledged_event_id(), acknowledged);
+        assert_eq!(recovered.events(&owner("owner"), &query()).unwrap(), events);
+        assert_eq!(recovered.screen(&owner("owner")).unwrap(), screen);
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
+    }
+
+    #[test]
+    fn host_loss_revokes_probes_without_replaying_input_or_accepting_other_owners() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        acquire(&mut session);
+        fixture.state.lock().unwrap().write_limit = 1;
+        session
+            .write(&owner("owner"), writer(), &text("secret input"), false)
+            .unwrap();
+        add(
+            &mut session,
+            Condition::TcpReady {
+                host: "example.invalid".into(),
+                port: 80,
+            },
+        );
+        assert_eq!(session.pump(10).unwrap().probes.len(), 1);
+        drop(session);
+        let metadata = std::fs::read(fixture.path.join("tj-meta")).unwrap();
+        assert!(matches!(
+            TerminalRecoveredSession::recover(fixture.recover(), &owner("wrong"), 100),
+            Err(TerminalSessionError::NotFound),
+        ));
+        assert_eq!(
+            std::fs::read(fixture.path.join("tj-meta")).unwrap(),
+            metadata
+        );
+        let (writes, calls) = {
+            let state = fixture.state.lock().unwrap();
+            (state.writes.clone(), state.status_calls)
+        };
+        assert!(matches!(
+            TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 9),
+            Err(TerminalSessionError::Clock),
+        ));
+        assert_eq!(
+            std::fs::read(fixture.path.join("tj-meta")).unwrap(),
+            metadata
+        );
+        let recovered =
+            TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 100).unwrap();
+        assert_eq!(recovered.facts.context.lifecycle, TerminalLifecycle::Lost);
+        assert_eq!(recovered.facts.context.now_ms, 100);
+        assert_eq!(recovered.monitors.len(), 0);
+        assert!(recovered.monitors.next_deadline().is_none());
+        assert!(recovered.facts.outcome.is_none());
+        assert!(matches!(
+            recovered.facts(&owner("wrong")),
+            Err(TerminalSessionError::NotFound)
+        ));
+        let origin = TerminalCursor::new(1, 0).unwrap();
+        assert!(matches!(
+            recovered.read(&owner("wrong"), &origin, 10),
+            Err(TerminalSessionError::NotFound),
+        ));
+        assert_eq!(fixture.state.lock().unwrap().writes, writes);
+        assert_eq!(fixture.state.lock().unwrap().status_calls, calls);
+        assert_eq!(fixture.state.lock().unwrap().closes, 0);
+        let saved = std::fs::read(fixture.path.join("tj-meta")).unwrap();
+        drop(recovered);
+        let _recovered =
+            TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 100).unwrap();
+        assert_eq!(std::fs::read(fixture.path.join("tj-meta")).unwrap(), saved);
+    }
+
+    #[test]
+    fn crash_between_raw_and_state_commit_records_an_observation_gap() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        add(
+            &mut session,
+            Condition::OutputContains {
+                pattern: "unobserved".into(),
+            },
+        );
+        let observed = session.context().cursor;
+        // Simulate a crash after raw fsync but before the monitor/state transaction.
+        let latest = session.history.append(b"unobserved").unwrap().cursor;
+        drop(session);
+        let mut recovered =
+            TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 100).unwrap();
+        let gap = recovered.facts.observation_gap.as_ref().unwrap();
+        assert_eq!(gap.missing_from, observed);
+        assert_eq!(gap.available_from, latest);
+        assert_eq!(recovered.facts.context.cursor, latest);
+        assert_eq!(recovered.facts.context.lifecycle, TerminalLifecycle::Lost);
+        assert_eq!(
+            recovered
+                .read(&owner("owner"), &observed, 100)
+                .unwrap()
+                .bytes,
+            b"unobserved"
+        );
+        assert!(
+            recovered
+                .events(&owner("owner"), &query())
+                .unwrap()
+                .iter()
+                .all(|event| {
+                    event.reason != machine_god_core::TerminalMonitorEventReason::Matched
+                })
+        );
+        drop(recovered);
+        let recovered =
+            TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 100).unwrap();
+        assert!(recovered.facts.observation_gap.is_some());
+    }
+
+    #[test]
+    fn recovered_event_acknowledgement_is_durable_and_wrong_owner_has_no_effects() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        add(
+            &mut session,
+            Condition::OutputContains {
+                pattern: "event".into(),
+            },
+        );
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"event".to_vec());
+        session.pump(1).unwrap();
+        drop(session);
+        let mut recovered =
+            TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 100).unwrap();
+        let events = recovered.events(&owner("owner"), &query()).unwrap();
+        let ack = events.last().unwrap().event_id;
+        let query = TerminalEventQuery {
+            acknowledge_event_id: Some(ack),
+            ..query()
+        };
+        let metadata = std::fs::read(fixture.path.join("tj-meta")).unwrap();
+        assert_eq!(
+            recovered.events(&owner("wrong"), &query),
+            Err(TerminalSessionError::NotFound)
+        );
+        assert_eq!(
+            std::fs::read(fixture.path.join("tj-meta")).unwrap(),
+            metadata
+        );
+        recovered.events(&owner("owner"), &query).unwrap();
+        drop(recovered);
+        let recovered =
+            TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 100).unwrap();
+        assert_eq!(recovered.monitors.acknowledged_event_id(), ack);
+    }
+
+    #[test]
+    fn state_publication_failure_quiesces_input_but_cannot_skip_cleanup() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        let _temporary = rustix::fs::openat(
+            fixture.fd(),
+            "tj-meta.tmp",
+            OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::from_bits_retain(0o600),
+        )
+        .unwrap();
+        assert!(session.shell_ready(1).is_err());
+        assert_eq!(session.context().lifecycle, TerminalLifecycle::Lost);
+        assert!(session.input.is_quiesced());
+        assert_eq!(fixture.state.lock().unwrap().closes, 0);
+        // Failed state publication makes history read-only, but cannot skip
+        // the explicitly requested native cleanup.
+        assert!(
+            session
+                .close(&owner("owner"), TerminalClosePolicy::Force, 2)
+                .is_err()
+        );
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
+        assert!(session.input.is_quiesced());
+        assert!(session.backend.is_none());
+        drop(session);
+        let recovered =
+            TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 100).unwrap();
+        assert_eq!(recovered.facts.context.lifecycle, TerminalLifecycle::Lost);
+        assert!(recovered.facts.outcome.is_none());
     }
 
     #[test]

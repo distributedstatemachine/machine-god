@@ -30,6 +30,7 @@ const MAX_EVENT_BYTES: usize = 4096;
 const MAX_PAGE_BYTES: usize = 64 * 1024;
 const MAX_DIRECTORY_ENTRIES: usize = 1024;
 const MAX_CHECKPOINT_BYTES: usize = 64 * 1024 * 1024;
+const MAX_STATE_BYTES: usize = 33 * 1024 * 1024;
 const DOMAIN: &[u8] = b"machine-god:terminal-journal:v1:";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -139,6 +140,7 @@ redacted!(TerminalJournalEvents);
 pub(crate) struct TerminalJournalUsage {
     pub(crate) raw_bytes: usize,
     pub(crate) checkpoint_bytes: usize,
+    pub(crate) state_bytes: usize,
     pub(crate) event_bytes: usize,
     pub(crate) payload_bytes: usize,
     /// Encoded metadata bytes, separate from the profile payload budget.
@@ -181,6 +183,10 @@ struct Manifest {
     acknowledged: u64,
     event_gap: u64,
     events: Vec<Blob>,
+    // Omit absent state so the canonical hash of existing version-1 manifests
+    // remains unchanged. Unlike screen checkpoints, session facts never evict.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    state: Option<Checkpoint>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -235,6 +241,7 @@ impl TerminalJournal {
             acknowledged: 0,
             event_gap: 0,
             events: Vec::new(),
+            state: None,
         };
         let mut journal = Self {
             root,
@@ -247,11 +254,13 @@ impl TerminalJournal {
             pending_files: BTreeSet::new(),
         };
         // No committed metadata exists: only an abandoned metadata temp is safe
-        // to remove. Existing raw/event/checkpoint files require investigation.
-        for name in journal.scan_owned()? {
-            if name != TEMP {
-                return Err(TerminalJournalError::Corrupt);
-            }
+        // to remove. Existing raw/event/checkpoint/state files require investigation.
+        let abandoned = journal.scan_owned()?;
+        ensure(
+            abandoned.iter().all(|name| name == TEMP),
+            TerminalJournalError::Corrupt,
+        )?;
+        for name in abandoned {
             journal.remove_checked(&name)?;
         }
         journal.publish_manifest(&journal.manifest.clone())?;
@@ -459,7 +468,7 @@ impl TerminalJournal {
         ensure(
             !bytes.is_empty()
                 && bytes.len() <= MAX_CHECKPOINT_BYTES
-                && bytes.len() <= self.manifest.limits.session_bytes
+                && bytes.len() <= self.manifest.limits.session_bytes - self.usage().state_bytes
                 && source <= self.manifest.latest,
             TerminalJournalError::Invalid,
         )?;
@@ -491,6 +500,67 @@ impl TerminalJournal {
                         &checkpoint_name(value.blob.id),
                         &value.blob,
                         MAX_CHECKPOINT_BYTES,
+                    )?,
+                })
+            })
+            .transpose()
+    }
+
+    /// Protected opaque session facts and monitor snapshot. Publication replaces
+    /// the previous state atomically; retention never removes it. One full raw
+    /// segment remains affordable, so subsequent output cannot strand the writer.
+    pub(crate) fn publish_state(&mut self, source: TerminalCursor, bytes: &[u8]) -> Result<()> {
+        self.ready()?;
+        ensure(
+            !bytes.is_empty()
+                && bytes.len() <= MAX_STATE_BYTES
+                && bytes.len()
+                    <= self.manifest.limits.session_bytes - self.manifest.limits.segment_bytes
+                && source <= self.manifest.latest,
+            TerminalJournalError::Invalid,
+        )?;
+        self.validate_position(&source)?;
+        let mut next = self.manifest.clone();
+        let id = next
+            .generation
+            .checked_add(1)
+            .ok_or(TerminalJournalError::ResourceLimit)?;
+        next.generation = id;
+        next.state = Some(Checkpoint {
+            blob: Blob {
+                id,
+                bytes: bytes.len(),
+                sha256: [0; 32],
+            },
+            source,
+        });
+        // Finish capacity and counter checks before creating any file or
+        // poisoning this handle. Existing state is replaced, not double-counted.
+        trim(&mut next, false)?;
+        validate_manifest(&next)?;
+        self.poisoned = true;
+        let blob = write_blob(&self.root, &state_name(id), id, bytes)?;
+        self.pending_files.insert(state_name(id));
+        next.state
+            .as_mut()
+            .ok_or(TerminalJournalError::Corrupt)?
+            .blob = blob;
+        self.commit(next)
+    }
+
+    pub(crate) fn load_state(&self) -> Result<Option<TerminalJournalCheckpoint>> {
+        self.ready()?;
+        self.manifest
+            .state
+            .as_ref()
+            .map(|value| {
+                Ok(TerminalJournalCheckpoint {
+                    source: value.source.clone(),
+                    bytes: read_blob(
+                        &self.root,
+                        &state_name(value.blob.id),
+                        &value.blob,
+                        MAX_STATE_BYTES,
                     )?,
                 })
             })
@@ -669,6 +739,15 @@ impl TerminalJournal {
             )?;
             verify_prefix(&file, &checkpoint.blob)?;
         }
+        if let Some(state) = &self.manifest.state {
+            let file = open_file(&self.root, &state_name(state.blob.id), OFlags::RDONLY)
+                .map_err(missing_is_corrupt)?;
+            ensure(
+                file_size(&file)? == state.blob.bytes,
+                TerminalJournalError::Corrupt,
+            )?;
+            verify_prefix(&file, &state.blob)?;
+        }
         for event in &self.manifest.events {
             let file = open_file(&self.root, &event_name(event.id), OFlags::RDONLY)
                 .map_err(missing_is_corrupt)?;
@@ -793,6 +872,18 @@ fn validate_manifest(m: &Manifest) -> Result<()> {
             TerminalJournalError::Corrupt,
         )?;
     }
+    if let Some(state) = &m.state {
+        ensure(
+            state.blob.id > 0
+                && state.blob.id <= m.generation
+                && state.blob.bytes > 0
+                && state.blob.bytes <= MAX_STATE_BYTES
+                && state.blob.bytes <= m.limits.session_bytes - m.limits.segment_bytes
+                && state.source <= m.latest
+                && state.source.offset() <= m.limits.segment_bytes as u64,
+            TerminalJournalError::Corrupt,
+        )?;
+    }
     previous = m.event_gap;
     for event in &m.events {
         ensure(
@@ -840,11 +931,13 @@ fn usage(m: &Manifest, metadata_bytes: usize) -> TerminalJournalUsage {
     let raw_bytes = m.segments.iter().map(|b| b.bytes).sum();
     let event_bytes = m.events.iter().map(|b| b.bytes).sum();
     let checkpoint_bytes = m.checkpoint.as_ref().map_or(0, |c| c.blob.bytes);
+    let state_bytes = m.state.as_ref().map_or(0, |c| c.blob.bytes);
     TerminalJournalUsage {
         raw_bytes,
         checkpoint_bytes,
+        state_bytes,
         event_bytes,
-        payload_bytes: raw_bytes + checkpoint_bytes + event_bytes,
+        payload_bytes: raw_bytes + checkpoint_bytes + state_bytes + event_bytes,
         metadata_bytes,
     }
 }
@@ -858,6 +951,9 @@ fn owned_names(m: &Manifest) -> BTreeSet<String> {
     if let Some(checkpoint) = &m.checkpoint {
         names.insert(checkpoint_name(checkpoint.blob.id));
     }
+    if let Some(state) = &m.state {
+        names.insert(state_name(state.blob.id));
+    }
     names
 }
 fn recognized_blob_name(name: &[u8]) -> bool {
@@ -865,6 +961,7 @@ fn recognized_blob_name(name: &[u8]) -> bool {
         b"tj-raw-".as_slice(),
         b"tj-event-".as_slice(),
         b"tj-checkpoint-".as_slice(),
+        b"tj-state-".as_slice(),
     ]
     .iter()
     .any(|prefix| {
@@ -880,6 +977,9 @@ fn event_name(id: u64) -> String {
 }
 fn checkpoint_name(id: u64) -> String {
     format!("tj-checkpoint-{id:020}")
+}
+fn state_name(id: u64) -> String {
+    format!("tj-state-{id:020}")
 }
 fn cursor(segment: u64, offset: u64) -> TerminalCursor {
     TerminalCursor::new(segment, offset).expect("internal cursor segment is nonzero")
@@ -1387,6 +1487,333 @@ mod tests {
             fixture.open(limits).unwrap().checkpoint_status(),
             TerminalJournalCheckpointStatus::RetentionEvicted
         );
+    }
+
+    #[test]
+    fn protected_state_replacement_reopens_with_exact_source_and_accounting() {
+        let fixture = Fixture::new();
+        let limits = limits(8, 32);
+        let mut journal = fixture.create(limits);
+        assert!(journal.load_state().unwrap().is_none());
+        assert_eq!(journal.usage().state_bytes, 0);
+        let source = journal.append(b"hello").unwrap();
+        journal.publish_state(source.clone(), b"old-facts").unwrap();
+        let old_id = journal.manifest.state.as_ref().unwrap().blob.id;
+        journal.append(b"!").unwrap();
+        journal.publish_state(source.clone(), b"new-facts").unwrap();
+        assert!(!fixture.path.join(state_name(old_id)).exists());
+        assert_eq!(journal.usage().raw_bytes, 6);
+        assert_eq!(journal.usage().state_bytes, 9);
+        assert_eq!(journal.usage().payload_bytes, 15);
+        assert_eq!(
+            format!("{:?}", journal.load_state().unwrap().unwrap()),
+            "TerminalJournalCheckpoint { .. }"
+        );
+        drop(journal);
+        let journal = fixture.open(limits).unwrap();
+        let state = journal.load_state().unwrap().unwrap();
+        assert_eq!(state.source, source);
+        assert_eq!(state.bytes, b"new-facts");
+        assert_eq!(journal.recovery(), TerminalJournalRecovery::default());
+    }
+
+    #[test]
+    fn state_admission_reserves_raw_segment_and_invalid_requests_are_inert() {
+        let fixture = Fixture::new();
+        let mut journal = fixture.create(limits(4, 12));
+        journal.append(b"raw").unwrap();
+        journal
+            .publish_state(journal.latest(), b"12345678")
+            .unwrap();
+        let before = std::fs::read(fixture.path.join(META)).unwrap();
+        let generation = journal.manifest.generation;
+        for (source, bytes) in [
+            (journal.latest(), b"".as_slice()),
+            (journal.latest(), b"123456789".as_slice()),
+            (cursor(1, 4), b"x".as_slice()),
+        ] {
+            assert_eq!(
+                journal.publish_state(source, bytes).unwrap_err(),
+                TerminalJournalError::Invalid
+            );
+        }
+        assert_eq!(
+            journal
+                .publish_checkpoint(journal.latest(), b"12345")
+                .unwrap_err(),
+            TerminalJournalError::Invalid
+        );
+        assert_eq!(std::fs::read(fixture.path.join(META)).unwrap(), before);
+        assert!(!fixture.path.join(state_name(generation + 1)).exists());
+        assert!(!fixture.path.join(checkpoint_name(generation + 1)).exists());
+        assert_eq!(journal.usage().state_bytes, 8);
+        journal.append(b"123456789").unwrap();
+        assert_eq!(collect(&journal, cursor(1, 0)), b"6789");
+        assert_eq!(journal.usage().payload_bytes, 12);
+        journal.publish_state(journal.latest(), b"smaller").unwrap();
+        assert_eq!(journal.usage().state_bytes, 7);
+    }
+
+    #[test]
+    fn state_global_bound_and_exhausted_generation_are_preflighted() {
+        let fixture = Fixture::new();
+        let mut journal = fixture.create(TerminalJournalLimits::default());
+        assert_eq!(
+            journal
+                .publish_state(journal.latest(), &vec![0; MAX_STATE_BYTES + 1])
+                .unwrap_err(),
+            TerminalJournalError::Invalid
+        );
+        assert!(journal.load_state().unwrap().is_none());
+        journal.manifest.generation = u64::MAX;
+        assert_eq!(
+            journal
+                .publish_state(journal.latest(), b"facts")
+                .unwrap_err(),
+            TerminalJournalError::ResourceLimit
+        );
+        assert!(!journal.poisoned);
+        assert!(journal.pending_files.is_empty());
+        let fixture = Fixture::new();
+        let mut journal = fixture.create(limits(4, 4));
+        assert_eq!(
+            journal.publish_state(journal.latest(), b"x").unwrap_err(),
+            TerminalJournalError::Invalid
+        );
+        journal.append(b"raw!").unwrap();
+    }
+
+    #[test]
+    fn protected_state_survives_raw_checkpoint_and_event_eviction() {
+        let fixture = Fixture::new();
+        let limits = limits(4, 12);
+        let mut journal = fixture.create(limits);
+        journal
+            .publish_state(journal.latest(), b"facts123")
+            .unwrap();
+        journal
+            .publish_checkpoint(journal.latest(), b"grid")
+            .unwrap();
+        journal.append_event(b"event").unwrap();
+        assert!(journal.load_checkpoint().unwrap().is_none());
+        assert_eq!(journal.read_events(0, 256).unwrap().gap_through, 1);
+        journal.append(b"abcdefghijklmnop").unwrap();
+        assert_eq!(collect(&journal, cursor(1, 0)), b"mnop");
+        assert_eq!(journal.usage().state_bytes, 8);
+        assert_eq!(journal.usage().payload_bytes, 12);
+        drop(journal);
+        let mut journal = fixture.open(limits).unwrap();
+        let state = journal.load_state().unwrap().unwrap();
+        assert_eq!(state.bytes, b"facts123");
+        assert_eq!(state.source, cursor(1, 0));
+        assert!(journal.read(&state.source, 4).unwrap().gap.is_some());
+        journal.acknowledge_events(1).unwrap();
+        assert_eq!(journal.load_state().unwrap().unwrap().bytes, b"facts123");
+    }
+
+    #[test]
+    fn growing_state_trims_other_payloads_and_checkpoint_can_use_remaining_budget() {
+        let fixture = Fixture::new();
+        let limits = limits(4, 12);
+        let mut journal = fixture.create(limits);
+        journal.append(b"raw!").unwrap();
+        journal.publish_state(journal.latest(), b"v1").unwrap();
+        journal
+            .publish_checkpoint(journal.latest(), b"grid")
+            .unwrap();
+        journal.append_event(b"ev").unwrap();
+        assert_eq!(journal.usage().payload_bytes, 12);
+        journal
+            .publish_state(journal.latest(), b"facts-v2")
+            .unwrap();
+        assert_eq!(journal.usage().raw_bytes, 4);
+        assert_eq!(journal.usage().checkpoint_bytes, 0);
+        assert_eq!(journal.usage().event_bytes, 0);
+        assert_eq!(journal.usage().payload_bytes, 12);
+        journal
+            .publish_checkpoint(journal.latest(), b"grid")
+            .unwrap();
+        assert_eq!(journal.usage().raw_bytes, 0);
+        assert_eq!(journal.usage().checkpoint_bytes, 4);
+        assert_eq!(journal.usage().state_bytes, 8);
+        journal.append(b"next").unwrap();
+        assert_eq!(journal.usage().raw_bytes, 4);
+        assert_eq!(journal.usage().checkpoint_bytes, 0);
+        assert_eq!(journal.load_state().unwrap().unwrap().bytes, b"facts-v2");
+        drop(journal);
+        let journal = fixture.open(limits).unwrap();
+        assert_eq!(journal.recovery(), TerminalJournalRecovery::default());
+        assert_eq!(journal.usage().payload_bytes, 12);
+    }
+
+    #[test]
+    fn failed_state_publication_recovers_old_and_removes_only_owned_orphans() {
+        let fixture = Fixture::new();
+        let limits = limits(8, 32);
+        let mut journal = fixture.create(limits);
+        journal
+            .publish_state(journal.latest(), b"old-state")
+            .unwrap();
+        let new_id = journal.manifest.generation + 1;
+        fixture.put(TEMP, b"interrupted-metadata");
+        fixture.put("tj-state-not-a-generation", b"unrelated");
+        assert_eq!(
+            journal
+                .publish_state(journal.latest(), b"new-state")
+                .unwrap_err(),
+            TerminalJournalError::Corrupt
+        );
+        assert_eq!(
+            journal.load_state().unwrap_err(),
+            TerminalJournalError::Unavailable
+        );
+        assert!(fixture.path.join(state_name(new_id)).exists());
+        drop(journal);
+        let mut journal = fixture.open(limits).unwrap();
+        assert_eq!(journal.recovery().removed_orphan_files, 2);
+        assert_eq!(journal.load_state().unwrap().unwrap().bytes, b"old-state");
+        assert!(fixture.path.join("tj-state-not-a-generation").exists());
+        journal
+            .publish_state(journal.latest(), b"complete-new-state")
+            .unwrap();
+        drop(journal);
+        // An interrupted post-publication cleanup may leave the old generation.
+        fixture.put(&state_name(new_id - 1), b"old-state");
+        let journal = fixture.open(limits).unwrap();
+        assert_eq!(journal.recovery().removed_orphan_files, 1);
+        assert_eq!(
+            journal.load_state().unwrap().unwrap().bytes,
+            b"complete-new-state"
+        );
+    }
+
+    #[test]
+    fn corrupt_or_missing_state_prevents_all_recovery_cleanup() {
+        for missing in [false, true] {
+            let fixture = Fixture::new();
+            let limits = limits(8, 32);
+            let mut journal = fixture.create(limits);
+            journal.append(b"raw").unwrap();
+            journal.publish_state(journal.latest(), b"facts").unwrap();
+            let id = journal.manifest.state.as_ref().unwrap().blob.id;
+            let state_path = fixture.path.join(state_name(id));
+            if missing {
+                std::fs::remove_file(&state_path).unwrap();
+            } else {
+                OpenOptions::new()
+                    .write(true)
+                    .open(&state_path)
+                    .unwrap()
+                    .write_all(b"X")
+                    .unwrap();
+            }
+            assert_eq!(
+                journal.load_state().unwrap_err(),
+                TerminalJournalError::Corrupt
+            );
+            drop(journal);
+            OpenOptions::new()
+                .append(true)
+                .open(fixture.path.join(raw_name(1)))
+                .unwrap()
+                .write_all(b"unpub")
+                .unwrap();
+            fixture.put(TEMP, b"pending");
+            fixture.put(&state_name(id + 1), b"orphan");
+            assert_eq!(
+                fixture.open(limits).unwrap_err(),
+                TerminalJournalError::Corrupt
+            );
+            assert!(fixture.path.join(TEMP).exists());
+            assert!(fixture.path.join(state_name(id + 1)).exists());
+            assert_eq!(
+                std::fs::read(fixture.path.join(raw_name(1))).unwrap(),
+                b"rawunpub"
+            );
+        }
+    }
+
+    #[test]
+    fn state_paths_reject_links_and_unsafe_orphans_before_cleanup() {
+        let fixture = Fixture::new();
+        let limits = limits(8, 32);
+        let mut journal = fixture.create(limits);
+        journal.publish_state(journal.latest(), b"facts").unwrap();
+        let state_name = state_name(journal.manifest.state.as_ref().unwrap().blob.id);
+        drop(journal);
+        std::fs::hard_link(fixture.path.join(&state_name), fixture.path.join("alias")).unwrap();
+        fixture.put(TEMP, b"pending");
+        assert_eq!(
+            fixture.open(limits).unwrap_err(),
+            TerminalJournalError::Corrupt
+        );
+        assert!(fixture.path.join(TEMP).exists());
+        std::fs::remove_file(fixture.path.join("alias")).unwrap();
+        symlink("unrelated", fixture.path.join(super::state_name(99))).unwrap();
+        assert_eq!(
+            fixture.open(limits).unwrap_err(),
+            TerminalJournalError::Corrupt
+        );
+        assert!(fixture.path.join(TEMP).exists());
+        assert!(
+            std::fs::symlink_metadata(fixture.path.join(super::state_name(99)))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[test]
+    fn stateless_version_one_manifests_keep_their_canonical_hash() {
+        let fixture = Fixture::new();
+        let limits = limits(8, 32);
+        let journal = fixture.create(limits);
+        let bytes = serde_json::to_vec(&journal.manifest).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(value.get("state").is_none());
+        let mut old_hash = Sha256::new();
+        old_hash.update(DOMAIN);
+        old_hash.update(&bytes);
+        let decoded: Manifest = serde_json::from_slice(&bytes).unwrap();
+        assert!(decoded.state.is_none());
+        assert_eq!(
+            manifest_hash(&decoded).unwrap(),
+            <[u8; 32]>::from(old_hash.finalize())
+        );
+        drop(journal);
+        let mut journal = fixture.open(limits).unwrap();
+        journal.publish_state(journal.latest(), b"facts").unwrap();
+        drop(journal);
+        assert_eq!(
+            fixture
+                .open(limits)
+                .unwrap()
+                .load_state()
+                .unwrap()
+                .unwrap()
+                .bytes,
+            b"facts"
+        );
+    }
+
+    #[test]
+    fn uncommitted_state_without_manifest_never_authorizes_cleanup() {
+        let fixture = Fixture::new();
+        fixture.put(TEMP, b"abandoned");
+        fixture.put(&state_name(2), b"unexplained-state");
+        assert_eq!(
+            TerminalJournal::create(fixture.fd(), session(), limits(8, 32)).unwrap_err(),
+            TerminalJournalError::Corrupt
+        );
+        assert_eq!(
+            std::fs::read(fixture.path.join(TEMP)).unwrap(),
+            b"abandoned"
+        );
+        assert_eq!(
+            std::fs::read(fixture.path.join(state_name(2))).unwrap(),
+            b"unexplained-state"
+        );
+        assert!(!fixture.path.join(META).exists());
     }
 
     #[test]

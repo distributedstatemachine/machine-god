@@ -61,6 +61,12 @@ opaque screen checkpoints and bounded retained events. Reopen verifies the
 committed prefix; only proven uncommitted suffixes/orphans are reconciled.
 Retention reports cursor/checkpoint gaps. Mutation failure poisons the writer
 until reopen, and one exclusive writer lease prevents concurrent publication.
+Session facts and monitor state have a separate protected, checksummed blob;
+output, event and screen-checkpoint eviction cannot silently remove it. Its
+33 MiB bound includes up to 32 MiB of monitor state and 64 KiB of framed facts.
+Admission reserves at least one full raw segment inside the session payload
+budget, and impossible state/checkpoint combinations fail before publication.
+State-less journal records retain their existing checksum representation.
 
 The history owner binds the live screen to the journal's committed cursor.
 Raw bytes commit before screen processing can return a protocol reply; a screen
@@ -103,9 +109,28 @@ reply effects, and removes monitors after final observations. A positively
 complete drain may publish the final coherent screen; an incomplete drain
 retains the gap. Persistence failure cannot skip native cleanup, and failed
 native cleanup retains owned authority for an explicit retry. The driver is a
-runtime composition component; the persistent catalog/host, durable monitor and
-attention facts, startup-control transport and full tool routing are not
+runtime composition component; the persistent catalog/host, attention and lease
+facts, startup-control transport and full tool routing are not
 provided by this driver alone.
+
+The driver binds durable lifecycle, known termination, creation/last-output
+times, exact logical owner/incarnation and monitor snapshots to the committed
+output cursor. Output observations, due timers, probe transitions, monitor
+mutations and event acknowledgements commit their state before returning their
+successful result. Idle scheduler steps without those changes do not rewrite
+metadata. A state-publication failure quiesces live input and probes without
+discarding the owned backend needed for explicit cleanup.
+
+Native recovered-session views expose only owner-authorized facts, raw history,
+screens and durable event acknowledgements. A previously starting/running host
+record becomes lost, with pending monitors/probes stopped before publication.
+The host injects a non-rewinding recovery clock for that transition; known
+closed/exited records retain their observed outcome. Saved state never
+contains a PID, process capability or live input lease, and recovery never
+replays input. If raw output committed after the last state snapshot, recovery
+records an observation gap instead of inventing monitor matches or output
+timestamps. That gap is distinct from missing raw bytes: retained output and
+an independently valid screen can still be read.
 
 The monitor state machine implements all thirteen conditions with explicit
 clock/cursor/lifecycle observations. It emits bounded typed probe requests,
@@ -113,7 +138,7 @@ not network/filesystem/process effects. Evidence must match the exact session,
 monitor generation and probe sequence. Snapshots retain matcher/event state;
 pause/resume preserves activation baselines and rejects stale probes. Waits
 observe started/exit/quiet/literal-match conditions without owning process
-lifetime. Runtime probe authorization, persistence coordination and model-facing
+lifetime. Runtime probe authorization, profile-wide persistence coordination and model-facing
 action routing remain separate composition responsibilities.
 
 ## Boundary

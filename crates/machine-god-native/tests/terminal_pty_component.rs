@@ -25,5 +25,7 @@ mod terminal_pty;
 mod terminal_screen;
 #[path = "../src/terminal_session.rs"]
 mod terminal_session;
+#[path = "../src/terminal_session_record.rs"]
+mod terminal_session_record;
 #[path = "../src/terminal_unicode_data.rs"]
 mod terminal_unicode_data;

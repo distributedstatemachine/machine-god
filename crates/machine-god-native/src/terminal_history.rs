@@ -11,7 +11,8 @@ use machine_god_core::{
 };
 
 use crate::terminal_journal::{
-    TerminalJournal, TerminalJournalCheckpointStatus, TerminalJournalError, TerminalJournalPage,
+    TerminalJournal, TerminalJournalCheckpoint, TerminalJournalCheckpointStatus,
+    TerminalJournalError, TerminalJournalPage,
 };
 use crate::terminal_screen::{
     MAX_TERMINAL_SCREEN_FEED_BYTES, TerminalScreenEngine, TerminalScreenError, TerminalScreenMode,
@@ -182,6 +183,17 @@ impl TerminalHistory {
 
     pub(crate) fn session_id(&self) -> &TerminalSessionId {
         self.journal.session_id()
+    }
+
+    /// Facts are independently durable from evictable screen checkpoints.
+    /// Recovery may acknowledge observations without acquiring live authority.
+    pub(crate) fn publish_state(&mut self, bytes: &[u8]) -> Result<()> {
+        let result = self.journal.publish_state(self.latest(), bytes);
+        self.mutation(result)
+    }
+
+    pub(crate) fn load_state(&self) -> Result<Option<TerminalJournalCheckpoint>> {
+        Ok(self.journal.load_state()?)
     }
 
     pub(crate) fn read(

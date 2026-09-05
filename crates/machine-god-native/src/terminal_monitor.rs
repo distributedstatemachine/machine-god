@@ -261,6 +261,19 @@ struct Snapshot {
 }
 
 impl TerminalMonitorSet {
+    pub(crate) fn session_id(&self) -> &TerminalSessionId {
+        &self.session_id
+    }
+
+    pub(crate) fn context(&self) -> &TerminalMonitorContext {
+        &self.context
+    }
+
+    /// Advance only the observation boundary; no timer, matcher, or probe effects.
+    pub(crate) fn checkpoint_context(&mut self, context: TerminalMonitorContext) -> Result<()> {
+        self.transition(context, |_| Ok(()))
+    }
+
     pub(crate) fn new(
         session_id: TerminalSessionId,
         context: TerminalMonitorContext,
