@@ -127,6 +127,25 @@ impl TerminalSessionFacts {
             && &self.owner_incarnation_id == owner.session_incarnation_id()
     }
 
+    /// Bind data-only retention facts to their actual profile namespace. This
+    /// reconstructs identity, never native ownership or a recovered session.
+    /// Legacy facts without launch metadata cannot authorize cross-owner work.
+    pub(crate) fn validate_profile_binding(&self, namespace: &str) -> Result<()> {
+        let metadata = self
+            .metadata
+            .as_ref()
+            .ok_or(TerminalSessionRecordError::Invalid)?;
+        self.validate()?;
+        require(crate::terminal_catalog::canonical_workspace(
+            &metadata.workspace,
+        ))?;
+        let owner = BackgroundOutputOwner::new(
+            self.owner_session_id.clone(),
+            self.owner_incarnation_id.clone(),
+        );
+        require(crate::terminal_catalog::owner_name(&metadata.workspace, &owner) == namespace)
+    }
+
     fn validate(&self) -> Result<()> {
         if let Some(metadata) = &self.metadata {
             metadata.validate()?;
@@ -277,6 +296,28 @@ mod tests {
             SessionId::new("logical-owner").unwrap(),
             SessionIncarnationId::new(incarnation).unwrap(),
         )
+    }
+
+    #[test]
+    fn profile_binding_requires_exact_namespace_and_canonical_launch_workspace() {
+        let (mut facts, _) = fixture();
+        let namespace = crate::terminal_catalog::owner_name("/workspace", &owner("one"));
+        assert_eq!(
+            facts.validate_profile_binding(&namespace),
+            Err(TerminalSessionRecordError::Invalid)
+        );
+        facts.metadata = Some(test_metadata());
+        facts.validate_profile_binding(&namespace).unwrap();
+        let wrong_owner = crate::terminal_catalog::owner_name("/workspace", &owner("other"));
+        assert_eq!(
+            facts.validate_profile_binding(&wrong_owner),
+            Err(TerminalSessionRecordError::Invalid)
+        );
+        facts.metadata.as_mut().unwrap().workspace = "/workspace/../other".into();
+        assert_eq!(
+            facts.validate_profile_binding(&namespace),
+            Err(TerminalSessionRecordError::Invalid)
+        );
     }
 
     #[test]

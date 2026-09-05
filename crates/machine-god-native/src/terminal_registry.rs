@@ -3,13 +3,16 @@
 //! disk catalog is separate, so releasing inactive residency never deletes history.
 
 use crate::terminal_catalog::{canonical_workspace, owner_name};
-use crate::terminal_history::{TerminalHistoryError, TerminalHistoryEviction};
-use crate::terminal_journal::{TerminalJournalPage, TerminalJournalPhysicalUsage};
+use crate::terminal_history::{TerminalHistory, TerminalHistoryError, TerminalHistoryEviction};
+use crate::terminal_journal::{
+    TerminalJournal, TerminalJournalError, TerminalJournalMutation, TerminalJournalPage,
+    TerminalJournalPhysicalUsage, TerminalJournalReceipt,
+};
 use crate::terminal_profile::{
     TerminalJournalPersistence, TerminalProfileBudget, TerminalProfileError,
     TerminalProfileMutationContext,
 };
-use crate::terminal_profile_store::TerminalProfileStore;
+use crate::terminal_profile_store::{TerminalProfileStore, TerminalProfileTransaction};
 use crate::terminal_session::{
     TerminalRecoveredSession, TerminalSession, TerminalSessionBackend, TerminalSessionError,
     TerminalSessionStep,
@@ -368,7 +371,10 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         now_ms: i64,
         maximum: usize,
     ) -> Result<Vec<TerminalRegistryStep>> {
-        self.pump_dispatch(now_ms, maximum, |session, _| {
+        self.pump_dispatch(now_ms, maximum, |entries, index| {
+            let Resident::Live(session) = &mut entries[index].resident else {
+                unreachable!("active entry is live");
+            };
             session.pump(now_ms).map(|step| (step, None))
         })
     }
@@ -376,7 +382,8 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
     /// Each running session reserves bounded headroom before any native read.
     /// Pre-read profile refusals are typed per-session results, not observations:
     /// they neither consume output nor quiesce the session. Fairness advances
-    /// even on refusal. No transaction survives this call or spans two sessions.
+    /// even on refusal. Bounded victim mutations share the active admission's
+    /// transaction; no transaction survives a scheduler turn or host callback.
     pub(crate) fn pump_with_profile(
         &mut self,
         store: &TerminalProfileStore,
@@ -385,8 +392,11 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         maximum: usize,
     ) -> Result<Vec<TerminalRegistryStep>> {
         let workspace = self.workspace.clone();
-        self.pump_dispatch(now_ms, maximum, |session, owner| {
-            let namespace = owner_name(&workspace, owner);
+        self.pump_dispatch(now_ms, maximum, |entries, index| {
+            let namespace = owner_name(&workspace, &entries[index].owner);
+            let Resident::Live(session) = &mut entries[index].resident else {
+                unreachable!("active entry is live");
+            };
             let Ok(cleanup) = session.needs_native_cleanup() else {
                 // Native authority loss must take the driver's failed
                 // observation path, not leave a Running session parked as
@@ -420,6 +430,17 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
                     .pump_with(&mut context, now_ms)
                     .map(|step| (step, None));
             }
+            session.preflight_profile_read(&mut transaction, budget, &namespace)?;
+            let growth = session.required_profile_read_growth()?;
+            reclaim_profile_capacity(entries, &workspace, index, &mut transaction, budget, growth)?;
+            let Resident::Live(session) = &mut entries[index].resident else {
+                unreachable!("active entry is live");
+            };
+            {
+                let mut context =
+                    TerminalProfileMutationContext::new(&mut transaction, *budget, &namespace);
+                session.ensure_checkpoint_reserve_with(&mut context)?;
+            }
             let mut permit = session.reserve_profile_read(&mut transaction, budget, &namespace)?;
             let mut step = session.pump_read_with(&mut permit, now_ms)?;
             drop(permit);
@@ -448,8 +469,8 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         now_ms: i64,
         maximum: usize,
         mut pump: impl FnMut(
-            &mut TerminalSession<B>,
-            &BackgroundOutputOwner,
+            &mut [Entry<B>],
+            usize,
         ) -> std::result::Result<
             (TerminalSessionStep, Option<TerminalSessionError>),
             TerminalSessionError,
@@ -467,14 +488,12 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         for _ in 0..self.entries.len() {
             let index = self.next % self.entries.len();
             self.next = (index + 1) % self.entries.len();
-            let entry = &mut self.entries[index];
-            if entry.active()
-                && let Resident::Live(session) = &mut entry.resident
-            {
-                let (result, cleanup_error) = match pump(session, &entry.owner) {
+            if self.entries[index].active() {
+                let (result, cleanup_error) = match pump(&mut self.entries, index) {
                     Ok((step, error)) => (Ok(step), error),
                     Err(error) => (Err(error), None),
                 };
+                let entry = &self.entries[index];
                 steps.push(TerminalRegistryStep {
                     session_id: entry.id.clone(),
                     owner: entry.owner.clone(),
@@ -647,6 +666,287 @@ impl<B: TerminalSessionBackend> Drop for TerminalRegistry<B> {
             session.teardown_without_persistence(true, now_ms, TerminalSessionError::InvalidState)
         });
     }
+}
+
+struct RetentionCandidate {
+    namespace: String,
+    id: TerminalSessionId,
+    created_at_ms: i64,
+    kind: TerminalHistoryEviction,
+    resident: Option<usize>,
+}
+
+fn retention_classes(lifecycle: TerminalLifecycle) -> &'static [TerminalHistoryEviction] {
+    use TerminalHistoryEviction::{CompletedCheckpoint, CompletedOutput, LiveCoveredOutput};
+    match lifecycle {
+        TerminalLifecycle::Closed | TerminalLifecycle::Exited => {
+            &[CompletedOutput, CompletedCheckpoint]
+        }
+        TerminalLifecycle::Starting | TerminalLifecycle::Running => &[LiveCoveredOutput],
+        TerminalLifecycle::Lost => &[],
+    }
+}
+
+fn retention_rank(kind: TerminalHistoryEviction) -> u8 {
+    match kind {
+        TerminalHistoryEviction::CompletedOutput => 0,
+        TerminalHistoryEviction::CompletedCheckpoint => 1,
+        TerminalHistoryEviction::LiveCoveredOutput => 2,
+    }
+}
+
+fn resident_retention_facts<B: TerminalSessionBackend>(
+    entry: &Entry<B>,
+) -> std::result::Result<Option<TerminalSessionFacts>, TerminalSessionError> {
+    match &entry.resident {
+        Resident::Live(session) => {
+            if session.publication_error().is_some() {
+                return Ok(None);
+            }
+            let facts = session.inspect(&entry.owner)?;
+            let live = matches!(
+                facts.context.lifecycle,
+                TerminalLifecycle::Starting | TerminalLifecycle::Running
+            );
+            if live != session.owns_backend() {
+                return Ok(None);
+            }
+            Ok(Some(facts))
+        }
+        Resident::Recovered(session) => {
+            if session.publication_error().is_some() {
+                return Ok(None);
+            }
+            Ok(Some(session.facts(&entry.owner)?.clone()))
+        }
+    }
+}
+
+/// Reads and validates facts without recovery's lifecycle/state publications.
+/// A stale fact cursor cannot establish completed history after a torn update.
+fn retention_facts(
+    journal: &TerminalJournal,
+    namespace: &str,
+) -> std::result::Result<Option<TerminalSessionFacts>, TerminalSessionError> {
+    let Some(state) = journal.load_state().map_err(TerminalHistoryError::from)? else {
+        return Ok(None);
+    };
+    let (facts, monitors) =
+        TerminalSessionFacts::decode(&state.bytes, journal.session_id(), &state.source)?;
+    if facts.metadata.is_none() {
+        return Ok(None);
+    }
+    facts.validate_profile_binding(namespace)?;
+    // Decoding only the JSON header would accept a corrupt protected record.
+    drop(facts.restore_monitors(monitors)?);
+    if state.source != journal.latest() {
+        return Ok(None);
+    }
+    Ok(Some(facts))
+}
+
+/// A crash between publishing completed facts and retiring their live floor
+/// leaves only accounting work. The validated completed cursor grants no
+/// process authority, but does permit this admitted metadata-only release.
+fn release_completed_reserve(
+    journal: &mut TerminalJournal,
+    transaction: &mut TerminalProfileTransaction<'_>,
+    budget: &TerminalProfileBudget,
+    namespace: &str,
+    facts: &TerminalSessionFacts,
+) -> std::result::Result<(), TerminalSessionError> {
+    if journal.checkpoint_reserve_bytes() == 0
+        || !matches!(
+            facts.context.lifecycle,
+            TerminalLifecycle::Closed | TerminalLifecycle::Exited
+        )
+    {
+        return Ok(());
+    }
+    let mut context = TerminalProfileMutationContext::new(transaction, *budget, namespace);
+    let completion = context
+        .mutate(journal, TerminalJournalMutation::CheckpointReserve(0))
+        .map_err(profile_error)?;
+    let receipt = completion.operation.map_err(TerminalHistoryError::from)?;
+    completion
+        .accounting
+        .map_err(TerminalHistoryError::Accounting)?;
+    if receipt != TerminalJournalReceipt::Published {
+        return Err(
+            TerminalHistoryError::Accounting(TerminalProfileError::AccountingMismatch).into(),
+        );
+    }
+    Ok(())
+}
+
+fn retention_candidates<B: TerminalSessionBackend>(
+    entries: &[Entry<B>],
+    workspace: &str,
+    active: usize,
+    transaction: &mut TerminalProfileTransaction<'_>,
+    budget: &TerminalProfileBudget,
+) -> std::result::Result<Vec<RetentionCandidate>, TerminalSessionError> {
+    let active_namespace = owner_name(workspace, &entries[active].owner);
+    let inventory = transaction
+        .inventory()
+        .map_err(|error| profile_error(error.into()))?;
+    let mut candidates = Vec::new();
+    for usage in inventory.sessions {
+        if usage.owner_namespace == active_namespace && usage.session_id == entries[active].id {
+            continue;
+        }
+        let resident = entries.iter().position(|entry| {
+            entry.id == usage.session_id
+                && owner_name(workspace, &entry.owner) == usage.owner_namespace
+        });
+        let facts = if let Some(index) = resident {
+            resident_retention_facts(&entries[index])?
+        } else {
+            let directory = transaction
+                .open_session(&usage.owner_namespace, &usage.session_id)
+                .map_err(|error| profile_error(error.into()))?;
+            let mut journal =
+                match TerminalJournal::open_for_retention(directory, &usage.session_id) {
+                    Ok(journal) => journal,
+                    // A busy foreign writer retains all its physical/reserved charge.
+                    // An incomplete directory has no validated facts to authorize work.
+                    Err(TerminalJournalError::Busy | TerminalJournalError::NotFound) => continue,
+                    Err(error) => return Err(TerminalHistoryError::from(error).into()),
+                };
+            let facts = retention_facts(&journal, &usage.owner_namespace)?;
+            if let Some(facts) = &facts {
+                release_completed_reserve(
+                    &mut journal,
+                    transaction,
+                    budget,
+                    &usage.owner_namespace,
+                    facts,
+                )?;
+            }
+            facts
+        };
+        let Some(facts) = facts else { continue };
+        facts.validate_profile_binding(&usage.owner_namespace)?;
+        for &kind in retention_classes(facts.context.lifecycle) {
+            candidates.push(RetentionCandidate {
+                namespace: usage.owner_namespace.clone(),
+                id: usage.session_id.clone(),
+                created_at_ms: facts.created_at_ms,
+                kind,
+                resident,
+            });
+        }
+    }
+    candidates.sort_by(|left, right| {
+        (
+            retention_rank(left.kind),
+            left.created_at_ms,
+            &left.namespace,
+            left.id.as_str(),
+        )
+            .cmp(&(
+                retention_rank(right.kind),
+                right.created_at_ms,
+                &right.namespace,
+                right.id.as_str(),
+            ))
+    });
+    Ok(candidates)
+}
+
+/// One bounded inventory, at most two candidates per retained history, then one
+/// attempt per sorted candidate. No retry loop, promised-byte credit, or writer
+/// lease bypass. The profile transaction stays held across selection, metadata-
+/// first eviction and physical/reservation re-accounting.
+fn reclaim_profile_capacity<B: TerminalSessionBackend>(
+    entries: &mut [Entry<B>],
+    workspace: &str,
+    active: usize,
+    transaction: &mut TerminalProfileTransaction<'_>,
+    budget: &TerminalProfileBudget,
+    additional: u64,
+) -> std::result::Result<(), TerminalSessionError> {
+    if additional > budget.output_limit() {
+        return Err(profile_error(TerminalProfileError::ResourceLimit));
+    }
+    let fits = |transaction: &TerminalProfileTransaction<'_>| {
+        TerminalProfileBudget::output_charge(transaction).map(|charge| {
+            charge
+                .checked_add(additional)
+                .is_some_and(|total| total <= budget.output_limit())
+        })
+    };
+    if fits(transaction).map_err(profile_error)? {
+        return Ok(());
+    }
+    // The active session is never a victim. Refuse an impossible admission
+    // before discarding somebody else's output, even if all other histories
+    // together could be reclaimed.
+    let active_namespace = owner_name(workspace, &entries[active].owner);
+    let directory = transaction
+        .open_session(&active_namespace, &entries[active].id)
+        .map_err(|error| profile_error(error.into()))?;
+    let active_reserve =
+        TerminalJournal::inspect_checkpoint_reserve(&directory, &entries[active].id)
+            .map_err(TerminalHistoryError::from)?;
+    let active_output = TerminalJournal::inspect_physical(directory)
+        .map_err(TerminalHistoryError::from)?
+        .output_bytes;
+    if active_output
+        .checked_add(active_reserve)
+        .and_then(|charge| charge.checked_add(additional))
+        .is_none_or(|charge| charge > budget.output_limit())
+    {
+        return Err(profile_error(TerminalProfileError::ResourceLimit));
+    }
+    let candidates = retention_candidates(entries, workspace, active, transaction, budget)?;
+    // Opening an abandoned writer may have reconciled orphan bytes. Always
+    // measure that actual result before touching any committed output.
+    if fits(transaction).map_err(profile_error)? {
+        return Ok(());
+    }
+    for candidate in candidates {
+        if let Some(index) = candidate.resident {
+            let entry = &mut entries[index];
+            let mut context =
+                TerminalProfileMutationContext::new(transaction, *budget, &candidate.namespace);
+            match &mut entry.resident {
+                Resident::Live(session) => {
+                    session.evict_with(&mut context, &entry.owner, candidate.kind)?;
+                }
+                Resident::Recovered(session) => {
+                    session.evict_with(&mut context, &entry.owner, candidate.kind)?;
+                }
+            }
+        } else {
+            let directory = transaction
+                .open_session(&candidate.namespace, &candidate.id)
+                .map_err(|error| profile_error(error.into()))?;
+            let journal = match TerminalJournal::open_for_retention(directory, &candidate.id) {
+                Ok(journal) => journal,
+                Err(TerminalJournalError::Busy | TerminalJournalError::NotFound) => continue,
+                Err(error) => return Err(TerminalHistoryError::from(error).into()),
+            };
+            let Some(facts) = retention_facts(&journal, &candidate.namespace)? else {
+                continue;
+            };
+            if facts.created_at_ms != candidate.created_at_ms
+                || !retention_classes(facts.context.lifecycle).contains(&candidate.kind)
+            {
+                continue;
+            }
+            let mut history = TerminalHistory::recover(journal)?;
+            let mut context =
+                TerminalProfileMutationContext::new(transaction, *budget, &candidate.namespace);
+            history.evict_with(&mut context, candidate.kind)?;
+        }
+        // In particular, removing raw bytes does not remove a live checkpoint
+        // floor, and orphan/unlinked-publication failures grant no guessed credit.
+        if fits(transaction).map_err(profile_error)? {
+            return Ok(());
+        }
+    }
+    Err(profile_error(TerminalProfileError::ResourceLimit))
 }
 
 fn profile_error(error: TerminalProfileError) -> TerminalSessionError {
@@ -1008,6 +1308,663 @@ mod tests {
         );
     }
 
+    fn retained_history(
+        store: &TerminalProfileStore,
+        owner: &BackgroundOutputOwner,
+        id: &TerminalSessionId,
+        lifecycle: TerminalLifecycle,
+        created_at_ms: i64,
+        raw_bytes: usize,
+    ) -> String {
+        let mut transaction = store.transaction().unwrap();
+        let mut catalog = transaction
+            .prepare_catalog("/workspace".into(), owner.clone())
+            .unwrap();
+        let directory = transaction.create_session(&mut catalog, id).unwrap();
+        let namespace = catalog.namespace_key().to_owned();
+        let journal = TerminalJournal::create(
+            directory,
+            id.clone(),
+            TerminalJournalLimits {
+                segment_bytes: 128 * 1024,
+                session_bytes: 16 * 1024 * 1024,
+            },
+        )
+        .unwrap();
+        let mut history =
+            TerminalHistory::create(journal, &TerminalDimensions::new(3, 20).unwrap()).unwrap();
+        for bytes in vec![b'x'; raw_bytes].chunks(16 * 1024) {
+            history.append(bytes).unwrap();
+        }
+        history.checkpoint().unwrap();
+        let context = crate::terminal_monitor::TerminalMonitorContext {
+            now_ms: created_at_ms,
+            cursor: history.latest(),
+            lifecycle,
+        };
+        let mut facts = TerminalSessionFacts::new(
+            id.clone(),
+            owner,
+            context.clone(),
+            created_at_ms,
+            created_at_ms,
+            None,
+        )
+        .unwrap();
+        facts.metadata = Some(test_metadata());
+        let monitors =
+            crate::terminal_monitor::TerminalMonitorSet::new(id.clone(), context).unwrap();
+        history
+            .publish_state(&facts.encode(&monitors).unwrap())
+            .unwrap();
+        if lifecycle == TerminalLifecycle::Closed {
+            history
+                .release_checkpoint_reserve_with(&mut TerminalTestPersistence)
+                .unwrap();
+        }
+        namespace
+    }
+
+    fn retained_usage(
+        store: &TerminalProfileStore,
+        namespace: &str,
+        id: &TerminalSessionId,
+    ) -> TerminalJournalPhysicalUsage {
+        store
+            .transaction()
+            .unwrap()
+            .inventory()
+            .unwrap()
+            .sessions
+            .into_iter()
+            .find(|session| session.owner_namespace == namespace && session.session_id == *id)
+            .unwrap()
+            .usage
+    }
+
+    fn capacity_budget(output_bytes: u64) -> TerminalProfileBudget {
+        let mut limits = TerminalProfileLimits::default();
+        limits.retained.output_bytes = output_bytes;
+        TerminalProfileBudget::new(limits).unwrap()
+    }
+
+    #[test]
+    fn profile_retention_orders_classes_then_age_and_preserves_active_full_key() {
+        let fixture = Fixture::new();
+        let active_owner = owner("active");
+        let shared_id = id("same-id");
+        let (store, session) = fixture.profile_live(&active_owner, &shared_id);
+        let mut registry = registry();
+        registry
+            .start(active_owner.clone(), shared_id.clone(), || Ok(session))
+            .unwrap();
+        // The oldest history has only a checkpoint. Completed raw always takes
+        // priority, even when it is newer and has the active session's short id.
+        let checkpoint = retained_history(
+            &store,
+            &owner("checkpoint"),
+            &id("checkpoint"),
+            TerminalLifecycle::Closed,
+            1,
+            0,
+        );
+        let newer = retained_history(
+            &store,
+            &owner("newer"),
+            &id("newer"),
+            TerminalLifecycle::Closed,
+            3,
+            64,
+        );
+        let older = retained_history(
+            &store,
+            &owner("older"),
+            &shared_id,
+            TerminalLifecycle::Closed,
+            2,
+            64,
+        );
+        let checkpoint_before = retained_usage(&store, &checkpoint, &id("checkpoint"));
+        let active_before = registry.physical_usage(&active_owner, &shared_id).unwrap();
+        let normal = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+        let mut transaction = store.transaction().unwrap();
+        let budget = capacity_budget(TerminalProfileBudget::output_charge(&transaction).unwrap());
+        reclaim_profile_capacity(
+            &mut registry.entries,
+            "/workspace",
+            0,
+            &mut transaction,
+            &budget,
+            32,
+        )
+        .unwrap();
+        drop(transaction);
+        assert_eq!(retained_usage(&store, &older, &shared_id).raw_bytes, 0);
+        assert_eq!(retained_usage(&store, &newer, &id("newer")).raw_bytes, 64);
+        assert_eq!(
+            retained_usage(&store, &checkpoint, &id("checkpoint")),
+            checkpoint_before
+        );
+        assert_eq!(
+            registry.physical_usage(&active_owner, &shared_id).unwrap(),
+            active_before
+        );
+        registry
+            .shutdown_with_profile(&store, &normal, 3, TerminalClosePolicy::Force)
+            .unwrap();
+    }
+
+    #[test]
+    fn profile_pump_reclaims_nonresident_completed_output_before_native_read() {
+        let fixture = Fixture::new();
+        let active_owner = owner("active");
+        let active_id = id("active");
+        let (store, session) = fixture.profile_live(&active_owner, &active_id);
+        let mut registry = registry();
+        registry
+            .start(active_owner.clone(), active_id.clone(), || Ok(session))
+            .unwrap();
+        let victim_id = id("victim");
+        let victim = retained_history(
+            &store,
+            &owner("foreign"),
+            &victim_id,
+            TerminalLifecycle::Closed,
+            0,
+            32 * 1024,
+        );
+        let before = retained_usage(&store, &victim, &victim_id);
+        let normal = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+        let budget = capacity_budget(
+            TerminalProfileBudget::output_charge(&store.transaction().unwrap()).unwrap(),
+        );
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"progress".to_vec());
+        let mut steps = registry.pump_with_profile(&store, &budget, 1, 1).unwrap();
+        let step = steps.remove(0).result.unwrap();
+        assert_eq!(step.output, b"progress");
+        assert_eq!(fixture.state.lock().unwrap().reads, 1);
+        let after = retained_usage(&store, &victim, &victim_id);
+        assert_eq!(after.raw_bytes, 0);
+        assert_eq!(after.checkpoint_bytes, before.checkpoint_bytes);
+        assert_eq!(after.state_bytes, before.state_bytes);
+        registry
+            .shutdown_with_profile(&store, &normal, 1, TerminalClosePolicy::Force)
+            .unwrap();
+    }
+
+    #[test]
+    fn profile_retention_busy_foreign_writer_defers_without_native_consumption() {
+        let fixture = Fixture::new();
+        let active_owner = owner("active");
+        let active_id = id("active");
+        let (store, session) = fixture.profile_live(&active_owner, &active_id);
+        let mut registry = registry();
+        registry
+            .start(active_owner.clone(), active_id.clone(), || Ok(session))
+            .unwrap();
+        let victim_id = id("victim");
+        let victim = retained_history(
+            &store,
+            &owner("foreign"),
+            &victim_id,
+            TerminalLifecycle::Closed,
+            0,
+            32 * 1024,
+        );
+        let normal = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+        let transaction = store.transaction().unwrap();
+        let budget = capacity_budget(TerminalProfileBudget::output_charge(&transaction).unwrap());
+        let held = TerminalJournal::open_for_retention(
+            transaction.open_session(&victim, &victim_id).unwrap(),
+            &victim_id,
+        )
+        .unwrap();
+        let before = held.physical_usage().unwrap();
+        drop(transaction);
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"pending".to_vec());
+        let steps = registry.pump_with_profile(&store, &budget, 1, 1).unwrap();
+        assert_eq!(
+            steps[0].result.as_ref().err(),
+            Some(&profile_error(TerminalProfileError::ResourceLimit))
+        );
+        assert_eq!(fixture.state.lock().unwrap().reads, 0);
+        assert_eq!(
+            registry
+                .inspect(&active_owner, &active_id)
+                .unwrap()
+                .context
+                .lifecycle,
+            TerminalLifecycle::Starting
+        );
+        assert_eq!(held.physical_usage().unwrap(), before);
+        drop(held);
+        let mut steps = registry.pump_with_profile(&store, &budget, 2, 1).unwrap();
+        assert_eq!(steps.remove(0).result.unwrap().output, b"pending");
+        registry
+            .shutdown_with_profile(&store, &normal, 2, TerminalClosePolicy::Force)
+            .unwrap();
+    }
+
+    #[test]
+    fn profile_retention_uses_validated_live_covered_prefix_after_completed_classes() {
+        let fixture = Fixture::new();
+        let active_owner = owner("active");
+        let active_id = id("active");
+        let (store, session) = fixture.profile_live(&active_owner, &active_id);
+        let mut registry = registry();
+        registry
+            .start(active_owner, active_id, || Ok(session))
+            .unwrap();
+        let live_id = id("live-foreign");
+        let live = retained_history(
+            &store,
+            &owner("live-foreign"),
+            &live_id,
+            TerminalLifecycle::Running,
+            0,
+            256 * 1024 + 1,
+        );
+        let completed_id = id("completed");
+        let completed = retained_history(
+            &store,
+            &owner("completed"),
+            &completed_id,
+            TerminalLifecycle::Closed,
+            1,
+            0,
+        );
+        let live_before = retained_usage(&store, &live, &live_id);
+        let completed_before = retained_usage(&store, &completed, &completed_id);
+        let mut transaction = store.transaction().unwrap();
+        let normal = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+        let budget = capacity_budget(TerminalProfileBudget::output_charge(&transaction).unwrap());
+        // Raw is absent in the completed history, so its checkpoint is selected
+        // before the older live history loses any covered raw prefix.
+        reclaim_profile_capacity(
+            &mut registry.entries,
+            "/workspace",
+            0,
+            &mut transaction,
+            &budget,
+            1,
+        )
+        .unwrap();
+        drop(transaction);
+        assert!(completed_before.checkpoint_bytes > 0);
+        assert_eq!(
+            retained_usage(&store, &completed, &completed_id).checkpoint_bytes,
+            0
+        );
+        assert_eq!(retained_usage(&store, &live, &live_id), live_before);
+        let mut transaction = store.transaction().unwrap();
+        let budget = capacity_budget(TerminalProfileBudget::output_charge(&transaction).unwrap());
+        reclaim_profile_capacity(
+            &mut registry.entries,
+            "/workspace",
+            0,
+            &mut transaction,
+            &budget,
+            1,
+        )
+        .unwrap();
+        drop(transaction);
+        let after = retained_usage(&store, &live, &live_id);
+        assert_eq!(after.raw_bytes, 1);
+        assert_eq!(after.checkpoint_bytes, live_before.checkpoint_bytes);
+        assert_eq!(after.state_bytes, live_before.state_bytes);
+        let transaction = store.transaction().unwrap();
+        let journal = TerminalJournal::open_for_retention(
+            transaction.open_session(&live, &live_id).unwrap(),
+            &live_id,
+        )
+        .unwrap();
+        let facts = retention_facts(&journal, &live).unwrap().unwrap();
+        assert_eq!(facts.context.lifecycle, TerminalLifecycle::Running);
+        assert!(TerminalHistory::recover(journal).unwrap().screen().is_ok());
+        drop(transaction);
+        registry
+            .shutdown_with_profile(&store, &normal, 1, TerminalClosePolicy::Force)
+            .unwrap();
+    }
+
+    #[test]
+    fn profile_retention_corrupt_records_or_live_projection_fail_before_read() {
+        for projection in [false, true] {
+            let fixture = Fixture::new();
+            let active_owner = owner("active");
+            let active_id = id("active");
+            let (store, session) = fixture.profile_live(&active_owner, &active_id);
+            let mut registry = registry();
+            registry
+                .start(active_owner, active_id, || Ok(session))
+                .unwrap();
+            let victim_id = id("victim");
+            let victim = retained_history(
+                &store,
+                &owner("foreign"),
+                &victim_id,
+                TerminalLifecycle::Running,
+                0,
+                256 * 1024 + 1,
+            );
+            let transaction = store.transaction().unwrap();
+            let mut journal = TerminalJournal::open_for_retention(
+                transaction.open_session(&victim, &victim_id).unwrap(),
+                &victim_id,
+            )
+            .unwrap();
+            if projection {
+                journal
+                    .publish_checkpoint(journal.latest(), b"invalid checkpoint")
+                    .unwrap();
+            } else {
+                journal
+                    .publish_state(journal.latest(), b"invalid facts")
+                    .unwrap();
+            }
+            let before = journal.physical_usage().unwrap();
+            drop(journal);
+            let normal = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+            let budget =
+                capacity_budget(TerminalProfileBudget::output_charge(&transaction).unwrap());
+            drop(transaction);
+            fixture
+                .state
+                .lock()
+                .unwrap()
+                .output
+                .push_back(b"pending".to_vec());
+            let steps = registry.pump_with_profile(&store, &budget, 1, 1).unwrap();
+            assert!(steps[0].result.is_err());
+            assert_eq!(fixture.state.lock().unwrap().reads, 0);
+            assert_eq!(retained_usage(&store, &victim, &victim_id), before);
+            registry
+                .shutdown_with_profile(&store, &normal, 1, TerminalClosePolicy::Force)
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn profile_retention_uses_resident_writer_without_reopening_or_stale_cache() {
+        let fixture = Fixture::new();
+        let active_owner = owner("active");
+        let active_id = id("active");
+        let (store, session) = fixture.profile_live(&active_owner, &active_id);
+        let mut registry = registry();
+        registry
+            .start(active_owner, active_id, || Ok(session))
+            .unwrap();
+        let victim_owner = owner("resident");
+        let victim_id = id("resident");
+        let (_, mut victim) = fixture.profile_live(&victim_owner, &victim_id);
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(vec![b'x'; 16 * 1024]);
+        victim.pump(0).unwrap();
+        victim
+            .close(&victim_owner, TerminalClosePolicy::Force, 1)
+            .unwrap();
+        registry
+            .start(victim_owner.clone(), victim_id.clone(), || Ok(victim))
+            .unwrap();
+        let before = registry.physical_usage(&victim_owner, &victim_id).unwrap();
+        assert_eq!(before.raw_bytes, 16 * 1024);
+        let mut transaction = store.transaction().unwrap();
+        let normal = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+        let budget = capacity_budget(TerminalProfileBudget::output_charge(&transaction).unwrap());
+        reclaim_profile_capacity(
+            &mut registry.entries,
+            "/workspace",
+            0,
+            &mut transaction,
+            &budget,
+            1,
+        )
+        .unwrap();
+        drop(transaction);
+        let after = registry.physical_usage(&victim_owner, &victim_id).unwrap();
+        assert_eq!(after.raw_bytes, 0);
+        assert_eq!(after.state_bytes, before.state_bytes);
+        let page = registry
+            .read(
+                &victim_owner,
+                &victim_id,
+                &TerminalCursor::new(1, 0).unwrap(),
+                32,
+            )
+            .unwrap();
+        assert!(page.bytes.is_empty());
+        assert!(page.gap.is_some());
+        registry
+            .shutdown_with_profile(&store, &normal, 1, TerminalClosePolicy::Force)
+            .unwrap();
+    }
+
+    #[test]
+    fn profile_retention_retires_abandoned_completed_floor_before_output_eviction() {
+        let fixture = Fixture::new();
+        let active_owner = owner("active");
+        let active_id = id("active");
+        let (store, session) = fixture.profile_live(&active_owner, &active_id);
+        let mut registry = registry();
+        registry
+            .start(active_owner, active_id, || Ok(session))
+            .unwrap();
+        let victim_id = id("completed");
+        let victim = retained_history(
+            &store,
+            &owner("foreign"),
+            &victim_id,
+            TerminalLifecycle::Closed,
+            0,
+            64,
+        );
+        let transaction = store.transaction().unwrap();
+        let mut journal = TerminalJournal::open_for_retention(
+            transaction.open_session(&victim, &victim_id).unwrap(),
+            &victim_id,
+        )
+        .unwrap();
+        journal
+            .prepare_mutation(TerminalJournalMutation::CheckpointReserve(10 * 1024 * 1024))
+            .unwrap()
+            .execute()
+            .unwrap();
+        let before = journal.physical_usage().unwrap();
+        let state_before = journal.load_state().unwrap().unwrap().bytes;
+        drop(journal);
+        let budget = capacity_budget(TerminalProfileBudget::output_charge(&transaction).unwrap());
+        drop(transaction);
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"progress".to_vec());
+        let mut steps = registry.pump_with_profile(&store, &budget, 1, 1).unwrap();
+        assert_eq!(steps.remove(0).result.unwrap().output, b"progress");
+        let transaction = store.transaction().unwrap();
+        let journal = TerminalJournal::open_for_retention(
+            transaction.open_session(&victim, &victim_id).unwrap(),
+            &victim_id,
+        )
+        .unwrap();
+        assert_eq!(journal.checkpoint_reserve_bytes(), 0);
+        assert_eq!(journal.load_state().unwrap().unwrap().bytes, state_before);
+        let after = journal.physical_usage().unwrap();
+        assert_eq!(after.raw_bytes, before.raw_bytes);
+        assert_eq!(after.checkpoint_bytes, before.checkpoint_bytes);
+        drop(journal);
+        drop(transaction);
+        let normal = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+        registry
+            .shutdown_with_profile(&store, &normal, 1, TerminalClosePolicy::Force)
+            .unwrap();
+    }
+
+    #[test]
+    fn profile_retention_never_treats_lost_or_stale_completed_facts_as_completion() {
+        for stale in [false, true] {
+            let fixture = Fixture::new();
+            let active_owner = owner("active");
+            let active_id = id("active");
+            let (store, session) = fixture.profile_live(&active_owner, &active_id);
+            let mut registry = registry();
+            registry
+                .start(active_owner, active_id, || Ok(session))
+                .unwrap();
+            let victim_id = id("victim");
+            let lifecycle = if stale {
+                TerminalLifecycle::Closed
+            } else {
+                TerminalLifecycle::Lost
+            };
+            let victim = retained_history(
+                &store,
+                &owner("foreign"),
+                &victim_id,
+                lifecycle,
+                0,
+                32 * 1024,
+            );
+            let mut transaction = store.transaction().unwrap();
+            if stale {
+                let mut journal = TerminalJournal::open_for_retention(
+                    transaction.open_session(&victim, &victim_id).unwrap(),
+                    &victim_id,
+                )
+                .unwrap();
+                journal.append(b"unobserved").unwrap();
+            }
+            let budget =
+                capacity_budget(TerminalProfileBudget::output_charge(&transaction).unwrap());
+            let before = transaction.inventory().unwrap().usage;
+            assert_eq!(
+                reclaim_profile_capacity(
+                    &mut registry.entries,
+                    "/workspace",
+                    0,
+                    &mut transaction,
+                    &budget,
+                    1
+                ),
+                Err(profile_error(TerminalProfileError::ResourceLimit))
+            );
+            assert_eq!(transaction.inventory().unwrap().usage, before);
+            drop(transaction);
+            let normal = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+            registry
+                .shutdown_with_profile(&store, &normal, 1, TerminalClosePolicy::Force)
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn profile_retention_preserves_victims_when_active_charge_cannot_fit_alone() {
+        let fixture = Fixture::new();
+        let active_owner = owner("active");
+        let active_id = id("active");
+        let (store, session) = fixture.profile_live(&active_owner, &active_id);
+        let budget = capacity_budget(
+            TerminalProfileBudget::output_charge(&store.transaction().unwrap()).unwrap(),
+        );
+        let mut registry = registry();
+        registry
+            .start(active_owner, active_id, || Ok(session))
+            .unwrap();
+        let victim_id = id("victim");
+        let victim = retained_history(
+            &store,
+            &owner("foreign"),
+            &victim_id,
+            TerminalLifecycle::Closed,
+            0,
+            32 * 1024,
+        );
+        let before = retained_usage(&store, &victim, &victim_id);
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"pending".to_vec());
+        let steps = registry.pump_with_profile(&store, &budget, 1, 1).unwrap();
+        assert_eq!(
+            steps[0].result.as_ref().err(),
+            Some(&profile_error(TerminalProfileError::ResourceLimit))
+        );
+        assert_eq!(fixture.state.lock().unwrap().reads, 0);
+        assert_eq!(retained_usage(&store, &victim, &victim_id), before);
+        let normal = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+        registry
+            .shutdown_with_profile(&store, &normal, 1, TerminalClosePolicy::Force)
+            .unwrap();
+    }
+
+    #[test]
+    fn profile_retention_preserves_victims_for_non_output_admission_refusals() {
+        for ledger in 0..3 {
+            let fixture = Fixture::new();
+            let active_owner = owner("active");
+            let active_id = id("active");
+            let (store, session) = fixture.profile_live(&active_owner, &active_id);
+            let mut registry = registry();
+            registry
+                .start(active_owner, active_id, || Ok(session))
+                .unwrap();
+            let victim_id = id("victim");
+            let victim = retained_history(
+                &store,
+                &owner("foreign"),
+                &victim_id,
+                TerminalLifecycle::Closed,
+                0,
+                32 * 1024,
+            );
+            let before = retained_usage(&store, &victim, &victim_id);
+            let mut limits = TerminalProfileLimits::default();
+            limits.retained.output_bytes =
+                TerminalProfileBudget::output_charge(&store.transaction().unwrap()).unwrap();
+            match ledger {
+                0 => limits.temporary_bytes = 1,
+                1 => limits.retained.protected_bytes = 1,
+                2 => limits.retained.metadata_bytes = 1,
+                _ => unreachable!(),
+            }
+            let budget = TerminalProfileBudget::new(limits).unwrap();
+            fixture
+                .state
+                .lock()
+                .unwrap()
+                .output
+                .push_back(b"pending".to_vec());
+            let steps = registry.pump_with_profile(&store, &budget, 1, 1).unwrap();
+            assert_eq!(
+                steps[0].result.as_ref().err(),
+                Some(&profile_error(TerminalProfileError::ResourceLimit))
+            );
+            assert_eq!(fixture.state.lock().unwrap().reads, 0);
+            assert_eq!(retained_usage(&store, &victim, &victim_id), before);
+            let normal = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+            registry
+                .shutdown_with_profile(&store, &normal, 1, TerminalClosePolicy::Force)
+                .unwrap();
+        }
+    }
+
     #[test]
     fn profile_shutdown_without_lock_closes_native_and_retains_failed_history() {
         let fixture = Fixture::new();
@@ -1049,7 +2006,7 @@ mod tests {
         registry
             .start(owner.clone(), id.clone(), || Ok(session))
             .unwrap();
-        let existing = registry.physical_usage(&owner, &id).unwrap().output_bytes;
+        let existing = TerminalProfileBudget::output_charge(&store.transaction().unwrap()).unwrap();
         let mut limits = TerminalProfileLimits::default();
         limits.retained.output_bytes = existing.max(1);
         let budget = TerminalProfileBudget::new(limits).unwrap();
