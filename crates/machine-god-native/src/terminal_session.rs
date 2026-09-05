@@ -126,6 +126,13 @@ pub(crate) struct TerminalSessionStep {
     pub(crate) cursor: TerminalCursor,
     pub(crate) probes: Vec<TerminalProbeRequest>,
     pub(crate) lifecycle: TerminalLifecycle,
+    /// The read permit must be released before an ordinary-context exit drain.
+    pub(crate) cleanup_needed: bool,
+}
+#[derive(Clone, Copy)]
+enum TerminalPumpMode {
+    RunningRead,
+    WithExitDrain,
 }
 pub(crate) struct TerminalSession<B: TerminalSessionBackend> {
     backend: Option<B>,
@@ -432,6 +439,26 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         persistence: &mut dyn TerminalJournalPersistence,
         now_ms: i64,
     ) -> Result<TerminalSessionStep> {
+        self.pump_mode_with(persistence, now_ms, TerminalPumpMode::WithExitDrain)
+    }
+
+    /// Consume at most one admitted read, never an exit drain. The owner drops
+    /// the read permit before handling `cleanup_needed` with ordinary held
+    /// persistence authority. Output already returned here is not replayed.
+    pub(crate) fn pump_read_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        now_ms: i64,
+    ) -> Result<TerminalSessionStep> {
+        self.pump_mode_with(persistence, now_ms, TerminalPumpMode::RunningRead)
+    }
+
+    fn pump_mode_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        now_ms: i64,
+        mode: TerminalPumpMode,
+    ) -> Result<TerminalSessionStep> {
         self.check_time(now_ms)?;
         let before_lifecycle = self.lifecycle;
         let timer_due = self
@@ -445,7 +472,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         ) {
             return Ok(self.step(Vec::new(), Vec::new()));
         }
-        match self.pump_inner_with(persistence) {
+        match self.pump_inner_with(persistence, mode) {
             Ok(step) => {
                 if timer_due
                     || !step.output.is_empty()
@@ -462,6 +489,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
     fn pump_inner_with(
         &mut self,
         persistence: &mut dyn TerminalJournalPersistence,
+        mode: TerminalPumpMode,
     ) -> Result<TerminalSessionStep> {
         let status = self
             .backend
@@ -470,6 +498,9 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             .status()
             .map_err(|()| TerminalSessionError::Native)?;
         if status != TerminalPtyStatus::Running {
+            if matches!(mode, TerminalPumpMode::RunningRead) {
+                return Ok(self.cleanup_step(Vec::new()));
+            }
             // Retain final output and close before reaping the shell, including
             // owned jobs left behind by an exited interactive shell.
             self.finish_native_with(persistence, false, TerminalLifecycle::Exited)?;
@@ -524,6 +555,9 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
                 .map_err(|()| TerminalSessionError::Native)?;
             if status == TerminalPtyStatus::Running {
                 return Err(TerminalSessionError::Native);
+            }
+            if matches!(mode, TerminalPumpMode::RunningRead) {
+                return Ok(self.cleanup_step(output));
             }
             self.finish_native_with(persistence, false, TerminalLifecycle::Exited)?;
             return Ok(self.step(output, Vec::new()));
@@ -1085,7 +1119,14 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             cursor: self.history.latest(),
             probes,
             lifecycle: self.lifecycle,
+            cleanup_needed: false,
         }
+    }
+    fn cleanup_step(&mut self, output: Vec<u8>) -> TerminalSessionStep {
+        self.input.quiesce();
+        let mut step = self.step(output, Vec::new());
+        step.cleanup_needed = true;
+        step
     }
     fn lose(&mut self) {
         self.input.quiesce();
@@ -1390,6 +1431,7 @@ mod tests {
         writes: Vec<u8>,
         write_limit: usize,
         status: TerminalPtyStatus,
+        exit_after_read: Option<TerminalPtyStatus>,
         closes: usize,
         signals: Vec<TerminalSignal>,
         resizes: Vec<TerminalDimensions>,
@@ -1407,6 +1449,7 @@ mod tests {
                 writes: Vec::new(),
                 write_limit: usize::MAX,
                 status: TerminalPtyStatus::Running,
+                exit_after_read: None,
                 closes: 0,
                 signals: Vec::new(),
                 resizes: Vec::new(),
@@ -1434,9 +1477,13 @@ mod tests {
                 bytes.drain(..count);
                 state.output.push_front(bytes);
             }
+            let exit_after_read = state.exit_after_read.take();
+            if let Some(status) = exit_after_read {
+                state.status = status;
+            }
             Ok(TerminalPtyRead {
                 bytes_read: count,
-                closed: false,
+                closed: exit_after_read.is_some(),
             })
         }
         fn write(&mut self, bytes: &[u8]) -> std::result::Result<BackgroundInputReceipt, ()> {
@@ -1652,6 +1699,7 @@ mod tests {
         calls: Vec<&'static str>,
         denied: bool,
         fail_accounting: Option<&'static str>,
+        remaining_appends: Option<usize>,
     }
     impl TerminalJournalPersistence for Persistence {
         fn mutate(
@@ -1674,6 +1722,13 @@ mod tests {
             if self.denied {
                 return Err(TerminalProfileError::ResourceLimit);
             }
+            if kind == "append"
+                && let Some(remaining) = &mut self.remaining_appends
+            {
+                *remaining = remaining
+                    .checked_sub(1)
+                    .ok_or(TerminalProfileError::ResourceLimit)?;
+            }
             let mut completion = TerminalTestPersistence.mutate(journal, mutation)?;
             if self.fail_accounting == Some(kind) && completion.operation.is_ok() {
                 self.fail_accounting = None;
@@ -1685,6 +1740,95 @@ mod tests {
 
     fn denied_error() -> TerminalSessionError {
         TerminalHistoryError::Profile(TerminalProfileError::ResourceLimit).into()
+    }
+
+    #[test]
+    fn exit_racing_read_preflight_drains_large_tail_only_after_read_permit_release() {
+        for exit_after_read in [false, true] {
+            let fixture = Fixture::new();
+            let mut session = fixture.session();
+            session.shell_ready(0).unwrap();
+            let tail = vec![b't'; 2 * MAX_MONITOR_FEED_BYTES + 7];
+            fixture.state.lock().unwrap().tail = tail.clone();
+            assert!(!session.needs_native_cleanup().unwrap());
+            let prefix = if exit_after_read {
+                let prefix = vec![b'p'; MAX_MONITOR_FEED_BYTES];
+                let mut state = fixture.state.lock().unwrap();
+                state.output.push_back(prefix.clone());
+                state.exit_after_read = Some(TerminalPtyStatus::Exited(7));
+                prefix
+            } else {
+                fixture.state.lock().unwrap().status = TerminalPtyStatus::Exited(7);
+                Vec::new()
+            };
+            // A one-read permit would reject a second append; native close
+            // delivers the >16 KiB tail in many chunks, outside that permit.
+            let mut read_permit = Persistence {
+                remaining_appends: Some(1),
+                ..Persistence::default()
+            };
+            let step = session.pump_read_with(&mut read_permit, 1).unwrap();
+            assert!(step.cleanup_needed);
+            assert_eq!(step.output, prefix);
+            assert_eq!(step.cursor.offset(), prefix.len() as u64);
+            assert_eq!(fixture.state.lock().unwrap().closes, 0);
+            assert_eq!(fixture.state.lock().unwrap().tail, tail);
+            assert!(session.owns_backend());
+            assert!(session.input.is_quiesced());
+            assert_eq!(
+                read_permit
+                    .calls
+                    .iter()
+                    .filter(|kind| **kind == "append")
+                    .count(),
+                usize::from(exit_after_read)
+            );
+            assert!(!read_permit.calls.contains(&"checkpoint"));
+            drop(read_permit);
+            let mut ordinary = Persistence::default();
+            let completed = session.pump_with(&mut ordinary, 1).unwrap();
+            assert!(!completed.cleanup_needed);
+            assert!(completed.output.is_empty());
+            assert_eq!(completed.lifecycle, TerminalLifecycle::Exited);
+            assert_eq!(session.outcome(), Some(TerminalProcessOutcome::Exited(7)));
+            assert_eq!(fixture.state.lock().unwrap().closes, 1);
+            assert!(!session.owns_backend());
+            assert!(!session.monitor_notifications_incomplete);
+            assert!(session.publication_error().is_none());
+            let mut expected = prefix;
+            expected.extend_from_slice(&tail);
+            assert_eq!(completed.cursor.offset(), expected.len() as u64);
+            assert_eq!(
+                ordinary
+                    .calls
+                    .iter()
+                    .filter(|kind| **kind == "append")
+                    .count(),
+                tail.len().div_ceil(4096)
+            );
+            let page = session
+                .read(
+                    &owner("owner"),
+                    &TerminalCursor::new(1, 0).unwrap(),
+                    expected.len(),
+                )
+                .unwrap();
+            assert_eq!(page.bytes, expected);
+            drop(session);
+            let recovered = TerminalRecoveredSession::recover_with(
+                &mut ordinary,
+                fixture.recover(),
+                &owner("owner"),
+                1,
+            )
+            .unwrap();
+            assert_eq!(recovered.facts.context.lifecycle, TerminalLifecycle::Exited);
+            assert_eq!(
+                recovered.facts.context.cursor.offset(),
+                expected.len() as u64
+            );
+            assert!(!recovered.facts.monitor_notifications_incomplete);
+        }
     }
 
     #[test]
