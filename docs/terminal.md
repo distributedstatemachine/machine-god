@@ -180,9 +180,14 @@ and unexecuted probe descriptions without adding another retained output queue.
 The injected clock cannot rewind any resident session. Resident listing is
 owner-scoped, lexically paged and optionally filtered by lifecycle/backend.
 Inactive residency may be released without deleting history, but a lost session
-with unfinished native cleanup remains owned. Shutdown stops admission before
-attempting every owned cleanup; it retains failed native cleanup for retry and
-keeps completed history readable. Final registry drop forces a cleanup pass on
+with unfinished native cleanup remains owned. Failed state publication is
+tracked independently of native ownership: shutdown retries publication after
+successful process cleanup, and ordinary release rejects unresolved failures.
+An explicit failed-history transfer retains the journal lock and in-memory
+facts for a host recovery owner; it is not a successful durable release.
+Shutdown stops admission before attempting every owned cleanup; it retains
+failed native cleanup for retry and keeps completed history readable.
+Final registry drop forces a cleanup pass on
 the blocking owner, not on a tool future's poll thread.
 
 The disk catalog receives a retained state-root descriptor and derives a framed
@@ -191,8 +196,11 @@ incarnation. Each namespace retains at most 256 validated session directories,
 listed in exact-spelling lexical order. Private directories, a permanent
 nonblocking owner lock, no-follow opens and retained inode checks confine access.
 New directory publication syncs the child and parent. Ambiguous post-creation
-failure poisons that catalog handle; reopening validates existing state without
-deleting or guessing repairs. Catalog reads never infer process authority.
+failure poisons that catalog handle; preparation of validated existing
+directories and locks retries the child and parent durability barriers. Opening
+a session explicitly also reconciles its directory barriers; listing remains
+validation-only and does not sync every retained session. No path deletes or
+guesses repairs. Catalog reads never infer process authority.
 
 The sixteen-entry resident bound is not disk-history retention, and neither
 component yet enforces the 512 MiB profile payload budget. The continuous owner

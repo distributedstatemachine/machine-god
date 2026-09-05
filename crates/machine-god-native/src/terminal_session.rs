@@ -134,6 +134,7 @@ pub(crate) struct TerminalSession<B: TerminalSessionBackend> {
     outcome: Option<TerminalProcessOutcome>,
     created_at_ms: i64,
     monitor_notifications_incomplete: bool,
+    publication_error: Option<TerminalSessionError>,
     now_ms: i64,
     last_output_ms: i64,
 }
@@ -177,6 +178,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             outcome: None,
             created_at_ms: now_ms,
             monitor_notifications_incomplete: false,
+            publication_error: None,
             now_ms,
             last_output_ms: now_ms,
         };
@@ -207,6 +209,10 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
     }
     pub(crate) fn owns_backend(&self) -> bool {
         self.backend.is_some()
+    }
+    /// Native cleanup and durable state publication are independent obligations.
+    pub(crate) fn publication_error(&self) -> Option<TerminalSessionError> {
+        self.publication_error
     }
     pub(crate) fn inspect(&self, owner: &BackgroundOutputOwner) -> Result<TerminalSessionFacts> {
         self.authorize(owner)?;
@@ -610,9 +616,11 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
                 Ok(())
             })();
             if let Err(error) = publication {
+                self.publication_error = Some(error);
                 self.failed_publication();
                 return Err(error);
             }
+            self.publication_error = None;
             self.monitors = candidate;
         }
         Ok(events)
@@ -637,7 +645,8 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             self.history.publish_state(&bytes)?;
             Ok(())
         })();
-        if result.is_err() {
+        self.publication_error = result.err();
+        if self.publication_error.is_some() {
             self.failed_publication();
         }
         result

@@ -120,7 +120,7 @@ impl TerminalCatalog {
         if !self.list()?.iter().any(|entry| entry == id) {
             return Err(TerminalCatalogError::NotFound);
         }
-        open_directory(&self.sessions, id.as_str())
+        seal_existing_directory(&self.sessions, id.as_str())
     }
 
     pub(crate) fn list(&self) -> Result<Vec<TerminalSessionId>> {
@@ -233,9 +233,19 @@ fn open_directory(parent: impl AsFd, name: &str) -> Result<OwnedFd> {
 fn prepare_directory(parent: impl AsFd, name: &str) -> Result<OwnedFd> {
     match rustix::fs::mkdirat(parent.as_fd(), name, DIRECTORY_MODE) {
         Ok(()) => finish_created_directory(parent, name),
-        Err(rustix::io::Errno::EXIST) => open_directory(parent, name),
+        Err(rustix::io::Errno::EXIST) => seal_existing_directory(parent, name),
         Err(error) => Err(io_error(error)),
     }
+}
+
+fn seal_existing_directory(parent: impl AsFd, name: &str) -> Result<OwnedFd> {
+    // A previous attempt can have created this entry but failed its durability
+    // barrier. Revalidate without chmod, then repeat both barriers before reuse.
+    // Ordinary listing deliberately does not perform this explicit open work.
+    let fd = open_directory(parent.as_fd(), name)?;
+    sync_child(&fd)?;
+    sync_parent(parent)?;
+    Ok(fd)
 }
 
 fn finish_created_directory(parent: impl AsFd, name: &str) -> Result<OwnedFd> {
@@ -260,7 +270,7 @@ fn finish_created_directory(parent: impl AsFd, name: &str) -> Result<OwnedFd> {
     if before.st_dev != after.st_dev || before.st_ino != after.st_ino {
         return Err(TerminalCatalogError::Corrupt);
     }
-    rustix::fs::fsync(&fd).map_err(io_error)?;
+    sync_child(&fd)?;
     sync_parent(parent)?;
     Ok(fd)
 }
@@ -276,8 +286,6 @@ fn acquire_lock(parent: impl AsFd) -> Result<OwnedFd> {
         Ok(fd) => {
             rustix::fs::fchmod(&fd, FILE_MODE).map_err(io_error)?;
             private(&fd, false)?;
-            rustix::fs::fsync(&fd).map_err(io_error)?;
-            sync_parent(parent.as_fd())?;
             fd
         }
         Err(rustix::io::Errno::EXIST) => {
@@ -285,12 +293,16 @@ fn acquire_lock(parent: impl AsFd) -> Result<OwnedFd> {
         }
         Err(error) => return Err(io_error(error)),
     };
-    same_entry(parent, LOCK, &lock, false)?;
+    same_entry(parent.as_fd(), LOCK, &lock, false)?;
     match rustix::fs::flock(&lock, FlockOperation::NonBlockingLockExclusive) {
-        Ok(()) => Ok(lock),
-        Err(rustix::io::Errno::WOULDBLOCK) => Err(TerminalCatalogError::Busy),
-        Err(error) => Err(io_error(error)),
+        Ok(()) => {}
+        Err(rustix::io::Errno::WOULDBLOCK) => return Err(TerminalCatalogError::Busy),
+        Err(error) => return Err(io_error(error)),
     }
+    // Reused locks can also originate in an interrupted preparation attempt.
+    sync_child(&lock)?;
+    sync_parent(parent)?;
+    Ok(lock)
 }
 
 fn names(root: impl AsFd, maximum: usize) -> Result<Vec<String>> {
@@ -315,7 +327,15 @@ fn sync_parent(parent: impl AsFd) -> Result<()> {
     if FAIL_PARENT_SYNC.with(|failure| failure.replace(false)) {
         return Err(TerminalCatalogError::Unavailable);
     }
+    #[cfg(test)]
+    probe_sync(parent.as_fd(), true)?;
     rustix::fs::fsync(parent).map_err(io_error)
+}
+
+fn sync_child(child: impl AsFd) -> Result<()> {
+    #[cfg(test)]
+    probe_sync(child.as_fd(), false)?;
+    rustix::fs::fsync(child).map_err(io_error)
 }
 
 fn io_error(error: rustix::io::Errno) -> TerminalCatalogError {
@@ -330,6 +350,42 @@ fn io_error(error: rustix::io::Errno) -> TerminalCatalogError {
 #[cfg(test)]
 thread_local! {
     static FAIL_PARENT_SYNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static SYNC_PROBE: std::cell::Cell<Option<SyncProbe>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+struct SyncProbe {
+    inode: u128,
+    child_calls: usize,
+    parent_calls: usize,
+    fail_child: bool,
+    fail_parent: bool,
+}
+
+#[cfg(test)]
+fn probe_sync(fd: impl AsFd, parent: bool) -> Result<()> {
+    SYNC_PROBE.with(|cell| {
+        let Some(mut probe) = cell.get() else {
+            return Ok(());
+        };
+        if u128::from(rustix::fs::fstat(fd).map_err(io_error)?.st_ino) != probe.inode {
+            return Ok(());
+        }
+        let fail = if parent {
+            probe.parent_calls += 1;
+            std::mem::replace(&mut probe.fail_parent, false)
+        } else {
+            probe.child_calls += 1;
+            std::mem::replace(&mut probe.fail_child, false)
+        };
+        cell.set(Some(probe));
+        if fail {
+            Err(TerminalCatalogError::Unavailable)
+        } else {
+            Ok(())
+        }
+    })
 }
 
 #[cfg(test)]
@@ -366,6 +422,9 @@ mod tests {
             .unwrap()
         }
         fn catalog(&self) -> TerminalCatalog {
+            self.try_catalog().unwrap()
+        }
+        fn try_catalog(&self) -> Result<TerminalCatalog> {
             // Parallel subprocess tests may briefly inherit a CLOEXEC lock
             // between fork and exec. A deliberately live owner's Busy check
             // below still calls prepare directly and must fail immediately.
@@ -379,7 +438,7 @@ mod tests {
                     Err(TerminalCatalogError::Busy) if std::time::Instant::now() < deadline => {
                         std::thread::sleep(std::time::Duration::from_millis(5));
                     }
-                    result => return result.unwrap(),
+                    result => return result,
                 }
             }
         }
@@ -705,6 +764,109 @@ mod tests {
         assert!(fixture.sessions().join("ambiguous").is_dir());
         drop(catalog);
         assert_eq!(fixture.catalog().list().unwrap(), vec![id("ambiguous")]);
+    }
+
+    fn watch_sync(fd: impl AsFd, fail_child: bool, fail_parent: bool) {
+        SYNC_PROBE.with(|cell| {
+            cell.set(Some(SyncProbe {
+                inode: u128::from(rustix::fs::fstat(fd).unwrap().st_ino),
+                child_calls: 0,
+                parent_calls: 0,
+                fail_child,
+                fail_parent,
+            }));
+        });
+    }
+
+    #[test]
+    fn prepare_retries_failed_ancestor_publication_before_accepting_existing_namespace() {
+        let fixture = Fixture::new();
+        watch_sync(fixture.fd(), false, true);
+        let prepare = || {
+            TerminalCatalog::prepare(
+                fixture.fd(),
+                "/workspace".into(),
+                owner("session", "incarnation"),
+            )
+        };
+        assert_eq!(prepare().unwrap_err(), TerminalCatalogError::Unavailable);
+        assert!(fixture.0.join(NAMESPACE).is_dir());
+        // A second injected failure at this exact ancestor must still reject
+        // prepare: merely opening the now-existing namespace is insufficient.
+        SYNC_PROBE.with(|cell| {
+            let mut probe = cell.get().unwrap();
+            assert_eq!(probe.parent_calls, 1);
+            probe.fail_parent = true;
+            cell.set(Some(probe));
+        });
+        assert_eq!(prepare().unwrap_err(), TerminalCatalogError::Unavailable);
+        let mut catalog = prepare().unwrap();
+        SYNC_PROBE.with(|cell| {
+            assert_eq!(cell.get().unwrap().parent_calls, 3);
+            cell.set(None);
+        });
+        catalog.create(&id("durable-descendant")).unwrap();
+    }
+
+    #[test]
+    fn existing_fixed_directories_and_lock_retry_child_barriers() {
+        for target in 0..4 {
+            let fixture = Fixture::new();
+            let catalog = fixture.catalog();
+            let descriptor = match target {
+                0 => &catalog.namespace,
+                1 => &catalog.owner_root,
+                2 => &catalog.sessions,
+                _ => &catalog.lock,
+            };
+            watch_sync(descriptor, true, false);
+            drop(catalog);
+            assert_eq!(
+                fixture.try_catalog().unwrap_err(),
+                TerminalCatalogError::Unavailable,
+                "target {target}"
+            );
+            let reopened = fixture.catalog();
+            assert!(reopened.list().unwrap().is_empty());
+            SYNC_PROBE.with(|cell| {
+                assert!(cell.get().unwrap().child_calls >= 2, "target {target}");
+                cell.set(None);
+            });
+        }
+    }
+
+    #[test]
+    fn explicit_session_open_reconciles_child_and_parent_without_syncing_list() {
+        let fixture = Fixture::new();
+        let mut catalog = fixture.catalog();
+        FAIL_PARENT_SYNC.with(|failure| failure.set(true));
+        assert_eq!(
+            catalog.create(&id("ambiguous")).unwrap_err(),
+            TerminalCatalogError::Unavailable
+        );
+        drop(catalog);
+        let catalog = fixture.catalog();
+        watch_sync(&catalog.sessions, false, true);
+        assert_eq!(catalog.list().unwrap(), vec![id("ambiguous")]);
+        SYNC_PROBE.with(|cell| assert_eq!(cell.get().unwrap().parent_calls, 0));
+        assert_eq!(
+            catalog.open(&id("ambiguous")).unwrap_err(),
+            TerminalCatalogError::Unavailable
+        );
+        assert_eq!(catalog.list().unwrap(), vec![id("ambiguous")]);
+        let session = catalog.open(&id("ambiguous")).unwrap();
+        SYNC_PROBE.with(|cell| assert_eq!(cell.get().unwrap().parent_calls, 2));
+        watch_sync(&session, true, false);
+        assert_eq!(
+            catalog.open(&id("ambiguous")).unwrap_err(),
+            TerminalCatalogError::Unavailable
+        );
+        assert_eq!(catalog.list().unwrap(), vec![id("ambiguous")]);
+        catalog.open(&id("ambiguous")).unwrap();
+        SYNC_PROBE.with(|cell| {
+            assert_eq!(cell.get().unwrap().child_calls, 2);
+            cell.set(None);
+        });
     }
 
     #[test]

@@ -335,13 +335,39 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         id: &TerminalSessionId,
     ) -> Result<()> {
         let index = self.index(owner, id)?;
-        if matches!(&self.entries[index].resident, Resident::Live(session) if session.owns_backend())
-        {
-            return Err(TerminalRegistryError::Busy);
+        if let Resident::Live(session) = &self.entries[index].resident {
+            if session.owns_backend() {
+                return Err(TerminalRegistryError::Busy);
+            }
+            if let Some(error) = session.publication_error() {
+                return Err(error.into());
+            }
         }
         self.entries.remove(index);
         self.next = 0;
         Ok(())
+    }
+    /// Explicitly transfer a failed, natively closed history to the host's
+    /// recovery owner. Unlike release, this preserves the journal lock and all
+    /// in-memory facts; it neither claims durability nor silently drops them.
+    pub(crate) fn take_failed_history(
+        &mut self,
+        owner: &BackgroundOutputOwner,
+        id: &TerminalSessionId,
+    ) -> Result<Box<TerminalSession<B>>> {
+        let index = self.index(owner, id)?;
+        match &self.entries[index].resident {
+            Resident::Live(session) if session.owns_backend() => {
+                return Err(TerminalRegistryError::Busy);
+            }
+            Resident::Live(session) if session.publication_error().is_some() => {}
+            _ => return Err(TerminalRegistryError::Invalid),
+        }
+        let Resident::Live(session) = self.entries.remove(index).resident else {
+            unreachable!("validated live history");
+        };
+        self.next = 0;
+        Ok(session)
     }
     /// Stop admissions first, then attempt every owned cleanup even after error.
     /// Failed native cleanup retains authority for repeated shutdown; Drop forces one
@@ -357,7 +383,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         let mut failures = Vec::new();
         for entry in &mut self.entries {
             if let Resident::Live(session) = &mut entry.resident
-                && session.owns_backend()
+                && (session.owns_backend() || session.publication_error().is_some())
                 && let Err(error) = session.close(&entry.owner, policy, now_ms)
             {
                 failures.push(TerminalRegistryFailure {
@@ -880,6 +906,82 @@ mod tests {
             assert_eq!(fixture.state.lock().unwrap().reads, 1);
         }
         assert_eq!(registry.pump(10, 1).unwrap()[0].session_id, id("t-1"));
+    }
+
+    #[test]
+    fn failed_final_publication_survives_shutdown_and_requires_explicit_transfer() {
+        for direct_close in [false, true] {
+            let fixture = Fixture::new();
+            let mut registry = registry();
+            let other_owner = owner("other");
+            let owner = owner("one");
+            let id = id("failed-publication");
+            registry
+                .start(owner.clone(), id.clone(), || fixture.live(&owner, &id, 0))
+                .unwrap();
+            assert!(matches!(
+                registry.take_failed_history(&owner, &id),
+                Err(TerminalRegistryError::Busy)
+            ));
+            let temporary = rustix::fs::openat(
+                fixture.fd(),
+                "tj-meta.tmp",
+                OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+                Mode::from_bits_retain(0o600),
+            )
+            .unwrap();
+            if direct_close {
+                assert!(
+                    registry
+                        .live_mut(&owner, &id)
+                        .unwrap()
+                        .close(&owner, TerminalClosePolicy::Force, 1)
+                        .is_err()
+                );
+            }
+            for now_ms in [2, 3] {
+                let failures = registry
+                    .shutdown(now_ms, TerminalClosePolicy::Force)
+                    .unwrap();
+                assert_eq!(failures.len(), 1);
+                assert_eq!(failures[0].session_id, id);
+                assert_eq!(failures[0].owner, owner);
+                assert!(matches!(
+                    failures[0].error,
+                    TerminalSessionError::History(_)
+                ));
+                assert_eq!(fixture.state.lock().unwrap().closes, 1);
+                assert!(matches!(
+                    registry.release(&owner, &id),
+                    Err(TerminalRegistryError::Session(
+                        TerminalSessionError::History(_)
+                    ))
+                ));
+                let facts = registry.inspect(&owner, &id).unwrap();
+                assert_eq!(facts.context.lifecycle, TerminalLifecycle::Closed);
+                assert!(facts.outcome.is_some());
+            }
+            assert!(matches!(
+                registry.take_failed_history(&other_owner, &id),
+                Err(TerminalRegistryError::NotFound)
+            ));
+            let failed = registry.take_failed_history(&owner, &id).unwrap();
+            assert!(!failed.owns_backend());
+            assert!(failed.publication_error().is_some());
+            assert!(failed.inspect(&owner).unwrap().outcome.is_some());
+            assert!(matches!(
+                TerminalJournal::open_existing(fixture.fd(), &id, TerminalJournalLimits::default()),
+                Err(TerminalJournalError::Busy)
+            ));
+            assert!(matches!(
+                registry.inspect(&owner, &id),
+                Err(TerminalRegistryError::NotFound)
+            ));
+            drop(registry);
+            drop(failed);
+            drop(temporary);
+            assert_eq!(fixture.state.lock().unwrap().closes, 1);
+        }
     }
 
     #[test]

@@ -72,6 +72,9 @@ Native session lifetime belongs to the long-lived host registry, not individual
 tool futures. Pinned registry shutdown terminates native sessions; durable
 history and backend-specific recovery do not require a separate native daemon
 or a new IPC protocol. Recovered numeric PIDs never grant process authority.
+Registry shutdown tracks final-state publication independently of native
+cleanup, and catalog reopening retries interrupted directory durability
+barriers. These remain internal integration components, not a delivery.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:
