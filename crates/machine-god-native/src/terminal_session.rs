@@ -249,6 +249,24 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
     pub(crate) fn owns_backend(&self) -> bool {
         self.backend.is_some()
     }
+    /// Observe whether the owner needs a cleanup transaction instead of one
+    /// bounded-read permit. Does not consume output or publish session facts;
+    /// `pump_with` still rechecks status to handle a later process exit.
+    pub(crate) fn needs_native_cleanup(&mut self) -> Result<bool> {
+        let Some(backend) = self.backend.as_mut() else {
+            return Ok(false);
+        };
+        if !matches!(
+            self.lifecycle,
+            TerminalLifecycle::Starting | TerminalLifecycle::Running
+        ) {
+            return Ok(true);
+        }
+        backend
+            .status()
+            .map(|status| status != TerminalPtyStatus::Running)
+            .map_err(|()| TerminalSessionError::Native)
+    }
     /// Native cleanup and durable state publication are independent obligations.
     pub(crate) fn publication_error(&self) -> Option<TerminalSessionError> {
         self.publication_error
@@ -1667,6 +1685,36 @@ mod tests {
 
     fn denied_error() -> TerminalSessionError {
         TerminalHistoryError::Profile(TerminalProfileError::ResourceLimit).into()
+    }
+
+    #[test]
+    fn cleanup_preflight_observes_status_without_consuming_output_or_publishing() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"pending".to_vec());
+        let before = std::fs::read(fixture.path.join("tj-meta")).unwrap();
+        assert!(!session.needs_native_cleanup().unwrap());
+        fixture.state.lock().unwrap().status = TerminalPtyStatus::Exited(7);
+        assert!(session.needs_native_cleanup().unwrap());
+        assert_eq!(session.context().lifecycle, TerminalLifecycle::Starting);
+        assert_eq!(session.outcome(), None);
+        assert_eq!(fixture.state.lock().unwrap().output.len(), 1);
+        assert_eq!(fixture.state.lock().unwrap().closes, 0);
+        assert_eq!(std::fs::read(fixture.path.join("tj-meta")).unwrap(), before);
+        session.lose();
+        let calls = fixture.state.lock().unwrap().status_calls;
+        assert!(session.needs_native_cleanup().unwrap());
+        assert_eq!(fixture.state.lock().unwrap().status_calls, calls);
+        session
+            .close(&owner("owner"), TerminalClosePolicy::Force, 1)
+            .unwrap();
+        assert!(!session.needs_native_cleanup().unwrap());
+        assert_eq!(session.outcome(), Some(TerminalProcessOutcome::Exited(7)));
     }
 
     #[test]
