@@ -4,7 +4,13 @@ import sys
 import tempfile
 import unittest
 
-from scripts.generate_terminal_unicode_data import ARRAYS, extract_array, render
+from scripts.generate_terminal_unicode_data import (
+    ARRAYS,
+    SUPPORTED_UPSTREAM_COMMIT,
+    extract_array,
+    render,
+    validate_upstream_commit,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,7 +34,7 @@ class TerminalUnicodeGeneratorTests(unittest.TestCase):
         generated = render(fixture())
         self.assertEqual(generated, render(fixture()))
         self.assertIn("// Unicode fixture provenance\n// sha256: fixture", generated)
-        self.assertIn("b1774fbf6c7602b503026f96f6e960e946c692ef", generated)
+        self.assertIn(f"// {SUPPORTED_UPSTREAM_COMMIT}:", generated)
         for name, kind in ARRAYS:
             self.assertIn(f"static {name.upper()}: [{kind}; 1]", generated)
         self.assertIn("Range { first: 0x1100, last: 0x115F },", generated)
@@ -37,6 +43,14 @@ class TerminalUnicodeGeneratorTests(unittest.TestCase):
         self.assertIn("MAX_RGI_SEQUENCE_CODEPOINTS: usize = 10;", generated)
         self.assertEqual(generated.count("#[rustfmt::skip]"), len(ARRAYS))
         self.assertTrue(generated.endswith("\n"))
+
+    def test_upstream_revision_must_match_supported_generator_provenance(self) -> None:
+        validate_upstream_commit(SUPPORTED_UPSTREAM_COMMIT)
+        for commit in ("f" * 40, "", SUPPORTED_UPSTREAM_COMMIT.upper()):
+            with self.subTest(commit=commit), self.assertRaisesRegex(
+                ValueError, "terminal Unicode generator supports"
+            ):
+                validate_upstream_commit(commit)
 
     def test_missing_array_is_rejected(self) -> None:
         for name, _ in ARRAYS:

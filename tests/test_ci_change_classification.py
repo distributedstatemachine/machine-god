@@ -835,6 +835,12 @@ class CiChangeClassificationTests(unittest.TestCase):
         self.assertIn("terminal_unicode_tests == 'true'", quality)
         self.assertIn("tests/test_terminal_unicode_generator.py", quality)
         pinned = step_script(quality, "Check pinned upstream compatibility inventory")
+        provenance_check = 'validate_upstream_commit(lock["commit"])'
+        self.assertIn(
+            "from scripts.generate_terminal_unicode_data import validate_upstream_commit",
+            pinned,
+        )
+        self.assertLess(pinned.index(provenance_check), pinned.index("tempfile.mkdtemp"))
         self.assertIn('"scripts/generate_terminal_unicode_data.py"', pinned)
         self.assertIn('upstream / "src/core/shared/unicode_display_data.zig"', pinned)
         self.assertIn('"crates/machine-god-native/src/terminal_unicode_data.rs"', pinned)

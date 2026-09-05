@@ -642,8 +642,10 @@ jobs:
           from pathlib import Path
 
           from scripts.generate_compatibility import parse_lock
+          from scripts.generate_terminal_unicode_data import validate_upstream_commit
 
           lock = parse_lock(Path("benchmarks/upstream.lock"))
+          validate_upstream_commit(lock["commit"])
           upstream = Path(
               tempfile.mkdtemp(prefix="fx-compatibility-", dir=os.environ["RUNNER_TEMP"])
           )

@@ -13,6 +13,18 @@ import pathlib
 import re
 
 
+SUPPORTED_UPSTREAM_COMMIT = "b1774fbf6c7602b503026f96f6e960e946c692ef"
+
+
+def validate_upstream_commit(commit: str) -> None:
+    """Reject a different source revision before verifying generated evidence."""
+    if commit != SUPPORTED_UPSTREAM_COMMIT:
+        raise ValueError(
+            f"terminal Unicode generator supports {SUPPORTED_UPSTREAM_COMMIT}, "
+            f"not {commit}"
+        )
+
+
 ARRAYS = (
     ("wide_ranges", "Range"),
     ("emoji_presentation_ranges", "Range"),
@@ -51,7 +63,7 @@ def render(source: str) -> str:
         "// SPDX-License-Identifier: Apache-2.0",
         "//",
         "// Mechanically transliterated from vercel-labs/fx at revision",
-        "// b1774fbf6c7602b503026f96f6e960e946c692ef:",
+        f"// {SUPPORTED_UPSTREAM_COMMIT}:",
         "// src/core/shared/unicode_display_data.zig.",
         "// The upstream provenance and Unicode input hashes are retained below.",
     ]

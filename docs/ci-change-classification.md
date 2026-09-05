@@ -54,7 +54,10 @@ Cargo commands. The terminal Unicode generator, its focused test, generated
 Rust table, and pinned upstream lock select deterministic generator tests and
 the pinned-upstream agreement check. That check compares regeneration against
 the checked-in table using the exact verified fx checkout; it does not build
-Zig. Generator-only changes do not select Rust package tests, while generated
+Zig. It rejects an upstream lock whose revision differs from the generator's
+explicit supported revision before fetching or comparing content, so a pin
+update cannot silently retain old generated-table attribution. Generator-only
+changes do not select Rust package tests, while generated
 Rust table changes also select native and CLI through ordinary source routing.
 Compatibility, release-smoke, dependency-audit, native-matrix, and
 unsupported-platform concerns remain independent. Dependency policy alone does
