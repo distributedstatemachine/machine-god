@@ -109,7 +109,7 @@ impl<B: TerminalSessionBackend, T: Send> Job<B> for Request<B, T> {
         } else {
             let operation = self.operation.take().expect("request executed once");
             catch_callback(|| operation(registry, now_ms, &self.cancellation))
-                .map_err(|_| TerminalOwnerError::Panicked)
+                .map_err(|()| TerminalOwnerError::Panicked)
         };
         let keep_running = !matches!(&result, Err(TerminalOwnerError::Panicked));
         self.completed = true;
