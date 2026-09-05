@@ -202,6 +202,8 @@ checkpoint-covered raw prefixes; within each class it uses creation time,
 owner namespace and session ID. The active namespace/session pair is excluded.
 Discovery reads bounded manifest and facts-prefix hints, skips histories with
 neither output nor reserves, and does not recover or hash unselected payloads.
+Each payload class requires physical bytes in that category, including orphans;
+a checkpoint-only history is not a raw-output victim.
 Hints are selection data, not mutation authority: selected nonresident candidates
 require their normal nonblocking journal writer lease, full recovery, matching
 state identity, and validated, current, namespace-bound facts. Recovery-only

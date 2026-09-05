@@ -698,6 +698,19 @@ fn retention_rank(kind: Option<TerminalHistoryEviction>) -> u8 {
     }
 }
 
+fn retention_class_has_output(
+    kind: Option<TerminalHistoryEviction>,
+    usage: &TerminalJournalPhysicalUsage,
+) -> bool {
+    match kind {
+        None => true,
+        Some(
+            TerminalHistoryEviction::CompletedOutput | TerminalHistoryEviction::LiveCoveredOutput,
+        ) => usage.raw_bytes != 0,
+        Some(TerminalHistoryEviction::CompletedCheckpoint) => usage.checkpoint_bytes != 0,
+    }
+}
+
 fn resident_retention_facts<B: TerminalSessionBackend>(
     entry: &Entry<B>,
 ) -> std::result::Result<Option<TerminalSessionFacts>, TerminalSessionError> {
@@ -853,6 +866,11 @@ fn retention_candidates<B: TerminalSessionBackend>(
                 .copied()
                 .map(Some),
         ) {
+            // Physical bytes include recoverable orphan generations. Do not
+            // open a history for a class that cannot reclaim any of its bytes.
+            if !retention_class_has_output(kind, &usage.usage) {
+                continue;
+            }
             candidates.push(RetentionCandidate {
                 namespace: usage.owner_namespace.clone(),
                 id: usage.session_id.clone(),
@@ -1952,7 +1970,7 @@ mod tests {
 
     #[test]
     fn profile_retention_never_recovers_unselected_payloads() {
-        for unused_raw in [0, 64] {
+        for (unused_raw, checkpoint_only) in [(0, false), (0, true), (64, false)] {
             let fixture = Fixture::new();
             let (store, session) = fixture.profile_live(&owner("active"), &id("active"));
             let mut registry = registry();
@@ -1972,7 +1990,7 @@ mod tests {
                 &owner("unused"),
                 &id("unused"),
                 TerminalLifecycle::Closed,
-                2,
+                if checkpoint_only { 0 } else { 2 },
                 unused_raw,
             );
             let transaction = store.transaction().unwrap();
@@ -1982,9 +2000,11 @@ mod tests {
             )
             .unwrap();
             let event = journal.append_event(b"retained").unwrap();
-            journal
-                .evict(&crate::terminal_journal::TerminalJournalEviction::CompletedCheckpoint)
-                .unwrap();
+            if !checkpoint_only {
+                journal
+                    .evict(&crate::terminal_journal::TerminalJournalEviction::CompletedCheckpoint)
+                    .unwrap();
+            }
             drop(journal);
             let event_path = fixture
                 .path

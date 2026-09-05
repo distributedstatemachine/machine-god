@@ -114,7 +114,8 @@ facts. The profile owner selects bounded, oldest-first retention classes before
 reads, using resident authority or acquired nonresident writer leases. Completed
 crash-leftover reserves retire before payload eviction, including after resident
 recovery. Discovery uses bounded facts-prefix hints without recovering unselected
-payloads; selected histories still require full validation before mutation.
+payloads; classes without physical bytes are skipped, while selected histories
+still require full validation before mutation.
 Legacy metadata-less records remain readable but do not block eligible victims.
 Per-session retention separates raw/checkpoint output from independently bounded
 state and events, matching the pinned output-accounting boundary. Non-output
