@@ -400,6 +400,10 @@ slots. Cancellation before execution prevents effects; cancellation after
 execution begins does not discard a committed receipt. Dropping a tool future
 does not shut down the registry. Last-host-handle drop requests shutdown without
 joining or running native cleanup on the polling thread.
+Profile-aware jobs receive the owning worker's exact store and budget, acquire
+their short mutation transaction inside dispatch, and release it before reply
+wakes. Borrowed profile authority cannot escape through a request result. Such
+jobs refuse an unmetered test loop before invoking the mutation callback.
 
 The native host's reusable reserved-worker spawn path shares the existing
 bounded worker collector. It rejects foreign/non-single reservations before

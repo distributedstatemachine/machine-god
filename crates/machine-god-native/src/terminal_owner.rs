@@ -27,6 +27,7 @@ pub(crate) enum TerminalOwnerError {
     Closed,
     Cancelled,
     Panicked,
+    ProfileRequired,
     Registry(TerminalRegistryError),
 }
 type Result<T> = std::result::Result<T, TerminalOwnerError>;
@@ -46,7 +47,12 @@ fn catch_callback<T>(callback: impl FnOnce() -> T) -> std::result::Result<T, ()>
 
 trait Job<B: TerminalSessionBackend>: Send {
     /// False means an operation panicked and this owner must stop.
-    fn execute(self: Box<Self>, registry: &mut TerminalRegistry<B>, now_ms: i64) -> bool;
+    fn execute(
+        self: Box<Self>,
+        registry: &mut TerminalRegistry<B>,
+        now_ms: i64,
+        profile: Option<(&TerminalProfileStore, &TerminalProfileBudget)>,
+    ) -> bool;
 }
 enum Message<B: TerminalSessionBackend> {
     Job(Box<dyn Job<B>>),
@@ -90,8 +96,15 @@ fn complete<T>(reply: &Mutex<Reply<T>>, value: Result<T>) -> bool {
     }
     true
 }
-type Operation<B, T> =
-    Box<dyn FnOnce(&mut TerminalRegistry<B>, i64, &CancellationToken) -> T + Send>;
+type Operation<B, T> = Box<
+    dyn FnOnce(
+            &mut TerminalRegistry<B>,
+            i64,
+            &CancellationToken,
+            Option<(&TerminalProfileStore, &TerminalProfileBudget)>,
+        ) -> Result<T>
+        + Send,
+>;
 struct Request<B: TerminalSessionBackend, T> {
     operation: Option<Operation<B, T>>,
     reply: Arc<Mutex<Reply<T>>>,
@@ -102,7 +115,12 @@ struct Request<B: TerminalSessionBackend, T> {
     completed: bool,
 }
 impl<B: TerminalSessionBackend, T: Send> Job<B> for Request<B, T> {
-    fn execute(mut self: Box<Self>, registry: &mut TerminalRegistry<B>, now_ms: i64) -> bool {
+    fn execute(
+        mut self: Box<Self>,
+        registry: &mut TerminalRegistry<B>,
+        now_ms: i64,
+        profile: Option<(&TerminalProfileStore, &TerminalProfileBudget)>,
+    ) -> bool {
         if self.caller.is_cancelled() {
             self.cancellation.cancel();
         }
@@ -110,8 +128,8 @@ impl<B: TerminalSessionBackend, T: Send> Job<B> for Request<B, T> {
             Err(TerminalOwnerError::Cancelled)
         } else {
             let operation = self.operation.take().expect("request executed once");
-            catch_callback(|| operation(registry, now_ms, &self.cancellation))
-                .map_err(|()| TerminalOwnerError::Panicked)
+            catch_callback(|| operation(registry, now_ms, &self.cancellation, profile))
+                .unwrap_or(Err(TerminalOwnerError::Panicked))
         };
         let keep_running = !matches!(&result, Err(TerminalOwnerError::Panicked));
         self.completed = true;
@@ -160,9 +178,49 @@ impl<B: TerminalSessionBackend + 'static> TerminalOwnerHandle<B> {
         caller: CancellationToken,
         operation: impl FnOnce(&mut TerminalRegistry<B>, i64, &CancellationToken) -> T + Send + 'static,
     ) -> TerminalOwnerFuture<B, T> {
+        self.request_inner(
+            caller,
+            Box::new(move |registry, now_ms, cancellation, _| {
+                Ok(operation(registry, now_ms, cancellation))
+            }),
+        )
+    }
+
+    /// Supplies this worker's exact profile authority to a bounded authorized
+    /// mutation. The operation acquires its own short transaction; neither
+    /// borrowed authority nor its transaction can escape through the result.
+    /// Completion wakes the caller only after the operation returns and drops
+    /// all transaction guards, including when the operation panics.
+    pub(crate) fn request_with_profile<T: Send + 'static>(
+        &self,
+        caller: CancellationToken,
+        operation: impl FnOnce(
+            &mut TerminalRegistry<B>,
+            &TerminalProfileStore,
+            &TerminalProfileBudget,
+            i64,
+            &CancellationToken,
+        ) -> T
+        + Send
+        + 'static,
+    ) -> TerminalOwnerFuture<B, T> {
+        self.request_inner(
+            caller,
+            Box::new(move |registry, now_ms, cancellation, profile| {
+                let (store, budget) = profile.ok_or(TerminalOwnerError::ProfileRequired)?;
+                Ok(operation(registry, store, budget, now_ms, cancellation))
+            }),
+        )
+    }
+
+    fn request_inner<T: Send + 'static>(
+        &self,
+        caller: CancellationToken,
+        operation: Operation<B, T>,
+    ) -> TerminalOwnerFuture<B, T> {
         TerminalOwnerFuture {
             shared: Arc::clone(&self.shared),
-            operation: Some(Box::new(operation)),
+            operation: Some(operation),
             reply: Arc::new(Mutex::new(Reply {
                 result: None,
                 waker: None,
@@ -301,6 +359,14 @@ enum Persistence<'a> {
 }
 
 impl Persistence<'_> {
+    fn authority(&self) -> Option<(&TerminalProfileStore, &TerminalProfileBudget)> {
+        match self {
+            Self::Profile(store, budget) => Some((store, budget)),
+            #[cfg(test)]
+            Self::Unmetered => None,
+        }
+    }
+
     fn pump<B: TerminalSessionBackend>(
         &self,
         registry: &mut TerminalRegistry<B>,
@@ -433,7 +499,11 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
                         }
                         // Commands use the last validated registry time, preventing a
                         // second unvalidated clock read from preceding native effects.
-                        if !job.execute(registry, registry.minimum_time_ms()) {
+                        if !job.execute(
+                            registry,
+                            registry.minimum_time_ms(),
+                            persistence.authority(),
+                        ) {
                             error = Some(TerminalOwnerError::Panicked);
                             break;
                         }

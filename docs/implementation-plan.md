@@ -117,6 +117,9 @@ recovery. Discovery uses bounded facts-prefix hints without recovering unselecte
 payloads; classes without physical bytes are skipped, while selected histories
 still require full validation before mutation.
 Legacy metadata-less records remain readable but do not block eligible victims.
+Profile-aware owner requests now pass the worker's exact store and budget into
+bounded mutation dispatch; transaction guards end before reply wakes. Production
+worker startup, complete tool request contracts and host assembly remain open.
 Per-session retention separates raw/checkpoint output from independently bounded
 state and events, matching the pinned output-accounting boundary. Non-output
 publications cannot evict output; recovery retains all ledger categories.
