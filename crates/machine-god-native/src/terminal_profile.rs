@@ -2,7 +2,8 @@
 //!
 //! Retained output, protected state/events and metadata have separate ledgers.
 //! Temporary allocation is gross, not the net size of a replacement. Mutation
-//! owners must declare and obey their allocation demand before performing I/O.
+//! plans derive their allocation demand before performing I/O; the lower-level
+//! reservation API requires owners to declare and obey their demand.
 //! Every admission and completion measures disk again: abandoning a reservation
 //! cannot turn an orphan or an ambiguous publication into free capacity.
 
@@ -10,7 +11,10 @@
 
 use std::fmt;
 
-use crate::terminal_journal::TerminalJournalPhysicalUsage;
+use crate::terminal_journal::{
+    TerminalJournalError, TerminalJournalPhysicalUsage, TerminalJournalReceipt,
+    TerminalJournalWrite,
+};
 use crate::terminal_profile_store::{
     MAX_PROFILE_OWNERS, MAX_PROFILE_SESSIONS, TerminalProfileStoreError, TerminalProfileTransaction,
 };
@@ -23,6 +27,7 @@ pub(crate) enum TerminalProfileError {
     Invalid,
     ResourceLimit,
     AccountingMismatch,
+    Journal(TerminalJournalError),
     Store(TerminalProfileStoreError),
 }
 
@@ -35,6 +40,11 @@ impl std::error::Error for TerminalProfileError {}
 impl From<TerminalProfileStoreError> for TerminalProfileError {
     fn from(error: TerminalProfileStoreError) -> Self {
         Self::Store(error)
+    }
+}
+impl From<TerminalJournalError> for TerminalProfileError {
+    fn from(error: TerminalJournalError) -> Self {
+        Self::Journal(error)
     }
 }
 type Result<T> = std::result::Result<T, TerminalProfileError>;
@@ -142,6 +152,36 @@ impl TerminalProfileBudget {
         Ok(Self { limits })
     }
 
+    /// Admit and execute one exact borrowed journal mutation. Neither the
+    /// payload nor this writer's manifest can change while the plan is held.
+    /// Namespace spelling, session identity and directory inode must all bind
+    /// to this transaction before its budget can authorize any allocation.
+    pub(crate) fn mutate_journal(
+        &self,
+        transaction: &mut TerminalProfileTransaction<'_>,
+        owner_namespace: &str,
+        write: TerminalJournalWrite<'_, '_>,
+    ) -> Result<TerminalProfileCompletion<TerminalJournalReceipt, TerminalJournalError>> {
+        let directory = transaction.open_session(owner_namespace, write.session_id())?;
+        if !write.matches_directory(&directory)? {
+            return Err(TerminalProfileError::Invalid);
+        }
+        drop(directory);
+        let allocation = write.allocation();
+        let demand = TerminalProfileDemand {
+            additional_owners: 0,
+            additional_sessions: 0,
+            retained_growth: TerminalProfileLedgers {
+                output_bytes: allocation.output_growth,
+                protected_bytes: allocation.protected_growth,
+                metadata_bytes: allocation.metadata_growth,
+            },
+            allocation_bytes: allocation.allocation_bytes,
+        };
+        self.reserve_inner(transaction, demand, write.reclaims_only())?
+            .run(|| write.execute())
+    }
+
     /// The exclusive mutable borrow prevents multiple outstanding reservations
     /// under one lock. All cooperating namespace/journal mutations must share
     /// the profile transaction; the budget grants no journal/process authority.
@@ -150,6 +190,26 @@ impl TerminalProfileBudget {
         transaction: &'a mut TerminalProfileTransaction<'store>,
         demand: TerminalProfileDemand,
     ) -> Result<TerminalProfileReservation<'a, 'store>> {
+        self.reserve_inner(transaction, demand, false)
+    }
+
+    fn reserve_inner<'a, 'store>(
+        &self,
+        transaction: &'a mut TerminalProfileTransaction<'store>,
+        demand: TerminalProfileDemand,
+        reclaiming: bool,
+    ) -> Result<TerminalProfileReservation<'a, 'store>> {
+        // Only a sealed journal acknowledgement/eviction plan takes this path.
+        // Metadata-first reclamation must remain possible above the payload
+        // quota; it cannot create namespaces, output, state or event payloads.
+        if reclaiming
+            && (demand.additional_owners != 0
+                || demand.additional_sessions != 0
+                || demand.retained_growth.output_bytes != 0
+                || demand.retained_growth.protected_bytes != 0)
+        {
+            return Err(TerminalProfileError::Invalid);
+        }
         if demand.allocation_bytes < demand.retained_growth.total()? {
             return Err(TerminalProfileError::Invalid);
         }
@@ -170,13 +230,18 @@ impl TerminalProfileBudget {
             .ok_or(TerminalProfileError::ResourceLimit)?;
         let baseline = TerminalProfileLedgers::physical(inventory.usage)?;
         let ceiling = baseline.plus(demand.retained_growth)?;
-        if !ceiling.fits(self.limits.retained) {
+        if !reclaiming && !ceiling.fits(self.limits.retained) {
             return Err(TerminalProfileError::ResourceLimit);
         }
         // Check the actual gross-allocation envelope, even though the separate
         // ledger checks above are stronger for ordinary bounded inputs.
+        let base_ceiling = if reclaiming {
+            baseline.total()?
+        } else {
+            self.limits.retained.total()?
+        };
         if add(baseline.total()?, demand.allocation_bytes)?
-            > add(self.limits.retained.total()?, self.limits.temporary_bytes)?
+            > add(base_ceiling, self.limits.temporary_bytes)?
         {
             return Err(TerminalProfileError::ResourceLimit);
         }
@@ -252,6 +317,7 @@ mod tests {
     use crate::terminal_catalog::TerminalCatalog;
     use crate::terminal_journal::{
         TerminalJournal, TerminalJournalError, TerminalJournalEviction, TerminalJournalLimits,
+        TerminalJournalMutation,
     };
     use crate::terminal_profile_store::TerminalProfileStore;
     use machine_god_core::{
@@ -397,6 +463,260 @@ mod tests {
         )
         .unwrap();
         File::from(fd).write_all(bytes).unwrap();
+    }
+
+    #[test]
+    fn bound_catalog_and_journal_plans_admit_all_mutation_kinds() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let mut transaction = begin_transaction(&store);
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("owner").unwrap(),
+            SessionIncarnationId::new("incarnation").unwrap(),
+        );
+        let mut catalog = transaction
+            .prepare_catalog("/workspace".into(), owner)
+            .unwrap();
+        let id = TerminalSessionId::new("bound").unwrap();
+        let directory = transaction.create_session(&mut catalog, &id).unwrap();
+        // Initial metadata creation is still a separate runtime integration
+        // boundary. All existing-journal writes below use derived admission.
+        let mut journal = TerminalJournal::create(
+            directory,
+            id,
+            TerminalJournalLimits {
+                segment_bytes: 8,
+                session_bytes: 8,
+            },
+        )
+        .unwrap();
+        let namespace = catalog.namespace_key();
+        let write = journal
+            .prepare_mutation(TerminalJournalMutation::Append(b"raw-data"))
+            .unwrap();
+        let completion = budget()
+            .mutate_journal(&mut transaction, namespace, write)
+            .unwrap();
+        assert_eq!(
+            completion.operation.unwrap(),
+            TerminalJournalReceipt::Appended(journal.latest())
+        );
+        assert_eq!(completion.accounting.unwrap().output_bytes, 8);
+        let source = journal.latest();
+        for mutation in [
+            TerminalJournalMutation::Checkpoint {
+                source: source.clone(),
+                bytes: b"old-grid",
+            },
+            TerminalJournalMutation::Checkpoint {
+                source: source.clone(),
+                bytes: b"new-grid",
+            },
+            TerminalJournalMutation::State {
+                source,
+                bytes: b"state",
+            },
+            TerminalJournalMutation::Event(b"event"),
+            TerminalJournalMutation::Acknowledge(1),
+        ] {
+            let write = journal.prepare_mutation(mutation).unwrap();
+            let completion = budget()
+                .mutate_journal(&mut transaction, namespace, write)
+                .unwrap();
+            assert!(completion.operation.is_ok());
+            assert_eq!(completion.accounting.unwrap().output_bytes, 8);
+        }
+        assert_eq!(
+            journal.load_checkpoint().unwrap().unwrap().bytes,
+            b"new-grid"
+        );
+        assert_eq!(journal.usage().state_bytes, 5);
+        assert_eq!(journal.usage().event_bytes, 0);
+        let write = journal
+            .prepare_mutation(TerminalJournalMutation::Evict(
+                &TerminalJournalEviction::CompletedCheckpoint,
+            ))
+            .unwrap();
+        let completion = budget()
+            .mutate_journal(&mut transaction, namespace, write)
+            .unwrap();
+        assert_eq!(
+            completion.operation.unwrap(),
+            TerminalJournalReceipt::Evicted(8)
+        );
+        assert_eq!(completion.accounting.unwrap().output_bytes, 0);
+    }
+
+    #[test]
+    fn plans_cannot_borrow_another_profiles_or_owners_quota() {
+        let fixture = Fixture::new();
+        let other = Fixture::new();
+        let store = fixture.store();
+        let other_store = other.store();
+        let (catalog, mut journal) = fixture.journal("same-id");
+        let (_other_catalog, _other_journal) = other.journal("same-id");
+        let mut foreign = begin_transaction(&other_store);
+        let write = journal
+            .prepare_mutation(TerminalJournalMutation::Append(b"x"))
+            .unwrap();
+        assert!(matches!(
+            budget().mutate_journal(&mut foreign, catalog.namespace_key(), write),
+            Err(TerminalProfileError::Invalid)
+        ));
+        assert_eq!(journal.usage().raw_bytes, 0);
+        assert_eq!(foreign.inventory().unwrap().usage.output_bytes, 0);
+        let mut transaction = begin_transaction(&store);
+        let wrong_namespace = "0".repeat(64);
+        let write = journal
+            .prepare_mutation(TerminalJournalMutation::Append(b"x"))
+            .unwrap();
+        assert!(
+            budget()
+                .mutate_journal(&mut transaction, &wrong_namespace, write)
+                .is_err()
+        );
+        assert_eq!(journal.usage().raw_bytes, 0);
+    }
+
+    #[test]
+    fn sealed_reclamation_recovers_overquota_ledgers_without_admitting_payloads() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let (catalog, mut journal) = fixture.journal("overquota");
+        journal.append(b"0123456789abcdef").unwrap();
+        journal.append_event(b"event").unwrap();
+        let mut transaction = begin_transaction(&store);
+        let mut tight = budget();
+        tight.limits.retained.protected_bytes = 0;
+        let write = journal
+            .prepare_mutation(TerminalJournalMutation::Append(b"x"))
+            .unwrap();
+        assert!(matches!(
+            tight.mutate_journal(&mut transaction, catalog.namespace_key(), write),
+            Err(TerminalProfileError::ResourceLimit)
+        ));
+        assert_eq!(journal.usage().raw_bytes, 16);
+        let write = journal
+            .prepare_mutation(TerminalJournalMutation::Acknowledge(1))
+            .unwrap();
+        let completion = tight
+            .mutate_journal(&mut transaction, catalog.namespace_key(), write)
+            .unwrap();
+        assert!(completion.operation.is_ok());
+        let actual = completion.accounting.unwrap();
+        assert_eq!(actual.output_bytes, 16);
+        assert_eq!(actual.protected_bytes, 0);
+        let write = journal
+            .prepare_mutation(TerminalJournalMutation::Evict(
+                &TerminalJournalEviction::CompletedOutput,
+            ))
+            .unwrap();
+        let completion = tight
+            .mutate_journal(&mut transaction, catalog.namespace_key(), write)
+            .unwrap();
+        assert_eq!(
+            completion.operation.unwrap(),
+            TerminalJournalReceipt::Evicted(16)
+        );
+        assert_eq!(completion.accounting.unwrap().output_bytes, 0);
+        let write = journal
+            .prepare_mutation(TerminalJournalMutation::Append(b"new-data"))
+            .unwrap();
+        let completion = tight
+            .mutate_journal(&mut transaction, catalog.namespace_key(), write)
+            .unwrap();
+        assert!(completion.operation.is_ok());
+        assert_eq!(completion.accounting.unwrap().output_bytes, 8);
+        let source = journal.latest();
+        // Even a replacement with zero net growth is not reclamation.
+        journal
+            .publish_checkpoint(source.clone(), b"old-grid")
+            .unwrap();
+        tight.limits.retained.output_bytes = 1;
+        let write = journal
+            .prepare_mutation(TerminalJournalMutation::Checkpoint {
+                source,
+                bytes: b"new-grid",
+            })
+            .unwrap();
+        assert_eq!(write.allocation().output_growth, 0);
+        assert!(matches!(
+            tight.mutate_journal(&mut transaction, catalog.namespace_key(), write),
+            Err(TerminalProfileError::ResourceLimit)
+        ));
+        assert_eq!(journal.usage().raw_bytes, 8);
+        tight.limits.temporary_bytes = 1;
+        let write = journal
+            .prepare_mutation(TerminalJournalMutation::Acknowledge(1))
+            .unwrap();
+        assert_eq!(write.allocation().allocation_bytes, 0);
+        let completion = tight
+            .mutate_journal(&mut transaction, catalog.namespace_key(), write)
+            .unwrap();
+        assert!(completion.operation.is_ok());
+        assert_eq!(completion.accounting.unwrap().output_bytes, 16);
+    }
+
+    #[test]
+    fn derived_replacement_accounts_for_gross_allocation_and_failed_publication() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let (catalog, mut journal) = fixture.journal("derived");
+        journal
+            .publish_checkpoint(journal.latest(), b"old-grid")
+            .unwrap();
+        let mut transaction = begin_transaction(&store);
+        let source = journal.latest();
+        let mut tight = budget();
+        tight.limits.temporary_bytes = MAX_METADATA + 7;
+        let write = journal
+            .prepare_mutation(TerminalJournalMutation::Checkpoint {
+                source: source.clone(),
+                bytes: b"new-grid",
+            })
+            .unwrap();
+        assert!(matches!(
+            tight.mutate_journal(&mut transaction, catalog.namespace_key(), write),
+            Err(TerminalProfileError::ResourceLimit)
+        ));
+        assert_eq!(
+            journal.load_checkpoint().unwrap().unwrap().bytes,
+            b"old-grid"
+        );
+        put(
+            session_fd(&transaction, "derived"),
+            "tj-meta.tmp",
+            b"interrupted",
+        );
+        let write = journal
+            .prepare_mutation(TerminalJournalMutation::Checkpoint {
+                source: source.clone(),
+                bytes: b"new-grid",
+            })
+            .unwrap();
+        let completion = budget()
+            .mutate_journal(&mut transaction, catalog.namespace_key(), write)
+            .unwrap();
+        assert!(completion.operation.is_err());
+        assert_eq!(
+            completion.accounting,
+            Err(TerminalProfileError::AccountingMismatch)
+        );
+        assert_eq!(transaction.inventory().unwrap().usage.output_bytes, 16);
+        drop(journal);
+        let mut journal = reopen(&transaction, "derived");
+        assert_eq!(transaction.inventory().unwrap().usage.output_bytes, 8);
+        let write = journal
+            .prepare_mutation(TerminalJournalMutation::Checkpoint {
+                source,
+                bytes: b"new-grid",
+            })
+            .unwrap();
+        let completion = budget()
+            .mutate_journal(&mut transaction, catalog.namespace_key(), write)
+            .unwrap();
+        assert!(completion.operation.is_ok());
+        assert_eq!(completion.accounting.unwrap().output_bytes, 8);
     }
 
     #[test]

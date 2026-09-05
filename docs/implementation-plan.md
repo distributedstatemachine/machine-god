@@ -83,8 +83,12 @@ integration routes physical inventory and explicit eviction through registry,
 session and validated history boundaries. Profile transactions now inventory
 nonresident and busy foreign histories; admission accounts separately for
 retained growth and whole temporary allocations, preserving committed receipts
-across accounting failures. Runtime-wide mutation routing, live checkpoint
-reserves and victim selection remain to be composed before exposure.
+across accounting failures. Borrowed journal plans now derive write demand and
+bind it to the profile's exact session directory; sealed acknowledgement and
+eviction plans permit bounded metadata-first quota recovery. Profile-bound
+catalog preparation and directory creation enforce global counts before effects.
+Initial journal creation, runtime-wide mutation routing, live checkpoint reserves
+and victim selection remain to be composed before exposure.
 Per-session retention separates raw/checkpoint output from independently bounded
 state and events, matching the pinned output-accounting boundary. Non-output
 publications cannot evict output; recovery retains all ledger categories.

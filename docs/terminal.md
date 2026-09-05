@@ -96,6 +96,13 @@ spelling, private descriptors and before/after topology checks reject replaced
 or unexplained entries. Recognized incomplete namespaces are counted without
 granting recovery or process authority.
 
+Catalog preparation and session-directory creation run through the held profile
+transaction. They bind the catalog to the exact retained profile descriptors
+and check global counts before creating a genuinely new owner or session.
+Existing or partially prepared owners can finish preparation at the owner cap;
+duplicate session creation remains a conflict. These directory operations do
+not reacquire the profile lock or initialize journal metadata.
+
 Profile admission separates the default 512 MiB output budget from protected
 state/events and metadata. Their ceilings derive from the journal bounds and
 the total session-count limit; metadata allows two 128 KiB files per session.
@@ -111,10 +118,20 @@ write cannot become a retryable operation when accounting fails. Dropping or
 unwinding a reservation grants no capacity credit: later admission still counts
 all remaining artifacts until explicit journal recovery removes them.
 
-Mutation owners must derive allocation demand from validated current journal
-state and obey it while holding the transaction. This admission component does
-not intercept unguarded journal calls; runtime-wide mutation routing and victim
-selection must be composed before exposing the full terminal runtime.
+Existing-journal mutation plans borrow the writer and immutable input through
+admission and execution. Shared effect-free planning derives positive ledger
+growth and charges the whole submitted payload plus bounded metadata. Committed
+artifact sizes are validated before replacement credit; plans bind to the exact
+profile session directory before dispatch. Append, checkpoint, state, event,
+acknowledgement and eviction share this path. Dropped plans perform no writes.
+Only typed acknowledgement and eviction plans may reclaim an already-overquota
+profile: they allocate bounded metadata but no new payloads or namespaces, and
+reconciliation still counts every remaining physical byte. Ordinary zero-growth
+replacements cannot use that exception; no-op maintenance allocates nothing.
+The lower-level declared-demand reservation remains available to trusted owners.
+Neither API intercepts unguarded journal calls; initial journal creation,
+runtime-wide mutation routing and victim selection must be composed before
+exposing the full terminal runtime.
 
 Profile retention uses explicit metadata-first eviction operations rather than
 rewriting session limits. Completed output/checkpoint eviction preserves facts,
