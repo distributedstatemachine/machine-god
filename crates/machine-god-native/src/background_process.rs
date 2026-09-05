@@ -5401,11 +5401,11 @@ fn invariant_error() -> BackgroundProcessError {
 #[cfg(all(test, target_os = "linux"))]
 mod linux_proc_tests {
     use super::*;
-    use std::io::{BufRead, BufReader};
     use std::process::ChildStdout;
 
     const UNRESTRICTED_PROC: &[u8] =
         b"36 25 0:32 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw,hidepid=0\n";
+    const MAX_SIGNAL_SNAPSHOT_FIXTURE_PID_BYTES: usize = 10;
 
     fn pid(raw: i32) -> rustix::process::Pid {
         rustix::process::Pid::from_raw(raw).expect("positive test pid")
@@ -5449,6 +5449,62 @@ mod linux_proc_tests {
                 .expect("fixture readiness pipe")
         }
 
+        fn read_child_pid(&mut self) -> Result<rustix::process::Pid, &'static str> {
+            let mut readiness = self.readiness();
+            let flags = rustix::fs::fcntl_getfl(&readiness)
+                .map_err(|_| "inspect fixture readiness flags")?;
+            rustix::fs::fcntl_setfl(&readiness, flags | OFlags::NONBLOCK)
+                .map_err(|_| "make fixture readiness nonblocking")?;
+            let deadline = Instant::now() + HELPER_READY_TIMEOUT;
+            let mut observation = ObservationBackoff::new();
+            let mut bytes = [0_u8; MAX_SIGNAL_SNAPSHOT_FIXTURE_PID_BYTES + 1];
+            let mut length = 0_usize;
+            loop {
+                match observe_leader(self.group) {
+                    Ok(None) => {}
+                    Ok(Some(_)) => return Err("fixture root exited before readiness"),
+                    Err(_) => return Err("fixture root readiness observation failed"),
+                }
+                if Instant::now() >= deadline {
+                    return Err("fixture readiness timed out");
+                }
+                if length == bytes.len() {
+                    return Err("fixture child PID exceeds its byte bound");
+                }
+                match readiness.read(&mut bytes[length..]) {
+                    Ok(0) => break,
+                    Ok(read) => {
+                        length = length.saturating_add(read);
+                        if length > MAX_SIGNAL_SNAPSHOT_FIXTURE_PID_BYTES {
+                            return Err("fixture child PID exceeds its byte bound");
+                        }
+                    }
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+                        ) =>
+                    {
+                        observation.sleep_until_and_advance(deadline);
+                    }
+                    Err(_) => return Err("fixture readiness read failed"),
+                }
+            }
+            match observe_leader(self.group) {
+                Ok(None) => {}
+                Ok(Some(_)) => return Err("fixture root exited before readiness"),
+                Err(_) => return Err("fixture root readiness observation failed"),
+            }
+            if length == 0 || !bytes[..length].iter().all(u8::is_ascii_digit) {
+                return Err("fixture child PID is not one unsigned decimal value");
+            }
+            let child = std::str::from_utf8(&bytes[..length])
+                .map_err(|_| "fixture child PID is not ASCII")?
+                .parse::<i32>()
+                .map_err(|_| "fixture child PID is not a signed integer")?;
+            rustix::process::Pid::from_raw(child).ok_or("fixture child PID is not positive")
+        }
+
         fn bind_child(&mut self, child: rustix::process::Pid) {
             self.child = Some(child);
         }
@@ -5458,14 +5514,21 @@ mod linux_proc_tests {
                 return Ok(());
             }
             let _ = rustix::process::kill_process_group(self.group, rustix::process::Signal::KILL);
-            if let Some(child) = self.child {
-                let _ = rustix::process::kill_process(child, rustix::process::Signal::KILL);
-            }
 
             let deadline = Instant::now() + CHILD_REAP_PROBE_TIMEOUT;
+            let mut reaped_root = false;
+            let mut reaped_child = self.child.is_none();
             loop {
                 match rustix::process::waitpgid(self.group, rustix::process::WaitOptions::NOHANG) {
-                    Ok(Some(_)) => continue,
+                    Ok(Some((reaped, _))) => {
+                        reaped_root |= reaped == self.group;
+                        reaped_child |= Some(reaped) == self.child;
+                        if reaped_root && reaped_child {
+                            self.root = None;
+                            return Ok(());
+                        }
+                        continue;
+                    }
                     Err(rustix::io::Errno::CHILD) => {
                         self.root = None;
                         return Ok(());
@@ -6132,7 +6195,9 @@ mod linux_proc_tests {
         let mut command = Command::new("/bin/sh");
         command
             .arg("-c")
-            .arg("/bin/sleep 30 & child=$!; printf '%s\\n' \"$child\"; wait \"$child\"")
+            .arg(
+                "/bin/sleep 30 >/dev/null & child=$!; printf '%s' \"$child\"; exec 1>&-; wait \"$child\"",
+            )
             .process_group(0)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -6140,14 +6205,9 @@ mod linux_proc_tests {
         let root = command.spawn().expect("spawn signal-snapshot fixture");
         let mut fixture = SignalSnapshotFixture::new(root);
         let root_pid = fixture.root();
-        let mut child_line = String::new();
-        BufReader::new(fixture.readiness())
-            .read_line(&mut child_line)
-            .expect("read fixture child PID");
-        let child_pid = pid(child_line
-            .trim()
-            .parse()
-            .expect("fixture child PID is a signed integer"));
+        let child_pid = fixture
+            .read_child_pid()
+            .expect("read one bounded fixture child PID");
         fixture.bind_child(child_pid);
         let mut expected_scratch = SignalProcessScratch::new();
         let expected_root = read_signal_process(&authority, root_pid, &mut expected_scratch)
