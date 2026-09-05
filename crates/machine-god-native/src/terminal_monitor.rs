@@ -2243,6 +2243,22 @@ impl LiteralMatcher {
 }
 
 impl TerminalMonitorSet {
+    /// A fatal session-end transition may be unable to allocate another event
+    /// ID. Native shutdown still must revoke every pending probe and timer.
+    pub(crate) fn quiesce(&mut self) {
+        self.monitors.clear();
+    }
+
+    pub(crate) fn needs_screen(&self) -> bool {
+        self.monitors.iter().any(|monitor| {
+            monitor.enabled()
+                && matches!(
+                    monitor.definition.condition,
+                    Condition::ScreenMatches { .. }
+                )
+        })
+    }
+
     pub(crate) fn output(&mut self, bytes: &[u8], context: TerminalMonitorContext) -> Result<()> {
         require(bytes.len() <= MAX_MONITOR_FEED_BYTES)?;
         self.transition(context, |set| {

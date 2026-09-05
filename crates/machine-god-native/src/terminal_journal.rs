@@ -205,6 +205,10 @@ pub(crate) struct TerminalJournal {
 redacted!(TerminalJournal);
 
 impl TerminalJournal {
+    pub(crate) fn session_id(&self) -> &TerminalSessionId {
+        &self.manifest.session
+    }
+
     pub(crate) fn create(
         root: OwnedFd,
         session: TerminalSessionId,
@@ -1086,7 +1090,7 @@ mod tests {
             TerminalJournal::create(self.fd(), session(), limits).unwrap()
         }
         fn open(&self, limits: TerminalJournalLimits) -> Result<TerminalJournal> {
-            TerminalJournal::open_existing(self.fd(), &session(), limits)
+            after_owner_drop(|| TerminalJournal::open_existing(self.fd(), &session(), limits))
         }
         fn put(&self, name: &str, bytes: &[u8]) {
             let fd = create_file(self.fd(), name).unwrap();
@@ -1106,6 +1110,20 @@ mod tests {
         TerminalJournalLimits {
             segment_bytes,
             session_bytes,
+        }
+    }
+    fn after_owner_drop<T>(mut open: impl FnMut() -> Result<T>) -> Result<T> {
+        // Concurrent process-spawn tests can transiently inherit a flock
+        // before exec closes the CLOEXEC descriptor. Only post-drop assertions
+        // use this bounded wait; live-writer conflict tests call try-open directly.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match open() {
+                Err(TerminalJournalError::Busy) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                result => return result,
+            }
         }
     }
     fn collect(journal: &TerminalJournal, mut position: TerminalCursor) -> Vec<u8> {
@@ -1154,7 +1172,7 @@ mod tests {
         let limits = limits(8, 16);
         let mut journal = fixture.create(limits);
         assert_eq!(
-            fixture.open(limits).unwrap_err(),
+            TerminalJournal::open_existing(fixture.fd(), &session(), limits).unwrap_err(),
             TerminalJournalError::Busy
         );
         assert_eq!(
@@ -1180,7 +1198,8 @@ mod tests {
         );
         drop(journal);
         assert_eq!(
-            TerminalJournal::create(fixture.fd(), session(), limits).unwrap_err(),
+            after_owner_drop(|| TerminalJournal::create(fixture.fd(), session(), limits))
+                .unwrap_err(),
             TerminalJournalError::Conflict
         );
         assert!(fixture.open(limits).is_ok());
@@ -1442,11 +1461,11 @@ mod tests {
         let limits = limits(8, 16);
         drop(fixture.create(limits));
         assert_eq!(
-            TerminalJournal::open_existing(
+            after_owner_drop(|| TerminalJournal::open_existing(
                 fixture.fd(),
                 &TerminalSessionId::new("other").unwrap(),
                 limits
-            )
+            ))
             .unwrap_err(),
             TerminalJournalError::Corrupt
         );

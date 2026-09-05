@@ -1,0 +1,1274 @@
+//! Single-owner terminal driver. A persistent native host owns this value;
+//! individual tool calls borrow it and do not own the process lifetime.
+
+use crate::background_input::BackgroundInputReceipt;
+use crate::background_process::BackgroundProcessSignal;
+use crate::terminal_history::{TerminalHistory, TerminalHistoryError};
+use crate::terminal_input::{
+    TerminalInput, TerminalInputError, TerminalInputReceipt, TerminalWriterId,
+};
+use crate::terminal_journal::TerminalJournalPage;
+use crate::terminal_monitor::{
+    MAX_MONITOR_FEED_BYTES, TerminalMonitorActivation, TerminalMonitorContext,
+    TerminalMonitorError, TerminalMonitorMutation, TerminalMonitorSet, TerminalProbeEvidence,
+    TerminalProbeRequest, TerminalProcessOutcome,
+};
+use crate::terminal_pty::{
+    TerminalPty, TerminalPtyClose, TerminalPtyDimensions, TerminalPtyRead, TerminalPtyStatus,
+};
+use machine_god_core::{
+    BackgroundOutputOwner, TerminalClosePolicy, TerminalCursor, TerminalDimensions,
+    TerminalEventQuery, TerminalLifecycle, TerminalMonitorEvent, TerminalMonitorOperation,
+    TerminalScreen, TerminalSessionId, TerminalSignal, TerminalWriteRequest,
+};
+use std::fmt;
+use std::num::NonZeroU64;
+
+/// Implementations retain native authority, never reconstruct it from a PID.
+/// Read/write are nonblocking and bounded; Drop must release native ownership.
+pub(crate) trait TerminalSessionBackend {
+    fn read(&mut self, buffer: &mut [u8]) -> std::result::Result<TerminalPtyRead, ()>;
+    fn write(&mut self, bytes: &[u8]) -> std::result::Result<BackgroundInputReceipt, ()>;
+    fn status(&mut self) -> std::result::Result<TerminalPtyStatus, ()>;
+    fn resize(&mut self, dimensions: &TerminalDimensions) -> std::result::Result<(), ()>;
+    fn signal(&mut self, signal: TerminalSignal) -> std::result::Result<(), ()>;
+    fn signal_may_discard_output(&self) -> bool;
+    fn close(
+        &mut self,
+        force: bool,
+        output: &mut dyn FnMut(&[u8]),
+    ) -> std::result::Result<TerminalPtyClose, ()>;
+}
+impl TerminalSessionBackend for TerminalPty {
+    fn read(&mut self, buffer: &mut [u8]) -> std::result::Result<TerminalPtyRead, ()> {
+        self.read(buffer).map_err(|_| ())
+    }
+    fn write(&mut self, bytes: &[u8]) -> std::result::Result<BackgroundInputReceipt, ()> {
+        self.write(bytes).map_err(|_| ())
+    }
+    fn status(&mut self) -> std::result::Result<TerminalPtyStatus, ()> {
+        self.status().map_err(|_| ())
+    }
+    fn resize(&mut self, dimensions: &TerminalDimensions) -> std::result::Result<(), ()> {
+        self.resize(TerminalPtyDimensions {
+            rows: dimensions.rows(),
+            columns: dimensions.columns(),
+        })
+        .map_err(|_| ())
+    }
+    fn signal(&mut self, signal: TerminalSignal) -> std::result::Result<(), ()> {
+        let signal = match signal {
+            TerminalSignal::Hangup => BackgroundProcessSignal::Hangup,
+            TerminalSignal::Interrupt => BackgroundProcessSignal::Interrupt,
+            TerminalSignal::Quit => BackgroundProcessSignal::Quit,
+            TerminalSignal::Terminate => BackgroundProcessSignal::Terminate,
+            TerminalSignal::Kill => BackgroundProcessSignal::Kill,
+        };
+        self.signal(signal).map_err(|_| ())
+    }
+    fn signal_may_discard_output(&self) -> bool {
+        cfg!(target_os = "macos")
+    }
+    fn close(
+        &mut self,
+        force: bool,
+        output: &mut dyn FnMut(&[u8]),
+    ) -> std::result::Result<TerminalPtyClose, ()> {
+        self.close_with_output(force, output).map_err(|_| ())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TerminalSessionError {
+    NotFound,
+    InvalidState,
+    Clock,
+    Native,
+    Input(TerminalInputError),
+    History(TerminalHistoryError),
+    Monitor(TerminalMonitorError),
+}
+type Result<T> = std::result::Result<T, TerminalSessionError>;
+impl From<TerminalHistoryError> for TerminalSessionError {
+    fn from(error: TerminalHistoryError) -> Self {
+        Self::History(error)
+    }
+}
+impl From<TerminalInputError> for TerminalSessionError {
+    fn from(error: TerminalInputError) -> Self {
+        Self::Input(error)
+    }
+}
+impl From<TerminalMonitorError> for TerminalSessionError {
+    fn from(error: TerminalMonitorError) -> Self {
+        Self::Monitor(error)
+    }
+}
+
+/// Output is bounded for active wait matchers; probe requests are descriptions,
+/// not authorization for a host to perform their effects.
+pub(crate) struct TerminalSessionStep {
+    pub(crate) output: Vec<u8>,
+    pub(crate) cursor: TerminalCursor,
+    pub(crate) probes: Vec<TerminalProbeRequest>,
+    pub(crate) lifecycle: TerminalLifecycle,
+}
+pub(crate) struct TerminalSession<B: TerminalSessionBackend> {
+    backend: Option<B>,
+    history: TerminalHistory,
+    owner: BackgroundOutputOwner,
+    input: TerminalInput,
+    monitors: TerminalMonitorSet,
+    lifecycle: TerminalLifecycle,
+    outcome: Option<TerminalProcessOutcome>,
+    now_ms: i64,
+    last_output_ms: i64,
+}
+impl<B: TerminalSessionBackend> fmt::Debug for TerminalSession<B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TerminalSession").finish_non_exhaustive()
+    }
+}
+impl<B: TerminalSessionBackend> TerminalSession<B> {
+    /// Takes already-owned transport and fresh history. Only a trusted readiness
+    /// channel calls `shell_ready`; raw output is never readiness authority.
+    pub(crate) fn new(
+        backend: B,
+        history: TerminalHistory,
+        owner: BackgroundOutputOwner,
+        id: TerminalSessionId,
+        now_ms: i64,
+    ) -> Result<Self> {
+        history.require_live()?;
+        if history.session_id() != &id {
+            return Err(TerminalSessionError::InvalidState);
+        }
+        let monitors = TerminalMonitorSet::new(
+            id,
+            TerminalMonitorContext {
+                now_ms,
+                cursor: history.latest(),
+                lifecycle: TerminalLifecycle::Starting,
+            },
+        )?;
+        Ok(Self {
+            backend: Some(backend),
+            history,
+            owner,
+            input: TerminalInput::new(),
+            monitors,
+            lifecycle: TerminalLifecycle::Starting,
+            outcome: None,
+            now_ms,
+            last_output_ms: now_ms,
+        })
+    }
+    pub(crate) fn shell_ready(&mut self, now_ms: i64) -> Result<()> {
+        self.check_time(now_ms)?;
+        if self.lifecycle != TerminalLifecycle::Starting {
+            return Err(TerminalSessionError::InvalidState);
+        }
+        self.now_ms = now_ms;
+        self.lifecycle = TerminalLifecycle::Running;
+        Ok(())
+    }
+    pub(crate) fn context(&self) -> TerminalMonitorContext {
+        TerminalMonitorContext {
+            now_ms: self.now_ms,
+            cursor: self.history.latest(),
+            lifecycle: self.lifecycle,
+        }
+    }
+    pub(crate) fn outcome(&self) -> Option<TerminalProcessOutcome> {
+        self.outcome
+    }
+    pub(crate) fn last_output_ms(&self) -> i64 {
+        self.last_output_ms
+    }
+    pub(crate) fn read(
+        &self,
+        owner: &BackgroundOutputOwner,
+        cursor: &TerminalCursor,
+        maximum: usize,
+    ) -> Result<TerminalJournalPage> {
+        self.authorize(owner)?;
+        Ok(self.history.read(cursor, maximum)?)
+    }
+    pub(crate) fn screen(&self, owner: &BackgroundOutputOwner) -> Result<TerminalScreen> {
+        self.authorize(owner)?;
+        Ok(self.history.screen()?)
+    }
+    pub(crate) fn write(
+        &mut self,
+        owner: &BackgroundOutputOwner,
+        writer: TerminalWriterId,
+        request: &TerminalWriteRequest,
+        cancelled: bool,
+    ) -> Result<TerminalInputReceipt> {
+        self.authorize(owner)?;
+        if self.lifecycle != TerminalLifecycle::Running {
+            return Err(TerminalSessionError::InvalidState);
+        }
+        request
+            .validate()
+            .map_err(|_| TerminalInputError::Invalid)?;
+        if cancelled {
+            return Err(TerminalInputError::Cancelled.into());
+        }
+        if self
+            .backend
+            .as_mut()
+            .ok_or(TerminalSessionError::InvalidState)?
+            .status()
+            .map_err(|()| TerminalSessionError::Native)?
+            != TerminalPtyStatus::Running
+        {
+            self.input.quiesce();
+            return Err(TerminalSessionError::InvalidState);
+        }
+        let receipt = self.input.submit(writer, request, cancelled)?;
+        if receipt.operation_id.is_some() {
+            self.flush_input();
+        }
+        receipt.operation_id.map_or(Ok(receipt), |operation| {
+            Ok(self.input.receipt(writer, operation)?)
+        })
+    }
+    pub(crate) fn write_receipt(
+        &self,
+        owner: &BackgroundOutputOwner,
+        writer: TerminalWriterId,
+        operation: NonZeroU64,
+    ) -> Result<TerminalInputReceipt> {
+        self.authorize(owner)?;
+        Ok(self.input.receipt(writer, operation)?)
+    }
+
+    /// One nonblocking write, one <=16 KiB read, then bounded monitor work.
+    /// Cancelling an attention future does not drop a committed input suffix.
+    pub(crate) fn pump(&mut self, now_ms: i64) -> Result<TerminalSessionStep> {
+        self.check_time(now_ms)?;
+        self.now_ms = now_ms;
+        if !matches!(
+            self.lifecycle,
+            TerminalLifecycle::Starting | TerminalLifecycle::Running
+        ) {
+            return Ok(self.step(Vec::new(), Vec::new()));
+        }
+        let result = self.pump_inner();
+        if result.is_err() {
+            self.lose();
+        }
+        result
+    }
+    fn pump_inner(&mut self) -> Result<TerminalSessionStep> {
+        let status = self
+            .backend
+            .as_mut()
+            .ok_or(TerminalSessionError::InvalidState)?
+            .status()
+            .map_err(|()| TerminalSessionError::Native)?;
+        if status != TerminalPtyStatus::Running {
+            // Retain final output and close before reaping the shell, including
+            // owned jobs left behind by an exited interactive shell.
+            self.finish_native(false, TerminalLifecycle::Exited)?;
+            return Ok(self.step(Vec::new(), Vec::new()));
+        }
+        self.flush_input();
+        let mut buffer = [0; MAX_MONITOR_FEED_BYTES];
+        let read = self
+            .backend
+            .as_mut()
+            .ok_or(TerminalSessionError::InvalidState)?
+            .read(&mut buffer)
+            .map_err(|()| TerminalSessionError::Native)?;
+        if read.bytes_read > buffer.len() {
+            return Err(TerminalSessionError::Native);
+        }
+        let output = buffer[..read.bytes_read].to_vec();
+        if !output.is_empty() {
+            let receipt = self.history.append(&output)?;
+            self.last_output_ms = self.now_ms;
+            self.monitors.output(&output, self.context())?;
+            if receipt.screen_unavailable.is_some() {
+                self.monitors.raw_gap(self.context())?;
+            } else if self.monitors.needs_screen() {
+                self.monitors
+                    .screen(&self.history.screen()?, self.context())?;
+            }
+            if !receipt.replies.is_empty() && !self.input.is_quiesced() {
+                self.input.replies(receipt.replies)?;
+            }
+        }
+        if read.closed {
+            let status = self
+                .backend
+                .as_mut()
+                .ok_or(TerminalSessionError::InvalidState)?
+                .status()
+                .map_err(|()| TerminalSessionError::Native)?;
+            if status == TerminalPtyStatus::Running {
+                return Err(TerminalSessionError::Native);
+            }
+            self.finish_native(false, TerminalLifecycle::Exited)?;
+            return Ok(self.step(output, Vec::new()));
+        }
+        let probes = self.monitors.tick(self.context())?;
+        Ok(self.step(output, probes))
+    }
+    pub(crate) fn resize(
+        &mut self,
+        owner: &BackgroundOutputOwner,
+        dimensions: &TerminalDimensions,
+        now_ms: i64,
+    ) -> Result<()> {
+        self.authorize_running(owner, now_ms)?;
+        let backend = self
+            .backend
+            .as_mut()
+            .ok_or(TerminalSessionError::InvalidState)?;
+        self.history
+            .resize(dimensions, |dimensions| backend.resize(dimensions))?;
+        self.now_ms = now_ms;
+        if self.monitors.needs_screen() {
+            self.monitors
+                .screen(&self.history.screen()?, self.context())?;
+        }
+        Ok(())
+    }
+    pub(crate) fn signal(
+        &mut self,
+        owner: &BackgroundOutputOwner,
+        signal: TerminalSignal,
+        now_ms: i64,
+    ) -> Result<()> {
+        self.authorize_running(owner, now_ms)?;
+        if self
+            .backend
+            .as_ref()
+            .ok_or(TerminalSessionError::InvalidState)?
+            .signal_may_discard_output()
+        {
+            self.history.mark_output_gap()?;
+            self.now_ms = now_ms;
+            self.monitors.raw_gap(self.context())?;
+        }
+        // A failed signal is not retried and never escalates into close/kill.
+        self.backend
+            .as_mut()
+            .ok_or(TerminalSessionError::InvalidState)?
+            .signal(signal)
+            .map_err(|()| TerminalSessionError::Native)?;
+        self.now_ms = now_ms;
+        Ok(())
+    }
+    pub(crate) fn close(
+        &mut self,
+        owner: &BackgroundOutputOwner,
+        policy: TerminalClosePolicy,
+        now_ms: i64,
+    ) -> Result<()> {
+        self.authorize(owner)?;
+        self.check_time(now_ms)?;
+        self.now_ms = now_ms;
+        self.finish_native(
+            policy == TerminalClosePolicy::Force,
+            TerminalLifecycle::Closed,
+        )
+    }
+
+    /// Native cleanup proceeds even if history publication fails. The error is
+    /// retained, and input is quiesced before either persistence or process I/O.
+    fn finish_native(&mut self, force: bool, final_lifecycle: TerminalLifecycle) -> Result<()> {
+        self.input.quiesce();
+        let Some(backend) = self.backend.as_mut() else {
+            if final_lifecycle == TerminalLifecycle::Closed {
+                self.lifecycle = TerminalLifecycle::Closed;
+            }
+            return Ok(());
+        };
+        let mut history_error = None;
+        let monitors = &mut self.monitors;
+        let now_ms = self.now_ms;
+        let lifecycle = self.lifecycle;
+        let mut observed_output = false;
+        let mut monitor_error = None;
+        let result = match self.history.begin_close() {
+            Ok(mut capture) => {
+                let result = backend
+                    .close(force, &mut |bytes| {
+                        if bytes.is_empty() {
+                            return;
+                        }
+                        observed_output = true;
+                        match capture.append(bytes) {
+                            Ok(cursor) if monitor_error.is_none() => {
+                                for chunk in bytes.chunks(MAX_MONITOR_FEED_BYTES) {
+                                    if let Err(error) = monitors.output(
+                                        chunk,
+                                        TerminalMonitorContext {
+                                            now_ms,
+                                            cursor: cursor.clone(),
+                                            lifecycle,
+                                        },
+                                    ) {
+                                        monitor_error = Some(error);
+                                        break;
+                                    }
+                                }
+                            }
+                            Ok(_) => {}
+                            Err(error) => {
+                                history_error.get_or_insert(error);
+                            }
+                        }
+                    })
+                    .and_then(|closed| {
+                        if closed.status == TerminalPtyStatus::Running {
+                            Err(())
+                        } else {
+                            Ok(closed)
+                        }
+                    });
+                if let Err(error) = capture.finish(
+                    result
+                        .as_ref()
+                        .is_ok_and(|closed| !closed.output_incomplete),
+                ) {
+                    history_error.get_or_insert(error);
+                }
+                result
+            }
+            Err(error) => {
+                history_error = Some(error);
+                backend.close(force, &mut |_| {})
+            }
+        };
+        if observed_output {
+            self.last_output_ms = now_ms;
+        }
+        if let Ok(closed) = result {
+            self.outcome = outcome(closed.status);
+            self.lifecycle = final_lifecycle;
+            self.backend.take();
+            if closed.output_incomplete {
+                if let Err(error) = self.monitors.raw_gap(self.context()) {
+                    monitor_error.get_or_insert(error);
+                }
+            } else if self.monitors.needs_screen()
+                && let Ok(screen) = self.history.screen()
+                && let Err(error) = self.monitors.screen(&screen, self.context())
+            {
+                monitor_error.get_or_insert(error);
+            }
+            if let Err(error) = self.monitors.end_session(self.outcome, self.context()) {
+                self.monitors.quiesce();
+                monitor_error.get_or_insert(error);
+            }
+        } else {
+            self.lose();
+        }
+        if let Some(error) = history_error {
+            return Err(error.into());
+        }
+        if let Some(error) = monitor_error {
+            return Err(error.into());
+        }
+        result
+            .map(|_| ())
+            .map_err(|()| TerminalSessionError::Native)
+    }
+    pub(crate) fn monitor(
+        &mut self,
+        owner: &BackgroundOutputOwner,
+        operation: TerminalMonitorOperation,
+        activation: TerminalMonitorActivation,
+        now_ms: i64,
+    ) -> Result<TerminalMonitorMutation> {
+        self.authorize(owner)?;
+        self.check_time(now_ms)?;
+        if !matches!(
+            self.lifecycle,
+            TerminalLifecycle::Starting | TerminalLifecycle::Running
+        ) {
+            return Err(TerminalSessionError::InvalidState);
+        }
+        let mut context = self.context();
+        context.now_ms = now_ms;
+        let mutation = self
+            .monitors
+            .apply_with_activation(operation, activation, context)?;
+        self.now_ms = now_ms;
+        Ok(mutation)
+    }
+    pub(crate) fn complete_probe(
+        &mut self,
+        evidence: TerminalProbeEvidence,
+        now_ms: i64,
+    ) -> Result<bool> {
+        if !matches!(
+            self.lifecycle,
+            TerminalLifecycle::Starting | TerminalLifecycle::Running
+        ) {
+            return Ok(false);
+        }
+        let mut context = self.context();
+        context.now_ms = now_ms;
+        let mut candidate = self.monitors.clone();
+        let accepted = candidate.complete_probe(evidence, context)?;
+        if accepted {
+            self.check_time(now_ms)?;
+            self.monitors = candidate;
+            self.now_ms = now_ms;
+        }
+        Ok(accepted)
+    }
+    pub(crate) fn events(
+        &mut self,
+        owner: &BackgroundOutputOwner,
+        query: &TerminalEventQuery,
+    ) -> Result<Vec<TerminalMonitorEvent>> {
+        self.authorize(owner)?;
+        Ok(self.monitors.events(query)?)
+    }
+    fn authorize(&self, owner: &BackgroundOutputOwner) -> Result<()> {
+        if owner == &self.owner {
+            Ok(())
+        } else {
+            Err(TerminalSessionError::NotFound)
+        }
+    }
+    fn authorize_running(&self, owner: &BackgroundOutputOwner, now_ms: i64) -> Result<()> {
+        self.authorize(owner)?;
+        self.check_time(now_ms)?;
+        // A control action cannot overtake an admitted partial payload or a
+        // cursor reply. The host keeps pumping and retries this bounded Busy.
+        if self.input.has_pending_bytes() {
+            return Err(TerminalInputError::Busy.into());
+        }
+        if self.lifecycle == TerminalLifecycle::Running {
+            Ok(())
+        } else {
+            Err(TerminalSessionError::InvalidState)
+        }
+    }
+    fn check_time(&self, now_ms: i64) -> Result<()> {
+        if now_ms < self.now_ms || now_ms < 0 {
+            Err(TerminalSessionError::Clock)
+        } else {
+            Ok(())
+        }
+    }
+    fn flush_input(&mut self) {
+        if let Some(backend) = &mut self.backend {
+            self.input.flush(|bytes| backend.write(bytes));
+        }
+    }
+    fn step(&self, output: Vec<u8>, probes: Vec<TerminalProbeRequest>) -> TerminalSessionStep {
+        TerminalSessionStep {
+            output,
+            cursor: self.history.latest(),
+            probes,
+            lifecycle: self.lifecycle,
+        }
+    }
+    fn lose(&mut self) {
+        self.input.quiesce();
+        self.lifecycle = TerminalLifecycle::Lost;
+        let _ = self.monitors.end_session(None, self.context());
+        self.monitors.quiesce();
+    }
+}
+fn outcome(status: TerminalPtyStatus) -> Option<TerminalProcessOutcome> {
+    match status {
+        TerminalPtyStatus::Running => None,
+        TerminalPtyStatus::Exited(code) => Some(TerminalProcessOutcome::Exited(code)),
+        TerminalPtyStatus::Signalled(signal) => Some(TerminalProcessOutcome::Signaled(signal)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::background_input::BackgroundInputStatus;
+    use crate::terminal_input::TerminalInputProgress;
+    use crate::terminal_journal::{TerminalJournal, TerminalJournalLimits};
+    use crate::terminal_monitor::{
+        TerminalProbeObservation, TerminalWaitOutcome, TerminalWaitState,
+    };
+    use machine_god_core::{
+        SessionId, SessionIncarnationId, TerminalMonitorCondition as Condition,
+        TerminalMonitorDefinition, TerminalMonitorLifetime, TerminalMonitorState,
+        TerminalNotifySchedule, TerminalReturnCondition, TerminalSchedule, TerminalWaitRequest,
+        TerminalWriteLeaseIntent, TerminalWritePayload,
+    };
+    use rustix::fd::OwnedFd;
+    use rustix::fs::{Mode, OFlags};
+    use std::collections::VecDeque;
+    use std::fs::DirBuilder;
+    use std::os::unix::fs::DirBuilderExt;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+
+    #[allow(
+        clippy::struct_excessive_bools,
+        reason = "independent backend fault injections"
+    )]
+    struct State {
+        output: VecDeque<Vec<u8>>,
+        tail: Vec<u8>,
+        writes: Vec<u8>,
+        write_limit: usize,
+        status: TerminalPtyStatus,
+        closes: usize,
+        signals: Vec<TerminalSignal>,
+        resizes: Vec<TerminalDimensions>,
+        status_calls: usize,
+        incomplete: bool,
+        signal_flushes: bool,
+        signal_fails: bool,
+        close_fails: bool,
+    }
+    impl Default for State {
+        fn default() -> Self {
+            Self {
+                output: VecDeque::new(),
+                tail: Vec::new(),
+                writes: Vec::new(),
+                write_limit: usize::MAX,
+                status: TerminalPtyStatus::Running,
+                closes: 0,
+                signals: Vec::new(),
+                resizes: Vec::new(),
+                status_calls: 0,
+                incomplete: false,
+                signal_flushes: false,
+                signal_fails: false,
+                close_fails: false,
+            }
+        }
+    }
+    struct Backend(Arc<Mutex<State>>);
+    impl TerminalSessionBackend for Backend {
+        fn read(&mut self, buffer: &mut [u8]) -> std::result::Result<TerminalPtyRead, ()> {
+            let mut state = self.0.lock().unwrap();
+            let Some(mut bytes) = state.output.pop_front() else {
+                return Ok(TerminalPtyRead {
+                    bytes_read: 0,
+                    closed: false,
+                });
+            };
+            let count = buffer.len().min(bytes.len());
+            buffer[..count].copy_from_slice(&bytes[..count]);
+            if count < bytes.len() {
+                bytes.drain(..count);
+                state.output.push_front(bytes);
+            }
+            Ok(TerminalPtyRead {
+                bytes_read: count,
+                closed: false,
+            })
+        }
+        fn write(&mut self, bytes: &[u8]) -> std::result::Result<BackgroundInputReceipt, ()> {
+            let mut state = self.0.lock().unwrap();
+            let count = bytes.len().min(state.write_limit);
+            state.writes.extend_from_slice(&bytes[..count]);
+            Ok(BackgroundInputReceipt::new(
+                count,
+                false,
+                if count == bytes.len() {
+                    BackgroundInputStatus::Written
+                } else {
+                    BackgroundInputStatus::Backpressure
+                },
+            ))
+        }
+        fn status(&mut self) -> std::result::Result<TerminalPtyStatus, ()> {
+            let mut state = self.0.lock().unwrap();
+            state.status_calls += 1;
+            Ok(state.status)
+        }
+        fn resize(&mut self, dimensions: &TerminalDimensions) -> std::result::Result<(), ()> {
+            self.0.lock().unwrap().resizes.push(dimensions.clone());
+            Ok(())
+        }
+        fn signal(&mut self, signal: TerminalSignal) -> std::result::Result<(), ()> {
+            let mut state = self.0.lock().unwrap();
+            state.signals.push(signal);
+            if state.signal_fails { Err(()) } else { Ok(()) }
+        }
+        fn signal_may_discard_output(&self) -> bool {
+            self.0.lock().unwrap().signal_flushes
+        }
+        fn close(
+            &mut self,
+            _: bool,
+            output: &mut dyn FnMut(&[u8]),
+        ) -> std::result::Result<TerminalPtyClose, ()> {
+            let (tail, result) = {
+                let mut state = self.0.lock().unwrap();
+                state.closes += 1;
+                let tail = std::mem::take(&mut state.tail);
+                let result = if state.close_fails {
+                    Err(())
+                } else {
+                    if state.status == TerminalPtyStatus::Running {
+                        state.status = TerminalPtyStatus::Exited(0);
+                    }
+                    Ok(TerminalPtyClose {
+                        status: state.status,
+                        output_incomplete: state.incomplete,
+                    })
+                };
+                (tail, result)
+            };
+            for chunk in tail.chunks(4096) {
+                output(chunk);
+            }
+            result
+        }
+    }
+    struct Fixture {
+        path: PathBuf,
+        state: Arc<Mutex<State>>,
+    }
+    impl Fixture {
+        fn new() -> Self {
+            let mut random = [0; 16];
+            getrandom::fill(&mut random).unwrap();
+            let path = std::env::temp_dir().join(format!(
+                "machine-god-session-{:032x}",
+                u128::from_le_bytes(random)
+            ));
+            DirBuilder::new().mode(0o700).create(&path).unwrap();
+            Self {
+                path,
+                state: Arc::new(Mutex::new(State::default())),
+            }
+        }
+        fn fd(&self) -> OwnedFd {
+            rustix::fs::open(
+                &self.path,
+                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+                Mode::empty(),
+            )
+            .unwrap()
+        }
+        fn session(&self) -> TerminalSession<Backend> {
+            let journal =
+                TerminalJournal::create(self.fd(), id(), TerminalJournalLimits::default()).unwrap();
+            let history =
+                TerminalHistory::create(journal, &TerminalDimensions::new(3, 20).unwrap()).unwrap();
+            TerminalSession::new(
+                Backend(Arc::clone(&self.state)),
+                history,
+                owner("owner"),
+                id(),
+                0,
+            )
+            .unwrap()
+        }
+        fn recover(&self) -> TerminalHistory {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                match TerminalJournal::open_existing(
+                    self.fd(),
+                    &id(),
+                    TerminalJournalLimits::default(),
+                ) {
+                    Err(crate::terminal_journal::TerminalJournalError::Busy)
+                        if std::time::Instant::now() < deadline =>
+                    {
+                        // A parallel fork/exec may transiently retain the
+                        // just-dropped flock; production acquisition stays try-only.
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    result => return TerminalHistory::recover(result.unwrap()).unwrap(),
+                }
+            }
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.path).unwrap();
+        }
+    }
+    fn id() -> TerminalSessionId {
+        TerminalSessionId::new("session-test").unwrap()
+    }
+    fn owner(incarnation: &str) -> BackgroundOutputOwner {
+        BackgroundOutputOwner::new(
+            SessionId::new("same-session").unwrap(),
+            SessionIncarnationId::new(incarnation).unwrap(),
+        )
+    }
+    fn writer() -> TerminalWriterId {
+        TerminalWriterId::new(NonZeroU64::new(1).unwrap())
+    }
+    fn text(value: &str) -> TerminalWriteRequest {
+        TerminalWriteRequest {
+            lease: TerminalWriteLeaseIntent::Use,
+            payload: Some(TerminalWritePayload::Text { text: value.into() }),
+        }
+    }
+    fn acquire(session: &mut TerminalSession<Backend>) {
+        session
+            .write(
+                &owner("owner"),
+                writer(),
+                &TerminalWriteRequest {
+                    lease: TerminalWriteLeaseIntent::Acquire,
+                    payload: None,
+                },
+                false,
+            )
+            .unwrap();
+    }
+    fn query() -> TerminalEventQuery {
+        TerminalEventQuery {
+            after_event_id: 0,
+            acknowledge_event_id: None,
+            max_events: 256,
+        }
+    }
+    fn add(
+        session: &mut TerminalSession<Backend>,
+        condition: Condition,
+    ) -> machine_god_core::TerminalMonitorId {
+        let check_schedule = condition
+            .requires_polling()
+            .then_some(TerminalSchedule { interval_ms: 10 });
+        session
+            .monitor(
+                &owner("owner"),
+                TerminalMonitorOperation::Add {
+                    definition: TerminalMonitorDefinition {
+                        condition,
+                        check_schedule,
+                        notify: TerminalNotifySchedule::OnMatch,
+                        lifetime: TerminalMonitorLifetime::UntilSessionEnd,
+                    },
+                },
+                TerminalMonitorActivation::default(),
+                session.now_ms,
+            )
+            .unwrap()
+            .monitor_id
+    }
+
+    #[test]
+    fn wrong_incarnation_and_clock_rejection_precede_every_native_effect() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(10).unwrap();
+        let wrong = owner("other-incarnation");
+        let origin = session.context().cursor;
+        assert_eq!(
+            session.write(&wrong, writer(), &text("secret"), false),
+            Err(TerminalSessionError::NotFound)
+        );
+        assert!(matches!(
+            session.read(&wrong, &origin, 64),
+            Err(TerminalSessionError::NotFound)
+        ));
+        assert_eq!(session.screen(&wrong), Err(TerminalSessionError::NotFound));
+        assert_eq!(
+            session.resize(&wrong, &TerminalDimensions::new(4, 30).unwrap(), 11),
+            Err(TerminalSessionError::NotFound)
+        );
+        assert_eq!(
+            session.signal(&wrong, TerminalSignal::Kill, 11),
+            Err(TerminalSessionError::NotFound)
+        );
+        assert_eq!(
+            session.close(&wrong, TerminalClosePolicy::Force, 11),
+            Err(TerminalSessionError::NotFound)
+        );
+        assert!(matches!(session.pump(9), Err(TerminalSessionError::Clock)));
+        assert_eq!(fixture.state.lock().unwrap().status_calls, 0);
+        assert_eq!(session.context().cursor, origin);
+        assert_eq!(format!("{session:?}"), "TerminalSession { .. }");
+    }
+
+    #[test]
+    fn driver_identity_must_match_its_history_and_recovered_history_stays_read_only() {
+        let fixture = Fixture::new();
+        let session = fixture.session();
+        let TerminalSession {
+            backend, history, ..
+        } = session;
+        assert!(matches!(
+            TerminalSession::new(
+                backend.unwrap(),
+                history,
+                owner("owner"),
+                TerminalSessionId::new("other-terminal").unwrap(),
+                0
+            ),
+            Err(TerminalSessionError::InvalidState)
+        ));
+        assert!(matches!(
+            TerminalSession::new(
+                Backend(Arc::clone(&fixture.state)),
+                fixture.recover(),
+                owner("owner"),
+                id(),
+                0
+            ),
+            Err(TerminalSessionError::History(
+                TerminalHistoryError::ReadOnly
+            ))
+        ));
+        assert_eq!(fixture.state.lock().unwrap().status_calls, 0);
+    }
+
+    #[test]
+    fn output_never_impersonates_readiness_and_pending_input_outlives_attention() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"READY".to_vec());
+        assert_eq!(
+            session.pump(1).unwrap().lifecycle,
+            TerminalLifecycle::Starting
+        );
+        assert_eq!(
+            session.write(&owner("owner"), writer(), &text("early"), false),
+            Err(TerminalSessionError::InvalidState)
+        );
+        session.shell_ready(2).unwrap();
+        acquire(&mut session);
+        fixture.state.lock().unwrap().write_limit = 1;
+        let receipt = session
+            .write(&owner("owner"), writer(), &text("a界"), false)
+            .unwrap();
+        let operation = receipt.operation_id.unwrap();
+        assert_eq!(receipt.accepted_bytes, 1);
+        assert_eq!(
+            session.write(&owner("owner"), writer(), &text("cancelled"), true),
+            Err(TerminalSessionError::Input(TerminalInputError::Cancelled))
+        );
+        for now in 3..7 {
+            session.pump(now).unwrap();
+        }
+        assert_eq!(fixture.state.lock().unwrap().writes, "a界".as_bytes());
+        assert_eq!(
+            session
+                .write_receipt(&owner("owner"), writer(), operation)
+                .unwrap()
+                .progress,
+            TerminalInputProgress::Complete
+        );
+    }
+
+    #[test]
+    fn query_replies_are_once_only_and_do_not_require_a_writer_lease() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"\x1b[6n".to_vec());
+        let step = session.pump(1).unwrap();
+        assert_eq!(step.output, b"\x1b[6n");
+        assert!(fixture.state.lock().unwrap().writes.is_empty());
+        session.pump(2).unwrap();
+        session.pump(3).unwrap();
+        assert_eq!(fixture.state.lock().unwrap().writes, b"\x1b[1;1R");
+        session.shell_ready(3).unwrap();
+        assert_eq!(
+            session.write(&owner("owner"), writer(), &text("no lease"), false),
+            Err(TerminalSessionError::Input(
+                TerminalInputError::LeaseConflict
+            ))
+        );
+    }
+
+    #[test]
+    fn resize_and_signal_cannot_overtake_an_admitted_partial_write() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        acquire(&mut session);
+        fixture.state.lock().unwrap().write_limit = 1;
+        session
+            .write(&owner("owner"), writer(), &text("abc"), false)
+            .unwrap();
+        let dimensions = TerminalDimensions::new(4, 30).unwrap();
+        assert_eq!(
+            session.resize(&owner("owner"), &dimensions, 1),
+            Err(TerminalInputError::Busy.into())
+        );
+        assert_eq!(
+            session.signal(&owner("owner"), TerminalSignal::Interrupt, 1),
+            Err(TerminalInputError::Busy.into())
+        );
+        assert!(fixture.state.lock().unwrap().resizes.is_empty());
+        assert!(fixture.state.lock().unwrap().signals.is_empty());
+        session.pump(1).unwrap();
+        session.pump(2).unwrap();
+        session.resize(&owner("owner"), &dimensions, 2).unwrap();
+        session
+            .signal(&owner("owner"), TerminalSignal::Interrupt, 2)
+            .unwrap();
+        assert_eq!(fixture.state.lock().unwrap().writes, b"abc");
+    }
+
+    #[test]
+    fn output_and_screen_monitors_observe_committed_cursors_and_waits_do_not_own_close() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        let raw = add(
+            &mut session,
+            Condition::OutputContains {
+                pattern: "hello".into(),
+            },
+        );
+        let screen = add(
+            &mut session,
+            Condition::ScreenMatches {
+                pattern: "*hello*".into(),
+            },
+        );
+        let mut wait = TerminalWaitState::new(
+            TerminalWaitRequest {
+                condition: TerminalReturnCondition::Match {
+                    pattern: "hello".into(),
+                },
+                safety_ceiling_ms: 100,
+            },
+            &session.context(),
+            session.last_output_ms(),
+            false,
+        )
+        .unwrap();
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .extend([b"hel".to_vec(), b"lo".to_vec()]);
+        for now in 1..=2 {
+            let step = session.pump(now).unwrap();
+            wait.output(&step.output, now).unwrap();
+            assert_eq!(step.cursor, session.context().cursor);
+        }
+        let events = session.events(&owner("owner"), &query()).unwrap();
+        for id in [&raw, &screen] {
+            assert!(
+                events.iter().any(
+                    |event| &event.monitor_id == id && event.cursor == session.context().cursor
+                )
+            );
+        }
+        assert_eq!(
+            wait.poll(&session.context(), session.outcome(), false)
+                .unwrap(),
+            Some(TerminalWaitOutcome::ConditionMet)
+        );
+        assert_eq!(fixture.state.lock().unwrap().closes, 0);
+    }
+
+    #[test]
+    fn probe_descriptions_need_explicit_evidence_and_stale_completion_cannot_rewind_clock() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        let monitor_id = add(
+            &mut session,
+            Condition::TcpReady {
+                host: "example.invalid".into(),
+                port: 1234,
+            },
+        );
+        let request = session.pump(10).unwrap().probes.remove(0);
+        let evidence = TerminalProbeEvidence {
+            session_id: request.session_id.clone(),
+            monitor_id: monitor_id.clone(),
+            generation: request.generation,
+            request_sequence: request.request_sequence,
+            completed_at_ms: 11,
+            output_bytes: 0,
+            truncated: false,
+            timed_out: false,
+            result: Ok(TerminalProbeObservation::Tcp { connected: true }),
+        };
+        session
+            .resize(
+                &owner("owner"),
+                &TerminalDimensions::new(4, 30).unwrap(),
+                20,
+            )
+            .unwrap();
+        assert_eq!(
+            session.complete_probe(evidence.clone(), 11),
+            Err(TerminalSessionError::Clock)
+        );
+        assert_eq!(session.context().now_ms, 20);
+        assert!(session.complete_probe(evidence.clone(), 20).unwrap());
+        assert!(!session.complete_probe(evidence, -1).unwrap());
+        assert_eq!(session.context().now_ms, 20);
+    }
+
+    #[test]
+    fn close_drains_final_output_then_notifies_monitors_and_preserves_readable_history() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        acquire(&mut session);
+        let monitor_id = add(
+            &mut session,
+            Condition::OutputContains {
+                pattern: "tail".into(),
+            },
+        );
+        fixture.state.lock().unwrap().tail = [b"tail".as_slice(), &b"\x1b[6n".repeat(20)].concat();
+        session
+            .close(&owner("owner"), TerminalClosePolicy::Graceful, 5)
+            .unwrap();
+        assert_eq!(session.context().lifecycle, TerminalLifecycle::Closed);
+        assert_eq!(session.outcome(), Some(TerminalProcessOutcome::Exited(0)));
+        assert_eq!(session.monitors.len(), 0);
+        assert!(
+            session
+                .events(&owner("owner"), &query())
+                .unwrap()
+                .iter()
+                .any(|event| event.monitor_id == monitor_id)
+        );
+        assert!(fixture.state.lock().unwrap().writes.is_empty());
+        let expected = session.screen(&owner("owner")).unwrap();
+        session
+            .close(&owner("owner"), TerminalClosePolicy::Force, 6)
+            .unwrap();
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
+        drop(session);
+        assert_eq!(fixture.recover().screen().unwrap(), expected);
+    }
+
+    #[test]
+    fn incomplete_close_and_failed_history_publication_never_skip_native_cleanup() {
+        for publication_failure in [false, true] {
+            let fixture = Fixture::new();
+            let mut session = fixture.session();
+            session.shell_ready(0).unwrap();
+            if publication_failure {
+                std::fs::write(fixture.path.join("tj-meta.tmp"), b"abandoned").unwrap();
+            } else {
+                fixture.state.lock().unwrap().incomplete = true;
+            }
+            let result = session.close(&owner("owner"), TerminalClosePolicy::Force, 1);
+            assert_eq!(result.is_err(), publication_failure);
+            assert_eq!(fixture.state.lock().unwrap().closes, 1);
+            assert!(session.input.is_quiesced());
+            assert!(session.screen(&owner("owner")).is_err());
+            assert_eq!(session.monitors.len(), 0);
+        }
+    }
+
+    #[test]
+    fn failed_close_keeps_owned_backend_for_retry_but_no_pending_input() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        acquire(&mut session);
+        fixture.state.lock().unwrap().write_limit = 0;
+        let receipt = session
+            .write(&owner("owner"), writer(), &text("not-yet-written"), false)
+            .unwrap();
+        fixture.state.lock().unwrap().close_fails = true;
+        assert_eq!(
+            session.close(&owner("owner"), TerminalClosePolicy::Force, 1),
+            Err(TerminalSessionError::Native)
+        );
+        assert_eq!(session.context().lifecycle, TerminalLifecycle::Lost);
+        assert!(session.backend.is_some());
+        assert_eq!(
+            session
+                .write_receipt(&owner("owner"), writer(), receipt.operation_id.unwrap())
+                .unwrap()
+                .progress,
+            TerminalInputProgress::Closed
+        );
+        fixture.state.lock().unwrap().close_fails = false;
+        session
+            .close(&owner("owner"), TerminalClosePolicy::Force, 2)
+            .unwrap();
+        assert_eq!(fixture.state.lock().unwrap().closes, 2);
+        assert!(fixture.state.lock().unwrap().writes.is_empty());
+    }
+
+    #[test]
+    fn event_counter_failure_cannot_leave_monitors_or_late_probe_authority_after_close() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        let monitor_id = add(&mut session, Condition::ProcessExit);
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&session.monitors.snapshot().unwrap()).unwrap();
+        saved["next_event_id"] = serde_json::json!(u64::MAX);
+        saved["dropped_through_event_id"] = serde_json::json!(u64::MAX - 1);
+        saved["events"] = serde_json::json!([]);
+        session.monitors =
+            TerminalMonitorSet::restore(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        assert_eq!(
+            session.close(&owner("owner"), TerminalClosePolicy::Force, 1),
+            Err(TerminalSessionError::Monitor(TerminalMonitorError::Counter))
+        );
+        assert_eq!(session.monitors.len(), 0);
+        assert!(session.backend.is_none());
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
+        let evidence = TerminalProbeEvidence {
+            session_id: id(),
+            monitor_id,
+            generation: 1,
+            request_sequence: 1,
+            completed_at_ms: 999,
+            output_bytes: 0,
+            truncated: false,
+            timed_out: false,
+            result: Ok(TerminalProbeObservation::Tcp { connected: true }),
+        };
+        assert!(!session.complete_probe(evidence, 999).unwrap());
+        assert_eq!(session.context().now_ms, 1);
+    }
+
+    #[test]
+    fn flushing_signal_records_a_gap_and_failure_never_escalates() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        let monitor_id = add(
+            &mut session,
+            Condition::OutputContains {
+                pattern: "pattern".into(),
+            },
+        );
+        {
+            let mut state = fixture.state.lock().unwrap();
+            state.signal_flushes = true;
+            state.signal_fails = true;
+        }
+        assert_eq!(
+            session.signal(&owner("owner"), TerminalSignal::Interrupt, 1),
+            Err(TerminalSessionError::Native)
+        );
+        assert_eq!(
+            fixture.state.lock().unwrap().signals,
+            vec![TerminalSignal::Interrupt]
+        );
+        assert_eq!(fixture.state.lock().unwrap().closes, 0);
+        assert!(session.screen(&owner("owner")).is_err());
+        assert_eq!(
+            session.monitors.state(&monitor_id),
+            Some(TerminalMonitorState::Degraded)
+        );
+    }
+}

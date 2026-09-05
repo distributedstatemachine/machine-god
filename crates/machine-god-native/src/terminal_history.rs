@@ -7,7 +7,7 @@ use std::fmt;
 
 use machine_god_core::{
     TerminalCursor, TerminalDimensions, TerminalModes, TerminalScreen,
-    TerminalScreenUnavailableReason as Unavailable,
+    TerminalScreenUnavailableReason as Unavailable, TerminalSessionId,
 };
 
 use crate::terminal_journal::{
@@ -69,6 +69,54 @@ pub(crate) struct TerminalHistory {
     screen: Option<TerminalScreenEngine>,
     unavailable: Unavailable,
     live: bool,
+}
+
+/// An unavailable checkpoint is already committed while this guard exists.
+/// Dropping it before `finish` preserves that barrier. Native cleanup can keep
+/// draining even if a later journal append fails; it must not be interrupted.
+pub(crate) struct TerminalHistoryClosing<'a> {
+    history: &'a mut TerminalHistory,
+    projection: Option<TerminalScreenEngine>,
+    failed: bool,
+}
+impl TerminalHistoryClosing<'_> {
+    pub(crate) fn append(&mut self, bytes: &[u8]) -> Result<TerminalCursor> {
+        if self.failed {
+            return Err(TerminalJournalError::Unavailable.into());
+        }
+        let appended = self.history.append(bytes);
+        match appended {
+            Ok(receipt) => {
+                if let Some(screen) = &mut self.projection
+                    && screen.feed(bytes).is_err()
+                {
+                    self.projection = None;
+                }
+                Ok(receipt.cursor)
+            }
+            Err(error) => {
+                self.failed = true;
+                self.projection = None;
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) fn finish(self, complete: bool) -> Result<()> {
+        if self.failed {
+            return Err(TerminalJournalError::Unavailable.into());
+        }
+        if complete && let Some(screen) = self.projection {
+            let bytes = encode_checkpoint(&screen)?;
+            let saved = self
+                .history
+                .journal
+                .publish_checkpoint(self.history.latest(), &bytes);
+            self.history.mutation(saved)?;
+            self.history.screen = Some(screen);
+        }
+        Ok(())
+    }
 }
 impl fmt::Debug for TerminalHistory {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -132,6 +180,10 @@ impl TerminalHistory {
         self.journal.latest()
     }
 
+    pub(crate) fn session_id(&self) -> &TerminalSessionId {
+        self.journal.session_id()
+    }
+
     pub(crate) fn read(
         &self,
         cursor: &TerminalCursor,
@@ -191,6 +243,24 @@ impl TerminalHistory {
         self.save_unavailable(Unavailable::RawGap, RAW_GAP)
     }
 
+    /// Publishes a discontinuity barrier before native close can discard data.
+    /// Only a positively complete native drain may restore the final screen.
+    /// Closing projection feeds are replay-only: quiesced input cannot emit
+    /// terminal replies, even when the final output contains many queries.
+    pub(crate) fn begin_close(&mut self) -> Result<TerminalHistoryClosing<'_>> {
+        self.require_live()?;
+        let projection = self.screen.as_ref().and_then(|screen| {
+            let checkpoint = screen.checkpoint().ok()?;
+            TerminalScreenEngine::restore(&checkpoint, TerminalScreenMode::Replay).ok()
+        });
+        self.save_unavailable(Unavailable::RawGap, RAW_GAP)?;
+        Ok(TerminalHistoryClosing {
+            history: self,
+            projection,
+            failed: false,
+        })
+    }
+
     /// Coordinates a durable invalidation barrier, the actual native resize,
     /// the in-memory resize, and the replacement checkpoint, in that order.
     /// Crashes or ambiguous failures cannot expose a pre-resize checkpoint as
@@ -221,7 +291,7 @@ impl TerminalHistory {
         Ok(())
     }
 
-    fn require_live(&self) -> Result<()> {
+    pub(crate) fn require_live(&self) -> Result<()> {
         if self.live {
             Ok(())
         } else {
@@ -354,7 +424,19 @@ mod tests {
             TerminalJournal::create(self.fd(), session(), self.limits).unwrap()
         }
         fn open(&self) -> TerminalJournal {
-            TerminalJournal::open_existing(self.fd(), &session(), self.limits).unwrap()
+            // These recovery assertions run beside real process-spawn tests.
+            // CLOEXEC does not prevent a transient inherited flock reference
+            // between fork and exec. Retry only Busy, after dropping our owner;
+            // a retained/leaked lock still fails this bounded expectation.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                match TerminalJournal::open_existing(self.fd(), &session(), self.limits) {
+                    Err(TerminalJournalError::Busy) if std::time::Instant::now() < deadline => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    result => return result.unwrap(),
+                }
+            }
         }
         fn history(&self) -> TerminalHistory {
             TerminalHistory::create(self.journal(), &dimensions()).unwrap()

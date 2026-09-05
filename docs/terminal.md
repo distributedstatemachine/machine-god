@@ -79,6 +79,34 @@ must first durably record an output gap; subsequent raw bytes cannot silently
 repair that screen. These are runtime composition components, not additional
 model-facing actions in the current reference-host subset.
 
+The single-owner session driver composes PTY transport, history, ordered input
+and monitor observation. Raw output does not establish shell readiness: only
+the trusted startup-control path may transition from starting to running.
+Same-session/different-incarnation callers cannot read or mutate the owned
+terminal. A scheduler step performs one bounded input attempt, reads at most
+16 KiB, and returns typed probe descriptions for separate authorization.
+
+Native text/paste input preserves bytes, including NUL; named keys use the
+pinned fixed sequences and control spellings map to control bytes. Exactly one
+user payload (up to 64 KiB) may remain pending. A shared ordered queue prevents
+partial UTF-8, key sequences and protocol replies from interleaving. Each
+transport attempt is at most 8 KiB; receipts report bytes actually accepted,
+retain pending suffixes across attention cancellation, and keep the latest 64
+operation results. Protocol replies do not require a writer lease, but have a
+separate resident bound of 16 frames/4 KiB. Revoke and close quiesce both input
+sources; release cannot strand an in-flight payload under another writer.
+Resize and signal return busy while input or replies remain queued, allowing
+the host to serialize control actions without overtaking accepted input.
+
+Close commits a discontinuity barrier, drains final output without protocol
+reply effects, and removes monitors after final observations. A positively
+complete drain may publish the final coherent screen; an incomplete drain
+retains the gap. Persistence failure cannot skip native cleanup, and failed
+native cleanup retains owned authority for an explicit retry. The driver is a
+runtime composition component; the persistent catalog/host, durable monitor and
+attention facts, startup-control transport and full tool routing are not
+provided by this driver alone.
+
 The monitor state machine implements all thirteen conditions with explicit
 clock/cursor/lifecycle observations. It emits bounded typed probe requests,
 not network/filesystem/process effects. Evidence must match the exact session,

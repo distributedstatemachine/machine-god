@@ -986,10 +986,17 @@ mod tests {
         // from a final checkpoint that could conceal a replay defect.
         let source = history.latest();
         drop(history);
-        let recovered = TerminalHistory::recover(
-            TerminalJournal::open_existing(storage.fd(), &id, limits).unwrap(),
-        )
-        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let recovered = loop {
+            match TerminalJournal::open_existing(storage.fd(), &id, limits) {
+                Err(crate::terminal_journal::TerminalJournalError::Busy)
+                    if Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                result => break TerminalHistory::recover(result.unwrap()).unwrap(),
+            }
+        };
         assert_eq!(recovered.latest(), source);
         assert_eq!(recovered.screen().unwrap(), expected);
         pty.close(true).unwrap();
@@ -1012,6 +1019,153 @@ mod tests {
         )
         .unwrap()
     }
+
+    #[test]
+    fn owned_session_driver_composes_real_input_resize_monitor_and_exit() {
+        use crate::terminal_history::TerminalHistory;
+        use crate::terminal_input::{TerminalInputProgress, TerminalWriterId};
+        use crate::terminal_journal::{TerminalJournal, TerminalJournalLimits};
+        use crate::terminal_monitor::{TerminalMonitorActivation, TerminalProcessOutcome};
+        use crate::terminal_session::TerminalSession;
+        use machine_god_core::{
+            BackgroundOutputOwner, SessionId, SessionIncarnationId, TerminalCursor,
+            TerminalDimensions, TerminalEventQuery, TerminalLifecycle, TerminalMonitorCondition,
+            TerminalMonitorDefinition, TerminalMonitorLifetime, TerminalMonitorOperation,
+            TerminalNotifySchedule, TerminalSessionId,
+        };
+        use std::num::NonZeroU64;
+        use std::os::unix::fs::PermissionsExt;
+
+        let cwd = Directory::new();
+        let storage = Directory::new();
+        std::fs::set_permissions(&storage.0, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let id = TerminalSessionId::new("driver-pty").unwrap();
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("driver-session").unwrap(),
+            SessionIncarnationId::new("driver-incarnation").unwrap(),
+        );
+        let writer = TerminalWriterId::new(NonZeroU64::new(1).unwrap());
+        let history = TerminalHistory::create(
+            TerminalJournal::create(storage.fd(), id.clone(), TerminalJournalLimits::default())
+                .unwrap(),
+            &TerminalDimensions::new(24, 80).unwrap(),
+        )
+        .unwrap();
+        let pty = start(
+            &cwd,
+            &[
+                "-c",
+                "stty -echo; printf READY; read answer; stty size; printf FINISHED; exit 23",
+            ],
+        );
+        let mut session = TerminalSession::new(pty, history, owner.clone(), id, 0).unwrap();
+        let monitor = session
+            .monitor(
+                &owner,
+                TerminalMonitorOperation::Add {
+                    definition: TerminalMonitorDefinition {
+                        condition: TerminalMonitorCondition::OutputContains {
+                            pattern: "7 31".into(),
+                        },
+                        check_schedule: None,
+                        notify: TerminalNotifySchedule::OnMatch,
+                        lifetime: TerminalMonitorLifetime::UntilSessionEnd,
+                    },
+                },
+                TerminalMonitorActivation::default(),
+                0,
+            )
+            .unwrap()
+            .monitor_id;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut observed = Vec::new();
+        let mut operation = None;
+        for now in 1..=2500 {
+            assert!(Instant::now() < deadline, "session driver did not finish");
+            let step = session.pump(now).unwrap();
+            observed.extend(step.output);
+            if operation.is_none() && observed.windows(5).any(|bytes| bytes == b"READY") {
+                // This fixture's private handshake proves the script is waiting
+                // for input. Production readiness uses its control channel.
+                operation = Some(release_driver_fixture(&mut session, &owner, writer, now));
+            }
+            if session.context().lifecycle == TerminalLifecycle::Exited {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(session.context().lifecycle, TerminalLifecycle::Exited);
+        assert_eq!(session.outcome(), Some(TerminalProcessOutcome::Exited(23)));
+        assert_eq!(
+            session
+                .write_receipt(&owner, writer, operation.unwrap())
+                .unwrap()
+                .progress,
+            TerminalInputProgress::Complete
+        );
+        let raw = session
+            .read(&owner, &TerminalCursor::new(1, 0).unwrap(), 4096)
+            .unwrap()
+            .bytes;
+        assert!(raw.windows(4).any(|bytes| bytes == b"7 31"));
+        assert!(raw.windows(8).any(|bytes| bytes == b"FINISHED"));
+        assert!(
+            session
+                .events(
+                    &owner,
+                    &TerminalEventQuery {
+                        after_event_id: 0,
+                        acknowledge_event_id: None,
+                        max_events: 256
+                    }
+                )
+                .unwrap()
+                .iter()
+                .any(|event| event.monitor_id == monitor)
+        );
+    }
+
+    fn release_driver_fixture(
+        session: &mut crate::terminal_session::TerminalSession<TerminalPty>,
+        owner: &machine_god_core::BackgroundOutputOwner,
+        writer: crate::terminal_input::TerminalWriterId,
+        now: i64,
+    ) -> std::num::NonZeroU64 {
+        use machine_god_core::{
+            TerminalDimensions, TerminalWriteLeaseIntent, TerminalWritePayload,
+            TerminalWriteRequest,
+        };
+        session.shell_ready(now).unwrap();
+        session
+            .resize(owner, &TerminalDimensions::new(7, 31).unwrap(), now)
+            .unwrap();
+        session
+            .write(
+                owner,
+                writer,
+                &TerminalWriteRequest {
+                    lease: TerminalWriteLeaseIntent::Acquire,
+                    payload: None,
+                },
+                false,
+            )
+            .unwrap();
+        session
+            .write(
+                owner,
+                writer,
+                &TerminalWriteRequest {
+                    lease: TerminalWriteLeaseIntent::Use,
+                    payload: Some(TerminalWritePayload::Text {
+                        text: "continue\n".into(),
+                    }),
+                },
+                false,
+            )
+            .unwrap()
+            .operation_id
+            .unwrap()
+    }
     fn start(directory: &Directory, args: &[&str]) -> TerminalPty {
         PreparedTerminalPty::prepare(
             &helper(),
@@ -1029,7 +1183,8 @@ mod tests {
         while !bytes.windows(marker.len()).any(|part| part == marker) {
             assert!(
                 Instant::now() < deadline,
-                "PTY marker missing: {}",
+                "PTY marker {:?} missing: {}",
+                String::from_utf8_lossy(marker),
                 String::from_utf8_lossy(&bytes)
             );
             let read = pty.read(&mut buffer).unwrap();
@@ -1111,7 +1266,9 @@ mod tests {
         pty.write(b"stty -echo; printf '%s%s\\n' ready _marker\n")
             .unwrap();
         read_until(&mut pty, b"ready_marker");
-        pty.write(b"/bin/sleep 30\n").unwrap();
+        pty.write(b"/bin/sh -c 'printf child_active; exec /bin/sleep 30'\n")
+            .unwrap();
+        read_until(&mut pty, b"child_active");
         let deadline = Instant::now() + Duration::from_secs(2);
         while rustix::termios::tcgetpgrp(pty.master.as_ref().unwrap())
             .unwrap()
@@ -1127,6 +1284,23 @@ mod tests {
             std::thread::sleep(Duration::from_millis(2));
         }
         pty.write(b"\x03").unwrap();
+        // Terminal input processing may flush bytes queued behind Ctrl-C.
+        // Wait for the shell to regain foreground ownership before sending
+        // the next command, rather than racing that line-discipline flush.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while rustix::termios::tcgetpgrp(pty.master.as_ref().unwrap())
+            .unwrap()
+            .as_raw_nonzero()
+            .get()
+            .cast_unsigned()
+            != pty.pid().get()
+        {
+            assert!(
+                Instant::now() < deadline,
+                "shell did not regain the foreground after Ctrl-C"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
         pty.write(b"printf foreground_survived\\n\n").unwrap();
         read_until(&mut pty, b"foreground_survived");
         assert_eq!(pty.status().unwrap(), TerminalPtyStatus::Running);

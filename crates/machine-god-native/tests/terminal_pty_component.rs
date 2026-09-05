@@ -13,11 +13,17 @@ mod terminal_display_width;
 mod terminal_grid;
 #[path = "../src/terminal_history.rs"]
 mod terminal_history;
+#[path = "../src/terminal_input.rs"]
+mod terminal_input;
 #[path = "../src/terminal_journal.rs"]
 mod terminal_journal;
+#[path = "../src/terminal_monitor.rs"]
+mod terminal_monitor;
 #[path = "../src/terminal_pty.rs"]
 mod terminal_pty;
 #[path = "../src/terminal_screen.rs"]
 mod terminal_screen;
+#[path = "../src/terminal_session.rs"]
+mod terminal_session;
 #[path = "../src/terminal_unicode_data.rs"]
 mod terminal_unicode_data;

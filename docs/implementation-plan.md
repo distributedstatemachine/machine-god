@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `compose PTY lifecycle, shell/input, durable history and monitors into the complete persistent terminal runtime and tool/CLI paths before the feature gate`
+- Next gate: `integrate the live session driver with persistent host/catalog, durable monitor and attention facts, startup control, tmux, and fully authorized tool/CLI actions before the full terminal feature gate`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -61,6 +61,11 @@ screen/monitor/resize/close, and the composed-host behavior needed to complete
 the pinned terminal action contract. Internal component commits may be tested
 and integrated independently; they are not deliveries or compatibility claims.
 Review and exact local/remote delivery gates apply to the complete feature.
+
+Native session lifetime belongs to the long-lived host registry, not individual
+tool futures. Pinned registry shutdown terminates native sessions; durable
+history and backend-specific recovery do not require a separate native daemon
+or a new IPC protocol. Recovered numeric PIDs never grant process authority.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:
