@@ -202,6 +202,10 @@ Resize validates dimensions and projection availability before starting those
 effects. An unavailable projection, including a previously recorded signal
 gap, rejects resize without changing the running session's lifecycle, input,
 monitors or persistence; ordinary raw-output pumping can continue.
+Quota refusal before the invalidation barrier is likewise effect-free. If
+final checkpoint admission fails after native resize, the session instead
+becomes lost, quiesces input and monitors, and retains the publication failure
+even when its best-effort lost-state publication succeeds.
 
 The single-owner session driver composes PTY transport, history, ordered input
 and monitor observation. Raw output does not establish shell readiness: only

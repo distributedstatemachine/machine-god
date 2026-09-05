@@ -611,13 +611,17 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             .backend
             .as_mut()
             .ok_or(TerminalSessionError::InvalidState)?;
+        let mut native_attempted = false;
         let resized = self
             .history
             .resize_with(persistence, dimensions, |dimensions| {
+                native_attempted = true;
                 backend.resize(dimensions)
             });
         if let Err(error) = resized {
-            if matches!(error, TerminalHistoryError::Profile(_)) {
+            // Only initial barrier admission is effect-free. The same quota
+            // error can reject the final checkpoint after native resize.
+            if !native_attempted && matches!(error, TerminalHistoryError::Profile(_)) {
                 return Err(error.into());
             }
             return Err(self.failed_observation_with(persistence, error.into()));
@@ -1717,6 +1721,7 @@ mod tests {
     struct Persistence {
         calls: Vec<&'static str>,
         denied: bool,
+        denied_call: Option<usize>,
         fail_accounting: Option<&'static str>,
         remaining_appends: Option<usize>,
     }
@@ -1738,7 +1743,7 @@ mod tests {
                 TerminalJournalMutation::Evict(_) => "evict",
             };
             self.calls.push(kind);
-            if self.denied {
+            if self.denied || self.denied_call == Some(self.calls.len()) {
                 return Err(TerminalProfileError::ResourceLimit);
             }
             if kind == "append"
@@ -1759,6 +1764,64 @@ mod tests {
 
     fn denied_error() -> TerminalSessionError {
         TerminalHistoryError::Profile(TerminalProfileError::ResourceLimit).into()
+    }
+
+    #[test]
+    fn resize_admission_refusal_distinguishes_before_and_after_native_effects() {
+        for denied_call in [1, 2] {
+            let fixture = Fixture::new();
+            let mut session = fixture.session();
+            session.shell_ready(0).unwrap();
+            add(&mut session, Condition::ProcessExit);
+            let metadata = std::fs::read(fixture.path.join("tj-meta")).unwrap();
+            let monitors = session.monitors.snapshot().unwrap();
+            let mut persistence = Persistence {
+                denied_call: Some(denied_call),
+                ..Persistence::default()
+            };
+            assert_eq!(
+                session.resize_with(
+                    &mut persistence,
+                    &owner("owner"),
+                    &TerminalDimensions::new(24, 80).unwrap(),
+                    1,
+                ),
+                Err(denied_error())
+            );
+            assert!(session.owns_backend());
+            if denied_call == 1 {
+                assert_eq!(persistence.calls, ["checkpoint"]);
+                assert!(fixture.state.lock().unwrap().resizes.is_empty());
+                assert_eq!(session.lifecycle, TerminalLifecycle::Running);
+                assert!(!session.input.is_quiesced());
+                assert!(session.publication_error.is_none());
+                assert_eq!(session.now_ms, 0);
+                assert_eq!(session.monitors.snapshot().unwrap(), monitors);
+                assert_eq!(
+                    std::fs::read(fixture.path.join("tj-meta")).unwrap(),
+                    metadata
+                );
+                assert!(session.history.screen().is_ok());
+            } else {
+                assert_eq!(persistence.calls, ["checkpoint", "checkpoint", "state"]);
+                assert_eq!(fixture.state.lock().unwrap().resizes.len(), 1);
+                assert_eq!(session.lifecycle, TerminalLifecycle::Lost);
+                assert!(session.input.is_quiesced());
+                assert_eq!(session.monitors.len(), 0);
+                // Even a successful lost-state write cannot erase the refused
+                // post-resize checkpoint publication.
+                assert_eq!(session.publication_error, Some(denied_error()));
+                assert!(session.history.screen().is_err());
+                let stored = session.history.load_state().unwrap().unwrap();
+                let (facts, monitors) =
+                    TerminalSessionFacts::decode(&stored.bytes, &id(), &stored.source).unwrap();
+                assert_eq!(facts.context.lifecycle, TerminalLifecycle::Lost);
+                assert_eq!(TerminalMonitorSet::restore(monitors).unwrap().len(), 0);
+            }
+            session
+                .close(&owner("owner"), TerminalClosePolicy::Force, 2)
+                .unwrap();
+        }
     }
 
     #[test]

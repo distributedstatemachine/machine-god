@@ -103,6 +103,9 @@ Native status failures take the lost-session/quiescence path even when profile
 publication is unavailable; they are not treated as harmless capacity deferrals.
 Effect-free resize validation rejects unavailable projections without stopping
 an otherwise running session or its raw-output pumping.
+Resize admission distinguishes initial barrier refusal from final checkpoint
+refusal after native effects; the latter loses/quiesces the session and retains
+the unresolved publication failure.
 Persistent live checkpoint reserves and victim selection remain to be composed
 before exposure.
 Per-session retention separates raw/checkpoint output from independently bounded
