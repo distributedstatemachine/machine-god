@@ -120,6 +120,8 @@ mutations and event acknowledgements commit their state before returning their
 successful result. Idle scheduler steps without those changes do not rewrite
 metadata. A state-publication failure quiesces live input and probes without
 discarding the owned backend needed for explicit cleanup.
+Acknowledgements advance the in-memory record only after durable publication;
+a failed acknowledgement cannot become a successful memory-only retry.
 
 Native recovered-session views expose only owner-authorized facts, raw history,
 screens and durable event acknowledgements. A previously starting/running host
@@ -131,6 +133,9 @@ replays input. If raw output committed after the last state snapshot, recovery
 records an observation gap instead of inventing monitor matches or output
 timestamps. That gap is distinct from missing raw bytes: retained output and
 an independently valid screen can still be read.
+Notification-counter exhaustion also stops pending monitors and records
+incomplete monitor notifications, rather than making retained history
+unreadable or pretending every terminal notification was delivered.
 
 The monitor state machine implements all thirteen conditions with explicit
 clock/cursor/lifecycle observations. It emits bounded typed probe requests,

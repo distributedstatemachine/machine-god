@@ -130,6 +130,7 @@ pub(crate) struct TerminalSession<B: TerminalSessionBackend> {
     lifecycle: TerminalLifecycle,
     outcome: Option<TerminalProcessOutcome>,
     created_at_ms: i64,
+    monitor_notifications_incomplete: bool,
     now_ms: i64,
     last_output_ms: i64,
 }
@@ -169,6 +170,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             lifecycle: TerminalLifecycle::Starting,
             outcome: None,
             created_at_ms: now_ms,
+            monitor_notifications_incomplete: false,
             now_ms,
             last_output_ms: now_ms,
         };
@@ -284,7 +286,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
                 Ok(step)
             }
             Err(error) => {
-                self.lose();
+                self.failed_publication();
                 let _ = self.persist();
                 Err(error)
             }
@@ -492,6 +494,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
                 monitor_error.get_or_insert(error);
             }
             if let Err(error) = self.monitors.end_session(self.outcome, self.context()) {
+                self.monitor_notifications_incomplete = true;
                 self.monitors.quiesce();
                 monitor_error.get_or_insert(error);
             }
@@ -569,37 +572,60 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         query: &TerminalEventQuery,
     ) -> Result<Vec<TerminalMonitorEvent>> {
         self.authorize(owner)?;
-        let before_ack = self.monitors.acknowledged_event_id();
-        let events = self.monitors.events(query)?;
-        if self.monitors.acknowledged_event_id() != before_ack {
-            self.persist()?;
+        if query
+            .acknowledge_event_id
+            .is_none_or(|ack| ack <= self.monitors.acknowledged_event_id())
+        {
+            return Ok(self.monitors.events(query)?);
+        }
+        let mut candidate = self.monitors.clone();
+        let events = candidate.events(query)?;
+        if candidate.acknowledged_event_id() != self.monitors.acknowledged_event_id() {
+            let publication = (|| -> Result<()> {
+                candidate.checkpoint_context(self.context())?;
+                let bytes = self.facts()?.encode(&candidate)?;
+                self.history.publish_state(&bytes)?;
+                Ok(())
+            })();
+            if let Err(error) = publication {
+                self.failed_publication();
+                return Err(error);
+            }
+            self.monitors = candidate;
         }
         Ok(events)
+    }
+    fn facts(&self) -> Result<TerminalSessionFacts> {
+        let mut facts = TerminalSessionFacts::new(
+            self.history.session_id().clone(),
+            &self.owner,
+            self.context(),
+            self.created_at_ms,
+            self.last_output_ms,
+            self.outcome,
+        )?;
+        facts.monitor_notifications_incomplete = self.monitor_notifications_incomplete;
+        Ok(facts)
     }
     fn persist(&mut self) -> Result<()> {
         let result = (|| {
             self.monitors.checkpoint_context(self.context())?;
-            let facts = TerminalSessionFacts::new(
-                self.history.session_id().clone(),
-                &self.owner,
-                self.context(),
-                self.created_at_ms,
-                self.last_output_ms,
-                self.outcome,
-            )?;
-            let bytes = facts.encode(&self.monitors)?;
+            let bytes = self.facts()?.encode(&self.monitors)?;
             self.history.publish_state(&bytes)?;
             Ok(())
         })();
         if result.is_err() {
-            if self.backend.is_some() {
-                self.lose();
-            } else {
-                self.input.quiesce();
-                self.monitors.quiesce();
-            }
+            self.failed_publication();
         }
         result
+    }
+    fn failed_publication(&mut self) {
+        if self.backend.is_some() {
+            self.lose();
+        } else {
+            self.input.quiesce();
+            self.monitors.quiesce();
+        }
     }
     fn authorize(&self, owner: &BackgroundOutputOwner) -> Result<()> {
         if owner == &self.owner {
@@ -646,7 +672,9 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         self.input.quiesce();
         self.lifecycle = TerminalLifecycle::Lost;
         self.outcome = None;
-        let _ = self.monitors.end_session(None, self.context());
+        if self.monitors.end_session(None, self.context()).is_err() {
+            self.monitor_notifications_incomplete = true;
+        }
         self.monitors.quiesce();
     }
 }
@@ -722,7 +750,17 @@ impl TerminalRecoveredSession {
         if was_live {
             facts.context.lifecycle = TerminalLifecycle::Lost;
             facts.outcome = None;
-            monitors.end_session(None, facts.context.clone())?;
+            match monitors.end_session(None, facts.context.clone()) {
+                Ok(()) => {}
+                Err(TerminalMonitorError::Counter) => {
+                    // Exhausted notification identities cannot retain effect
+                    // authority or make otherwise intact history unreadable.
+                    monitors.quiesce();
+                    monitors.checkpoint_context(facts.context.clone())?;
+                    facts.monitor_notifications_incomplete = true;
+                }
+                Err(error) => return Err(error.into()),
+            }
         } else {
             monitors.checkpoint_context(facts.context.clone())?;
         }
@@ -762,6 +800,12 @@ impl TerminalRecoveredSession {
         query: &TerminalEventQuery,
     ) -> Result<Vec<TerminalMonitorEvent>> {
         self.authorize(owner)?;
+        if query
+            .acknowledge_event_id
+            .is_none_or(|ack| ack <= self.monitors.acknowledged_event_id())
+        {
+            return Ok(self.monitors.events(query)?);
+        }
         let mut candidate = self.monitors.clone();
         let events = candidate.events(query)?;
         if candidate.acknowledged_event_id() != self.monitors.acknowledged_event_id() {
@@ -959,6 +1003,15 @@ mod tests {
                 owner("owner"),
                 id(),
                 0,
+            )
+            .unwrap()
+        }
+        fn block_publication(&self) -> OwnedFd {
+            rustix::fs::openat(
+                self.fd(),
+                "tj-meta.tmp",
+                OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+                Mode::from_bits_retain(0o600),
             )
             .unwrap()
         }
@@ -1281,6 +1334,139 @@ mod tests {
         let recovered =
             TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 100).unwrap();
         assert_eq!(recovered.monitors.acknowledged_event_id(), ack);
+    }
+
+    #[test]
+    fn failed_live_acknowledgement_cannot_become_a_successful_memory_only_retry() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        add(
+            &mut session,
+            Condition::OutputContains {
+                pattern: "event".into(),
+            },
+        );
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"event".to_vec());
+        session.pump(1).unwrap();
+        let events = session.events(&owner("owner"), &query()).unwrap();
+        let ack = events.last().unwrap().event_id;
+        let query = TerminalEventQuery {
+            acknowledge_event_id: Some(ack),
+            ..query()
+        };
+        let _temporary = fixture.block_publication();
+        assert!(session.events(&owner("owner"), &query).is_err());
+        assert_eq!(session.monitors.acknowledged_event_id(), 0);
+        assert!(session.events(&owner("owner"), &query).is_err());
+        assert_eq!(session.monitors.acknowledged_event_id(), 0);
+        assert!(session.input.is_quiesced());
+        drop(session);
+        let mut recovered =
+            TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 100).unwrap();
+        assert_eq!(recovered.monitors.acknowledged_event_id(), 0);
+        recovered.events(&owner("owner"), &query).unwrap();
+        drop(recovered);
+        let recovered =
+            TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 100).unwrap();
+        assert_eq!(recovered.monitors.acknowledged_event_id(), ack);
+    }
+
+    #[test]
+    fn recovery_retains_history_when_terminal_notifications_exhaust_their_counter() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        session
+            .monitor(
+                &owner("owner"),
+                TerminalMonitorOperation::Add {
+                    definition: TerminalMonitorDefinition {
+                        condition: Condition::ProcessExit,
+                        check_schedule: None,
+                        notify: TerminalNotifySchedule::OnExit,
+                        lifetime: TerminalMonitorLifetime::UntilSessionEnd,
+                    },
+                },
+                TerminalMonitorActivation::default(),
+                0,
+            )
+            .unwrap();
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"retained".to_vec());
+        session.pump(1).unwrap();
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&session.monitors.snapshot().unwrap()).unwrap();
+        saved["next_event_id"] = serde_json::json!(u64::MAX);
+        saved["dropped_through_event_id"] = serde_json::json!(u64::MAX - 1);
+        saved["events"] = serde_json::json!([]);
+        session.monitors =
+            TerminalMonitorSet::restore(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        session.persist().unwrap();
+        drop(session);
+        let recovered =
+            TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 100).unwrap();
+        assert_eq!(recovered.facts.context.lifecycle, TerminalLifecycle::Lost);
+        assert!(recovered.facts.monitor_notifications_incomplete);
+        assert_eq!(recovered.monitors.len(), 0);
+        assert!(recovered.monitors.next_deadline().is_none());
+        assert_eq!(
+            recovered
+                .read(&owner("owner"), &TerminalCursor::new(1, 0).unwrap(), 64)
+                .unwrap()
+                .bytes,
+            b"retained",
+        );
+        let metadata = std::fs::read(fixture.path.join("tj-meta")).unwrap();
+        drop(recovered);
+        let recovered =
+            TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 100).unwrap();
+        assert!(recovered.facts.monitor_notifications_incomplete);
+        assert_eq!(
+            std::fs::read(fixture.path.join("tj-meta")).unwrap(),
+            metadata
+        );
+    }
+
+    #[test]
+    fn known_process_exit_survives_monitor_notification_failure() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        add(&mut session, Condition::ProcessExit);
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&session.monitors.snapshot().unwrap()).unwrap();
+        saved["next_event_id"] = serde_json::json!(u64::MAX);
+        saved["dropped_through_event_id"] = serde_json::json!(u64::MAX - 1);
+        saved["events"] = serde_json::json!([]);
+        session.monitors =
+            TerminalMonitorSet::restore(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        fixture.state.lock().unwrap().status = TerminalPtyStatus::Exited(23);
+        assert!(matches!(
+            session.pump(1),
+            Err(TerminalSessionError::Monitor(TerminalMonitorError::Counter)),
+        ));
+        assert_eq!(session.context().lifecycle, TerminalLifecycle::Exited);
+        assert_eq!(session.outcome(), Some(TerminalProcessOutcome::Exited(23)));
+        assert!(session.monitor_notifications_incomplete);
+        drop(session);
+        let recovered =
+            TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 100).unwrap();
+        assert_eq!(recovered.facts.context.lifecycle, TerminalLifecycle::Exited);
+        assert_eq!(
+            recovered.facts.outcome,
+            Some(TerminalProcessOutcome::Exited(23))
+        );
+        assert!(recovered.facts.monitor_notifications_incomplete);
     }
 
     #[test]

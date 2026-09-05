@@ -39,6 +39,8 @@ pub(crate) struct TerminalSessionFacts {
     pub(crate) last_output_ms: i64,
     pub(crate) outcome: Option<TerminalProcessOutcome>,
     pub(crate) observation_gap: Option<TerminalGap>,
+    #[serde(default)]
+    pub(crate) monitor_notifications_incomplete: bool,
 }
 impl fmt::Debug for TerminalSessionFacts {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -64,6 +66,7 @@ impl TerminalSessionFacts {
             last_output_ms,
             outcome,
             observation_gap: None,
+            monitor_notifications_incomplete: false,
         };
         facts.validate()?;
         Ok(facts)
