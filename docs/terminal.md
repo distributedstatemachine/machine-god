@@ -136,6 +136,8 @@ an independently valid screen can still be read.
 Notification-counter exhaustion also stops pending monitors and records
 incomplete monitor notifications, rather than making retained history
 unreadable or pretending every terminal notification was delivered.
+This incomplete-notification fact also survives failures while consuming live
+or close-time output, even if stopping the remaining monitors succeeds.
 
 The monitor state machine implements all thirteen conditions with explicit
 clock/cursor/lifecycle observations. It emits bounded typed probe requests,

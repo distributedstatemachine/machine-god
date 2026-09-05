@@ -286,6 +286,9 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
                 Ok(step)
             }
             Err(error) => {
+                if matches!(error, TerminalSessionError::Monitor(_)) {
+                    self.monitor_notifications_incomplete = true;
+                }
                 self.failed_publication();
                 let _ = self.persist();
                 Err(error)
@@ -501,6 +504,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         } else {
             self.lose();
         }
+        self.monitor_notifications_incomplete |= monitor_error.is_some();
         if let Some(error) = history_error {
             return Err(error.into());
         }
@@ -1435,6 +1439,68 @@ mod tests {
             std::fs::read(fixture.path.join("tj-meta")).unwrap(),
             metadata
         );
+    }
+
+    #[test]
+    fn consumed_output_notification_failure_survives_recovery() {
+        for close in [false, true] {
+            let fixture = Fixture::new();
+            let mut session = fixture.session();
+            session.shell_ready(0).unwrap();
+            add(
+                &mut session,
+                Condition::OutputContains {
+                    pattern: "event".into(),
+                },
+            );
+            let mut saved: serde_json::Value =
+                serde_json::from_slice(&session.monitors.snapshot().unwrap()).unwrap();
+            saved["next_event_id"] = serde_json::json!(u64::MAX);
+            saved["dropped_through_event_id"] = serde_json::json!(u64::MAX - 1);
+            saved["events"] = serde_json::json!([]);
+            session.monitors =
+                TerminalMonitorSet::restore(&serde_json::to_vec(&saved).unwrap()).unwrap();
+            if close {
+                fixture.state.lock().unwrap().tail = b"event".to_vec();
+            } else {
+                fixture
+                    .state
+                    .lock()
+                    .unwrap()
+                    .output
+                    .push_back(b"event".to_vec());
+            }
+            let result = if close {
+                session.close(&owner("owner"), TerminalClosePolicy::Force, 1)
+            } else {
+                session.pump(1).map(|_| ())
+            };
+            assert!(matches!(
+                result,
+                Err(TerminalSessionError::Monitor(TerminalMonitorError::Counter)),
+            ));
+            assert!(session.monitor_notifications_incomplete);
+            drop(session);
+            let recovered =
+                TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 100).unwrap();
+            assert!(recovered.facts.monitor_notifications_incomplete);
+            assert_eq!(recovered.monitors.len(), 0);
+            assert_eq!(
+                recovered
+                    .read(&owner("owner"), &TerminalCursor::new(1, 0).unwrap(), 64)
+                    .unwrap()
+                    .bytes,
+                b"event",
+            );
+            assert_eq!(
+                recovered.facts.context.lifecycle,
+                if close {
+                    TerminalLifecycle::Closed
+                } else {
+                    TerminalLifecycle::Lost
+                },
+            );
+        }
     }
 
     #[test]
