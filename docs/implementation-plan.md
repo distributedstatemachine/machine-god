@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `integrate input contracts and transport, map remaining pinned terminal actions, and complete the interactive terminal backend before the feature gate`
+- Next gate: `compose the PTY, shell, input, screen, journal and monitor components into the complete persistent terminal runtime and tool/CLI paths before the feature gate`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -48,10 +48,9 @@ delivered-slice count. Documentation-only descendants now exercise only the
 bounded documentation checks and aggregate gates, without Rust, platform,
 audit, compatibility, or benchmark-artifact jobs.
 
-Next product work returns to terminal input/write. Durable or restart-safe
-logs, persistent interactive handles, interactive terminal behavior,
-restart-safe control, ACP, teams, and extension slash commands remain separate
-until explicitly bounded.
+The active complete terminal feature includes interactive handles, durable
+logs, restart/recovery and the action contract below. ACP, teams and extension
+slash commands retain their later milestone ownership.
 Documentation-tool maintenance remains a separate non-product task.
 
 ### Active feature: complete terminal behavior
@@ -114,7 +113,7 @@ remain part of this feature; piped input does not complete it.
 - `machine-god-cli` is a thin host and owns no product state.
 - `machine-god-testkit` owns deterministic test doubles and fixtures.
 - Unsafe Rust is forbidden in the product crates. The isolated macOS
-  `TIOCSIG` binding is the sole exception under
+  PTY and exact process-incarnation bindings are the sole exception under
   [ADR 0003](decisions/0003-macos-terminal-foreground-signal.md); it remains subject
   to the full terminal feature's adversarial and platform gates.
 - Constructors and futures must preserve the documented inert-before-poll,

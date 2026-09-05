@@ -39,6 +39,38 @@ an explicit raw gap invalidates the projection rather than inventing a screen.
 Oversized feeds are rejected without mutation. Resizing this projection alone
 does not resize a process: the runtime must also resize the actual PTY.
 
+## Native PTY lifecycle component
+
+The native PTY transport prepares a retained-descriptor helper and commits the
+shell only after ownership is installed. Its separate protocol channel cannot
+consume terminal input bytes. Reads/writes are bounded and nonblocking; resize
+changes the actual PTY. Close quiesces input, drains bounded output, terminates
+with an 800 ms grace period or forces termination, and verifies cleanup before
+reaping the shell. Linux retains process identities through pidfds. On macOS,
+foreground signaling uses the retained PTY master, while background job-control
+cleanup uses separately verified session-member incarnations, not numeric-PID
+signals. See [ADR 0003](decisions/0003-macos-terminal-foreground-signal.md).
+PTY signal flushing and incomplete drains are retained as output gaps, even if
+a later read observes EOF. These native components do not by themselves expose
+the full interactive action contract through the reference-host tool.
+
+## Journal and monitor components
+
+The descriptor-bound journal uses checksummed metadata, segmented raw bytes,
+opaque screen checkpoints and bounded retained events. Reopen verifies the
+committed prefix; only proven uncommitted suffixes/orphans are reconciled.
+Retention reports cursor/checkpoint gaps. Mutation failure poisons the writer
+until reopen, and one exclusive writer lease prevents concurrent publication.
+
+The monitor state machine implements all thirteen conditions with explicit
+clock/cursor/lifecycle observations. It emits bounded typed probe requests,
+not network/filesystem/process effects. Evidence must match the exact session,
+monitor generation and probe sequence. Snapshots retain matcher/event state;
+pause/resume preserves activation baselines and rejects stale probes. Waits
+observe started/exit/quiet/literal-match conditions without owning process
+lifetime. Runtime probe authorization, persistence coordination and model-facing
+action routing remain separate composition responsibilities.
+
 ## Boundary
 
 The reference-host tool implements the `exec`, bounded `start`, bounded

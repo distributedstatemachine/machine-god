@@ -4,6 +4,11 @@
 //! All orchestration, process ownership and permission policy stay in native.
 
 #[cfg(target_os = "macos")]
+mod process_identity;
+#[cfg(target_os = "macos")]
+pub use process_identity::ProcessIdentity;
+
+#[cfg(target_os = "macos")]
 use std::{
     io,
     os::fd::{AsRawFd, BorrowedFd},
@@ -24,7 +29,7 @@ use rustix::process::Signal;
 /// # Errors
 /// Returns the OS error for an invalid/non-master descriptor or failed ioctl.
 #[cfg(target_os = "macos")]
-#[allow(unsafe_code)] // ADR 0003: this function is the entire unsafe exception.
+#[allow(unsafe_code)] // ADR 0003: fixed PTY ioctl, not an arbitrary request API.
 pub fn signal_terminal_foreground(master: BorrowedFd<'_>, signal: Signal) -> io::Result<()> {
     let argument = libc::uintptr_t::try_from(signal.as_raw())
         .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;

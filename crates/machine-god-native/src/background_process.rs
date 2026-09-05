@@ -2590,6 +2590,8 @@ impl OwnedBackgroundProcess {
         captured.retain(macos_scope_members(self.group, true)?)?;
         if !force {
             terminal_phase(TerminalClosePhase::Graceful);
+            #[cfg(target_os = "macos")]
+            signal_macos_terminal_members(&captured, self.group, rustix::process::Signal::TERM)?;
             let _ = self.terminal_signal(BackgroundProcessSignal::Terminate);
             let deadline = Instant::now() + Duration::from_millis(800);
             while self.terminal_poll()?.is_none() && Instant::now() < deadline {
@@ -2619,6 +2621,8 @@ impl OwnedBackgroundProcess {
         }
         #[cfg(target_os = "macos")]
         {
+            captured.retain(macos_scope_members(self.group, true)?)?;
+            signal_macos_terminal_members(&captured, self.group, rustix::process::Signal::KILL)?;
             let _ = self.terminal_signal(BackgroundProcessSignal::Kill);
         }
         // Closing the master must precede waiting for a shell that may itself
@@ -5239,6 +5243,15 @@ fn captured_group_member_exists(
     _authority: &GroupSnapshotAuthority,
     member: &CapturedGroupMember,
 ) -> Result<bool, BackgroundProcessError> {
+    if let Some(unique_id) = member.identity {
+        let pid = NonZeroU32::new(member.pid.as_raw_nonzero().get().cast_unsigned())
+            .ok_or_else(cleanup_error)?;
+        return match machine_god_terminal_sys::ProcessIdentity::capture(pid) {
+            Ok(current) => Ok(current.unique_id() == unique_id),
+            Err(error) if error.raw_os_error() == Some(libc::ESRCH) => Ok(false),
+            Err(_) => Err(cleanup_error()),
+        };
+    }
     match rustix::process::getpgid(Some(member.pid)) {
         Ok(_) => Ok(true),
         Err(rustix::io::Errno::SRCH) => Ok(false),
@@ -5329,19 +5342,83 @@ fn macos_scope_members(
         }
         // Darwin hides getsid for zombies before ps removes their row. The
         // exclusive, unreaped direct child already pins the leader identity.
+        let mut identity = None;
         if session_scope && pid != group {
+            let raw = NonZeroU32::new(pid.as_raw_nonzero().get().cast_unsigned())
+                .ok_or_else(cleanup_error)?;
+            let before = match machine_god_terminal_sys::ProcessIdentity::capture(raw) {
+                Ok(identity) => identity,
+                Err(error) if error.raw_os_error() == Some(libc::ESRCH) => continue,
+                Err(_) => return Err(cleanup_error()),
+            };
             match rustix::process::getsid(Some(pid)) {
                 Ok(session) if session == group => {}
                 Ok(_) | Err(rustix::io::Errno::SRCH) => continue,
                 Err(_) => return Err(cleanup_error()),
             }
+            let after = match machine_god_terminal_sys::ProcessIdentity::capture(raw) {
+                Ok(identity) => identity,
+                Err(error) if error.raw_os_error() == Some(libc::ESRCH) => continue,
+                Err(_) => return Err(cleanup_error()),
+            };
+            // Capture identity on both sides of getsid: a reused PID can never
+            // turn another session's process into our retained cleanup target.
+            if !before.same_process(after) {
+                return Err(cleanup_error());
+            }
+            identity = Some(after.unique_id());
         }
-        members.push(CapturedGroupMember {
-            pid,
-            identity: None,
-        });
+        members.push(CapturedGroupMember { pid, identity });
     }
     Ok(members)
+}
+
+#[cfg(target_os = "macos")]
+fn signal_macos_terminal_members(
+    captured: &CapturedMemberUnion,
+    leader: rustix::process::Pid,
+    signal: rustix::process::Signal,
+) -> Result<(), BackgroundProcessError> {
+    let deadline = Instant::now() + GROUP_SNAPSHOT_TIMEOUT;
+    let mut failed = false;
+    for member in captured.iter().filter(|member| member.pid != leader) {
+        if Instant::now() >= deadline {
+            return Err(cleanup_error());
+        }
+        let unique_id = member.identity.ok_or_else(cleanup_error)?;
+        let raw = NonZeroU32::new(member.pid.as_raw_nonzero().get().cast_unsigned())
+            .ok_or_else(cleanup_error)?;
+        let identity = match machine_god_terminal_sys::ProcessIdentity::capture(raw) {
+            Ok(identity) if identity.unique_id() == unique_id => identity,
+            Ok(_) => continue, // Replacement PID is not our authority.
+            Err(error) if error.raw_os_error() == Some(libc::ESRCH) => continue,
+            Err(_) => {
+                failed = true;
+                continue;
+            }
+        };
+        // Refreshing an exec version preserves the retained unique incarnation.
+        // Three bounded attempts tolerate exec racing delivery without ever
+        // converting an observation into kill(PID) authority.
+        let mut resolved = false;
+        for _ in 0..3 {
+            match identity.signal(signal) {
+                Ok(()) => {
+                    resolved = true;
+                    break;
+                }
+                Err(error) if error.raw_os_error() == Some(libc::ESRCH) => {
+                    if matches!(identity.exists(), Ok(false)) {
+                        resolved = true;
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        failed |= !resolved;
+    }
+    if failed { Err(cleanup_error()) } else { Ok(()) }
 }
 
 #[cfg(target_os = "macos")]

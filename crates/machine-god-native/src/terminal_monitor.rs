@@ -849,7 +849,7 @@ mod tests {
     fn context(now_ms: i64) -> TerminalMonitorContext {
         TerminalMonitorContext {
             now_ms,
-            cursor: TerminalCursor::new(1, now_ms as u64).unwrap(),
+            cursor: TerminalCursor::new(1, u64::try_from(now_ms).unwrap()).unwrap(),
             lifecycle: TerminalLifecycle::Running,
         }
     }
@@ -933,7 +933,7 @@ mod tests {
     }
 
     #[test]
-    fn all_thirteen_conditions_produce_exact_matches() {
+    fn local_conditions_produce_exact_matches() {
         let cases = [
             (
                 Condition::ProcessExit,
@@ -992,6 +992,10 @@ mod tests {
             .screen(&grid.structured_screen().unwrap(), context(1))
             .unwrap();
         assert_eq!(screen.state(&id), Some(State::Matched));
+    }
+
+    #[test]
+    fn probe_conditions_produce_exact_matches() {
         let probes = [
             (tcp(), TerminalProbeObservation::Tcp { connected: true }),
             (
@@ -1420,14 +1424,14 @@ mod tests {
         .into_iter()
         .enumerate()
         {
-            let now = 2020 + index as i64 * 10;
+            let now = 2020 + i64::try_from(index).unwrap() * 10;
             let request = set.tick(context(now)).unwrap().remove(0);
             let mut result = evidence(&request, TerminalProbeObservation::Tcp { connected: true });
             result.result = Err(failure);
             assert!(set.complete_probe(result, context(now)).unwrap());
         }
         for (index, mode) in [0, 1, 2, 3].into_iter().enumerate() {
-            let now = 2070 + index as i64 * 2010;
+            let now = 2070 + i64::try_from(index).unwrap() * 2010;
             let request = set.tick(context(now)).unwrap().remove(0);
             let mut result = evidence(&request, TerminalProbeObservation::Tcp { connected: true });
             match mode {

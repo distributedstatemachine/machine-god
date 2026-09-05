@@ -23,8 +23,7 @@ use crate::background_input::{
 };
 use crate::background_process::{
     BackgroundProcessExit, BackgroundProcessSignal, OwnedBackgroundProcess, TerminalChildGuard,
-    TerminalClosePhase,
-    ValidatedBackgroundEnvironment,
+    TerminalClosePhase, ValidatedBackgroundEnvironment,
 };
 
 const MAGIC: &[u8; 8] = b"MGPTY\0\0\x01";
@@ -197,6 +196,9 @@ impl PreparedTerminalPty {
         }
         let permit = PtyPermit::acquire()?;
         let frame = request.frame()?;
+        #[cfg(target_os = "macos")]
+        machine_god_terminal_sys::ProcessIdentity::verify_signal_support()
+            .map_err(process_error)?;
         let (master, slave) = open_pty(request.dimensions)?;
         let (mut gate, child_gate) = UnixStream::pair().map_err(process_error)?;
         gate.set_nonblocking(true).map_err(process_error)?;
@@ -446,7 +448,7 @@ impl TerminalPty {
             if self.status()? != TerminalPtyStatus::Running {
                 return Err(error(TerminalPtyErrorKind::Closed));
             }
-            return self.signal_foreground(signal);
+            self.signal_foreground(signal)
         }
         #[cfg(target_os = "linux")]
         self.process
@@ -457,7 +459,10 @@ impl TerminalPty {
     }
 
     #[cfg(target_os = "macos")]
-    fn signal_foreground(&self, signal: BackgroundProcessSignal) -> Result<(), TerminalPtyError> {
+    fn signal_foreground(
+        &mut self,
+        signal: BackgroundProcessSignal,
+    ) -> Result<(), TerminalPtyError> {
         let signal = match signal {
             BackgroundProcessSignal::Interrupt => rustix::process::Signal::INT,
             BackgroundProcessSignal::Terminate => rustix::process::Signal::TERM,
@@ -465,7 +470,14 @@ impl TerminalPty {
             BackgroundProcessSignal::Hangup => rustix::process::Signal::HUP,
             BackgroundProcessSignal::Quit => rustix::process::Signal::QUIT,
         };
-        let master = self.master.as_ref().ok_or_else(|| error(TerminalPtyErrorKind::Closed))?;
+        let master = self
+            .master
+            .as_ref()
+            .ok_or_else(|| error(TerminalPtyErrorKind::Closed))?;
+        // TIOCSIG can flush the tty's unread output even if a later read sees
+        // EOF. Conservatively retain that evidence gap through explicit signals
+        // and close rather than claiming a complete raw tail.
+        self.output_incomplete = true;
         machine_god_terminal_sys::signal_terminal_foreground(master.as_fd(), signal)
             .map_err(process_error)
     }
@@ -491,8 +503,13 @@ impl TerminalPty {
         self.write_closed = true;
         let before = self.status()?;
         let mut drain_budget = 128;
-        let mut phase_failed = self.drain_close_output(&mut drain_budget, &mut output).is_err();
-        let mut process = self.process.take().ok_or_else(|| error(TerminalPtyErrorKind::Closed))?;
+        let mut phase_failed = self
+            .drain_close_output(&mut drain_budget, &mut output)
+            .is_err();
+        let mut process = self
+            .process
+            .take()
+            .ok_or_else(|| error(TerminalPtyErrorKind::Closed))?;
         let closed = process.terminal_close(force, |phase| match phase {
             TerminalClosePhase::Graceful | TerminalClosePhase::Force => {
                 #[cfg(target_os = "macos")]
@@ -505,13 +522,17 @@ impl TerminalPty {
                     // An exited session leader can still have a foreground
                     // job. The owned master, not a persisted PID, authorizes
                     // this delivery; the kernel resolves membership atomically.
-                    if self.signal_foreground(signal).is_err() && before == TerminalPtyStatus::Running {
+                    if self.signal_foreground(signal).is_err()
+                        && before == TerminalPtyStatus::Running
+                    {
                         phase_failed = true;
                     }
                 }
             }
             TerminalClosePhase::Close => {
-                phase_failed |= self.drain_close_output(&mut drain_budget, &mut output).is_err();
+                phase_failed |= self
+                    .drain_close_output(&mut drain_budget, &mut output)
+                    .is_err();
                 self.output_incomplete |= !self.read_closed;
                 drop(self.master.take());
                 self.read_closed = true;
@@ -546,7 +567,11 @@ impl TerminalPty {
         })
     }
 
-    fn drain_close_output(&mut self, budget: &mut usize, output: &mut impl FnMut(&[u8])) -> Result<(), TerminalPtyError> {
+    fn drain_close_output(
+        &mut self,
+        budget: &mut usize,
+        output: &mut impl FnMut(&[u8]),
+    ) -> Result<(), TerminalPtyError> {
         let mut buffer = [0; 4096];
         while *budget != 0 {
             *budget -= 1;
@@ -1051,6 +1076,89 @@ mod tests {
         assert_eq!(pty.status().unwrap(), TerminalPtyStatus::Running);
         pty.write(b"exit\n").unwrap();
         pty.close(false).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn owned_ioctl_interrupts_foreground_job_without_terminating_shell() {
+        let directory = Directory::new();
+        let mut pty = start(&directory, &["-i"]);
+        pty.write(b"stty -echo; printf '%s%s\\n' shell _ready\n")
+            .unwrap();
+        read_until(&mut pty, b"shell_ready");
+        pty.write(b"/bin/sh -c 'printf job_ready; exec /bin/sleep 30'\n")
+            .unwrap();
+        read_until(&mut pty, b"job_ready");
+        pty.signal(BackgroundProcessSignal::Interrupt).unwrap();
+        pty.write(b"printf '%s%s\\n' still _interactive\n").unwrap();
+        read_until(&mut pty, b"still_interactive");
+        assert_eq!(pty.status().unwrap(), TerminalPtyStatus::Running);
+        pty.close(true).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn close_reaps_separate_foreground_and_background_jobs_ignoring_hup_and_term() {
+        use machine_god_terminal_sys::ProcessIdentity;
+        for force in [true, false] {
+            let directory = Directory::new();
+            let mut pty = start(&directory, &["-i"]);
+            pty.write(b"stty -echo; printf '%s%s\\n' shell _ready\n")
+                .unwrap();
+            read_until(&mut pty, b"shell_ready");
+            pty.write(b"/bin/sh -c 'trap \"\" HUP TERM; printf %s $$ > background.pid; printf background_ready; while :; do /bin/sleep 30; done' &\n").unwrap();
+            read_until(&mut pty, b"background_ready");
+            pty.write(b"/bin/sh -c 'trap \"\" HUP TERM; printf %s $$ > foreground.pid; printf foreground_ready; while :; do /bin/sleep 30; done'\n").unwrap();
+            read_until(&mut pty, b"foreground_ready");
+            let identity = |file: &str| {
+                ProcessIdentity::capture(
+                    NonZeroU32::new(
+                        std::fs::read_to_string(directory.0.join(file))
+                            .unwrap()
+                            .parse()
+                            .unwrap(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap()
+            };
+            let background = identity("background.pid");
+            let foreground = identity("foreground.pid");
+            for job in [background, foreground] {
+                let pid = rustix::process::Pid::from_raw(i32::try_from(job.pid().get()).unwrap())
+                    .unwrap();
+                assert_ne!(
+                    rustix::process::getpgid(Some(pid))
+                        .unwrap()
+                        .as_raw_nonzero()
+                        .get()
+                        .cast_unsigned(),
+                    pty.pid().get()
+                );
+            }
+            // A separate owned Child in another session/group must be untouched.
+            let mut bystander = Command::new("/bin/sleep")
+                .arg("30")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            let bystander_identity =
+                ProcessIdentity::capture(NonZeroU32::new(bystander.id()).unwrap()).unwrap();
+            let result = pty.close(force);
+            let untouched = bystander.try_wait().unwrap().is_none();
+            let _ = bystander.kill();
+            let _ = bystander.wait();
+            // Clean up exact test-owned incarnations even on a failed assertion.
+            let background_alive = background.exists().unwrap();
+            let foreground_alive = foreground.exists().unwrap();
+            let _ = background.signal(rustix::process::Signal::KILL);
+            let _ = foreground.signal(rustix::process::Signal::KILL);
+            assert!(result.is_ok(), "close({force}) failed: {result:?}");
+            assert!(!background_alive && !foreground_alive);
+            assert!(untouched, "close touched unrelated {bystander_identity:?}");
+        }
     }
 
     #[test]
