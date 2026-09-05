@@ -97,8 +97,10 @@ or unexplained entries. Recognized incomplete namespaces are counted without
 granting recovery or process authority.
 
 Catalog preparation and session-directory creation run through the held profile
-transaction. They bind the catalog to the exact retained profile descriptors
-and check global counts before creating a genuinely new owner or session.
+transaction through an exclusive mutable borrow, preventing concurrent callers
+from sharing a count preflight. They bind the catalog to the exact retained
+profile descriptors and check global counts before creating a genuinely new
+owner or session.
 Existing or partially prepared owners can finish preparation at the owner cap;
 duplicate session creation remains a conflict. These directory operations do
 not reacquire the profile lock or initialize journal metadata.

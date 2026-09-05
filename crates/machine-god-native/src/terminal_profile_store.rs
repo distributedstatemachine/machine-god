@@ -196,8 +196,10 @@ impl TerminalProfileTransaction<'_> {
     /// Existing and partial owner namespaces already consume their count slot.
     /// The returned catalog retains its independent owner lock after this short
     /// transaction ends. No journal payload is created by this operation.
+    /// The exclusive borrow also serializes callers sharing this transaction;
+    /// the filesystem lock alone only excludes other transactions.
     pub(crate) fn prepare_catalog(
-        &self,
+        &mut self,
         workspace: String,
         owner: BackgroundOutputOwner,
     ) -> Result<TerminalCatalog> {
@@ -224,7 +226,7 @@ impl TerminalProfileTransaction<'_> {
     /// existing per-owner limit, duplicate errors, fsync and poison rules remain
     /// authoritative; this adds exact profile binding and the global limit.
     pub(crate) fn create_session(
-        &self,
+        &mut self,
         catalog: &mut TerminalCatalog,
         id: &TerminalSessionId,
     ) -> Result<OwnedFd> {
@@ -574,7 +576,7 @@ mod tests {
         )
     }
 
-    fn catalog(transaction: &TerminalProfileTransaction<'_>, name: &str) -> TerminalCatalog {
+    fn catalog(transaction: &mut TerminalProfileTransaction<'_>, name: &str) -> TerminalCatalog {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
             match transaction.prepare_catalog("/workspace".into(), logical_owner(name)) {
@@ -590,8 +592,8 @@ mod tests {
     fn catalog_preparation_and_creation_share_transaction_but_retain_owner_lifetime() {
         let fixture = Fixture::new();
         let store = fixture.store();
-        let transaction = begin(&store);
-        let mut prepared = catalog(&transaction, "owner");
+        let mut transaction = begin(&store);
+        let mut prepared = catalog(&mut transaction, "owner");
         assert_eq!(
             prepared.namespace_key(),
             owner_name("/workspace", &logical_owner("owner"))
@@ -610,14 +612,14 @@ mod tests {
             TerminalProfileStoreError::Busy
         );
         drop(transaction);
-        let next = begin(&store);
+        let mut next = begin(&store);
         assert_eq!(
             next.prepare_catalog("/workspace".into(), logical_owner("owner"))
                 .unwrap_err(),
             TerminalProfileStoreError::Busy
         );
         drop(prepared);
-        let reopened = catalog(&next, "owner");
+        let reopened = catalog(&mut next, "owner");
         assert_eq!(reopened.list().unwrap(), [id("session")]);
     }
 
@@ -625,7 +627,7 @@ mod tests {
     fn invalid_workspace_rejects_before_catalog_filesystem_effects() {
         let fixture = Fixture::new();
         let store = fixture.store();
-        let transaction = begin(&store);
+        let mut transaction = begin(&store);
         for workspace in ["relative", "/a/..", "/a//b", "/a/", "/a\0b"] {
             assert_eq!(
                 transaction
@@ -650,8 +652,8 @@ mod tests {
         for number in 0..MAX_PROFILE_OWNERS - 1 {
             fixture.owner(number);
         }
-        let transaction = begin(&store);
-        let prepared = catalog(&transaction, "existing");
+        let mut transaction = begin(&store);
+        let prepared = catalog(&mut transaction, "existing");
         assert_eq!(prepared.namespace_key(), key);
         assert_eq!(prepared.list().unwrap(), [id("retained")]);
         assert_eq!(fs::metadata(&owner_root).unwrap().ino(), inode);
@@ -669,7 +671,7 @@ mod tests {
         assert!(!fixture.namespace().join(new_key).exists());
         drop(prepared);
         assert_eq!(
-            catalog(&transaction, "existing").list().unwrap(),
+            catalog(&mut transaction, "existing").list().unwrap(),
             [id("retained")]
         );
     }
@@ -681,8 +683,8 @@ mod tests {
         let key = owner_name("/workspace", &logical_owner("empty"));
         let owner_root = fixture.namespace().join(&key);
         directory(&owner_root);
-        let transaction = begin(&store);
-        let mut prepared = catalog(&transaction, "empty");
+        let mut transaction = begin(&store);
+        let mut prepared = catalog(&mut transaction, "empty");
         assert_eq!(transaction.inventory().unwrap().owner_count, 1);
         transaction
             .create_session(&mut prepared, &id("new"))
@@ -695,8 +697,8 @@ mod tests {
     fn global_session_cap_preflights_mkdir_and_duplicates_keep_conflict() {
         let fixture = Fixture::new();
         let store = fixture.store();
-        let transaction = begin(&store);
-        let mut full = catalog(&transaction, "full");
+        let mut transaction = begin(&store);
+        let mut full = catalog(&mut transaction, "full");
         let full_root = fixture.namespace().join(full.namespace_key());
         for number in 0..MAX_OWNER_SESSIONS {
             fixture.session(&full_root, &format!("s{number}"));
@@ -715,7 +717,7 @@ mod tests {
                 fixture.session(&owner, &format!("s{session}"));
             }
         }
-        let mut empty = catalog(&transaction, "empty");
+        let mut empty = catalog(&mut transaction, "empty");
         assert_eq!(
             transaction.inventory().unwrap().sessions.len(),
             MAX_PROFILE_SESSIONS
@@ -750,10 +752,10 @@ mod tests {
         let foreign = Fixture::new();
         let local_store = local.store();
         let foreign_store = foreign.store();
-        let local_transaction = begin(&local_store);
-        let foreign_transaction = begin(&foreign_store);
-        let mut local_catalog = catalog(&local_transaction, "same-owner");
-        let mut foreign_catalog = catalog(&foreign_transaction, "same-owner");
+        let mut local_transaction = begin(&local_store);
+        let mut foreign_transaction = begin(&foreign_store);
+        let mut local_catalog = catalog(&mut local_transaction, "same-owner");
+        let mut foreign_catalog = catalog(&mut foreign_transaction, "same-owner");
         assert_eq!(
             local_catalog.namespace_key(),
             foreign_catalog.namespace_key()
@@ -777,8 +779,8 @@ mod tests {
     fn replaced_profile_lock_rejects_both_catalog_mutations_before_effects() {
         let fixture = Fixture::new();
         let store = fixture.store();
-        let transaction = begin(&store);
-        let mut prepared = catalog(&transaction, "existing");
+        let mut transaction = begin(&store);
+        let mut prepared = catalog(&mut transaction, "existing");
         let lock = fixture.namespace().join(LOCK);
         fs::rename(&lock, fixture.0.join("old-profile-lock")).unwrap();
         file(&lock, b"");

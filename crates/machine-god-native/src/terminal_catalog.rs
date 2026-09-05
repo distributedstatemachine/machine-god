@@ -493,7 +493,7 @@ mod tests {
 
         let fixture = Fixture::new();
         let store = TerminalProfileStore::prepare(fixture.fd()).unwrap();
-        let transaction = store.transaction().unwrap();
+        let mut transaction = store.transaction().unwrap();
         let mut catalog = transaction
             .prepare_catalog("/workspace".into(), owner("session", "incarnation"))
             .unwrap();
