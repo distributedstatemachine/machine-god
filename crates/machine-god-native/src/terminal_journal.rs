@@ -660,8 +660,8 @@ impl TerminalJournal {
     /// persisted limits for nonresident retention. The journal's checksummed
     /// limits still pass the same global bounds; no caller estimate replaces
     /// them. Recovery validates committed payloads before repairing artifacts.
-    pub(crate) fn open_for_retention(root: OwnedFd, session: TerminalSessionId) -> Result<Self> {
-        Self::open_checked(root, &session, None)
+    pub(crate) fn open_for_retention(root: OwnedFd, session: &TerminalSessionId) -> Result<Self> {
+        Self::open_checked(root, session, None)
     }
 
     fn open_checked(
@@ -763,8 +763,15 @@ impl TerminalJournal {
         let file = match open_file(root.as_fd(), META, OFlags::RDONLY) {
             Ok(file) => file,
             Err(TerminalJournalError::NotFound) => {
-                // Recognized partial initialization has no committed reserve.
-                scan_physical(root.as_fd(), MAX_SEGMENT_BYTES, BTreeSet::new())?;
+                // Creation publishes metadata before any payload. Payload
+                // without metadata cannot establish an absent reservation.
+                let physical = scan_physical(root.as_fd(), MAX_SEGMENT_BYTES, BTreeSet::new())?;
+                ensure(
+                    physical.output_bytes == 0
+                        && physical.state_bytes == 0
+                        && physical.event_bytes == 0,
+                    TerminalJournalError::Corrupt,
+                )?;
                 return Ok(0);
             }
             Err(error) => return Err(error),
@@ -2069,7 +2076,7 @@ mod tests {
         set_reserve(&mut journal, 32);
         fixture.put(&checkpoint_name(99), b"orphan");
         assert_eq!(
-            TerminalJournal::open_for_retention(fixture.fd(), session()).unwrap_err(),
+            TerminalJournal::open_for_retention(fixture.fd(), &session()).unwrap_err(),
             TerminalJournalError::Busy
         );
         assert!(fixture.path.join(checkpoint_name(99)).exists());
@@ -2079,7 +2086,7 @@ mod tests {
             TerminalJournalError::Corrupt
         );
         let mut retained =
-            after_owner_drop(|| TerminalJournal::open_for_retention(fixture.fd(), session()))
+            after_owner_drop(|| TerminalJournal::open_for_retention(fixture.fd(), &session()))
                 .unwrap();
         assert_eq!(retained.manifest.limits, custom_limits);
         assert_eq!(retained.checkpoint_reserve_bytes(), 32);
@@ -2114,7 +2121,7 @@ mod tests {
             }
             replace_metadata(&fixture, manifest);
             assert_eq!(
-                after_owner_drop(|| TerminalJournal::open_for_retention(fixture.fd(), session()))
+                after_owner_drop(|| TerminalJournal::open_for_retention(fixture.fd(), &session()))
                     .unwrap_err(),
                 TerminalJournalError::Corrupt,
                 "case {case}"
@@ -2319,6 +2326,44 @@ mod tests {
             TerminalJournalError::Corrupt
         );
         assert_eq!(std::fs::read(fixture.path.join(META)).unwrap(), encoded);
+    }
+
+    #[test]
+    fn checkpoint_reserve_scan_rejects_payload_without_committed_metadata() {
+        for case in 0..4 {
+            let fixture = Fixture::new();
+            let mut journal = fixture.create(limits(8, 64));
+            set_reserve(&mut journal, 32);
+            match case {
+                0 => {
+                    journal.append(b"raw").unwrap();
+                }
+                1 => {
+                    journal
+                        .publish_checkpoint(journal.latest(), b"grid")
+                        .unwrap();
+                }
+                2 => {
+                    journal.publish_state(journal.latest(), b"facts").unwrap();
+                }
+                3 => {
+                    journal.append_event(b"event").unwrap();
+                }
+                _ => unreachable!(),
+            }
+            std::fs::remove_file(fixture.path.join(META)).unwrap();
+            let before = TerminalJournal::inspect_physical(fixture.fd()).unwrap();
+            assert_eq!(
+                TerminalJournal::inspect_checkpoint_reserve(fixture.fd(), &session()).unwrap_err(),
+                TerminalJournalError::Corrupt,
+                "case {case}"
+            );
+            assert_eq!(
+                TerminalJournal::inspect_physical(fixture.fd()).unwrap(),
+                before
+            );
+            assert!(!fixture.path.join(META).exists());
+        }
     }
 
     #[test]
