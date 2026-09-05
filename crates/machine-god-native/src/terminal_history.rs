@@ -23,7 +23,8 @@ const MAGIC: &[u8; 8] = b"MGTH\0\0\0\x01";
 const GRID: u8 = 0;
 const RAW_GAP: u8 = 1;
 const RESIZE_PENDING: u8 = 2;
-// The journal retains at most 64 MiB. Page reads are at most 64 KiB;
+// The journal retains at most 64 MiB of raw/checkpoint output, independently
+// of protected state and events. Page reads are at most 64 KiB;
 // segment boundaries may add at most 128 short pages.
 const MAX_REPLAY_PAGES: usize = 1024 + 128;
 
@@ -541,6 +542,64 @@ mod tests {
                 TerminalScreenError::Unavailable(reason)
             ))
         );
+    }
+
+    #[test]
+    fn protected_records_do_not_displace_output_or_recovered_screen() {
+        let fixture = Fixture::new(TerminalJournalLimits {
+            segment_bytes: 256,
+            session_bytes: 16 * 1024,
+        });
+        let mut history = fixture.history();
+        history.append(b"checkpointed").unwrap();
+        history.checkpoint().unwrap();
+        history.append(b" replayed").unwrap();
+        let screen = history.screen().unwrap();
+        let before = history.physical_usage().unwrap();
+        let state = vec![b's'; 64 * 1024];
+        history.publish_state(&state).unwrap();
+        for _ in 0..16 {
+            history.journal.append_event(&[b'e'; 4096]).unwrap();
+        }
+        let after = history.physical_usage().unwrap();
+        assert_eq!(after.output_bytes, before.output_bytes);
+        assert_eq!(after.state_bytes, 64 * 1024);
+        assert_eq!(after.event_bytes, 64 * 1024);
+        assert_eq!(history.screen().unwrap(), screen);
+        let page = history.read(&origin(), 64).unwrap();
+        assert_eq!(page.bytes, b"checkpointed replayed");
+        assert!(page.gap.is_none());
+        drop(history);
+
+        let recovered = TerminalHistory::recover(fixture.open()).unwrap();
+        assert_eq!(recovered.screen().unwrap(), screen);
+        assert_eq!(recovered.load_state().unwrap().unwrap().bytes, state);
+        let events = recovered.journal.read_events(0, 256).unwrap();
+        assert_eq!(events.events.len(), 16);
+        assert_eq!(events.gap_through, 0);
+        assert_eq!(recovered.physical_usage().unwrap(), after);
+        assert!(recovered.read(&origin(), 64).unwrap().gap.is_none());
+    }
+
+    #[test]
+    fn non_output_records_prevent_reclassification_as_new_live_history() {
+        for state_only in [true, false] {
+            let fixture = Fixture::new(TerminalJournalLimits::default());
+            let mut journal = fixture.journal();
+            if state_only {
+                journal.publish_state(origin(), b"existing state").unwrap();
+            } else {
+                journal.append_event(b"existing event").unwrap();
+            }
+            assert_eq!(journal.physical_usage().unwrap().output_bytes, 0);
+            drop(journal);
+            assert!(matches!(
+                TerminalHistory::create(fixture.open(), &dimensions()),
+                Err(TerminalHistoryError::Journal(
+                    TerminalJournalError::Conflict
+                ))
+            ));
+        }
     }
 
     #[test]

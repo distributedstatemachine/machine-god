@@ -82,6 +82,9 @@ Reusable owned-worker spawning now shares the production collector. Retention
 integration routes physical inventory and explicit eviction through registry,
 session and validated history boundaries; profile-wide admission and victim
 selection remain to be composed before the terminal runtime is exposed.
+Per-session retention separates raw/checkpoint output from independently bounded
+state and events, matching the pinned output-accounting boundary. Non-output
+publications cannot evict output; recovery retains all ledger categories.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:

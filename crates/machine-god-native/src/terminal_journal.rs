@@ -4,7 +4,8 @@
 //! same-account processes. Checksums detect corruption; they are not authentication.
 //! Metadata publication is the commit point. An I/O error can be ambiguous and
 //! poisons the handle until reopen/reconciliation. No persisted PID is consulted.
-//! The session budget covers committed retained payload. Atomic publication
+//! The session output budget covers committed raw bytes and screen checkpoints;
+//! session facts and the event ring have separate fixed bounds. Atomic publication
 //! temporarily needs up to the submitted payload's length in additional disk
 //! space, plus bounded metadata. The profile coordinator must reserve that
 //! headroom before dispatch; this module does not silently enforce a global cap.
@@ -166,6 +167,8 @@ redacted!(TerminalJournalEvents);
 pub(crate) struct TerminalJournalUsage {
     pub(crate) raw_bytes: usize,
     pub(crate) checkpoint_bytes: usize,
+    /// Committed raw output plus checkpoint bytes, subject to `session_bytes`.
+    pub(crate) output_bytes: usize,
     pub(crate) state_bytes: usize,
     pub(crate) event_bytes: usize,
     pub(crate) payload_bytes: usize,
@@ -700,7 +703,7 @@ impl TerminalJournal {
         ensure(
             !bytes.is_empty()
                 && bytes.len() <= MAX_CHECKPOINT_BYTES
-                && bytes.len() <= self.manifest.limits.session_bytes - self.usage().state_bytes
+                && bytes.len() <= self.manifest.limits.session_bytes
                 && source <= self.manifest.latest,
             TerminalJournalError::Invalid,
         )?;
@@ -757,16 +760,12 @@ impl TerminalJournal {
     }
 
     /// Protected opaque session facts and monitor snapshot. Publication replaces
-    /// the previous state atomically; retention never removes it. One full raw
-    /// segment remains affordable, so subsequent output cannot strand the writer.
+    /// the previous state atomically; output retention never removes it and state
+    /// publication cannot consume or evict the separately budgeted output.
     pub(crate) fn publish_state(&mut self, source: TerminalCursor, bytes: &[u8]) -> Result<()> {
         self.ready()?;
         ensure(
-            !bytes.is_empty()
-                && bytes.len() <= MAX_STATE_BYTES
-                && bytes.len()
-                    <= self.manifest.limits.session_bytes - self.manifest.limits.segment_bytes
-                && source <= self.manifest.latest,
+            !bytes.is_empty() && bytes.len() <= MAX_STATE_BYTES && source <= self.manifest.latest,
             TerminalJournalError::Invalid,
         )?;
         self.validate_position(&source)?;
@@ -786,7 +785,6 @@ impl TerminalJournal {
         });
         // Finish capacity and counter checks before creating any file or
         // poisoning this handle. Existing state is replaced, not double-counted.
-        trim(&mut next, false)?;
         validate_manifest(&next)?;
         self.poisoned = true;
         let blob = write_blob(&self.root, &state_name(id), id, bytes)?;
@@ -821,9 +819,7 @@ impl TerminalJournal {
     pub(crate) fn append_event(&mut self, payload: &[u8]) -> Result<u64> {
         self.ready()?;
         ensure(
-            !payload.is_empty()
-                && payload.len() <= MAX_EVENT_BYTES
-                && payload.len() <= self.manifest.limits.session_bytes,
+            !payload.is_empty() && payload.len() <= MAX_EVENT_BYTES,
             TerminalJournalError::Invalid,
         )?;
         self.poisoned = true;
@@ -838,7 +834,6 @@ impl TerminalJournal {
         while next.events.len() > MAX_EVENTS {
             evict_event(&mut next);
         }
-        trim(&mut next, false)?;
         self.commit(next)?;
         Ok(id)
     }
@@ -1132,7 +1127,6 @@ fn validate_manifest(m: &Manifest) -> Result<()> {
                 && state.blob.id <= m.generation
                 && state.blob.bytes > 0
                 && state.blob.bytes <= MAX_STATE_BYTES
-                && state.blob.bytes <= m.limits.session_bytes - m.limits.segment_bytes
                 && state.source <= m.latest
                 && state.source.offset() <= m.limits.segment_bytes as u64,
             TerminalJournalError::Corrupt,
@@ -1156,20 +1150,18 @@ fn validate_manifest(m: &Manifest) -> Result<()> {
     )?;
     ensure(m.acknowledged <= m.event_gap, TerminalJournalError::Corrupt)?;
     ensure(
-        usage(m, 0).payload_bytes <= m.limits.session_bytes,
+        usage(m, 0).output_bytes <= m.limits.session_bytes,
         TerminalJournalError::Corrupt,
     )
 }
 
 fn trim(m: &mut Manifest, preserve_checkpoint: bool) -> Result<()> {
-    while usage(m, 0).payload_bytes > m.limits.session_bytes || m.segments.len() > MAX_SEGMENTS {
+    while usage(m, 0).output_bytes > m.limits.session_bytes || m.segments.len() > MAX_SEGMENTS {
         if m.segments.len() > 1 {
             m.segments.remove(0);
         } else if !preserve_checkpoint && m.checkpoint.is_some() {
             m.checkpoint = None;
             m.checkpoint_evicted = true;
-        } else if !m.events.is_empty() {
-            evict_event(m);
         } else if preserve_checkpoint && !m.segments.is_empty() {
             m.segments.clear();
         } else {
@@ -1189,6 +1181,7 @@ fn usage(m: &Manifest, metadata_bytes: usize) -> TerminalJournalUsage {
     TerminalJournalUsage {
         raw_bytes,
         checkpoint_bytes,
+        output_bytes: raw_bytes + checkpoint_bytes,
         state_bytes,
         event_bytes,
         payload_bytes: raw_bytes + checkpoint_bytes + state_bytes + event_bytes,
@@ -2107,7 +2100,7 @@ mod tests {
     }
 
     #[test]
-    fn state_admission_reserves_raw_segment_and_invalid_requests_are_inert() {
+    fn state_admission_is_independent_and_invalid_requests_are_inert() {
         let fixture = Fixture::new();
         let mut journal = fixture.create(limits(4, 12));
         journal.append(b"raw").unwrap();
@@ -2118,7 +2111,6 @@ mod tests {
         let generation = journal.manifest.generation;
         for (source, bytes) in [
             (journal.latest(), b"".as_slice()),
-            (journal.latest(), b"123456789".as_slice()),
             (cursor(1, 4), b"x".as_slice()),
         ] {
             assert_eq!(
@@ -2128,7 +2120,7 @@ mod tests {
         }
         assert_eq!(
             journal
-                .publish_checkpoint(journal.latest(), b"12345")
+                .publish_checkpoint(journal.latest(), b"1234567890123")
                 .unwrap_err(),
             TerminalJournalError::Invalid
         );
@@ -2137,8 +2129,15 @@ mod tests {
         assert!(!fixture.path.join(checkpoint_name(generation + 1)).exists());
         assert_eq!(journal.usage().state_bytes, 8);
         journal.append(b"123456789").unwrap();
-        assert_eq!(collect(&journal, cursor(1, 0)), b"6789");
-        assert_eq!(journal.usage().payload_bytes, 12);
+        assert_eq!(collect(&journal, cursor(1, 0)), b"raw123456789");
+        assert_eq!(journal.usage().output_bytes, 12);
+        assert_eq!(journal.usage().payload_bytes, 20);
+        journal
+            .publish_state(journal.latest(), b"1234567890123")
+            .unwrap();
+        assert_eq!(journal.usage().state_bytes, 13);
+        assert_eq!(journal.usage().output_bytes, 12);
+        assert_eq!(journal.usage().payload_bytes, 25);
         journal.publish_state(journal.latest(), b"smaller").unwrap();
         assert_eq!(journal.usage().state_bytes, 7);
     }
@@ -2165,15 +2164,15 @@ mod tests {
         assert!(journal.pending_files.is_empty());
         let fixture = Fixture::new();
         let mut journal = fixture.create(limits(4, 4));
-        assert_eq!(
-            journal.publish_state(journal.latest(), b"x").unwrap_err(),
-            TerminalJournalError::Invalid
-        );
+        journal.publish_state(journal.latest(), b"x").unwrap();
         journal.append(b"raw!").unwrap();
+        assert_eq!(journal.usage().output_bytes, 4);
+        assert_eq!(journal.usage().payload_bytes, 5);
+        assert_eq!(journal.load_state().unwrap().unwrap().bytes, b"x");
     }
 
     #[test]
-    fn protected_state_survives_raw_checkpoint_and_event_eviction() {
+    fn state_and_events_survive_raw_checkpoint_pressure() {
         let fixture = Fixture::new();
         let limits = limits(4, 12);
         let mut journal = fixture.create(limits);
@@ -2184,12 +2183,23 @@ mod tests {
             .publish_checkpoint(journal.latest(), b"grid")
             .unwrap();
         journal.append_event(b"event").unwrap();
-        assert!(journal.load_checkpoint().unwrap().is_none());
-        assert_eq!(journal.read_events(0, 256).unwrap().gap_through, 1);
+        assert_eq!(journal.load_checkpoint().unwrap().unwrap().bytes, b"grid");
+        assert_eq!(journal.read_events(0, 256).unwrap().gap_through, 0);
         journal.append(b"abcdefghijklmnop").unwrap();
-        assert_eq!(collect(&journal, cursor(1, 0)), b"mnop");
+        assert_eq!(collect(&journal, cursor(1, 0)), b"ijklmnop");
         assert_eq!(journal.usage().state_bytes, 8);
-        assert_eq!(journal.usage().payload_bytes, 12);
+        assert_eq!(journal.usage().output_bytes, 12);
+        assert_eq!(journal.usage().payload_bytes, 25);
+        journal
+            .publish_checkpoint(journal.latest(), b"123456789012")
+            .unwrap();
+        assert_eq!(journal.usage().raw_bytes, 0);
+        journal.append(b"qrst").unwrap();
+        assert!(journal.load_checkpoint().unwrap().is_none());
+        assert_eq!(
+            journal.read_events(0, 256).unwrap().events[0].payload,
+            b"event"
+        );
         drop(journal);
         let mut journal = fixture.open(limits).unwrap();
         let state = journal.load_state().unwrap().unwrap();
@@ -2201,7 +2211,7 @@ mod tests {
     }
 
     #[test]
-    fn growing_state_trims_other_payloads_and_checkpoint_can_use_remaining_budget() {
+    fn growing_state_preserves_output_and_checkpoint_can_use_full_output_budget() {
         let fixture = Fixture::new();
         let limits = limits(4, 12);
         let mut journal = fixture.create(limits);
@@ -2216,15 +2226,19 @@ mod tests {
             .publish_state(journal.latest(), b"facts-v2")
             .unwrap();
         assert_eq!(journal.usage().raw_bytes, 4);
-        assert_eq!(journal.usage().checkpoint_bytes, 0);
-        assert_eq!(journal.usage().event_bytes, 0);
-        assert_eq!(journal.usage().payload_bytes, 12);
+        assert_eq!(journal.usage().checkpoint_bytes, 4);
+        assert_eq!(journal.usage().event_bytes, 2);
+        assert_eq!(journal.usage().output_bytes, 8);
+        assert_eq!(journal.usage().payload_bytes, 18);
         journal
-            .publish_checkpoint(journal.latest(), b"grid")
+            .publish_checkpoint(journal.latest(), b"123456789012")
             .unwrap();
         assert_eq!(journal.usage().raw_bytes, 0);
-        assert_eq!(journal.usage().checkpoint_bytes, 4);
+        assert_eq!(journal.usage().checkpoint_bytes, 12);
         assert_eq!(journal.usage().state_bytes, 8);
+        assert_eq!(journal.usage().event_bytes, 2);
+        assert_eq!(journal.usage().output_bytes, 12);
+        assert_eq!(journal.usage().payload_bytes, 22);
         journal.append(b"next").unwrap();
         assert_eq!(journal.usage().raw_bytes, 4);
         assert_eq!(journal.usage().checkpoint_bytes, 0);
@@ -2232,7 +2246,67 @@ mod tests {
         drop(journal);
         let journal = fixture.open(limits).unwrap();
         assert_eq!(journal.recovery(), TerminalJournalRecovery::default());
-        assert_eq!(journal.usage().payload_bytes, 12);
+        assert_eq!(journal.usage().output_bytes, 4);
+        assert_eq!(journal.usage().event_bytes, 2);
+        assert_eq!(journal.usage().payload_bytes, 14);
+    }
+
+    #[test]
+    fn small_output_budget_admits_independent_state_and_maximum_event_without_output_loss() {
+        let fixture = Fixture::new();
+        let limits = limits(4, 8);
+        let mut journal = fixture.create(limits);
+        journal.append(b"raw!").unwrap();
+        journal
+            .publish_checkpoint(journal.latest(), b"grid")
+            .unwrap();
+        let state = vec![b's'; 4096];
+        let event = vec![b'e'; MAX_EVENT_BYTES];
+        journal.publish_state(journal.latest(), &state).unwrap();
+        journal.append_event(&event).unwrap();
+        assert_eq!(journal.usage().output_bytes, 8);
+        assert_eq!(journal.usage().payload_bytes, 8 + state.len() + event.len());
+        let manifest_bytes = std::fs::read(fixture.path.join(META)).unwrap();
+        let mut files = journal.scan_owned().unwrap();
+        files.sort();
+        assert_eq!(
+            journal.append_event(&[]).unwrap_err(),
+            TerminalJournalError::Invalid
+        );
+        assert_eq!(
+            journal
+                .append_event(&vec![0; MAX_EVENT_BYTES + 1])
+                .unwrap_err(),
+            TerminalJournalError::Invalid
+        );
+        assert_eq!(
+            std::fs::read(fixture.path.join(META)).unwrap(),
+            manifest_bytes
+        );
+        let mut after_files = journal.scan_owned().unwrap();
+        after_files.sort();
+        assert_eq!(after_files, files);
+        assert!(!journal.poisoned);
+        // Validate the independent exact state ceiling without writing a large
+        // fixture file; actual publication above already exceeds the output cap.
+        let mut manifest = journal.manifest.clone();
+        manifest.state.as_mut().unwrap().blob.bytes = MAX_STATE_BYTES;
+        assert!(validate_manifest(&manifest).is_ok());
+        manifest.state.as_mut().unwrap().blob.bytes += 1;
+        assert_eq!(
+            validate_manifest(&manifest),
+            Err(TerminalJournalError::Corrupt)
+        );
+        drop(journal);
+        let journal = fixture.open(limits).unwrap();
+        assert_eq!(collect(&journal, cursor(1, 0)), b"raw!");
+        assert_eq!(journal.load_checkpoint().unwrap().unwrap().bytes, b"grid");
+        assert_eq!(journal.load_state().unwrap().unwrap().bytes, state);
+        assert_eq!(
+            journal.read_events(0, 256).unwrap().events[0].payload,
+            event
+        );
+        assert_eq!(journal.recovery(), TerminalJournalRecovery::default());
     }
 
     #[test]
@@ -2408,8 +2482,15 @@ mod tests {
     #[test]
     fn events_retain_256_and_acknowledgements_and_gaps_survive_reopen() {
         let fixture = Fixture::new();
-        let limits = limits(64, 2048);
+        let limits = limits(4, 8);
         let mut journal = fixture.create(limits);
+        journal.append(b"raw!").unwrap();
+        journal
+            .publish_checkpoint(journal.latest(), b"grid")
+            .unwrap();
+        journal
+            .publish_state(journal.latest(), b"facts-outside-budget")
+            .unwrap();
         for expected in 1..=260 {
             assert_eq!(journal.append_event(b"x").unwrap(), expected);
         }
@@ -2419,6 +2500,13 @@ mod tests {
         assert_eq!(events.next_event_id, 261);
         assert_eq!(events.events[0].id, 5);
         assert_eq!(events.events[0].payload, b"x");
+        assert_eq!(journal.usage().output_bytes, 8);
+        assert_eq!(journal.usage().event_bytes, 256);
+        assert_eq!(collect(&journal, cursor(1, 0)), b"raw!");
+        assert_eq!(journal.load_checkpoint().unwrap().unwrap().bytes, b"grid");
+        journal.append(b"abcdefgh").unwrap();
+        assert_eq!(journal.usage().event_bytes, 256);
+        assert_eq!(journal.read_events(0, 256).unwrap().gap_through, 4);
         journal.acknowledge_events(100).unwrap();
         journal.acknowledge_events(99).unwrap();
         assert_eq!(
@@ -2431,6 +2519,11 @@ mod tests {
         assert_eq!(events.events.len(), 160);
         assert_eq!(events.acknowledged_through, 100);
         assert_eq!(events.gap_through, 100);
+        assert_eq!(reopened.usage().output_bytes, 8);
+        assert_eq!(
+            reopened.load_state().unwrap().unwrap().bytes,
+            b"facts-outside-budget"
+        );
         assert!(!fixture.path.join(event_name(1)).exists());
     }
 

@@ -64,8 +64,14 @@ until reopen, and one exclusive writer lease prevents concurrent publication.
 Session facts and monitor state have a separate protected, checksummed blob;
 output, event and screen-checkpoint eviction cannot silently remove it. Its
 33 MiB bound includes up to 32 MiB of monitor state and 512 KiB of framed facts.
-Admission reserves at least one full raw segment inside the session payload
-budget, and impossible state/checkpoint combinations fail before publication.
+The per-session output budget (64 MiB by default) counts only raw output and
+screen checkpoints, matching the pinned fx accounting boundary. State is
+bounded independently at 33 MiB; the event ring retains at most 256 records of
+at most 4 KiB each. Publishing state or events cannot displace raw output or
+screen checkpoints, and output pressure cannot evict state or events. Events
+leave the ring only through its count limit or explicit acknowledgement.
+Committed total-payload accounting still includes all four artifact kinds;
+physical accounting additionally includes temporary/orphan files and metadata.
 State-less journal records retain their existing checksum representation.
 
 The journal exposes a non-mutating physical inventory through its retained
