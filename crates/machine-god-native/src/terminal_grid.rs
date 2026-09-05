@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Safe, replay-only Rust transliteration of vercel-labs/fx at revision
+// Safe, bounded Rust transliteration of vercel-labs/fx at revision
 // b1774fbf6c7602b503026f96f6e960e946c692ef:
-// src/core/terminal/engine.zig. Presentation styles, hyperlinks, protocol
-// replies, checkpoints, and diffs are intentionally omitted from this private
-// projection; their control sequences are still consumed without leaking.
+// src/core/terminal/engine.zig. Replay remains observational; live callers
+// explicitly request and own bounded protocol replies.
 
 use super::terminal_display_width::{decode_next_rune, display_unit_at, utf8_sequence_len};
-use std::collections::HashMap;
+use machine_god_core::{
+    TerminalCell, TerminalCellKind, TerminalCellStyle, TerminalColor, TerminalCursorShape,
+    TerminalDimensions, TerminalHyperlink, TerminalModes, TerminalScreen, TerminalScreenCursor,
+};
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 const MAX_DIMENSION: u16 = 4096;
@@ -23,6 +26,11 @@ const MAX_SUFFIX_ENTRIES: usize = 65_535;
 const MAX_CELL_TEXT_BYTES: usize = 64;
 const FEED_CANCELLATION_CHECKPOINT_BYTES: usize = 16 * 1024;
 const SYNC_RESET: &[u8] = b"\x1b[?2026l";
+const MAX_REPLY_COUNT: usize = 16;
+const MAX_REPLY_BYTES: usize = 256;
+const MAX_REPLY_TOTAL_BYTES: usize = 4096;
+const MAX_HYPERLINK_POOL_BYTES: usize = 4 * 1024 * 1024;
+const MAX_CHECKPOINT_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TerminalGridError {
@@ -34,6 +42,10 @@ pub(crate) enum TerminalGridError {
     SynchronizedUpdateTooLarge,
     CombiningPoolCapacityExceeded,
     SnapshotTooLarge,
+    HyperlinkPoolCapacityExceeded,
+    ReplyCapacityExceeded,
+    InvalidCheckpoint,
+    CheckpointTooLarge,
 }
 
 impl std::fmt::Display for TerminalGridError {
@@ -47,6 +59,10 @@ impl std::fmt::Display for TerminalGridError {
             Self::SynchronizedUpdateTooLarge => "terminal synchronized update limit exceeded",
             Self::CombiningPoolCapacityExceeded => "terminal combining suffix limit exceeded",
             Self::SnapshotTooLarge => "terminal snapshot limit exceeded",
+            Self::HyperlinkPoolCapacityExceeded => "terminal hyperlink pool limit exceeded",
+            Self::ReplyCapacityExceeded => "terminal reply capacity exceeded",
+            Self::InvalidCheckpoint => "invalid terminal checkpoint",
+            Self::CheckpointTooLarge => "terminal checkpoint limit exceeded",
         })
     }
 }
@@ -88,11 +104,13 @@ impl FeedCheckpoint {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 struct Cell {
     codepoint: u32,
     width: u8,
     suffix_id: u32,
+    style: TerminalCellStyle,
+    hyperlink_id: u32,
 }
 
 impl Default for Cell {
@@ -101,6 +119,8 @@ impl Default for Cell {
             codepoint: u32::from(' '),
             width: 1,
             suffix_id: 0,
+            style: TerminalCellStyle::default(),
+            hyperlink_id: 0,
         }
     }
 }
@@ -111,6 +131,8 @@ struct SavedCursor {
     col: u16,
     pending_wrap: bool,
     origin_mode: bool,
+    style: TerminalCellStyle,
+    hyperlink_id: u32,
 }
 
 // These independent booleans are the terminal modes serialized by the pinned
@@ -129,6 +151,11 @@ struct SavedScreen {
     insert_mode: bool,
     saved_cursor: Option<SavedCursor>,
     last_printable_idx: Option<usize>,
+    current_style: TerminalCellStyle,
+    hyperlink_id: u32,
+    hyperlink_params: Vec<u8>,
+    cursor_shape: TerminalCursorShape,
+    cursor_blinking: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -180,6 +207,107 @@ pub(crate) struct TerminalGrid {
     utf8_expected: usize,
     sync_active: bool,
     sync_buffer: Vec<u8>,
+    current_style: TerminalCellStyle,
+    hyperlink_id: u32,
+    hyperlink_params: Vec<u8>,
+    hyperlink_pool: Vec<Arc<[u8]>>,
+    hyperlink_index: HashMap<Arc<[u8]>, u32>,
+    hyperlink_pool_bytes: usize,
+    cursor_shape: TerminalCursorShape,
+    cursor_blinking: bool,
+    bracketed_paste: bool,
+    mouse_modes: u16,
+    focus_tracking: bool,
+    application_cursor_keys: bool,
+    application_keypad: bool,
+    keyboard_protocol: bool,
+    live_feed: bool,
+    replies: Vec<Vec<u8>>,
+    reply_bytes: usize,
+}
+
+// Active and saved screens deliberately have the same persisted field names.
+macro_rules! encode_screen {
+    ($writer:ident, $screen:expr) => {{
+        let screen = $screen;
+        $writer.cells(&screen.cells)?;
+        for value in [
+            screen.row_origin,
+            screen.cursor_row,
+            screen.cursor_col,
+            screen.scroll_top,
+            screen.scroll_bottom,
+        ] {
+            $writer.u16(value)?;
+        }
+        for value in [
+            screen.autowrap,
+            screen.pending_wrap,
+            screen.origin_mode,
+            screen.insert_mode,
+        ] {
+            $writer.boolean(value)?;
+        }
+        $writer.style(screen.current_style)?;
+        $writer.u32(screen.hyperlink_id as usize)?;
+        $writer.sized(&screen.hyperlink_params)?;
+        $writer.u8(shape_code(screen.cursor_shape))?;
+        $writer.boolean(screen.cursor_blinking)?;
+        $writer.boolean(screen.saved_cursor.is_some())?;
+        if let Some(saved) = screen.saved_cursor {
+            $writer.u16(saved.row)?;
+            $writer.u16(saved.col)?;
+            $writer.boolean(saved.pending_wrap)?;
+            $writer.boolean(saved.origin_mode)?;
+            $writer.style(saved.style)?;
+            $writer.u32(saved.hyperlink_id as usize)?;
+        }
+        $writer.boolean(screen.last_printable_idx.is_some())?;
+        if let Some(index) = screen.last_printable_idx {
+            $writer.u32(index)?;
+        }
+    }};
+}
+
+macro_rules! validate_screen {
+    ($grid:expr, $screen:expr) => {{
+        let grid = $grid;
+        let screen = $screen;
+        validate_cells(
+            &screen.cells,
+            grid.cols,
+            grid.rows,
+            &grid.suffix_pool,
+            grid.hyperlink_pool.len(),
+        )?;
+        if screen.row_origin >= grid.rows
+            || screen.cursor_row == 0
+            || screen.cursor_row > grid.rows
+            || screen.cursor_col == 0
+            || screen.cursor_col > grid.cols
+            || screen.scroll_top == 0
+            || screen.scroll_top > screen.scroll_bottom
+            || screen.scroll_bottom > grid.rows
+            || screen.hyperlink_id as usize > grid.hyperlink_pool.len()
+            || screen.hyperlink_params.len() > MAX_CONTROL_STRING_BYTES
+            || screen
+                .last_printable_idx
+                .is_some_and(|index| screen.cells.get(index).is_none_or(|cell| cell.width == 0))
+        {
+            return Err(TerminalGridError::InvalidCheckpoint);
+        }
+        if let Some(saved) = screen.saved_cursor {
+            // Resize clamps saved cursor only when it is restored, matching fx.
+            if saved.row == 0
+                || saved.row > MAX_DIMENSION
+                || saved.col == 0
+                || saved.col > MAX_DIMENSION
+                || saved.hyperlink_id as usize > grid.hyperlink_pool.len()
+            {
+                return Err(TerminalGridError::InvalidCheckpoint);
+            }
+        }
+    }};
 }
 
 impl TerminalGrid {
@@ -224,6 +352,23 @@ impl TerminalGrid {
             utf8_expected: 0,
             sync_active: false,
             sync_buffer: Vec::new(),
+            current_style: TerminalCellStyle::default(),
+            hyperlink_id: 0,
+            hyperlink_params: Vec::new(),
+            hyperlink_pool: Vec::new(),
+            hyperlink_index: HashMap::new(),
+            hyperlink_pool_bytes: 0,
+            cursor_shape: TerminalCursorShape::Block,
+            cursor_blinking: true,
+            bracketed_paste: false,
+            mouse_modes: 0,
+            focus_tracking: false,
+            application_cursor_keys: false,
+            application_keypad: false,
+            keyboard_protocol: false,
+            live_feed: false,
+            replies: Vec::new(),
+            reply_bytes: 0,
         })
     }
 
@@ -315,6 +460,110 @@ impl TerminalGrid {
         }
     }
 
+    /// Explicitly permits bounded protocol replies. No I/O is performed here.
+    pub(crate) fn feed_live(&mut self, bytes: &[u8]) -> Result<(), TerminalGridError> {
+        self.live_feed = true;
+        let result = self.feed(bytes);
+        self.live_feed = false;
+        result
+    }
+
+    pub(crate) fn take_replies(&mut self) -> Vec<Vec<u8>> {
+        self.reply_bytes = 0;
+        std::mem::take(&mut self.replies)
+    }
+
+    pub(crate) fn modes(&self) -> TerminalModes {
+        TerminalModes {
+            alternate_screen: self.saved_normal_screen.is_some(),
+            origin: self.origin_mode,
+            autowrap: self.autowrap,
+            insert: self.insert_mode,
+            bracketed_paste: self.bracketed_paste,
+            mouse_tracking: self.mouse_modes != 0,
+            focus_tracking: self.focus_tracking,
+            application_cursor_keys: self.application_cursor_keys,
+            application_keypad: self.application_keypad,
+            keyboard_protocol: self.keyboard_protocol,
+            synchronized_updates: self.sync_active,
+        }
+    }
+
+    pub(crate) fn structured_screen(&self) -> Result<TerminalScreen, TerminalGridError> {
+        let mut cells = Vec::with_capacity(self.cells.len());
+        let mut used_links = BTreeSet::new();
+        for row in 1..=self.rows {
+            let base = self.row_base(row);
+            for cell in &self.cells[base..base + usize::from(self.cols)] {
+                let kind = match cell.width {
+                    0 => TerminalCellKind::Continuation,
+                    2 => TerminalCellKind::Wide,
+                    _ if cell.codepoint == u32::from(' ') && cell.suffix_id == 0 => {
+                        TerminalCellKind::Blank
+                    }
+                    _ => TerminalCellKind::Single,
+                };
+                let mut text = String::new();
+                if cell.width != 0 && kind != TerminalCellKind::Blank {
+                    text.push(
+                        char::from_u32(cell.codepoint)
+                            .ok_or(TerminalGridError::InvalidCheckpoint)?,
+                    );
+                    if let Some(suffix) = self.suffix(cell.suffix_id) {
+                        text.push_str(
+                            std::str::from_utf8(suffix)
+                                .map_err(|_| TerminalGridError::InvalidCheckpoint)?,
+                        );
+                    }
+                }
+                let hyperlink_id = (cell.hyperlink_id != 0).then_some(cell.hyperlink_id);
+                if let Some(id) = hyperlink_id {
+                    used_links.insert(id);
+                }
+                cells.push(TerminalCell {
+                    kind,
+                    text,
+                    style: cell.style,
+                    hyperlink_id,
+                });
+            }
+        }
+        let screen = TerminalScreen {
+            dimensions: TerminalDimensions::new(self.rows, self.cols)
+                .map_err(|_| TerminalGridError::InvalidGridSize)?,
+            cursor: TerminalScreenCursor {
+                row: self.cursor_row - 1,
+                column: self.cursor_col - 1,
+                visible: self.cursor_visible,
+                shape: self.cursor_shape,
+                blinking: self.cursor_blinking,
+            },
+            modes: self.modes(),
+            cells,
+            hyperlinks: used_links
+                .into_iter()
+                .map(|id| TerminalHyperlink {
+                    id,
+                    uri: self.hyperlink_pool[(id - 1) as usize].to_vec(),
+                })
+                .collect(),
+        };
+        screen
+            .validate()
+            .map_err(|_| TerminalGridError::SnapshotTooLarge)?;
+        Ok(screen)
+    }
+
+    pub(crate) fn hyperlink_at(&self, row: u16, column: u16) -> Option<&[u8]> {
+        if row >= self.rows || column >= self.cols {
+            return None;
+        }
+        let id = self.cells[self.cell_index(row + 1, column + 1)].hyperlink_id;
+        self.hyperlink_pool
+            .get(usize::try_from(id.checked_sub(1)?).ok()?)
+            .map(AsRef::as_ref)
+    }
+
     pub(crate) fn feed_with_cancel_check(
         &mut self,
         bytes: &[u8],
@@ -373,6 +622,178 @@ impl TerminalGrid {
             push_slice_bounded(&mut output, b"|\n")?;
         }
         Ok(output)
+    }
+
+    /// Versioned, bounded state bytes. Reply effects are deliberately excluded:
+    /// restoring a checkpoint cannot repeat an already-issued protocol reply.
+    pub(crate) fn checkpoint(&self) -> Result<Vec<u8>, TerminalGridError> {
+        self.validate_checkpoint()?;
+        let mut writer = CheckpointWriter(Vec::new());
+        writer.bytes(b"MGTE\x01\0")?;
+        writer.u16(self.cols)?;
+        writer.u16(self.rows)?;
+        encode_screen!(writer, self);
+        writer.boolean(self.cursor_visible)?;
+        for mode in [
+            self.bracketed_paste,
+            self.focus_tracking,
+            self.application_cursor_keys,
+            self.application_keypad,
+            self.keyboard_protocol,
+        ] {
+            writer.boolean(mode)?;
+        }
+        writer.u16(self.mouse_modes)?;
+        for stop in &self.tab_stops {
+            writer.boolean(*stop)?;
+        }
+        writer.boolean(self.sync_active)?;
+        writer.sized(&self.sync_buffer)?;
+        writer.u8(match self.state {
+            ParserState::Normal => 0,
+            ParserState::Escape => 1,
+            ParserState::Csi => 2,
+            ParserState::Osc => 3,
+            ParserState::Dcs => 4,
+        })?;
+        for parameter in self.csi_params {
+            writer.u16(parameter)?;
+        }
+        writer.u32(self.csi_param_count)?;
+        writer.boolean(self.csi_has_digit)?;
+        writer.u8(self.csi_private)?;
+        writer.bytes(&self.csi_intermediates)?;
+        writer.u32(self.csi_intermediate_count)?;
+        writer.boolean(self.osc_saw_esc)?;
+        writer.sized(&self.osc_buffer)?;
+        writer.boolean(self.dcs_saw_esc)?;
+        writer.sized(&self.dcs_buffer)?;
+        writer.bytes(&self.utf8_buffer)?;
+        writer.u32(self.utf8_len)?;
+        writer.u32(self.utf8_expected)?;
+        writer.pool(&self.suffix_pool)?;
+        writer.pool(&self.hyperlink_pool)?;
+        writer.boolean(self.saved_normal_screen.is_some())?;
+        if let Some(saved) = &self.saved_normal_screen {
+            encode_screen!(writer, saved);
+        }
+        Ok(writer.0)
+    }
+
+    pub(crate) fn restore(bytes: &[u8]) -> Result<Self, TerminalGridError> {
+        if bytes.len() > MAX_CHECKPOINT_BYTES {
+            return Err(TerminalGridError::CheckpointTooLarge);
+        }
+        let mut reader = CheckpointReader { bytes, offset: 0 };
+        if reader.bytes(6)? != b"MGTE\x01\0" {
+            return Err(TerminalGridError::InvalidCheckpoint);
+        }
+        let cols = reader.u16()?;
+        let rows = reader.u16()?;
+        let count = checked_cell_count(cols, rows)?;
+        let active = reader.screen(count)?;
+        let mut grid = Self::new(cols, rows)?;
+        grid.saved_normal_screen = Some(active);
+        grid.leave_alternate_screen();
+        grid.cursor_visible = reader.boolean()?;
+        grid.bracketed_paste = reader.boolean()?;
+        grid.focus_tracking = reader.boolean()?;
+        grid.application_cursor_keys = reader.boolean()?;
+        grid.application_keypad = reader.boolean()?;
+        grid.keyboard_protocol = reader.boolean()?;
+        grid.mouse_modes = reader.u16()?;
+        for stop in &mut grid.tab_stops {
+            *stop = reader.boolean()?;
+        }
+        grid.sync_active = reader.boolean()?;
+        grid.sync_buffer = reader.sized(MAX_SYNC_BYTES)?.to_vec();
+        grid.state = match reader.u8()? {
+            0 => ParserState::Normal,
+            1 => ParserState::Escape,
+            2 => ParserState::Csi,
+            3 => ParserState::Osc,
+            4 => ParserState::Dcs,
+            _ => return Err(TerminalGridError::InvalidCheckpoint),
+        };
+        for parameter in &mut grid.csi_params {
+            *parameter = reader.u16()?;
+        }
+        grid.csi_param_count = reader.u32()?;
+        grid.csi_has_digit = reader.boolean()?;
+        grid.csi_private = reader.u8()?;
+        grid.csi_intermediates
+            .copy_from_slice(reader.bytes(MAX_CSI_INTERMEDIATES)?);
+        grid.csi_intermediate_count = reader.u32()?;
+        grid.osc_saw_esc = reader.boolean()?;
+        grid.osc_buffer = reader.sized(MAX_CONTROL_STRING_BYTES)?.to_vec();
+        grid.dcs_saw_esc = reader.boolean()?;
+        grid.dcs_buffer = reader.sized(MAX_CONTROL_STRING_BYTES)?.to_vec();
+        grid.utf8_buffer.copy_from_slice(reader.bytes(4)?);
+        grid.utf8_len = reader.u32()?;
+        grid.utf8_expected = reader.u32()?;
+        grid.suffix_pool = reader.pool(MAX_CELL_TEXT_BYTES, MAX_SUFFIX_POOL_BYTES)?;
+        grid.hyperlink_pool = reader.pool(MAX_CONTROL_STRING_BYTES, MAX_HYPERLINK_POOL_BYTES)?;
+        grid.suffix_pool_bytes = grid.suffix_pool.iter().map(|item| item.len()).sum();
+        grid.hyperlink_pool_bytes = grid.hyperlink_pool.iter().map(|item| item.len()).sum();
+        grid.suffix_index = index_pool(&grid.suffix_pool)?;
+        grid.hyperlink_index = index_pool(&grid.hyperlink_pool)?;
+        if reader.boolean()? {
+            grid.saved_normal_screen = Some(reader.screen(count)?);
+        }
+        if reader.offset != bytes.len() {
+            return Err(TerminalGridError::InvalidCheckpoint);
+        }
+        grid.validate_checkpoint()?;
+        Ok(grid)
+    }
+
+    fn validate_checkpoint(&self) -> Result<(), TerminalGridError> {
+        let invalid = TerminalGridError::InvalidCheckpoint;
+        if checked_cell_count(self.cols, self.rows)? != self.cells.len()
+            || self.tab_stops.len() != usize::from(self.cols)
+            || self.csi_param_count > MAX_CSI_PARAMS
+            || (self.state == ParserState::Csi && self.csi_param_count >= MAX_CSI_PARAMS)
+            || self.csi_intermediate_count > MAX_CSI_INTERMEDIATES
+            || self.osc_buffer.len() > MAX_CONTROL_STRING_BYTES
+            || self.dcs_buffer.len() > MAX_CONTROL_STRING_BYTES
+            || self.sync_buffer.len() > MAX_SYNC_BYTES
+            || (!self.sync_active && !self.sync_buffer.is_empty())
+            || (self.osc_saw_esc && self.state != ParserState::Osc)
+            || (self.dcs_saw_esc && self.state != ParserState::Dcs)
+            || self.mouse_modes & !0x3f != 0
+            || self.utf8_expected > 4
+            || (self.utf8_len == 0 && self.utf8_expected != 0)
+            || (self.utf8_len > 0
+                && (self.state != ParserState::Normal
+                    || self.utf8_len >= self.utf8_expected
+                    || utf8_sequence_len(self.utf8_buffer[0]) != Some(self.utf8_expected)))
+            || !matches!(self.csi_private, 0 | b'?' | b'>' | b'<' | b'=')
+        {
+            return Err(invalid);
+        }
+        validate_pool(
+            &self.suffix_pool,
+            MAX_CELL_TEXT_BYTES,
+            MAX_SUFFIX_POOL_BYTES,
+        )?;
+        for suffix in &self.suffix_pool {
+            // Native parsing cannot store C0 bytes as printable suffixes.
+            // Restoring them would turn an observational snapshot into an
+            // injected terminal control sequence.
+            if std::str::from_utf8(suffix).is_err() || suffix.iter().any(|byte| *byte < 0x20) {
+                return Err(invalid);
+            }
+        }
+        validate_pool(
+            &self.hyperlink_pool,
+            MAX_CONTROL_STRING_BYTES,
+            MAX_HYPERLINK_POOL_BYTES,
+        )?;
+        validate_screen!(self, self);
+        if let Some(saved) = &self.saved_normal_screen {
+            validate_screen!(self, saved);
+        }
+        Ok(())
     }
 
     // Keeping the five parser states in one dispatch loop makes byte
@@ -479,7 +900,7 @@ impl TerminalGrid {
                     if self.csi_has_digit || self.csi_param_count > 0 {
                         self.csi_param_count += 1;
                     }
-                    self.dispatch_csi(byte);
+                    self.dispatch_csi(byte)?;
                     self.state = ParserState::Normal;
                     index += 1;
                     checkpoint.consume(1, is_cancelled)?;
@@ -489,10 +910,12 @@ impl TerminalGrid {
                 }
                 ParserState::Osc => {
                     if byte == 0x07 {
+                        self.dispatch_osc()?;
                         self.cancel_control_sequence();
                     } else if byte == 0x1b {
                         self.osc_saw_esc = true;
                     } else if self.osc_saw_esc && byte == b'\\' {
+                        self.dispatch_osc()?;
                         self.cancel_control_sequence();
                     } else {
                         if self.osc_saw_esc {
@@ -508,6 +931,7 @@ impl TerminalGrid {
                     if byte == 0x1b {
                         self.dcs_saw_esc = true;
                     } else if self.dcs_saw_esc && byte == b'\\' {
+                        self.dispatch_dcs()?;
                         self.cancel_control_sequence();
                     } else {
                         if self.dcs_saw_esc {
@@ -570,6 +994,10 @@ impl TerminalGrid {
             }
             b'c' => {
                 self.reset_terminal();
+                self.state = ParserState::Normal;
+            }
+            b'=' | b'>' => {
+                self.application_keypad = byte == b'=';
                 self.state = ParserState::Normal;
             }
             _ => self.state = ParserState::Normal,
@@ -676,6 +1104,8 @@ impl TerminalGrid {
             codepoint: decoded.codepoint,
             width,
             suffix_id: 0,
+            style: self.current_style,
+            hyperlink_id: self.hyperlink_id,
         };
         if decoded.len < consumed {
             self.append_suffix(cell_index, &bytes[start + decoded.len..start + consumed])?;
@@ -686,6 +1116,8 @@ impl TerminalGrid {
                 codepoint: 0,
                 width: 0,
                 suffix_id: 0,
+                style: self.current_style,
+                hyperlink_id: self.hyperlink_id,
             };
         }
         if u32::from(col) + u32::from(width) <= u32::from(self.cols) {
@@ -697,7 +1129,7 @@ impl TerminalGrid {
         Ok(consumed)
     }
 
-    fn dispatch_csi(&mut self, final_byte: u8) {
+    fn dispatch_csi(&mut self, final_byte: u8) -> Result<(), TerminalGridError> {
         match final_byte {
             b'H' | b'f' => self.position_cursor(self.param(0, 1), self.param(1, 1)),
             b'A' => {
@@ -762,10 +1194,23 @@ impl TerminalGrid {
             b'r' => self.set_scroll_region(),
             b's' => self.save_cursor(),
             b'u' if self.csi_private == 0 => self.restore_cursor(),
-            // SGR, protocol queries, cursor style, and unsupported sequences
-            // are deliberately consumed with no visible plain-grid effect.
+            b'u' => self.keyboard_protocol = self.csi_private != b'<' && self.param_raw(0, 0) != 0,
+            b'm' if self.csi_private == 0 => self.apply_sgr(),
+            b'n' | b'c' | b't' => self.dispatch_query(final_byte)?,
+            b'q' if self.csi_intermediate_count == 1 && self.csi_intermediates[0] == b' ' => {
+                let value = self.param_raw(0, 0);
+                if value <= 6 {
+                    self.cursor_shape = match value {
+                        3 | 4 => TerminalCursorShape::Underline,
+                        5 | 6 => TerminalCursorShape::Bar,
+                        _ => TerminalCursorShape::Block,
+                    };
+                    self.cursor_blinking = value == 0 || value % 2 == 1;
+                }
+            }
             _ => {}
         }
+        Ok(())
     }
 
     fn set_reset(&mut self, set: bool) {
@@ -781,6 +1226,7 @@ impl TerminalGrid {
         let params = self.csi_params[..self.csi_param_count].to_vec();
         for param in params {
             match param {
+                1 => self.application_cursor_keys = set,
                 6 => {
                     self.origin_mode = set;
                     self.position_cursor(1, 1);
@@ -795,8 +1241,212 @@ impl TerminalGrid {
                     }
                 }
                 2026 => self.sync_active = set,
+                1004 => self.focus_tracking = set,
+                2004 => self.bracketed_paste = set,
+                1000 | 1002 | 1003 | 1005 | 1006 | 1015 => {
+                    let bit = match param {
+                        1000 => 0,
+                        1002 => 1,
+                        1003 => 2,
+                        1005 => 3,
+                        1006 => 4,
+                        _ => 5,
+                    };
+                    if set {
+                        self.mouse_modes |= 1 << bit;
+                    } else {
+                        self.mouse_modes &= !(1 << bit);
+                    }
+                }
                 _ => {}
             }
+        }
+    }
+
+    fn append_reply(&mut self, bytes: &[u8]) -> Result<(), TerminalGridError> {
+        if !self.live_feed {
+            return Ok(());
+        }
+        if bytes.is_empty()
+            || bytes.len() > MAX_REPLY_BYTES
+            || self.replies.len() >= MAX_REPLY_COUNT
+            || bytes.len() > MAX_REPLY_TOTAL_BYTES.saturating_sub(self.reply_bytes)
+        {
+            return Err(TerminalGridError::ReplyCapacityExceeded);
+        }
+        self.reply_bytes += bytes.len();
+        self.replies.push(bytes.to_vec());
+        Ok(())
+    }
+
+    fn dispatch_query(&mut self, final_byte: u8) -> Result<(), TerminalGridError> {
+        // Replay consumes queries without even allocating a reply.
+        if !self.live_feed {
+            return Ok(());
+        }
+        let reply = match (final_byte, self.param_raw(0, 0)) {
+            (b'n', 5) if self.csi_private == 0 => "\x1b[0n".to_owned(),
+            (b'n', 6) => {
+                let row = if self.origin_mode {
+                    self.cursor_row.saturating_sub(self.scroll_top) + 1
+                } else {
+                    self.cursor_row
+                };
+                format!(
+                    "\x1b[{}{row};{}R",
+                    if self.csi_private == b'?' { "?" } else { "" },
+                    self.cursor_col
+                )
+            }
+            (b'c', _) if self.csi_private == b'>' => "\x1b[>0;0;0c".to_owned(),
+            (b'c', _) if self.csi_private == 0 => "\x1b[?1;2c".to_owned(),
+            (b't', 14) => "\x1b[4;0;0t".to_owned(),
+            (b't', 16) => "\x1b[6;0;0t".to_owned(),
+            (b't', 18) => format!("\x1b[8;{};{}t", self.rows, self.cols),
+            (b't', 19) => format!("\x1b[9;{};{}t", self.rows, self.cols),
+            _ => return Ok(()),
+        };
+        self.append_reply(reply.as_bytes())
+    }
+
+    fn dispatch_dcs(&mut self) -> Result<(), TerminalGridError> {
+        if !self.live_feed {
+            return Ok(());
+        }
+        match self.dcs_buffer.as_slice() {
+            b"$qm" => self.append_reply(b"\x1bP1$r0m\x1b\\"),
+            b"$qr" => self.append_reply(
+                format!("\x1bP1$r{};{}r\x1b\\", self.scroll_top, self.scroll_bottom).as_bytes(),
+            ),
+            bytes if bytes.starts_with(b"$q") => self.append_reply(b"\x1bP0$r\x1b\\"),
+            _ => Ok(()),
+        }
+    }
+
+    fn dispatch_osc(&mut self) -> Result<(), TerminalGridError> {
+        let Some(payload) = self.osc_buffer.strip_prefix(b"8;") else {
+            return Ok(());
+        };
+        let Some(split) = payload.iter().position(|byte| *byte == b';') else {
+            return Ok(());
+        };
+        let (params, uri) = (&payload[..split], &payload[split + 1..]);
+        if uri.is_empty() {
+            self.hyperlink_id = 0;
+            self.hyperlink_params.clear();
+            return Ok(());
+        }
+        let id = if let Some(id) = self.hyperlink_index.get(uri) {
+            *id
+        } else {
+            if self.hyperlink_pool.len() >= MAX_SUFFIX_ENTRIES
+                || uri.len() > MAX_HYPERLINK_POOL_BYTES.saturating_sub(self.hyperlink_pool_bytes)
+            {
+                return Err(TerminalGridError::HyperlinkPoolCapacityExceeded);
+            }
+            let uri: Arc<[u8]> = uri.into();
+            let id = u32::try_from(self.hyperlink_pool.len() + 1)
+                .map_err(|_| TerminalGridError::HyperlinkPoolCapacityExceeded)?;
+            self.hyperlink_pool_bytes += uri.len();
+            self.hyperlink_pool.push(Arc::clone(&uri));
+            self.hyperlink_index.insert(uri, id);
+            id
+        };
+        self.hyperlink_params = params.to_vec();
+        self.hyperlink_id = id;
+        Ok(())
+    }
+
+    fn apply_sgr(&mut self) {
+        if self.csi_param_count == 0 {
+            self.current_style = TerminalCellStyle::default();
+            return;
+        }
+        let mut index = 0;
+        while index < self.csi_param_count {
+            match self.csi_params[index] {
+                0 => self.current_style = TerminalCellStyle::default(),
+                1 => self.current_style.bold = true,
+                2 => self.current_style.faint = true,
+                3 => self.current_style.italic = true,
+                4 => self.current_style.underline = true,
+                7 => self.current_style.inverse = true,
+                9 => self.current_style.strikethrough = true,
+                22 => {
+                    self.current_style.bold = false;
+                    self.current_style.faint = false;
+                }
+                23 => self.current_style.italic = false,
+                24 => self.current_style.underline = false,
+                27 => self.current_style.inverse = false,
+                29 => self.current_style.strikethrough = false,
+                value @ (30..=37 | 90..=97) => {
+                    self.current_style.foreground = TerminalColor::Indexed {
+                        index: u8::try_from(if value >= 90 {
+                            value - 90 + 8
+                        } else {
+                            value - 30
+                        })
+                        .expect("palette index is below sixteen"),
+                    }
+                }
+                value @ (40..=47 | 100..=107) => {
+                    self.current_style.background = TerminalColor::Indexed {
+                        index: u8::try_from(if value >= 100 {
+                            value - 100 + 8
+                        } else {
+                            value - 40
+                        })
+                        .expect("palette index is below sixteen"),
+                    }
+                }
+                39 => self.current_style.foreground = TerminalColor::Default,
+                49 => self.current_style.background = TerminalColor::Default,
+                value @ (38 | 48) => {
+                    if let Some((color, consumed)) = self.extended_color(index) {
+                        if value == 38 {
+                            self.current_style.foreground = color;
+                        } else {
+                            self.current_style.background = color;
+                        }
+                        index += consumed;
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+    }
+
+    fn extended_color(&self, index: usize) -> Option<(TerminalColor, usize)> {
+        let params = &self.csi_params[..self.csi_param_count];
+        match params.get(index + 1)? {
+            5 => Some((
+                TerminalColor::Indexed {
+                    index: (*params.get(index + 2)?).min(255) as u8,
+                },
+                3,
+            )),
+            2 => Some((
+                TerminalColor::Rgb {
+                    red: (*params.get(index + 2)?).min(255) as u8,
+                    green: (*params.get(index + 3)?).min(255) as u8,
+                    blue: (*params.get(index + 4)?).min(255) as u8,
+                },
+                5,
+            )),
+            _ => None,
+        }
+    }
+
+    fn blank_cell(&self) -> Cell {
+        Cell {
+            style: TerminalCellStyle {
+                background: self.current_style.background,
+                ..TerminalCellStyle::default()
+            },
+            ..Cell::default()
         }
     }
 
@@ -865,6 +1515,8 @@ impl TerminalGrid {
             col: self.cursor_col,
             pending_wrap: self.pending_wrap,
             origin_mode: self.origin_mode,
+            style: self.current_style,
+            hyperlink_id: self.hyperlink_id,
         });
     }
 
@@ -876,6 +1528,8 @@ impl TerminalGrid {
         self.cursor_col = clamp(saved.col, 1, self.cols);
         self.pending_wrap = saved.pending_wrap;
         self.origin_mode = saved.origin_mode;
+        self.current_style = saved.style;
+        self.hyperlink_id = saved.hyperlink_id;
     }
 
     fn set_scroll_region(&mut self) {
@@ -910,6 +1564,11 @@ impl TerminalGrid {
             insert_mode: self.insert_mode,
             saved_cursor: self.saved_cursor,
             last_printable_idx: self.last_printable_idx,
+            current_style: self.current_style,
+            hyperlink_id: self.hyperlink_id,
+            hyperlink_params: std::mem::take(&mut self.hyperlink_params),
+            cursor_shape: self.cursor_shape,
+            cursor_blinking: self.cursor_blinking,
         };
         self.saved_normal_screen = Some(saved);
         self.row_origin = 0;
@@ -923,6 +1582,10 @@ impl TerminalGrid {
         self.insert_mode = false;
         self.last_printable_idx = None;
         self.saved_cursor = None;
+        self.current_style = TerminalCellStyle::default();
+        self.hyperlink_id = 0;
+        self.cursor_shape = TerminalCursorShape::Block;
+        self.cursor_blinking = true;
     }
 
     fn leave_alternate_screen(&mut self) {
@@ -941,6 +1604,11 @@ impl TerminalGrid {
         self.insert_mode = saved.insert_mode;
         self.saved_cursor = saved.saved_cursor;
         self.last_printable_idx = saved.last_printable_idx;
+        self.current_style = saved.current_style;
+        self.hyperlink_id = saved.hyperlink_id;
+        self.hyperlink_params = saved.hyperlink_params;
+        self.cursor_shape = saved.cursor_shape;
+        self.cursor_blinking = saved.cursor_blinking;
     }
 
     fn reset_terminal(&mut self) {
@@ -952,6 +1620,20 @@ impl TerminalGrid {
         self.autowrap = true;
         self.pending_wrap = false;
         self.cursor_visible = true;
+        self.cursor_shape = TerminalCursorShape::Block;
+        self.cursor_blinking = true;
+        self.current_style = TerminalCellStyle::default();
+        self.hyperlink_id = 0;
+        self.hyperlink_params.clear();
+        self.hyperlink_pool.clear();
+        self.hyperlink_index.clear();
+        self.hyperlink_pool_bytes = 0;
+        self.bracketed_paste = false;
+        self.mouse_modes = 0;
+        self.focus_tracking = false;
+        self.application_cursor_keys = false;
+        self.application_keypad = false;
+        self.keyboard_protocol = false;
         self.scroll_top = 1;
         self.scroll_bottom = self.rows;
         self.origin_mode = false;
@@ -986,6 +1668,7 @@ impl TerminalGrid {
     }
 
     fn scroll_up(&mut self, top: u16, bottom: u16, requested: u16) {
+        let blank = self.blank_cell();
         if top == 0 || bottom < top || bottom > self.rows {
             return;
         }
@@ -996,7 +1679,7 @@ impl TerminalGrid {
         if top == 1 && bottom == self.rows && count == 1 {
             self.row_origin = (self.row_origin + 1) % self.rows;
             let base = self.row_base(self.rows);
-            self.cells[base..base + usize::from(self.cols)].fill(Cell::default());
+            self.cells[base..base + usize::from(self.cols)].fill(blank);
             return;
         }
         for row in top..=bottom - count {
@@ -1007,11 +1690,12 @@ impl TerminalGrid {
         }
         for row in bottom - count + 1..=bottom {
             let base = self.row_base(row);
-            self.cells[base..base + usize::from(self.cols)].fill(Cell::default());
+            self.cells[base..base + usize::from(self.cols)].fill(blank);
         }
     }
 
     fn scroll_down(&mut self, top: u16, bottom: u16, requested: u16) {
+        let blank = self.blank_cell();
         if top == 0 || bottom < top || bottom > self.rows {
             return;
         }
@@ -1027,11 +1711,12 @@ impl TerminalGrid {
         }
         for row in top..top + count {
             let base = self.row_base(row);
-            self.cells[base..base + usize::from(self.cols)].fill(Cell::default());
+            self.cells[base..base + usize::from(self.cols)].fill(blank);
         }
     }
 
     fn insert_cells(&mut self, requested: u16) {
+        let blank = self.blank_cell();
         let count = requested.min(self.cols - self.cursor_col + 1);
         if count == 0 {
             return;
@@ -1041,13 +1726,14 @@ impl TerminalGrid {
         let end = base + usize::from(self.cols);
         self.cells
             .copy_within(start..end - usize::from(count), start + usize::from(count));
-        self.cells[start..start + usize::from(count)].fill(Cell::default());
+        self.cells[start..start + usize::from(count)].fill(blank);
         repair_wide_cells(&mut self.cells[base..end], self.cols, 1);
         self.pending_wrap = false;
         self.last_printable_idx = None;
     }
 
     fn delete_cells(&mut self, requested: u16) {
+        let blank = self.blank_cell();
         let count = requested.min(self.cols - self.cursor_col + 1);
         if count == 0 {
             return;
@@ -1057,7 +1743,7 @@ impl TerminalGrid {
         let end = base + usize::from(self.cols);
         self.cells
             .copy_within(start + usize::from(count)..end, start);
-        self.cells[end - usize::from(count)..end].fill(Cell::default());
+        self.cells[end - usize::from(count)..end].fill(blank);
         repair_wide_cells(&mut self.cells[base..end], self.cols, 1);
         self.pending_wrap = false;
         self.last_printable_idx = None;
@@ -1120,6 +1806,7 @@ impl TerminalGrid {
     }
 
     fn erase_range(&mut self, start: usize, end: usize) {
+        let blank = self.blank_cell();
         let cols = usize::from(self.cols);
         let mut expanded_start = start;
         let mut expanded_end = end;
@@ -1141,7 +1828,7 @@ impl TerminalGrid {
             let column = logical % cols;
             let chunk = (cols - column).min(expanded_end - logical);
             let physical = self.physical_index_for_logical_offset(logical);
-            self.cells[physical..physical + chunk].fill(Cell::default());
+            self.cells[physical..physical + chunk].fill(blank);
             logical += chunk;
         }
     }
@@ -1154,14 +1841,14 @@ impl TerminalGrid {
         match self.cells[index].width {
             0 => {
                 if col > 1 && self.cells[index - 1].width == 2 {
-                    self.cells[index - 1] = Cell::default();
+                    self.cells[index - 1] = self.blank_cell();
                 }
-                self.cells[index] = Cell::default();
+                self.cells[index] = self.blank_cell();
             }
             2 => {
-                self.cells[index] = Cell::default();
+                self.cells[index] = self.blank_cell();
                 if col < self.cols && self.cells[index + 1].width == 0 {
-                    self.cells[index + 1] = Cell::default();
+                    self.cells[index + 1] = self.blank_cell();
                 }
             }
             _ => {}
@@ -1255,6 +1942,368 @@ impl TerminalGrid {
         let logical_row = u16::try_from(offset / cols).expect("logical row fits grid dimensions");
         physical_row_index(self.row_origin, logical_row, self.rows) * cols + offset % cols
     }
+}
+
+struct CheckpointWriter(Vec<u8>);
+
+impl CheckpointWriter {
+    fn bytes(&mut self, bytes: &[u8]) -> Result<(), TerminalGridError> {
+        if bytes.len() > MAX_CHECKPOINT_BYTES.saturating_sub(self.0.len()) {
+            return Err(TerminalGridError::CheckpointTooLarge);
+        }
+        self.0.extend_from_slice(bytes);
+        Ok(())
+    }
+    fn u8(&mut self, value: u8) -> Result<(), TerminalGridError> {
+        self.bytes(&[value])
+    }
+    fn u16(&mut self, value: u16) -> Result<(), TerminalGridError> {
+        self.bytes(&value.to_le_bytes())
+    }
+    fn u32(&mut self, value: usize) -> Result<(), TerminalGridError> {
+        self.bytes(
+            &u32::try_from(value)
+                .map_err(|_| TerminalGridError::CheckpointTooLarge)?
+                .to_le_bytes(),
+        )
+    }
+    fn boolean(&mut self, value: bool) -> Result<(), TerminalGridError> {
+        self.u8(u8::from(value))
+    }
+    fn sized(&mut self, value: &[u8]) -> Result<(), TerminalGridError> {
+        self.u32(value.len())?;
+        self.bytes(value)
+    }
+    fn color(&mut self, value: TerminalColor) -> Result<(), TerminalGridError> {
+        match value {
+            TerminalColor::Default => self.bytes(&[0, 0, 0, 0]),
+            TerminalColor::Indexed { index } => self.bytes(&[1, index, 0, 0]),
+            TerminalColor::Rgb { red, green, blue } => self.bytes(&[2, red, green, blue]),
+        }
+    }
+    fn style(&mut self, style: TerminalCellStyle) -> Result<(), TerminalGridError> {
+        self.color(style.foreground)?;
+        self.color(style.background)?;
+        let mut flags = 0;
+        for (bit, enabled) in [
+            style.bold,
+            style.faint,
+            style.italic,
+            style.underline,
+            style.inverse,
+            style.strikethrough,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if enabled {
+                flags |= 1 << bit;
+            }
+        }
+        self.u8(flags)
+    }
+    fn cells(&mut self, cells: &[Cell]) -> Result<(), TerminalGridError> {
+        self.u32(cells.len())?;
+        for cell in cells {
+            self.u32(cell.codepoint as usize)?;
+            self.u8(cell.width)?;
+            self.u32(cell.suffix_id as usize)?;
+            self.style(cell.style)?;
+            self.u32(cell.hyperlink_id as usize)?;
+        }
+        Ok(())
+    }
+    fn pool(&mut self, pool: &[Arc<[u8]>]) -> Result<(), TerminalGridError> {
+        self.u32(pool.len())?;
+        for item in pool {
+            self.sized(item)?;
+        }
+        Ok(())
+    }
+}
+
+struct CheckpointReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> CheckpointReader<'a> {
+    fn bytes(&mut self, length: usize) -> Result<&'a [u8], TerminalGridError> {
+        let end = self
+            .offset
+            .checked_add(length)
+            .ok_or(TerminalGridError::InvalidCheckpoint)?;
+        let bytes = self
+            .bytes
+            .get(self.offset..end)
+            .ok_or(TerminalGridError::InvalidCheckpoint)?;
+        self.offset = end;
+        Ok(bytes)
+    }
+    fn u8(&mut self) -> Result<u8, TerminalGridError> {
+        Ok(self.bytes(1)?[0])
+    }
+    fn u16(&mut self) -> Result<u16, TerminalGridError> {
+        Ok(u16::from_le_bytes(
+            self.bytes(2)?
+                .try_into()
+                .map_err(|_| TerminalGridError::InvalidCheckpoint)?,
+        ))
+    }
+    fn u32(&mut self) -> Result<usize, TerminalGridError> {
+        usize::try_from(u32::from_le_bytes(
+            self.bytes(4)?
+                .try_into()
+                .map_err(|_| TerminalGridError::InvalidCheckpoint)?,
+        ))
+        .map_err(|_| TerminalGridError::InvalidCheckpoint)
+    }
+    fn boolean(&mut self) -> Result<bool, TerminalGridError> {
+        match self.u8()? {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(TerminalGridError::InvalidCheckpoint),
+        }
+    }
+    fn sized(&mut self, maximum: usize) -> Result<&'a [u8], TerminalGridError> {
+        let size = self.u32()?;
+        if size > maximum {
+            return Err(TerminalGridError::InvalidCheckpoint);
+        }
+        self.bytes(size)
+    }
+    fn color(&mut self) -> Result<TerminalColor, TerminalGridError> {
+        match self.bytes(4)? {
+            [0, 0, 0, 0] => Ok(TerminalColor::Default),
+            [1, index, 0, 0] => Ok(TerminalColor::Indexed { index: *index }),
+            [2, red, green, blue] => Ok(TerminalColor::Rgb {
+                red: *red,
+                green: *green,
+                blue: *blue,
+            }),
+            _ => Err(TerminalGridError::InvalidCheckpoint),
+        }
+    }
+    fn style(&mut self) -> Result<TerminalCellStyle, TerminalGridError> {
+        let foreground = self.color()?;
+        let background = self.color()?;
+        let flags = self.u8()?;
+        if flags & !0x3f != 0 {
+            return Err(TerminalGridError::InvalidCheckpoint);
+        }
+        Ok(TerminalCellStyle {
+            foreground,
+            background,
+            bold: flags & 1 != 0,
+            faint: flags & 2 != 0,
+            italic: flags & 4 != 0,
+            underline: flags & 8 != 0,
+            inverse: flags & 16 != 0,
+            strikethrough: flags & 32 != 0,
+        })
+    }
+    fn cells(&mut self, count: usize) -> Result<Vec<Cell>, TerminalGridError> {
+        if self.u32()? != count || count > self.bytes.len().saturating_sub(self.offset) / 22 {
+            return Err(TerminalGridError::InvalidCheckpoint);
+        }
+        let mut cells = Vec::with_capacity(count);
+        for _ in 0..count {
+            let codepoint =
+                u32::try_from(self.u32()?).map_err(|_| TerminalGridError::InvalidCheckpoint)?;
+            let width = self.u8()?;
+            let suffix_id =
+                u32::try_from(self.u32()?).map_err(|_| TerminalGridError::InvalidCheckpoint)?;
+            let style = self.style()?;
+            let hyperlink_id =
+                u32::try_from(self.u32()?).map_err(|_| TerminalGridError::InvalidCheckpoint)?;
+            cells.push(Cell {
+                codepoint,
+                width,
+                suffix_id,
+                style,
+                hyperlink_id,
+            });
+        }
+        Ok(cells)
+    }
+    fn pool(
+        &mut self,
+        item_max: usize,
+        total_max: usize,
+    ) -> Result<Vec<Arc<[u8]>>, TerminalGridError> {
+        let count = self.u32()?;
+        if count > MAX_SUFFIX_ENTRIES || count > self.bytes.len().saturating_sub(self.offset) / 5 {
+            return Err(TerminalGridError::InvalidCheckpoint);
+        }
+        let mut pool = Vec::with_capacity(count);
+        let mut total = 0usize;
+        for _ in 0..count {
+            let item = self.sized(item_max)?;
+            if item.is_empty() || item.len() > total_max.saturating_sub(total) {
+                return Err(TerminalGridError::InvalidCheckpoint);
+            }
+            total += item.len();
+            pool.push(Arc::from(item));
+        }
+        Ok(pool)
+    }
+    fn screen(&mut self, count: usize) -> Result<SavedScreen, TerminalGridError> {
+        let cells = self.cells(count)?;
+        let row_origin = self.u16()?;
+        let cursor_row = self.u16()?;
+        let cursor_col = self.u16()?;
+        let scroll_top = self.u16()?;
+        let scroll_bottom = self.u16()?;
+        let autowrap = self.boolean()?;
+        let pending_wrap = self.boolean()?;
+        let origin_mode = self.boolean()?;
+        let insert_mode = self.boolean()?;
+        let current_style = self.style()?;
+        let hyperlink_id =
+            u32::try_from(self.u32()?).map_err(|_| TerminalGridError::InvalidCheckpoint)?;
+        let hyperlink_params = self.sized(MAX_CONTROL_STRING_BYTES)?.to_vec();
+        let cursor_shape = match self.u8()? {
+            0 => TerminalCursorShape::Block,
+            1 => TerminalCursorShape::Underline,
+            2 => TerminalCursorShape::Bar,
+            _ => return Err(TerminalGridError::InvalidCheckpoint),
+        };
+        let cursor_blinking = self.boolean()?;
+        let saved_cursor = if self.boolean()? {
+            Some(SavedCursor {
+                row: self.u16()?,
+                col: self.u16()?,
+                pending_wrap: self.boolean()?,
+                origin_mode: self.boolean()?,
+                style: self.style()?,
+                hyperlink_id: u32::try_from(self.u32()?)
+                    .map_err(|_| TerminalGridError::InvalidCheckpoint)?,
+            })
+        } else {
+            None
+        };
+        let last_printable_idx = if self.boolean()? {
+            Some(self.u32()?)
+        } else {
+            None
+        };
+        Ok(SavedScreen {
+            cells,
+            row_origin,
+            cursor_row,
+            cursor_col,
+            autowrap,
+            pending_wrap,
+            scroll_top,
+            scroll_bottom,
+            origin_mode,
+            insert_mode,
+            saved_cursor,
+            last_printable_idx,
+            current_style,
+            hyperlink_id,
+            hyperlink_params,
+            cursor_shape,
+            cursor_blinking,
+        })
+    }
+}
+
+fn shape_code(shape: TerminalCursorShape) -> u8 {
+    match shape {
+        TerminalCursorShape::Block => 0,
+        TerminalCursorShape::Underline => 1,
+        TerminalCursorShape::Bar => 2,
+    }
+}
+
+fn validate_pool(
+    pool: &[Arc<[u8]>],
+    item_max: usize,
+    total_max: usize,
+) -> Result<(), TerminalGridError> {
+    if pool.len() > MAX_SUFFIX_ENTRIES {
+        return Err(TerminalGridError::InvalidCheckpoint);
+    }
+    let mut total = 0usize;
+    for item in pool {
+        if item.is_empty() || item.len() > item_max || item.len() > total_max.saturating_sub(total)
+        {
+            return Err(TerminalGridError::InvalidCheckpoint);
+        }
+        total += item.len();
+    }
+    Ok(())
+}
+
+fn index_pool(pool: &[Arc<[u8]>]) -> Result<HashMap<Arc<[u8]>, u32>, TerminalGridError> {
+    let mut index = HashMap::with_capacity(pool.len());
+    for (position, item) in pool.iter().enumerate() {
+        if index
+            .insert(
+                Arc::clone(item),
+                u32::try_from(position + 1).map_err(|_| TerminalGridError::InvalidCheckpoint)?,
+            )
+            .is_some()
+        {
+            return Err(TerminalGridError::InvalidCheckpoint);
+        }
+    }
+    Ok(index)
+}
+
+fn validate_cells(
+    cells: &[Cell],
+    cols: u16,
+    rows: u16,
+    suffixes: &[Arc<[u8]>],
+    hyperlink_count: usize,
+) -> Result<(), TerminalGridError> {
+    let invalid = TerminalGridError::InvalidCheckpoint;
+    if cells.len() != usize::from(cols) * usize::from(rows) {
+        return Err(invalid);
+    }
+    for (index, cell) in cells.iter().enumerate() {
+        if cell.suffix_id as usize > suffixes.len() || cell.hyperlink_id as usize > hyperlink_count
+        {
+            return Err(invalid);
+        }
+        if cell.codepoint != 0
+            && (cell.codepoint < 0x20 || char::from_u32(cell.codepoint).is_none())
+        {
+            return Err(invalid);
+        }
+        match cell.width {
+            0 => {
+                if index % usize::from(cols) == 0
+                    || cell.codepoint != 0
+                    || cell.suffix_id != 0
+                    || cells[index - 1].width != 2
+                    || cells[index - 1].style != cell.style
+                    || cells[index - 1].hyperlink_id != cell.hyperlink_id
+                {
+                    return Err(invalid);
+                }
+            }
+            1 => {
+                if cell.codepoint == 0 {
+                    return Err(invalid);
+                }
+            }
+            2 => {
+                if index % usize::from(cols) + 1 >= usize::from(cols)
+                    || cell.codepoint == 0
+                    || cells[index + 1].width != 0
+                    || cells[index + 1].style != cell.style
+                    || cells[index + 1].hyperlink_id != cell.hyperlink_id
+                {
+                    return Err(invalid);
+                }
+            }
+            _ => return Err(invalid),
+        }
+    }
+    Ok(())
 }
 
 fn checked_cell_count(cols: u16, rows: u16) -> Result<usize, TerminalGridError> {
@@ -1520,6 +2569,220 @@ mod tests {
     fn terminal_grid_remains_send_with_indexed_suffix_storage() {
         fn assert_send<T: Send>() {}
         assert_send::<TerminalGrid>();
+    }
+
+    #[test]
+    fn structured_styles_palette_rgb_flags_and_erasure_background() {
+        let mut grid = test_grid(8, 2);
+        grid.feed(
+            b"\x1b[1;2;3;4;7;9;38;5;196;48;2;12;34;56mA\x1b[22;23;24;27;29mB\x1b[0mC\x1b[44m\x1b[K",
+        )
+        .unwrap();
+        let screen = grid.structured_screen().unwrap();
+        let style = screen.cells[0].style;
+        assert_eq!(style.foreground, TerminalColor::Indexed { index: 196 });
+        assert_eq!(
+            style.background,
+            TerminalColor::Rgb {
+                red: 12,
+                green: 34,
+                blue: 56
+            }
+        );
+        assert!(
+            style.bold
+                && style.faint
+                && style.italic
+                && style.underline
+                && style.inverse
+                && style.strikethrough
+        );
+        assert!(
+            !screen.cells[1].style.bold
+                && !screen.cells[1].style.faint
+                && !screen.cells[1].style.italic
+                && !screen.cells[1].style.underline
+                && !screen.cells[1].style.inverse
+                && !screen.cells[1].style.strikethrough
+        );
+        assert_eq!(screen.cells[2].style, TerminalCellStyle::default());
+        assert_eq!(screen.cells[3].kind, TerminalCellKind::Blank);
+        assert_eq!(
+            screen.cells[3].style.background,
+            TerminalColor::Indexed { index: 4 }
+        );
+        assert!(screen.cells[3].text.is_empty());
+        assert_eq!(snapshot(&grid), "|ABC     |\n|        |\n");
+    }
+
+    #[test]
+    fn structured_modes_cursor_shape_wide_cells_and_hyperlinks() {
+        let mut grid = test_grid(8, 2);
+        grid.feed(b"\x1b[?1;1000;1006;1004;2004h\x1b=\x1b[>1u\x1b[6 q\x1b]8;id=a;https://example.test\x07").unwrap();
+        grid.feed("界\x1b[0m!\x1b]8;;\x1b\\?".as_bytes()).unwrap();
+        let screen = grid.structured_screen().unwrap();
+        assert!(
+            screen.modes.application_cursor_keys
+                && screen.modes.application_keypad
+                && screen.modes.keyboard_protocol
+                && screen.modes.bracketed_paste
+                && screen.modes.mouse_tracking
+                && screen.modes.focus_tracking
+        );
+        assert_eq!(screen.cursor.shape, TerminalCursorShape::Bar);
+        assert!(!screen.cursor.blinking);
+        assert_eq!(screen.cells[0].kind, TerminalCellKind::Wide);
+        assert_eq!(screen.cells[1].kind, TerminalCellKind::Continuation);
+        assert!(screen.cells[1].text.is_empty());
+        assert_eq!(screen.cells[0].hyperlink_id, Some(1));
+        assert_eq!(screen.cells[1].hyperlink_id, Some(1));
+        assert_eq!(screen.cells[2].hyperlink_id, Some(1));
+        assert_eq!(screen.cells[3].hyperlink_id, None);
+        assert_eq!(screen.hyperlinks.len(), 1);
+        assert_eq!(screen.hyperlinks[0].uri, b"https://example.test");
+        assert_eq!(grid.hyperlink_at(0, 0), Some(&b"https://example.test"[..]));
+        grid.feed(b"\x1b[?1000l").unwrap();
+        assert!(grid.modes().mouse_tracking);
+        grid.feed(b"\x1b[?1006l\x1b[<u\x1b>").unwrap();
+        assert!(
+            !grid.modes().mouse_tracking
+                && !grid.modes().keyboard_protocol
+                && !grid.modes().application_keypad
+        );
+    }
+
+    #[test]
+    fn live_replies_are_explicit_bounded_and_suppressed_during_replay() {
+        let queries = b"\x1b[5n\x1b[6n\x1b[?6n\x1b[c\x1b[>c\x1b[18t\x1bP$qm\x1b\\";
+        let mut grid = test_grid(80, 24);
+        grid.feed(queries).unwrap();
+        assert!(grid.take_replies().is_empty());
+        grid.feed_live(queries).unwrap();
+        assert_eq!(
+            grid.take_replies(),
+            vec![
+                b"\x1b[0n".to_vec(),
+                b"\x1b[1;1R".to_vec(),
+                b"\x1b[?1;1R".to_vec(),
+                b"\x1b[?1;2c".to_vec(),
+                b"\x1b[>0;0;0c".to_vec(),
+                b"\x1b[8;24;80t".to_vec(),
+                b"\x1bP1$r0m\x1b\\".to_vec()
+            ]
+        );
+        grid.feed_live(&b"\x1b[5n".repeat(16)).unwrap();
+        assert_eq!(
+            grid.feed_live(b"\x1b[5n"),
+            Err(TerminalGridError::ReplyCapacityExceeded)
+        );
+        assert_eq!(grid.take_replies().len(), 16);
+        // Failed live feeds must never leave permission to emit on replay.
+        grid.feed(b"\x18\x1b[5n").unwrap();
+        assert!(grid.take_replies().is_empty());
+    }
+
+    #[test]
+    fn checkpoint_restores_every_fragmented_control_and_unicode_boundary() {
+        let payload="A\u{301}界\x1b[38;2;12;34;56mB\x1b]8;id=x;https://x\x1b\\C\x1bP$qm\x1b\\\x1b[?2004h\x1b[?2026h\rnew\x1b[?2026l".as_bytes();
+        for split in 0..=payload.len() {
+            let mut original = test_grid(12, 3);
+            original.feed(&payload[..split]).unwrap();
+            let checkpoint = original.checkpoint().unwrap();
+            let mut restored = TerminalGrid::restore(&checkpoint).unwrap();
+            assert_eq!(restored.checkpoint().unwrap(), checkpoint, "split {split}");
+            original.feed(&payload[split..]).unwrap();
+            restored.feed(&payload[split..]).unwrap();
+            assert_eq!(
+                original.snapshot().unwrap(),
+                restored.snapshot().unwrap(),
+                "split {split}"
+            );
+            assert_eq!(
+                original.structured_screen().unwrap(),
+                restored.structured_screen().unwrap(),
+                "split {split}"
+            );
+            assert_eq!(
+                original.checkpoint().unwrap(),
+                restored.checkpoint().unwrap(),
+                "split {split}"
+            );
+            assert!(restored.take_replies().is_empty());
+        }
+    }
+
+    #[test]
+    fn checkpoint_alternate_screen_preserves_styles_cursor_and_suffixes() {
+        let mut grid = test_grid(8, 3);
+        grid.feed("\x1b[31mN\u{301}\x1b7\x1b[?1049h\x1b[32malt\x1b[4 q".as_bytes())
+            .unwrap();
+        let mut restored = TerminalGrid::restore(&grid.checkpoint().unwrap()).unwrap();
+        grid.resize(6, 2).unwrap();
+        restored.resize(6, 2).unwrap();
+        for candidate in [&mut grid, &mut restored] {
+            candidate.feed(b"\x1b[?1049l\x1b8!").unwrap();
+        }
+        assert_eq!(
+            grid.structured_screen().unwrap(),
+            restored.structured_screen().unwrap()
+        );
+        assert_eq!(snapshot(&restored), "|N\u{301}!    |\n|      |\n");
+        assert_eq!(
+            restored.structured_screen().unwrap().cells[1]
+                .style
+                .foreground,
+            TerminalColor::Indexed { index: 1 }
+        );
+    }
+
+    #[test]
+    fn corrupt_checkpoint_rejects_truncation_sizes_versions_and_invalid_cells() {
+        let mut grid = test_grid(4, 2);
+        grid.feed(b"test").unwrap();
+        let bytes = grid.checkpoint().unwrap();
+        for end in 0..bytes.len() {
+            assert!(
+                TerminalGrid::restore(&bytes[..end]).is_err(),
+                "truncation {end}"
+            );
+        }
+        let mut extra = bytes.clone();
+        extra.push(0);
+        assert!(TerminalGrid::restore(&extra).is_err());
+        for (offset, value) in [(0, b'X'), (4, 2), (6, 0), (7, 0xff), (10, 0xff), (18, 3)] {
+            let mut corrupt = bytes.clone();
+            corrupt[offset] = value;
+            assert!(TerminalGrid::restore(&corrupt).is_err(), "offset {offset}");
+        }
+        let mut grid = test_grid(2, 1);
+        grid.feed("界".as_bytes()).unwrap();
+        grid.cells[1].style.bold = true;
+        assert!(grid.checkpoint().is_err());
+        let mut grid = test_grid(2, 1);
+        grid.feed(b"a").unwrap();
+        grid.suffix_pool.push(Arc::from(&b"\x1b"[..]));
+        grid.cells[0].suffix_id = 1;
+        assert!(grid.checkpoint().is_err());
+    }
+
+    #[test]
+    fn checkpoints_drop_old_reply_effects_and_restore_partial_live_queries() {
+        let mut grid = test_grid(8, 3);
+        grid.feed_live(b"\x1b[5n\x1bP$q").unwrap();
+        let mut restored = TerminalGrid::restore(&grid.checkpoint().unwrap()).unwrap();
+        assert!(restored.take_replies().is_empty());
+        restored.feed_live(b"r\x1b\\").unwrap();
+        assert_eq!(
+            restored.take_replies(),
+            vec![b"\x1bP1$r1;3r\x1b\\".to_vec()]
+        );
+    }
+
+    #[test]
+    fn cursor_reports_remain_bounded_after_absolute_position_in_origin_mode() {
+        let mut grid = test_grid(8, 4);
+        grid.feed_live(b"\x1b[2;4r\x1b[?6h\x1b[1d\x1b[6n").unwrap();
+        assert_eq!(grid.take_replies(), vec![b"\x1b[1;1R".to_vec()]);
     }
 
     #[test]
