@@ -219,6 +219,8 @@ admission and initiates cleanup. Exit reports include every unresolved shutdown
 failure; the blocking host retains registry ownership for recovery disposition.
 Queued rejection contains each request's waker/destructor panic independently,
 so one caller cannot bypass native cleanup or strand the remaining replies.
+Suppressed opaque panic payloads are deliberately retained without invoking
+their potentially panicking destructors, matching the host's cleanup policy.
 External probes remain separately authorized, off-loop effects.
 
 The sixteen-entry resident bound is not disk-history retention. Profile

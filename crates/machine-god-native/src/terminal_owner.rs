@@ -29,6 +29,19 @@ pub(crate) enum TerminalOwnerError {
 }
 type Result<T> = std::result::Result<T, TerminalOwnerError>;
 
+fn catch_callback<T>(callback: impl FnOnce() -> T) -> std::result::Result<T, ()> {
+    match catch_unwind(AssertUnwindSafe(callback)) {
+        Ok(value) => Ok(value),
+        Err(payload) => {
+            // A caught opaque payload can itself have a panicking destructor.
+            // Suppression must not execute that arbitrary callback during cleanup.
+            // This exceptional path deliberately retains the opaque allocation.
+            std::mem::forget(payload);
+            Err(())
+        }
+    }
+}
+
 trait Job<B: TerminalSessionBackend>: Send {
     /// False means an operation panicked and this owner must stop.
     fn execute(self: Box<Self>, registry: &mut TerminalRegistry<B>, now_ms: i64) -> bool;
@@ -71,7 +84,7 @@ fn complete<T>(reply: &Mutex<Reply<T>>, value: Result<T>) -> bool {
     };
     // Never invoke user-controlled wakers while holding a synchronization lock.
     if let Some(waker) = wake {
-        return catch_unwind(AssertUnwindSafe(|| waker.wake())).is_ok();
+        return catch_callback(|| waker.wake()).is_ok();
     }
     true
 }
@@ -95,10 +108,8 @@ impl<B: TerminalSessionBackend, T: Send> Job<B> for Request<B, T> {
             Err(TerminalOwnerError::Cancelled)
         } else {
             let operation = self.operation.take().expect("request executed once");
-            catch_unwind(AssertUnwindSafe(|| {
-                operation(registry, now_ms, &self.cancellation)
-            }))
-            .map_err(|_| TerminalOwnerError::Panicked)
+            catch_callback(|| operation(registry, now_ms, &self.cancellation))
+                .map_err(|_| TerminalOwnerError::Panicked)
         };
         let keep_running = !matches!(&result, Err(TerminalOwnerError::Panicked));
         self.completed = true;
@@ -286,7 +297,7 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
     fn reject_pending(&self) -> bool {
         let mut panicked = false;
         while let Ok(message) = self.receiver.try_recv() {
-            panicked |= catch_unwind(AssertUnwindSafe(|| drop(message))).is_err();
+            panicked |= catch_callback(|| drop(message)).is_err();
         }
         panicked
     }
@@ -319,7 +330,7 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
     ) -> TerminalOwnerExit {
         let mut error = None;
         let mut deadline = Instant::now();
-        let execution = catch_unwind(AssertUnwindSafe(|| {
+        let execution = catch_callback(|| {
             while !self.shared.closing.load(Ordering::Acquire) {
                 if Instant::now() >= deadline {
                     let output_ready = match registry.pump(clock(), MAX_RESIDENT_TERMINALS) {
@@ -364,7 +375,7 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
                     Err(RecvTimeoutError::Disconnected) => break,
                 }
             }
-        }));
+        });
         if execution.is_err() {
             error = Some(TerminalOwnerError::Panicked);
         }

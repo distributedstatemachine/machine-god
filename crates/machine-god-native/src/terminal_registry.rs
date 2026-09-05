@@ -842,6 +842,61 @@ mod tests {
     }
 
     #[test]
+    fn owner_secondary_panic_payload_drop_cannot_bypass_shutdown() {
+        use crate::terminal_owner::{TerminalOwnerError, TerminalOwnerLoop};
+        use machine_god_core::CancellationToken;
+        use std::future::Future;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::task::{Context, Wake, Waker};
+        struct Payload(Arc<AtomicBool>);
+        impl Drop for Payload {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+                panic!("secondary payload destructor must not run");
+            }
+        }
+        struct Capture(Arc<AtomicBool>);
+        impl Drop for Capture {
+            fn drop(&mut self) {
+                std::panic::panic_any(Payload(Arc::clone(&self.0)));
+            }
+        }
+        struct CallerWake(Arc<AtomicBool>);
+        impl Wake for CallerWake {
+            fn wake(self: Arc<Self>) {
+                std::panic::panic_any(Payload(Arc::clone(&self.0)));
+            }
+        }
+        let secondary = Arc::new(AtomicBool::new(false));
+        let wake = Waker::from(Arc::new(CallerWake(Arc::clone(&secondary))));
+        let fixture = Fixture::new();
+        let mut registry = registry();
+        let owner = owner("one");
+        let id = id("secondary-panic");
+        registry
+            .start(owner.clone(), id.clone(), || fixture.live(&owner, &id, 0))
+            .unwrap();
+        let (worker, handle) = TerminalOwnerLoop::new();
+        let capture = Capture(Arc::clone(&secondary));
+        let mut request = handle.request(CancellationToken::new(), move |_, _, _| drop(capture));
+        assert!(
+            std::pin::Pin::new(&mut request)
+                .poll(&mut Context::from_waker(&wake))
+                .is_pending()
+        );
+        handle.shutdown();
+        let exit = worker.run(&mut registry, || 0, |_| {});
+        assert_eq!(exit.error, Some(TerminalOwnerError::Panicked));
+        assert!(exit.shutdown.unwrap().is_empty());
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
+        assert_eq!(
+            futures_executor::block_on(request),
+            Err(TerminalOwnerError::Closed)
+        );
+        assert!(!secondary.load(Ordering::Acquire));
+    }
+
+    #[test]
     fn owner_panic_and_clock_failure_stop_admissions_and_cleanup() {
         use crate::terminal_owner::{TerminalOwnerError, TerminalOwnerLoop};
         use machine_god_core::CancellationToken;
