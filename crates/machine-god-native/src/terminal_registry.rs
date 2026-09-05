@@ -2,9 +2,14 @@
 //! Tool calls borrow sessions; only this owner releases native resources. The
 //! disk catalog is separate, so releasing inactive residency never deletes history.
 
-use crate::terminal_catalog::canonical_workspace;
-use crate::terminal_history::TerminalHistoryEviction;
+use crate::terminal_catalog::{canonical_workspace, owner_name};
+use crate::terminal_history::{TerminalHistoryError, TerminalHistoryEviction};
 use crate::terminal_journal::{TerminalJournalPage, TerminalJournalPhysicalUsage};
+use crate::terminal_profile::{
+    TerminalJournalPersistence, TerminalProfileBudget, TerminalProfileError,
+    TerminalProfileMutationContext,
+};
+use crate::terminal_profile_store::TerminalProfileStore;
 use crate::terminal_session::{
     TerminalRecoveredSession, TerminalSession, TerminalSessionBackend, TerminalSessionError,
     TerminalSessionStep,
@@ -81,6 +86,8 @@ pub(crate) struct TerminalRegistryStep {
     pub(crate) session_id: TerminalSessionId,
     pub(crate) owner: BackgroundOutputOwner,
     pub(crate) result: std::result::Result<TerminalSessionStep, TerminalSessionError>,
+    /// A successful read receipt survives a separate follow-on cleanup failure.
+    pub(crate) cleanup_error: Option<TerminalSessionError>,
 }
 pub(crate) struct TerminalRegistryFailure {
     pub(crate) session_id: TerminalSessionId,
@@ -274,16 +281,31 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             Resident::Recovered(session) => session.screen(owner)?,
         })
     }
+    #[cfg(test)]
     pub(crate) fn events(
         &mut self,
         owner: &BackgroundOutputOwner,
         id: &TerminalSessionId,
         query: &TerminalEventQuery,
     ) -> Result<Vec<TerminalMonitorEvent>> {
+        self.events_with(
+            &mut crate::terminal_profile::TerminalTestPersistence,
+            owner,
+            id,
+            query,
+        )
+    }
+    pub(crate) fn events_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        owner: &BackgroundOutputOwner,
+        id: &TerminalSessionId,
+        query: &TerminalEventQuery,
+    ) -> Result<Vec<TerminalMonitorEvent>> {
         let index = self.index(owner, id)?;
         Ok(match &mut self.entries[index].resident {
-            Resident::Live(session) => session.events(owner, query)?,
-            Resident::Recovered(session) => session.events(owner, query)?,
+            Resident::Live(session) => session.events_with(persistence, owner, query)?,
+            Resident::Recovered(session) => session.events_with(persistence, owner, query)?,
         })
     }
 
@@ -310,25 +332,112 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
     }
     /// Only the profile coordinator selects a victim and holds the profile
     /// transaction. Session dispatch additionally enforces exact owner/lifecycle.
+    #[cfg(test)]
     pub(crate) fn evict(
         &mut self,
         owner: &BackgroundOutputOwner,
         id: &TerminalSessionId,
         kind: TerminalHistoryEviction,
     ) -> Result<usize> {
+        self.evict_with(
+            &mut crate::terminal_profile::TerminalTestPersistence,
+            owner,
+            id,
+            kind,
+        )
+    }
+    pub(crate) fn evict_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        owner: &BackgroundOutputOwner,
+        id: &TerminalSessionId,
+        kind: TerminalHistoryEviction,
+    ) -> Result<usize> {
         let index = self.index(owner, id)?;
         Ok(match &mut self.entries[index].resident {
-            Resident::Live(session) => session.evict(owner, kind)?,
-            Resident::Recovered(session) => session.evict(owner, kind)?,
+            Resident::Live(session) => session.evict_with(persistence, owner, kind)?,
+            Resident::Recovered(session) => session.evict_with(persistence, owner, kind)?,
         })
     }
 
     /// Fair bounded round-robin. One failed session cannot starve its neighbors.
     /// Returned raw chunks/probes are not queued or retained a second time here.
+    #[cfg(test)]
     pub(crate) fn pump(
         &mut self,
         now_ms: i64,
         maximum: usize,
+    ) -> Result<Vec<TerminalRegistryStep>> {
+        self.pump_dispatch(now_ms, maximum, |session, _| {
+            session.pump(now_ms).map(|step| (step, None))
+        })
+    }
+
+    /// Each running session reserves bounded headroom before any native read.
+    /// Pre-read profile refusals are typed per-session results, not observations:
+    /// they neither consume output nor quiesce the session. Fairness advances
+    /// even on refusal. No transaction survives this call or spans two sessions.
+    pub(crate) fn pump_with_profile(
+        &mut self,
+        store: &TerminalProfileStore,
+        budget: &TerminalProfileBudget,
+        now_ms: i64,
+        maximum: usize,
+    ) -> Result<Vec<TerminalRegistryStep>> {
+        let workspace = self.workspace.clone();
+        self.pump_dispatch(now_ms, maximum, |session, owner| {
+            let namespace = owner_name(&workspace, owner);
+            let cleanup = session.needs_native_cleanup()?;
+            let mut transaction = match store.transaction() {
+                Ok(transaction) => transaction,
+                Err(error) if cleanup => {
+                    return session
+                        .teardown_without_persistence(true, now_ms, profile_error(error.into()))
+                        .and(Err(TerminalSessionError::InvalidState));
+                }
+                Err(error) => return Err(profile_error(error.into())),
+            };
+            if cleanup {
+                let mut context =
+                    TerminalProfileMutationContext::new(&mut transaction, *budget, &namespace);
+                return session
+                    .pump_with(&mut context, now_ms)
+                    .map(|step| (step, None));
+            }
+            let mut permit = session.reserve_profile_read(&mut transaction, budget, &namespace)?;
+            let mut step = session.pump_read_with(&mut permit, now_ms)?;
+            drop(permit);
+            let cleanup_error = if step.cleanup_needed {
+                // Keep the same transaction, but release the one-read permit:
+                // exited cleanup can drain multiple bounded native chunks.
+                let mut context =
+                    TerminalProfileMutationContext::new(&mut transaction, *budget, &namespace);
+                let error = session.pump_with(&mut context, now_ms).err();
+                let observed = session.context();
+                step.cursor = observed.cursor;
+                step.lifecycle = observed.lifecycle;
+                step.cleanup_needed = false;
+                // Cleanup quiesces monitors; pre-cleanup probes are no longer live.
+                step.probes.clear();
+                error
+            } else {
+                None
+            };
+            Ok((step, cleanup_error))
+        })
+    }
+
+    fn pump_dispatch(
+        &mut self,
+        now_ms: i64,
+        maximum: usize,
+        mut pump: impl FnMut(
+            &mut TerminalSession<B>,
+            &BackgroundOutputOwner,
+        ) -> std::result::Result<
+            (TerminalSessionStep, Option<TerminalSessionError>),
+            TerminalSessionError,
+        >,
     ) -> Result<Vec<TerminalRegistryStep>> {
         if maximum == 0 || maximum > MAX_RESIDENT_TERMINALS {
             return Err(TerminalRegistryError::Invalid);
@@ -346,10 +455,15 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             if entry.active()
                 && let Resident::Live(session) = &mut entry.resident
             {
+                let (result, cleanup_error) = match pump(session, &entry.owner) {
+                    Ok((step, error)) => (Ok(step), error),
+                    Err(error) => (Err(error), None),
+                };
                 steps.push(TerminalRegistryStep {
                     session_id: entry.id.clone(),
                     owner: entry.owner.clone(),
-                    result: session.pump(now_ms),
+                    result,
+                    cleanup_error,
                 });
                 if steps.len() == maximum {
                     break;
@@ -387,6 +501,11 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
                 return Err(error.into());
             }
         }
+        if let Resident::Recovered(session) = &self.entries[index].resident
+            && let Some(error) = session.publication_error()
+        {
+            return Err(error.into());
+        }
         self.entries.remove(index);
         self.next = 0;
         Ok(())
@@ -413,13 +532,69 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         self.next = 0;
         Ok(session)
     }
+
+    /// Preserve a recovered history whose new facts could not be published.
+    /// Ordinary release must not silently discard that failure and journal lock.
+    pub(crate) fn take_failed_recovered_history(
+        &mut self,
+        owner: &BackgroundOutputOwner,
+        id: &TerminalSessionId,
+    ) -> Result<Box<TerminalRecoveredSession>> {
+        let index = self.index(owner, id)?;
+        if !matches!(&self.entries[index].resident, Resident::Recovered(session) if session.publication_error().is_some())
+        {
+            return Err(TerminalRegistryError::Invalid);
+        }
+        let Resident::Recovered(session) = self.entries.remove(index).resident else {
+            unreachable!("validated recovered history");
+        };
+        self.next = 0;
+        Ok(session)
+    }
     /// Stop admissions first, then attempt every owned cleanup even after error.
     /// Failed native cleanup retains authority for repeated shutdown; Drop forces one
     /// final bounded pass on the owning blocking worker.
+    #[cfg(test)]
     pub(crate) fn shutdown(
         &mut self,
         now_ms: i64,
         policy: TerminalClosePolicy,
+    ) -> Result<Vec<TerminalRegistryFailure>> {
+        self.shutdown_dispatch(now_ms, |session, owner| {
+            session.close(owner, policy, now_ms)
+        })
+    }
+
+    pub(crate) fn shutdown_with_profile(
+        &mut self,
+        store: &TerminalProfileStore,
+        budget: &TerminalProfileBudget,
+        now_ms: i64,
+        policy: TerminalClosePolicy,
+    ) -> Result<Vec<TerminalRegistryFailure>> {
+        let workspace = self.workspace.clone();
+        self.shutdown_dispatch(now_ms, |session, owner| match store.transaction() {
+            Ok(mut transaction) => {
+                let namespace = owner_name(&workspace, owner);
+                let mut context =
+                    TerminalProfileMutationContext::new(&mut transaction, *budget, &namespace);
+                session.close_with(&mut context, owner, policy, now_ms)
+            }
+            Err(error) => session.teardown_without_persistence(
+                policy == TerminalClosePolicy::Force,
+                now_ms,
+                profile_error(error.into()),
+            ),
+        })
+    }
+
+    fn shutdown_dispatch(
+        &mut self,
+        now_ms: i64,
+        mut close: impl FnMut(
+            &mut TerminalSession<B>,
+            &BackgroundOutputOwner,
+        ) -> std::result::Result<(), TerminalSessionError>,
     ) -> Result<Vec<TerminalRegistryFailure>> {
         self.check_time(now_ms)?;
         self.now_ms = now_ms;
@@ -428,7 +603,16 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         for entry in &mut self.entries {
             if let Resident::Live(session) = &mut entry.resident
                 && (session.owns_backend() || session.publication_error().is_some())
-                && let Err(error) = session.close(&entry.owner, policy, now_ms)
+                && let Err(error) = close(session, &entry.owner)
+            {
+                failures.push(TerminalRegistryFailure {
+                    session_id: entry.id.clone(),
+                    owner: entry.owner.clone(),
+                    error,
+                });
+            }
+            if let Resident::Recovered(session) = &entry.resident
+                && let Some(error) = session.publication_error()
             {
                 failures.push(TerminalRegistryFailure {
                     session_id: entry.id.clone(),
@@ -443,8 +627,14 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
 impl<B: TerminalSessionBackend> Drop for TerminalRegistry<B> {
     fn drop(&mut self) {
         let now_ms = self.minimum_time_ms();
-        let _ = self.shutdown(now_ms, TerminalClosePolicy::Force);
+        let _ = self.shutdown_dispatch(now_ms, |session, _| {
+            session.teardown_without_persistence(true, now_ms, TerminalSessionError::InvalidState)
+        });
     }
+}
+
+fn profile_error(error: TerminalProfileError) -> TerminalSessionError {
+    TerminalSessionError::History(TerminalHistoryError::Profile(error))
 }
 
 #[cfg(test)]
@@ -454,9 +644,16 @@ mod tests {
     use crate::terminal_catalog::TerminalCatalog;
     use crate::terminal_history::TerminalHistory;
     use crate::terminal_journal::{TerminalJournal, TerminalJournalError, TerminalJournalLimits};
+    use crate::terminal_monitor::TerminalMonitorActivation;
+    use crate::terminal_profile::{TerminalProfileLimits, TerminalTestPersistence};
+    use crate::terminal_profile_store::TerminalProfileStoreError;
     use crate::terminal_pty::{TerminalPtyClose, TerminalPtyRead, TerminalPtyStatus};
     use crate::terminal_session_record::test_metadata;
-    use machine_god_core::{SessionId, SessionIncarnationId, TerminalDimensions};
+    use machine_god_core::{
+        SessionId, SessionIncarnationId, TerminalDimensions, TerminalMonitorCondition,
+        TerminalMonitorDefinition, TerminalMonitorLifetime, TerminalMonitorOperation,
+        TerminalNotifySchedule,
+    };
     use rustix::fd::OwnedFd;
     use rustix::fs::{Mode, OFlags};
     use std::collections::VecDeque;
@@ -472,7 +669,11 @@ mod tests {
         closes: usize,
         dropped: usize,
         read_fails: bool,
+        read_closed: bool,
         close_fails: bool,
+        statuses: VecDeque<TerminalPtyStatus>,
+        tail: Vec<Vec<u8>>,
+        corrupt_on_close: Option<PathBuf>,
     }
     struct Backend(Arc<Mutex<State>>);
     impl Drop for Backend {
@@ -492,7 +693,7 @@ mod tests {
             buffer[..output.len()].copy_from_slice(&output);
             Ok(TerminalPtyRead {
                 bytes_read: output.len(),
-                closed: false,
+                closed: state.read_closed,
             })
         }
         fn write(&mut self, bytes: &[u8]) -> std::result::Result<BackgroundInputReceipt, ()> {
@@ -503,7 +704,13 @@ mod tests {
             ))
         }
         fn status(&mut self) -> std::result::Result<TerminalPtyStatus, ()> {
-            Ok(TerminalPtyStatus::Running)
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .statuses
+                .pop_front()
+                .unwrap_or(TerminalPtyStatus::Running))
         }
         fn resize(&mut self, _: &TerminalDimensions) -> std::result::Result<(), ()> {
             Ok(())
@@ -517,12 +724,20 @@ mod tests {
         fn close(
             &mut self,
             _: bool,
-            _: &mut dyn FnMut(&[u8]),
+            output: &mut dyn FnMut(&[u8]),
         ) -> std::result::Result<TerminalPtyClose, ()> {
             let mut state = self.0.lock().unwrap();
             state.closes += 1;
             if state.close_fails {
                 return Err(());
+            }
+            if let Some(path) = state.corrupt_on_close.take() {
+                // Fault injection after the normal read has committed, but
+                // before the profile coordinator admits the close drain.
+                std::fs::write(path, b"fault").unwrap();
+            }
+            for bytes in state.tail.drain(..) {
+                output(&bytes);
             }
             Ok(TerminalPtyClose {
                 status: TerminalPtyStatus::Exited(0),
@@ -576,6 +791,50 @@ mod tests {
                 now_ms,
             )
         }
+        fn profile_live(
+            &self,
+            owner: &BackgroundOutputOwner,
+            id: &TerminalSessionId,
+        ) -> (TerminalProfileStore, TerminalSession<Backend>) {
+            let store = TerminalProfileStore::prepare(self.fd()).unwrap();
+            let budget = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+            let mut transaction = store.transaction().unwrap();
+            let mut catalog = transaction
+                .prepare_catalog("/workspace".into(), owner.clone())
+                .unwrap();
+            drop(transaction.create_session(&mut catalog, id).unwrap());
+            let namespace = catalog.namespace_key();
+            let completion = budget
+                .create_journal(
+                    &mut transaction,
+                    namespace,
+                    id,
+                    TerminalJournalLimits::default(),
+                )
+                .unwrap();
+            completion.accounting.unwrap();
+            let journal = completion.operation.unwrap();
+            let mut context =
+                TerminalProfileMutationContext::new(&mut transaction, budget, namespace);
+            let history = TerminalHistory::create_with(
+                &mut context,
+                journal,
+                &TerminalDimensions::new(3, 20).unwrap(),
+            )
+            .unwrap();
+            let session = TerminalSession::new_with(
+                &mut context,
+                Backend(Arc::clone(&self.state)),
+                history,
+                owner.clone(),
+                id.clone(),
+                test_metadata(),
+                0,
+            )
+            .unwrap();
+            drop(transaction);
+            (store, session)
+        }
         fn recovered(
             &self,
             owner: &BackgroundOutputOwner,
@@ -614,6 +873,429 @@ mod tests {
     }
     fn registry() -> TerminalRegistry<Backend> {
         TerminalRegistry::new("/workspace".into()).unwrap()
+    }
+
+    #[test]
+    fn profile_busy_and_capacity_defer_before_read_and_later_progress() {
+        let fixture = Fixture::new();
+        let owner = owner("profile");
+        let id = id("profile-read");
+        let (store, session) = fixture.profile_live(&owner, &id);
+        let mut registry = registry();
+        registry
+            .start(owner.clone(), id.clone(), || Ok(session))
+            .unwrap();
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"kept".to_vec());
+        let budget = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+        let held = store.transaction().unwrap();
+        let before = registry.inspect(&owner, &id).unwrap();
+        let steps = registry.pump_with_profile(&store, &budget, 1, 1).unwrap();
+        assert!(matches!(
+            steps[0].result,
+            Err(TerminalSessionError::History(
+                TerminalHistoryError::Profile(TerminalProfileError::Store(
+                    TerminalProfileStoreError::Busy
+                ))
+            ))
+        ));
+        drop(held);
+        let mut limits = TerminalProfileLimits::default();
+        limits.retained.output_bytes = 1;
+        let limited = TerminalProfileBudget::new(limits).unwrap();
+        let steps = registry.pump_with_profile(&store, &limited, 2, 1).unwrap();
+        assert!(matches!(
+            steps[0].result,
+            Err(TerminalSessionError::History(
+                TerminalHistoryError::Profile(TerminalProfileError::ResourceLimit)
+            ))
+        ));
+        assert_eq!(fixture.state.lock().unwrap().reads, 0);
+        let after = registry.inspect(&owner, &id).unwrap();
+        assert_eq!(after.context.cursor, before.context.cursor);
+        assert_eq!(after.context.lifecycle, before.context.lifecycle);
+        assert_eq!(after.context.now_ms, before.context.now_ms);
+        assert!(
+            registry
+                .live_mut(&owner, &id)
+                .unwrap()
+                .publication_error()
+                .is_none()
+        );
+        let mut steps = registry.pump_with_profile(&store, &budget, 3, 1).unwrap();
+        assert_eq!(steps.remove(0).result.unwrap().output, b"kept");
+        assert_eq!(fixture.state.lock().unwrap().reads, 1);
+        assert!(store.transaction().is_ok());
+        assert!(
+            registry
+                .shutdown_with_profile(&store, &budget, 3, TerminalClosePolicy::Force)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn profile_shutdown_without_lock_closes_native_and_retains_failed_history() {
+        let fixture = Fixture::new();
+        let owner = owner("profile");
+        let id = id("shutdown");
+        let (store, session) = fixture.profile_live(&owner, &id);
+        let mut registry = registry();
+        registry
+            .start(owner.clone(), id.clone(), || Ok(session))
+            .unwrap();
+        let budget = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+        let held = store.transaction().unwrap();
+        let before = held.inventory().unwrap().usage;
+        let failures = registry
+            .shutdown_with_profile(&store, &budget, 1, TerminalClosePolicy::Force)
+            .unwrap();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
+        assert_eq!(held.inventory().unwrap().usage, before);
+        assert!(matches!(
+            registry.release(&owner, &id),
+            Err(TerminalRegistryError::Session(_))
+        ));
+        let failed = registry.take_failed_history(&owner, &id).unwrap();
+        assert!(!failed.owns_backend());
+        assert!(failed.publication_error().is_some());
+        drop(failed);
+        drop(held);
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
+    }
+
+    #[test]
+    fn known_exit_is_cleaned_even_when_normal_read_capacity_is_full() {
+        let fixture = Fixture::new();
+        let owner = owner("exit");
+        let id = id("full-profile-exit");
+        let (store, session) = fixture.profile_live(&owner, &id);
+        let mut registry = registry();
+        registry
+            .start(owner.clone(), id.clone(), || Ok(session))
+            .unwrap();
+        let existing = registry.physical_usage(&owner, &id).unwrap().output_bytes;
+        let mut limits = TerminalProfileLimits::default();
+        limits.retained.output_bytes = existing.max(1);
+        let budget = TerminalProfileBudget::new(limits).unwrap();
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .statuses
+            .extend([TerminalPtyStatus::Exited(0); 2]);
+        let steps = registry.pump_with_profile(&store, &budget, 1, 1).unwrap();
+        assert!(steps[0].result.is_ok());
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(state.reads, 0);
+        assert_eq!(state.closes, 1);
+        drop(state);
+        assert!(!registry.live_mut(&owner, &id).unwrap().owns_backend());
+        assert_eq!(
+            registry.inspect(&owner, &id).unwrap().context.lifecycle,
+            TerminalLifecycle::Exited
+        );
+    }
+
+    #[test]
+    fn known_exit_without_profile_lock_still_closes_native() {
+        let fixture = Fixture::new();
+        let owner = owner("exit");
+        let id = id("busy-profile-exit");
+        let (store, session) = fixture.profile_live(&owner, &id);
+        let mut registry = registry();
+        registry
+            .start(owner.clone(), id.clone(), || Ok(session))
+            .unwrap();
+        let budget = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+        let held = store.transaction().unwrap();
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .statuses
+            .push_back(TerminalPtyStatus::Exited(0));
+        let steps = registry.pump_with_profile(&store, &budget, 1, 1).unwrap();
+        assert!(steps[0].result.is_err());
+        assert_eq!(fixture.state.lock().unwrap().reads, 0);
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
+        assert!(
+            registry
+                .live_mut(&owner, &id)
+                .unwrap()
+                .publication_error()
+                .is_some()
+        );
+        drop(held);
+    }
+
+    #[test]
+    fn exit_after_preflight_releases_read_permit_before_multichunk_drain() {
+        for after_read in [false, true] {
+            let fixture = Fixture::new();
+            let owner = owner("exit");
+            let id = id("exit-race");
+            let (store, session) = fixture.profile_live(&owner, &id);
+            let mut registry = registry();
+            registry
+                .start(owner.clone(), id.clone(), || Ok(session))
+                .unwrap();
+            let budget = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+            let mut expected = Vec::new();
+            {
+                let mut state = fixture.state.lock().unwrap();
+                state.statuses.push_back(TerminalPtyStatus::Running);
+                if after_read {
+                    state.statuses.push_back(TerminalPtyStatus::Running);
+                    state.output.push_back(vec![b'r'; 16 * 1024]);
+                    state.read_closed = true;
+                    expected.extend(vec![b'r'; 16 * 1024]);
+                }
+                state.statuses.extend([TerminalPtyStatus::Exited(0); 2]);
+                state.tail = vec![vec![b'a'; 16 * 1024], vec![b'b'; 16 * 1024], vec![b'c'; 7]];
+                for bytes in &state.tail {
+                    expected.extend(bytes);
+                }
+            }
+            let mut steps = registry.pump_with_profile(&store, &budget, 1, 1).unwrap();
+            let receipt = steps.remove(0);
+            assert!(receipt.cleanup_error.is_none());
+            let step = receipt.result.unwrap();
+            assert_eq!(step.output.len(), if after_read { 16 * 1024 } else { 0 });
+            assert_eq!(step.lifecycle, TerminalLifecycle::Exited);
+            assert!(!step.cleanup_needed);
+            assert!(step.probes.is_empty());
+            assert_eq!(
+                step.cursor,
+                registry.inspect(&owner, &id).unwrap().context.cursor
+            );
+            let page = registry
+                .read(&owner, &id, &TerminalCursor::new(1, 0).unwrap(), 64 * 1024)
+                .unwrap();
+            assert_eq!(page.bytes, expected);
+            assert_eq!(fixture.state.lock().unwrap().reads, usize::from(after_read));
+            assert_eq!(fixture.state.lock().unwrap().closes, 1);
+            assert!(store.transaction().is_ok());
+        }
+    }
+
+    #[test]
+    fn committed_read_receipt_survives_follow_on_cleanup_publication_failure() {
+        let fixture = Fixture::new();
+        let owner = owner("exit");
+        let id = id("cleanup-receipt");
+        let (store, session) = fixture.profile_live(&owner, &id);
+        let mut registry = registry();
+        registry
+            .start(owner.clone(), id.clone(), || Ok(session))
+            .unwrap();
+        let budget = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+        {
+            let mut state = fixture.state.lock().unwrap();
+            state.statuses.extend([
+                TerminalPtyStatus::Running,
+                TerminalPtyStatus::Running,
+                TerminalPtyStatus::Exited(0),
+                TerminalPtyStatus::Exited(0),
+            ]);
+            state.read_closed = true;
+            state.output.push_back(b"receipt".to_vec());
+            state.tail = vec![b"tail".to_vec()];
+            state.corrupt_on_close = Some(
+                fixture
+                    .path
+                    .join("terminal-v1")
+                    .join(owner_name("/workspace", &owner))
+                    .join("sessions")
+                    .join(id.as_str())
+                    .join("unrecognized"),
+            );
+        }
+        let mut steps = registry.pump_with_profile(&store, &budget, 1, 1).unwrap();
+        let receipt = steps.remove(0);
+        assert!(
+            receipt.result.is_ok(),
+            "pre-read refusal: {:?}",
+            receipt.result.as_ref().err()
+        );
+        assert!(receipt.cleanup_error.is_some());
+        let step = receipt.result.unwrap();
+        assert_eq!(step.output, b"receipt");
+        assert!(step.probes.is_empty());
+        assert_eq!(
+            step.cursor,
+            registry.inspect(&owner, &id).unwrap().context.cursor
+        );
+        assert_eq!(
+            step.lifecycle,
+            registry.inspect(&owner, &id).unwrap().context.lifecycle
+        );
+        assert!(
+            registry
+                .live_mut(&owner, &id)
+                .unwrap()
+                .publication_error()
+                .is_some()
+        );
+        assert_eq!(fixture.state.lock().unwrap().reads, 1);
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
+        let page = registry
+            .read(&owner, &id, &TerminalCursor::new(1, 0).unwrap(), 64 * 1024)
+            .unwrap();
+        assert!(page.bytes.starts_with(b"receipt"));
+        assert_eq!(
+            page.bytes
+                .windows(7)
+                .filter(|bytes| *bytes == b"receipt")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn profile_owner_releases_transaction_before_observer_and_request_callback() {
+        let fixture = Fixture::new();
+        let owner = owner("profile");
+        let id = id("owner-profile");
+        let (store, session) = fixture.profile_live(&owner, &id);
+        let store = Arc::new(store);
+        let mut registry = registry();
+        registry.start(owner, id, || Ok(session)).unwrap();
+        let budget = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+        let (worker, handle) = crate::terminal_owner::TerminalOwnerLoop::new();
+        let callback_store = Arc::clone(&store);
+        let stop = handle.clone();
+        let mut request = handle.request(
+            machine_god_core::CancellationToken::new(),
+            move |_, _, _| {
+                assert!(callback_store.transaction().is_ok());
+                stop.shutdown();
+                true
+            },
+        );
+        assert!(poll_owner(&mut request).is_pending());
+        let mut observed = false;
+        let exit = worker.run_with_profile(
+            &mut registry,
+            &store,
+            &budget,
+            || 1,
+            |steps| {
+                assert!(store.transaction().is_ok());
+                assert!(steps[0].result.is_ok());
+                observed = true;
+            },
+        );
+        assert!(observed);
+        assert!(exit.error.is_none());
+        assert!(exit.shutdown.unwrap().is_empty());
+        assert_eq!(poll_owner(&mut request), std::task::Poll::Ready(Ok(true)));
+    }
+
+    #[test]
+    fn recovered_publication_failure_requires_explicit_transfer() {
+        struct Denied;
+        impl TerminalJournalPersistence for Denied {
+            fn mutate(
+                &mut self,
+                _: &mut TerminalJournal,
+                _: crate::terminal_journal::TerminalJournalMutation<'_>,
+            ) -> std::result::Result<
+                crate::terminal_profile::TerminalProfileCompletion<
+                    crate::terminal_journal::TerminalJournalReceipt,
+                    TerminalJournalError,
+                >,
+                TerminalProfileError,
+            > {
+                Err(TerminalProfileError::ResourceLimit)
+            }
+        }
+        for acknowledge in [false, true] {
+            let fixture = Fixture::new();
+            let owner = owner("recovered");
+            let id = id("failed-recovered");
+            let mut live = fixture.live(&owner, &id, 0).unwrap();
+            live.monitor(
+                &owner,
+                TerminalMonitorOperation::Add {
+                    definition: TerminalMonitorDefinition {
+                        condition: TerminalMonitorCondition::OutputContains {
+                            pattern: "kept".into(),
+                        },
+                        check_schedule: None,
+                        notify: TerminalNotifySchedule::OnMatch,
+                        lifetime: TerminalMonitorLifetime::UntilSessionEnd,
+                    },
+                },
+                TerminalMonitorActivation::default(),
+                0,
+            )
+            .unwrap();
+            fixture
+                .state
+                .lock()
+                .unwrap()
+                .output
+                .push_back(b"kept".to_vec());
+            live.pump(1).unwrap();
+            live.close(&owner, TerminalClosePolicy::Force, 2).unwrap();
+            drop(live);
+            let mut registry = registry();
+            registry
+                .recover(owner.clone(), id.clone(), || {
+                    fixture.recovered(&owner, &id, 2)
+                })
+                .unwrap();
+            if acknowledge {
+                let mut query = TerminalEventQuery {
+                    after_event_id: 0,
+                    acknowledge_event_id: None,
+                    max_events: 256,
+                };
+                let events = registry
+                    .events_with(&mut TerminalTestPersistence, &owner, &id, &query)
+                    .unwrap();
+                query.acknowledge_event_id = Some(events.last().unwrap().event_id);
+                assert!(
+                    registry
+                        .events_with(&mut Denied, &owner, &id, &query)
+                        .is_err()
+                );
+            } else {
+                assert!(
+                    registry
+                        .evict_with(
+                            &mut Denied,
+                            &owner,
+                            &id,
+                            TerminalHistoryEviction::CompletedOutput
+                        )
+                        .is_err()
+                );
+            }
+            assert!(matches!(
+                registry.release(&owner, &id),
+                Err(TerminalRegistryError::Session(_))
+            ));
+            assert!(matches!(
+                registry.take_failed_recovered_history(&self::owner("wrong"), &id),
+                Err(TerminalRegistryError::NotFound)
+            ));
+            assert_eq!(
+                registry
+                    .shutdown(2, TerminalClosePolicy::Force)
+                    .unwrap()
+                    .len(),
+                1
+            );
+            let failed = registry.take_failed_recovered_history(&owner, &id).unwrap();
+            assert!(failed.publication_error().is_some());
+        }
     }
 
     fn poll_owner<T: Send + 'static>(
@@ -1193,7 +1875,7 @@ mod tests {
         let facts = second
             .list(&owner, None, 1, &TerminalRegistryFilter::default())
             .unwrap();
-        assert_eq!(facts[0].context.lifecycle, TerminalLifecycle::Closed);
+        assert_eq!(facts[0].context.lifecycle, TerminalLifecycle::Lost);
         assert_eq!(facts[0].metadata.as_ref().unwrap().workspace, "/workspace");
         assert!(matches!(
             second.live_mut(&owner, &id),
@@ -1301,7 +1983,7 @@ mod tests {
         let recovered = fixture.recovered(&owner, &id, 100).unwrap();
         assert_eq!(
             recovered.facts(&owner).unwrap().context.lifecycle,
-            TerminalLifecycle::Closed
+            TerminalLifecycle::Lost
         );
         assert_eq!(
             recovered

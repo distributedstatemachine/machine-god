@@ -1,6 +1,8 @@
 //! Continuous terminal pumping on an explicitly owned blocking worker.
 //! Construction and unpolled requests are inert; this module spawns no threads.
 
+use crate::terminal_profile::TerminalProfileBudget;
+use crate::terminal_profile_store::TerminalProfileStore;
 use crate::terminal_registry::{
     MAX_RESIDENT_TERMINALS, TerminalRegistry, TerminalRegistryError, TerminalRegistryFailure,
     TerminalRegistryStep,
@@ -290,6 +292,42 @@ pub(crate) struct TerminalOwnerExit {
     pub(crate) error: Option<TerminalOwnerError>,
     pub(crate) shutdown: std::result::Result<Vec<TerminalRegistryFailure>, TerminalRegistryError>,
 }
+
+#[derive(Clone, Copy)]
+enum Persistence<'a> {
+    Profile(&'a TerminalProfileStore, &'a TerminalProfileBudget),
+    #[cfg(test)]
+    Unmetered,
+}
+
+impl Persistence<'_> {
+    fn pump<B: TerminalSessionBackend>(
+        &self,
+        registry: &mut TerminalRegistry<B>,
+        now_ms: i64,
+    ) -> std::result::Result<Vec<TerminalRegistryStep>, TerminalRegistryError> {
+        match self {
+            Self::Profile(store, budget) => {
+                registry.pump_with_profile(store, budget, now_ms, MAX_RESIDENT_TERMINALS)
+            }
+            #[cfg(test)]
+            Self::Unmetered => registry.pump(now_ms, MAX_RESIDENT_TERMINALS),
+        }
+    }
+    fn shutdown<B: TerminalSessionBackend>(
+        &self,
+        registry: &mut TerminalRegistry<B>,
+    ) -> std::result::Result<Vec<TerminalRegistryFailure>, TerminalRegistryError> {
+        let now_ms = registry.minimum_time_ms();
+        match self {
+            Self::Profile(store, budget) => {
+                registry.shutdown_with_profile(store, budget, now_ms, TerminalClosePolicy::Force)
+            }
+            #[cfg(test)]
+            Self::Unmetered => registry.shutdown(now_ms, TerminalClosePolicy::Force),
+        }
+    }
+}
 impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
     /// A rejected request can run user waker or captured-value destructors.
     /// Contain each one independently so every remaining reply is resolved and
@@ -322,9 +360,38 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
     /// the same worker can retain failed histories after inspecting the exit.
     /// The observer consumes bounded output/probe descriptions synchronously;
     /// it must not execute unbounded probes or enqueue unbounded output.
+    #[cfg(test)]
     pub(crate) fn run(
         self,
         registry: &mut TerminalRegistry<B>,
+        clock: impl FnMut() -> i64,
+        observer: impl FnMut(Vec<TerminalRegistryStep>),
+    ) -> TerminalOwnerExit {
+        self.run_inner(registry, Persistence::Unmetered, clock, observer)
+    }
+
+    /// Profile transactions exist only inside dispatch, never across observers,
+    /// job callbacks/reply wakes, or the blocking request wait.
+    pub(crate) fn run_with_profile(
+        self,
+        registry: &mut TerminalRegistry<B>,
+        store: &TerminalProfileStore,
+        budget: &TerminalProfileBudget,
+        clock: impl FnMut() -> i64,
+        observer: impl FnMut(Vec<TerminalRegistryStep>),
+    ) -> TerminalOwnerExit {
+        self.run_inner(
+            registry,
+            Persistence::Profile(store, budget),
+            clock,
+            observer,
+        )
+    }
+
+    fn run_inner(
+        self,
+        registry: &mut TerminalRegistry<B>,
+        persistence: Persistence<'_>,
         mut clock: impl FnMut() -> i64,
         mut observer: impl FnMut(Vec<TerminalRegistryStep>),
     ) -> TerminalOwnerExit {
@@ -333,7 +400,7 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
         let execution = catch_callback(|| {
             while !self.shared.closing.load(Ordering::Acquire) {
                 if Instant::now() >= deadline {
-                    let output_ready = match registry.pump(clock(), MAX_RESIDENT_TERMINALS) {
+                    let output_ready = match persistence.pump(registry, clock()) {
                         Ok(steps) => {
                             let output_ready = steps.iter().any(|step| {
                                 step.result
@@ -385,7 +452,7 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
         if rejection_panicked || self.shared.callback_panicked.load(Ordering::Acquire) {
             error = Some(TerminalOwnerError::Panicked);
         }
-        let shutdown = registry.shutdown(registry.minimum_time_ms(), TerminalClosePolicy::Force);
+        let shutdown = persistence.shutdown(registry);
         TerminalOwnerExit { error, shutdown }
     }
 }
