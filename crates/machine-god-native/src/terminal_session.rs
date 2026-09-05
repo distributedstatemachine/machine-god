@@ -606,6 +606,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         now_ms: i64,
     ) -> Result<()> {
         self.authorize_running(owner, now_ms)?;
+        self.history.validate_resize(dimensions)?;
         let backend = self
             .backend
             .as_mut()
@@ -1758,6 +1759,63 @@ mod tests {
 
     fn denied_error() -> TerminalSessionError {
         TerminalHistoryError::Profile(TerminalProfileError::ResourceLimit).into()
+    }
+
+    #[test]
+    fn resize_after_signal_gap_rejects_without_losing_the_running_session() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        add(&mut session, Condition::ProcessExit);
+        fixture.state.lock().unwrap().signal_flushes = true;
+        let mut persistence = Persistence::default();
+        session
+            .signal_with(
+                &mut persistence,
+                &owner("owner"),
+                TerminalSignal::Interrupt,
+                1,
+            )
+            .unwrap();
+        let metadata = std::fs::read(fixture.path.join("tj-meta")).unwrap();
+        let monitors = session.monitors.snapshot().unwrap();
+        persistence.calls.clear();
+        assert!(matches!(
+            session.resize_with(
+                &mut persistence,
+                &owner("owner"),
+                &TerminalDimensions::new(4, 30).unwrap(),
+                2,
+            ),
+            Err(TerminalSessionError::History(TerminalHistoryError::Screen(
+                crate::terminal_screen::TerminalScreenError::Unavailable(_)
+            )))
+        ));
+        assert!(persistence.calls.is_empty());
+        assert_eq!(
+            std::fs::read(fixture.path.join("tj-meta")).unwrap(),
+            metadata
+        );
+        assert_eq!(session.monitors.snapshot().unwrap(), monitors);
+        assert_eq!(session.lifecycle, TerminalLifecycle::Running);
+        assert_eq!(session.now_ms, 1);
+        assert!(!session.input.is_quiesced());
+        assert!(session.publication_error.is_none());
+        assert!(fixture.state.lock().unwrap().resizes.is_empty());
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"still running".to_vec());
+        assert_eq!(
+            session.pump_with(&mut persistence, 2).unwrap().output,
+            b"still running"
+        );
+        assert_eq!(session.lifecycle, TerminalLifecycle::Running);
+        session
+            .close(&owner("owner"), TerminalClosePolicy::Force, 3)
+            .unwrap();
     }
 
     #[test]

@@ -198,6 +198,11 @@ must first durably record an output gap; subsequent raw bytes cannot silently
 repair that screen. These are runtime composition components, not additional
 model-facing actions in the current reference-host subset.
 
+Resize validates dimensions and projection availability before starting those
+effects. An unavailable projection, including a previously recorded signal
+gap, rejects resize without changing the running session's lifecycle, input,
+monitors or persistence; ordinary raw-output pumping can continue.
+
 The single-owner session driver composes PTY transport, history, ordered input
 and monitor observation. Raw output does not establish shell readiness: only
 the trusted startup-control path may transition from starting to running.

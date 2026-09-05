@@ -499,11 +499,7 @@ impl TerminalHistory {
         dimensions: &TerminalDimensions,
         native_resize: impl FnOnce(&TerminalDimensions) -> std::result::Result<(), ()>,
     ) -> Result<()> {
-        self.require_live()?;
-        dimensions
-            .validate()
-            .map_err(|_| TerminalScreenError::InvalidInput)?;
-        self.projection()?;
+        self.validate_resize(dimensions)?;
         // Keep the old grid privately while publishing the unavailable marker;
         // no operation may observe it between the barrier and new checkpoint.
         let mut screen = self.screen.take().expect("validated projection");
@@ -526,6 +522,18 @@ impl TerminalHistory {
         let bytes = encode_checkpoint(&screen)?;
         self.publish_checkpoint_with(persistence, &bytes)?;
         self.screen = Some(screen);
+        Ok(())
+    }
+
+    /// Effect-free resize validation shared with the session driver, so an
+    /// expected unavailable projection is not mistaken for a publication or
+    /// native-resize failure after the driver starts the operation.
+    pub(crate) fn validate_resize(&self, dimensions: &TerminalDimensions) -> Result<()> {
+        self.require_live()?;
+        dimensions
+            .validate()
+            .map_err(|_| TerminalScreenError::InvalidInput)?;
+        self.projection()?;
         Ok(())
     }
 
