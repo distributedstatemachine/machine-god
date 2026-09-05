@@ -1064,6 +1064,63 @@ fn prepare_signal_process_tree(
     })
 }
 
+/// Includes same-session jobs whose shell already exited and reparented them.
+/// The unreaped session leader prevents SID reuse throughout this capture.
+#[cfg(target_os = "linux")]
+fn prepare_terminal_process_tree(
+    target: &ProcessSignalTarget,
+) -> Result<PreparedSignalProcessTree, BackgroundProcessSignalError> {
+    let authority = target.authority.as_ref().ok_or_else(signal_process_error)?;
+    let mut scratch = SignalProcessScratch::new();
+    let (snapshot, mut pinned_processes) =
+        signal_process_snapshot(authority, target.group, &mut scratch)?;
+    let mut descendants = derive_signal_descendants(&snapshot, target.group, target.root_identity)?;
+    let members =
+        linux_scope_members(authority, target.group, true).map_err(|_| signal_process_error())?;
+    for member in members {
+        if member.pid == target.group || pinned_processes.contains_key(&member.pid) {
+            continue;
+        }
+        let Some(directory) = open_linux_signal_process_directory(authority, member.pid, &scratch)?
+        else {
+            continue;
+        };
+        scratch
+            .budget
+            .preflight()
+            .map_err(|_| signal_process_error())?;
+        let process_handle = match budgeted_linux_signal_open(&scratch.descriptors, || {
+            rustix::process::pidfd_open(member.pid, rustix::process::PidfdFlags::empty())
+        })? {
+            Ok(process) => process,
+            Err(rustix::io::Errno::SRCH) => continue,
+            Err(_) => return Err(signal_process_error()),
+        };
+        let Some(process) = read_linux_signal_process_at(
+            directory.as_fd(),
+            member.pid,
+            &mut scratch.stat_bytes,
+            &mut scratch.budget,
+            &scratch.descriptors,
+        )?
+        else {
+            continue;
+        };
+        let stat = parse_linux_proc_stat(&scratch.stat_bytes, member.pid)
+            .map_err(|_| signal_process_error())?;
+        if stat.session != Some(target.group) || Some(stat.start_time) != member.identity {
+            continue;
+        }
+        descendants.push(process);
+        pinned_processes.insert(member.pid, process_handle);
+    }
+    require_retained_signal_root(target)?;
+    Ok(PreparedSignalProcessTree {
+        descendants,
+        pinned_processes,
+    })
+}
+
 #[cfg(target_os = "linux")]
 fn deliver_signal_process_tree(
     target: &ProcessSignalTarget,
@@ -2393,33 +2450,60 @@ pub(crate) struct TerminalChildGuard {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl TerminalChildGuard {
-    pub(crate) fn reserve(cancellation: &CancellationToken) -> Result<Self, BackgroundProcessError> {
+    pub(crate) fn reserve(
+        cancellation: &CancellationToken,
+    ) -> Result<Self, BackgroundProcessError> {
         require_exclusive_child_reaping(cancellation)?;
         #[cfg(target_os = "linux")]
         let authority = GroupSnapshotAuthority::open()?;
         #[cfg(target_os = "macos")]
         let authority = GroupSnapshotAuthority;
-        Ok(Self { child: None, reap_permit: Some(reserve_child_reap_authority()?), authority: Arc::new(authority) })
+        Ok(Self {
+            child: None,
+            reap_permit: Some(reserve_child_reap_authority()?),
+            authority: Arc::new(authority),
+        })
     }
 
-    pub(crate) fn spawn(&mut self, command: &mut Command) -> Result<NonZeroU32, BackgroundProcessError> {
-        if self.child.is_some() { return Err(invariant_error()); }
+    pub(crate) fn spawn(
+        &mut self,
+        command: &mut Command,
+    ) -> Result<NonZeroU32, BackgroundProcessError> {
+        if self.child.is_some() {
+            return Err(invariant_error());
+        }
         self.child = Some(command.spawn().map_err(|_| spawn_error())?);
-        NonZeroU32::new(self.child.as_ref().ok_or_else(invariant_error)?.id()).ok_or_else(invariant_error)
+        NonZeroU32::new(self.child.as_ref().ok_or_else(invariant_error)?.id())
+            .ok_or_else(invariant_error)
     }
 
     pub(crate) fn into_session(mut self) -> Result<OwnedBackgroundProcess, BackgroundProcessError> {
-        let pid = NonZeroU32::new(self.child.as_ref().ok_or_else(invariant_error)?.id()).ok_or_else(invariant_error)?;
-        let group = rustix::process::Pid::from_raw(i32::try_from(pid.get()).map_err(|_| invariant_error())?).ok_or_else(invariant_error)?;
-        if rustix::process::getpgid(Some(group)) != Ok(group) || rustix::process::getsid(Some(group)) != Ok(group) { return Err(invariant_error()); }
+        let pid = NonZeroU32::new(self.child.as_ref().ok_or_else(invariant_error)?.id())
+            .ok_or_else(invariant_error)?;
+        let group = rustix::process::Pid::from_raw(
+            i32::try_from(pid.get()).map_err(|_| invariant_error())?,
+        )
+        .ok_or_else(invariant_error)?;
+        if rustix::process::getpgid(Some(group)) != Ok(group)
+            || rustix::process::getsid(Some(group)) != Ok(group)
+        {
+            return Err(invariant_error());
+        }
         #[cfg(target_os = "linux")]
-        let controller = BackgroundProcessSignalController::hidden(group, Arc::clone(&self.authority)).map_err(|_| spawn_error())?;
+        let controller =
+            BackgroundProcessSignalController::hidden(group, Arc::clone(&self.authority))
+                .map_err(|_| spawn_error())?;
         #[cfg(target_os = "macos")]
         let controller = BackgroundProcessSignalController::hidden(group);
         Ok(OwnedBackgroundProcess {
-            child: self.child.take(), reap_permit: self.reap_permit.take(),
-            group, snapshot_authority: Some(Arc::clone(&self.authority)),
-            output: None, input_controller: None, signal_controller: Some(controller), pid,
+            child: self.child.take(),
+            reap_permit: self.reap_permit.take(),
+            group,
+            snapshot_authority: Some(Arc::clone(&self.authority)),
+            output: None,
+            input_controller: None,
+            signal_controller: Some(controller),
+            pid,
         })
     }
 }
@@ -2427,14 +2511,27 @@ impl TerminalChildGuard {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl Drop for TerminalChildGuard {
     fn drop(&mut self) {
-        if self.child.is_some() { let _ = terminate_and_reap_or_quarantine(&mut self.child, &mut self.reap_permit); }
+        if self.child.is_some() {
+            let _ = terminate_and_reap_or_quarantine(&mut self.child, &mut self.reap_permit);
+        }
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) enum TerminalClosePhase {
+    Graceful,
+    Force,
+    Close,
 }
 
 impl OwnedBackgroundProcess {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    pub(crate) fn terminal_poll(&mut self) -> Result<Option<BackgroundProcessExit>, BackgroundProcessError> {
-        if self.child.is_none() { return Err(invariant_error()); }
+    pub(crate) fn terminal_poll(
+        &mut self,
+    ) -> Result<Option<BackgroundProcessExit>, BackgroundProcessError> {
+        if self.child.is_none() {
+            return Err(invariant_error());
+        }
         match observe_leader(self.group) {
             Ok(status) => Ok(status),
             Err(LeaderObservationFailure::LostAuthority) => {
@@ -2442,49 +2539,112 @@ impl OwnedBackgroundProcess {
                 close_signal_controller(&mut self.signal_controller);
                 drop(self.child.take());
                 Err(wait_error())
-            },
+            }
             Err(LeaderObservationFailure::Operation(error)) => Err(error),
         }
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    pub(crate) fn terminal_signal(&self, signal: BackgroundProcessSignal) -> Result<(), BackgroundProcessSignalError> {
-        self.signal_controller.as_ref().ok_or_else(signal_not_found_error)?.signal(signal)
+    pub(crate) fn terminal_signal(
+        &self,
+        signal: BackgroundProcessSignal,
+    ) -> Result<(), BackgroundProcessSignalError> {
+        self.signal_controller
+            .as_ref()
+            .ok_or_else(signal_not_found_error)?
+            .signal(signal)
     }
 
     /// Closes one PTY shell while retaining its pre-close Linux ancestry pins.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    pub(crate) fn terminal_close(&mut self, force: bool) -> Result<BackgroundProcessExit, BackgroundProcessError> {
-        let authority = Arc::clone(self.snapshot_authority.as_ref().ok_or_else(invariant_error)?);
+    pub(crate) fn terminal_close(
+        &mut self,
+        force: bool,
+        mut terminal_phase: impl FnMut(TerminalClosePhase),
+    ) -> Result<BackgroundProcessExit, BackgroundProcessError> {
+        let authority = Arc::clone(
+            self.snapshot_authority
+                .as_ref()
+                .ok_or_else(invariant_error)?,
+        );
         let mut captured = CapturedMemberUnion::new();
+        captured.session_scope = true;
         #[cfg(target_os = "linux")]
         let pinned = {
-            let target = ProcessSignalTarget::capture(self.group, Arc::clone(&authority)).map_err(|_| cleanup_error())?;
-            let pinned = prepare_signal_process_tree(&target).map_err(|_| cleanup_error())?;
-            captured.retain(pinned.descendants.iter().map(|member| CapturedGroupMember { pid: member.pid, identity: Some(member.identity.primary) }).collect())?;
+            let target = ProcessSignalTarget::capture(self.group, Arc::clone(&authority))
+                .map_err(|_| cleanup_error())?;
+            let pinned = prepare_terminal_process_tree(&target).map_err(|_| cleanup_error())?;
+            captured.retain(
+                pinned
+                    .descendants
+                    .iter()
+                    .map(|member| CapturedGroupMember {
+                        pid: member.pid,
+                        identity: Some(member.identity.primary),
+                    })
+                    .collect(),
+            )?;
             Some((target, pinned))
         };
         #[cfg(target_os = "macos")]
-        let _ = &mut captured;
+        captured.retain(macos_scope_members(self.group, true)?)?;
         if !force {
+            terminal_phase(TerminalClosePhase::Graceful);
             let _ = self.terminal_signal(BackgroundProcessSignal::Terminate);
             let deadline = Instant::now() + Duration::from_millis(800);
             while self.terminal_poll()?.is_none() && Instant::now() < deadline {
                 thread::sleep(Duration::from_millis(5));
             }
         }
+        terminal_phase(TerminalClosePhase::Force);
         #[cfg(target_os = "linux")]
         if let Some((target, pinned)) = &pinned {
+            let final_tree = prepare_terminal_process_tree(target).map_err(|_| cleanup_error())?;
+            captured.retain(
+                final_tree
+                    .descendants
+                    .iter()
+                    .map(|member| CapturedGroupMember {
+                        pid: member.pid,
+                        identity: Some(member.identity.primary),
+                    })
+                    .collect(),
+            )?;
             // These are the same retained descendant identities captured before
             // TERM, even when their shell has exited and they were reparented.
-            deliver_signal_process_tree(target, rustix::process::Signal::KILL, pinned).map_err(|_| cleanup_error())?;
+            deliver_signal_process_tree(target, rustix::process::Signal::KILL, pinned)
+                .map_err(|_| cleanup_error())?;
+            deliver_signal_process_tree(target, rustix::process::Signal::KILL, &final_tree)
+                .map_err(|_| cleanup_error())?;
         }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = self.terminal_signal(BackgroundProcessSignal::Kill);
+        }
+        // Closing the master must precede waiting for a shell that may itself
+        // be blocked in tty teardown. Foreground signals still require that
+        // same retained master and therefore run before this final phase.
+        terminal_phase(TerminalClosePhase::Close);
+        let deadline = Instant::now() + CHILD_REAP_PROBE_TIMEOUT;
+        let observed = loop {
+            let observed = self.terminal_poll()?;
+            if observed.is_some() || Instant::now() >= deadline {
+                break observed;
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
         close_input_controller(&mut self.input_controller);
         close_signal_controller(&mut self.signal_controller);
-        cleanup_child_with_captured_expected(&mut self.child, &mut self.reap_permit, self.group, Duration::ZERO, None, true, (&authority, captured))?;
-        // Cleanup consumed the retained child's final status; callers use the
-        // earlier non-reaping observation where available, otherwise force-KILL.
-        Ok(BackgroundProcessExit::Signalled(rustix::process::Signal::KILL.as_raw()))
+        cleanup_child_with_captured_expected(
+            &mut self.child,
+            &mut self.reap_permit,
+            self.group,
+            Duration::ZERO,
+            observed,
+            true,
+            (&authority, captured),
+        )?;
+        observed.ok_or_else(wait_error)
     }
     /// Activates pipe authority at the authoritative retain-time boundary.
     pub(crate) fn activate_input_controller(&mut self) -> Result<(), BackgroundInputError> {
@@ -4271,7 +4431,15 @@ fn cleanup_child_with_expected(
     force_cleanup: bool,
     authority: &GroupSnapshotAuthority,
 ) -> Result<(), BackgroundProcessError> {
-    cleanup_child_with_captured_expected(child, reap_permit, group, term_grace, expected, force_cleanup, (authority, CapturedMemberUnion::new()))
+    cleanup_child_with_captured_expected(
+        child,
+        reap_permit,
+        group,
+        term_grace,
+        expected,
+        force_cleanup,
+        (authority, CapturedMemberUnion::new()),
+    )
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -4507,6 +4675,18 @@ fn require_original_group_quiescent(
     authority: &GroupSnapshotAuthority,
     mut captured: CapturedMemberUnion,
 ) -> Result<(), BackgroundProcessError> {
+    let session_scope = captured.session_scope;
+    let scope_members = || {
+        #[cfg(target_os = "linux")]
+        if session_scope {
+            return linux_scope_members(authority, group, true);
+        }
+        #[cfg(target_os = "macos")]
+        if session_scope {
+            return macos_scope_members(group, true);
+        }
+        group_members(authority, group)
+    };
     // Capture the complete post-KILL membership once. The retained, unreaped
     // leader keeps the original numeric group identity from being reused while
     // descriptor-relative procfs (Linux) or `ps` (macOS) supplies the bounded
@@ -4515,7 +4695,7 @@ fn require_original_group_quiescent(
     let deadline = Instant::now() + GROUP_DISAPPEARANCE_GRACE;
     thread::sleep(GROUP_SNAPSHOT_INITIAL_INTERVAL);
     let mut observed_failure = false;
-    match group_members(authority, group) {
+    match scope_members() {
         Ok(members) => {
             if captured.retain(members).is_err() {
                 observed_failure = true;
@@ -4568,7 +4748,7 @@ fn require_original_group_quiescent(
             deadline.saturating_duration_since(Instant::now()),
         ));
     }
-    let members = group_members(authority, group)?;
+    let members = scope_members()?;
     require_group_quiescence_evidence(observed_failure, captured_resolved, &members, group)
 }
 
@@ -4597,6 +4777,7 @@ struct CapturedGroupMember {
 struct CapturedMemberUnion {
     members: Vec<CapturedGroupMember>,
     index: HashSet<CapturedGroupMember>,
+    session_scope: bool,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -4605,6 +4786,7 @@ impl CapturedMemberUnion {
         Self {
             members: Vec::new(),
             index: HashSet::new(),
+            session_scope: false,
         }
     }
 
@@ -5069,6 +5251,14 @@ fn group_members(
     _authority: &GroupSnapshotAuthority,
     group: rustix::process::Pid,
 ) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
+    macos_scope_members(group, false)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_scope_members(
+    group: rustix::process::Pid,
+    session_scope: bool,
+) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
     #[cfg(test)]
     record_group_snapshot_for_test(group);
 
@@ -5081,9 +5271,14 @@ fn group_members(
         return Err(cleanup_error());
     }
     let mut command = Command::new("/bin/ps");
-    command.args(["-o", "pid=", "-g"]);
+    if session_scope {
+        command.args(["-axo", "pid="]);
+    } else {
+        command
+            .args(["-o", "pid=", "-g"])
+            .arg(group.as_raw_nonzero().get().to_string());
+    }
     command
-        .arg(group.as_raw_nonzero().get().to_string())
         .env_clear()
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -5127,15 +5322,26 @@ fn group_members(
     ) {
         return Err(cleanup_error());
     }
-    parse_group_members(&bytes).map(|members| {
-        members
-            .into_iter()
-            .map(|pid| CapturedGroupMember {
-                pid,
-                identity: None,
-            })
-            .collect()
-    })
+    let mut members = Vec::new();
+    for pid in parse_group_members(&bytes)? {
+        if Instant::now() >= deadline {
+            return Err(cleanup_error());
+        }
+        // Darwin hides getsid for zombies before ps removes their row. The
+        // exclusive, unreaped direct child already pins the leader identity.
+        if session_scope && pid != group {
+            match rustix::process::getsid(Some(pid)) {
+                Ok(session) if session == group => {}
+                Ok(_) | Err(rustix::io::Errno::SRCH) => continue,
+                Err(_) => return Err(cleanup_error()),
+            }
+        }
+        members.push(CapturedGroupMember {
+            pid,
+            identity: None,
+        });
+    }
+    Ok(members)
 }
 
 #[cfg(target_os = "macos")]
@@ -5194,6 +5400,15 @@ fn collect_group_snapshot_output(
 fn group_members(
     authority: &GroupSnapshotAuthority,
     group: rustix::process::Pid,
+) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
+    linux_scope_members(authority, group, false)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_scope_members(
+    authority: &GroupSnapshotAuthority,
+    group: rustix::process::Pid,
+    session_scope: bool,
 ) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
     #[cfg(test)]
     record_group_snapshot_for_test(group);
@@ -5266,7 +5481,12 @@ fn group_members(
             .checked_add(stat_bytes.len())
             .filter(|bytes| *bytes <= MAX_LINUX_PROC_SNAPSHOT_BYTES)
             .ok_or_else(cleanup_error)?;
-        if parsed.group == Some(group) {
+        if (if session_scope {
+            parsed.session
+        } else {
+            parsed.group
+        }) == Some(group)
+        {
             if members.len() == MAX_CAPTURED_GROUP_MEMBERS {
                 return Err(cleanup_error());
             }
@@ -5349,7 +5569,11 @@ fn parse_linux_proc_stat(
         .next()
         .and_then(parse_linux_nonnegative_i32)
         .ok_or_else(cleanup_error)?;
-    for _ in 0..16 {
+    let session = fields
+        .next()
+        .and_then(parse_linux_nonnegative_i32)
+        .ok_or_else(cleanup_error)?;
+    for _ in 0..15 {
         fields.next().ok_or_else(cleanup_error)?;
     }
     let start_time = fields
@@ -5359,6 +5583,7 @@ fn parse_linux_proc_stat(
     Ok(LinuxProcStat {
         parent: rustix::process::Pid::from_raw(parent),
         group: rustix::process::Pid::from_raw(group),
+        session: rustix::process::Pid::from_raw(session),
         start_time,
         zombie: state[0] == b'Z',
     })
@@ -5369,6 +5594,7 @@ fn parse_linux_proc_stat(
 struct LinuxProcStat {
     parent: Option<rustix::process::Pid>,
     group: Option<rustix::process::Pid>,
+    session: Option<rustix::process::Pid>,
     start_time: u64,
     zombie: bool,
 }
@@ -6111,6 +6337,7 @@ mod linux_proc_tests {
             LinuxProcStat {
                 parent: Some(pid(12)),
                 group: Some(pid(77)),
+                session: None,
                 start_time: 4242,
                 zombie: false,
             }
@@ -6137,6 +6364,7 @@ mod linux_proc_tests {
             LinuxProcStat {
                 parent: None,
                 group: None,
+                session: None,
                 start_time: 99,
                 zombie: false,
             }
