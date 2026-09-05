@@ -1,4 +1,4 @@
-# ADR 0001: macOS PTY foreground signal binding
+# ADR 0003: macOS PTY foreground signal binding
 
 ## Decision and scope
 

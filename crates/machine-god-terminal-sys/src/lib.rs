@@ -1,6 +1,6 @@
 //! Narrow OS binding unavailable through the pinned safe dependencies.
 //!
-//! See docs/adr/0001-macos-terminal-foreground-signal.md in the repository.
+//! See docs/decisions/0003-macos-terminal-foreground-signal.md in the repository.
 //! All orchestration, process ownership and permission policy stay in native.
 
 #[cfg(target_os = "macos")]
@@ -24,7 +24,7 @@ use rustix::process::Signal;
 /// # Errors
 /// Returns the OS error for an invalid/non-master descriptor or failed ioctl.
 #[cfg(target_os = "macos")]
-#[allow(unsafe_code)] // ADR 0001: this function is the entire unsafe exception.
+#[allow(unsafe_code)] // ADR 0003: this function is the entire unsafe exception.
 pub fn signal_terminal_foreground(master: BorrowedFd<'_>, signal: Signal) -> io::Result<()> {
     let argument = libc::uintptr_t::try_from(signal.as_raw())
         .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
@@ -65,6 +65,30 @@ mod tests {
                 Some(libc::ENOTTY | libc::ENODEV)
             ));
             assert!(file.metadata().is_ok());
+        }
+    }
+
+    #[test]
+    fn scalar_signal_abi_accepts_a_master_but_rejects_its_slave() {
+        use rustix::fs::{Mode, OFlags, open};
+        let flags = OFlags::RDWR | OFlags::NOCTTY | OFlags::CLOEXEC | OFlags::NONBLOCK;
+        let master = open("/dev/ptmx", flags, Mode::empty()).unwrap();
+        rustix::pty::grantpt(&master).unwrap();
+        rustix::pty::unlockpt(&master).unwrap();
+        let name = rustix::pty::ptsname(&master, Vec::new()).unwrap();
+        let slave = open(name.as_c_str(), flags | OFlags::NOFOLLOW, Mode::empty()).unwrap();
+        // No child/session has attached to this PTY. This exercises the actual
+        // kernel ABI without directing signals at the test runner or its group.
+        for signal in [
+            Signal::HUP,
+            Signal::INT,
+            Signal::QUIT,
+            Signal::TERM,
+            Signal::KILL,
+        ] {
+            signal_terminal_foreground(master.as_fd(), signal).unwrap();
+            let error = signal_terminal_foreground(slave.as_fd(), signal).unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(libc::ENOTTY));
         }
     }
 }

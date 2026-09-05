@@ -115,7 +115,7 @@ remain part of this feature; piped input does not complete it.
 - `machine-god-testkit` owns deterministic test doubles and fixtures.
 - Unsafe Rust is forbidden in the product crates. The isolated macOS
   `TIOCSIG` binding is the sole exception under
-  [ADR 0001](adr/0001-macos-terminal-foreground-signal.md); it remains subject
+  [ADR 0003](decisions/0003-macos-terminal-foreground-signal.md); it remains subject
   to the full terminal feature's adversarial and platform gates.
 - Constructors and futures must preserve the documented inert-before-poll,
   cancellation, resource-bound, redaction, and authority invariants.

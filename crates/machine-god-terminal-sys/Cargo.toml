@@ -11,7 +11,7 @@ publish.workspace = true
 libc.workspace = true
 rustix.workspace = true
 
-# ADR 0001: do not relax the production crates' workspace-wide forbid.
+# ADR 0003: do not relax the production crates' workspace-wide forbid.
 # Only the one TIOCSIG function may override this crate's deny.
 [lints.rust]
 unsafe_code = "deny"

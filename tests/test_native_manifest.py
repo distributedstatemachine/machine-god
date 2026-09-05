@@ -199,7 +199,7 @@ class NativeManifestTests(unittest.TestCase):
         self.assertTrue(cli_tokio["workspace"])
         self.assertEqual(cli_tokio["features"], ["signal"])
 
-    def test_no_darwin_process_query_dependency_or_unsafe_exception(self) -> None:
+    def test_no_darwin_process_query_dependency(self) -> None:
         macos_dependencies = self.manifest["target"][
             'cfg(target_os = "macos")'
         ]["dependencies"]
@@ -214,6 +214,30 @@ class NativeManifestTests(unittest.TestCase):
         self.assertNotIn("machine-god-darwin-proc", workspace_dependencies)
         self.assertNotIn("libproc", workspace_dependencies)
         self.assertNotIn("errno", workspace_dependencies)
+
+    def test_terminal_binding_exception_does_not_relax_product_lints(self) -> None:
+        workspace = self.workspace_manifest["workspace"]
+        self.assertEqual(workspace["lints"]["rust"]["unsafe_code"], "forbid")
+        binding_member = "crates/machine-god-terminal-sys"
+        self.assertIn(binding_member, workspace["members"])
+        for member in workspace["members"]:
+            with (REPOSITORY_ROOT / member / "Cargo.toml").open("rb") as source:
+                manifest = tomllib.load(source)
+            if member == binding_member:
+                self.assertEqual(manifest["lints"]["rust"]["unsafe_code"], "deny")
+                self.assertEqual(
+                    manifest["lints"]["clippy"]["undocumented_unsafe_blocks"],
+                    "deny",
+                )
+            else:
+                self.assertTrue(manifest["lints"]["workspace"])
+        self.assertNotIn("machine-god-terminal-sys", self.manifest["dependencies"])
+        placements = [
+            cfg
+            for cfg, table in self.manifest["target"].items()
+            if "machine-god-terminal-sys" in table.get("dependencies", {})
+        ]
+        self.assertEqual(placements, ['cfg(target_os = "macos")'])
 
     def test_sha2_is_unconditional_for_terminal_environment_identity(self) -> None:
         features = self.manifest["features"]
