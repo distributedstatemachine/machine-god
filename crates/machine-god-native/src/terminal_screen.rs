@@ -56,6 +56,24 @@ impl fmt::Debug for TerminalScreenEngine {
 }
 
 impl TerminalScreenEngine {
+    /// Bounds the serialized grid checkpoint at these dimensions, including
+    /// both screens, retained pools and parser buffers. This is a true bound
+    /// below the encoder cap, not a guarantee that corrupt/unavailable state
+    /// can be checkpointed. It excludes the history owner's outer envelope.
+    #[allow(
+        dead_code,
+        reason = "private profile-reservation integration is staged separately"
+    )]
+    pub(crate) fn checkpoint_bound(
+        dimensions: &TerminalDimensions,
+    ) -> Result<usize, TerminalScreenError> {
+        dimensions
+            .validate()
+            .map_err(|_| TerminalScreenError::InvalidInput)?;
+        TerminalGrid::checkpoint_bound(dimensions.columns(), dimensions.rows())
+            .map_err(|_| TerminalScreenError::InvalidInput)
+    }
+
     /// Creates an empty screen from validated dimensions without native effects.
     ///
     /// # Errors
@@ -188,6 +206,39 @@ impl TerminalScreenEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn independent_checkpoint_bound_tracks_dimensions_and_fragmented_parser_state() {
+        let payload = b"x\x1b7\x1b[?1049halt\x1b7\x1b]8;id=x;https://x\x1b\\\x1b[38;2;1;2;3m\xf0\x90\x80\x80\x1bP$qm\x1b\\\x1b[?2026hbuffered";
+        for dimensions in [
+            TerminalDimensions::new(1, 1).unwrap(),
+            TerminalDimensions::new(24, 80).unwrap(),
+            TerminalDimensions::new(64, 4096).unwrap(),
+        ] {
+            let bound = TerminalScreenEngine::checkpoint_bound(&dimensions).unwrap();
+            assert_eq!(
+                bound,
+                TerminalGrid::checkpoint_bound(dimensions.columns(), dimensions.rows()).unwrap()
+            );
+            let mut screen =
+                TerminalScreenEngine::new(&dimensions, TerminalScreenMode::Replay).unwrap();
+            let chunk_size = if dimensions.columns() == 4096 {
+                payload.len()
+            } else {
+                1
+            };
+            for chunk in payload.chunks(chunk_size) {
+                screen.feed(chunk).unwrap();
+                assert!(screen.checkpoint().unwrap().len() <= bound);
+            }
+            let restored = TerminalScreenEngine::restore(
+                &screen.checkpoint().unwrap(),
+                TerminalScreenMode::Replay,
+            )
+            .unwrap();
+            assert!(restored.checkpoint().unwrap().len() <= bound);
+        }
+    }
 
     #[test]
     fn live_and_restored_replay_screens_agree_without_replaying_effects() {

@@ -31,6 +31,10 @@ const MAX_REPLY_BYTES: usize = 256;
 const MAX_REPLY_TOTAL_BYTES: usize = 4096;
 const MAX_HYPERLINK_POOL_BYTES: usize = 4 * 1024 * 1024;
 const MAX_CHECKPOINT_BYTES: usize = 32 * 1024 * 1024;
+// Fixed-width fields emitted by CheckpointWriter, not Rust struct sizes or the
+// pinned engine's separate render-allocation estimate above.
+const CHECKPOINT_STYLE_BYTES: usize = 4 + 4 + 1;
+const CHECKPOINT_CELL_BYTES: usize = 4 + 1 + 4 + CHECKPOINT_STYLE_BYTES + 4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TerminalGridError {
@@ -311,6 +315,51 @@ macro_rules! validate_screen {
 }
 
 impl TerminalGrid {
+    /// Upper bound for this encoder at fixed dimensions, including a saved
+    /// normal screen and every independently bounded parser/pool field. Pools
+    /// retain unused entries, so even a tiny grid needs their full allowance.
+    /// The result is not clamped: every valid checkpoint state fits the result,
+    /// and all supported dimensions fit the existing global checkpoint cap.
+    pub(crate) fn checkpoint_bound(cols: u16, rows: u16) -> Result<usize, TerminalGridError> {
+        let cells = checked_cell_count(cols, rows)?
+            .checked_mul(CHECKPOINT_CELL_BYTES)
+            .ok_or(TerminalGridError::CheckpointTooLarge)?;
+        // encode_screen!: cell count/payload, five coordinates, four modes,
+        // style/link/params, shape/blink, maximal saved cursor and last index.
+        let screen = checkpoint_size_sum(&[
+            4,
+            cells,
+            5 * 2,
+            4,
+            CHECKPOINT_STYLE_BYTES,
+            4,
+            4 + MAX_CONTROL_STRING_BYTES,
+            1 + 1,
+            1 + 2 * 2 + 2 + CHECKPOINT_STYLE_BYTES + 4,
+            1 + 4,
+        ])?;
+        let both_screens = screen
+            .checked_mul(2)
+            .ok_or(TerminalGridError::CheckpointTooLarge)?;
+        let bound = checkpoint_size_sum(&[
+            6 + 2 + 2, // Magic/version and dimensions.
+            both_screens,
+            1 + 5 + 2,         // Cursor visibility, global modes and mouse mask.
+            usize::from(cols), // One byte per tab stop, not a packed bitset.
+            1 + 4 + MAX_SYNC_BYTES,
+            1 + MAX_CSI_PARAMS * 2 + 4 + 1 + 1 + MAX_CSI_INTERMEDIATES + 4,
+            2 * (1 + 4 + MAX_CONTROL_STRING_BYTES), // OSC and DCS.
+            4 + 4 + 4, // UTF-8 pending bytes, length and expected length.
+            checkpoint_pool_bound(MAX_CELL_TEXT_BYTES, MAX_SUFFIX_POOL_BYTES)?,
+            checkpoint_pool_bound(MAX_CONTROL_STRING_BYTES, MAX_HYPERLINK_POOL_BYTES)?,
+            1, // Saved-screen presence flag; its full payload is included above.
+        ])?;
+        if bound > MAX_CHECKPOINT_BYTES {
+            return Err(TerminalGridError::CheckpointTooLarge);
+        }
+        Ok(bound)
+    }
+
     pub(crate) fn new(cols: u16, rows: u16) -> Result<Self, TerminalGridError> {
         let cell_count = checked_cell_count(cols, rows)?;
         let mut tab_stops = vec![false; usize::from(cols)];
@@ -1946,6 +1995,28 @@ impl TerminalGrid {
 
 struct CheckpointWriter(Vec<u8>);
 
+fn checkpoint_size_sum(parts: &[usize]) -> Result<usize, TerminalGridError> {
+    parts
+        .iter()
+        .try_fold(0usize, |total, part| total.checked_add(*part))
+        .ok_or(TerminalGridError::CheckpointTooLarge)
+}
+
+fn checkpoint_pool_bound(item_max: usize, total_max: usize) -> Result<usize, TerminalGridError> {
+    // Every entry is nonempty and has its own u32 prefix, in addition to the
+    // pool's u32 entry count. The suffix entry limit is tighter than its 4 MiB
+    // payload cap: 65,535 x 64 bytes, not 4 MiB of payload plus free prefixes.
+    let entries = MAX_SUFFIX_ENTRIES.min(total_max);
+    let payload = entries
+        .checked_mul(item_max)
+        .ok_or(TerminalGridError::CheckpointTooLarge)?
+        .min(total_max);
+    let prefixes = entries
+        .checked_mul(4)
+        .ok_or(TerminalGridError::CheckpointTooLarge)?;
+    checkpoint_size_sum(&[4, prefixes, payload])
+}
+
 impl CheckpointWriter {
     fn bytes(&mut self, bytes: &[u8]) -> Result<(), TerminalGridError> {
         if bytes.len() > MAX_CHECKPOINT_BYTES.saturating_sub(self.0.len()) {
@@ -2428,6 +2499,123 @@ mod tests {
         String::from_utf8(grid.snapshot().expect("bounded snapshot")).expect("valid UTF-8")
     }
 
+    fn maximal_checkpoint_grid() -> TerminalGrid {
+        let mut grid = test_grid(1, 1);
+        grid.feed(b"x\x1b7\x1b[?1049hx\x1b7").unwrap();
+        grid.hyperlink_params = vec![b'p'; MAX_CONTROL_STRING_BYTES];
+        grid.saved_normal_screen.as_mut().unwrap().hyperlink_params =
+            vec![b'q'; MAX_CONTROL_STRING_BYTES];
+        grid.osc_buffer = vec![b'o'; MAX_CONTROL_STRING_BYTES];
+        grid.dcs_buffer = vec![b'd'; MAX_CONTROL_STRING_BYTES];
+        grid.sync_active = true;
+        grid.sync_buffer = vec![b's'; MAX_SYNC_BYTES];
+        grid.csi_params = [u16::MAX; MAX_CSI_PARAMS];
+        grid.csi_param_count = MAX_CSI_PARAMS;
+        grid.csi_intermediates = [b' '; MAX_CSI_INTERMEDIATES];
+        grid.csi_intermediate_count = MAX_CSI_INTERMEDIATES;
+        grid.utf8_buffer = [0xf0, 0x90, 0x80, 0];
+        grid.utf8_len = 3;
+        grid.utf8_expected = 4;
+        // Distinct, valid restore inputs reach both entry-count limits. Suffix
+        // payloads reach their per-entry cap; links use the remaining 64 bytes
+        // of their independent pool cap in their first entry.
+        grid.suffix_pool = (0..MAX_SUFFIX_ENTRIES)
+            .map(|index| Arc::from(format!("{index:064}").into_bytes()))
+            .collect();
+        grid.suffix_pool_bytes = MAX_SUFFIX_ENTRIES * MAX_CELL_TEXT_BYTES;
+        grid.hyperlink_pool.clone_from(&grid.suffix_pool);
+        grid.hyperlink_pool[0] = Arc::from(vec![b'l'; MAX_CELL_TEXT_BYTES + 64]);
+        grid.hyperlink_pool_bytes = MAX_HYPERLINK_POOL_BYTES;
+        grid
+    }
+
+    #[test]
+    fn checkpoint_bound_covers_actual_maxima_at_tiny_normal_and_max_dimensions() {
+        let mut grid = maximal_checkpoint_grid();
+        for (cols, rows) in [(1, 1), (80, 24), (MAX_DIMENSION, 64)] {
+            grid.resize(cols, rows).unwrap();
+            grid.last_printable_idx = Some(0);
+            grid.saved_normal_screen
+                .as_mut()
+                .unwrap()
+                .last_printable_idx = Some(0);
+            let bound = TerminalGrid::checkpoint_bound(cols, rows).unwrap();
+            assert_eq!(
+                bound,
+                9_978_007 + 44 * usize::from(cols) * usize::from(rows) + usize::from(cols)
+            );
+            assert!(bound < MAX_CHECKPOINT_BYTES);
+            let encoded = grid.checkpoint().unwrap();
+            // Equality locks the formula to every actual encoder field/prefix,
+            // not merely a loose estimate based on in-memory struct layouts.
+            assert_eq!(encoded.len(), bound);
+            let restored = TerminalGrid::restore(&encoded).unwrap();
+            assert_eq!(restored.checkpoint().unwrap(), encoded);
+        }
+    }
+
+    #[test]
+    fn checkpoint_wire_widths_and_pool_prefixes_match_the_bound() {
+        let mut writer = CheckpointWriter(Vec::new());
+        let style = TerminalCellStyle {
+            foreground: TerminalColor::Rgb {
+                red: 1,
+                green: 2,
+                blue: 3,
+            },
+            background: TerminalColor::Indexed { index: 255 },
+            bold: true,
+            faint: true,
+            italic: true,
+            underline: true,
+            inverse: true,
+            strikethrough: true,
+        };
+        writer.style(style).unwrap();
+        assert_eq!(writer.0.len(), CHECKPOINT_STYLE_BYTES);
+        writer.0.clear();
+        writer
+            .cells(&[Cell {
+                style,
+                ..Cell::default()
+            }])
+            .unwrap();
+        assert_eq!(writer.0.len(), 4 + CHECKPOINT_CELL_BYTES);
+        writer.0.clear();
+        writer
+            .pool(&[Arc::from(&b"one"[..]), Arc::from(&b"two"[..])])
+            .unwrap();
+        assert_eq!(writer.0.len(), 4 + 2 * 4 + 6);
+        assert_eq!(
+            checkpoint_pool_bound(MAX_CELL_TEXT_BYTES, MAX_SUFFIX_POOL_BYTES).unwrap(),
+            4 + MAX_SUFFIX_ENTRIES * (4 + MAX_CELL_TEXT_BYTES)
+        );
+        assert_eq!(
+            checkpoint_pool_bound(MAX_CONTROL_STRING_BYTES, MAX_HYPERLINK_POOL_BYTES).unwrap(),
+            4 + MAX_SUFFIX_ENTRIES * 4 + MAX_HYPERLINK_POOL_BYTES
+        );
+    }
+
+    #[test]
+    fn checkpoint_bound_rejects_invalid_dimensions_and_checked_overflow() {
+        for (cols, rows) in [(0, 1), (1, 0), (4097, 1), (1, 4097), (4096, 65)] {
+            assert!(TerminalGrid::checkpoint_bound(cols, rows).is_err());
+        }
+        assert_eq!(
+            checkpoint_size_sum(&[usize::MAX, 1]),
+            Err(TerminalGridError::CheckpointTooLarge)
+        );
+        assert_eq!(
+            checkpoint_pool_bound(usize::MAX, usize::MAX),
+            Err(TerminalGridError::CheckpointTooLarge)
+        );
+        assert_eq!(
+            TerminalGrid::checkpoint_bound(4096, 64).unwrap(),
+            21_516_439
+        );
+        assert!(TerminalGrid::checkpoint_bound(64, 4096).unwrap() < 21_516_439);
+    }
+
     #[test]
     fn writes_cursor_controls_wrap_and_scroll_match_fx() {
         let mut grid = test_grid(5, 3);
@@ -2688,6 +2876,7 @@ mod tests {
             let mut original = test_grid(12, 3);
             original.feed(&payload[..split]).unwrap();
             let checkpoint = original.checkpoint().unwrap();
+            assert!(checkpoint.len() <= TerminalGrid::checkpoint_bound(12, 3).unwrap());
             let mut restored = TerminalGrid::restore(&checkpoint).unwrap();
             assert_eq!(restored.checkpoint().unwrap(), checkpoint, "split {split}");
             original.feed(&payload[split..]).unwrap();
