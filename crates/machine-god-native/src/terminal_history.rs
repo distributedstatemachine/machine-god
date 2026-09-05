@@ -17,7 +17,11 @@ use crate::terminal_journal::{
 };
 #[cfg(test)]
 use crate::terminal_profile::TerminalTestPersistence;
-use crate::terminal_profile::{TerminalJournalPersistence, TerminalProfileError};
+use crate::terminal_profile::{
+    TerminalJournalPersistence, TerminalProfileBudget, TerminalProfileError,
+    TerminalProfileReadBounds, TerminalProfileReadPermit,
+};
+use crate::terminal_profile_store::TerminalProfileTransaction;
 use crate::terminal_screen::{
     MAX_TERMINAL_SCREEN_FEED_BYTES, TerminalScreenEngine, TerminalScreenError, TerminalScreenMode,
 };
@@ -237,6 +241,32 @@ impl TerminalHistory {
 
     pub(crate) fn physical_usage(&self) -> Result<TerminalJournalPhysicalUsage> {
         Ok(self.journal.physical_usage()?)
+    }
+
+    /// The returned permit borrows only the transaction, leaving this history
+    /// available to consume it after the owner performs one bounded native read.
+    pub(crate) fn reserve_read<'a, 'store>(
+        &mut self,
+        transaction: &'a mut TerminalProfileTransaction<'store>,
+        budget: &TerminalProfileBudget,
+        owner_namespace: &str,
+    ) -> Result<TerminalProfileReadPermit<'a, 'store>> {
+        self.require_live()?;
+        let checkpoint = self
+            .screen
+            .as_ref()
+            .map_or(Ok(0), TerminalScreenEngine::current_checkpoint_bound)?;
+        let bound = checkpoint
+            .checked_add(MAGIC.len() + 1)
+            .ok_or(TerminalJournalError::ResourceLimit)?;
+        budget
+            .reserve_read(
+                transaction,
+                owner_namespace,
+                &mut self.journal,
+                TerminalProfileReadBounds::for_checkpoint(bound),
+            )
+            .map_err(TerminalHistoryError::Profile)
     }
 
     /// Session/registry owners establish lifecycle and profile transaction
@@ -516,6 +546,13 @@ impl TerminalHistory {
     fn invalidate(&mut self, reason: Unavailable) {
         self.screen = None;
         self.unavailable = reason;
+    }
+
+    /// Revoke an in-memory projection after cleanup had to discard output
+    /// without persistence authority. This is not a durable gap publication.
+    /// The session retains that obligation until a contextual barrier succeeds.
+    pub(crate) fn invalidate_output_without_persistence(&mut self) {
+        self.invalidate(Unavailable::RawGap);
     }
 
     fn save_unavailable(

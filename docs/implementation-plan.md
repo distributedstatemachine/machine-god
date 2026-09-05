@@ -87,8 +87,12 @@ across accounting failures. Borrowed journal plans now derive write demand and
 bind it to the profile's exact session directory; sealed acknowledgement and
 eviction plans permit bounded metadata-first quota recovery. Profile-bound
 catalog preparation and directory creation enforce global counts before effects.
-Initial journal creation, runtime-wide mutation routing, live checkpoint reserves
-and victim selection remain to be composed before exposure.
+Initial journal metadata now passes admission, and history writes take explicit
+persistence contexts. Pre-read permits reserve bounded output and follow-on
+publications using Rust-encoder-derived checkpoint bounds, keeping committed
+receipts separate from accounting errors. Production owner/registry routing,
+persistent live checkpoint reserves and victim selection remain to be composed
+before exposure.
 Per-session retention separates raw/checkpoint output from independently bounded
 state and events, matching the pinned output-accounting boundary. Non-output
 publications cannot evict output; recovery retains all ledger categories.

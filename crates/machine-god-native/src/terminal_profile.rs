@@ -9,11 +9,13 @@
 
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
+use machine_god_core::TerminalSessionId;
+use rustix::fd::OwnedFd;
 use std::fmt;
 
 use crate::terminal_journal::{
-    TerminalJournalError, TerminalJournalPhysicalUsage, TerminalJournalReceipt,
-    TerminalJournalWrite,
+    TerminalJournal, TerminalJournalError, TerminalJournalLimits, TerminalJournalMutation,
+    TerminalJournalPhysicalUsage, TerminalJournalReceipt, TerminalJournalWrite,
 };
 use crate::terminal_profile_store::{
     MAX_PROFILE_OWNERS, MAX_PROFILE_SESSIONS, TerminalProfileStoreError, TerminalProfileTransaction,
@@ -21,6 +23,9 @@ use crate::terminal_profile_store::{
 
 const MIB: u64 = 1024 * 1024;
 const MAX_METADATA: u64 = 128 * 1024;
+const MAX_READ_BYTES: usize = crate::terminal_monitor::MAX_MONITOR_FEED_BYTES;
+const MAX_STATE_BYTES: usize = 33 * 1024 * 1024;
+const MAX_CHECKPOINT_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TerminalProfileError {
@@ -48,6 +53,82 @@ impl From<TerminalJournalError> for TerminalProfileError {
     }
 }
 type Result<T> = std::result::Result<T, TerminalProfileError>;
+
+/// Explicit synchronous persistence authority, borrowed by a history operation.
+/// Implementations either admit an exact write under the held transaction or
+/// consume capacity already reserved before a native read. No implementation
+/// may acquire a profile lock after native output has been consumed.
+pub(crate) trait TerminalJournalPersistence {
+    fn mutate(
+        &mut self,
+        journal: &mut TerminalJournal,
+        mutation: TerminalJournalMutation<'_>,
+    ) -> Result<TerminalProfileCompletion<TerminalJournalReceipt, TerminalJournalError>>;
+}
+
+pub(crate) struct TerminalProfileMutationContext<'a, 'store> {
+    transaction: &'a mut TerminalProfileTransaction<'store>,
+    budget: TerminalProfileBudget,
+    owner_namespace: &'a str,
+}
+
+impl<'a, 'store> TerminalProfileMutationContext<'a, 'store> {
+    pub(crate) fn new(
+        transaction: &'a mut TerminalProfileTransaction<'store>,
+        budget: TerminalProfileBudget,
+        owner_namespace: &'a str,
+    ) -> Self {
+        Self {
+            transaction,
+            budget,
+            owner_namespace,
+        }
+    }
+}
+
+impl fmt::Debug for TerminalProfileMutationContext<'_, '_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TerminalProfileMutationContext")
+            .finish_non_exhaustive()
+    }
+}
+
+impl TerminalJournalPersistence for TerminalProfileMutationContext<'_, '_> {
+    fn mutate(
+        &mut self,
+        journal: &mut TerminalJournal,
+        mutation: TerminalJournalMutation<'_>,
+    ) -> Result<TerminalProfileCompletion<TerminalJournalReceipt, TerminalJournalError>> {
+        let write = journal.prepare_mutation(mutation)?;
+        self.budget
+            .mutate_journal(self.transaction, self.owner_namespace, write)
+    }
+}
+
+/// Standalone component fixtures have no profile hierarchy. Production callers
+/// must supply a retained profile context or a pre-read permit instead.
+#[cfg(test)]
+pub(crate) struct TerminalTestPersistence;
+
+#[cfg(test)]
+impl TerminalJournalPersistence for TerminalTestPersistence {
+    fn mutate(
+        &mut self,
+        journal: &mut TerminalJournal,
+        mutation: TerminalJournalMutation<'_>,
+    ) -> Result<TerminalProfileCompletion<TerminalJournalReceipt, TerminalJournalError>> {
+        let operation = journal.prepare_mutation(mutation)?.execute();
+        let accounting = journal
+            .physical_usage()
+            .map_err(TerminalProfileError::from)
+            .and_then(TerminalProfileLedgers::physical);
+        Ok(TerminalProfileCompletion {
+            operation,
+            accounting,
+        })
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[allow(
@@ -152,6 +233,107 @@ impl TerminalProfileBudget {
         Ok(Self { limits })
     }
 
+    /// Initialize metadata in an already count-admitted session directory.
+    /// A failed or abandoned initialization remains physically charged; retry
+    /// uses journal creation's existing partial-state validation rules.
+    pub(crate) fn create_journal(
+        &self,
+        transaction: &mut TerminalProfileTransaction<'_>,
+        owner_namespace: &str,
+        session: &TerminalSessionId,
+        limits: TerminalJournalLimits,
+    ) -> Result<TerminalProfileCompletion<TerminalJournal, TerminalJournalError>> {
+        let directory = transaction.open_session(owner_namespace, session)?;
+        self.reserve(
+            transaction,
+            TerminalProfileDemand {
+                retained_growth: TerminalProfileLedgers {
+                    metadata_bytes: MAX_METADATA,
+                    ..TerminalProfileLedgers::default()
+                },
+                allocation_bytes: MAX_METADATA,
+                ..TerminalProfileDemand::default()
+            },
+        )?
+        .run(|| TerminalJournal::create(directory, session.clone(), limits))
+    }
+
+    /// Reserve a bounded read and its mandatory follow-on publications BEFORE
+    /// the native owner consumes output. The exclusive transaction borrow lasts
+    /// through every write; no sibling profile context can spend its headroom.
+    /// Checkpoint/state bounds are total replacement sizes, not growth hints.
+    /// Victim selection and persistent live-checkpoint reserves belong to the
+    /// owner coordinator and must be established before requesting this permit.
+    pub(crate) fn reserve_read<'a, 'store>(
+        &self,
+        transaction: &'a mut TerminalProfileTransaction<'store>,
+        owner_namespace: &str,
+        journal: &mut TerminalJournal,
+        bounds: TerminalProfileReadBounds,
+    ) -> Result<TerminalProfileReadPermit<'a, 'store>> {
+        if bounds.output_bytes == 0
+            || bounds.output_bytes > MAX_READ_BYTES
+            || bounds.checkpoint_bytes > MAX_CHECKPOINT_BYTES
+            || bounds.state_bytes > MAX_STATE_BYTES
+        {
+            return Err(TerminalProfileError::Invalid);
+        }
+        let session = journal.session_id().clone();
+        let directory = transaction.open_session(owner_namespace, &session)?;
+        journal.ensure_commit_capacity(
+            1 + 2 * u64::from(bounds.checkpoint_bytes > 0) + 2 * u64::from(bounds.state_bytes > 0),
+        )?;
+        let usage = journal.usage();
+        // Planning does not inspect payload contents. This bounded scratch
+        // validates cursor/counter/segment headroom and old committed sizes
+        // for the largest possible read without performing any journal writes.
+        let scratch = [0; MAX_READ_BYTES];
+        let write = journal.prepare_mutation(TerminalJournalMutation::Append(
+            &scratch[..bounds.output_bytes],
+        ))?;
+        if !write.matches_directory(&directory)? {
+            return Err(TerminalProfileError::Invalid);
+        }
+        let demand = TerminalProfileDemand {
+            retained_growth: TerminalProfileLedgers {
+                // Do not anticipate raw eviction to make a read affordable.
+                output_bytes: add(
+                    bounds.output_bytes as u64,
+                    bounds
+                        .checkpoint_bytes
+                        .saturating_sub(usage.checkpoint_bytes) as u64,
+                )?,
+                protected_bytes: bounds.state_bytes.saturating_sub(usage.state_bytes) as u64,
+                metadata_bytes: MAX_METADATA.saturating_sub(usage.metadata_bytes as u64),
+            },
+            // Publications are sequential and reconcile after each one. This
+            // is the largest single temporary allocation, not cumulative net
+            // growth across the complete bounded read operation.
+            allocation_bytes: add(
+                bounds
+                    .output_bytes
+                    .max(bounds.checkpoint_bytes)
+                    .max(bounds.state_bytes) as u64,
+                MAX_METADATA,
+            )?,
+            ..TerminalProfileDemand::default()
+        };
+        Ok(TerminalProfileReadPermit {
+            reservation: self.reserve_inner(transaction, demand, false, true)?,
+            owner_namespace: owner_namespace.to_owned(),
+            session,
+            directory,
+            remaining_output: bounds.output_bytes,
+            appended: false,
+            checkpoint_bytes: bounds.checkpoint_bytes,
+            state_bytes: bounds.state_bytes,
+            checkpoints: 2,
+            states: 2,
+            temporary_bytes: self.limits.temporary_bytes,
+            failed: false,
+        })
+    }
+
     /// Admit and execute one exact borrowed journal mutation. Neither the
     /// payload nor this writer's manifest can change while the plan is held.
     /// Namespace spelling, session identity and directory inode must all bind
@@ -178,7 +360,7 @@ impl TerminalProfileBudget {
             },
             allocation_bytes: allocation.allocation_bytes,
         };
-        self.reserve_inner(transaction, demand, write.reclaims_only())?
+        self.reserve_inner(transaction, demand, write.reclaims_only(), false)?
             .run(|| write.execute())
     }
 
@@ -190,7 +372,7 @@ impl TerminalProfileBudget {
         transaction: &'a mut TerminalProfileTransaction<'store>,
         demand: TerminalProfileDemand,
     ) -> Result<TerminalProfileReservation<'a, 'store>> {
-        self.reserve_inner(transaction, demand, false)
+        self.reserve_inner(transaction, demand, false, false)
     }
 
     fn reserve_inner<'a, 'store>(
@@ -198,6 +380,7 @@ impl TerminalProfileBudget {
         transaction: &'a mut TerminalProfileTransaction<'store>,
         demand: TerminalProfileDemand,
         reclaiming: bool,
+        sequential: bool,
     ) -> Result<TerminalProfileReservation<'a, 'store>> {
         // Only a sealed journal acknowledgement/eviction plan takes this path.
         // Metadata-first reclamation must remain possible above the payload
@@ -210,7 +393,7 @@ impl TerminalProfileBudget {
         {
             return Err(TerminalProfileError::Invalid);
         }
-        if demand.allocation_bytes < demand.retained_growth.total()? {
+        if !sequential && demand.allocation_bytes < demand.retained_growth.total()? {
             return Err(TerminalProfileError::Invalid);
         }
         if demand.allocation_bytes > self.limits.temporary_bytes {
@@ -250,6 +433,124 @@ impl TerminalProfileBudget {
             ceiling,
             owners,
             sessions,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+#[allow(
+    clippy::struct_field_names,
+    reason = "all read limits carry explicit byte units"
+)]
+pub(crate) struct TerminalProfileReadBounds {
+    pub(crate) output_bytes: usize,
+    pub(crate) checkpoint_bytes: usize,
+    pub(crate) state_bytes: usize,
+}
+
+impl TerminalProfileReadBounds {
+    pub(crate) const fn for_checkpoint(checkpoint_bytes: usize) -> Self {
+        Self {
+            output_bytes: MAX_READ_BYTES,
+            checkpoint_bytes,
+            state_bytes: MAX_STATE_BYTES,
+        }
+    }
+}
+
+/// One target session, at most 16 KiB of raw data and two checkpoint/state
+/// replacements each (including a discontinuity barrier and its completion).
+/// No event, namespace, or retention authority is granted. An unsuccessful
+/// operation or accounting result seals the permit against any further writes.
+pub(crate) struct TerminalProfileReadPermit<'a, 'store> {
+    reservation: TerminalProfileReservation<'a, 'store>,
+    owner_namespace: String,
+    session: TerminalSessionId,
+    directory: OwnedFd,
+    remaining_output: usize,
+    appended: bool,
+    checkpoint_bytes: usize,
+    state_bytes: usize,
+    checkpoints: usize,
+    states: usize,
+    temporary_bytes: u64,
+    failed: bool,
+}
+
+impl fmt::Debug for TerminalProfileReadPermit<'_, '_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TerminalProfileReadPermit")
+            .finish_non_exhaustive()
+    }
+}
+
+impl TerminalJournalPersistence for TerminalProfileReadPermit<'_, '_> {
+    fn mutate(
+        &mut self,
+        journal: &mut TerminalJournal,
+        mutation: TerminalJournalMutation<'_>,
+    ) -> Result<TerminalProfileCompletion<TerminalJournalReceipt, TerminalJournalError>> {
+        let result = self.mutate_inner(journal, mutation);
+        if !result
+            .as_ref()
+            .is_ok_and(|completion| completion.operation.is_ok() && completion.accounting.is_ok())
+        {
+            self.failed = true;
+        }
+        result
+    }
+}
+
+impl TerminalProfileReadPermit<'_, '_> {
+    fn mutate_inner(
+        &mut self,
+        journal: &mut TerminalJournal,
+        mutation: TerminalJournalMutation<'_>,
+    ) -> Result<TerminalProfileCompletion<TerminalJournalReceipt, TerminalJournalError>> {
+        if self.failed || journal.session_id() != &self.session {
+            return Err(TerminalProfileError::Invalid);
+        }
+        match &mutation {
+            TerminalJournalMutation::Append(bytes)
+                if !self.appended && bytes.len() <= self.remaining_output =>
+            {
+                self.appended = true;
+                self.remaining_output = 0;
+            }
+            TerminalJournalMutation::Checkpoint { bytes, .. }
+                if bytes.len() <= self.checkpoint_bytes && self.checkpoints > 0 =>
+            {
+                self.checkpoints -= 1;
+            }
+            TerminalJournalMutation::State { bytes, .. }
+                if bytes.len() <= self.state_bytes && self.states > 0 =>
+            {
+                self.states -= 1;
+            }
+            _ => return Err(TerminalProfileError::Invalid),
+        }
+        let write = journal.prepare_mutation(mutation)?;
+        let current = self
+            .reservation
+            .transaction
+            .open_session(&self.owner_namespace, &self.session)?;
+        if !write.matches_directory(&self.directory)? || !write.matches_directory(&current)? {
+            return Err(TerminalProfileError::Invalid);
+        }
+        if write.allocation().allocation_bytes > self.temporary_bytes {
+            return Err(TerminalProfileError::ResourceLimit);
+        }
+        // A previous committed write is now ordinary retained usage. Require it
+        // to fit before another temporary allocation; never reuse a failed
+        // publication's uncredited orphan or temporary metadata headroom.
+        self.reservation.reconcile()?;
+        self.reservation.transaction.validate()?;
+        let operation = write.execute();
+        let accounting = self.reservation.reconcile();
+        Ok(TerminalProfileCompletion {
+            operation,
+            accounting,
         })
     }
 }
@@ -463,6 +764,356 @@ mod tests {
         )
         .unwrap();
         File::from(fd).write_all(bytes).unwrap();
+    }
+
+    #[test]
+    fn initial_metadata_is_admitted_before_journal_files_are_created() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let mut transaction = begin_transaction(&store);
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("owner").unwrap(),
+            SessionIncarnationId::new("incarnation").unwrap(),
+        );
+        let mut catalog = transaction
+            .prepare_catalog("/workspace".into(), owner)
+            .unwrap();
+        let id = TerminalSessionId::new("created").unwrap();
+        let directory = transaction.create_session(&mut catalog, &id).unwrap();
+        let mut tight = budget();
+        tight.limits.retained.metadata_bytes = MAX_METADATA - 1;
+        assert!(matches!(
+            tight.create_journal(
+                &mut transaction,
+                catalog.namespace_key(),
+                &id,
+                journal_limits()
+            ),
+            Err(TerminalProfileError::ResourceLimit)
+        ));
+        assert_eq!(
+            TerminalJournal::inspect_physical(
+                rustix::io::fcntl_dupfd_cloexec(&directory, 3).unwrap()
+            )
+            .unwrap()
+            .total_bytes,
+            0
+        );
+        let completion = budget()
+            .create_journal(
+                &mut transaction,
+                catalog.namespace_key(),
+                &id,
+                journal_limits(),
+            )
+            .unwrap();
+        let journal = completion.operation.unwrap();
+        assert_eq!(
+            completion.accounting.unwrap().metadata_bytes,
+            journal.usage().metadata_bytes as u64
+        );
+        assert_eq!(journal.usage().payload_bytes, 0);
+        assert!(matches!(
+            budget()
+                .create_journal(
+                    &mut transaction,
+                    catalog.namespace_key(),
+                    &id,
+                    journal_limits()
+                )
+                .unwrap()
+                .operation,
+            Err(TerminalJournalError::Busy)
+        ));
+    }
+
+    fn read_bounds() -> TerminalProfileReadBounds {
+        TerminalProfileReadBounds {
+            output_bytes: 4,
+            checkpoint_bytes: 8,
+            state_bytes: 4,
+        }
+    }
+
+    #[test]
+    fn history_derives_read_headroom_from_current_geometry_and_keeps_its_receipt() {
+        use crate::terminal_history::TerminalHistory;
+        use machine_god_core::TerminalDimensions;
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let mut transaction = begin_transaction(&store);
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("history").unwrap(),
+            SessionIncarnationId::new("incarnation").unwrap(),
+        );
+        let mut catalog = transaction
+            .prepare_catalog("/workspace".into(), owner)
+            .unwrap();
+        let id = TerminalSessionId::new("screen").unwrap();
+        transaction.create_session(&mut catalog, &id).unwrap();
+        let allowed = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+        let created = allowed
+            .create_journal(
+                &mut transaction,
+                catalog.namespace_key(),
+                &id,
+                TerminalJournalLimits::default(),
+            )
+            .unwrap();
+        assert!(created.accounting.is_ok());
+        let dimensions = TerminalDimensions::new(24, 80).unwrap();
+        let mut history = {
+            let mut context = TerminalProfileMutationContext::new(
+                &mut transaction,
+                allowed,
+                catalog.namespace_key(),
+            );
+            TerminalHistory::create_with(&mut context, created.operation.unwrap(), &dimensions)
+                .unwrap()
+        };
+        let mut permit = history
+            .reserve_read(&mut transaction, &allowed, catalog.namespace_key())
+            .unwrap();
+        let receipt = history.append_with(&mut permit, b"hello").unwrap();
+        assert_eq!(receipt.cursor, history.latest());
+        assert!(receipt.accounting_error.is_none());
+        history.checkpoint_with(&mut permit).unwrap();
+        history.publish_state_with(&mut permit, b"facts").unwrap();
+        drop(permit);
+        assert_eq!(history.screen().unwrap().dimensions, dimensions);
+        assert_eq!(transaction.inventory().unwrap().usage.raw_bytes, 5);
+        let latest = history.latest();
+        let mut tight = allowed;
+        tight.limits.retained.output_bytes = 1;
+        assert!(
+            history
+                .reserve_read(&mut transaction, &tight, catalog.namespace_key())
+                .is_err()
+        );
+        assert_eq!(history.latest(), latest);
+        assert_eq!(history.screen().unwrap().dimensions, dimensions);
+    }
+
+    #[test]
+    fn read_permit_reserves_sequential_publications_and_bounds_each_kind() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let (catalog, mut journal) = fixture.journal("read");
+        let mut transaction = begin_transaction(&store);
+        let mut allowed = budget();
+        allowed.limits.retained.output_bytes = 12;
+        allowed.limits.retained.protected_bytes = 4;
+        // The cumulative retained growth exceeds the largest single allocation.
+        allowed.limits.temporary_bytes = MAX_METADATA + 8;
+        let mut permit = allowed
+            .reserve_read(
+                &mut transaction,
+                catalog.namespace_key(),
+                &mut journal,
+                read_bounds(),
+            )
+            .unwrap();
+        assert_eq!(format!("{permit:?}"), "TerminalProfileReadPermit { .. }");
+        let completion = permit
+            .mutate(&mut journal, TerminalJournalMutation::Append(b"read"))
+            .unwrap();
+        assert_eq!(
+            completion.operation.unwrap(),
+            TerminalJournalReceipt::Appended(journal.latest())
+        );
+        assert_eq!(completion.accounting.unwrap().output_bytes, 4);
+        let source = journal.latest();
+        for bytes in [b"barrier!".as_slice(), b"new-grid".as_slice()] {
+            let completion = permit
+                .mutate(
+                    &mut journal,
+                    TerminalJournalMutation::Checkpoint {
+                        source: source.clone(),
+                        bytes,
+                    },
+                )
+                .unwrap();
+            assert!(completion.operation.is_ok());
+            assert_eq!(completion.accounting.unwrap().output_bytes, 12);
+        }
+        for bytes in [b"fact".as_slice(), b"ok".as_slice()] {
+            let completion = permit
+                .mutate(
+                    &mut journal,
+                    TerminalJournalMutation::State {
+                        source: source.clone(),
+                        bytes,
+                    },
+                )
+                .unwrap();
+            assert!(completion.operation.is_ok());
+            assert!(completion.accounting.unwrap().protected_bytes <= 4);
+        }
+        assert!(matches!(
+            permit.mutate(&mut journal, TerminalJournalMutation::Append(b"x")),
+            Err(TerminalProfileError::Invalid)
+        ));
+        assert_eq!(journal.usage().raw_bytes, 4);
+        drop(permit);
+        assert_eq!(transaction.inventory().unwrap().usage.output_bytes, 12);
+    }
+
+    #[test]
+    fn full_profile_and_invalid_read_bounds_reject_before_native_consumption() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let (catalog, mut journal) = fixture.journal("full");
+        journal.append(b"full-raw").unwrap();
+        let latest = journal.latest();
+        let mut transaction = begin_transaction(&store);
+        let mut reads = 0;
+        match budget().reserve_read(
+            &mut transaction,
+            catalog.namespace_key(),
+            &mut journal,
+            read_bounds(),
+        ) {
+            Ok(_) => reads += 1,
+            Err(error) => assert_eq!(error, TerminalProfileError::ResourceLimit),
+        }
+        assert_eq!(reads, 0);
+        assert_eq!(journal.latest(), latest);
+        for bounds in [
+            TerminalProfileReadBounds {
+                output_bytes: 0,
+                ..read_bounds()
+            },
+            TerminalProfileReadBounds {
+                output_bytes: MAX_READ_BYTES + 1,
+                ..read_bounds()
+            },
+            TerminalProfileReadBounds {
+                checkpoint_bytes: MAX_CHECKPOINT_BYTES + 1,
+                ..read_bounds()
+            },
+            TerminalProfileReadBounds {
+                state_bytes: MAX_STATE_BYTES + 1,
+                ..read_bounds()
+            },
+        ] {
+            assert!(matches!(
+                budget().reserve_read(
+                    &mut transaction,
+                    catalog.namespace_key(),
+                    &mut journal,
+                    bounds
+                ),
+                Err(TerminalProfileError::Invalid)
+            ));
+        }
+        assert_eq!(transaction.inventory().unwrap().usage.output_bytes, 8);
+    }
+
+    #[test]
+    fn read_permit_rejects_foreign_journals_and_unreserved_payloads() {
+        for violation in 0..4 {
+            let fixture = Fixture::new();
+            let foreign = Fixture::new();
+            let store = fixture.store();
+            let (catalog, mut journal) = fixture.journal("same-id");
+            let (_foreign_catalog, mut foreign_journal) = foreign.journal("same-id");
+            let mut transaction = begin_transaction(&store);
+            let mut allowed = budget();
+            allowed.limits.retained.output_bytes = 12;
+            let mut permit = allowed
+                .reserve_read(
+                    &mut transaction,
+                    catalog.namespace_key(),
+                    &mut journal,
+                    read_bounds(),
+                )
+                .unwrap();
+            let result = match violation {
+                0 => permit.mutate(&mut foreign_journal, TerminalJournalMutation::Append(b"x")),
+                1 => permit.mutate(&mut journal, TerminalJournalMutation::Event(b"x")),
+                2 => permit.mutate(&mut journal, TerminalJournalMutation::Append(b"large")),
+                _ => {
+                    let source = journal.latest();
+                    permit.mutate(
+                        &mut journal,
+                        TerminalJournalMutation::State {
+                            source,
+                            bytes: b"large",
+                        },
+                    )
+                }
+            };
+            assert!(matches!(result, Err(TerminalProfileError::Invalid)));
+            // Any rejected/failed operation seals the permit.
+            assert!(matches!(
+                permit.mutate(&mut journal, TerminalJournalMutation::Append(b"x")),
+                Err(TerminalProfileError::Invalid)
+            ));
+            assert_eq!(journal.usage().payload_bytes, 0);
+            assert_eq!(foreign_journal.usage().payload_bytes, 0);
+        }
+    }
+
+    #[test]
+    fn failed_read_publication_preserves_receipt_and_seals_remaining_capacity() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let (catalog, mut journal) = fixture.journal("failure");
+        journal
+            .publish_checkpoint(journal.latest(), b"old-grid")
+            .unwrap();
+        let mut transaction = begin_transaction(&store);
+        let directory = session_fd(&transaction, "failure");
+        let mut allowed = budget();
+        allowed.limits.retained.output_bytes = 12;
+        let mut permit = allowed
+            .reserve_read(
+                &mut transaction,
+                catalog.namespace_key(),
+                &mut journal,
+                read_bounds(),
+            )
+            .unwrap();
+        let completion = permit
+            .mutate(&mut journal, TerminalJournalMutation::Append(b"read"))
+            .unwrap();
+        assert_eq!(
+            completion.operation.unwrap(),
+            TerminalJournalReceipt::Appended(journal.latest())
+        );
+        assert_eq!(completion.accounting.unwrap().output_bytes, 12);
+        put(&directory, "tj-meta.tmp", b"interrupted");
+        let source = journal.latest();
+        let completion = permit
+            .mutate(
+                &mut journal,
+                TerminalJournalMutation::Checkpoint {
+                    source: source.clone(),
+                    bytes: b"new-grid",
+                },
+            )
+            .unwrap();
+        assert!(completion.operation.is_err());
+        assert_eq!(
+            completion.accounting,
+            Err(TerminalProfileError::AccountingMismatch)
+        );
+        assert!(matches!(
+            permit.mutate(
+                &mut journal,
+                TerminalJournalMutation::State {
+                    source,
+                    bytes: b"fact"
+                }
+            ),
+            Err(TerminalProfileError::Invalid)
+        ));
+        drop(permit);
+        assert_eq!(transaction.inventory().unwrap().usage.output_bytes, 20);
+        drop(journal);
+        let recovered = reopen(&transaction, "failure");
+        assert_eq!(recovered.usage().raw_bytes, 4);
+        assert_eq!(transaction.inventory().unwrap().usage.output_bytes, 12);
     }
 
     #[test]

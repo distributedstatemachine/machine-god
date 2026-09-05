@@ -74,6 +74,17 @@ impl TerminalScreenEngine {
             .map_err(|_| TerminalScreenError::InvalidInput)
     }
 
+    #[allow(
+        dead_code,
+        reason = "private history profile integration is staged separately"
+    )]
+    pub(crate) fn current_checkpoint_bound(&self) -> Result<usize, TerminalScreenError> {
+        let grid = self.grid()?;
+        let dimensions = TerminalDimensions::new(grid.rows(), grid.cols())
+            .map_err(|_| TerminalScreenError::InvalidInput)?;
+        Self::checkpoint_bound(&dimensions)
+    }
+
     /// Creates an empty screen from validated dimensions without native effects.
     ///
     /// # Errors

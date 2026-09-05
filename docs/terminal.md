@@ -39,6 +39,13 @@ an explicit raw gap invalidates the projection rather than inventing a screen.
 Oversized feeds are rejected without mutation. Resizing this projection alone
 does not resize a process: the runtime must also resize the actual PTY.
 
+The Rust checkpoint encoder exposes a dimension-dependent reservation bound:
+`9,978,007 + 44 × cells + columns` bytes, excluding the nine-byte history
+envelope. It covers active and saved screens, retained suffix/hyperlink pools
+and their length prefixes, tabs and all bounded parser/control buffers. Even
+maximum valid geometry stays below the 32 MiB encoder cap; the bound is not a
+clamped estimate and does not promise to encode corrupt or unavailable state.
+
 ## Native PTY lifecycle component
 
 The native PTY transport prepares a retained-descriptor helper and commits the
@@ -104,6 +111,9 @@ owner or session.
 Existing or partially prepared owners can finish preparation at the owner cap;
 duplicate session creation remains a conflict. These directory operations do
 not reacquire the profile lock or initialize journal metadata.
+Initial journal metadata is separately admitted in that count-admitted
+directory before creating journal files. Failed initialization remains charged
+and uses the journal's existing partial-state rules on retry.
 
 Profile admission separates the default 512 MiB output budget from protected
 state/events and metadata. Their ceilings derive from the journal bounds and
@@ -131,9 +141,24 @@ profile: they allocate bounded metadata but no new payloads or namespaces, and
 reconciliation still counts every remaining physical byte. Ordinary zero-growth
 replacements cannot use that exception; no-op maintenance allocates nothing.
 The lower-level declared-demand reservation remains available to trusted owners.
-Neither API intercepts unguarded journal calls; initial journal creation,
-runtime-wide mutation routing and victim selection must be composed before
-exposing the full terminal runtime.
+
+History writes take an explicit borrowed persistence context; the ordinary
+context consumes exact journal plans under its already-held transaction.
+An alternative read permit reserves capacity before native output consumption:
+one raw append of at most 16 KiB, up to two bounded checkpoint replacements
+and two protected-state replacements. History derives checkpoint headroom from
+its current geometry plus framing, or only the gap marker for an unavailable
+projection. The permit checks commit-counter headroom before the read, binds
+all writes to one exact session directory, and admits no event, namespace or
+retention operations. It reserves cumulative retained growth separately from
+the largest sequential temporary allocation and reconciles after every write.
+Any rejection, operation failure or accounting failure seals further use;
+dropping the permit releases no optimistic capacity credit. Append receipts
+retain their committed cursor even when accounting subsequently fails.
+Legacy no-context history entrypoints are available only to component tests.
+These APIs do not intercept bare journal calls; the production owner/registry
+must route operations through them, establish persistent live-checkpoint
+reserves and select validated victims before exposing the full terminal runtime.
 
 Profile retention uses explicit metadata-first eviction operations rather than
 rewriting session limits. Completed output/checkpoint eviction preserves facts,

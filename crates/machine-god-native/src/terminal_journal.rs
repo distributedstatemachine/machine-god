@@ -534,6 +534,18 @@ impl TerminalJournal {
         &self.manifest.session
     }
 
+    /// Effect-free preflight for an operation which may publish several
+    /// manifests after consuming native output. Each actual write still checks
+    /// its request; the owner holds the profile transaction between calls.
+    pub(crate) fn ensure_commit_capacity(&self, commits: u64) -> Result<()> {
+        self.ready()?;
+        self.manifest
+            .generation
+            .checked_add(commits)
+            .ok_or(TerminalJournalError::ResourceLimit)?;
+        Ok(())
+    }
+
     pub(crate) fn create(
         root: OwnedFd,
         session: TerminalSessionId,
@@ -1958,6 +1970,21 @@ mod tests {
         assert_eq!(std::fs::read(fixture.path.join(META)).unwrap(), metadata);
         assert_eq!(std::fs::read_dir(&fixture.path).unwrap().count(), 2);
         assert!(!journal.poisoned);
+    }
+
+    #[test]
+    fn multi_publication_capacity_is_checked_without_effects() {
+        let fixture = Fixture::new();
+        let mut journal = fixture.create(limits(4, 8));
+        let before = std::fs::read(fixture.path.join(META)).unwrap();
+        journal.manifest.generation = u64::MAX - 4;
+        assert_eq!(
+            journal.ensure_commit_capacity(5),
+            Err(TerminalJournalError::ResourceLimit)
+        );
+        assert_eq!(journal.ensure_commit_capacity(4), Ok(()));
+        assert!(!journal.poisoned);
+        assert_eq!(std::fs::read(fixture.path.join(META)).unwrap(), before);
     }
 
     #[test]
