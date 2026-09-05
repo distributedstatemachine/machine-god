@@ -97,6 +97,45 @@ impl fmt::Debug for TerminalSessionFacts {
     }
 }
 impl TerminalSessionFacts {
+    pub(crate) const PREFIX_HEADER_BYTES: usize = HEADER_BYTES;
+
+    /// Framing only, for a bounded unverified retention-selection hint. The
+    /// caller reads the header first, then precisely this prefix length; no
+    /// monitor payload needs to be read or allocated during enumeration.
+    pub(crate) fn prefix_hint_len(header: &[u8], total_bytes: usize) -> Result<usize> {
+        require(header.len() == HEADER_BYTES && header.starts_with(MAGIC))?;
+        let facts_len = u32::from_le_bytes(
+            header[MAGIC.len()..]
+                .try_into()
+                .map_err(|_| TerminalSessionRecordError::Invalid)?,
+        ) as usize;
+        require(facts_len > 0 && facts_len <= MAX_FACT_BYTES)?;
+        let prefix_len = HEADER_BYTES + facts_len;
+        require(prefix_len < total_bytes && total_bytes - prefix_len <= MAX_MONITOR_BYTES)?;
+        Ok(prefix_len)
+    }
+
+    /// UNVERIFIED selection data, never authority to reclaim output. In
+    /// particular, this neither authenticates the state blob nor validates its
+    /// monitor suffix. The selected journal and full record must be verified
+    /// again under writer authority before effects.
+    pub(crate) fn decode_prefix_hint(
+        prefix: &[u8],
+        total_bytes: usize,
+        session_id: &TerminalSessionId,
+        source: &TerminalCursor,
+    ) -> Result<Self> {
+        let header = prefix
+            .get(..HEADER_BYTES)
+            .ok_or(TerminalSessionRecordError::Invalid)?;
+        require(Self::prefix_hint_len(header, total_bytes)? == prefix.len())?;
+        let facts: Self = serde_json::from_slice(&prefix[HEADER_BYTES..])
+            .map_err(|_| TerminalSessionRecordError::Invalid)?;
+        facts.validate()?;
+        require(&facts.session_id == session_id && &facts.context.cursor == source)?;
+        Ok(facts)
+    }
+
     pub(crate) fn new(
         session_id: TerminalSessionId,
         owner: &BackgroundOutputOwner,
@@ -209,27 +248,13 @@ impl TerminalSessionFacts {
         session_id: &TerminalSessionId,
         source: &TerminalCursor,
     ) -> Result<(Self, &'a [u8])> {
-        require(
-            bytes.len() > HEADER_BYTES
-                && bytes.len() <= HEADER_BYTES + MAX_FACT_BYTES + MAX_MONITOR_BYTES
-                && bytes.starts_with(MAGIC),
-        )?;
-        let facts_len = u32::from_le_bytes(
-            bytes[MAGIC.len()..HEADER_BYTES]
-                .try_into()
-                .map_err(|_| TerminalSessionRecordError::Invalid)?,
-        ) as usize;
-        require(
-            facts_len > 0
-                && facts_len <= MAX_FACT_BYTES
-                && HEADER_BYTES + facts_len < bytes.len()
-                && bytes.len() - HEADER_BYTES - facts_len <= MAX_MONITOR_BYTES,
-        )?;
-        let facts: Self = serde_json::from_slice(&bytes[HEADER_BYTES..HEADER_BYTES + facts_len])
-            .map_err(|_| TerminalSessionRecordError::Invalid)?;
-        facts.validate()?;
-        require(&facts.session_id == session_id && &facts.context.cursor == source)?;
-        Ok((facts, &bytes[HEADER_BYTES + facts_len..]))
+        let header = bytes
+            .get(..HEADER_BYTES)
+            .ok_or(TerminalSessionRecordError::Invalid)?;
+        let prefix_len = Self::prefix_hint_len(header, bytes.len())?;
+        let facts =
+            Self::decode_prefix_hint(&bytes[..prefix_len], bytes.len(), session_id, source)?;
+        Ok((facts, &bytes[prefix_len..]))
     }
 
     pub(crate) fn restore_monitors(&self, bytes: &[u8]) -> Result<TerminalMonitorSet> {
@@ -296,6 +321,59 @@ mod tests {
             SessionId::new("logical-owner").unwrap(),
             SessionIncarnationId::new(incarnation).unwrap(),
         )
+    }
+
+    #[test]
+    fn prefix_hint_shares_exact_framing_without_decoding_monitor_payload() {
+        let (facts, monitors) = fixture();
+        let mut bytes = facts.encode(&monitors).unwrap();
+        let prefix_len =
+            TerminalSessionFacts::prefix_hint_len(&bytes[..HEADER_BYTES], bytes.len()).unwrap();
+        let hint = TerminalSessionFacts::decode_prefix_hint(
+            &bytes[..prefix_len],
+            bytes.len(),
+            &facts.session_id,
+            &facts.context.cursor,
+        )
+        .unwrap();
+        assert_eq!(hint.created_at_ms, facts.created_at_ms);
+        assert!(
+            TerminalSessionFacts::decode_prefix_hint(
+                &bytes[..prefix_len - 1],
+                bytes.len(),
+                &facts.session_id,
+                &facts.context.cursor,
+            )
+            .is_err()
+        );
+        assert!(
+            TerminalSessionFacts::decode_prefix_hint(
+                &bytes[..prefix_len],
+                bytes.len(),
+                &TerminalSessionId::new("other").unwrap(),
+                &facts.context.cursor,
+            )
+            .is_err()
+        );
+        bytes[prefix_len] = b'!';
+        let (decoded, suffix) =
+            TerminalSessionFacts::decode(&bytes, &facts.session_id, &facts.context.cursor).unwrap();
+        assert!(decoded.restore_monitors(suffix).is_err());
+        for length in [0, MAX_FACT_BYTES + 1] {
+            let mut header = bytes[..HEADER_BYTES].to_vec();
+            header[MAGIC.len()..].copy_from_slice(&u32::try_from(length).unwrap().to_le_bytes());
+            assert!(TerminalSessionFacts::prefix_hint_len(&header, bytes.len()).is_err());
+        }
+        for total in [
+            prefix_len,
+            prefix_len - 1,
+            prefix_len + MAX_MONITOR_BYTES + 1,
+        ] {
+            assert!(TerminalSessionFacts::prefix_hint_len(&bytes[..HEADER_BYTES], total).is_err());
+        }
+        assert!(
+            TerminalSessionFacts::prefix_hint_len(&bytes[..HEADER_BYTES - 1], bytes.len()).is_err()
+        );
     }
 
     #[test]

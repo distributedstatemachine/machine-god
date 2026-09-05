@@ -35,6 +35,25 @@ const MAX_CHECKPOINT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_STATE_BYTES: usize = 33 * 1024 * 1024;
 const DOMAIN: &[u8] = b"machine-god:terminal-journal:v1:";
 
+#[cfg(test)]
+thread_local! {
+    static OBSERVED_READ_BYTES: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+/// Small identity token for an UNVERIFIED selection hint. It identifies the
+/// directory, session and exact state blob, not mutable retention metadata.
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct TerminalJournalRetentionIdentity([u8; 32]);
+
+pub(crate) struct TerminalJournalRetentionHint {
+    pub(crate) identity: TerminalJournalRetentionIdentity,
+    pub(crate) source: TerminalCursor,
+    pub(crate) latest: TerminalCursor,
+    pub(crate) state_bytes: usize,
+    pub(crate) checkpoint_reserve_bytes: usize,
+    pub(crate) facts_prefix: Vec<u8>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TerminalJournalError {
     Invalid,
@@ -97,6 +116,8 @@ macro_rules! redacted {
         }
     };
 }
+redacted!(TerminalJournalRetentionIdentity);
+redacted!(TerminalJournalRetentionHint);
 
 pub(crate) struct TerminalJournalPage {
     pub(crate) bytes: Vec<u8>,
@@ -813,6 +834,81 @@ impl TerminalJournal {
             .saturating_sub(checkpoint_bytes) as u64)
     }
 
+    /// Bounded, read-only selection hints under a held profile transaction.
+    /// `physical_output_bytes` comes from that transaction's physical inventory.
+    /// Metadata is checksummed, but the state prefix is explicitly UNVERIFIED:
+    /// no payload checksum, writer lock, reconciliation or monitor decode occurs.
+    /// The selected journal must be opened and fully validated before effects.
+    pub(crate) fn inspect_retention_hint(
+        root: impl AsFd,
+        session: &TerminalSessionId,
+        physical_output_bytes: u64,
+    ) -> Result<Option<TerminalJournalRetentionHint>> {
+        use crate::terminal_session_record::TerminalSessionFacts;
+        private(root.as_fd(), true)?;
+        let metadata = match open_file(root.as_fd(), META, OFlags::RDONLY) {
+            Ok(file) => file,
+            Err(TerminalJournalError::NotFound) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let encoded = read_whole(&metadata, MAX_META)?;
+        let envelope: Envelope =
+            serde_json::from_slice(&encoded).map_err(|_| TerminalJournalError::Corrupt)?;
+        ensure(
+            envelope.version == 1
+                && &envelope.manifest.session == session
+                && manifest_hash(&envelope.manifest)? == envelope.sha256,
+            TerminalJournalError::Corrupt,
+        )?;
+        validate_manifest(&envelope.manifest)?;
+        validate_visible_file(root.as_fd(), META, &metadata, encoded.len())?;
+        if physical_output_bytes == 0 && envelope.manifest.checkpoint_reserve.is_none() {
+            return Ok(None);
+        }
+        let Some(state) = &envelope.manifest.state else {
+            return Ok(None);
+        };
+        let name = state_name(state.blob.id);
+        let file = open_file(root.as_fd(), &name, OFlags::RDONLY).map_err(missing_is_corrupt)?;
+        validate_visible_file(root.as_fd(), &name, &file, state.blob.bytes)?;
+        ensure(
+            state.blob.bytes > TerminalSessionFacts::PREFIX_HEADER_BYTES,
+            TerminalJournalError::Corrupt,
+        )?;
+        let mut prefix = vec![0; TerminalSessionFacts::PREFIX_HEADER_BYTES];
+        read_at(&file, 0, &mut prefix)?;
+        let prefix_len = TerminalSessionFacts::prefix_hint_len(&prefix, state.blob.bytes)
+            .map_err(|_| TerminalJournalError::Corrupt)?;
+        prefix.resize(prefix_len, 0);
+        read_at(
+            &file,
+            TerminalSessionFacts::PREFIX_HEADER_BYTES,
+            &mut prefix[TerminalSessionFacts::PREFIX_HEADER_BYTES..],
+        )?;
+        validate_visible_file(root.as_fd(), &name, &file, state.blob.bytes)?;
+        validate_visible_file(root.as_fd(), META, &metadata, encoded.len())?;
+        private(root.as_fd(), true)?;
+        Ok(Some(TerminalJournalRetentionHint {
+            identity: retention_identity(root, &envelope.manifest)?,
+            source: state.source.clone(),
+            latest: envelope.manifest.latest.clone(),
+            state_bytes: state.blob.bytes,
+            checkpoint_reserve_bytes: envelope.manifest.checkpoint_reserve.unwrap_or(0),
+            facts_prefix: prefix,
+        }))
+    }
+
+    /// Identity revalidation only; successful ordinary writer recovery and full
+    /// protected-record validation remain mandatory before retention effects.
+    pub(crate) fn matches_retention_identity(
+        &self,
+        expected: &TerminalJournalRetentionIdentity,
+    ) -> Result<bool> {
+        self.ready()?;
+        Ok(self.manifest.state.is_some()
+            && retention_identity(&self.root, &self.manifest)? == *expected)
+    }
+
     pub(crate) fn eviction_bytes(&self, eviction: &TerminalJournalEviction) -> Result<usize> {
         self.ready()?;
         Ok(self.eviction_plan(eviction)?.1)
@@ -1369,6 +1465,29 @@ fn output_charge(manifest: &Manifest) -> u64 {
             .max(manifest.checkpoint_reserve.unwrap_or(0))) as u64
 }
 
+fn retention_identity(
+    root: impl AsFd,
+    manifest: &Manifest,
+) -> Result<TerminalJournalRetentionIdentity> {
+    let state = manifest
+        .state
+        .as_ref()
+        .ok_or(TerminalJournalError::Corrupt)?;
+    let stat = rustix::fs::fstat(root).map_err(io_error)?;
+    let mut digest = Sha256::new();
+    digest.update(b"machine-god:terminal-retention-state:v1:");
+    digest.update(stat.st_dev.to_le_bytes());
+    digest.update(stat.st_ino.to_le_bytes());
+    digest.update(manifest.session.as_str().as_bytes());
+    digest.update([0]);
+    digest.update(state.blob.id.to_le_bytes());
+    digest.update((state.blob.bytes as u64).to_le_bytes());
+    digest.update(state.blob.sha256);
+    digest.update(state.source.segment().to_le_bytes());
+    digest.update(state.source.offset().to_le_bytes());
+    Ok(TerminalJournalRetentionIdentity(digest.finalize().into()))
+}
+
 fn planned_checkpoint(
     generation: u64,
     source: &TerminalCursor,
@@ -1771,6 +1890,19 @@ fn checked_artifact_size(root: impl AsFd, name: &str) -> Result<usize> {
     )?;
     usize::try_from(held.st_size).map_err(|_| TerminalJournalError::Corrupt)
 }
+fn validate_visible_file(root: impl AsFd, name: &str, file: impl AsFd, bytes: usize) -> Result<()> {
+    let held = rustix::fs::fstat(file).map_err(io_error)?;
+    let visible = rustix::fs::statat(root, name, AtFlags::SYMLINK_NOFOLLOW)
+        .map_err(io_error)
+        .map_err(missing_is_corrupt)?;
+    ensure(
+        held.st_dev == visible.st_dev
+            && held.st_ino == visible.st_ino
+            && usize::try_from(held.st_size).ok() == Some(bytes)
+            && visible.st_size == held.st_size,
+        TerminalJournalError::Corrupt,
+    )
+}
 fn create_file(root: impl AsFd, name: &str) -> Result<OwnedFd> {
     let fd = rustix::fs::openat(
         root,
@@ -1826,6 +1958,12 @@ fn write_at(fd: impl AsFd, mut offset: usize, mut bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 fn read_at(fd: impl AsFd, mut offset: usize, mut bytes: &mut [u8]) -> Result<()> {
+    #[cfg(test)]
+    OBSERVED_READ_BYTES.with(|observed| {
+        if let Some(total) = observed.get() {
+            observed.set(Some(total + bytes.len()));
+        }
+    });
     while !bytes.is_empty() {
         let count = rustix::io::pread(fd.as_fd(), &mut *bytes, offset as u64).map_err(io_error)?;
         ensure(count > 0, TerminalJournalError::Corrupt)?;
@@ -2017,6 +2155,141 @@ mod tests {
                 .unwrap(),
             TerminalJournalReceipt::Published
         );
+    }
+
+    fn retention_state(journal: &TerminalJournal) -> Vec<u8> {
+        use crate::terminal_monitor::{TerminalMonitorContext, TerminalMonitorSet};
+        use crate::terminal_session_record::TerminalSessionFacts;
+        use machine_god_core::{
+            BackgroundOutputOwner, SessionId, SessionIncarnationId, TerminalLifecycle,
+        };
+        let context = TerminalMonitorContext {
+            now_ms: 0,
+            cursor: journal.latest(),
+            lifecycle: TerminalLifecycle::Closed,
+        };
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("owner").unwrap(),
+            SessionIncarnationId::new("incarnation").unwrap(),
+        );
+        let facts =
+            TerminalSessionFacts::new(session(), &owner, context.clone(), 0, 0, None).unwrap();
+        let monitors = TerminalMonitorSet::new(session(), context).unwrap();
+        facts.encode(&monitors).unwrap()
+    }
+
+    #[test]
+    fn retention_hint_reads_exact_prefix_without_payload_recovery_or_writer_authority() {
+        use crate::terminal_session_record::TerminalSessionFacts;
+        let fixture = Fixture::new();
+        let mut journal = fixture.create(limits(8, 64));
+        journal.append(b"raw").unwrap();
+        journal
+            .publish_checkpoint(journal.latest(), b"grid")
+            .unwrap();
+        let mut state = retention_state(&journal);
+        state.extend(std::iter::repeat_n(b' ', 1024 * 1024));
+        journal.publish_state(journal.latest(), &state).unwrap();
+        journal.append_event(&[b'e'; MAX_EVENT_BYTES]).unwrap();
+        let event = journal.manifest.events[0].id;
+        let file = open_file(fixture.fd(), &event_name(event), OFlags::RDWR).unwrap();
+        write_at(file, 0, b"!").unwrap();
+        fixture.put(TEMP, b"unreconciled");
+        let before = std::fs::read(fixture.path.join(META)).unwrap();
+        OBSERVED_READ_BYTES.with(|observed| observed.set(Some(0)));
+        let hint = TerminalJournal::inspect_retention_hint(fixture.fd(), &session(), 7)
+            .unwrap()
+            .unwrap();
+        let read_bytes = OBSERVED_READ_BYTES
+            .with(|observed| observed.replace(None))
+            .unwrap();
+        assert_eq!(read_bytes, before.len() + hint.facts_prefix.len());
+        assert!(hint.facts_prefix.len() < 4096);
+        assert_eq!(hint.state_bytes, state.len());
+        assert_eq!(hint.latest, journal.latest());
+        assert_eq!(hint.checkpoint_reserve_bytes, 0);
+        TerminalSessionFacts::decode_prefix_hint(
+            &hint.facts_prefix,
+            hint.state_bytes,
+            &session(),
+            &hint.source,
+        )
+        .unwrap();
+        assert!(journal.matches_retention_identity(&hint.identity).unwrap());
+        assert_eq!(std::fs::read(fixture.path.join(META)).unwrap(), before);
+        assert_eq!(
+            std::fs::read(fixture.path.join(TEMP)).unwrap(),
+            b"unreconciled"
+        );
+        drop(journal);
+        // Selection never pretended that the unread payload was valid.
+        assert_eq!(
+            fixture.open(limits(8, 64)).unwrap_err(),
+            TerminalJournalError::Corrupt
+        );
+        assert_eq!(
+            std::fs::read(fixture.path.join(TEMP)).unwrap(),
+            b"unreconciled"
+        );
+    }
+
+    #[test]
+    fn retention_hint_skips_zero_charge_without_reading_a_state_prefix() {
+        let fixture = Fixture::new();
+        let mut journal = fixture.create(limits(8, 64));
+        journal
+            .publish_state(journal.latest(), b"invalid facts")
+            .unwrap();
+        journal.append_event(b"protected").unwrap();
+        OBSERVED_READ_BYTES.with(|observed| observed.set(Some(0)));
+        assert!(
+            TerminalJournal::inspect_retention_hint(fixture.fd(), &session(), 0)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            OBSERVED_READ_BYTES.with(|observed| observed.replace(None)),
+            Some(journal.usage().metadata_bytes)
+        );
+        set_reserve(&mut journal, 16);
+        assert_eq!(
+            TerminalJournal::inspect_retention_hint(fixture.fd(), &session(), 0).unwrap_err(),
+            TerminalJournalError::Corrupt
+        );
+    }
+
+    #[test]
+    fn retention_hint_identity_survives_retention_but_not_state_or_directory_replacement() {
+        let fixture = Fixture::new();
+        let mut journal = fixture.create(limits(8, 64));
+        journal.append(b"raw").unwrap();
+        journal
+            .publish_checkpoint(journal.latest(), b"grid")
+            .unwrap();
+        let state = retention_state(&journal);
+        journal.publish_state(journal.latest(), &state).unwrap();
+        set_reserve(&mut journal, 16);
+        let hint = TerminalJournal::inspect_retention_hint(fixture.fd(), &session(), 7)
+            .unwrap()
+            .unwrap();
+        journal
+            .evict(&TerminalJournalEviction::CompletedOutput)
+            .unwrap();
+        assert!(journal.matches_retention_identity(&hint.identity).unwrap());
+        set_reserve(&mut journal, 0);
+        assert!(journal.matches_retention_identity(&hint.identity).unwrap());
+        journal
+            .evict(&TerminalJournalEviction::CompletedCheckpoint)
+            .unwrap();
+        assert!(journal.matches_retention_identity(&hint.identity).unwrap());
+        let other_fixture = Fixture::new();
+        let mut other = other_fixture.create(limits(8, 64));
+        other
+            .publish_state(other.latest(), &retention_state(&other))
+            .unwrap();
+        assert!(!other.matches_retention_identity(&hint.identity).unwrap());
+        journal.publish_state(journal.latest(), &state).unwrap();
+        assert!(!journal.matches_retention_identity(&hint.identity).unwrap());
     }
 
     fn replace_metadata(fixture: &Fixture, manifest: Manifest) {
