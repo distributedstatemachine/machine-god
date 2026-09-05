@@ -29,9 +29,15 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::time::Duration;
 
-use machine_god_core::CancellationToken;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use crate::background_input::BackgroundInputStatus;
+use crate::background_input::{
+    BackgroundInputError, BackgroundInputErrorKind, BackgroundInputReceipt, BackgroundInputTarget,
+    validate_input,
+};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use machine_god_core::Cancelled;
+use machine_god_core::{CancellationToken, ProcessInput};
 
 #[cfg(target_os = "linux")]
 use rustix::fd::AsRawFd;
@@ -197,7 +203,7 @@ const BACKGROUND_OUTPUT_READS_PER_OBSERVATION: usize = 16;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const BACKGROUND_OUTPUT_FINAL_READS: usize = 128;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-const RELEASE_FRAME_MAGIC: &[u8; 8] = b"MGBG\0\0\0\x02";
+const RELEASE_FRAME_MAGIC: &[u8; 8] = b"MGBG\0\0\0\x03";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const RELEASE_NULL_OUTPUT_BYTE: u8 = 0;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -212,6 +218,7 @@ const RELEASE_FRAME_PIPE_WRITE_BYTES: usize = if libc::PIPE_BUF < RELEASE_FRAME_
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_RELEASE_FRAME_PAYLOAD_BYTES: usize = RELEASE_FRAME_MAGIC.len()
+    + 1
     + 1
     + 4
     + MAX_BACKGROUND_PROCESS_COMMAND_BYTES
@@ -1443,6 +1450,7 @@ impl ValidatedBackgroundEnvironment {
 
 /// Exact, bounded request for one prepared background command.
 pub struct BackgroundProcessRequest {
+    stdin: ProcessInput,
     command: String,
     cwd: String,
     environment: ValidatedBackgroundEnvironment,
@@ -1487,6 +1495,7 @@ impl BackgroundProcessRequest {
         #[cfg(target_os = "linux")]
         let descriptor_path = validated_descriptor_path(directory.as_fd())?;
         Ok(Self {
+            stdin: ProcessInput::Null,
             command,
             cwd,
             environment,
@@ -1552,6 +1561,26 @@ impl BackgroundProcessRequest {
     #[must_use]
     pub fn environment(&self) -> &[(OsString, OsString)] {
         self.environment.entries()
+    }
+
+    /// Selects null input (the default) or an explicitly retained input pipe.
+    ///
+    /// # Errors
+    /// Returns an unsupported error for piped input on unsupported platforms.
+    pub fn with_stdin(mut self, stdin: ProcessInput) -> Result<Self, BackgroundProcessError> {
+        if stdin == ProcessInput::Pipe && !cfg!(any(target_os = "linux", target_os = "macos")) {
+            return Err(BackgroundProcessError::new(
+                BackgroundProcessErrorKind::Unsupported,
+            ));
+        }
+        self.stdin = stdin;
+        Ok(self)
+    }
+
+    /// Returns the explicitly selected input mode.
+    #[must_use]
+    pub const fn stdin(&self) -> ProcessInput {
+        self.stdin
     }
 
     /// Returns the retained directory descriptor.
@@ -1740,28 +1769,31 @@ pub fn run_background_process_helper() -> Result<(), BackgroundProcessError> {
         .map_err(|_| spawn_error())?;
     drop(ready);
 
-    let mut input = stdin().lock();
+    // StdinLock can read ahead beyond the protocol commit and lose application
+    // input when exec replaces this helper. Read only each requested byte span.
+    let stdin = stdin();
+    let mut input = ExactDescriptorReader(stdin.as_fd());
     let ReleaseFrame {
         command,
         environment,
         capture_output,
+        stdin_mode,
     } = read_release_frame(&mut input)?;
     let mut commit = [0_u8; 1];
     read_release_bytes(&mut input, &mut commit)?;
     if commit[0] != RELEASE_COMMIT_BYTE {
         return Err(invalid_request());
     }
-    #[cfg(target_os = "macos")]
-    drop((input, stdout));
-    #[cfg(target_os = "linux")]
-    drop(input);
     let mut shell = Command::new(BACKGROUND_PROCESS_PROGRAM);
     shell
         .arg("-c")
         .arg(command)
         .env_clear()
         .envs(environment)
-        .stdin(Stdio::null());
+        .stdin(match stdin_mode {
+            ProcessInput::Null => Stdio::null(),
+            ProcessInput::Pipe => Stdio::inherit(),
+        });
     if capture_output {
         let output = rustix::io::dup(stderr().as_fd()).map_err(|_| spawn_error())?;
         shell.stdout(Stdio::from(output)).stderr(Stdio::inherit());
@@ -1778,6 +1810,17 @@ struct ReleaseFrame {
     command: String,
     environment: Vec<(OsString, OsString)>,
     capture_output: bool,
+    stdin_mode: ProcessInput,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct ExactDescriptorReader<'a>(BorrowedFd<'a>);
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl std::io::Read for ExactDescriptorReader<'_> {
+    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        rustix::io::read(self.0, bytes).map_err(Into::into)
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1794,6 +1837,13 @@ fn read_release_frame(
     let capture_output = match output_mode[0] {
         RELEASE_NULL_OUTPUT_BYTE => false,
         RELEASE_CAPTURE_OUTPUT_BYTE => true,
+        _ => return Err(invalid_request()),
+    };
+    let mut input_mode = [0_u8; 1];
+    read_release_bytes(input, &mut input_mode)?;
+    let stdin_mode = match input_mode[0] {
+        0 => ProcessInput::Null,
+        1 => ProcessInput::Pipe,
         _ => return Err(invalid_request()),
     };
     let command_length = read_release_length(input, MAX_BACKGROUND_PROCESS_COMMAND_BYTES)?;
@@ -1830,6 +1880,7 @@ fn read_release_frame(
         command,
         environment,
         capture_output,
+        stdin_mode,
     })
 }
 
@@ -1870,8 +1921,303 @@ pub fn run_background_process_helper() -> Result<(), BackgroundProcessError> {
     ))
 }
 
+/// Exact descriptor authority for one retained process's input pipe.
+#[derive(Clone, Default)]
+pub(crate) struct BackgroundProcessInputController {
+    state: Arc<std::sync::Mutex<ProcessInputState>>,
+    revoked: Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[derive(Default)]
+struct ProcessInputState {
+    active: bool,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    writer: Option<ChildStdin>,
+}
+
+impl BackgroundProcessInputController {
+    fn activate(&self) -> Result<(), BackgroundInputError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| BackgroundInputError::new(BackgroundInputErrorKind::Process))?;
+        if self.revoked.load(std::sync::atomic::Ordering::Acquire) || state.active {
+            return Err(BackgroundInputError::new(
+                BackgroundInputErrorKind::NotFound,
+            ));
+        }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if state.writer.is_none() {
+            return Err(BackgroundInputError::new(
+                BackgroundInputErrorKind::NotFound,
+            ));
+        }
+        state.active = true;
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn install(&self, writer: ChildStdin) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !self.revoked.load(Ordering::Acquire) {
+            state.writer = Some(writer);
+        }
+    }
+
+    fn close(&self) {
+        self.revoked
+            .store(true, std::sync::atomic::Ordering::Release);
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.active = false;
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        drop(state.writer.take());
+    }
+}
+
+impl BackgroundInputTarget for BackgroundProcessInputController {
+    fn write(
+        &self,
+        data: &[u8],
+        eof: bool,
+    ) -> Result<BackgroundInputReceipt, BackgroundInputError> {
+        validate_input(data, eof)?;
+        if self.revoked.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(BackgroundInputError::new(
+                BackgroundInputErrorKind::NotFound,
+            ));
+        }
+        let mut state = self.state.try_lock().map_err(|error| {
+            BackgroundInputError::new(match error {
+                std::sync::TryLockError::WouldBlock => BackgroundInputErrorKind::Busy,
+                std::sync::TryLockError::Poisoned(_) => BackgroundInputErrorKind::Process,
+            })
+        })?;
+        if !state.active || self.revoked.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(BackgroundInputError::new(
+                BackgroundInputErrorKind::NotFound,
+            ));
+        }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            let Some(writer) = state.writer.as_mut() else {
+                return Ok(BackgroundInputReceipt::new(
+                    0,
+                    true,
+                    BackgroundInputStatus::Closed,
+                ));
+            };
+            let receipt = write_input_bounded(writer, data, eof);
+            if receipt.stdin_closed() {
+                drop(state.writer.take());
+            }
+            Ok(receipt)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            let _ = &mut state;
+            Err(BackgroundInputError::new(BackgroundInputErrorKind::Process))
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn write_input_bounded(
+    writer: &mut impl std::io::Write,
+    data: &[u8],
+    eof: bool,
+) -> BackgroundInputReceipt {
+    let mut accepted = 0;
+    // A nonblocking descriptor plus a fixed syscall budget bounds time holding
+    // lifecycle authority, even under repeated EINTR or one-byte short writes.
+    for _ in 0..32 {
+        if accepted == data.len() {
+            return BackgroundInputReceipt::new(
+                accepted,
+                eof,
+                if eof {
+                    BackgroundInputStatus::Closed
+                } else {
+                    BackgroundInputStatus::Written
+                },
+            );
+        }
+        match writer.write(&data[accepted..]) {
+            Ok(0) => break,
+            Ok(count) => accepted += count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(error) => {
+                return BackgroundInputReceipt::new(
+                    accepted,
+                    true,
+                    if error.kind() == std::io::ErrorKind::BrokenPipe {
+                        BackgroundInputStatus::Closed
+                    } else {
+                        BackgroundInputStatus::Failed
+                    },
+                );
+            }
+        }
+    }
+    if accepted == data.len() {
+        BackgroundInputReceipt::new(
+            accepted,
+            eof,
+            if eof {
+                BackgroundInputStatus::Closed
+            } else {
+                BackgroundInputStatus::Written
+            },
+        )
+    } else {
+        BackgroundInputReceipt::new(accepted, false, BackgroundInputStatus::Backpressure)
+    }
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod input_tests {
+    use super::*;
+    use std::io::{Read, Write};
+
+    struct ShortWriter {
+        attempts: usize,
+        failure: Option<std::io::ErrorKind>,
+    }
+    impl Write for ShortWriter {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            self.attempts += 1;
+            if self.attempts > 1
+                && let Some(kind) = self.failure
+            {
+                return Err(kind.into());
+            }
+            Ok(1)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn bounded_input_short_writes_and_interruption_preserve_receipts() {
+        for failure in [
+            None,
+            Some(std::io::ErrorKind::Interrupted),
+            Some(std::io::ErrorKind::WouldBlock),
+        ] {
+            let mut writer = ShortWriter {
+                attempts: 0,
+                failure,
+            };
+            let receipt = write_input_bounded(&mut writer, &[0; 64], true);
+            assert_eq!(receipt.status(), BackgroundInputStatus::Backpressure);
+            assert!(!receipt.stdin_closed());
+            assert_eq!(
+                receipt.bytes_written(),
+                if failure.is_none() { 32 } else { 1 }
+            );
+            assert!(writer.attempts <= 32);
+        }
+    }
+
+    #[test]
+    fn bounded_input_terminal_failures_preserve_accepted_count_and_close() {
+        for (failure, expected) in [
+            (
+                std::io::ErrorKind::BrokenPipe,
+                BackgroundInputStatus::Closed,
+            ),
+            (std::io::ErrorKind::Other, BackgroundInputStatus::Failed),
+        ] {
+            let mut writer = ShortWriter {
+                attempts: 0,
+                failure: Some(failure),
+            };
+            let receipt = write_input_bounded(&mut writer, b"ab", true);
+            assert_eq!(receipt.bytes_written(), 1);
+            assert_eq!(receipt.status(), expected);
+            assert!(receipt.stdin_closed());
+            assert_eq!(writer.attempts, 2);
+        }
+        let mut writer = ShortWriter {
+            attempts: 0,
+            failure: None,
+        };
+        let receipt = write_input_bounded(&mut writer, &[0; 32], true);
+        assert_eq!(receipt.bytes_written(), 32);
+        assert!(receipt.stdin_closed());
+        assert_eq!(receipt.status(), BackgroundInputStatus::Closed);
+    }
+
+    #[test]
+    fn exact_descriptor_protocol_does_not_consume_post_commit_input() {
+        let (mut reader, mut writer) = std::io::pipe().unwrap();
+        let environment = ValidatedBackgroundEnvironment::new(Vec::new()).unwrap();
+        let mut bytes = Vec::new();
+        write_release_frame(&mut bytes, "cat", &environment, true, ProcessInput::Pipe).unwrap();
+        bytes.push(RELEASE_COMMIT_BYTE);
+        bytes.extend_from_slice(b"first\0\xffapplication");
+        writer.write_all(&bytes).unwrap();
+        drop(writer);
+        let mut exact = ExactDescriptorReader(reader.as_fd());
+        let frame = read_release_frame(&mut exact).unwrap();
+        assert_eq!(frame.stdin_mode, ProcessInput::Pipe);
+        let mut commit = [0; 1];
+        exact.read_exact(&mut commit).unwrap();
+        assert_eq!(commit, [RELEASE_COMMIT_BYTE]);
+        let mut remaining = Vec::new();
+        reader.read_to_end(&mut remaining).unwrap();
+        assert_eq!(remaining, b"first\0\xffapplication");
+    }
+
+    #[test]
+    fn release_protocol_strictly_validates_input_mode() {
+        let environment = ValidatedBackgroundEnvironment::new(Vec::new()).unwrap();
+        let mut bytes = Vec::new();
+        write_release_frame(&mut bytes, "cat", &environment, true, ProcessInput::Null).unwrap();
+        bytes[RELEASE_FRAME_MAGIC.len() + 1] = 2;
+        assert!(read_release_frame(&mut bytes.as_slice()).is_err());
+    }
+
+    #[test]
+    fn input_close_publishes_revocation_before_waiting_for_an_admitted_write() {
+        let controller = BackgroundProcessInputController::default();
+        let state = controller.state.lock().unwrap();
+        assert_eq!(
+            controller.write(b"x", false).unwrap_err().kind(),
+            BackgroundInputErrorKind::Busy
+        );
+        let closer = controller.clone();
+        let worker = thread::spawn(move || closer.close());
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !controller.revoked.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline);
+            thread::yield_now();
+        }
+        assert!(
+            !worker.is_finished(),
+            "close must serialize with the held write gate"
+        );
+        assert_eq!(
+            controller.write(b"x", false).unwrap_err().kind(),
+            BackgroundInputErrorKind::NotFound
+        );
+        drop(state);
+        worker.join().unwrap();
+        assert!(!controller.state.lock().unwrap().active);
+    }
+}
+
 /// A spawned process blocked on its private start gate.
 pub struct PreparedBackgroundProcess {
+    stdin: ProcessInput,
+    input_controller: Option<BackgroundProcessInputController>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     child: Option<Child>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1893,6 +2239,24 @@ pub struct PreparedBackgroundProcess {
 }
 
 impl PreparedBackgroundProcess {
+    /// Attaches hidden descriptor authority before release, only for pipe input.
+    pub(crate) fn attach_input_controller(
+        &mut self,
+    ) -> Result<BackgroundProcessInputController, BackgroundInputError> {
+        if self.stdin != ProcessInput::Pipe {
+            return Err(BackgroundInputError::new(
+                BackgroundInputErrorKind::InvalidRequest,
+            ));
+        }
+        if self.input_controller.is_some() {
+            return Err(BackgroundInputError::new(
+                BackgroundInputErrorKind::Conflict,
+            ));
+        }
+        let controller = BackgroundProcessInputController::default();
+        self.input_controller = Some(controller.clone());
+        Ok(controller)
+    }
     /// Returns the validated, nonzero direct-child PID.
     #[must_use]
     pub const fn pid(&self) -> NonZeroU32 {
@@ -1936,8 +2300,8 @@ impl PreparedBackgroundProcess {
     }
 
     /// Releases the private start gate and transfers process ownership.
-    /// Closing the gate immediately after the release byte gives the user
-    /// command EOF on standard input.
+    /// Null input remains the default; an attached pipe controller retains
+    /// the input descriptor after the distinct release commit.
     ///
     /// # Errors
     ///
@@ -2020,6 +2384,7 @@ impl Drop for PreparedBackgroundProcess {
 /// snapshots. A descendant that changes process group or session before any
 /// snapshot observes it is outside this ownership set.
 pub struct OwnedBackgroundProcess {
+    input_controller: Option<BackgroundProcessInputController>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     child: Option<Child>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -2035,6 +2400,14 @@ pub struct OwnedBackgroundProcess {
 }
 
 impl OwnedBackgroundProcess {
+    /// Activates pipe authority at the authoritative retain-time boundary.
+    pub(crate) fn activate_input_controller(&mut self) -> Result<(), BackgroundInputError> {
+        let controller = self
+            .input_controller
+            .as_ref()
+            .ok_or_else(|| BackgroundInputError::new(BackgroundInputErrorKind::NotFound))?;
+        controller.activate()
+    }
     /// Returns the validated, nonzero direct-child PID.
     #[must_use]
     pub const fn pid(&self) -> NonZeroU32 {
@@ -2789,9 +3162,12 @@ fn prepare_system(
     let BackgroundProcessRequest {
         command,
         environment,
+        stdin,
         ..
     } = request;
     Ok(PreparedBackgroundProcess {
+        stdin,
+        input_controller: None,
         child,
         gate: Some(gate),
         command: Some(command),
@@ -2925,6 +3301,9 @@ fn release_prepared(
     cancellation: &CancellationToken,
     capture_output: bool,
 ) -> Result<OwnedBackgroundProcess, BackgroundProcessError> {
+    if prepared.stdin == ProcessInput::Pipe && prepared.input_controller.is_none() {
+        return Err(invalid_request());
+    }
     let Some(mut gate) = prepared.gate.take() else {
         return Err(invariant_error());
     };
@@ -2939,6 +3318,7 @@ fn release_prepared(
                 &command,
                 &environment,
                 capture_output,
+                prepared.stdin,
                 cancellation,
                 prepared.pid,
             )
@@ -2951,7 +3331,11 @@ fn release_prepared(
             Err(cleanup_error) => Err(cleanup_error),
         };
     }
-    drop(gate);
+    if let Some(controller) = prepared.input_controller.as_ref() {
+        controller.install(gate);
+    } else {
+        drop(gate);
+    }
     if prepared.child.is_none()
         || prepared.snapshot_authority.is_none()
         || prepared.reap_permit.is_none()
@@ -2967,6 +3351,7 @@ fn release_prepared(
     let reap_permit = prepared.reap_permit.take().ok_or_else(invariant_error)?;
     let output = prepared.output.take().ok_or_else(invariant_error)?;
     Ok(OwnedBackgroundProcess {
+        input_controller: prepared.input_controller.take(),
         child: Some(child),
         group: prepared.group,
         snapshot_authority: Some(snapshot_authority),
@@ -2983,6 +3368,7 @@ fn write_release_frame(
     command: &str,
     environment: &ValidatedBackgroundEnvironment,
     capture_output: bool,
+    stdin: ProcessInput,
 ) -> std::io::Result<()> {
     let mut output = ReleaseFrameChunkWriter::new(output);
     output.write_bytes(RELEASE_FRAME_MAGIC)?;
@@ -2990,6 +3376,10 @@ fn write_release_frame(
         RELEASE_CAPTURE_OUTPUT_BYTE
     } else {
         RELEASE_NULL_OUTPUT_BYTE
+    }])?;
+    output.write_bytes(&[match stdin {
+        ProcessInput::Null => 0,
+        ProcessInput::Pipe => 1,
     }])?;
     output.write_length(command.len())?;
     output.write_bytes(command.as_bytes())?;
@@ -3052,6 +3442,7 @@ fn write_release_frame_bounded(
     command: &str,
     environment: &ValidatedBackgroundEnvironment,
     capture_output: bool,
+    stdin: ProcessInput,
     cancellation: &CancellationToken,
     pid: NonZeroU32,
 ) -> Result<(), ReleaseWriteFailure> {
@@ -3070,7 +3461,7 @@ fn write_release_frame_bounded(
         attempts: 0,
         attempt_limit: MAX_RELEASE_FRAME_WRITE_ATTEMPTS,
     };
-    if write_release_frame(&mut output, command, environment, capture_output).is_err() {
+    if write_release_frame(&mut output, command, environment, capture_output, stdin).is_err() {
         return Err(output.observed_failure());
     }
     #[cfg(test)]
@@ -3206,6 +3597,7 @@ fn release_prepared(
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn abort_prepared(prepared: &mut PreparedBackgroundProcess) -> Result<(), BackgroundProcessError> {
+    close_input_controller(&mut prepared.input_controller);
     close_signal_controller(&mut prepared.signal_controller);
     drop(prepared.gate.take());
     drop(prepared.output.take());
@@ -3247,6 +3639,7 @@ fn wait_owned_with_output(
     output: &mut impl FnMut(&[u8]),
 ) -> Result<BackgroundProcessExit, BackgroundProcessError> {
     if owned.child.is_none() {
+        close_input_controller(&mut owned.input_controller);
         close_signal_controller(&mut owned.signal_controller);
         return Err(invariant_error());
     }
@@ -3265,6 +3658,7 @@ fn wait_owned_with_output(
         };
         match observe_leader(owned.group) {
             Err(LeaderObservationFailure::LostAuthority) => {
+                close_input_controller(&mut owned.input_controller);
                 close_signal_controller(&mut owned.signal_controller);
                 drop(owned.child.take());
                 return Err(wait_error());
@@ -3308,6 +3702,7 @@ fn wait_owned_with_stop_and_output(
     output: &mut impl FnMut(&[u8]),
 ) -> Result<BackgroundProcessOutputOutcome, BackgroundProcessError> {
     if owned.child.is_none() {
+        close_input_controller(&mut owned.input_controller);
         close_signal_controller(&mut owned.signal_controller);
         return Err(invariant_error());
     }
@@ -3347,6 +3742,7 @@ fn wait_owned_with_stop_and_output(
             }
             Ok(None) => {}
             Err(LeaderObservationFailure::LostAuthority) => {
+                close_input_controller(&mut owned.input_controller);
                 close_signal_controller(&mut owned.signal_controller);
                 drop(owned.child.take());
                 return Err(wait_error());
@@ -3467,6 +3863,7 @@ fn finish_background_output_bounded<R: std::io::Read>(
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn stop_owned(owned: &mut OwnedBackgroundProcess) -> Result<(), BackgroundProcessError> {
+    close_input_controller(&mut owned.input_controller);
     close_signal_controller(&mut owned.signal_controller);
     if owned.child.is_none() {
         return Ok(());
@@ -3744,6 +4141,7 @@ fn cleanup_owned_child(
     expected: Option<BackgroundProcessExit>,
     force_cleanup: bool,
 ) -> Result<(), BackgroundProcessError> {
+    close_input_controller(&mut owned.input_controller);
     close_signal_controller(&mut owned.signal_controller);
     if owned.child.is_none() {
         return Err(invariant_error());
@@ -3761,6 +4159,13 @@ fn cleanup_owned_child(
         force_cleanup,
         authority,
     )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn close_input_controller(controller: &mut Option<BackgroundProcessInputController>) {
+    if let Some(controller) = controller.take() {
+        controller.close();
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -7231,15 +7636,22 @@ mod process_regression_tests {
             bytes: Vec::new(),
         };
 
-        write_release_frame(&mut output, &command, &environment, true).expect("release frame");
+        write_release_frame(
+            &mut output,
+            &command,
+            &environment,
+            true,
+            ProcessInput::Null,
+        )
+        .expect("release frame");
         assert_eq!(output.lengths.len(), 19);
         assert!(
             output.lengths[..18]
                 .iter()
                 .all(|length| *length == RELEASE_FRAME_WRITE_CHUNK_BYTES)
         );
-        assert_eq!(output.lengths[18], 4_113);
-        assert_eq!(output.bytes.len(), 299_025);
+        assert_eq!(output.lengths[18], 4_114);
+        assert_eq!(output.bytes.len(), 299_026);
         std::io::Write::write_all(&mut output, &[RELEASE_COMMIT_BYTE]).expect("distinct commit");
         assert_eq!(output.lengths.len(), 20);
         assert_eq!(output.lengths[19], 1);
@@ -7256,7 +7668,14 @@ mod process_regression_tests {
             (true, RELEASE_CAPTURE_OUTPUT_BYTE),
         ] {
             let mut bytes = Vec::new();
-            write_release_frame(&mut bytes, "true", &environment, capture_output).unwrap();
+            write_release_frame(
+                &mut bytes,
+                "true",
+                &environment,
+                capture_output,
+                ProcessInput::Null,
+            )
+            .unwrap();
             assert_eq!(bytes[RELEASE_FRAME_MAGIC.len()], expected);
             let decoded = read_release_frame(&mut bytes.as_slice()).unwrap();
             assert_eq!(decoded.command, "true");
@@ -7265,7 +7684,14 @@ mod process_regression_tests {
         }
 
         let mut invalid = Vec::new();
-        write_release_frame(&mut invalid, "true", &environment, false).unwrap();
+        write_release_frame(
+            &mut invalid,
+            "true",
+            &environment,
+            false,
+            ProcessInput::Null,
+        )
+        .unwrap();
         invalid[RELEASE_FRAME_MAGIC.len()] = 2;
         let Err(error) = read_release_frame(&mut invalid.as_slice()) else {
             panic!("an unknown output mode must be rejected");
@@ -7320,7 +7746,14 @@ mod process_regression_tests {
             attempt_limit: MAX_RELEASE_FRAME_WRITE_ATTEMPTS,
         };
 
-        write_release_frame(&mut writer, &command, &environment, true).expect("release frame");
+        write_release_frame(
+            &mut writer,
+            &command,
+            &environment,
+            true,
+            ProcessInput::Null,
+        )
+        .expect("release frame");
         let payload_attempts =
             MAX_RELEASE_FRAME_PAYLOAD_BYTES.div_ceil(RELEASE_FRAME_PIPE_WRITE_BYTES);
         assert_eq!(writer.attempts, payload_attempts);

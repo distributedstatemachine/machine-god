@@ -1,5 +1,7 @@
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
+#[path = "../src/background_input.rs"]
+mod background_input;
 #[path = "../src/background_process.rs"]
 mod background_process;
 
@@ -462,6 +464,168 @@ fn command_is_blocked_before_release_then_receives_null_stdin() {
     let owned = prepared.release().unwrap();
     assert_eq!(owned.wait().unwrap(), BackgroundProcessExit::Exited(0));
     assert_eq!(fs::read_to_string(marker).unwrap(), "released");
+}
+
+#[test]
+fn piped_input_preserves_immediate_binary_unicode_bytes_and_explicit_eof() {
+    use background_input::{
+        BackgroundInputErrorKind, BackgroundInputStatus, BackgroundInputTarget,
+    };
+    let directory = FreshDirectory::new("pipe-roundtrip");
+    let requested = request(directory.path(), "exec /bin/cat > received")
+        .with_stdin(machine_god_core::ProcessInput::Pipe)
+        .unwrap();
+    assert_eq!(requested.stdin(), machine_god_core::ProcessInput::Pipe);
+    let mut prepared = adapter().prepare(requested).unwrap();
+    let controller = prepared.attach_input_controller().unwrap();
+    assert_eq!(
+        controller.write(b"hidden", false).unwrap_err().kind(),
+        BackgroundInputErrorKind::NotFound
+    );
+    assert_eq!(
+        prepared.attach_input_controller().err().unwrap().kind(),
+        BackgroundInputErrorKind::Conflict
+    );
+    let mut owned = prepared.release().unwrap();
+    assert_eq!(
+        controller.write(b"hidden", false).unwrap_err().kind(),
+        BackgroundInputErrorKind::NotFound
+    );
+    owned.activate_input_controller().unwrap();
+    let bytes = b"first\0bytes\xff\xfe\xe2\x98\x83\xf0\x9f\x98\x80\nlast";
+    let receipt = controller.write(bytes, true).unwrap();
+    assert_eq!(receipt.bytes_written(), bytes.len());
+    assert!(receipt.stdin_closed());
+    assert_eq!(receipt.status(), BackgroundInputStatus::Closed);
+    assert_eq!(controller.write(b"late", false).unwrap().bytes_written(), 0);
+    assert_eq!(owned.wait().unwrap(), BackgroundProcessExit::Exited(0));
+    assert_eq!(fs::read(directory.path().join("received")).unwrap(), bytes);
+    assert_eq!(
+        controller.write(b"complete", false).unwrap_err().kind(),
+        BackgroundInputErrorKind::NotFound
+    );
+}
+
+#[test]
+fn pipe_mode_requires_controller_before_release_and_null_rejects_attachment() {
+    let directory = FreshDirectory::new("pipe-admission");
+    let mut null = adapter()
+        .prepare(request(directory.path(), "touch forbidden"))
+        .unwrap();
+    assert_eq!(
+        null.attach_input_controller().err().unwrap().kind(),
+        background_input::BackgroundInputErrorKind::InvalidRequest
+    );
+    null.abort_and_reap().unwrap();
+    let pipe = adapter()
+        .prepare(
+            request(directory.path(), "touch forbidden")
+                .with_stdin(machine_god_core::ProcessInput::Pipe)
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        pipe.release().unwrap_err().kind(),
+        BackgroundProcessErrorKind::InvalidRequest
+    );
+    assert!(!directory.path().join("forbidden").exists());
+}
+
+#[test]
+fn pipe_backpressure_preserves_open_input_and_cleanup_revokes_controller() {
+    use background_input::{
+        BackgroundInputErrorKind, BackgroundInputStatus, BackgroundInputTarget,
+    };
+    let directory = FreshDirectory::new("pipe-pressure");
+    let mut prepared = adapter()
+        .prepare(
+            request(directory.path(), "exec /bin/sleep 30")
+                .with_stdin(machine_god_core::ProcessInput::Pipe)
+                .unwrap(),
+        )
+        .unwrap();
+    let controller = prepared.attach_input_controller().unwrap();
+    let mut owned = prepared.release().unwrap();
+    owned.activate_input_controller().unwrap();
+    let bytes = [b'x'; 8192];
+    let mut pressured = false;
+    for _ in 0..256 {
+        let receipt = controller.write(&bytes, false).unwrap();
+        assert!(!receipt.stdin_closed());
+        if receipt.status() == BackgroundInputStatus::Backpressure {
+            assert!(receipt.bytes_written() < bytes.len());
+            pressured = true;
+            break;
+        }
+    }
+    assert!(
+        pressured,
+        "non-reading command must eventually fill its bounded pipe"
+    );
+    let receipt = controller.write(&bytes, true).unwrap();
+    assert_eq!(receipt.status(), BackgroundInputStatus::Backpressure);
+    assert!(!receipt.stdin_closed(), "partial input cannot apply EOF");
+    owned.stop().unwrap();
+    assert_eq!(
+        controller.write(&bytes, true).unwrap_err().kind(),
+        BackgroundInputErrorKind::NotFound
+    );
+}
+
+#[test]
+fn abort_and_drop_revoke_pipe_authority() {
+    use background_input::{BackgroundInputErrorKind, BackgroundInputTarget};
+    let directory = FreshDirectory::new("pipe-drop");
+    let pipe = || {
+        request(directory.path(), "exec /bin/sleep 30")
+            .with_stdin(machine_god_core::ProcessInput::Pipe)
+            .unwrap()
+    };
+    let mut prepared = adapter().prepare(pipe()).unwrap();
+    let aborted = prepared.attach_input_controller().unwrap();
+    prepared.abort_and_reap().unwrap();
+    assert_eq!(
+        aborted.write(b"x", false).unwrap_err().kind(),
+        BackgroundInputErrorKind::NotFound
+    );
+    let mut prepared = adapter().prepare(pipe()).unwrap();
+    let dropped = prepared.attach_input_controller().unwrap();
+    let mut owned = prepared.release().unwrap();
+    owned.activate_input_controller().unwrap();
+    drop(owned);
+    assert_eq!(
+        dropped.write(b"x", false).unwrap_err().kind(),
+        BackgroundInputErrorKind::NotFound
+    );
+}
+
+#[test]
+fn closed_child_stdin_returns_a_zero_count_closed_receipt_without_reaping() {
+    use background_input::{BackgroundInputStatus, BackgroundInputTarget};
+    let directory = FreshDirectory::new("pipe-reader-closed");
+    let mut prepared = adapter()
+        .prepare(
+            request(
+                directory.path(),
+                "exec 0<&-; printf ready > ready; exec /bin/sleep 30",
+            )
+            .with_stdin(machine_god_core::ProcessInput::Pipe)
+            .unwrap(),
+        )
+        .unwrap();
+    let controller = prepared.attach_input_controller().unwrap();
+    let mut owned = prepared.release().unwrap();
+    owned.activate_input_controller().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !directory.path().join("ready").exists() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(2));
+    }
+    let receipt = controller.write(b"not-accepted", false).unwrap();
+    assert_eq!(receipt.bytes_written(), 0);
+    assert!(receipt.stdin_closed());
+    assert_eq!(receipt.status(), BackgroundInputStatus::Closed);
+    owned.stop().unwrap();
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

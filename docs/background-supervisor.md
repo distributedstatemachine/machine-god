@@ -20,7 +20,9 @@ One start request contains a nonempty command of at most 32 KiB and one
 absolute canonical Unicode cwd of at most 4,096 bytes. Both reject NUL. The
 fixed program is `/bin/sh` with arguments `[-c, command]`; the command is an
 argument and is never interpolated into a machine-god wrapper script.
-Standard input is null after release. Only a start request carrying an output
+Standard input is null by default. An explicitly owner-scoped start may select
+`ProcessInput::Pipe`; its parent retains the same owned descriptor used for
+release as application input after the distinct commit byte. Only a start request carrying an output
 owner selects capture in the private release frame: the helper then duplicates
 one retained pipe onto the final shell's standard output and error, producing a
 single merged byte stream whose relative ordering is only the order observed by
@@ -28,10 +30,11 @@ that pipe. The readiness byte is consumed before the pipe becomes captured
 output. Without an output owner, the final shell retains the original null
 standard-output and standard-error behavior, and no worker drains or counts its
 output. The supervisor drains captured output continuously and retains a
-bounded process-local prefix. It detects no URL, accepts no interactive input,
-and creates no PTY. Linux and macOS use the same private helper protocol. The
-helper consumes only its bounded release frame and gives the user shell input
-from `/dev/null`.
+bounded process-local prefix. It detects no URL and creates no PTY. Linux and
+macOS use the same version-three private helper protocol. Its separately
+validated input-mode byte selects `/dev/null` or inherited pipe input. Protocol
+and commit reads use exact descriptor reads, without buffered read-ahead, so
+application bytes already queued behind the commit survive the final exec.
 
 The requested environment is never installed in the pre-release process. The
 host starts its helper with an emptied, fixed bootstrap environment; loader
@@ -448,6 +451,39 @@ failure. The lease remains held by the retained wait future until its native
 controller has synchronously closed under the same lifecycle gate before the
 leader is reaped. Unknown IDs, completed entries, and wrong session or
 incarnation owners are deliberately indistinguishable.
+
+### Process-local piped input
+
+Piped input uses a separate registry capped at 16 live entries and bound to the
+same exact session-incarnation owner. A pipe request must attach a hidden input
+controller before release; missing attachment fails before the commit. Null
+input cannot acquire that controller. Retain-time activation exposes input
+only after release and authoritative retention. The lease is removed when its
+owned process finishes. No PID, persisted record, or later host invocation can
+reconstruct input authority.
+
+One call accepts at most 8,192 arbitrary bytes, including NUL and invalid UTF-8,
+and requires either nonempty data or explicit EOF. Registry dispatch releases
+its lookup lock first and excludes concurrent writes to the same entry with a
+nonblocking reservation. The controller uses the retained nonblocking pipe and
+at most 32 write syscalls, including interrupted and short writes. Backpressure
+returns the exact accepted prefix length without closing input; callers retry
+only the unaccepted suffix. EOF closes the writer only after all supplied
+bytes are accepted. Empty explicit EOF is permitted. A broken pipe produces a
+`Closed` receipt; any other hard write failure produces `Failed`, closes input,
+and preserves the accepted count. No error discards a positive write effect.
+`Written` means all bytes were accepted with input still open; `Backpressure`
+means the suffix remains unaccepted and input remains open. Already half-closed
+input returns `Closed` with zero accepted bytes while the process is retained.
+
+Every abort, stop, completion, drop, and lost-reaping-authority path revokes and
+synchronously closes this owned descriptor before process cleanup or reaping.
+The controller's lifecycle lock serializes that close against the bounded
+nonblocking write, and a published revocation prevents later write admission.
+Hidden, completed, unknown, and wrong-owner commands produce the same fixed
+not-found category. Piped input is byte transport, not a pseudo-terminal: it
+does not promise terminal line editing, window sizing, or terminal-generated
+signals.
 
 On Linux, one explicit signal operation revalidates the retained leader,
 captures a bounded ancestry tree, signals every identity-pinned descendant
