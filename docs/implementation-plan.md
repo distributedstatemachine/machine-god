@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `compose the PTY, shell, input, screen, journal and monitor components into the complete persistent terminal runtime and tool/CLI paths before the feature gate`
+- Next gate: `compose PTY lifecycle, shell/input, durable history and monitors into the complete persistent terminal runtime and tool/CLI paths before the feature gate`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark

@@ -939,6 +939,62 @@ mod tests {
         )
         .unwrap()
     }
+
+    #[test]
+    fn durable_history_resize_matches_the_real_pty_and_survives_recovery() {
+        use crate::terminal_history::TerminalHistory;
+        use crate::terminal_journal::{TerminalJournal, TerminalJournalLimits};
+        use machine_god_core::{TerminalDimensions, TerminalSessionId};
+        use std::os::unix::fs::PermissionsExt;
+
+        let cwd = Directory::new();
+        let storage = Directory::new();
+        std::fs::set_permissions(&storage.0, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let id = TerminalSessionId::new("pty-history").unwrap();
+        let limits = TerminalJournalLimits::default();
+        let journal = TerminalJournal::create(storage.fd(), id.clone(), limits).unwrap();
+        let mut history =
+            TerminalHistory::create(journal, &TerminalDimensions::new(24, 80).unwrap()).unwrap();
+        // The shell does not check dimensions until the parent has committed
+        // both the native resize and the replacement screen checkpoint.
+        let mut pty = start(
+            &cwd,
+            &[
+                "-c",
+                "stty -echo; printf READY; read answer; stty size; printf FINISHED",
+            ],
+        );
+        let ready = read_until(&mut pty, b"READY");
+        history.append(&ready).unwrap();
+        let dimensions = TerminalDimensions::new(7, 31).unwrap();
+        history
+            .resize(&dimensions, |size| {
+                pty.resize(TerminalPtyDimensions {
+                    rows: size.rows(),
+                    columns: size.columns(),
+                })
+                .map_err(|_| ())
+            })
+            .unwrap();
+        assert_eq!(pty.write(b"continue\n").unwrap().bytes_written(), 9);
+        let output = read_until(&mut pty, b"FINISHED");
+        assert!(output.windows(b"7 31".len()).any(|bytes| bytes == b"7 31"));
+        history.append(&output).unwrap();
+        let expected = history.screen().unwrap();
+        assert_eq!(expected.dimensions, dimensions);
+        // Recover from the resize checkpoint plus later native output, not
+        // from a final checkpoint that could conceal a replay defect.
+        let source = history.latest();
+        drop(history);
+        let recovered = TerminalHistory::recover(
+            TerminalJournal::open_existing(storage.fd(), &id, limits).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(recovered.latest(), source);
+        assert_eq!(recovered.screen().unwrap(), expected);
+        pty.close(true).unwrap();
+    }
+
     fn request(directory: &Directory, args: &[&str]) -> TerminalPtyRequest {
         TerminalPtyRequest::new(
             "/bin/sh".into(),

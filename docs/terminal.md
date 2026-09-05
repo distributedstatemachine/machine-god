@@ -62,6 +62,23 @@ committed prefix; only proven uncommitted suffixes/orphans are reconciled.
 Retention reports cursor/checkpoint gaps. Mutation failure poisons the writer
 until reopen, and one exclusive writer lease prevents concurrent publication.
 
+The history owner binds the live screen to the journal's committed cursor.
+Raw bytes commit before screen processing can return a protocol reply; a screen
+failure does not turn committed output into a retryable append. Recovery uses
+the validated checkpoint and bounded contiguous replay, never live replies or
+process authority. Missing, unsupported, corrupt and retention-disconnected
+screen evidence remains explicitly unavailable while intact raw history can
+still be read. The native owner must reserve profile-budget publication
+headroom before dispatching these synchronous journal operations.
+
+Resize publishes an unavailable-screen barrier before invoking the native
+resize, then saves the resized projection at the current committed cursor.
+An interrupted resize or failed replacement checkpoint cannot resurrect the
+old dimensions on recovery. Operations that may flush unobserved PTY output
+must first durably record an output gap; subsequent raw bytes cannot silently
+repair that screen. These are runtime composition components, not additional
+model-facing actions in the current reference-host subset.
+
 The monitor state machine implements all thirteen conditions with explicit
 clock/cursor/lifecycle observations. It emits bounded typed probe requests,
 not network/filesystem/process effects. Evidence must match the exact session,
