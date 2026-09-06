@@ -120,6 +120,12 @@ Legacy metadata-less records remain readable but do not block eligible victims.
 Profile-aware owner requests now pass the worker's exact store and budget into
 bounded mutation dispatch; transaction guards end before reply wakes. Production
 worker startup and host assembly remain open.
+Actor/writer-bound attention and inspect projections are integrated, including
+checkpoint re-anchoring for live and recovered facts. Registry wait observations
+reject known observation gaps, and profile-backed completion releases storage
+authority before reply publication. Asynchronous wait-loop and user-profile
+startup integration remain under active focused testing; no full-feature gate
+or delivery is claimed by these internal component commits.
 The complete normalized twelve-action core contract and effect-free public
 decoder are present, including request/result identity checks and lossless
 foreground execution outcomes. Numeric coercion now matches pinned binary128

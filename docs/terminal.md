@@ -351,6 +351,12 @@ authority and release the transaction before returning a reply. Recovered wait
 observations reject a recorded observation gap rather than inventing matches.
 These components do not themselves grant tool or human-host authority.
 
+Profile-backed shutdown retries recovered-history publication failures on the
+same owner. It reconciles current facts and committed acknowledgements without
+replaying a failed request, acquiring native authority, or clearing an unresolved
+storage error. Repaired transient failures can therefore release the retained
+history; irrecoverable failures remain explicit cleanup obligations.
+
 Owner-authorized inspect projections cover live and recovered sessions, masking
 controls by role, lifecycle and input quiescence. A checkpoint on an older raw
 segment is re-anchored through explicit persistence before exposing current

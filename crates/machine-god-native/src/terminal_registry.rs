@@ -698,6 +698,21 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         policy: TerminalClosePolicy,
     ) -> Result<Vec<TerminalRegistryFailure>> {
         let workspace = self.workspace.clone();
+        self.check_time(now_ms)?;
+        // Recovered histories have no native cleanup, but retain failed
+        // durable/accounting obligations. Retry those on this same owner.
+        for entry in &mut self.entries {
+            if let Resident::Recovered(session) = &mut entry.resident
+                && session.publication_error().is_some()
+                && let Ok(mut transaction) = store.transaction()
+            {
+                let namespace = owner_name(&workspace, &entry.owner);
+                let mut context =
+                    TerminalProfileMutationContext::new(&mut transaction, *budget, &namespace);
+                // The common shutdown pass below reports any retained error.
+                let _ = session.retry_publication_with(&mut context, &entry.owner);
+            }
+        }
         self.shutdown_dispatch(now_ms, |session, owner| match store.transaction() {
             Ok(mut transaction) => {
                 let namespace = owner_name(&workspace, owner);
@@ -2996,24 +3011,108 @@ mod tests {
         }
     }
 
+    struct Denied;
+    impl TerminalJournalPersistence for Denied {
+        fn mutate(
+            &mut self,
+            _: &mut TerminalJournal,
+            _: crate::terminal_journal::TerminalJournalMutation<'_>,
+        ) -> std::result::Result<
+            crate::terminal_profile::TerminalProfileCompletion<
+                crate::terminal_journal::TerminalJournalReceipt,
+                TerminalJournalError,
+            >,
+            TerminalProfileError,
+        > {
+            Err(TerminalProfileError::ResourceLimit)
+        }
+    }
+
+    #[test]
+    fn profile_shutdown_retries_recovered_publication_after_storage_becomes_available() {
+        let fixture = Fixture::new();
+        let owner = owner("retry");
+        let id = id("retry");
+        let (store, session) = fixture.profile_live(&owner, &id);
+        let budget = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+        let mut live_registry = registry();
+        live_registry
+            .start(owner.clone(), id.clone(), || Ok(session))
+            .unwrap();
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"kept".to_vec());
+        assert!(
+            live_registry
+                .pump_with_profile(&store, &budget, 1, 1)
+                .unwrap()[0]
+                .result
+                .is_ok()
+        );
+        assert!(
+            live_registry
+                .shutdown_with_profile(&store, &budget, 2, TerminalClosePolicy::Force)
+                .unwrap()
+                .is_empty()
+        );
+        drop(live_registry);
+        let mut transaction = store.transaction().unwrap();
+        let namespace = owner_name("/workspace", &owner);
+        let journal = TerminalJournal::open_existing(
+            transaction.open_session(&namespace, &id).unwrap(),
+            &id,
+            TerminalJournalLimits::default(),
+        )
+        .unwrap();
+        let mut context = TerminalProfileMutationContext::new(&mut transaction, budget, &namespace);
+        let recovered = TerminalRecoveredSession::recover_with(
+            &mut context,
+            TerminalHistory::recover(journal).unwrap(),
+            &owner,
+            2,
+        )
+        .unwrap();
+        drop(transaction);
+        let mut registry = registry();
+        registry
+            .recover(owner.clone(), id.clone(), || Ok(recovered))
+            .unwrap();
+        assert!(
+            registry
+                .evict_with(
+                    &mut Denied,
+                    &owner,
+                    &id,
+                    TerminalHistoryEviction::CompletedOutput
+                )
+                .is_err()
+        );
+        let held = store.transaction().unwrap();
+        assert_eq!(
+            registry
+                .shutdown_with_profile(&store, &budget, 2, TerminalClosePolicy::Force)
+                .unwrap()
+                .len(),
+            1
+        );
+        drop(held);
+        assert!(
+            registry
+                .shutdown_with_profile(&store, &budget, 2, TerminalClosePolicy::Force)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
+        assert_eq!(registry.physical_usage(&owner, &id).unwrap().raw_bytes, 4);
+        registry.release(&owner, &id).unwrap();
+        assert!(store.transaction().is_ok());
+    }
+
     #[test]
     fn recovered_publication_failure_requires_explicit_transfer() {
-        struct Denied;
-        impl TerminalJournalPersistence for Denied {
-            fn mutate(
-                &mut self,
-                _: &mut TerminalJournal,
-                _: crate::terminal_journal::TerminalJournalMutation<'_>,
-            ) -> std::result::Result<
-                crate::terminal_profile::TerminalProfileCompletion<
-                    crate::terminal_journal::TerminalJournalReceipt,
-                    TerminalJournalError,
-                >,
-                TerminalProfileError,
-            > {
-                Err(TerminalProfileError::ResourceLimit)
-            }
-        }
         for acknowledge in [false, true] {
             let fixture = Fixture::new();
             let owner = owner("recovered");

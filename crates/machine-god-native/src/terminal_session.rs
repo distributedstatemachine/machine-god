@@ -1516,6 +1516,27 @@ impl fmt::Debug for TerminalRecoveredSession {
     }
 }
 impl TerminalRecoveredSession {
+    /// Reconcile a failed recovered-history publication without replaying an
+    /// uncommitted request or acquiring live backend authority.
+    pub(crate) fn retry_publication_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        owner: &BackgroundOutputOwner,
+    ) -> Result<()> {
+        self.authorize(owner)?;
+        if self.publication_error.is_none() {
+            return Ok(());
+        }
+        let result = (|| {
+            self.history.prepare_public_facts_with(persistence)?;
+            self.history
+                .publish_state_with(persistence, &self.facts.encode(&self.monitors)?)?;
+            Ok(())
+        })();
+        self.publication_error = result.as_ref().err().copied();
+        result
+    }
+
     #[cfg(test)]
     pub(crate) fn recover(
         history: TerminalHistory,
@@ -3686,6 +3707,75 @@ mod tests {
         let _recovered =
             TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 100).unwrap();
         assert_eq!(std::fs::read(fixture.path.join("tj-meta")).unwrap(), saved);
+    }
+
+    #[test]
+    fn recovered_publication_retry_preserves_only_committed_acknowledgements() {
+        for accounting in [false, true] {
+            let fixture = Fixture::new();
+            let mut session = fixture.session();
+            session.shell_ready(0).unwrap();
+            add(
+                &mut session,
+                Condition::OutputContains {
+                    pattern: "kept".into(),
+                },
+            );
+            fixture
+                .state
+                .lock()
+                .unwrap()
+                .output
+                .push_back(b"kept".to_vec());
+            session.pump(1).unwrap();
+            session
+                .close(&owner("owner"), TerminalClosePolicy::Force, 2)
+                .unwrap();
+            drop(session);
+            let mut recovered =
+                TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 2).unwrap();
+            let mut events = query();
+            let last = recovered
+                .events(&owner("owner"), &events)
+                .unwrap()
+                .last()
+                .unwrap()
+                .event_id;
+            events.acknowledge_event_id = Some(last);
+            let mut failure = Persistence {
+                denied: !accounting,
+                fail_accounting: accounting.then_some("state"),
+                ..Persistence::default()
+            };
+            assert!(
+                recovered
+                    .events_with(&mut failure, &owner("owner"), &events)
+                    .is_err()
+            );
+            let committed_ack = if accounting { last } else { 0 };
+            assert_eq!(recovered.monitors.acknowledged_event_id(), committed_ack);
+            let mut allowed = Persistence::default();
+            assert!(matches!(
+                recovered.retry_publication_with(&mut allowed, &owner("foreign")),
+                Err(TerminalSessionError::NotFound)
+            ));
+            assert!(allowed.calls.is_empty());
+            recovered
+                .retry_publication_with(&mut allowed, &owner("owner"))
+                .unwrap();
+            assert!(recovered.publication_error().is_none());
+            assert!(recovered.history.require_live().is_err());
+            assert_eq!(recovered.monitors.acknowledged_event_id(), committed_ack);
+            assert_eq!(allowed.calls, ["state"]);
+            recovered
+                .retry_publication_with(&mut allowed, &owner("owner"))
+                .unwrap();
+            assert_eq!(allowed.calls, ["state"]);
+            drop(recovered);
+            let recovered =
+                TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 2).unwrap();
+            assert_eq!(recovered.monitors.acknowledged_event_id(), committed_ack);
+        }
     }
 
     #[test]
