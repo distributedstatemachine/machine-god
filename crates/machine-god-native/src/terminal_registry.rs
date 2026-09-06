@@ -397,7 +397,11 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             self.release(&owner, &id)?;
             // Removal shifts the following candidate into this slot. New entries
             // append, preserving pressure-only round-robin order.
-            self.recycle_next = index;
+            self.recycle_next = if index == self.entries.len() {
+                0
+            } else {
+                index
+            };
             self.next = 0;
         }
         Ok(())
@@ -4831,6 +4835,7 @@ mod tests {
     fn sequential_closed_starts_reuse_pressure_slots_without_deleting_history() {
         let fixtures: Vec<_> = (0..40).map(|_| Fixture::new()).collect();
         let mut registry = registry();
+        registry.recycle_next = MAX_RESIDENT_TERMINALS - 1;
         let who = owner("one");
         for (number, fixture) in fixtures.iter().enumerate() {
             let session = id(&format!("sequential-{number}"));
@@ -4848,6 +4853,11 @@ mod tests {
                 registry.entries.len(),
                 (number + 1).min(MAX_RESIDENT_TERMINALS)
             );
+            if number == MAX_RESIDENT_TERMINALS + 1 {
+                // Removing the last old slot wraps to the oldest entry, not
+                // straight back to the newly appended replacement.
+                assert!(registry.inspect(&who, &id("sequential-16")).is_ok());
+            }
         }
         for fixture in &fixtures {
             assert!(fixture.path.join("tj-meta").is_file());
