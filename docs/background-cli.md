@@ -98,7 +98,7 @@ States are `running`, `exited`, `failed`, `stopped`, `dead`, and `stale`.
 Timestamps are unsigned and update time cannot precede start time. PID, when
 present, is a nonzero `u32`. `running` has no exit code, `exited` has exactly
 zero, and `failed` has a nonzero code. Command is nonempty, contains no NUL,
-and is at most 32 KiB. Workspace and cwd are absolute canonical Unicode paths,
+and is at most 64 KiB. Workspace and cwd are absolute canonical Unicode paths,
 contain no NUL, and are each at most 4,096 bytes. Optional URL and diagnostic
 are at most 2,048 and 4,096 UTF-8 bytes respectively and contain no NUL.
 
@@ -116,8 +116,9 @@ entries whose sole permission is `DELETE`. An ACL outside that closed policy is
 ## Bounds, effects, and concurrency
 
 One list processes at most 1,024 non-dot directory entries plus one name-only
-overflow witness, accepts at most 100 records, and retains at most 64 KiB per
-record plus one transient overflow byte used only to reject an oversized or
+overflow witness, accepts at most 100 records, and retains at most 479,744 bytes per
+record (six times bounded text fields plus 512 bytes of framing), plus one
+transient overflow byte used only to reject an oversized or
 concurrently growing file. It accepts at most 8 MiB aggregate canonical record
 bytes plus one transient overflow byte. JSON is limited to four container
 levels and 64 nodes before typed decoding. A complete

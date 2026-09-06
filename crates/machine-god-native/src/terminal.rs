@@ -6633,7 +6633,7 @@ mod tests {
                     10,
                     20 + u64::try_from(observation).unwrap(),
                     Some(1_234),
-                    "x".repeat(32 * 1_024),
+                    "x".repeat(crate::MAX_BACKGROUND_COMMAND_BYTES),
                     "/".to_owned(),
                     exit_code,
                     None,
@@ -6700,7 +6700,8 @@ mod tests {
         assert_eq!(delay.calls.load(Ordering::Acquire), 127);
         assert_eq!(tool.active_waits.load(Ordering::Acquire), 0);
 
-        let minimum_detail_bytes = TERMINAL_MAX_WAIT_OBSERVATIONS * (32 * 1_024 + 4 * 1_024);
+        let minimum_detail_bytes = TERMINAL_MAX_WAIT_OBSERVATIONS
+            * (crate::MAX_BACKGROUND_COMMAND_BYTES + crate::MAX_BACKGROUND_DIAGNOSTIC_BYTES);
         assert!(allocations.bytes_total >= u64::try_from(minimum_detail_bytes).unwrap());
         assert!(
             allocations.bytes_max < 512 * 1_024,

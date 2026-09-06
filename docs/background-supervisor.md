@@ -264,14 +264,25 @@ sequence.
 
 The writer keeps at most 100 total record or admitted-unpublished slots per
 workspace. On open it validates a lifecycle snapshot of at most 1,024 entries
-and 8 MiB; before reservation it compacts to at most 99 occupied slots. Every
+and 8 MiB; before reservation it compacts to at most 99 occupied slots and
+reserves the full 479,744-byte record ceiling for the new unpublished slot.
+Existing unpublished leases reserve the same ceiling. Live published running
+records charge their exact escaped immutable strings plus bounded future
+mutable fields; completed records charge their observed encoded bytes.
+Under allocator authority, a proven-unowned running record is re-read under
+its own lease and charged its actual bytes: no publisher can reacquire that
+old ID, and reconciliation only shrinks it. This lets older valid orphaned
+histories reopen without reserving impossible future growth. Every
 running or locked slot is preserved. Among removable terminal records, the
 newest `(updated_at_ms, id)` values are retained and older records plus their
 unowned per-ID locks are durably removed. Unowned unpublished lock orphans are
 also reclaimed. Consequently an old exact ID may later return `not_found`;
 active work and the monotonic allocator counter are never evicted or reused.
-Corrupt preflight or insufficient removable capacity fails before deleting
-valid history.
+Corrupt preflight or insufficient removable byte or count capacity fails before
+deleting valid history. Small histories can still retain 100 records; large
+records may require earlier oldest-first compaction to preserve the independent
+8 MiB aggregate ceiling. Final publication cannot enlarge immutable fields or
+grow a completed record, so it cannot exceed its reserved replacement headroom.
 
 Normal exit records `exited` with code zero or `failed` with the nonzero exit
 code. A signal termination is recorded as the conventional nonzero

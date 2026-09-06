@@ -23,6 +23,16 @@ The caller must reject duplicate raw JSON fields before constructing a
 `serde_json::Value`. These internal components do not yet replace the registered
 tool adapter described below.
 
+Numeric-string coercion uses deterministic IEEE binary128 rounding, matching
+the pinned typed decoder before integer range validation, including halfway,
+underflow, overflow and signed-zero behavior. It uses the pinned Rust
+`rustc_apfloat` dependency, not a Zig runtime. Numeric spellings remain bounded
+to 64 KiB independently of the complete action envelope. The internal decoder
+admits 64 KiB commands, all 32 maximum custom-probe definitions and textual byte
+arrays. Its schema-derived JSON ceiling is 16,378,880 bytes, including one
+stringified-composite escaping layer; separate node and depth bounds apply
+during composite decoding, before recursive normalization.
+
 ## Native shell resolution
 
 `TerminalShell` resolves explicitly injected account data or performs an
@@ -1066,7 +1076,7 @@ process authority or present-liveness assertion and keeps the complete
 
 The lister reuses the persisted reader's existing bounds: one call processes
 at most 1,024 non-dot directory entries plus one name-only overflow witness,
-accepts at most 100 records, retains at most 64 KiB per record, and accepts at
+accepts at most 100 records, retains at most 479,744 bytes per record, and accepts at
 most 8 MiB of aggregate canonical record bytes. Each record retains the
 four-container-level and 64-node JSON bounds. A bounded incomplete scan returns
 its validated partial set with `truncated` equal to `true`; that flag is not a
@@ -1206,11 +1216,11 @@ uninterruptible filesystem syscall, arbitrary trusted future poll or drop, or
 Waker callback. Once such work returns, cancellation and the elapsed ceiling
 are checked before publishing a newly observed exit or any other output. The
 wait does not initiate another controllable operation after either the ceiling
-or observation cap wins. At most one 64 KiB record, one bounded decoded detail,
+or observation cap wins. At most one 479,744-byte record, one bounded decoded detail,
 and one persistent absolute-ceiling timer are live per admitted wait. During a
 backoff, its shorter delay is the only second timer; aggregate decoded input is
-at most 8 MiB across 128 maximum-size observations and does not accumulate in
-memory.
+at most 128 times the per-record ceiling across all observations and does not
+accumulate in memory.
 
 ## Foreground execution protocol
 

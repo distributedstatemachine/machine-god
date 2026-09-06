@@ -655,23 +655,7 @@ impl NativeReferenceHost {
                 NativeReferenceHostBuildErrorKind::WebSearchTransport,
             )
         })?;
-        // A semantic 64 KiB command can require six JSON bytes per input byte.
-        // Keep provider admission and engine preflight aligned with the tool's
-        // bounded canonical envelope, without changing generic embedder defaults.
-        let argument_bytes = crate::MAX_TERMINAL_SERIALIZED_ARGUMENT_BYTES;
-        let provider_limits = AiGatewayLimits {
-            max_tool_arguments_bytes: argument_bytes,
-            ..AiGatewayLimits::default()
-        };
-        let engine_limits = EngineLimits {
-            max_tool_argument_bytes: NonZeroUsize::new(argument_bytes)
-                .expect("terminal argument envelope is nonzero"),
-            ..EngineLimits::default()
-        };
-        let provider =
-            AiGatewayProvider::with_limits(model, transport, provider_limits).map_err(|_| {
-                NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Provider)
-            })?;
+        let (provider, engine_limits) = compose_provider(model, transport)?;
         let web_fetch = compose_web_fetch()?;
         let permission_handler = AskPermissionHandler::shared_prompter(permission_prompter);
         let ask_user_question = AskUserQuestionTool::shared_prompter(question_prompter);
@@ -732,6 +716,33 @@ impl NativeReferenceHost {
             credential_source,
         })
     }
+}
+
+fn compose_provider(
+    model: String,
+    transport: Arc<dyn AiGatewayTransport>,
+) -> Result<(AiGatewayProvider, EngineLimits), NativeReferenceHostBuildError> {
+    // A semantic 64 KiB command can require six JSON bytes per input byte.
+    // Align provider admission and engine preflight with the tool's canonical
+    // envelope, without changing generic embedder defaults.
+    let argument_bytes = crate::MAX_TERMINAL_SERIALIZED_ARGUMENT_BYTES;
+    let provider = AiGatewayProvider::with_limits(
+        model,
+        transport,
+        AiGatewayLimits {
+            max_tool_arguments_bytes: argument_bytes,
+            ..AiGatewayLimits::default()
+        },
+    )
+    .map_err(|_| NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Provider))?;
+    Ok((
+        provider,
+        EngineLimits {
+            max_tool_argument_bytes: NonZeroUsize::new(argument_bytes)
+                .expect("terminal argument envelope is nonzero"),
+            ..EngineLimits::default()
+        },
+    ))
 }
 
 fn compose_terminal(
