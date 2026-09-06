@@ -14,16 +14,18 @@ use crate::terminal_profile::{
     TerminalProfileMutationContext,
 };
 use crate::terminal_profile_store::{TerminalProfileStore, TerminalProfileTransaction};
+#[cfg(test)]
+use crate::terminal_session::TerminalRecoveredSession;
 use crate::terminal_session::{
-    TerminalRecoveredSession, TerminalSession, TerminalSessionBackend, TerminalSessionError,
-    TerminalSessionStep,
+    TerminalSession, TerminalSessionBackend, TerminalSessionError, TerminalSessionStep,
 };
 use crate::terminal_session_record::TerminalSessionFacts;
 use machine_god_core::{
-    BackgroundOutputOwner, TerminalActorRole, TerminalAttentionState, TerminalBackend,
-    TerminalClosePolicy, TerminalCursor, TerminalEventQuery, TerminalLifecycle,
-    TerminalMonitorEvent, TerminalScreen, TerminalSessionId,
+    BackgroundOutputOwner, TerminalActorRole, TerminalAttentionState, TerminalClosePolicy,
+    TerminalCursor, TerminalEventQuery, TerminalLifecycle, TerminalScreen, TerminalSessionId,
 };
+#[cfg(test)]
+use machine_god_core::{TerminalBackend, TerminalMonitorEvent};
 use std::fmt;
 use std::num::NonZeroU64;
 use std::sync::Arc;
@@ -49,6 +51,7 @@ impl From<TerminalSessionError> for TerminalRegistryError {
 type Result<T> = std::result::Result<T, TerminalRegistryError>;
 
 #[derive(Default)]
+#[cfg(test)]
 pub(crate) struct TerminalRegistryFilter {
     pub(crate) lifecycle: Option<TerminalLifecycle>,
     pub(crate) backend: Option<TerminalBackend>,
@@ -56,27 +59,66 @@ pub(crate) struct TerminalRegistryFilter {
 
 enum Resident<B: TerminalSessionBackend> {
     Live(Box<TerminalSession<B>>),
+    #[cfg(test)]
     Recovered(Box<TerminalRecoveredSession>),
+}
+impl<B: TerminalSessionBackend> Resident<B> {
+    fn live(&self) -> Option<&TerminalSession<B>> {
+        match self {
+            Self::Live(session) => Some(session),
+            #[cfg(test)]
+            Self::Recovered(_) => None,
+        }
+    }
+    fn live_mut(&mut self) -> Option<&mut TerminalSession<B>> {
+        match self {
+            Self::Live(session) => Some(session),
+            #[cfg(test)]
+            Self::Recovered(_) => None,
+        }
+    }
 }
 struct Entry<B: TerminalSessionBackend> {
     id: TerminalSessionId,
     owner: BackgroundOutputOwner,
     resident: Resident<B>,
+    residency: Arc<()>,
+}
+
+/// Pure process-local residency reference. It owns no host, backend, registry or
+/// persistence authority; dropping it only releases an Arc on the calling thread.
+#[derive(Clone, Debug)]
+pub(crate) struct TerminalResidentLease {
+    _residency: Arc<()>,
 }
 impl<B: TerminalSessionBackend> Entry<B> {
     fn facts(&self) -> Result<TerminalSessionFacts> {
         Ok(match &self.resident {
             Resident::Live(session) => session.inspect(&self.owner)?,
+            #[cfg(test)]
             Resident::Recovered(session) => session.facts(&self.owner)?.clone(),
         })
     }
     fn active(&self) -> bool {
         matches!(&self.resident, Resident::Live(session) if matches!(session.context().lifecycle, TerminalLifecycle::Starting | TerminalLifecycle::Running))
     }
+    fn recyclable(&self) -> bool {
+        if Arc::strong_count(&self.residency) != 1 || self.active() {
+            return false;
+        }
+        match &self.resident {
+            Resident::Live(session) => {
+                !session.owns_backend() && session.publication_error().is_none()
+            }
+            #[cfg(test)]
+            Resident::Recovered(session) => session.publication_error().is_none(),
+        }
+    }
     fn now_ms(&self) -> i64 {
         match &self.resident {
             Resident::Live(session) => session.context().now_ms,
             // Registration validated ownership; this read cannot fail.
+            #[cfg(test)]
             Resident::Recovered(session) => {
                 session
                     .facts(&self.owner)
@@ -112,10 +154,12 @@ pub(crate) struct TerminalStartReservation {
     id: TerminalSessionId,
 }
 impl TerminalStartReservation {
+    #[cfg(test)]
     pub(crate) fn owner(&self) -> &BackgroundOutputOwner {
         &self.owner
     }
 
+    #[cfg(test)]
     pub(crate) fn session_id(&self) -> &TerminalSessionId {
         &self.id
     }
@@ -150,6 +194,7 @@ pub(crate) struct TerminalRegistry<B: TerminalSessionBackend> {
     pending_starts: Vec<PendingStart>,
     next_start_serial: Option<NonZeroU64>,
     next: usize,
+    recycle_next: usize,
     now_ms: i64,
     closing: bool,
 }
@@ -172,6 +217,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             pending_starts: Vec::with_capacity(MAX_RESIDENT_TERMINALS),
             next_start_serial: NonZeroU64::new(1),
             next: 0,
+            recycle_next: 0,
             now_ms: 0,
             closing: false,
         })
@@ -180,6 +226,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
     /// Reserves capacity before slow off-owner preparation without admitting a
     /// resident or invoking a native factory. Tokens remain exact to this registry
     /// even if it moves, and cannot become valid in a later registry allocation.
+    #[cfg(test)]
     pub(crate) fn reserve_start(
         &mut self,
         owner: BackgroundOutputOwner,
@@ -197,7 +244,6 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         id: TerminalSessionId,
         cancellation: machine_god_core::CancellationToken,
     ) -> Result<TerminalStartReservation> {
-        self.admit(&owner, &id)?;
         if cancellation.is_cancelled() {
             return Err(TerminalSessionError::Input(
                 crate::terminal_input::TerminalInputError::Cancelled,
@@ -207,6 +253,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         let serial = self
             .next_start_serial
             .ok_or(TerminalRegistryError::Capacity)?;
+        self.admit(&owner, &id)?;
         self.pending_starts.push(PendingStart {
             serial,
             owner: owner.clone(),
@@ -251,6 +298,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             id: pending.id,
             owner: pending.owner,
             resident: Resident::Live(Box::new(session)),
+            residency: Arc::new(()),
         });
         guard.0 = None;
         Ok(())
@@ -286,6 +334,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
 
     /// Reject duplicate/full/closing admission before invoking a native factory.
     /// Successful creation stays owned even if the requesting future disappears.
+    #[cfg(test)]
     pub(crate) fn start(
         &mut self,
         owner: BackgroundOutputOwner,
@@ -300,10 +349,12 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             id,
             owner,
             resident: Resident::Live(Box::new(session)),
+            residency: Arc::new(()),
         });
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn recover(
         &mut self,
         owner: BackgroundOutputOwner,
@@ -317,10 +368,11 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             id,
             owner,
             resident: Resident::Recovered(Box::new(session)),
+            residency: Arc::new(()),
         });
         Ok(())
     }
-    fn admit(&self, owner: &BackgroundOutputOwner, id: &TerminalSessionId) -> Result<()> {
+    fn admit(&mut self, owner: &BackgroundOutputOwner, id: &TerminalSessionId) -> Result<()> {
         if self.closing {
             return Err(TerminalRegistryError::Closed);
         }
@@ -336,7 +388,17 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             return Err(TerminalRegistryError::Conflict);
         }
         if self.entries.len() + self.pending_starts.len() >= MAX_RESIDENT_TERMINALS {
-            return Err(TerminalRegistryError::Capacity);
+            let index = (0..self.entries.len())
+                .map(|offset| (self.recycle_next + offset) % self.entries.len())
+                .find(|index| self.entries[*index].recyclable())
+                .ok_or(TerminalRegistryError::Capacity)?;
+            let owner = self.entries[index].owner.clone();
+            let id = self.entries[index].id.clone();
+            self.release(&owner, &id)?;
+            // Removal shifts the following candidate into this slot. New entries
+            // append, preserving pressure-only round-robin order.
+            self.recycle_next = index;
+            self.next = 0;
         }
         Ok(())
     }
@@ -364,6 +426,18 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             .position(|entry| &entry.owner == owner && &entry.id == id)
             .ok_or(TerminalRegistryError::NotFound)
     }
+    pub(crate) fn lease(
+        &self,
+        owner: &BackgroundOutputOwner,
+        id: &TerminalSessionId,
+    ) -> Result<TerminalResidentLease> {
+        if self.closing {
+            return Err(TerminalRegistryError::Closed);
+        }
+        Ok(TerminalResidentLease {
+            _residency: Arc::clone(&self.entries[self.index(owner, id)?].residency),
+        })
+    }
     pub(crate) fn live_mut(
         &mut self,
         owner: &BackgroundOutputOwner,
@@ -375,6 +449,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         }
         match &mut self.entries[index].resident {
             Resident::Live(session) => Ok(session),
+            #[cfg(test)]
             Resident::Recovered(_) => Err(TerminalRegistryError::Closed),
         }
     }
@@ -418,6 +493,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             Resident::Live(session) => {
                 Ok(session.inspect_result_with(persistence, owner, actor, query, controls)?)
             }
+            #[cfg(test)]
             Resident::Recovered(session) => {
                 Ok(session.inspect_result_with(persistence, owner, actor, query, controls)?)
             }
@@ -438,6 +514,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             Resident::Live(session) => {
                 Ok(session.write_receipt_with_actor(owner, actor, writer, operation)?)
             }
+            #[cfg(test)]
             Resident::Recovered(_) => Err(TerminalRegistryError::Closed),
         }
     }
@@ -465,6 +542,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
                 session.prepare_public_facts_with(persistence, owner)?;
                 Ok(session.public_facts(owner, actor, controls)?)
             }
+            #[cfg(test)]
             Resident::Recovered(session) => {
                 session.prepare_public_facts_with(persistence, owner)?;
                 Ok(session.public_facts(owner, actor, controls)?)
@@ -485,6 +563,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
                 session.last_output_ms(),
                 session.outcome(),
             ),
+            #[cfg(test)]
             Resident::Recovered(session) => {
                 let facts = session.facts(owner)?;
                 if facts.observation_gap.is_some() {
@@ -504,8 +583,28 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         let index = self.index(owner, id)?;
         match &self.entries[index].resident {
             Resident::Live(session) => Ok(session.live_monitor_generations(owner)?),
+            #[cfg(test)]
             Resident::Recovered(_) => Err(TerminalRegistryError::Closed),
         }
+    }
+
+    /// Close either native ownership or explicitly retained history. Recovered
+    /// facts never manufacture a backend or any process authority.
+    pub(crate) fn close_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        owner: &BackgroundOutputOwner,
+        id: &TerminalSessionId,
+        policy: TerminalClosePolicy,
+        now_ms: i64,
+    ) -> Result<()> {
+        let index = self.index(owner, id)?;
+        match &mut self.entries[index].resident {
+            Resident::Live(session) => session.close_with(persistence, owner, policy, now_ms)?,
+            #[cfg(test)]
+            Resident::Recovered(session) => session.close_with(persistence, owner, now_ms)?,
+        }
+        Ok(())
     }
 
     /// Executes a mutation under the exact owner's profile authority.
@@ -531,7 +630,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             .map_err(|error| profile_error(error.into()))?;
         let mut persistence =
             TerminalProfileMutationContext::new(&mut transaction, *budget, &namespace);
-        let Resident::Live(session) = &mut self.entries[index].resident else {
+        let Some(session) = self.entries[index].resident.live_mut() else {
             unreachable!("resident validated before profile admission")
         };
         Ok(operation(session, &mut persistence)?)
@@ -556,6 +655,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
     ) -> Result<TerminalAttentionState> {
         self.check_time(now_ms)?;
         let index = self.index(owner, id)?;
+        #[cfg(test)]
         if let Resident::Recovered(session) = &self.entries[index].resident {
             if let Some(error) = session.publication_error() {
                 return Err(error.into());
@@ -571,6 +671,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             session.finish_attention_with(persistence, owner, actor, writer, now_ms, cancelled)
         })
     }
+    #[cfg(test)]
     pub(crate) fn list(
         &self,
         owner: &BackgroundOutputOwner,
@@ -619,6 +720,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
     ) -> Result<TerminalJournalPage> {
         Ok(match &self.entries[self.index(owner, id)?].resident {
             Resident::Live(session) => session.read(owner, cursor, maximum)?,
+            #[cfg(test)]
             Resident::Recovered(session) => session.read(owner, cursor, maximum)?,
         })
     }
@@ -629,6 +731,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
     ) -> Result<TerminalScreen> {
         Ok(match &self.entries[self.index(owner, id)?].resident {
             Resident::Live(session) => session.screen(owner)?,
+            #[cfg(test)]
             Resident::Recovered(session) => session.screen(owner)?,
         })
     }
@@ -646,6 +749,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             query,
         )
     }
+    #[cfg(test)]
     pub(crate) fn events_with(
         &mut self,
         persistence: &mut dyn TerminalJournalPersistence,
@@ -656,10 +760,12 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         let index = self.index(owner, id)?;
         Ok(match &mut self.entries[index].resident {
             Resident::Live(session) => session.events_with(persistence, owner, query)?,
+            #[cfg(test)]
             Resident::Recovered(session) => session.events_with(persistence, owner, query)?,
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn physical_usage(
         &self,
         owner: &BackgroundOutputOwner,
@@ -667,9 +773,11 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
     ) -> Result<TerminalJournalPhysicalUsage> {
         Ok(match &self.entries[self.index(owner, id)?].resident {
             Resident::Live(session) => session.physical_usage(owner)?,
+            #[cfg(test)]
             Resident::Recovered(session) => session.physical_usage(owner)?,
         })
     }
+    #[cfg(test)]
     pub(crate) fn eviction_bytes(
         &self,
         owner: &BackgroundOutputOwner,
@@ -678,6 +786,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
     ) -> Result<usize> {
         Ok(match &self.entries[self.index(owner, id)?].resident {
             Resident::Live(session) => session.eviction_bytes(owner, kind)?,
+            #[cfg(test)]
             Resident::Recovered(session) => session.eviction_bytes(owner, kind)?,
         })
     }
@@ -697,6 +806,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             kind,
         )
     }
+    #[cfg(test)]
     pub(crate) fn evict_with(
         &mut self,
         persistence: &mut dyn TerminalJournalPersistence,
@@ -707,6 +817,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         let index = self.index(owner, id)?;
         Ok(match &mut self.entries[index].resident {
             Resident::Live(session) => session.evict_with(persistence, owner, kind)?,
+            #[cfg(test)]
             Resident::Recovered(session) => session.evict_with(persistence, owner, kind)?,
         })
     }
@@ -720,7 +831,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         maximum: usize,
     ) -> Result<Vec<TerminalRegistryStep>> {
         self.pump_dispatch(now_ms, maximum, |entries, index| {
-            let Resident::Live(session) = &mut entries[index].resident else {
+            let Some(session) = entries[index].resident.live_mut() else {
                 unreachable!("active entry is live");
             };
             session.pump(now_ms).map(|step| (step, None))
@@ -742,7 +853,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         let workspace = self.workspace.clone();
         self.pump_dispatch(now_ms, maximum, |entries, index| {
             let namespace = owner_name(&workspace, &entries[index].owner);
-            let Resident::Live(session) = &mut entries[index].resident else {
+            let Some(session) = entries[index].resident.live_mut() else {
                 unreachable!("active entry is live");
             };
             let Ok(cleanup) = session.needs_native_cleanup() else {
@@ -781,7 +892,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             session.preflight_profile_read(&mut transaction, budget, &namespace)?;
             let growth = session.required_profile_read_growth()?;
             reclaim_profile_capacity(entries, &workspace, index, &mut transaction, budget, growth)?;
-            let Resident::Live(session) = &mut entries[index].resident else {
+            let Some(session) = entries[index].resident.live_mut() else {
                 unreachable!("active entry is live");
             };
             {
@@ -887,7 +998,10 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         id: &TerminalSessionId,
     ) -> Result<()> {
         let index = self.index(owner, id)?;
-        if let Resident::Live(session) = &self.entries[index].resident {
+        if Arc::strong_count(&self.entries[index].residency) != 1 {
+            return Err(TerminalRegistryError::Busy);
+        }
+        if let Some(session) = self.entries[index].resident.live() {
             if session.owns_backend() {
                 return Err(TerminalRegistryError::Busy);
             }
@@ -895,6 +1009,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
                 return Err(error.into());
             }
         }
+        #[cfg(test)]
         if let Resident::Recovered(session) = &self.entries[index].resident
             && let Some(error) = session.publication_error()
         {
@@ -907,6 +1022,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
     /// Explicitly transfer a failed, natively closed history to the host's
     /// recovery owner. Unlike release, this preserves the journal lock and all
     /// in-memory facts; it neither claims durability nor silently drops them.
+    #[cfg(test)]
     pub(crate) fn take_failed_history(
         &mut self,
         owner: &BackgroundOutputOwner,
@@ -929,6 +1045,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
 
     /// Preserve a recovered history whose new facts could not be published.
     /// Ordinary release must not silently discard that failure and journal lock.
+    #[cfg(test)]
     pub(crate) fn take_failed_recovered_history(
         &mut self,
         owner: &BackgroundOutputOwner,
@@ -974,6 +1091,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         self.cancel_pending_starts();
         // Recovered histories have no native cleanup, but retain failed
         // durable/accounting obligations. Retry those on this same owner.
+        #[cfg(test)]
         for entry in &mut self.entries {
             if let Resident::Recovered(session) = &mut entry.resident
                 && session.publication_error().is_some()
@@ -1015,7 +1133,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         self.cancel_pending_starts();
         let mut failures = Vec::new();
         for entry in &mut self.entries {
-            if let Resident::Live(session) = &mut entry.resident
+            if let Some(session) = entry.resident.live_mut()
                 && (session.owns_backend() || session.publication_error().is_some())
                 && let Err(error) = close(session, &entry.owner)
             {
@@ -1025,6 +1143,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
                     error,
                 });
             }
+            #[cfg(test)]
             if let Resident::Recovered(session) = &entry.resident
                 && let Some(error) = session.publication_error()
             {
@@ -1114,6 +1233,7 @@ fn resident_retention_facts<B: TerminalSessionBackend>(
             }
             Ok(Some(facts))
         }
+        #[cfg(test)]
         Resident::Recovered(session) => {
             if session.publication_error().is_some() {
                 return Ok(None);
@@ -1202,6 +1322,7 @@ fn retention_candidates<B: TerminalSessionBackend>(
         let (facts, identity, reserve) = if let Some(index) = resident {
             let reserve = match &entries[index].resident {
                 Resident::Live(session) => session.checkpoint_reserve_bytes(),
+                #[cfg(test)]
                 Resident::Recovered(session) => session.checkpoint_reserve_bytes(),
             };
             (resident_retention_facts(&entries[index])?, None, reserve)
@@ -1338,12 +1459,14 @@ fn reclaim_profile_capacity<B: TerminalSessionBackend>(
                 (Resident::Live(session), Some(kind)) => {
                     session.evict_with(&mut context, &entry.owner, kind)?;
                 }
+                #[cfg(test)]
                 (Resident::Recovered(session), Some(kind)) => {
                     session.evict_with(&mut context, &entry.owner, kind)?;
                 }
                 (Resident::Live(session), None) => {
                     session.release_completed_reserve_with(&mut context)?;
                 }
+                #[cfg(test)]
                 (Resident::Recovered(session), None) => {
                     session.retire_completed_checkpoint_reserve_with(&mut context, &entry.owner)?;
                 }
@@ -4478,6 +4601,7 @@ mod tests {
                 fixture.recovered(&who, &live_id, 0)
             })
             .unwrap();
+        let _receipt = registry.lease(&who, &live_id).unwrap();
         assert!(matches!(
             registry.reserve_start(who.clone(), id("overflow")),
             Err(TerminalRegistryError::Capacity)
@@ -4642,6 +4766,270 @@ mod tests {
             registry.commit_reserved_start(&last, || panic!("exhausted replay")),
             Err(TerminalRegistryError::NotFound)
         );
+    }
+
+    #[test]
+    fn pressure_recycles_only_unreferenced_clean_residents_and_keeps_exit_waitable() {
+        let fixtures: Vec<_> = (0..MAX_RESIDENT_TERMINALS)
+            .map(|_| Fixture::new())
+            .collect();
+        let mut registry = registry();
+        let who = owner("one");
+        for (number, fixture) in fixtures.iter().enumerate() {
+            let session = id(&format!("p-{number}"));
+            registry
+                .start(who.clone(), session.clone(), || {
+                    fixture.live(&who, &session, 0)
+                })
+                .unwrap();
+        }
+        fixtures[0]
+            .state
+            .lock()
+            .unwrap()
+            .statuses
+            .push_back(TerminalPtyStatus::Exited(7));
+        registry.pump(0, MAX_RESIDENT_TERMINALS).unwrap();
+        let exited = id("p-0");
+        assert_eq!(
+            registry.wait_observation(&who, &exited).unwrap().2,
+            Some(TerminalProcessOutcome::Exited(0))
+        );
+        let lease = registry.lease(&who, &exited).unwrap();
+        assert!(registry.lease(&owner("foreign"), &exited).is_err());
+        assert_eq!(
+            registry.release(&who, &exited),
+            Err(TerminalRegistryError::Busy)
+        );
+        assert!(matches!(
+            registry.reserve_start(who.clone(), id("next")),
+            Err(TerminalRegistryError::Capacity)
+        ));
+        drop(lease);
+        let cancelled = machine_god_core::CancellationToken::new();
+        cancelled.cancel();
+        assert!(
+            registry
+                .reserve_start_with_cancellation(who.clone(), id("cancelled"), cancelled)
+                .is_err()
+        );
+        assert!(registry.wait_observation(&who, &exited).is_ok());
+        assert!(matches!(
+            registry.reserve_start(who.clone(), exited.clone()),
+            Err(TerminalRegistryError::Conflict)
+        ));
+        let reserved = registry.reserve_start(who.clone(), id("next")).unwrap();
+        assert!(matches!(
+            registry.wait_observation(&who, &exited),
+            Err(TerminalRegistryError::NotFound)
+        ));
+        assert!(fixtures[0].path.join("tj-meta").is_file());
+        registry.withdraw_reserved_start(&reserved).unwrap();
+    }
+
+    #[test]
+    fn sequential_closed_starts_reuse_pressure_slots_without_deleting_history() {
+        let fixtures: Vec<_> = (0..40).map(|_| Fixture::new()).collect();
+        let mut registry = registry();
+        let who = owner("one");
+        for (number, fixture) in fixtures.iter().enumerate() {
+            let session = id(&format!("sequential-{number}"));
+            registry
+                .start(who.clone(), session.clone(), || {
+                    fixture.live(&who, &session, 0)
+                })
+                .unwrap();
+            registry
+                .live_mut(&who, &session)
+                .unwrap()
+                .close(&who, TerminalClosePolicy::Force, 0)
+                .unwrap();
+            assert_eq!(
+                registry.entries.len(),
+                (number + 1).min(MAX_RESIDENT_TERMINALS)
+            );
+        }
+        for fixture in &fixtures {
+            assert!(fixture.path.join("tj-meta").is_file());
+        }
+        assert!(registry.inspect(&who, &id("sequential-0")).is_err());
+        assert!(registry.inspect(&who, &id("sequential-39")).is_ok());
+    }
+
+    #[test]
+    fn recovered_resident_close_changes_only_owned_durable_history() {
+        let fixture = Fixture::new();
+        let who = owner("one");
+        let session_id = id("recovered-close");
+        let mut registry = registry();
+        registry
+            .start(who.clone(), session_id.clone(), || {
+                fixture.live(&who, &session_id, 0)
+            })
+            .unwrap();
+        registry
+            .live_mut(&who, &session_id)
+            .unwrap()
+            .close(&who, TerminalClosePolicy::Force, 0)
+            .unwrap();
+        registry.release(&who, &session_id).unwrap();
+        registry
+            .recover(who.clone(), session_id.clone(), || {
+                fixture.recovered(&who, &session_id, 0)
+            })
+            .unwrap();
+        let closes = fixture.state.lock().unwrap().closes;
+        assert_eq!(
+            registry.close_with(
+                &mut crate::terminal_profile::TerminalTestPersistence,
+                &owner("foreign"),
+                &session_id,
+                TerminalClosePolicy::Force,
+                1
+            ),
+            Err(TerminalRegistryError::NotFound)
+        );
+        registry
+            .close_with(
+                &mut crate::terminal_profile::TerminalTestPersistence,
+                &who,
+                &session_id,
+                TerminalClosePolicy::Graceful,
+                1,
+            )
+            .unwrap();
+        assert_eq!(
+            registry
+                .inspect(&who, &session_id)
+                .unwrap()
+                .context
+                .lifecycle,
+            TerminalLifecycle::Closed
+        );
+        assert_eq!(fixture.state.lock().unwrap().closes, closes);
+    }
+
+    #[test]
+    fn pressure_never_discards_failed_native_cleanup_or_state_publication() {
+        for native_failure in [false, true] {
+            let fixture = Fixture::new();
+            let mut registry = registry();
+            let who = owner("one");
+            let session = id("failed");
+            registry
+                .start(who.clone(), session.clone(), || {
+                    fixture.live(&who, &session, 0)
+                })
+                .unwrap();
+            fixture.state.lock().unwrap().close_fails = native_failure;
+            assert!(
+                registry
+                    .live_mut(&who, &session)
+                    .unwrap()
+                    .close_with(&mut Denied, &who, TerminalClosePolicy::Force, 0)
+                    .is_err()
+            );
+            for number in 0..15 {
+                registry
+                    .reserve_start(who.clone(), id(&format!("pending-{number}")))
+                    .unwrap();
+            }
+            assert!(matches!(
+                registry.reserve_start(who.clone(), id("next")),
+                Err(TerminalRegistryError::Capacity)
+            ));
+            assert!(
+                registry
+                    .live_mut(&who, &session)
+                    .unwrap()
+                    .publication_error()
+                    .is_some()
+            );
+            fixture.state.lock().unwrap().close_fails = false;
+        }
+    }
+
+    #[test]
+    fn abandoned_wait_retains_residency_until_attention_publication_commits() {
+        use crate::terminal_input::TerminalWriterId;
+        use crate::terminal_wait::{
+            TerminalWaitCoordinator, TerminalWaitHistory, TerminalWaitIdentity,
+        };
+        let fixture = Fixture::new();
+        let mut registry = registry();
+        let who = owner("one");
+        let session = id("attention");
+        registry
+            .start(who.clone(), session.clone(), || {
+                fixture.live(&who, &session, 0)
+            })
+            .unwrap();
+        registry
+            .live_mut(&who, &session)
+            .unwrap()
+            .close(&who, TerminalClosePolicy::Force, 0)
+            .unwrap();
+        for number in 0..15 {
+            registry
+                .reserve_start(who.clone(), id(&format!("pending-{number}")))
+                .unwrap();
+        }
+        let (context, last_output, _) = registry.wait_observation(&who, &session).unwrap();
+        let mut waits = TerminalWaitCoordinator::new();
+        let (_, future) = waits
+            .register(
+                TerminalWaitIdentity {
+                    owner: who.clone(),
+                    session: session.clone(),
+                    actor: TerminalActorRole::Agent,
+                    writer: TerminalWriterId::new(NonZeroU64::new(1).unwrap()),
+                },
+                machine_god_core::TerminalWaitRequest {
+                    condition: machine_god_core::TerminalReturnCondition::Exit {},
+                    safety_ceiling_ms: 100,
+                },
+                &context,
+                last_output,
+                TerminalWaitHistory::default(),
+                machine_god_core::CancellationToken::new(),
+            )
+            .unwrap();
+        future.retain_residency(registry.lease(&who, &session).unwrap());
+        drop(future);
+        let unpublished = waits.take_ready();
+        assert_eq!(unpublished.len(), 1);
+        assert!(waits.observations().is_empty());
+        assert!(matches!(
+            registry.reserve_start(who.clone(), id("new")),
+            Err(TerminalRegistryError::Capacity)
+        ));
+        drop(unpublished); // Failed attention persistence preserves the pin for retry.
+        assert!(matches!(
+            registry.reserve_start(who.clone(), id("new")),
+            Err(TerminalRegistryError::Capacity)
+        ));
+        for completion in waits.take_ready() {
+            assert!(completion.publish());
+        }
+        assert!(waits.take_ready().is_empty());
+        assert!(registry.reserve_start(who, id("new")).is_ok());
+    }
+
+    #[test]
+    fn residency_leases_never_keep_native_backend_or_registry_alive() {
+        let fixture = Fixture::new();
+        let mut registry = registry();
+        let who = owner("one");
+        let session = id("pinned");
+        registry
+            .start(who.clone(), session.clone(), || {
+                fixture.live(&who, &session, 0)
+            })
+            .unwrap();
+        let lease = registry.lease(&who, &session).unwrap();
+        drop(registry);
+        assert!(fixture.state.lock().unwrap().closes > 0);
+        drop(lease);
     }
 
     #[test]

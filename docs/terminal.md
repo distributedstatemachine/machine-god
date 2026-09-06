@@ -631,9 +631,25 @@ non-owning requester futures cannot prevent last-host cleanup.
 
 The resident registry owns at most sixteen sessions on the host's blocking
 worker. Tool calls borrow live sessions and cannot acquire ownership of their
-lifetime. Duplicate, full and closing admissions fail before invoking the
+lifetime. Duplicate, unrecyclably full and closing admissions fail before invoking the
 launch/recovery factory. Owner-incarnation and workspace checks bind returned
 facts before residency is accepted. Recovered history has no live-control path.
+
+Exited/lost/closed sessions stay resident while empty slots remain. Only a new
+admission under pressure recycles an inactive slot, in round-robin order, after
+native cleanup and state publication succeed and all operation residency
+references are released. An exited resident remains waitable until recycling;
+a wait after recycling reports not found, while durable read/screen/inspect/list
+and explicitly authorized close remain available without reacquiring native
+authority. Recycling never deletes the journal. Cancelled or expired staged
+admission cannot evict another resident.
+
+Pure process-local residency leases carry no host-lifetime vote or native
+authority. Wait/write registrations retain their lease through pending input
+settlement or durable attention completion, even when the caller abandons them.
+Unconsumed replies and their final facts projection retain the same resident;
+staged start receipts retain it through the enclosing start attention wait.
+Last-host shutdown still cleans up native resources with such leases outstanding.
 
 Bounded round-robin pumping advances at most the requested number of active
 sessions per step, continues past per-session failures, and returns raw chunks
@@ -756,7 +772,9 @@ process authority; the existing prepared owner handles failed launch cleanup.
 Staged startup reserves a resident slot before acquiring launch authority, then
 prepares and commits the native transport on a separately collected worker. The
 single absolute startup deadline begins at first poll and includes worker and
-owner queue delay; expired admission never acquires native launch authority. The
+owner queue delay. A host that already began owned preparation supplies its
+original absolute deadline without converting it back into a remaining timeout;
+expired admission neither recycles another session nor acquires launch authority. The
 owner continues pumping other sessions throughout preparation. Only short
 admission/publication requests cross back to it; closures carrying a backend
 are constructed, polled and dropped on the effect worker or owner, never the
@@ -794,11 +812,16 @@ typed receipt plus an explicitly admission-time facts snapshot if shutdown
 prevents a later projection. Committed-effect failures are not retry-safe, and
 monitor probes remain available to the ordinary owner observer.
 Cold read, screen and inspect share the same result projection without native
-admission. Resident and cold reads aggregate up to 1 MiB within one retained
+admission. Explicitly authorized cold close persists closed history and monitor
+quiescence using the exact owner/profile transaction, without reconstructing a
+backend or signal target. Resident and cold reads aggregate up to 1 MiB within one retained
 segment, reporting the actual normalized raw range and any retention gap.
+Successful close replies clear their next-action hints, matching the pinned
+close result; subsequent historical observation still projects readable history.
 Runtime-facing dispatch combines these routes with the complete disk/resident
 list projection on the same owner. Only a missing exact owner/session permits
-cold observation fallback; mutations never fall back to saved history. The
+cold-history fallback; only durable close and inspect acknowledgement mutate
+history there, and no native-control action falls back to saved identifiers. The
 asynchronous dispatcher retains a non-owning requester, waits for write/wait
 receipts outside the owner loop, and then attempts an uncancelled facts refresh.
 Its reply explicitly distinguishes refreshed facts from the admission snapshot

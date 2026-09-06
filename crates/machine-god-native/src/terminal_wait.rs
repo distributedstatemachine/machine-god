@@ -11,7 +11,7 @@ use std::num::NonZeroU64;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::task::{Context, Poll, Waker};
 
 use machine_god_core::{
@@ -94,6 +94,7 @@ struct Reply {
     waker: Option<Waker>,
 }
 struct SharedReply {
+    residency: OnceLock<crate::terminal_registry::TerminalResidentLease>,
     reply: Mutex<Reply>,
     abandoned: AtomicBool,
     published: AtomicBool,
@@ -178,6 +179,7 @@ impl TerminalWaitCoordinator {
         self.next_id = id.0.get().checked_add(1).and_then(NonZeroU64::new);
         self.count.fetch_add(1, Ordering::AcqRel);
         let reply = Arc::new(SharedReply {
+            residency: OnceLock::new(),
             reply: Mutex::new(Reply {
                 result: None,
                 waker: None,
@@ -217,6 +219,7 @@ impl TerminalWaitCoordinator {
     /// Feed only durably committed bytes, once, in cursor order. Empty output
     /// advances time/lifecycle without inventing a new output observation.
     /// Validation precedes mutation of *every* matching registration.
+    #[cfg(test)]
     pub(crate) fn advance(
         &mut self,
         owner: &BackgroundOutputOwner,
@@ -275,6 +278,7 @@ impl TerminalWaitCoordinator {
 
     /// Explicit host cancellation requires the exact wait, incarnation,
     /// terminal and actor. No monitor, process or input receipt is modified.
+    #[cfg(test)]
     pub(crate) fn cancel(
         &mut self,
         id: TerminalWaitId,
@@ -508,6 +512,15 @@ pub(crate) struct TerminalWaitFuture {
     reply: Option<Arc<SharedReply>>,
     cancellation: CancellationToken,
     cancellation_wait: Option<Cancelled>,
+}
+impl TerminalWaitFuture {
+    /// Both an abandoned registration awaiting durable attention cleanup and an
+    /// unconsumed reply keep residency, without keeping the host alive.
+    pub(crate) fn retain_residency(&self, lease: crate::terminal_registry::TerminalResidentLease) {
+        if let Some(reply) = &self.reply {
+            let _ = reply.residency.set(lease);
+        }
+    }
 }
 impl Future for TerminalWaitFuture {
     type Output = TerminalWaitReceipt;

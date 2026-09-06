@@ -14,7 +14,9 @@ use crate::terminal_native_launch::{
 };
 use crate::terminal_owner::{TerminalOwnerContext, TerminalOwnerError};
 use crate::terminal_profile::{TerminalProfileError, TerminalProfileMutationContext};
-use crate::terminal_registry::{TerminalRegistryError, TerminalStartReservation};
+use crate::terminal_registry::{
+    TerminalRegistryError, TerminalResidentLease, TerminalStartReservation,
+};
 use crate::terminal_resident_dispatch::TerminalResidentAuthority;
 use crate::terminal_runtime::{TerminalRuntimeError, TerminalRuntimeRequester};
 use crate::terminal_session::{TerminalSession, TerminalSessionBackend, TerminalSessionError};
@@ -33,6 +35,36 @@ use std::time::{Duration, Instant};
 
 const MAX_STAGED_STARTS: usize = 16;
 const ROLLBACK_BACKOFF: Duration = Duration::from_millis(10);
+
+enum StartDeadline {
+    #[cfg(test)]
+    Relative(Duration),
+    Absolute(Instant),
+}
+impl StartDeadline {
+    fn resolve(self) -> Result<Instant> {
+        let now = Instant::now();
+        let (deadline, duration) = match self {
+            #[cfg(test)]
+            Self::Relative(duration) => {
+                if duration.is_zero() {
+                    return Err(TerminalStagedStartError::Invalid);
+                }
+                (now.checked_add(duration), duration)
+            }
+            Self::Absolute(deadline) => (Some(deadline), deadline.saturating_duration_since(now)),
+        };
+        if duration.is_zero() {
+            return Err(TerminalStagedStartError::Launch(
+                TerminalNativeLaunchError::Timeout,
+            ));
+        }
+        if duration > crate::terminal_helper::MAX_STARTUP_TIMEOUT {
+            return Err(TerminalStagedStartError::Invalid);
+        }
+        deadline.ok_or(TerminalStagedStartError::Invalid)
+    }
+}
 
 #[derive(Debug)]
 pub(crate) enum TerminalStagedStartError {
@@ -58,6 +90,8 @@ type Result<T> = std::result::Result<T, TerminalStagedStartError>;
 #[derive(Debug)]
 pub(crate) struct TerminalStagedStartReceipt {
     pub(crate) session: TerminalSessionFacts,
+    /// Retain through the enclosing host's attention wait and final projection.
+    pub(crate) residency: TerminalResidentLease,
 }
 
 /// No host-lifetime vote, host-state value or mutable native backend lives here.
@@ -92,6 +126,7 @@ impl<S: 'static> TerminalStagedStarter<S> {
         clippy::too_many_arguments,
         reason = "explicit native and actor authority"
     )]
+    #[cfg(test)]
     pub(crate) fn start(
         &self,
         authority: TerminalResidentAuthority,
@@ -112,6 +147,80 @@ impl<S: 'static> TerminalStagedStarter<S> {
         timeout: Duration,
         cancellation: CancellationToken,
     ) -> BoxFuture<'static, Result<TerminalStagedStartReceipt>> {
+        self.start_with_deadline(
+            authority,
+            session_id,
+            request,
+            prepare_authority,
+            activations,
+            install_monitors,
+            StartDeadline::Relative(timeout),
+            cancellation,
+        )
+    }
+
+    /// Preserve the host's original deadline through prior owned preparation;
+    /// polling never reconstructs a later deadline from a remaining duration.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit native and actor authority"
+    )]
+    pub(crate) fn start_until(
+        &self,
+        authority: TerminalResidentAuthority,
+        session_id: TerminalSessionId,
+        request: TerminalStartRequest,
+        prepare_authority: impl FnOnce() -> std::result::Result<
+            TerminalNativeLaunchAuthority,
+            TerminalNativeLaunchError,
+        > + Send
+        + 'static,
+        activations: Vec<TerminalMonitorActivation>,
+        install_monitors: impl FnOnce(
+            &mut S,
+            Vec<TerminalMonitorMutation>,
+        ) -> std::result::Result<(), TerminalSessionError>
+        + Send
+        + 'static,
+        deadline: Instant,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalStagedStartReceipt>> {
+        self.start_with_deadline(
+            authority,
+            session_id,
+            request,
+            prepare_authority,
+            activations,
+            install_monitors,
+            StartDeadline::Absolute(deadline),
+            cancellation,
+        )
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit native and actor authority"
+    )]
+    fn start_with_deadline(
+        &self,
+        authority: TerminalResidentAuthority,
+        session_id: TerminalSessionId,
+        request: TerminalStartRequest,
+        prepare_authority: impl FnOnce() -> std::result::Result<
+            TerminalNativeLaunchAuthority,
+            TerminalNativeLaunchError,
+        > + Send
+        + 'static,
+        activations: Vec<TerminalMonitorActivation>,
+        install_monitors: impl FnOnce(
+            &mut S,
+            Vec<TerminalMonitorMutation>,
+        ) -> std::result::Result<(), TerminalSessionError>
+        + Send
+        + 'static,
+        deadline: StartDeadline,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalStagedStartReceipt>> {
         let requester = self.requester.clone();
         let config = Arc::clone(&self.config);
         let host_identity = self.host_identity.clone();
@@ -121,13 +230,10 @@ impl<S: 'static> TerminalStagedStarter<S> {
             if cancellation.is_cancelled() {
                 return Err(TerminalStagedStartError::Cancelled);
             }
-            if timeout.is_zero()
-                || timeout > crate::terminal_helper::MAX_STARTUP_TIMEOUT
-                || activations.len() != request.initial_monitors.len()
-            {
+            if activations.len() != request.initial_monitors.len() {
                 return Err(TerminalStagedStartError::Invalid);
             }
-            let deadline = Instant::now() + timeout;
+            let deadline = deadline.resolve()?;
             let resolved = ResolvedTerminalNativeLaunch::resolve(&config, &request)
                 .map_err(TerminalStagedStartError::Launch)?;
             active
@@ -230,13 +336,18 @@ fn run_staged<B: TerminalSessionBackend + Send + 'static, S: 'static>(
     let reservation = futures_executor::block_on(requester.request_with_context(
         cancellation.clone(),
         move |context| {
+            if Instant::now() >= deadline {
+                return Err(TerminalStagedStartError::Launch(
+                    TerminalNativeLaunchError::Timeout,
+                ));
+            }
             context
                 .registry
                 .reserve_start_with_cancellation(owner, id, preparation_stop)
+                .map_err(TerminalStagedStartError::Registry)
         },
     ))
-    .map_err(TerminalStagedStartError::Runtime)?
-    .map_err(TerminalStagedStartError::Registry)?;
+    .map_err(TerminalStagedStartError::Runtime)??;
     let reservation = Arc::new(reservation);
     let mut rollback = StartRollback {
         requester: requester.clone(),
@@ -472,7 +583,11 @@ fn publish_start<B: TerminalSessionBackend + Send + 'static, S>(
             });
         }
     };
-    Ok(TerminalStagedStartReceipt { session })
+    let residency = context
+        .registry
+        .lease(owner, id)
+        .map_err(TerminalStagedStartError::Registry)?;
+    Ok(TerminalStagedStartReceipt { session, residency })
 }
 
 fn profile_error(error: TerminalProfileError) -> TerminalStagedStartError {
@@ -802,6 +917,35 @@ mod tests {
     }
 
     #[test]
+    fn absolute_start_deadline_never_restarts_at_first_poll() {
+        let fixture = Fixture::new();
+        let deadline = Instant::now() + Duration::from_millis(10);
+        let future = fixture.starter.start_until(
+            authority(),
+            id(),
+            fixture.request(None),
+            || panic!("expired authority"),
+            Vec::new(),
+            |_, _| Ok(()),
+            deadline,
+            CancellationToken::new(),
+        );
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(matches!(
+            futures_executor::block_on(future),
+            Err(TerminalStagedStartError::Launch(
+                TerminalNativeLaunchError::Timeout
+            ))
+        ));
+        assert_eq!(fixture.initialized.load(Ordering::Acquire), 0);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        assert_eq!(
+            StartDeadline::Absolute(deadline).resolve().unwrap(),
+            deadline
+        );
+    }
+
+    #[test]
     fn delayed_owner_admission_consumes_original_deadline_before_authority() {
         let fixture = Fixture::new();
         let (entered, ready) = mpsc::sync_channel(1);
@@ -921,6 +1065,7 @@ mod tests {
         .unwrap();
         assert_eq!(receipt.session.session_id, id());
         receipt.session.validate().unwrap();
+        let residency = receipt.residency.clone();
         drop(receipt);
         until(|| {
             fixture
@@ -943,6 +1088,55 @@ mod tests {
             facts.metadata.unwrap().command.as_deref(),
             Some("printf STAGED_OK; exit 0")
         );
+        until(|| {
+            futures_executor::block_on(fixture.runtime().request_with_context(
+                CancellationToken::new(),
+                |context| {
+                    !context
+                        .registry
+                        .live_mut(&authority().owner, &id())
+                        .unwrap()
+                        .owns_backend()
+                },
+            ))
+            .unwrap()
+        });
+        futures_executor::block_on(fixture.runtime().request_with_context(
+            CancellationToken::new(),
+            |context| {
+                for number in 0..15 {
+                    context
+                        .registry
+                        .reserve_start(
+                            authority().owner,
+                            TerminalSessionId::new(format!("pending-{number}")).unwrap(),
+                        )
+                        .unwrap();
+                }
+                assert!(matches!(
+                    context.registry.reserve_start(
+                        authority().owner,
+                        TerminalSessionId::new("pressure").unwrap()
+                    ),
+                    Err(TerminalRegistryError::Capacity)
+                ));
+            },
+        ))
+        .unwrap();
+        drop(residency);
+        futures_executor::block_on(fixture.runtime().request_with_context(
+            CancellationToken::new(),
+            |context| {
+                context
+                    .registry
+                    .reserve_start(
+                        authority().owner,
+                        TerminalSessionId::new("pressure").unwrap(),
+                    )
+                    .unwrap();
+            },
+        ))
+        .unwrap();
     }
 
     #[test]

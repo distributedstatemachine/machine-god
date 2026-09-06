@@ -84,13 +84,28 @@ where
             return Err(TerminalHostDispatchError::CommandAction);
         }
         let admitted_authority = authority.clone();
-        let reply = requester
+        let (reply, residency) = requester
             .request_with_context(cancellation, move |context| {
-                route(context, &admitted_authority, &request, activation)
+                let residency = request
+                    .session_id()
+                    .and_then(|id| context.registry.lease(&admitted_authority.owner, id).ok());
+                let reply = route(context, &admitted_authority, &request, activation)?;
+                if let Some(lease) = &residency {
+                    match &reply {
+                        TerminalResidentDispatch::Wait { future, .. } => {
+                            future.retain_residency(lease.clone());
+                        }
+                        TerminalResidentDispatch::Write { future, .. } => {
+                            future.retain_residency(lease.clone());
+                        }
+                        TerminalResidentDispatch::Ready(_) => {}
+                    }
+                }
+                Ok::<_, TerminalHostDispatchError>((reply, residency))
             })
             .await
             .map_err(TerminalHostDispatchError::Runtime)??;
-        match reply {
+        let result = match reply {
             TerminalResidentDispatch::Ready(result) => Ok(TerminalHostReply {
                 result,
                 facts_timing: TerminalHostFactsTiming::Current,
@@ -115,7 +130,11 @@ where
                     facts_timing,
                 })
             }
-        }
+        };
+        // The coordinator may already have released its reply; keep this pin
+        // through the separate current-facts projection as well.
+        drop(residency);
+        result
     })
 }
 
@@ -188,6 +207,7 @@ fn route<B: TerminalSessionBackend, S: TerminalCatalogState>(
                 TerminalActionRequest::Read { .. }
                     | TerminalActionRequest::Screen { .. }
                     | TerminalActionRequest::Inspect { .. }
+                    | TerminalActionRequest::Close { .. }
             ) =>
         {
             context
@@ -671,6 +691,148 @@ mod tests {
             }
         ));
     }
+    #[test]
+    fn unconsumed_wait_and_write_replies_pin_residency_through_projection() {
+        for request in [
+            TerminalActionRequest::Wait {
+                session_id: id("live"),
+                request: TerminalWaitRequest {
+                    condition: TerminalReturnCondition::Exit {},
+                    safety_ceiling_ms: 1000,
+                },
+            },
+            write(),
+        ] {
+            let fixture = Fixture::new();
+            fixture.action(acquire());
+            fixture.backend.lock().unwrap().blocked = true;
+            let requester = fixture.requester();
+            let mut pending = dispatch(
+                requester.clone(),
+                authority(),
+                request,
+                TerminalMonitorActivation::default(),
+                CancellationToken::new(),
+            );
+            assert!(
+                pending
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()))
+                    .is_pending()
+            );
+            block_on(requester.request_with_context(CancellationToken::new(), |_| ())).unwrap();
+            fixture.action(TerminalActionRequest::Close {
+                session_id: id("live"),
+                policy: TerminalClosePolicy::Force,
+            });
+            block_on(
+                requester.request_with_context(CancellationToken::new(), |context| {
+                    for number in 0..15 {
+                        context
+                            .registry
+                            .reserve_start(authority().owner, id(&format!("reserved-{number}")))
+                            .unwrap();
+                    }
+                    assert!(matches!(
+                        context
+                            .registry
+                            .reserve_start(authority().owner, id("pressure")),
+                        Err(TerminalRegistryError::Capacity)
+                    ));
+                    assert!(
+                        context
+                            .registry
+                            .wait_observation(&authority().owner, &id("live"))
+                            .is_ok()
+                    );
+                }),
+            )
+            .unwrap();
+            let reply = block_on(pending).unwrap();
+            assert_eq!(reply.facts_timing, TerminalHostFactsTiming::Current);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                let recycled = block_on(requester.request_with_context(
+                    CancellationToken::new(),
+                    |context| {
+                        context
+                            .registry
+                            .reserve_start(authority().owner, id("pressure"))
+                            .is_ok()
+                    },
+                ))
+                .unwrap();
+                if recycled {
+                    break;
+                }
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            fixture.action(TerminalActionRequest::Close {
+                session_id: id("live"),
+                policy: TerminalClosePolicy::Graceful,
+            });
+            assert!(matches!(fixture.action(TerminalActionRequest::Screen {
+                session_id: id("live"),
+            }).result, TerminalActionResult::Screen { session, .. }
+                if session.lifecycle == TerminalLifecycle::Closed));
+        }
+    }
+
+    #[test]
+    fn abandoned_write_remains_pinned_until_owner_observes_final_settlement() {
+        let fixture = Fixture::new();
+        fixture.action(acquire());
+        fixture.backend.lock().unwrap().blocked = true;
+        let requester = fixture.requester();
+        let mut pending = dispatch(
+            requester.clone(),
+            authority(),
+            write(),
+            TerminalMonitorActivation::default(),
+            CancellationToken::new(),
+        );
+        assert!(
+            pending
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending()
+        );
+        block_on(requester.request_with_context(CancellationToken::new(), |_| ())).unwrap();
+        drop(pending);
+        block_on(
+            requester.request_with_context(CancellationToken::new(), |context| {
+                context
+                    .registry
+                    .mutate_with_profile(
+                        context.store,
+                        context.budget,
+                        &authority().owner,
+                        &id("live"),
+                        |session, persistence| {
+                            session.close_with(
+                                persistence,
+                                &authority().owner,
+                                TerminalClosePolicy::Force,
+                                context.now_ms,
+                            )
+                        },
+                    )
+                    .unwrap();
+                assert_eq!(
+                    context.registry.release(&authority().owner, &id("live")),
+                    Err(TerminalRegistryError::Busy)
+                );
+                assert!(context.writes.observe(context.registry));
+                context
+                    .registry
+                    .release(&authority().owner, &id("live"))
+                    .unwrap();
+            }),
+        )
+        .unwrap();
+    }
+
     #[test]
     fn committed_write_survives_shutdown_without_extending_host_lifetime() {
         let mut fixture = Fixture::new();

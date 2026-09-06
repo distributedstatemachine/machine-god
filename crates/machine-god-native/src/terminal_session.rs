@@ -7,7 +7,9 @@ use crate::terminal_history::{TerminalHistory, TerminalHistoryError, TerminalHis
 use crate::terminal_input::{
     TerminalInput, TerminalInputError, TerminalInputReceipt, TerminalWriterId,
 };
-use crate::terminal_journal::{TerminalJournalPage, TerminalJournalPhysicalUsage};
+use crate::terminal_journal::TerminalJournalPage;
+#[cfg(test)]
+use crate::terminal_journal::TerminalJournalPhysicalUsage;
 use crate::terminal_monitor::{
     MAX_MONITOR_FEED_BYTES, TerminalMonitorActivation, TerminalMonitorContext,
     TerminalMonitorError, TerminalMonitorMutation, TerminalMonitorSet, TerminalProbeEvidence,
@@ -224,6 +226,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn new_with(
         persistence: &mut dyn TerminalJournalPersistence,
         backend: B,
@@ -652,6 +655,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             events,
         )
     }
+    #[cfg(test)]
     pub(crate) fn physical_usage(
         &self,
         owner: &BackgroundOutputOwner,
@@ -691,6 +695,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             Err(TerminalSessionError::InvalidState)
         }
     }
+    #[cfg(test)]
     pub(crate) fn eviction_bytes(
         &self,
         owner: &BackgroundOutputOwner,
@@ -754,6 +759,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn write_with(
         &mut self,
         persistence: &mut dyn TerminalJournalPersistence,
@@ -897,6 +903,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         Ok(self.attention.clone())
     }
 
+    #[cfg(test)]
     pub(crate) fn cancel_attention_with(
         &mut self,
         persistence: &mut dyn TerminalJournalPersistence,
@@ -1822,6 +1829,7 @@ impl fmt::Debug for TerminalRecoveredSession {
 impl TerminalRecoveredSession {
     /// Reconcile a failed recovered-history publication without replaying an
     /// uncommitted request or acquiring live backend authority.
+    #[cfg(test)]
     pub(crate) fn retry_publication_with(
         &mut self,
         persistence: &mut dyn TerminalJournalPersistence,
@@ -1950,10 +1958,12 @@ impl TerminalRecoveredSession {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn publication_error(&self) -> Option<TerminalSessionError> {
         self.publication_error
     }
 
+    #[cfg(test)]
     pub(crate) fn facts(&self, owner: &BackgroundOutputOwner) -> Result<&TerminalSessionFacts> {
         self.authorize(owner)?;
         Ok(&self.facts)
@@ -1967,6 +1977,44 @@ impl TerminalRecoveredSession {
     ) -> Result<machine_god_core::TerminalSessionFacts> {
         self.authorize(owner)?;
         project_facts(&self.facts, &self.history, &self.monitors, actor, controls)
+    }
+
+    /// Close retained history using only explicit owner/persistence authority.
+    /// Recovery never reconstructs a backend, signal target or writer claim.
+    pub(crate) fn close_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        owner: &BackgroundOutputOwner,
+        now_ms: i64,
+    ) -> Result<()> {
+        self.authorize(owner)?;
+        if now_ms < self.facts.context.now_ms {
+            return Err(TerminalSessionError::Clock);
+        }
+        let mut facts = self.facts.clone();
+        let mut monitors = self.monitors.clone();
+        facts.context.now_ms = now_ms;
+        facts.context.lifecycle = TerminalLifecycle::Closed;
+        facts.attention = TerminalAttentionState::default();
+        match monitors.end_session(facts.outcome, facts.context.clone()) {
+            Ok(()) => {}
+            Err(TerminalMonitorError::Counter) => {
+                monitors.quiesce();
+                monitors.checkpoint_context(facts.context.clone())?;
+                facts.monitor_notifications_incomplete = true;
+            }
+            Err(error) => return Err(error.into()),
+        }
+        let result = self
+            .history
+            .publish_state_with(persistence, &facts.encode(&monitors)?);
+        if result.is_ok() || matches!(result, Err(TerminalHistoryError::Accounting(_))) {
+            self.facts = facts;
+            self.monitors = monitors;
+        }
+        self.publication_error = result.as_ref().err().copied().map(Into::into);
+        result?;
+        self.retire_completed_checkpoint_reserve_with(persistence, owner)
     }
 
     pub(crate) fn prepare_public_facts_with(
@@ -2019,6 +2067,7 @@ impl TerminalRecoveredSession {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn checkpoint_reserve_bytes(&self) -> usize {
         self.history.checkpoint_reserve_bytes()
     }
@@ -2040,6 +2089,7 @@ impl TerminalRecoveredSession {
         result
     }
 
+    #[cfg(test)]
     pub(crate) fn physical_usage(
         &self,
         owner: &BackgroundOutputOwner,
@@ -2066,6 +2116,7 @@ impl TerminalRecoveredSession {
         }
         Ok(())
     }
+    #[cfg(test)]
     pub(crate) fn eviction_bytes(
         &self,
         owner: &BackgroundOutputOwner,
@@ -2087,6 +2138,7 @@ impl TerminalRecoveredSession {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn evict_with(
         &mut self,
         persistence: &mut dyn TerminalJournalPersistence,

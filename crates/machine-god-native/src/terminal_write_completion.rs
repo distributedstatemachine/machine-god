@@ -11,7 +11,7 @@ use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::task::{Context, Poll, Waker};
 
 pub(crate) const MAX_TERMINAL_WRITE_COMPLETIONS: usize = 32;
@@ -55,6 +55,7 @@ struct Reply {
     waker: Option<Waker>,
 }
 struct SharedReply {
+    residency: OnceLock<crate::terminal_registry::TerminalResidentLease>,
     reply: Mutex<Reply>,
     abandoned: AtomicBool,
     _permit: Permit,
@@ -110,8 +111,9 @@ impl TerminalWriteCoordinator {
         cancellation: &CancellationToken,
         effect: impl FnOnce() -> std::result::Result<TerminalWriteReceipt, TerminalRegistryError>,
     ) -> Result<TerminalWriteFuture> {
-        self.registrations
-            .retain(|entry| !entry.reply.abandoned.load(Ordering::Acquire));
+        self.registrations.retain(|entry| {
+            !entry.reply.abandoned.load(Ordering::Acquire) || entry.reply.residency.get().is_some()
+        });
         if self.closed {
             return Err(TerminalWriteError::Closed);
         }
@@ -126,6 +128,7 @@ impl TerminalWriteCoordinator {
         // The permit is already held if allocation or the effect unwinds.
         let last = effect().map_err(TerminalWriteError::Effect)?;
         let reply = Arc::new(SharedReply {
+            residency: OnceLock::new(),
             reply: Mutex::new(Reply {
                 result: None,
                 waker: None,
@@ -174,7 +177,9 @@ impl TerminalWriteCoordinator {
     ) -> bool {
         let mut woke = true;
         self.registrations.retain_mut(|entry| {
-            if entry.reply.abandoned.load(Ordering::Acquire) {
+            if entry.reply.abandoned.load(Ordering::Acquire)
+                && entry.reply.residency.get().is_none()
+            {
                 return false;
             }
             let previous = entry.last.input;
@@ -232,6 +237,15 @@ fn valid_receipt(receipt: TerminalInputReceipt) -> bool {
 
 pub(crate) struct TerminalWriteFuture {
     reply: Option<Arc<SharedReply>>,
+}
+impl TerminalWriteFuture {
+    /// Retain the exact resident until the pending write settles and its reply
+    /// is consumed, including when caller cancellation follows native admission.
+    pub(crate) fn retain_residency(&self, lease: crate::terminal_registry::TerminalResidentLease) {
+        if let Some(reply) = &self.reply {
+            let _ = reply.residency.set(lease);
+        }
+    }
 }
 impl Future for TerminalWriteFuture {
     type Output = Result<TerminalWriteReceipt>;

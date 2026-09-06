@@ -32,7 +32,8 @@ pub(crate) struct TerminalHostCatalogs {
 
 impl TerminalHostCatalogs {
     /// The enclosing host tries resident dispatch first. Only historical
-    /// observation actions may use this path; saved facts never grant mutation.
+    /// observations and an explicitly authorized durable close use this path;
+    /// saved facts never grant native authority.
     #[allow(
         clippy::too_many_arguments,
         reason = "explicit profile and authorized request context"
@@ -51,7 +52,8 @@ impl TerminalHostCatalogs {
             .map_err(|_| TerminalCatalogViewError::Invalid)?;
         let (TerminalActionRequest::Read { session_id: id, .. }
         | TerminalActionRequest::Screen { session_id: id }
-        | TerminalActionRequest::Inspect { session_id: id, .. }) = request
+        | TerminalActionRequest::Inspect { session_id: id, .. }
+        | TerminalActionRequest::Close { session_id: id, .. }) = request
         else {
             return Err(TerminalCatalogViewError::Invalid);
         };
@@ -63,6 +65,25 @@ impl TerminalHostCatalogs {
             now_ms,
             cancellation,
             |session, persistence| {
+                if let TerminalActionRequest::Close { policy, .. } = request {
+                    if cancellation.is_cancelled() {
+                        return Err(TerminalSessionError::Input(
+                            crate::terminal_input::TerminalInputError::Cancelled,
+                        ));
+                    }
+                    session.close_with(persistence, &authority.owner, now_ms)?;
+                    session.prepare_public_facts_with(persistence, &authority.owner)?;
+                    let mut facts = session.public_facts(
+                        &authority.owner,
+                        authority.actor,
+                        &authority.controls,
+                    )?;
+                    facts.next_actions = machine_god_core::TerminalAllowedControls::default();
+                    return Ok(TerminalActionResult::Close {
+                        session: facts,
+                        policy: *policy,
+                    });
+                }
                 if let TerminalActionRequest::Inspect { events, .. } = request {
                     return session.inspect_result_with(
                         persistence,
@@ -428,6 +449,86 @@ mod tests {
                 .is_err()
         );
         assert_eq!(fixture.saved_state("large"), before);
+    }
+
+    #[test]
+    fn cold_close_persists_without_native_authority_and_rejects_foreign_or_cancelled_calls() {
+        let mut fixture = Fixture::new();
+        fixture.history("cold-close", &owner("a"), "/workspace");
+        let request = TerminalActionRequest::Close {
+            session_id: id("cold-close"),
+            policy: machine_god_core::TerminalClosePolicy::Force,
+        };
+        let mut authority = TerminalResidentAuthority {
+            owner: owner("foreign"),
+            actor: TerminalActorRole::Agent,
+            writer: TerminalWriterId::new(std::num::NonZeroU64::new(1).unwrap()),
+            controls: TerminalAllowedControls::default(),
+            revoke_authorized: false,
+        };
+        let before = fixture.saved_state("cold-close");
+        assert!(
+            fixture
+                .catalogs
+                .dispatch_history(
+                    &fixture.store,
+                    budget(),
+                    &authority,
+                    &request,
+                    2,
+                    &CancellationToken::new()
+                )
+                .is_err()
+        );
+        authority.owner = owner("a");
+        authority.controls.read = true;
+        let cancelled = CancellationToken::new();
+        cancelled.cancel();
+        assert!(
+            fixture
+                .catalogs
+                .dispatch_history(
+                    &fixture.store,
+                    budget(),
+                    &authority,
+                    &request,
+                    2,
+                    &cancelled
+                )
+                .is_err()
+        );
+        assert_eq!(fixture.saved_state("cold-close"), before);
+        for now in [2, 3] {
+            let result = fixture
+                .catalogs
+                .dispatch_history(
+                    &fixture.store,
+                    budget(),
+                    &authority,
+                    &request,
+                    now,
+                    &CancellationToken::new(),
+                )
+                .unwrap();
+            result.validate_for(&request).unwrap();
+            assert!(matches!(result, TerminalActionResult::Close { session, .. }
+                if session.lifecycle == TerminalLifecycle::Closed
+                    && session.next_actions == TerminalAllowedControls::default()));
+        }
+        let facts = fixture
+            .catalogs
+            .with_recovered(
+                &fixture.store,
+                budget(),
+                &owner("a"),
+                &id("cold-close"),
+                4,
+                &CancellationToken::new(),
+                |session, _| Ok(session.facts(&owner("a"))?.clone()),
+            )
+            .unwrap();
+        assert_eq!(facts.context.lifecycle, TerminalLifecycle::Closed);
+        assert!(facts.attention == machine_god_core::TerminalAttentionState::default());
     }
 
     #[test]

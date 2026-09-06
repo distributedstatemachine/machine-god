@@ -423,22 +423,18 @@ pub(crate) fn dispatch_resident<B: TerminalSessionBackend, S>(
             }
         }
         TerminalActionRequest::Close { policy, .. } => {
-            context.registry.mutate_with_profile(
-                context.store,
-                context.budget,
-                &authority.owner,
-                id,
-                |session, persistence| {
-                    before_effect(cancellation)?;
-                    session.close_with(persistence, &authority.owner, *policy, context.now_ms)
-                },
-            )?;
-            let session = resident_facts(&mut context, authority, id).map_err(|error| {
+            let now_ms = context.now_ms;
+            with_persistence(&mut context, authority, id, |registry, persistence| {
+                before_effect(cancellation)?;
+                registry.close_with(persistence, &authority.owner, id, *policy, now_ms)
+            })?;
+            let mut session = resident_facts(&mut context, authority, id).map_err(|error| {
                 TerminalResidentError::Committed {
                     effect: TerminalResidentEffect::Close(*policy),
                     error,
                 }
             })?;
+            session.next_actions = machine_god_core::TerminalAllowedControls::default();
             TerminalActionResult::Close {
                 session,
                 policy: *policy,
