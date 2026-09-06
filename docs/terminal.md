@@ -604,6 +604,16 @@ that worker. Unpolled/cancelled requests do not initialize it, and tool futures
 do not keep the host alive. Last-host drop requests shutdown without joining
 on the polling thread. Unresolved cleanup stays on the same worker with capped
 backoff; completed cleanup is not held forever by an older request error.
+The runtime can additionally own a typed host state, created by its initializer
+on that worker. Context requests borrow the same state with the registry,
+profile store/budget, wait/write coordinators, validated time and cancellation;
+the stateful observer borrows it between requests. State need not be `Send` or
+`Sync`, and no state value lives in an async-caller-owned synchronization cell.
+State is retained through cleanup retries and destroyed after registry/backend
+destruction, including initialization or callback unwind. Its destructor panic
+is contained independently so teardown cannot double-panic through that state.
+Unpolled, pre-cancelled and early-closed requests do not construct state, and
+pending reply futures do not keep it alive after the last host shuts down.
 
 The loop pumps immediately while output is available and polls idle timers at
 10 ms intervals, with at most one command between pump opportunities. Output

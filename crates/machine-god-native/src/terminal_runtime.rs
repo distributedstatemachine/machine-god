@@ -3,7 +3,8 @@
 //! an unpolled request. Futures retain request state, never a host lifetime vote.
 
 use crate::terminal_owner::{
-    TerminalOwnerError, TerminalOwnerFuture, TerminalOwnerHandle, TerminalOwnerLoop,
+    TerminalOwnerContext, TerminalOwnerError, TerminalOwnerFuture, TerminalOwnerHandle,
+    TerminalOwnerLoop,
 };
 use crate::terminal_profile::TerminalProfileBudget;
 use crate::terminal_profile_store::TerminalProfileStore;
@@ -53,7 +54,7 @@ impl fmt::Display for TerminalRuntimeError {
 }
 impl std::error::Error for TerminalRuntimeError {}
 type Result<T> = std::result::Result<T, TerminalRuntimeError>;
-type Initializer<B> = Box<dyn FnOnce() -> Result<TerminalRuntimeWorker<B>> + Send + 'static>;
+type Initializer<B, S> = Box<dyn FnOnce() -> Result<TerminalRuntimeWorker<B, S>> + Send + 'static>;
 
 fn contain<T>(operation: impl FnOnce() -> T) -> std::result::Result<T, ()> {
     catch_unwind(AssertUnwindSafe(operation)).map_err(|payload| {
@@ -62,24 +63,24 @@ fn contain<T>(operation: impl FnOnce() -> T) -> std::result::Result<T, ()> {
     })
 }
 
-struct Starter<B: TerminalSessionBackend> {
-    owner: TerminalOwnerLoop<B>,
-    initialize: Initializer<B>,
+struct Starter<B: TerminalSessionBackend, S> {
+    owner: TerminalOwnerLoop<B, S>,
+    initialize: Initializer<B, S>,
 }
-enum Phase<B: TerminalSessionBackend> {
-    Dormant(Starter<B>),
-    Starting(Arc<Mutex<Option<Starter<B>>>>),
+enum Phase<B: TerminalSessionBackend, S> {
+    Dormant(Starter<B, S>),
+    Starting(Arc<Mutex<Option<Starter<B, S>>>>),
     Running,
     Failed(TerminalRuntimeError),
     Stopped,
 }
-struct Shared<B: TerminalSessionBackend> {
-    phase: Mutex<Phase<B>>,
+struct Shared<B: TerminalSessionBackend, S = ()> {
+    phase: Mutex<Phase<B, S>>,
     spawner: Arc<dyn TerminalRuntimeSpawner>,
     hosts: AtomicUsize,
     closing: AtomicBool,
 }
-impl<B: TerminalSessionBackend + Send + 'static> Shared<B> {
+impl<B: TerminalSessionBackend + Send + 'static, S: 'static> Shared<B, S> {
     fn failure(&self) -> Option<TerminalRuntimeError> {
         match &*self
             .phase
@@ -91,7 +92,7 @@ impl<B: TerminalSessionBackend + Send + 'static> Shared<B> {
         }
     }
 
-    fn set_phase(&self, phase: Phase<B>) {
+    fn set_phase(&self, phase: Phase<B, S>) {
         let previous = {
             let mut current = self
                 .phase
@@ -161,8 +162,12 @@ impl<B: TerminalSessionBackend + Send + 'static> Shared<B> {
             match contain(initialize) {
                 Ok(Ok(worker)) => {
                     shared.set_phase(Phase::Running);
-                    worker.run(owner);
-                    shared.set_phase(Phase::Stopped);
+                    let completed = contain(|| worker.run(owner));
+                    shared.set_phase(if completed.is_ok() {
+                        Phase::Stopped
+                    } else {
+                        Phase::Failed(TerminalRuntimeError::Panicked)
+                    });
                 }
                 outcome => {
                     let error = match outcome {
@@ -192,11 +197,11 @@ impl<B: TerminalSessionBackend + Send + 'static> Shared<B> {
 /// host code and must create all registry/profile/backend authority in its body,
 /// not capture an already-created native session. Failed spawn then has no PTY
 /// to destroy on the polling thread.
-pub(crate) struct TerminalRuntime<B: TerminalSessionBackend + Send + 'static> {
-    shared: Arc<Shared<B>>,
-    owner: TerminalOwnerHandle<B>,
+pub(crate) struct TerminalRuntime<B: TerminalSessionBackend + Send + 'static, S: 'static = ()> {
+    shared: Arc<Shared<B, S>>,
+    owner: TerminalOwnerHandle<B, S>,
 }
-impl<B: TerminalSessionBackend + Send + 'static> Clone for TerminalRuntime<B> {
+impl<B: TerminalSessionBackend + Send + 'static, S: 'static> Clone for TerminalRuntime<B, S> {
     fn clone(&self) -> Self {
         self.shared.hosts.fetch_add(1, Ordering::Relaxed);
         Self {
@@ -205,7 +210,7 @@ impl<B: TerminalSessionBackend + Send + 'static> Clone for TerminalRuntime<B> {
         }
     }
 }
-impl<B: TerminalSessionBackend + Send + 'static> Drop for TerminalRuntime<B> {
+impl<B: TerminalSessionBackend + Send + 'static, S: 'static> Drop for TerminalRuntime<B, S> {
     fn drop(&mut self) {
         if self.shared.hosts.fetch_sub(1, Ordering::AcqRel) == 1 {
             self.owner.shutdown();
@@ -213,16 +218,16 @@ impl<B: TerminalSessionBackend + Send + 'static> Drop for TerminalRuntime<B> {
         }
     }
 }
-impl<B: TerminalSessionBackend + Send + 'static> fmt::Debug for TerminalRuntime<B> {
+impl<B: TerminalSessionBackend + Send + 'static, S: 'static> fmt::Debug for TerminalRuntime<B, S> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("TerminalRuntime")
             .finish_non_exhaustive()
     }
 }
-impl<B: TerminalSessionBackend + Send + 'static> TerminalRuntime<B> {
+impl<B: TerminalSessionBackend + Send + 'static, S: 'static> TerminalRuntime<B, S> {
     pub(crate) fn new(
-        initialize: impl FnOnce() -> Result<TerminalRuntimeWorker<B>> + Send + 'static,
+        initialize: impl FnOnce() -> Result<TerminalRuntimeWorker<B, S>> + Send + 'static,
         spawner: Arc<dyn TerminalRuntimeSpawner>,
     ) -> Self {
         let (owner_loop, owner) = TerminalOwnerLoop::new();
@@ -244,7 +249,7 @@ impl<B: TerminalSessionBackend + Send + 'static> TerminalRuntime<B> {
         &self,
         caller: CancellationToken,
         operation: impl FnOnce(&mut TerminalRegistry<B>, i64, &CancellationToken) -> T + Send + 'static,
-    ) -> TerminalRuntimeFuture<B, T> {
+    ) -> TerminalRuntimeFuture<B, T, S> {
         self.wrap(self.owner.request(caller, operation))
     }
 
@@ -260,7 +265,7 @@ impl<B: TerminalSessionBackend + Send + 'static> TerminalRuntime<B> {
         ) -> T
         + Send
         + 'static,
-    ) -> TerminalRuntimeFuture<B, T> {
+    ) -> TerminalRuntimeFuture<B, T, S> {
         self.wrap(self.owner.request_with_profile(caller, operation))
     }
 
@@ -277,7 +282,7 @@ impl<B: TerminalSessionBackend + Send + 'static> TerminalRuntime<B> {
         ) -> T
         + Send
         + 'static,
-    ) -> TerminalRuntimeFuture<B, T> {
+    ) -> TerminalRuntimeFuture<B, T, S> {
         self.wrap(self.owner.request_with_waits(caller, operation))
     }
 
@@ -294,11 +299,21 @@ impl<B: TerminalSessionBackend + Send + 'static> TerminalRuntime<B> {
         ) -> T
         + Send
         + 'static,
-    ) -> TerminalRuntimeFuture<B, T> {
+    ) -> TerminalRuntimeFuture<B, T, S> {
         self.wrap(self.owner.request_with_writes(caller, operation))
     }
 
-    fn wrap<T>(&self, request: TerminalOwnerFuture<B, T>) -> TerminalRuntimeFuture<B, T> {
+    /// Borrow typed host state and the complete short-dispatch context on the
+    /// owning worker. No `S` value is created or stored by this future.
+    pub(crate) fn request_with_context<T: Send + 'static>(
+        &self,
+        caller: CancellationToken,
+        operation: impl FnOnce(TerminalOwnerContext<'_, B, S>) -> T + Send + 'static,
+    ) -> TerminalRuntimeFuture<B, T, S> {
+        self.wrap(self.owner.request_with_context(caller, operation))
+    }
+
+    fn wrap<T>(&self, request: TerminalOwnerFuture<B, T, S>) -> TerminalRuntimeFuture<B, T, S> {
         TerminalRuntimeFuture {
             shared: Arc::clone(&self.shared),
             request,
@@ -313,13 +328,13 @@ impl<B: TerminalSessionBackend + Send + 'static> TerminalRuntime<B> {
     }
 }
 
-pub(crate) struct TerminalRuntimeFuture<B: TerminalSessionBackend, T> {
-    shared: Arc<Shared<B>>,
-    request: TerminalOwnerFuture<B, T>,
+pub(crate) struct TerminalRuntimeFuture<B: TerminalSessionBackend, T, S = ()> {
+    shared: Arc<Shared<B, S>>,
+    request: TerminalOwnerFuture<B, T, S>,
     finished: bool,
 }
-impl<B: TerminalSessionBackend + Send + 'static, T: Send + 'static> Future
-    for TerminalRuntimeFuture<B, T>
+impl<B: TerminalSessionBackend + Send + 'static, T: Send + 'static, S: 'static> Future
+    for TerminalRuntimeFuture<B, T, S>
 {
     type Output = Result<T>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -354,20 +369,52 @@ impl<B: TerminalSessionBackend + Send + 'static, T: Send + 'static> Future
 
 /// Created inside the owned worker initializer. Registry and persistence remain
 /// on that worker through every failed native or durable cleanup retry.
-pub(crate) struct TerminalRuntimeWorker<B: TerminalSessionBackend> {
+pub(crate) struct TerminalRuntimeWorker<B: TerminalSessionBackend, S = ()> {
     registry: TerminalRegistry<B>,
     store: TerminalProfileStore,
     budget: TerminalProfileBudget,
     clock: Box<dyn FnMut() -> i64 + Send>,
-    observer: Box<dyn FnMut(Vec<TerminalRegistryStep>) + Send>,
+    observer: StateObserver<S>,
+    // Fields drop in declaration order, also during unwinding. State's catalog
+    // locks and cleanup authority outlive registry/backend destruction.
+    state: WorkerState<S>,
 }
+type StateObserver<S> = Box<dyn FnMut(&mut S, Vec<TerminalRegistryStep>) + Send>;
+
+struct WorkerState<S>(Option<S>);
+impl<S> Drop for WorkerState<S> {
+    fn drop(&mut self) {
+        // A state destructor must not turn another field's teardown unwind
+        // into a double panic, or run an opaque panic-payload destructor.
+        let _ = contain(|| drop(self.0.take()));
+    }
+}
+
 impl<B: TerminalSessionBackend> TerminalRuntimeWorker<B> {
     pub(crate) fn new(
         registry: TerminalRegistry<B>,
         store: TerminalProfileStore,
         budget: TerminalProfileBudget,
         clock: impl FnMut() -> i64 + Send + 'static,
-        observer: impl FnMut(Vec<TerminalRegistryStep>) + Send + 'static,
+        mut observer: impl FnMut(Vec<TerminalRegistryStep>) + Send + 'static,
+    ) -> Self {
+        Self::new_with_state(registry, store, budget, (), clock, move |(), steps| {
+            observer(steps);
+        })
+    }
+}
+
+impl<B: TerminalSessionBackend, S> TerminalRuntimeWorker<B, S> {
+    /// Construct inside the initializer, not on the polling thread. `S` need
+    /// not be Send or Sync: only the initializer and request closures cross
+    /// threads, never its result's worker-owned host state.
+    pub(crate) fn new_with_state(
+        registry: TerminalRegistry<B>,
+        store: TerminalProfileStore,
+        budget: TerminalProfileBudget,
+        state: S,
+        clock: impl FnMut() -> i64 + Send + 'static,
+        observer: impl FnMut(&mut S, Vec<TerminalRegistryStep>) + Send + 'static,
     ) -> Self {
         Self {
             registry,
@@ -375,15 +422,20 @@ impl<B: TerminalSessionBackend> TerminalRuntimeWorker<B> {
             budget,
             clock: Box::new(clock),
             observer: Box::new(observer),
+            state: WorkerState(Some(state)),
         }
     }
 
-    fn run(mut self, owner: TerminalOwnerLoop<B>) {
+    fn run(mut self, owner: TerminalOwnerLoop<B, S>) {
         let exit = contain(|| {
-            owner.run_with_profile(
+            owner.run_with_profile_and_state(
                 &mut self.registry,
                 &self.store,
                 &self.budget,
+                self.state
+                    .0
+                    .as_mut()
+                    .expect("worker owns its initialized state"),
                 &mut self.clock,
                 &mut self.observer,
             )
@@ -877,5 +929,327 @@ mod tests {
         fixture.spawner.collect();
         assert_eq!(fixture.backend.lock().unwrap().close_attempts, 1);
         drop(runtime);
+    }
+
+    #[derive(Default)]
+    struct StateLog {
+        initialized_on: Option<ThreadId>,
+        accesses: Vec<ThreadId>,
+        observations: usize,
+        dropped_on: Option<ThreadId>,
+        backend_dropped_before_state: bool,
+        close_attempts_at_drop: usize,
+    }
+
+    // Deliberately !Send and !Sync. The queue and runtime handles remain Send
+    // because they carry typed callbacks, never a HostState instance.
+    struct HostState {
+        counter: std::rc::Rc<std::cell::Cell<usize>>,
+        catalog: crate::terminal_catalog::TerminalCatalog,
+        log: Arc<Mutex<StateLog>>,
+        backend: Arc<Mutex<BackendState>>,
+        panic_on_drop: bool,
+    }
+    impl Drop for HostState {
+        fn drop(&mut self) {
+            let backend = self.backend.lock().unwrap();
+            let mut log = self.log.lock().unwrap();
+            log.dropped_on = Some(std::thread::current().id());
+            log.backend_dropped_before_state = backend.dropped_on.is_some();
+            log.close_attempts_at_drop = backend.close_attempts;
+            drop(log);
+            drop(backend);
+            assert!(!self.panic_on_drop, "state destructor panic");
+        }
+    }
+
+    impl Fixture {
+        fn state_initializer(
+            &self,
+            session: bool,
+            log: Arc<Mutex<StateLog>>,
+            panic_on_drop: bool,
+            panic_in_observer: bool,
+        ) -> impl FnOnce() -> Result<TerminalRuntimeWorker<Backend, HostState>> + Send + 'static
+        {
+            let initialize = self.initializer(session);
+            let backend = Arc::clone(&self.backend);
+            move || {
+                let TerminalRuntimeWorker {
+                    registry,
+                    store,
+                    budget,
+                    clock,
+                    ..
+                } = initialize()?;
+                let owner = BackgroundOutputOwner::new(
+                    SessionId::new("owner").unwrap(),
+                    SessionIncarnationId::new("incarnation").unwrap(),
+                );
+                let catalog = store
+                    .transaction()
+                    .unwrap()
+                    .prepare_catalog("/workspace".into(), owner)
+                    .unwrap();
+                log.lock().unwrap().initialized_on = Some(std::thread::current().id());
+                let state = HostState {
+                    counter: std::rc::Rc::new(std::cell::Cell::new(0)),
+                    catalog,
+                    log,
+                    backend,
+                    panic_on_drop,
+                };
+                Ok(TerminalRuntimeWorker::new_with_state(
+                    registry,
+                    store,
+                    budget,
+                    state,
+                    clock,
+                    move |state, _| {
+                        state.log.lock().unwrap().observations += 1;
+                        assert!(!panic_in_observer, "state observer panic");
+                    },
+                ))
+            }
+        }
+
+        fn state_runtime(
+            &self,
+            session: bool,
+            log: Arc<Mutex<StateLog>>,
+        ) -> TerminalRuntime<Backend, HostState> {
+            TerminalRuntime::new(
+                self.state_initializer(session, log, false, false),
+                self.spawner.clone(),
+            )
+        }
+    }
+
+    #[test]
+    fn typed_non_send_state_is_initialized_accessed_and_destroyed_on_one_worker() {
+        fn send_sync<T: Send + Sync>(_: &T) {}
+        fn send<T: Send>(_: &T) {}
+        let fixture = Fixture::new();
+        let log = Arc::new(Mutex::new(StateLog::default()));
+        let runtime = fixture.state_runtime(true, Arc::clone(&log));
+        send_sync(&runtime);
+        for expected in 1..=3 {
+            let request = runtime.request_with_context(CancellationToken::new(), |context| {
+                let state = context.state;
+                state
+                    .log
+                    .lock()
+                    .unwrap()
+                    .accesses
+                    .push(std::thread::current().id());
+                state.counter.set(state.counter.get() + 1);
+                context
+                    .store
+                    .transaction()
+                    .unwrap()
+                    .validate_catalog(&state.catalog)
+                    .unwrap();
+                assert_eq!(context.registry.workspace(), "/workspace");
+                assert!(context.budget.output_limit() > 0);
+                assert!(context.waits.next_deadline().is_none());
+                assert!(context.writes.observe(context.registry));
+                assert_eq!(context.now_ms, 0);
+                assert!(!context.cancellation.is_cancelled());
+                state.counter.get()
+            });
+            send(&request);
+            assert_eq!(futures_executor::block_on(request), Ok(expected));
+        }
+        assert!(log.lock().unwrap().dropped_on.is_none());
+        drop(runtime);
+        fixture.spawner.collect();
+        let log = log.lock().unwrap();
+        assert_ne!(log.initialized_on, Some(std::thread::current().id()));
+        assert_eq!(log.dropped_on, log.initialized_on);
+        assert!(
+            log.accesses
+                .iter()
+                .all(|thread| Some(*thread) == log.initialized_on)
+        );
+        assert!(log.observations > 0);
+        assert!(log.backend_dropped_before_state);
+    }
+
+    #[test]
+    fn typed_unpolled_cancelled_and_early_closed_requests_never_construct_state() {
+        let fixture = Fixture::new();
+        let log = Arc::new(Mutex::new(StateLog::default()));
+        let runtime = fixture.state_runtime(true, Arc::clone(&log));
+        drop(runtime.request_with_context(CancellationToken::new(), |_| panic!("unpolled")));
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        assert_eq!(
+            futures_executor::block_on(runtime.request_with_context(cancellation, |_| ())),
+            Err(TerminalRuntimeError::Owner(TerminalOwnerError::Cancelled))
+        );
+        runtime.shutdown();
+        assert_eq!(
+            futures_executor::block_on(
+                runtime.request_with_context(CancellationToken::new(), |_| ())
+            ),
+            Err(TerminalRuntimeError::Owner(TerminalOwnerError::Closed))
+        );
+        drop(runtime);
+        assert_eq!(fixture.spawner.calls.load(Ordering::Acquire), 0);
+        assert!(log.lock().unwrap().initialized_on.is_none());
+        assert!(log.lock().unwrap().dropped_on.is_none());
+    }
+
+    #[test]
+    fn typed_future_does_not_retain_state_after_last_host_drop() {
+        let fixture = Fixture::new();
+        let log = Arc::new(Mutex::new(StateLog::default()));
+        let runtime = fixture.state_runtime(true, Arc::clone(&log));
+        futures_executor::block_on(runtime.request_with_context(CancellationToken::new(), |_| ()))
+            .unwrap();
+        let future =
+            runtime.request_with_context(CancellationToken::new(), |_| panic!("closed future"));
+        drop(runtime);
+        fixture.spawner.collect();
+        assert!(log.lock().unwrap().backend_dropped_before_state);
+        assert_eq!(
+            futures_executor::block_on(future),
+            Err(TerminalRuntimeError::Owner(TerminalOwnerError::Closed))
+        );
+    }
+
+    #[test]
+    fn typed_state_survives_every_failed_cleanup_attempt() {
+        let fixture = Fixture::new();
+        fixture.backend.lock().unwrap().close_failures = 2;
+        let log = Arc::new(Mutex::new(StateLog::default()));
+        let runtime = fixture.state_runtime(true, Arc::clone(&log));
+        futures_executor::block_on(runtime.request_with_context(CancellationToken::new(), |_| ()))
+            .unwrap();
+        drop(runtime);
+        fixture.spawner.collect();
+        let log = log.lock().unwrap();
+        assert_eq!(log.close_attempts_at_drop, 3);
+        assert!(log.backend_dropped_before_state);
+        assert_eq!(log.dropped_on, log.initialized_on);
+    }
+
+    #[test]
+    fn typed_committed_receipt_wins_cancellation_and_state_remains_available() {
+        let fixture = Fixture::new();
+        let log = Arc::new(Mutex::new(StateLog::default()));
+        let runtime = fixture.state_runtime(false, log);
+        let caller = CancellationToken::new();
+        let cancel = caller.clone();
+        assert_eq!(
+            futures_executor::block_on(runtime.request_with_context(caller, move |context| {
+                context.state.counter.set(42);
+                cancel.cancel();
+                42
+            })),
+            Ok(42)
+        );
+        assert_eq!(
+            futures_executor::block_on(
+                runtime.request_with_context(CancellationToken::new(), |context| context
+                    .state
+                    .counter
+                    .get())
+            ),
+            Ok(42)
+        );
+        drop(runtime);
+        fixture.spawner.collect();
+    }
+
+    #[test]
+    fn typed_spawn_and_gated_early_close_failures_never_construct_state() {
+        for rejected in [false, true] {
+            let fixture = Fixture::new();
+            fixture.spawner.reject.store(rejected, Ordering::Release);
+            let (release, gate) = sync_channel(1);
+            if !rejected {
+                *fixture.spawner.gate.lock().unwrap() = Some(gate);
+            }
+            let log = Arc::new(Mutex::new(StateLog::default()));
+            let runtime = fixture.state_runtime(true, Arc::clone(&log));
+            let mut request =
+                runtime.request_with_context(CancellationToken::new(), |_| panic!("not admitted"));
+            let first = poll(&mut request);
+            if rejected {
+                assert_eq!(first, Poll::Ready(Err(TerminalRuntimeError::Spawn)));
+            } else {
+                assert!(first.is_pending());
+            }
+            drop(runtime);
+            if !rejected {
+                assert_eq!(
+                    futures_executor::block_on(request),
+                    Err(TerminalRuntimeError::Owner(TerminalOwnerError::Closed))
+                );
+                release.send(()).unwrap();
+            }
+            fixture.spawner.collect();
+            assert!(log.lock().unwrap().initialized_on.is_none());
+        }
+    }
+
+    #[test]
+    fn typed_initialization_error_and_unwind_destroy_backend_before_state() {
+        for panicked in [false, true] {
+            let fixture = Fixture::new();
+            let log = Arc::new(Mutex::new(StateLog::default()));
+            let initialize = fixture.state_initializer(true, Arc::clone(&log), panicked, false);
+            let runtime: TerminalRuntime<Backend, HostState> = TerminalRuntime::new(
+                move || {
+                    let _worker = initialize()?;
+                    assert!(!panicked, "initialization fails after state construction");
+                    Err(TerminalRuntimeError::Initialization)
+                },
+                fixture.spawner.clone(),
+            );
+            let expected = if panicked {
+                TerminalRuntimeError::Panicked
+            } else {
+                TerminalRuntimeError::Initialization
+            };
+            assert_eq!(
+                futures_executor::block_on(
+                    runtime.request_with_context(CancellationToken::new(), |_| ())
+                ),
+                Err(expected)
+            );
+            drop(runtime);
+            fixture.spawner.collect();
+            let log = log.lock().unwrap();
+            assert!(log.backend_dropped_before_state);
+            assert_eq!(log.dropped_on, log.initialized_on);
+            assert_ne!(log.dropped_on, Some(std::thread::current().id()));
+        }
+    }
+
+    #[test]
+    fn typed_callback_and_observer_panics_cleanup_before_state_destruction() {
+        for observer_panics in [false, true] {
+            let fixture = Fixture::new();
+            let log = Arc::new(Mutex::new(StateLog::default()));
+            let runtime = TerminalRuntime::new(
+                fixture.state_initializer(true, Arc::clone(&log), true, observer_panics),
+                fixture.spawner.clone(),
+            );
+            assert!(
+                futures_executor::block_on(
+                    runtime.request_with_context(CancellationToken::new(), |_| panic!(
+                        "state callback panic"
+                    ))
+                )
+                .is_err()
+            );
+            fixture.spawner.collect();
+            let log = log.lock().unwrap();
+            assert!(log.backend_dropped_before_state);
+            assert_eq!(log.dropped_on, log.initialized_on);
+            drop(runtime);
+        }
     }
 }

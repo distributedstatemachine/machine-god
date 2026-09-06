@@ -49,7 +49,7 @@ fn catch_callback<T>(callback: impl FnOnce() -> T) -> std::result::Result<T, ()>
     }
 }
 
-trait Job<B: TerminalSessionBackend>: Send {
+trait Job<B: TerminalSessionBackend, S>: Send {
     /// False means an operation panicked and this owner must stop.
     fn execute(
         self: Box<Self>,
@@ -58,20 +58,21 @@ trait Job<B: TerminalSessionBackend>: Send {
         writes: &mut TerminalWriteCoordinator,
         now_ms: i64,
         profile: Option<(&TerminalProfileStore, &TerminalProfileBudget)>,
+        state: &mut S,
     ) -> bool;
 }
-enum Message<B: TerminalSessionBackend> {
-    Job(Box<dyn Job<B>>),
+enum Message<B: TerminalSessionBackend, S> {
+    Job(Box<dyn Job<B, S>>),
     Wake,
 }
-struct Shared<B: TerminalSessionBackend> {
-    sender: SyncSender<Message<B>>,
+struct Shared<B: TerminalSessionBackend, S> {
+    sender: SyncSender<Message<B, S>>,
     closing: AtomicBool,
     clients: AtomicUsize,
     requests: Arc<AtomicUsize>,
     callback_panicked: Arc<AtomicBool>,
 }
-impl<B: TerminalSessionBackend> Shared<B> {
+impl<B: TerminalSessionBackend, S> Shared<B, S> {
     fn close(&self) {
         if !self.closing.swap(true, Ordering::AcqRel) {
             let _ = self.sender.try_send(Message::Wake);
@@ -102,7 +103,7 @@ fn complete<T>(reply: &Mutex<Reply<T>>, value: Result<T>) -> bool {
     }
     true
 }
-type Operation<B, T> = Box<
+type Operation<B, T, S> = Box<
     dyn FnOnce(
             &mut TerminalRegistry<B>,
             &mut TerminalWaitCoordinator,
@@ -110,11 +111,12 @@ type Operation<B, T> = Box<
             i64,
             &CancellationToken,
             Option<(&TerminalProfileStore, &TerminalProfileBudget)>,
+            &mut S,
         ) -> Result<T>
         + Send,
 >;
-struct Request<B: TerminalSessionBackend, T> {
-    operation: Option<Operation<B, T>>,
+struct Request<B: TerminalSessionBackend, T, S> {
+    operation: Option<Operation<B, T, S>>,
     reply: Arc<Mutex<Reply<T>>>,
     caller: CancellationToken,
     cancellation: CancellationToken,
@@ -122,7 +124,7 @@ struct Request<B: TerminalSessionBackend, T> {
     callback_panicked: Arc<AtomicBool>,
     completed: bool,
 }
-impl<B: TerminalSessionBackend, T: Send> Job<B> for Request<B, T> {
+impl<B: TerminalSessionBackend, T: Send, S> Job<B, S> for Request<B, T, S> {
     fn execute(
         mut self: Box<Self>,
         registry: &mut TerminalRegistry<B>,
@@ -130,6 +132,7 @@ impl<B: TerminalSessionBackend, T: Send> Job<B> for Request<B, T> {
         writes: &mut TerminalWriteCoordinator,
         now_ms: i64,
         profile: Option<(&TerminalProfileStore, &TerminalProfileBudget)>,
+        state: &mut S,
     ) -> bool {
         if self.caller.is_cancelled() {
             self.cancellation.cancel();
@@ -139,7 +142,15 @@ impl<B: TerminalSessionBackend, T: Send> Job<B> for Request<B, T> {
         } else {
             let operation = self.operation.take().expect("request executed once");
             catch_callback(|| {
-                operation(registry, waits, writes, now_ms, &self.cancellation, profile)
+                operation(
+                    registry,
+                    waits,
+                    writes,
+                    now_ms,
+                    &self.cancellation,
+                    profile,
+                    state,
+                )
             })
             .unwrap_or(Err(TerminalOwnerError::Panicked))
         };
@@ -152,7 +163,7 @@ impl<B: TerminalSessionBackend, T: Send> Job<B> for Request<B, T> {
         keep_running && woke
     }
 }
-impl<B: TerminalSessionBackend, T> Drop for Request<B, T> {
+impl<B: TerminalSessionBackend, T, S> Drop for Request<B, T, S> {
     fn drop(&mut self) {
         if !self.completed && !complete(&self.reply, Err(TerminalOwnerError::Closed)) {
             // Contain wake separately from captured-value Drop: if both panic,
@@ -162,12 +173,26 @@ impl<B: TerminalSessionBackend, T> Drop for Request<B, T> {
     }
 }
 
+/// One short, typed dispatch borrow. State is not stored in request futures;
+/// only the owning loop supplies it. Native authority must not be returned in
+/// reply values, and profile guards must end before the callback returns.
+pub(crate) struct TerminalOwnerContext<'a, B: TerminalSessionBackend, S> {
+    pub(crate) registry: &'a mut TerminalRegistry<B>,
+    pub(crate) store: &'a TerminalProfileStore,
+    pub(crate) budget: &'a TerminalProfileBudget,
+    pub(crate) waits: &'a mut TerminalWaitCoordinator,
+    pub(crate) writes: &'a mut TerminalWriteCoordinator,
+    pub(crate) state: &'a mut S,
+    pub(crate) now_ms: i64,
+    pub(crate) cancellation: &'a CancellationToken,
+}
+
 /// The host owns this handle, not an individual tool future. Last-handle drop
 /// requests shutdown; it never waits for process cleanup on the polling thread.
-pub(crate) struct TerminalOwnerHandle<B: TerminalSessionBackend> {
-    shared: Arc<Shared<B>>,
+pub(crate) struct TerminalOwnerHandle<B: TerminalSessionBackend, S = ()> {
+    shared: Arc<Shared<B, S>>,
 }
-impl<B: TerminalSessionBackend> Clone for TerminalOwnerHandle<B> {
+impl<B: TerminalSessionBackend, S> Clone for TerminalOwnerHandle<B, S> {
     fn clone(&self) -> Self {
         self.shared.clients.fetch_add(1, Ordering::Relaxed);
         Self {
@@ -175,24 +200,49 @@ impl<B: TerminalSessionBackend> Clone for TerminalOwnerHandle<B> {
         }
     }
 }
-impl<B: TerminalSessionBackend> Drop for TerminalOwnerHandle<B> {
+impl<B: TerminalSessionBackend, S> Drop for TerminalOwnerHandle<B, S> {
     fn drop(&mut self) {
         if self.shared.clients.fetch_sub(1, Ordering::AcqRel) == 1 {
             self.shared.close();
         }
     }
 }
-impl<B: TerminalSessionBackend + 'static> TerminalOwnerHandle<B> {
+impl<B: TerminalSessionBackend + 'static, S: 'static> TerminalOwnerHandle<B, S> {
+    pub(crate) fn request_with_context<T: Send + 'static>(
+        &self,
+        caller: CancellationToken,
+        operation: impl FnOnce(TerminalOwnerContext<'_, B, S>) -> T + Send + 'static,
+    ) -> TerminalOwnerFuture<B, T, S> {
+        self.request_inner(
+            caller,
+            Box::new(
+                move |registry, waits, writes, now_ms, cancellation, profile, state| {
+                    let (store, budget) = profile.ok_or(TerminalOwnerError::ProfileRequired)?;
+                    Ok(operation(TerminalOwnerContext {
+                        registry,
+                        store,
+                        budget,
+                        waits,
+                        writes,
+                        state,
+                        now_ms,
+                        cancellation,
+                    }))
+                },
+            ),
+        )
+    }
+
     /// Operations must be bounded, authorized host commands. No tool-supplied
     /// closure, process backend, or unbounded external probe belongs here.
     pub(crate) fn request<T: Send + 'static>(
         &self,
         caller: CancellationToken,
         operation: impl FnOnce(&mut TerminalRegistry<B>, i64, &CancellationToken) -> T + Send + 'static,
-    ) -> TerminalOwnerFuture<B, T> {
+    ) -> TerminalOwnerFuture<B, T, S> {
         self.request_inner(
             caller,
-            Box::new(move |registry, _, _, now_ms, cancellation, _| {
+            Box::new(move |registry, _, _, now_ms, cancellation, _, _| {
                 Ok(operation(registry, now_ms, cancellation))
             }),
         )
@@ -215,10 +265,10 @@ impl<B: TerminalSessionBackend + 'static> TerminalOwnerHandle<B> {
         ) -> T
         + Send
         + 'static,
-    ) -> TerminalOwnerFuture<B, T> {
+    ) -> TerminalOwnerFuture<B, T, S> {
         self.request_inner(
             caller,
-            Box::new(move |registry, _, _, now_ms, cancellation, profile| {
+            Box::new(move |registry, _, _, now_ms, cancellation, profile, _| {
                 let (store, budget) = profile.ok_or(TerminalOwnerError::ProfileRequired)?;
                 Ok(operation(registry, store, budget, now_ms, cancellation))
             }),
@@ -241,20 +291,22 @@ impl<B: TerminalSessionBackend + 'static> TerminalOwnerHandle<B> {
         ) -> T
         + Send
         + 'static,
-    ) -> TerminalOwnerFuture<B, T> {
+    ) -> TerminalOwnerFuture<B, T, S> {
         self.request_inner(
             caller,
-            Box::new(move |registry, waits, _, now_ms, cancellation, profile| {
-                let (store, budget) = profile.ok_or(TerminalOwnerError::ProfileRequired)?;
-                Ok(operation(
-                    registry,
-                    store,
-                    budget,
-                    waits,
-                    now_ms,
-                    cancellation,
-                ))
-            }),
+            Box::new(
+                move |registry, waits, _, now_ms, cancellation, profile, _| {
+                    let (store, budget) = profile.ok_or(TerminalOwnerError::ProfileRequired)?;
+                    Ok(operation(
+                        registry,
+                        store,
+                        budget,
+                        waits,
+                        now_ms,
+                        cancellation,
+                    ))
+                },
+            ),
         )
     }
 
@@ -273,28 +325,30 @@ impl<B: TerminalSessionBackend + 'static> TerminalOwnerHandle<B> {
         ) -> T
         + Send
         + 'static,
-    ) -> TerminalOwnerFuture<B, T> {
+    ) -> TerminalOwnerFuture<B, T, S> {
         self.request_inner(
             caller,
-            Box::new(move |registry, _, writes, now_ms, cancellation, profile| {
-                let (store, budget) = profile.ok_or(TerminalOwnerError::ProfileRequired)?;
-                Ok(operation(
-                    registry,
-                    store,
-                    budget,
-                    writes,
-                    now_ms,
-                    cancellation,
-                ))
-            }),
+            Box::new(
+                move |registry, _, writes, now_ms, cancellation, profile, _| {
+                    let (store, budget) = profile.ok_or(TerminalOwnerError::ProfileRequired)?;
+                    Ok(operation(
+                        registry,
+                        store,
+                        budget,
+                        writes,
+                        now_ms,
+                        cancellation,
+                    ))
+                },
+            ),
         )
     }
 
     fn request_inner<T: Send + 'static>(
         &self,
         caller: CancellationToken,
-        operation: Operation<B, T>,
-    ) -> TerminalOwnerFuture<B, T> {
+        operation: Operation<B, T, S>,
+    ) -> TerminalOwnerFuture<B, T, S> {
         TerminalOwnerFuture {
             shared: Arc::clone(&self.shared),
             operation: Some(operation),
@@ -314,9 +368,9 @@ impl<B: TerminalSessionBackend + 'static> TerminalOwnerHandle<B> {
         self.shared.close();
     }
 }
-pub(crate) struct TerminalOwnerFuture<B: TerminalSessionBackend, T> {
-    shared: Arc<Shared<B>>,
-    operation: Option<Operation<B, T>>,
+pub(crate) struct TerminalOwnerFuture<B: TerminalSessionBackend, T, S = ()> {
+    shared: Arc<Shared<B, S>>,
+    operation: Option<Operation<B, T, S>>,
     reply: Arc<Mutex<Reply<T>>>,
     caller_wait: Option<Cancelled>,
     caller: CancellationToken,
@@ -325,7 +379,9 @@ pub(crate) struct TerminalOwnerFuture<B: TerminalSessionBackend, T> {
     submitted: bool,
     finished: bool,
 }
-impl<B: TerminalSessionBackend + 'static, T: Send + 'static> Future for TerminalOwnerFuture<B, T> {
+impl<B: TerminalSessionBackend + 'static, T: Send + 'static, S: 'static> Future
+    for TerminalOwnerFuture<B, T, S>
+{
     type Output = Result<T>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -404,7 +460,7 @@ impl<B: TerminalSessionBackend + 'static, T: Send + 'static> Future for Terminal
         }
     }
 }
-impl<B: TerminalSessionBackend, T> Drop for TerminalOwnerFuture<B, T> {
+impl<B: TerminalSessionBackend, T, S> Drop for TerminalOwnerFuture<B, T, S> {
     fn drop(&mut self) {
         if !self.finished {
             self.cancellation.cancel();
@@ -419,9 +475,9 @@ impl<B: TerminalSessionBackend, T> Drop for TerminalOwnerFuture<B, T> {
     }
 }
 
-pub(crate) struct TerminalOwnerLoop<B: TerminalSessionBackend> {
-    shared: Arc<Shared<B>>,
-    receiver: Receiver<Message<B>>,
+pub(crate) struct TerminalOwnerLoop<B: TerminalSessionBackend, S = ()> {
+    shared: Arc<Shared<B, S>>,
+    receiver: Receiver<Message<B, S>>,
 }
 pub(crate) struct TerminalOwnerExit {
     pub(crate) error: Option<TerminalOwnerError>,
@@ -581,7 +637,7 @@ fn publish_waits<B: TerminalSessionBackend>(
     }
     (panicked, failed)
 }
-impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
+impl<B: TerminalSessionBackend, S> TerminalOwnerLoop<B, S> {
     /// A rejected request can run user waker or captured-value destructors.
     /// Contain each one independently so every remaining reply is resolved and
     /// neither normal shutdown nor unwinding Drop can skip native cleanup.
@@ -592,7 +648,7 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
         }
         panicked
     }
-    pub(crate) fn new() -> (Self, TerminalOwnerHandle<B>) {
+    pub(crate) fn new() -> (Self, TerminalOwnerHandle<B, S>) {
         let (sender, receiver) = sync_channel(MAX_REQUESTS);
         let shared = Arc::new(Shared {
             sender,
@@ -609,6 +665,9 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
             TerminalOwnerHandle { shared },
         )
     }
+}
+
+impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
     /// Runs only on the host's owned blocking worker. It borrows the registry so
     /// the same worker can retain failed histories after inspecting the exit.
     /// The observer consumes bounded output/probe descriptions synchronously;
@@ -618,9 +677,15 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
         self,
         registry: &mut TerminalRegistry<B>,
         clock: impl FnMut() -> i64,
-        observer: impl FnMut(Vec<TerminalRegistryStep>),
+        mut observer: impl FnMut(Vec<TerminalRegistryStep>),
     ) -> TerminalOwnerExit {
-        self.run_inner(registry, Persistence::Unmetered, clock, observer)
+        self.run_inner(
+            registry,
+            Persistence::Unmetered,
+            &mut (),
+            clock,
+            |(), steps| observer(steps),
+        )
     }
 
     /// Profile transactions exist only inside dispatch, never across observers,
@@ -631,11 +696,30 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
         store: &TerminalProfileStore,
         budget: &TerminalProfileBudget,
         clock: impl FnMut() -> i64,
-        observer: impl FnMut(Vec<TerminalRegistryStep>),
+        mut observer: impl FnMut(Vec<TerminalRegistryStep>),
+    ) -> TerminalOwnerExit {
+        self.run_with_profile_and_state(registry, store, budget, &mut (), clock, |(), steps| {
+            observer(steps);
+        })
+    }
+}
+
+impl<B: TerminalSessionBackend, S> TerminalOwnerLoop<B, S> {
+    /// The state borrow remains on this worker across requests and observers.
+    /// The caller retains state until registry destruction and cleanup retries.
+    pub(crate) fn run_with_profile_and_state(
+        self,
+        registry: &mut TerminalRegistry<B>,
+        store: &TerminalProfileStore,
+        budget: &TerminalProfileBudget,
+        state: &mut S,
+        clock: impl FnMut() -> i64,
+        observer: impl FnMut(&mut S, Vec<TerminalRegistryStep>),
     ) -> TerminalOwnerExit {
         self.run_inner(
             registry,
             Persistence::Profile(store, budget),
+            state,
             clock,
             observer,
         )
@@ -645,8 +729,9 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
         self,
         registry: &mut TerminalRegistry<B>,
         persistence: Persistence<'_>,
+        state: &mut S,
         mut clock: impl FnMut() -> i64,
-        mut observer: impl FnMut(Vec<TerminalRegistryStep>),
+        mut observer: impl FnMut(&mut S, Vec<TerminalRegistryStep>),
     ) -> TerminalOwnerExit {
         let mut error = None;
         let mut waits = TerminalWaitCoordinator::new();
@@ -670,7 +755,7 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
                                 error = Some(TerminalOwnerError::Panicked);
                                 break;
                             }
-                            observer(steps);
+                            observer(state, steps);
                             output_ready || catching_up
                         }
                         Err(failure) => {
@@ -706,6 +791,7 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
                             &mut writes,
                             registry.minimum_time_ms(),
                             persistence.authority(),
+                            state,
                         ) {
                             error = Some(TerminalOwnerError::Panicked);
                             break;
@@ -756,7 +842,7 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
         TerminalOwnerExit { error, shutdown }
     }
 }
-impl<B: TerminalSessionBackend> Drop for TerminalOwnerLoop<B> {
+impl<B: TerminalSessionBackend, S> Drop for TerminalOwnerLoop<B, S> {
     fn drop(&mut self) {
         self.shared.close();
         self.reject_pending();
