@@ -13,7 +13,15 @@ use machine_god_native::{
     NativeBackgroundInspectionErrorKind, NativeBackgroundQuery, inspect_process_background,
 };
 
-const MAX_BACKGROUND_OUTPUT_BYTES: usize = 64 * 1024;
+// Both renderers escape at most six output bytes per UTF-8 input byte. The
+// fixed allowance covers all labels, keys, punctuation and bounded scalars.
+// Detail is larger than a 100-row list even with maximal command previews.
+const MAX_BACKGROUND_OUTPUT_BYTES: usize = 6
+    * (MAX_BACKGROUND_COMMAND_BYTES
+        + MAX_BACKGROUND_PATH_BYTES
+        + MAX_BACKGROUND_SERVER_URL_BYTES
+        + MAX_BACKGROUND_DIAGNOSTIC_BYTES)
+    + 1024;
 const MAX_BACKGROUND_ID_BYTES: usize = u64::MAX.ilog10() as usize + 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1157,19 +1165,29 @@ mod tests {
     }
 
     #[test]
-    fn representation_expansion_over_the_limit_fails_before_success_output() {
+    fn maximum_escaped_command_renders_losslessly_in_both_formats() {
         let BackgroundSnapshot::Detail(mut snapshot) = detail() else {
             unreachable!()
         };
         snapshot.command = "\u{1b}".repeat(MAX_BACKGROUND_COMMAND_BYTES);
-        let host = FakeHost::ready(Ok(BackgroundSnapshot::Detail(snapshot)));
-        let (exit, stdout, stderr) = invoke(&host, &["--json"]);
-        assert_eq!(exit, 1);
-        assert_eq!(
-            stdout,
-            b"{\"kind\":\"background\",\"error\":\"could not inspect background history: ResourceLimit\",\"code\":\"ResourceLimit\"}\n"
+        snapshot.cwd = format!("/{}", "\u{1b}".repeat(MAX_BACKGROUND_PATH_BYTES - 1));
+        snapshot.server_url = Some("\u{1b}".repeat(MAX_BACKGROUND_SERVER_URL_BYTES));
+        snapshot.diagnostic = Some("\u{1b}".repeat(MAX_BACKGROUND_DIAGNOSTIC_BYTES));
+        let expected = format!(
+            "\"command\":\"{}\"",
+            "\\u001b".repeat(MAX_BACKGROUND_COMMAND_BYTES)
         );
-        assert!(stderr.is_empty());
+        let host = FakeHost::ready(Ok(BackgroundSnapshot::Detail(snapshot)));
+        for args in [&["last", "--json"][..], &["last"][..]] {
+            let (exit, stdout, stderr) = invoke(&host, args);
+            assert_eq!(exit, 0);
+            assert!(stdout.len() <= MAX_BACKGROUND_OUTPUT_BYTES);
+            assert!(stdout.len() > MAX_BACKGROUND_COMMAND_BYTES * 6);
+            assert!(stderr.is_empty());
+            if args.contains(&"--json") {
+                assert!(String::from_utf8(stdout).unwrap().contains(&expected));
+            }
+        }
     }
 
     struct BrokenWriter;

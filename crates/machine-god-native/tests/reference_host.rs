@@ -2345,6 +2345,7 @@ fn composed_terminal_preserves_full_commands_through_provider_engine_and_permiss
     for (case, command, accepted) in [
         ("plain", "a".repeat(maximum), true),
         ("escaped", "\u{1b}".repeat(maximum), true),
+        ("streamed", "\u{1b}".repeat(maximum), true),
         ("unicode", "é".repeat(maximum / 2), true),
         ("oversized", "a".repeat(maximum + 1), false),
     ] {
@@ -2356,9 +2357,18 @@ fn composed_terminal_preserves_full_commands_through_provider_engine_and_permiss
             "type": "tool-call", "toolCallId": "bounded-command",
             "toolName": "terminal", "input": arguments
         });
-        let response = format!(
+        let mut response = format!(
             "data: {input}\n\ndata: {{\"type\":\"finish\",\"finishReason\":{{\"unified\":\"tool-calls\"}}}}\n\n"
         );
+        if case == "streamed" {
+            let delta = json!({
+                "type": "tool-input-delta", "id": "bounded-command",
+                "delta": arguments.to_string()
+            });
+            response = format!(
+                "data: {{\"type\":\"tool-input-start\",\"id\":\"bounded-command\",\"toolName\":\"terminal\"}}\n\ndata: {delta}\n\ndata: {{\"type\":\"tool-input-end\",\"id\":\"bounded-command\"}}\n\n{response}"
+            );
+        }
         let finish = "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n";
         let transport = ScriptedTransport::new("COMMAND_BOUND", [response.as_str(), finish]);
         let prompter = DenyingTerminalPrompter::default();

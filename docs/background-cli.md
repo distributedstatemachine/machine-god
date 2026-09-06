@@ -69,8 +69,10 @@ states are explicitly recorded history, not a current-liveness assertion.
 
 Strings are JSON-escaped in machine mode and terminal-control-sanitized in
 human mode. Both modes have exactly one final LF. The complete representation
-is validated and rendered before the first success write and is capped at 64
-KiB including that LF. A violated snapshot invariant, checked-size overflow, or
+is validated and rendered before the first success write. Its ceiling is six
+times the command, cwd, URL and diagnostic byte limits plus 1,024 bytes for
+fixed fields and framing, including that LF. It accommodates worst-case
+escaping of every valid detail and every 100-row list. A violated snapshot invariant, checked-size overflow, or
 one-byte excess becomes `ResourceLimit` with no partial success output. Writer
 failure uses only the fixed global output diagnostic.
 
