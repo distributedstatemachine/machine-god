@@ -49,11 +49,11 @@ impl TerminalHostCatalogs {
         request
             .validate()
             .map_err(|_| TerminalCatalogViewError::Invalid)?;
-        let id = match request {
-            TerminalActionRequest::Read { session_id, .. }
-            | TerminalActionRequest::Screen { session_id }
-            | TerminalActionRequest::Inspect { session_id, .. } => session_id,
-            _ => return Err(TerminalCatalogViewError::Invalid),
+        let (TerminalActionRequest::Read { session_id: id, .. }
+        | TerminalActionRequest::Screen { session_id: id }
+        | TerminalActionRequest::Inspect { session_id: id, .. }) = request
+        else {
+            return Err(TerminalCatalogViewError::Invalid);
         };
         let result = self.with_recovered(
             store,
