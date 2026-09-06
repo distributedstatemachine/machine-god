@@ -5,6 +5,10 @@
     reason = "lower-level process lifecycle primitives remain directly integration-tested"
 )]
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "terminal_tmux_process.rs"]
+pub(crate) mod terminal_tmux_process;
+
 #[cfg(unix)]
 use std::collections::BTreeSet;
 #[cfg(target_os = "linux")]
