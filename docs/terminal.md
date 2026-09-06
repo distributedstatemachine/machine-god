@@ -101,6 +101,11 @@ or caller drop. The private CLI helper accepts only its exact single flag before
 normal configuration. Its bounded, close-on-exec error channel distinguishes a
 missing/non-executable shell from a command that legitimately exits with 125;
 launch failure is never guessed from an exit status or stderr content.
+The configured 1 ms–600 s timeout is one end-to-end deadline, including private
+helper startup and exec confirmation. The host passes the required absolute
+monotonic `MACHINE_GOD_CAPTURED_DEADLINE` stamp; the helper does not start a new
+timer or impose a hidden two-second cutoff. PTY standalone helper defaults and
+its independent maximum startup interval are unchanged.
 The registered legacy adapter is unchanged until full reference-host composition.
 
 ## Native screen projection
