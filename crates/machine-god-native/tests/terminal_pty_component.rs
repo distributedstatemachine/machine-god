@@ -9,6 +9,8 @@ mod background_input;
 mod background_process;
 #[path = "../src/terminal_catalog.rs"]
 mod terminal_catalog;
+#[path = "../src/terminal_catalog_view.rs"]
+mod terminal_catalog_view;
 #[path = "../src/terminal_display_width.rs"]
 mod terminal_display_width;
 #[path = "../src/terminal_grid.rs"]

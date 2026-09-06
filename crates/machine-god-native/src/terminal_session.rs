@@ -44,6 +44,16 @@ pub(crate) trait TerminalSessionBackend {
     }
     fn read(&mut self, buffer: &mut [u8]) -> std::result::Result<TerminalPtyRead, ()>;
     fn write(&mut self, bytes: &[u8]) -> std::result::Result<BackgroundInputReceipt, ()>;
+    fn write_with_paste(
+        &mut self,
+        bytes: &[u8],
+        _paste: bool,
+    ) -> std::result::Result<BackgroundInputReceipt, ()> {
+        self.write(bytes)
+    }
+    fn input_write_limit(&self) -> usize {
+        crate::background_input::MAX_BACKGROUND_INPUT_BYTES
+    }
     fn status(&mut self) -> std::result::Result<TerminalPtyStatus, ()>;
     fn resize(&mut self, dimensions: &TerminalDimensions) -> std::result::Result<(), ()>;
     fn signal(&mut self, signal: TerminalSignal) -> std::result::Result<(), ()>;
@@ -697,6 +707,24 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         request: &TerminalWriteRequest,
         cancelled: bool,
     ) -> Result<TerminalInputReceipt> {
+        let (receipt, error) =
+            self.write_completion_with(persistence, owner, actor, writer, request, cancelled)?;
+        error.map_or(Ok(receipt), Err)
+    }
+
+    /// Admission failures have no accepted receipt. Once input is submitted,
+    /// preserve its exact accepted-byte receipt independently of a subsequent
+    /// durable quiescence-publication error; callers must never retry payload
+    /// bytes merely because that separate publication failed.
+    pub(crate) fn write_completion_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        owner: &BackgroundOutputOwner,
+        actor: TerminalActorRole,
+        writer: TerminalWriterId,
+        request: &TerminalWriteRequest,
+        cancelled: bool,
+    ) -> Result<(TerminalInputReceipt, Option<TerminalSessionError>)> {
         self.authorize(owner)?;
         if self.lifecycle != TerminalLifecycle::Running {
             return Err(TerminalSessionError::InvalidState);
@@ -747,15 +775,17 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         let receipt = self
             .input
             .submit_with_actor(actor, writer, request, cancelled)?;
+        let mut publication_error = None;
         if receipt.operation_id.is_some() {
             self.flush_input();
             if self.input.is_quiesced() {
-                self.persist_with(persistence)?;
+                publication_error = self.persist_with(persistence).err();
             }
         }
-        receipt.operation_id.map_or(Ok(receipt), |operation| {
-            Ok(self.input.receipt_with_actor(actor, writer, operation)?)
-        })
+        let receipt = receipt.operation_id.map_or(Ok(receipt), |operation| {
+            self.input.receipt_with_actor(actor, writer, operation)
+        })?;
+        Ok((receipt, publication_error))
     }
     #[cfg(test)]
     pub(crate) fn write_receipt(
@@ -1642,7 +1672,10 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
     }
     fn flush_input(&mut self) {
         if let Some(backend) = &mut self.backend {
-            self.input.flush(|bytes| backend.write(bytes));
+            self.input
+                .flush_with_limit(backend.input_write_limit(), |bytes, paste| {
+                    backend.write_with_paste(bytes, paste)
+                });
         }
         if self.input.is_quiesced() {
             self.attention = TerminalAttentionState::default();
@@ -2159,7 +2192,9 @@ mod tests {
         output: VecDeque<Vec<u8>>,
         tail: Vec<u8>,
         writes: Vec<u8>,
+        paste_modes: Vec<bool>,
         write_limit: usize,
+        write_closes: bool,
         status: TerminalPtyStatus,
         exit_after_read: Option<TerminalPtyStatus>,
         closes: usize,
@@ -2179,7 +2214,9 @@ mod tests {
                 output: VecDeque::new(),
                 tail: Vec::new(),
                 writes: Vec::new(),
+                paste_modes: Vec::new(),
                 write_limit: usize::MAX,
+                write_closes: false,
                 status: TerminalPtyStatus::Running,
                 exit_after_read: None,
                 closes: 0,
@@ -2196,6 +2233,103 @@ mod tests {
         }
     }
     struct Backend(Arc<Mutex<State>>);
+
+    #[test]
+    fn submitted_write_receipt_survives_failed_quiescence_publication() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        let writer = TerminalWriterId::new(NonZeroU64::new(1).unwrap());
+        session
+            .write(
+                &owner("owner"),
+                writer,
+                &TerminalWriteRequest {
+                    lease: TerminalWriteLeaseIntent::Acquire,
+                    payload: None,
+                },
+                false,
+            )
+            .unwrap();
+        {
+            let mut state = fixture.state.lock().unwrap();
+            state.write_limit = 2;
+            state.write_closes = true;
+        }
+        let mut persistence = Persistence {
+            denied: true,
+            ..Persistence::default()
+        };
+        let (receipt, error) = session
+            .write_completion_with(
+                &mut persistence,
+                &owner("owner"),
+                TerminalActorRole::Agent,
+                writer,
+                &TerminalWriteRequest {
+                    lease: TerminalWriteLeaseIntent::Use,
+                    payload: Some(TerminalWritePayload::Text {
+                        text: "abcd".into(),
+                    }),
+                },
+                false,
+            )
+            .unwrap();
+        assert_eq!(receipt.accepted_bytes, 2);
+        assert_eq!(receipt.progress, TerminalInputProgress::Closed);
+        assert!(error.is_some());
+        assert_eq!(fixture.state.lock().unwrap().writes, b"ab");
+        assert_eq!(
+            session
+                .write_receipt(&owner("owner"), writer, receipt.operation_id.unwrap())
+                .unwrap(),
+            receipt
+        );
+        session
+            .close(&owner("owner"), TerminalClosePolicy::Force, 1)
+            .unwrap();
+    }
+
+    #[test]
+    fn session_dispatch_preserves_paste_kind_through_backpressure() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        fixture.state.lock().unwrap().write_limit = 1;
+        let writer = TerminalWriterId::new(NonZeroU64::new(1).unwrap());
+        session
+            .write(
+                &owner("owner"),
+                writer,
+                &TerminalWriteRequest {
+                    lease: TerminalWriteLeaseIntent::Acquire,
+                    payload: None,
+                },
+                false,
+            )
+            .unwrap();
+        session
+            .write(
+                &owner("owner"),
+                writer,
+                &TerminalWriteRequest {
+                    lease: TerminalWriteLeaseIntent::Use,
+                    payload: Some(TerminalWritePayload::Paste { text: "abc".into() }),
+                },
+                false,
+            )
+            .unwrap();
+        session.pump(1).unwrap();
+        session.pump(2).unwrap();
+        assert_eq!(fixture.state.lock().unwrap().writes, b"abc");
+        assert_eq!(
+            fixture.state.lock().unwrap().paste_modes,
+            [true, true, true]
+        );
+        session
+            .close(&owner("owner"), TerminalClosePolicy::Force, 3)
+            .unwrap();
+    }
 
     #[test]
     fn command_start_is_distinct_durable_and_never_recovered_as_authority() {
@@ -2251,6 +2385,14 @@ mod tests {
     }
 
     impl TerminalSessionBackend for Backend {
+        fn write_with_paste(
+            &mut self,
+            bytes: &[u8],
+            paste: bool,
+        ) -> std::result::Result<BackgroundInputReceipt, ()> {
+            self.0.lock().unwrap().paste_modes.push(paste);
+            self.write(bytes)
+        }
         fn restore_startup_echo(&mut self) -> std::result::Result<(), ()> {
             let mut state = self.0.lock().unwrap();
             state.echo_restore_calls += 1;
@@ -2289,8 +2431,10 @@ mod tests {
             state.writes.extend_from_slice(&bytes[..count]);
             Ok(BackgroundInputReceipt::new(
                 count,
-                false,
-                if count == bytes.len() {
+                state.write_closes,
+                if state.write_closes {
+                    BackgroundInputStatus::Closed
+                } else if count == bytes.len() {
                     BackgroundInputStatus::Written
                 } else {
                     BackgroundInputStatus::Backpressure

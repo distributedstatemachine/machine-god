@@ -317,14 +317,20 @@ multi-chunk exit tail without repeating an already committed read or its replies
 Native text/paste input preserves bytes, including NUL; named keys use the
 pinned fixed sequences and control spellings map to control bytes. Exactly one
 user payload (up to 64 KiB) may remain pending. A shared ordered queue prevents
-partial UTF-8, key sequences and protocol replies from interleaving. Each
-transport attempt is at most 8 KiB; receipts report bytes actually accepted,
+partial UTF-8, key sequences and protocol replies from interleaving. Native PTY
+transport attempts are at most 8 KiB. Backends may admit one whole bounded
+64 KiB payload while advancing their transport in bounded nonblocking steps;
+the queue preserves paste intent across retries instead of splitting one paste
+into several independently bracketed operations. Text and protocol replies do
+not acquire paste intent. Receipts report bytes actually accepted,
 retain pending suffixes across attention cancellation, and keep the latest 64
 operation results. Protocol replies do not require a writer lease, but have a
 separate resident bound of 16 frames/4 KiB. Revoke and close quiesce both input
 sources; release cannot strand an in-flight payload under another writer.
 Resize and signal return busy while input or replies remain queued, allowing
 the host to serialize control actions without overtaking accepted input.
+After submission, a failed durable quiescence publication is reported separately
+from the retained accepted-byte receipt; it does not authorize retrying bytes.
 
 Close commits a discontinuity barrier, drains final output without protocol
 reply effects, and removes monitors after final observations. A positively
@@ -467,6 +473,15 @@ directories and locks retries the child and parent durability barriers. Opening
 a session explicitly also reconciles its directory barriers; listing remains
 validation-only and does not sync every retained session. No path deletes or
 guesses repairs. Catalog reads never infer process authority.
+
+The complete list projection merges resident facts with validated nonresident
+histories, in exact session-ID order, without consuming resident slots. Its
+256-row bound is independent of the sixteen live slots; an oversized union is
+an error, not a truncated success. Task, workspace, lifecycle and backend filters
+cannot expand owner authority or hide corrupt records. An inode-bound catalog
+snapshot avoids repeated sibling scans and directory syncs for each row. Only
+one disk history is decoded at a time; the result retains compact facts, not
+commands or screen cells. Recovery observations never grant native authority.
 
 The continuous owner-loop component runs on an explicitly owned blocking
 worker; its constructor spawns no thread. Its host handle owns admission,

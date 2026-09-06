@@ -77,6 +77,7 @@ struct Frame {
     bytes: Vec<u8>,
     offset: usize,
     operation: Option<NonZeroU64>,
+    paste: bool,
 }
 struct SavedReceipt {
     writer: (TerminalActorRole, TerminalWriterId),
@@ -212,6 +213,7 @@ impl TerminalInput {
                     bytes,
                     offset: 0,
                     operation: Some(operation),
+                    paste: matches!(request.payload, Some(TerminalWritePayload::Paste { .. })),
                 });
                 self.receipts.push_back(SavedReceipt { writer, receipt });
                 if self.receipts.len() > MAX_RECEIPTS {
@@ -250,24 +252,48 @@ impl TerminalInput {
             bytes,
             offset: 0,
             operation: None,
+            paste: false,
         }));
         Ok(())
     }
 
     /// Exactly one bounded backend call. A short write retains its suffix at
     /// the queue front; neither other writers nor protocol replies interleave.
+    #[cfg(test)]
     pub(crate) fn flush(
         &mut self,
         write: impl FnOnce(&[u8]) -> std::result::Result<BackgroundInputReceipt, ()>,
     ) {
+        self.flush_with_kind(|bytes, _| write(bytes));
+    }
+
+    /// Preserve the model payload kind across backpressure. Native PTYs write
+    /// identical bytes; tmux uses paste mode only for an explicit paste payload.
+    #[cfg(test)]
+    pub(crate) fn flush_with_kind(
+        &mut self,
+        write: impl FnOnce(&[u8], bool) -> std::result::Result<BackgroundInputReceipt, ()>,
+    ) {
+        self.flush_with_limit(MAX_BACKGROUND_INPUT_BYTES, write);
+    }
+
+    /// A PTY admits at most 8 KiB per call. Tmux admits one complete bounded
+    /// payload, so a 64 KiB paste remains one bracketed-paste operation; its
+    /// transport still performs bounded nonblocking pipe writes internally.
+    pub(crate) fn flush_with_limit(
+        &mut self,
+        maximum: usize,
+        write: impl FnOnce(&[u8], bool) -> std::result::Result<BackgroundInputReceipt, ()>,
+    ) {
+        if maximum == 0 || maximum > machine_god_core::MAX_TERMINAL_WRITE_BYTES {
+            self.fail();
+            return;
+        }
         let Some(frame) = self.frames.front_mut() else {
             return;
         };
-        let end = frame
-            .bytes
-            .len()
-            .min(frame.offset + MAX_BACKGROUND_INPUT_BYTES);
-        let result = write(&frame.bytes[frame.offset..end]);
+        let end = frame.bytes.len().min(frame.offset + maximum);
+        let result = write(&frame.bytes[frame.offset..end], frame.paste);
         let Ok(result) = result else {
             self.fail();
             return;
@@ -514,6 +540,103 @@ mod tests {
             }),
             Err(TerminalInputError::Invalid)
         );
+    }
+
+    #[test]
+    fn paste_identity_survives_partial_retries_without_marking_text_or_replies() {
+        let mut input = TerminalInput::new();
+        acquire(&mut input, 1);
+        let request = TerminalWriteRequest {
+            lease: TerminalWriteLeaseIntent::Use,
+            payload: Some(TerminalWritePayload::Paste {
+                text: "a\n界".into(),
+            }),
+        };
+        let receipt = input.submit(writer(1), &request, false).unwrap();
+        input.flush_with_kind(|bytes, paste| {
+            assert!(paste);
+            assert_eq!(bytes, "a\n界".as_bytes());
+            Ok(accepted(0))
+        });
+        input.flush_with_kind(|bytes, paste| {
+            assert!(paste);
+            assert_eq!(bytes, "a\n界".as_bytes());
+            Ok(accepted(2))
+        });
+        input.replies(vec![b"reply".to_vec()]).unwrap();
+        input.flush_with_kind(|bytes, paste| {
+            assert!(paste);
+            assert_eq!(bytes, "界".as_bytes());
+            Ok(accepted(bytes.len()))
+        });
+        assert_eq!(
+            input
+                .receipt(writer(1), receipt.operation_id.unwrap())
+                .unwrap()
+                .progress,
+            TerminalInputProgress::Complete
+        );
+        input.flush_with_kind(|bytes, paste| {
+            assert!(!paste);
+            assert_eq!(bytes, b"reply");
+            Ok(accepted(bytes.len()))
+        });
+        input.submit(writer(1), &text("text"), false).unwrap();
+        input.flush_with_kind(|bytes, paste| {
+            assert!(!paste);
+            assert_eq!(bytes, b"text");
+            Ok(accepted(bytes.len()))
+        });
+    }
+
+    #[test]
+    fn whole_payload_backend_gets_one_paste_and_invalid_limits_never_dispatch() {
+        let mut input = TerminalInput::new();
+        acquire(&mut input, 1);
+        let payload = "x".repeat(machine_god_core::MAX_TERMINAL_WRITE_BYTES);
+        let receipt = input
+            .submit(
+                writer(1),
+                &TerminalWriteRequest {
+                    lease: TerminalWriteLeaseIntent::Use,
+                    payload: Some(TerminalWritePayload::Paste {
+                        text: payload.clone(),
+                    }),
+                },
+                false,
+            )
+            .unwrap();
+        for count in [0, payload.len()] {
+            input.flush_with_limit(payload.len(), |bytes, paste| {
+                assert!(paste);
+                assert_eq!(bytes, payload.as_bytes());
+                Ok(accepted(count))
+            });
+        }
+        assert_eq!(
+            input
+                .receipt(writer(1), receipt.operation_id.unwrap())
+                .unwrap()
+                .accepted_bytes,
+            payload.len()
+        );
+        for limit in [
+            0,
+            machine_god_core::MAX_TERMINAL_WRITE_BYTES + 1,
+            usize::MAX,
+        ] {
+            let mut input = TerminalInput::new();
+            acquire(&mut input, 1);
+            let receipt = input.submit(writer(1), &text("x"), false).unwrap();
+            input.flush_with_limit(limit, |_, _| panic!("invalid limit dispatched"));
+            assert_eq!(
+                input
+                    .receipt(writer(1), receipt.operation_id.unwrap())
+                    .unwrap()
+                    .progress,
+                TerminalInputProgress::Failed
+            );
+        }
     }
 
     #[test]
