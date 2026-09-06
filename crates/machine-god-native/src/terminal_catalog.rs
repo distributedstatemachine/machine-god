@@ -58,6 +58,50 @@ pub(crate) struct TerminalCatalog {
     poisoned: bool,
 }
 
+/// An exact-spelling, inode-bound batch under one retained owner catalog.
+/// Callers hold profile authority until final `validate`; opening a member
+/// neither rescans all siblings nor performs directory durability barriers.
+pub(crate) struct TerminalCatalogSnapshot<'a> {
+    catalog: &'a TerminalCatalog,
+    entries: Vec<(TerminalSessionId, i128, u128)>,
+}
+
+impl fmt::Debug for TerminalCatalogSnapshot<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TerminalCatalogSnapshot")
+            .finish_non_exhaustive()
+    }
+}
+
+impl TerminalCatalogSnapshot<'_> {
+    pub(crate) fn ids(&self) -> impl Iterator<Item = &TerminalSessionId> {
+        self.entries.iter().map(|(id, _, _)| id)
+    }
+
+    pub(crate) fn open(&self, id: &TerminalSessionId) -> Result<OwnedFd> {
+        self.catalog.validate()?;
+        let index = self
+            .entries
+            .binary_search_by(|(candidate, _, _)| candidate.as_str().cmp(id.as_str()))
+            .map_err(|_| TerminalCatalogError::NotFound)?;
+        let (_, device, inode) = &self.entries[index];
+        let directory = open_directory(&self.catalog.sessions, id.as_str())?;
+        let stat = private(&directory, true)?;
+        if i128::from(stat.st_dev) != *device || u128::from(stat.st_ino) != *inode {
+            return Err(TerminalCatalogError::Corrupt);
+        }
+        Ok(directory)
+    }
+
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self.catalog.snapshot()?.entries != self.entries {
+            return Err(TerminalCatalogError::Corrupt);
+        }
+        Ok(())
+    }
+}
+
 impl fmt::Debug for TerminalCatalog {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -67,6 +111,23 @@ impl fmt::Debug for TerminalCatalog {
 }
 
 impl TerminalCatalog {
+    pub(crate) fn snapshot(&self) -> Result<TerminalCatalogSnapshot<'_>> {
+        self.validate()?;
+        let names = names(&self.sessions, CAPACITY)?;
+        let mut entries = Vec::with_capacity(names.len());
+        for name in names {
+            let id = TerminalSessionId::new(name).map_err(|_| TerminalCatalogError::Corrupt)?;
+            let stat = private(open_directory(&self.sessions, id.as_str())?, true)?;
+            entries.push((id, i128::from(stat.st_dev), u128::from(stat.st_ino)));
+        }
+        entries.sort_unstable_by(|left, right| left.0.as_str().cmp(right.0.as_str()));
+        self.validate()?;
+        Ok(TerminalCatalogSnapshot {
+            catalog: self,
+            entries,
+        })
+    }
+
     pub(crate) fn namespace_key(&self) -> &str {
         &self.owner_name
     }

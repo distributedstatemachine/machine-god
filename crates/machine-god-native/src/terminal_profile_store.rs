@@ -203,6 +203,13 @@ impl TerminalProfileTransaction<'_> {
         Ok(())
     }
 
+    /// Reject a catalog from another profile even when its owner key matches.
+    pub(crate) fn validate_catalog(&self, catalog: &TerminalCatalog) -> Result<()> {
+        self.validate()?;
+        catalog.validate_profile_binding(&self.store.state_root)?;
+        Ok(())
+    }
+
     /// Prepare one owner catalog under the already-held profile transaction.
     /// Existing and partial owner namespaces already consume their count slot.
     /// The returned catalog retains its independent owner lock after this short

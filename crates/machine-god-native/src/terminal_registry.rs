@@ -226,6 +226,40 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         self.entries[self.index(owner, id)?].facts()
     }
 
+    pub(crate) fn workspace(&self) -> &str {
+        &self.workspace
+    }
+
+    /// Identity-only catalog overlay; do not clone bounded but large commands.
+    pub(crate) fn owner_ids(&self, owner: &BackgroundOutputOwner) -> Vec<TerminalSessionId> {
+        self.entries
+            .iter()
+            .filter(|entry| &entry.owner == owner)
+            .map(|entry| entry.id.clone())
+            .collect()
+    }
+
+    pub(crate) fn project_facts_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        owner: &BackgroundOutputOwner,
+        id: &TerminalSessionId,
+        actor: TerminalActorRole,
+        controls: &machine_god_core::TerminalAllowedControls,
+    ) -> Result<machine_god_core::TerminalSessionFacts> {
+        let index = self.index(owner, id)?;
+        match &mut self.entries[index].resident {
+            Resident::Live(session) => {
+                session.prepare_public_facts_with(persistence, owner)?;
+                Ok(session.public_facts(owner, actor, controls)?)
+            }
+            Resident::Recovered(session) => {
+                session.prepare_public_facts_with(persistence, owner)?;
+                Ok(session.public_facts(owner, actor, controls)?)
+            }
+        }
+    }
+
     /// Small observation snapshot for owner-side waits. Does not clone command,
     /// shell, workspace or monitor payloads on each scheduler tick.
     pub(crate) fn wait_observation(
