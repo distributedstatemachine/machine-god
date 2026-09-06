@@ -123,8 +123,27 @@ impl PreparedTerminalStartup {
         if cancellation.is_cancelled() {
             return Err(TerminalStartupError::Cancelled);
         }
+        let deadline = started
+            .checked_add(request.timeout)
+            .ok_or(TerminalStartupError::InvalidRequest)?;
+        Self::prepare_until(helper, request, deadline, cancellation)
+    }
+
+    /// Shares the caller's absolute worker deadline across preparation, commit
+    /// and startup acknowledgements without granting fresh time at this seam.
+    pub(crate) fn prepare_until(
+        helper: &TerminalPtyHelper,
+        request: TerminalStartupRequest,
+        deadline: Instant,
+        cancellation: &CancellationToken,
+    ) -> Result<Self> {
+        let started = Instant::now();
+        if cancellation.is_cancelled() {
+            return Err(TerminalStartupError::Cancelled);
+        }
         if request.timeout.is_zero()
             || request.timeout > MAX_STARTUP_TIMEOUT
+            || deadline.saturating_duration_since(started) > MAX_STARTUP_TIMEOUT
             || request.command.as_ref().is_some_and(|command| {
                 command.is_empty()
                     || command.len() > machine_god_core::MAX_TERMINAL_ACTION_COMMAND_BYTES
@@ -133,7 +152,7 @@ impl PreparedTerminalStartup {
         {
             return Err(TerminalStartupError::InvalidRequest);
         }
-        let deadline = started + request.timeout;
+        let deadline = deadline.min(started + request.timeout);
         let bootstrap = PreparedTerminalBootstrap::new(
             &request.shell,
             request.command.as_deref(),
