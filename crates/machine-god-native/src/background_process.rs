@@ -30,10 +30,9 @@ use std::pin::Pin;
 use std::time::Duration;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use crate::background_input::BackgroundInputStatus;
 use crate::background_input::{
-    BackgroundInputError, BackgroundInputErrorKind, BackgroundInputReceipt, BackgroundInputTarget,
-    validate_input,
+    BackgroundInputError, BackgroundInputErrorKind, BackgroundInputReceipt, BackgroundInputStatus,
+    BackgroundInputTarget, validate_input,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use machine_god_core::Cancelled;
@@ -1980,19 +1979,21 @@ pub fn run_background_process_helper() -> Result<(), BackgroundProcessError> {
 }
 
 /// Exact descriptor authority for one retained process's input pipe.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Clone, Default)]
 pub(crate) struct BackgroundProcessInputController {
     state: Arc<std::sync::Mutex<ProcessInputState>>,
     revoked: Arc<std::sync::atomic::AtomicBool>,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Default)]
 struct ProcessInputState {
     active: bool,
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     writer: Option<ChildStdin>,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl BackgroundProcessInputController {
     fn activate(&self) -> Result<(), BackgroundInputError> {
         let mut state = self
@@ -2004,7 +2005,6 @@ impl BackgroundProcessInputController {
                 BackgroundInputErrorKind::NotFound,
             ));
         }
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if state.writer.is_none() {
             return Err(BackgroundInputError::new(
                 BackgroundInputErrorKind::NotFound,
@@ -2014,7 +2014,6 @@ impl BackgroundProcessInputController {
         Ok(())
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn install(&self, writer: ChildStdin) {
         let mut state = self
             .state
@@ -2033,11 +2032,11 @@ impl BackgroundProcessInputController {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.active = false;
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
         drop(state.writer.take());
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl BackgroundInputTarget for BackgroundProcessInputController {
     fn write(
         &self,
@@ -2061,26 +2060,18 @@ impl BackgroundInputTarget for BackgroundProcessInputController {
                 BackgroundInputErrorKind::NotFound,
             ));
         }
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        {
-            let Some(writer) = state.writer.as_mut() else {
-                return Ok(BackgroundInputReceipt::new(
-                    0,
-                    true,
-                    BackgroundInputStatus::Closed,
-                ));
-            };
-            let receipt = write_input_bounded(writer, data, eof);
-            if receipt.stdin_closed() {
-                drop(state.writer.take());
-            }
-            Ok(receipt)
+        let Some(writer) = state.writer.as_mut() else {
+            return Ok(BackgroundInputReceipt::new(
+                0,
+                true,
+                BackgroundInputStatus::Closed,
+            ));
+        };
+        let receipt = write_input_bounded(writer, data, eof);
+        if receipt.stdin_closed() {
+            drop(state.writer.take());
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        {
-            let _ = &mut state;
-            Err(BackgroundInputError::new(BackgroundInputErrorKind::Process))
-        }
+        Ok(receipt)
     }
 }
 
@@ -2259,6 +2250,7 @@ mod input_tests {
 /// A spawned process blocked on its private start gate.
 pub struct PreparedBackgroundProcess {
     stdin: ProcessInput,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     input_controller: Option<BackgroundProcessInputController>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     child: Option<Child>,
@@ -2282,6 +2274,7 @@ pub struct PreparedBackgroundProcess {
 
 impl PreparedBackgroundProcess {
     /// Attaches hidden descriptor authority before release, only for pipe input.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn attach_input_controller(
         &mut self,
     ) -> Result<BackgroundProcessInputController, BackgroundInputError> {
@@ -2426,6 +2419,7 @@ impl Drop for PreparedBackgroundProcess {
 /// snapshots. A descendant that changes process group or session before any
 /// snapshot observes it is outside this ownership set.
 pub struct OwnedBackgroundProcess {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     input_controller: Option<BackgroundProcessInputController>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     child: Option<Child>,
@@ -2652,6 +2646,7 @@ impl OwnedBackgroundProcess {
         observed.ok_or_else(wait_error)
     }
     /// Activates pipe authority at the authoritative retain-time boundary.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn activate_input_controller(&mut self) -> Result<(), BackgroundInputError> {
         let controller = self
             .input_controller
