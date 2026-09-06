@@ -411,7 +411,7 @@ mod tests {
         let program = std::env::current_exe().unwrap();
         if mode == crate::terminal_tmux_helper::TERMINAL_TMUX_HELPER_ARGUMENT {
             let script = format!(
-                "export MG_TMUX_KIND=\"$1\" MG_TMUX_SOCKET=\"$2\" MG_TMUX_NONCE=\"$3\" MG_TMUX_CWD=\"$4\"; exec '{}' --exact terminal_tmux_startup::tests::helper_entry --nocapture",
+                "export MG_TMUX_KIND=\"$1\" MG_TMUX_SOCKET=\"$2\" MG_TMUX_NONCE=\"$3\" MG_TMUX_CWD=\"$4\"; if [ \"$1\" = exec ]; then exec 2>&1; exec 1>/dev/null; fi; exec '{}' --exact terminal_tmux_startup::tests::helper_entry --nocapture",
                 program.to_str().unwrap().replace('\'', "'\\''")
             );
             return TerminalPtyHelper::new(
