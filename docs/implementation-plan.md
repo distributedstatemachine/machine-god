@@ -119,7 +119,7 @@ still require full validation before mutation.
 Legacy metadata-less records remain readable but do not block eligible victims.
 Profile-aware owner requests now pass the worker's exact store and budget into
 bounded mutation dispatch; transaction guards end before reply wakes. Production
-worker startup, complete tool request contracts and host assembly remain open.
+worker startup and host assembly remain open.
 The complete normalized twelve-action core contract and effect-free public
 decoder are present, including request/result identity checks and lossless
 foreground execution outcomes. Numeric coercion now matches pinned binary128
@@ -130,8 +130,11 @@ persistence, host/provider admission and CLI rendering with encoding-derived
 ceilings. Background storage preserves its independent aggregate quota through
 pending and live-replacement reservations, including old orphaned histories.
 These remain internal components; the complete action contracts do not yet
-replace the reference host's legacy terminal adapter. The combined local gate
-and fresh correction reviews precede further full-feature host assembly.
+replace the reference host's legacy terminal adapter. Compatibility component
+`de480453718169adf5e458a34c727833dbf32cd1` passed the exact pinned local gate,
+fresh release command round-trip and three fresh local review tracks after
+correcting the decoder's legacy-only exec profile restriction. Full-feature
+host assembly and exact remote delivery gates remain open; this is not a delivery.
 Per-session retention separates raw/checkpoint output from independently bounded
 state and events, matching the pinned output-accounting boundary. Non-output
 publications cannot evict output; recovery retains all ledger categories.
