@@ -56,6 +56,8 @@ mod terminal_session;
 mod terminal_session_record;
 #[path = "../src/terminal_shell.rs"]
 mod terminal_shell;
+#[path = "../src/terminal_staged_start.rs"]
+mod terminal_staged_start;
 #[path = "../src/terminal_startup.rs"]
 mod terminal_startup;
 #[path = "../src/terminal_tmux.rs"]

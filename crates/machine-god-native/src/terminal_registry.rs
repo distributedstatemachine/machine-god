@@ -131,6 +131,16 @@ struct PendingStart {
     serial: NonZeroU64,
     owner: BackgroundOutputOwner,
     id: TerminalSessionId,
+    cancellation: machine_god_core::CancellationToken,
+}
+
+struct StartCommitGuard(Option<machine_god_core::CancellationToken>);
+impl Drop for StartCommitGuard {
+    fn drop(&mut self) {
+        if let Some(cancellation) = &self.0 {
+            cancellation.cancel();
+        }
+    }
 }
 
 pub(crate) struct TerminalRegistry<B: TerminalSessionBackend> {
@@ -175,7 +185,25 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         owner: BackgroundOutputOwner,
         id: TerminalSessionId,
     ) -> Result<TerminalStartReservation> {
+        self.reserve_start_with_cancellation(owner, id, machine_god_core::CancellationToken::new())
+    }
+
+    /// The pending slot owns preparation cancellation until a successful
+    /// commit. Shutdown and withdrawal stop helper preparation without an
+    /// extra watcher thread or a host-lifetime vote from its worker.
+    pub(crate) fn reserve_start_with_cancellation(
+        &mut self,
+        owner: BackgroundOutputOwner,
+        id: TerminalSessionId,
+        cancellation: machine_god_core::CancellationToken,
+    ) -> Result<TerminalStartReservation> {
         self.admit(&owner, &id)?;
+        if cancellation.is_cancelled() {
+            return Err(TerminalSessionError::Input(
+                crate::terminal_input::TerminalInputError::Cancelled,
+            )
+            .into());
+        }
         let serial = self
             .next_start_serial
             .ok_or(TerminalRegistryError::Capacity)?;
@@ -183,6 +211,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             serial,
             owner: owner.clone(),
             id: id.clone(),
+            cancellation,
         });
         self.next_start_serial = serial.get().checked_add(1).and_then(NonZeroU64::new);
         Ok(TerminalStartReservation {
@@ -204,6 +233,17 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
     ) -> Result<()> {
         let index = self.reservation_index(reservation)?;
         let pending = self.pending_starts.remove(index);
+        let mut guard = StartCommitGuard(Some(pending.cancellation));
+        if guard
+            .0
+            .as_ref()
+            .is_some_and(machine_god_core::CancellationToken::is_cancelled)
+        {
+            return Err(TerminalSessionError::Input(
+                crate::terminal_input::TerminalInputError::Cancelled,
+            )
+            .into());
+        }
         let session = create()?;
         let facts = session.inspect(&pending.owner)?;
         self.validate_facts(&facts, &pending.id, true)?;
@@ -212,6 +252,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             owner: pending.owner,
             resident: Resident::Live(Box::new(session)),
         });
+        guard.0 = None;
         Ok(())
     }
 
@@ -222,7 +263,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         reservation: &TerminalStartReservation,
     ) -> Result<()> {
         let index = self.reservation_index(reservation)?;
-        self.pending_starts.remove(index);
+        self.pending_starts.remove(index).cancellation.cancel();
         Ok(())
     }
 
@@ -918,7 +959,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         // Invalidate slow preparation before recovered-publication retries too,
         // not only before the subsequent native cleanup pass.
         self.closing = true;
-        self.pending_starts.clear();
+        self.cancel_pending_starts();
         // Recovered histories have no native cleanup, but retain failed
         // durable/accounting obligations. Retry those on this same owner.
         for entry in &mut self.entries {
@@ -959,7 +1000,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         self.check_time(now_ms)?;
         self.now_ms = now_ms;
         self.closing = true;
-        self.pending_starts.clear();
+        self.cancel_pending_starts();
         let mut failures = Vec::new();
         for entry in &mut self.entries {
             if let Resident::Live(session) = &mut entry.resident
@@ -983,6 +1024,12 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             }
         }
         Ok(failures)
+    }
+
+    fn cancel_pending_starts(&mut self) {
+        for pending in self.pending_starts.drain(..) {
+            pending.cancellation.cancel();
+        }
     }
 }
 impl<B: TerminalSessionBackend> Drop for TerminalRegistry<B> {
@@ -4238,6 +4285,72 @@ mod tests {
             registry.list(&owner("one"), None, 0, &filter),
             Err(TerminalRegistryError::Invalid)
         ));
+    }
+
+    #[test]
+    fn reserved_start_cancellation_tracks_withdraw_shutdown_failure_and_commit() {
+        use machine_god_core::CancellationToken;
+        for operation in 0..5 {
+            let fixture = Fixture::new();
+            let mut registry = registry();
+            let owner = owner("cancellation");
+            let id = id("start");
+            let stop = CancellationToken::new();
+            let reservation = registry
+                .reserve_start_with_cancellation(owner.clone(), id.clone(), stop.clone())
+                .unwrap();
+            match operation {
+                0 => registry.withdraw_reserved_start(&reservation).unwrap(),
+                1 => {
+                    registry.shutdown(0, TerminalClosePolicy::Force).unwrap();
+                }
+                2 => {
+                    assert!(
+                        registry
+                            .commit_reserved_start(&reservation, || Err(
+                                TerminalSessionError::Native
+                            ))
+                            .is_err()
+                    );
+                }
+                3 => {
+                    assert!(
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| registry
+                            .commit_reserved_start(&reservation, || panic!(
+                                "prepared factory panic"
+                            ))))
+                        .is_err()
+                    );
+                }
+                _ => {
+                    registry
+                        .commit_reserved_start(&reservation, || fixture.live(&owner, &id, 0))
+                        .unwrap();
+                }
+            }
+            assert_eq!(stop.is_cancelled(), operation != 4);
+        }
+    }
+
+    #[test]
+    fn cancelled_start_reservation_never_invokes_commit_factory() {
+        let mut registry = registry();
+        let stop = machine_god_core::CancellationToken::new();
+        let reservation = registry
+            .reserve_start_with_cancellation(owner("one"), id("pending"), stop.clone())
+            .unwrap();
+        stop.cancel();
+        assert!(
+            registry
+                .commit_reserved_start(&reservation, || panic!("cancelled factory"))
+                .is_err()
+        );
+        assert!(registry.pending_starts.is_empty());
+        assert!(
+            registry
+                .reserve_start_with_cancellation(owner("one"), id("pending"), stop)
+                .is_err()
+        );
     }
 
     #[test]

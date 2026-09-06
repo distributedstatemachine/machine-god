@@ -233,6 +233,23 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         metadata: TerminalSessionMetadata,
         now_ms: i64,
     ) -> Result<Self> {
+        let (session, publication_error) =
+            Self::new_retained_with(persistence, backend, history, owner, id, metadata, now_ms)?;
+        publication_error.map_or(Ok(session), Err)
+    }
+
+    /// Staged host admission retains the constructed owner after an initial
+    /// publication failure. It must register this failed session for cleanup
+    /// disposition, never acknowledge startup or report it as a successful start.
+    pub(crate) fn new_retained_with(
+        persistence: &mut dyn TerminalJournalPersistence,
+        backend: B,
+        history: TerminalHistory,
+        owner: BackgroundOutputOwner,
+        id: TerminalSessionId,
+        metadata: TerminalSessionMetadata,
+        now_ms: i64,
+    ) -> Result<(Self, Option<TerminalSessionError>)> {
         metadata.validate()?;
         history.require_live()?;
         if history.session_id() != &id {
@@ -267,8 +284,14 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             startup_stage: TerminalStartupStage::Prepared,
             command_start_cursor: None,
         };
-        session.persist_with(persistence)?;
-        Ok(session)
+        let publication_error = session.persist_with(persistence).err();
+        if let Some(error) = publication_error {
+            // No startup acknowledgement was attached or sent. Quiesce and
+            // attempt worker-side cleanup while preserving failed publication
+            // and any backend whose close must be retried by the registry.
+            session.abort_startup_with(None, now_ms, error);
+        }
+        Ok((session, publication_error))
     }
     #[cfg(test)]
     pub(crate) fn shell_ready(&mut self, now_ms: i64) -> Result<()> {
@@ -2928,6 +2951,44 @@ mod tests {
 
     fn denied_error() -> TerminalSessionError {
         TerminalHistoryError::Profile(TerminalProfileError::ResourceLimit).into()
+    }
+
+    #[test]
+    fn retained_initial_publication_failure_keeps_quiesced_owner_for_cleanup() {
+        for failed_close in [false, true] {
+            let fixture = Fixture::new();
+            fixture.state.lock().unwrap().close_fails = failed_close;
+            let journal =
+                TerminalJournal::create(fixture.fd(), id(), TerminalJournalLimits::default())
+                    .unwrap();
+            let history =
+                TerminalHistory::create(journal, &TerminalDimensions::new(3, 20).unwrap()).unwrap();
+            let (mut session, error) = TerminalSession::new_retained_with(
+                &mut Persistence {
+                    denied: true,
+                    ..Persistence::default()
+                },
+                Backend(Arc::clone(&fixture.state)),
+                history,
+                owner("owner"),
+                id(),
+                crate::terminal_session_record::test_metadata(),
+                0,
+            )
+            .unwrap();
+            assert_eq!(error, Some(denied_error()));
+            assert_eq!(session.publication_error(), error);
+            assert_eq!(session.context().lifecycle, TerminalLifecycle::Lost);
+            assert_eq!(session.owns_backend(), failed_close);
+            assert!(session.input.is_quiesced());
+            assert_eq!(fixture.state.lock().unwrap().closes, 1);
+            fixture.state.lock().unwrap().close_fails = false;
+            session
+                .close(&owner("owner"), TerminalClosePolicy::Force, 1)
+                .unwrap();
+            assert!(session.publication_error().is_none());
+            assert!(!session.owns_backend());
+        }
     }
 
     fn lease_request(lease: TerminalWriteLeaseIntent) -> TerminalWriteRequest {

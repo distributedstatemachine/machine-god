@@ -683,6 +683,30 @@ one supplied absolute deadline. Commit rechecks the exact retained cwd and
 returns the backend, startup acknowledgement control and descriptive launch
 identity together. Neither a transport selection nor saved identity creates
 process authority; the existing prepared owner handles failed launch cleanup.
+Staged startup reserves a resident slot before acquiring launch authority, then
+prepares and commits the native transport on a separately collected worker. The
+single absolute startup deadline begins at first poll and includes worker and
+owner queue delay; expired admission never acquires native launch authority. The
+owner continues pumping other sessions throughout preparation. Only short
+admission/publication requests cross back to it; closures carrying a backend
+are constructed, polled and dropped on the effect worker or owner, never the
+tool's polling thread. Initial facts and monitor admission are durable before
+the startup controller can release the user command. Failed initial publication
+retains a quiesced, lost session and its cleanup/publication obligation rather
+than reporting a successful start. Pending reservations cancel preparation on
+withdrawal, failed commit or host shutdown. Abandoned callers leave rollback on
+the collected worker; a busy owner queue retries without keeping the host alive.
+Successful admission transfers startup lifetime to the registry, independently
+of the caller's future. Its receipt describes durable initial admission; the
+enclosing host applies the requested attention wait separately. At most sixteen
+staged operations or unconsumed receipts occupy the starter's admission bound.
+An owner-state callback receives committed initial-monitor mutation identities
+before the first pump, so the host can install exact process-local probe grants.
+The callback changes in-memory owner state inside the publication transaction;
+it must not reenter profile transactions. It must install transactionally,
+rolling back partial grants on error, and retain
+their normal cancellation/shutdown cleanup. Callback failure quiesces and retains
+the failed session; it never releases the user command.
 Worker-owned catalog state retains bounded, exact-profile owner leases between
 requests. Cold saved histories can be opened without admitting a live registry
 entry or constructing a backend, so live-session capacity does not cap historical
