@@ -14,8 +14,8 @@ use machine_god_core::{
     ModelEventStream, ModelProvider, ModelRequest, ProviderError, ProviderErrorKind, Role,
     SessionId, SessionIncarnationId, StopReason, TokenUsage, ToolCall, ToolCallId, ToolName,
 };
-use serde::Serialize;
 use serde::de::{DeserializeSeed, Error as _, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -38,6 +38,27 @@ pub const AI_GATEWAY_PROTOCOL_VERSION: &str = "0.0.1";
 pub const AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION: &str = "4";
 
 const CONTENT_TYPE: &str = "application/json";
+const MAX_TOOL_INPUT_OVERRIDES: usize = 64;
+const MAX_COMPLETE_INPUT_BYTES: usize = 32 * 1024 * 1024;
+const MAX_COMPLETE_INPUT_NODES: usize = 4 * 1024 * 1024;
+const INPUT_FRAME_OVERHEAD: usize = 4096;
+
+/// Trusted response-only argument admission for one explicitly advertised tool.
+/// Historical request arguments and ordinary tools retain `AiGatewayLimits`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AiGatewayToolInputLimits {
+    /// Maximum raw JSON argument string and canonical argument bytes.
+    pub max_argument_bytes: usize,
+    /// Maximum argument JSON values, including the root (object keys are not nodes).
+    pub max_json_nodes: usize,
+}
+
+impl AiGatewayToolInputLimits {
+    fn is_valid(self) -> bool {
+        (1..=MAX_COMPLETE_INPUT_BYTES).contains(&self.max_argument_bytes)
+            && (1..=MAX_COMPLETE_INPUT_NODES).contains(&self.max_json_nodes)
+    }
+}
 
 /// Byte stream supplied by an explicitly injected native transport.
 pub type AiGatewayByteStream =
@@ -227,6 +248,7 @@ pub struct AiGatewayProvider {
     default_model: String,
     transport: Arc<dyn AiGatewayTransport>,
     limits: AiGatewayLimits,
+    tool_input_limits: BTreeMap<ToolName, AiGatewayToolInputLimits>,
 }
 
 impl AiGatewayProvider {
@@ -267,7 +289,34 @@ impl AiGatewayProvider {
             default_model,
             transport,
             limits,
+            tool_input_limits: BTreeMap::new(),
         })
+    }
+
+    /// Configures at most 64 unique, trusted tool-specific response input bounds.
+    /// Only names advertised by a particular request activate their overrides.
+    /// No transport, request-history or unrelated tool semantic limit is changed.
+    ///
+    /// # Errors
+    /// Rejects duplicates, zero bounds, more than 32 MiB of argument bytes or
+    /// 4,194,304 argument nodes, and configurations above 64 entries.
+    pub fn with_tool_input_limits(
+        mut self,
+        entries: impl IntoIterator<Item = (ToolName, AiGatewayToolInputLimits)>,
+    ) -> Result<Self, AiGatewayConfigError> {
+        let mut selected = BTreeMap::new();
+        for (name, limits) in entries {
+            if selected.len() == MAX_TOOL_INPUT_OVERRIDES
+                || !limits.is_valid()
+                || selected.insert(name, limits).is_some()
+            {
+                return Err(AiGatewayConfigError {
+                    kind: AiGatewayConfigErrorKind::InvalidLimits,
+                });
+            }
+        }
+        self.tool_input_limits = selected;
+        Ok(self)
     }
 }
 
@@ -278,6 +327,7 @@ impl fmt::Debug for AiGatewayProvider {
             .field("default_model", &"<redacted>")
             .field("transport", &"<redacted>")
             .field("limits", &self.limits)
+            .field("tool_input_limits", &self.tool_input_limits.len())
             .finish()
     }
 }
@@ -304,6 +354,11 @@ impl ModelProvider for AiGatewayProvider {
                 &cancellation,
             )?;
             validate_request_json(request.get(), self.limits, &cancellation)?;
+            let inputs = ResponseInputLimits::for_request(
+                request.get(),
+                self.limits,
+                &self.tool_input_limits,
+            )?;
             let transport_request = build_request(
                 request.take(),
                 &self.default_model,
@@ -332,10 +387,12 @@ impl ModelProvider for AiGatewayProvider {
             if cancellation.is_cancelled() {
                 return Err(cancelled_error());
             }
-            Ok(
-                Box::pin(GatewayEventStream::new(bytes, &cancellation, self.limits))
-                    as ModelEventStream,
-            )
+            Ok(Box::pin(GatewayEventStream::with_inputs(
+                bytes,
+                &cancellation,
+                self.limits,
+                inputs,
+            )) as ModelEventStream)
         })
     }
 }
@@ -1377,10 +1434,12 @@ fn parse_final_arguments(
     value: &Value,
     max_bytes: usize,
     max_nodes: usize,
+    cancellation: &CancellationToken,
 ) -> Result<Value, ProviderError> {
     match value {
         Value::String(text) => parse_argument_text(text, max_bytes, max_nodes),
         Value::Array(_) | Value::Object(_) => {
+            validate_argument_nodes(value, max_nodes, cancellation)?;
             let mut writer = CountingWriter {
                 bytes: 0,
                 max: max_bytes,
@@ -1394,6 +1453,15 @@ fn parse_final_arguments(
             Err(protocol_error("gateway_invalid_tool_arguments"))
         }
     }
+}
+
+fn validate_argument_nodes(
+    value: &Value,
+    maximum: usize,
+    cancellation: &CancellationToken,
+) -> Result<(), ProviderError> {
+    validate_json(value, &mut Vec::new(), &mut 0, maximum, cancellation)
+        .map_err(|_| protocol_error("gateway_invalid_tool_arguments"))
 }
 
 #[derive(Clone, Copy)]
@@ -1615,8 +1683,104 @@ fn optional_nonnegative_integer(
         .transpose()
 }
 
+struct ResponseInputLimits {
+    tools: BTreeMap<ToolName, AiGatewayToolInputLimits>,
+    record_bytes: usize,
+    undecoded_bytes: usize,
+    response_bytes: usize,
+    aggregate_arguments: usize,
+}
+
+impl ResponseInputLimits {
+    fn ordinary(limits: AiGatewayLimits) -> Self {
+        Self {
+            tools: BTreeMap::new(),
+            record_bytes: limits.max_record_bytes,
+            undecoded_bytes: limits.max_undecoded_bytes,
+            response_bytes: limits.max_total_response_bytes,
+            aggregate_arguments: usize::MAX,
+        }
+    }
+
+    fn for_request(
+        request: &ModelRequest,
+        limits: AiGatewayLimits,
+        configured: &BTreeMap<ToolName, AiGatewayToolInputLimits>,
+    ) -> Result<Self, ProviderError> {
+        let mut result = Self::ordinary(limits);
+        for tool in &request.tools {
+            if let Some(input) = configured.get(&tool.name) {
+                result.tools.insert(tool.name.clone(), *input);
+            }
+        }
+        if result.tools.is_empty() {
+            return Ok(result);
+        }
+        let largest = result
+            .tools
+            .values()
+            .map(|input| input.max_argument_bytes)
+            .max()
+            .unwrap_or(0);
+        // One complete largest input, or the ordinary maximum-cardinality round.
+        // Streamed bytes and finalized canonical bytes have independent charges;
+        // final evidence may legitimately repeat the entire streamed value.
+        result.aggregate_arguments = limits
+            .max_tool_arguments_bytes
+            .checked_mul(limits.max_tool_calls.max(limits.max_streamed_tool_calls))
+            .map(|ordinary| ordinary.max(largest))
+            .ok_or_else(|| invalid_request("gateway_input_limit_overflow"))?;
+        let record = largest
+            .checked_mul(6)
+            .and_then(|size| size.checked_add(INPUT_FRAME_OVERHEAD))
+            .ok_or_else(|| invalid_request("gateway_input_limit_overflow"))?;
+        result.record_bytes = result.record_bytes.max(record);
+        result.undecoded_bytes = result.undecoded_bytes.max(record);
+        result.response_bytes = result
+            .aggregate_arguments
+            .checked_mul(12)
+            .and_then(|size| size.checked_add(limits.max_total_response_bytes))
+            .ok_or_else(|| invalid_request("gateway_input_limit_overflow"))?;
+        Ok(result)
+    }
+
+    fn get(&self, name: &ToolName, ordinary: AiGatewayLimits) -> AiGatewayToolInputLimits {
+        self.tools
+            .get(name)
+            .copied()
+            .unwrap_or(AiGatewayToolInputLimits {
+                max_argument_bytes: ordinary.max_tool_arguments_bytes,
+                max_json_nodes: ordinary.max_json_nodes,
+            })
+    }
+}
+
+// Borrow input payloads without materializing a potentially large JSON tree.
+// Identity selects the argument and framing budgets before the strict parse.
+// The second parse still rejects duplicate fields anywhere, including fields
+// ignored here. Raw identity lengths are bounded before string allocation.
+#[derive(Deserialize)]
+struct InputFrameIdentity<'a> {
+    #[serde(borrow, rename = "type")]
+    kind: &'a serde_json::value::RawValue,
+    #[serde(borrow)]
+    id: Option<&'a serde_json::value::RawValue>,
+    #[serde(borrow, rename = "toolCallId")]
+    call_id: Option<&'a serde_json::value::RawValue>,
+    #[serde(borrow, rename = "toolName")]
+    name: Option<&'a serde_json::value::RawValue>,
+}
+
+fn frame_identity_text(value: &serde_json::value::RawValue) -> Result<String, ProviderError> {
+    if value.get().len() > INPUT_FRAME_OVERHEAD {
+        return Err(protocol_error("gateway_invalid_tool_call"));
+    }
+    serde_json::from_str(value.get()).map_err(|_| protocol_error("gateway_invalid_event"))
+}
+
 struct StreamedToolInput {
     name: ToolName,
+    limits: AiGatewayToolInputLimits,
     arguments: String,
     parsed_arguments: Option<Value>,
     canonical_arguments: Option<Vec<u8>>,
@@ -1629,12 +1793,16 @@ struct GatewayEventStream {
     cancellation_token: CancellationToken,
     cancellation: Option<Pin<Box<machine_god_core::Cancelled>>>,
     limits: AiGatewayLimits,
+    inputs: ResponseInputLimits,
+    streamed_argument_bytes: usize,
+    final_argument_bytes: usize,
+    ordinary_response_bytes: usize,
     undecoded: Vec<u8>,
     total_bytes: usize,
     records: usize,
     streamed: BTreeMap<ToolCallId, StreamedToolInput>,
     reconciliation: BTreeMap<ToolName, BTreeMap<Vec<u8>, BTreeSet<ToolCallId>>>,
-    finalized_streamed: BTreeSet<ToolCallId>,
+    finalized_streamed: BTreeMap<ToolCallId, (ToolName, AiGatewayToolInputLimits)>,
     emitted_calls: BTreeSet<ToolCallId>,
     pending: VecDeque<Result<ModelEvent, ProviderError>>,
     finished: bool,
@@ -1642,22 +1810,41 @@ struct GatewayEventStream {
 }
 
 impl GatewayEventStream {
+    #[cfg(test)]
     fn new(
         source: AiGatewayByteStream,
         cancellation: &CancellationToken,
         limits: AiGatewayLimits,
+    ) -> Self {
+        Self::with_inputs(
+            source,
+            cancellation,
+            limits,
+            ResponseInputLimits::ordinary(limits),
+        )
+    }
+
+    fn with_inputs(
+        source: AiGatewayByteStream,
+        cancellation: &CancellationToken,
+        limits: AiGatewayLimits,
+        inputs: ResponseInputLimits,
     ) -> Self {
         Self {
             source: Some(source),
             cancellation_token: cancellation.clone(),
             cancellation: None,
             limits,
+            inputs,
+            streamed_argument_bytes: 0,
+            final_argument_bytes: 0,
+            ordinary_response_bytes: 0,
             undecoded: Vec::new(),
             total_bytes: 0,
             records: 0,
             streamed: BTreeMap::new(),
             reconciliation: BTreeMap::new(),
-            finalized_streamed: BTreeSet::new(),
+            finalized_streamed: BTreeMap::new(),
             emitted_calls: BTreeSet::new(),
             pending: VecDeque::new(),
             finished: false,
@@ -1719,7 +1906,7 @@ impl GatewayEventStream {
         self.total_bytes = self
             .total_bytes
             .checked_add(chunk.len())
-            .filter(|total| *total <= self.limits.max_total_response_bytes)
+            .filter(|total| *total <= self.inputs.response_bytes)
             .ok_or_else(|| protocol_error("gateway_response_byte_limit"))?;
 
         let mut remaining = chunk;
@@ -1727,6 +1914,13 @@ impl GatewayEventStream {
             check_cancel(&self.cancellation_token)?;
             self.append_record_fragment(&remaining[..newline])?;
             let line = std::mem::take(&mut self.undecoded);
+            if !self.inputs.tools.is_empty() {
+                self.ordinary_response_bytes = self
+                    .ordinary_response_bytes
+                    .checked_add(1)
+                    .filter(|bytes| *bytes <= self.limits.max_total_response_bytes)
+                    .ok_or_else(|| protocol_error("gateway_response_byte_limit"))?;
+            }
             self.consume_line(&line)?;
             remaining = &remaining[newline + 1..];
         }
@@ -1740,7 +1934,7 @@ impl GatewayEventStream {
             .len()
             .checked_add(fragment.len())
             .ok_or_else(|| protocol_error("gateway_record_byte_limit"))?;
-        if new_len > self.limits.max_record_bytes || new_len > self.limits.max_undecoded_bytes {
+        if new_len > self.inputs.record_bytes || new_len > self.inputs.undecoded_bytes {
             return Err(protocol_error("gateway_record_byte_limit"));
         }
         self.undecoded.extend_from_slice(fragment);
@@ -1761,11 +1955,14 @@ impl GatewayEventStream {
     }
 
     fn consume_line(&mut self, line: &[u8]) -> Result<(), ProviderError> {
+        let wire_bytes = line.len();
         let line = line.strip_suffix(b"\r").unwrap_or(line);
         if line.is_empty() || line.starts_with(b":") {
+            self.charge_ordinary_line(wire_bytes)?;
             return Ok(());
         }
         let Some(data) = line.strip_prefix(b"data: ") else {
+            self.charge_ordinary_line(wire_bytes)?;
             return Ok(());
         };
         self.records = self
@@ -1774,6 +1971,7 @@ impl GatewayEventStream {
             .filter(|records| *records <= self.limits.max_records)
             .ok_or_else(|| protocol_error("gateway_record_count_limit"))?;
         if data == b"[DONE]" {
+            self.charge_ordinary_line(wire_bytes)?;
             return if self.finished {
                 Ok(())
             } else {
@@ -1784,7 +1982,14 @@ impl GatewayEventStream {
             return Err(protocol_error("gateway_event_after_finish"));
         }
         let text = std::str::from_utf8(data).map_err(|_| protocol_error("gateway_invalid_utf8"))?;
-        let event = parse_strict_json(text, self.limits.max_json_nodes)
+        let (record_bytes, record_nodes, extended) = self.frame_limits(text)?;
+        if !extended {
+            self.charge_ordinary_line(wire_bytes)?;
+        }
+        if line.len() > record_bytes || line.len() > self.inputs.undecoded_bytes {
+            return Err(protocol_error("gateway_record_byte_limit"));
+        }
+        let event = parse_strict_json(text, record_nodes)
             .map_err(|_| protocol_error("gateway_invalid_json"))?;
         let object = event
             .as_object()
@@ -1809,6 +2014,103 @@ impl GatewayEventStream {
             }
             _ => Ok(()),
         }
+    }
+
+    fn charge_ordinary_line(&mut self, bytes: usize) -> Result<(), ProviderError> {
+        if self.inputs.tools.is_empty() {
+            return Ok(());
+        }
+        if bytes
+            > self
+                .limits
+                .max_record_bytes
+                .min(self.limits.max_undecoded_bytes)
+        {
+            return Err(protocol_error("gateway_record_byte_limit"));
+        }
+        self.ordinary_response_bytes = self
+            .ordinary_response_bytes
+            .checked_add(bytes)
+            .filter(|bytes| *bytes <= self.limits.max_total_response_bytes)
+            .ok_or_else(|| protocol_error("gateway_response_byte_limit"))?;
+        Ok(())
+    }
+
+    fn frame_limits(&self, text: &str) -> Result<(usize, usize, bool), ProviderError> {
+        let ordinary = (
+            self.limits
+                .max_record_bytes
+                .min(self.limits.max_undecoded_bytes),
+            self.limits.max_json_nodes,
+            false,
+        );
+        if self.inputs.tools.is_empty() {
+            return Ok(ordinary);
+        }
+        let identity: InputFrameIdentity<'_> =
+            serde_json::from_str(text).map_err(|_| protocol_error("gateway_invalid_json"))?;
+        if identity.kind.get().len() > INPUT_FRAME_OVERHEAD {
+            return Ok(ordinary);
+        }
+        let kind = frame_identity_text(identity.kind)?;
+        let selected = match kind.as_str() {
+            "tool-call" => {
+                let id = identity
+                    .call_id
+                    .map(frame_identity_text)
+                    .transpose()?
+                    .ok_or_else(|| protocol_error("gateway_invalid_tool_call"))?;
+                let id = parse_call_id(&id)?;
+                let explicit = identity
+                    .name
+                    .map(frame_identity_text)
+                    .transpose()?
+                    .map(|name| parse_tool_name(&name))
+                    .transpose()?;
+                let streamed = self.streamed.get(&id);
+                if let (Some(name), Some(streamed)) = (&explicit, streamed)
+                    && name != &streamed.name
+                {
+                    return Err(protocol_error("gateway_conflicting_tool_call"));
+                }
+                explicit
+                    .as_ref()
+                    .or_else(|| streamed.map(|input| &input.name))
+                    .and_then(|name| self.inputs.tools.get(name))
+                    .copied()
+            }
+            "tool-input-delta" => {
+                let id = identity
+                    .id
+                    .map(frame_identity_text)
+                    .transpose()?
+                    .ok_or_else(|| protocol_error("gateway_unmatched_tool_input"))?;
+                let id = parse_call_id(&id)?;
+                self.streamed
+                    .get(&id)
+                    .filter(|input| self.inputs.tools.contains_key(&input.name))
+                    .map(|input| input.limits)
+                    .or_else(|| {
+                        self.finalized_streamed
+                            .get(&id)
+                            .and_then(|(name, _)| self.inputs.tools.get(name))
+                            .copied()
+                    })
+            }
+            _ => None,
+        };
+        Ok(selected.map_or(ordinary, |limits| {
+            (
+                ordinary.0.max(
+                    limits
+                        .max_argument_bytes
+                        .saturating_mul(6)
+                        .saturating_add(INPUT_FRAME_OVERHEAD),
+                ),
+                ordinary.1.max(limits.max_json_nodes.saturating_add(64)),
+                true,
+            )
+        }))
     }
 
     fn consume_delta(
@@ -1839,7 +2141,7 @@ impl GatewayEventStream {
         let id = parse_call_id(required_string(object, "id")?)?;
         let name = parse_tool_name(required_string(object, "toolName")?)?;
         if self.streamed.contains_key(&id)
-            || self.finalized_streamed.contains(&id)
+            || self.finalized_streamed.contains_key(&id)
             || self.emitted_calls.contains(&id)
         {
             return Err(protocol_error("gateway_duplicate_tool_call"));
@@ -1847,6 +2149,7 @@ impl GatewayEventStream {
         self.streamed.insert(
             id,
             StreamedToolInput {
+                limits: self.inputs.get(&name, self.limits),
                 name,
                 arguments: String::new(),
                 parsed_arguments: None,
@@ -1864,8 +2167,13 @@ impl GatewayEventStream {
     ) -> Result<(), ProviderError> {
         let id = parse_call_id(required_string(object, "id")?)?;
         let delta = required_string(object, "delta")?;
-        if self.finalized_streamed.contains(&id) {
-            return if delta.len() <= self.limits.max_tool_arguments_bytes {
+        self.streamed_argument_bytes = self
+            .streamed_argument_bytes
+            .checked_add(delta.len())
+            .filter(|bytes| *bytes <= self.inputs.aggregate_arguments)
+            .ok_or_else(|| protocol_error("gateway_aggregate_tool_arguments_byte_limit"))?;
+        if let Some((_, limits)) = self.finalized_streamed.get(&id) {
+            return if delta.len() <= limits.max_argument_bytes {
                 Ok(())
             } else {
                 Err(protocol_error("gateway_tool_arguments_byte_limit"))
@@ -1879,9 +2187,9 @@ impl GatewayEventStream {
             return Err(protocol_error("gateway_late_tool_input"));
         }
         if delta.len()
-            > self
+            > streamed
                 .limits
-                .max_tool_arguments_bytes
+                .max_argument_bytes
                 .saturating_sub(streamed.arguments.len())
         {
             return Err(protocol_error("gateway_tool_arguments_byte_limit"));
@@ -1894,10 +2202,8 @@ impl GatewayEventStream {
         &mut self,
         object: &serde_json::Map<String, Value>,
     ) -> Result<(), ProviderError> {
-        let max_bytes = self.limits.max_tool_arguments_bytes;
-        let max_nodes = self.limits.max_json_nodes;
         let id = parse_call_id(required_string(object, "id")?)?;
-        if self.finalized_streamed.contains(&id) {
+        if self.finalized_streamed.contains_key(&id) {
             return Ok(());
         }
         let streamed = self
@@ -1907,7 +2213,12 @@ impl GatewayEventStream {
         if streamed.ended {
             return Err(protocol_error("gateway_duplicate_tool_input_end"));
         }
-        let parsed = parse_argument_text(&streamed.arguments, max_bytes, max_nodes);
+        let max_bytes = streamed.limits.max_argument_bytes;
+        let parsed = parse_argument_text(
+            &streamed.arguments,
+            max_bytes,
+            streamed.limits.max_json_nodes,
+        );
         streamed.arguments = String::new();
         streamed.ended = true;
         match parsed {
@@ -1957,7 +2268,8 @@ impl GatewayEventStream {
         let Some(streamed) = self.streamed.remove(id) else {
             return;
         };
-        self.finalized_streamed.insert(id.clone());
+        self.finalized_streamed
+            .insert(id.clone(), (streamed.name.clone(), streamed.limits));
         let Some(canonical) = streamed.canonical_arguments else {
             return;
         };
@@ -1987,18 +2299,9 @@ impl GatewayEventStream {
         &mut self,
         object: &serde_json::Map<String, Value>,
     ) -> Result<(), ProviderError> {
-        if self.emitted_calls.len() >= self.limits.max_tool_calls {
-            return Err(protocol_error("gateway_tool_call_limit"));
-        }
-        if let Some(provider_executed) = object.get("providerExecuted") {
-            match provider_executed.as_bool() {
-                Some(false) => {}
-                Some(true) | None => {
-                    return Err(protocol_error("gateway_provider_executed_tool"));
-                }
-            }
-        }
+        reject_provider_execution(object)?;
         let id = parse_call_id(required_string(object, "toolCallId")?)?;
+        self.admit_final_id(&id)?;
         let explicit_name = object.get("toolName");
         let explicit_name = match explicit_name {
             Some(value) => parse_tool_name(
@@ -2009,19 +2312,31 @@ impl GatewayEventStream {
             .map(Some)?,
             None => None,
         };
+        let exact_streamed = self.streamed.get(&id);
+        if let (Some(name), Some(streamed)) = (&explicit_name, exact_streamed)
+            && name != &streamed.name
+        {
+            return Err(protocol_error("gateway_conflicting_tool_call"));
+        }
+        let resolved_name = explicit_name
+            .as_ref()
+            .or_else(|| exact_streamed.map(|input| &input.name))
+            .ok_or_else(|| protocol_error("gateway_invalid_tool_call"))?;
+        let input_limits = self.inputs.get(resolved_name, self.limits);
         let explicit_arguments = object
             .get("input")
             .map(|input| {
                 parse_final_arguments(
                     input,
-                    self.limits.max_tool_arguments_bytes,
-                    self.limits.max_json_nodes,
+                    input_limits.max_argument_bytes,
+                    input_limits.max_json_nodes,
+                    &self.cancellation_token,
                 )
             })
             .transpose()?;
         let explicit_canonical = explicit_arguments
             .as_ref()
-            .map(|arguments| canonical_arguments(arguments, self.limits.max_tool_arguments_bytes))
+            .map(|arguments| canonical_arguments(arguments, input_limits.max_argument_bytes))
             .transpose()?;
         let streamed_id = self.reconciled_streamed_id(
             &id,
@@ -2039,10 +2354,6 @@ impl GatewayEventStream {
         {
             return Err(protocol_error("gateway_conflicting_tool_call"));
         }
-        if self.emitted_calls.contains(&id) {
-            return Err(protocol_error("gateway_duplicate_tool_call"));
-        }
-
         let arguments = if let Some(arguments) = explicit_arguments {
             arguments
         } else {
@@ -2057,6 +2368,21 @@ impl GatewayEventStream {
                 .clone()
                 .ok_or_else(|| protocol_error("gateway_incomplete_tool_input"))?
         };
+        if !self.inputs.tools.is_empty() {
+            let bytes = if let Some(canonical) = explicit_canonical.as_ref() {
+                canonical.len()
+            } else {
+                streamed
+                    .and_then(|input| input.canonical_arguments.as_ref())
+                    .ok_or_else(|| protocol_error("gateway_incomplete_tool_input"))?
+                    .len()
+            };
+            self.final_argument_bytes = self
+                .final_argument_bytes
+                .checked_add(bytes)
+                .filter(|bytes| *bytes <= self.inputs.aggregate_arguments)
+                .ok_or_else(|| protocol_error("gateway_aggregate_tool_arguments_byte_limit"))?;
+        }
         if let Some(streamed_id) = streamed_id {
             self.remove_streamed(&streamed_id);
         }
@@ -2068,6 +2394,16 @@ impl GatewayEventStream {
                 arguments,
             },
         }));
+        Ok(())
+    }
+
+    fn admit_final_id(&self, id: &ToolCallId) -> Result<(), ProviderError> {
+        if self.emitted_calls.len() >= self.limits.max_tool_calls {
+            return Err(protocol_error("gateway_tool_call_limit"));
+        }
+        if self.emitted_calls.contains(id) {
+            return Err(protocol_error("gateway_duplicate_tool_call"));
+        }
         Ok(())
     }
 
@@ -2111,6 +2447,20 @@ impl GatewayEventStream {
         drop(self.source.take());
         Ok(())
     }
+}
+
+#[cfg(test)]
+#[path = "ai_gateway_complete_input_tests.rs"]
+mod complete_input_tests;
+
+fn reject_provider_execution(object: &serde_json::Map<String, Value>) -> Result<(), ProviderError> {
+    if object
+        .get("providerExecuted")
+        .is_some_and(|value| value.as_bool() != Some(false))
+    {
+        return Err(protocol_error("gateway_provider_executed_tool"));
+    }
+    Ok(())
 }
 
 impl fmt::Debug for GatewayEventStream {

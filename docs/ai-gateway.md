@@ -315,6 +315,47 @@ form, and an unprojected result does not merge the two charges. The final outer
 request serialization remains independently subject to the encoded-body limit,
 so intermediate retained strings cannot each claim the full allowance.
 
+### Explicit complete tool inputs
+
+Trusted hosts may configure `AiGatewayProvider::with_tool_input_limits` with
+unique `ToolName` / `AiGatewayToolInputLimits` pairs. The immutable configuration
+accepts at most 64 entries, each with nonzero `max_argument_bytes` (at most
+32 MiB) and `max_json_nodes` (at most 4,194,304). The override is response-only
+and activates only when the exact name is advertised in the current request.
+Unadvertised names, ordinary tools, outgoing historical arguments, request
+schemas, metadata and encoded request bodies retain their ordinary limits.
+The complete terminal input fits explicit 16,378,880-byte / 2,308,160-node
+admission; these values are not implicit defaults or inferred from a schema.
+
+A bounded borrowed framing pass resolves final or streamed tool identity
+before allocating and parsing the argument tree. Exact-ID finals may inherit
+the established streamed name; missing unrelated names and conflicting names
+cannot borrow a larger allowance. Both serialized-string and direct
+object/array inputs enforce the resolved node and compact-byte bounds.
+Streamed strings also enforce their raw byte ceiling before append, and late
+delta tombstones retain the original resolved limits. Existing authoritative
+final-input replacement and unique changed-ID reconciliation rules remain.
+
+For an active override, one record and its receive buffer can grow lazily to
+the larger of their ordinary limit and six times the largest input allowance
+plus 4,096 framing bytes. No maximum-size buffer is allocated up front. Each
+completed frame must still satisfy its resolved tool's framing allowance;
+ordinary frames retain their ordinary byte/node and cumulative response caps.
+An extended tool-call frame permits its input node bound plus 64 envelope nodes,
+but this does not expand the independently checked input tree. Chunk sizes,
+record counts, streamed-call counts and final-call counts do not increase.
+
+The complete-input aggregate is the larger of the largest active input allowance
+and the ordinary per-call allowance times the larger configured streamed/final
+call count. Raw streamed bytes (including ignored late deltas) and finalized
+canonical argument bytes each have this independent, non-replenishing aggregate.
+The aggregate does not multiply by the number of configured overrides. Total
+wire bytes are bounded by the ordinary response allowance plus twelve times
+that aggregate, covering worst-case outer escaping and a complete streamed
+value repeated in the authoritative final. Overflow in derived limits rejects
+the request before transport admission. Without an active override, ordinary
+framing, response and argument admission remain unchanged.
+
 ## Errors and cancellation
 
 Construction rejects an invalid default model or invalid limits through fixed
