@@ -19,6 +19,10 @@ ranges, and preserves foreground stdout/stderr bytes, totals, status and duratio
 The public JSON decoder maps flat tool arguments to these contracts; it does
 not manufacture owner, actor or writer authority. Its cwd extractor validates
 the complete request before a host resolves and authorizes a directory.
+For `exec`, it preserves both explicit `user` and `clean` profiles and leaves
+an omitted or null profile unset for shell resolution; the pinned shell
+resolver defaults omission to `user`. The legacy adapter's clean-only policy
+does not constrain this complete, effect-free decoder.
 The caller must reject duplicate raw JSON fields before constructing a
 `serde_json::Value`. These internal components do not yet replace the registered
 tool adapter described below.

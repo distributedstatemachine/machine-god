@@ -976,8 +976,9 @@ fn quad_spelling(spelling: &str) -> ParseResult<String> {
 /// prepared the right directory. It performs no filesystem, process, environment,
 /// network, shell-resolution, or authorization effects.
 ///
-/// Foreground `exec` retains the clean profile default and uses the complete
-/// core command bound. Execution timeout remains a host limit, not a public argument.
+/// Foreground `exec` preserves the optional profile for host shell resolution
+/// (the pinned resolver defaults omission to user) and uses the complete core
+/// command bound. Execution timeout remains a host limit, not a public argument.
 /// Other actions use pinned semantic defaults and the bounded core contracts.
 ///
 /// # Errors
@@ -1001,16 +1002,12 @@ pub fn decode_terminal_action(
         "exec" => {
             let command = required::<String>(object, "command")?;
             bounded_text(&command, MAX_COMMAND_BYTES)?;
-            let profile =
-                optional::<TerminalProfile>(object, "profile")?.unwrap_or(TerminalProfile::Clean);
-            if profile != TerminalProfile::Clean {
-                return Err(TerminalActionParseError);
-            }
+            let profile = optional::<TerminalProfile>(object, "profile")?;
             TerminalActionRequest::Exec {
                 request: TerminalExecRequest {
                     command,
                     cwd: resolved_cwd.to_owned(),
-                    profile: Some(profile),
+                    profile,
                 },
             }
         }

@@ -123,7 +123,9 @@ worker startup, complete tool request contracts and host assembly remain open.
 The complete normalized twelve-action core contract and effect-free public
 decoder are present, including request/result identity checks and lossless
 foreground execution outcomes. Numeric coercion now matches pinned binary128
-rounding. Semantic 64 KiB commands survive native transport, background
+rounding. Foreground decoding preserves explicit user/clean profiles and leaves
+omission unset for the pinned user-profile default at shell resolution.
+Semantic 64 KiB commands survive native transport, background
 persistence, host/provider admission and CLI rendering with encoding-derived
 ceilings. Background storage preserves its independent aggregate quota through
 pending and live-replacement reservations, including old orphaned histories.

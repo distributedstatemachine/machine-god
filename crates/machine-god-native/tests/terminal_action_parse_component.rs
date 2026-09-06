@@ -106,16 +106,49 @@ fn cwd_is_retained_for_separate_preparation_and_never_used_as_authority() {
 }
 
 #[test]
+fn exec_preserves_optional_profiles_for_pinned_shell_resolution() {
+    let omitted = parse(&json!({"action":"exec","command":"true"}));
+    assert_eq!(
+        omitted,
+        parse(&json!({"action":"exec","command":"true","profile":null}))
+    );
+    for (profile, expected) in [
+        (json!("user"), TerminalProfile::User),
+        (json!(1), TerminalProfile::User),
+        (json!("1"), TerminalProfile::User),
+        (json!("clean"), TerminalProfile::Clean),
+        (json!(0), TerminalProfile::Clean),
+        (json!("0"), TerminalProfile::Clean),
+    ] {
+        let value = json!({"action":"exec","command":"true","cwd":"relative","profile":profile});
+        assert_eq!(
+            terminal_action_requested_cwd(&value).unwrap().as_deref(),
+            Some("relative")
+        );
+        let TerminalActionRequest::Exec { request } = parse(&value) else {
+            panic!()
+        };
+        assert_eq!(request.profile, Some(expected));
+        assert_eq!(request.cwd, "/trusted/workspace");
+    }
+    for profile in [json!(2), json!("unknown"), json!(true)] {
+        let value = json!({"action":"exec","command":"true","profile":profile});
+        assert!(terminal_action_requested_cwd(&value).is_err());
+        assert!(decode_terminal_action(&value, "/trusted").is_err());
+    }
+}
+
+#[test]
 fn command_profile_shell_and_wait_defaults() {
     let TerminalActionRequest::Exec { request } = parse(&json!({"action":"exec","command":"true"}))
     else {
         panic!()
     };
-    assert_eq!(request.profile, Some(TerminalProfile::Clean));
+    assert_eq!(request.profile, None);
     for value in [
         json!({"action":"exec","command":""}),
         json!({"action":"exec","command":"x".repeat(65_537)}),
-        json!({"action":"exec","command":"true","profile":"user"}),
+        json!({"action":"exec","command":"true","profile":"unknown"}),
     ] {
         assert!(decode_terminal_action(&value, "/trusted").is_err());
     }
