@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `compose the lazy runtime with production worker ownership, disk catalog and startup; complete tmux and authorized tool/CLI action routing before the full terminal feature gate`
+- Next gate: `wire the production terminal executor and reference host, including staged startup, foreground execution and authorized monitor effects, before the full terminal feature gate`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -181,6 +181,12 @@ resources; transcript admission moves validated input instead of cloning it.
 The preceding input/archive integration passed the complete pinned workspace
 format, Clippy, test and doctest gate. Production action dispatch and full host
 registration remain the next work, not documentation of a compatibility exception.
+The shared native launch factory and nine-action resident dispatcher are now
+integrated with cold-history read/screen/inspect routing. Catalog leases stay on
+the worker; historical access does not consume live slots. Non-owning request
+handles support staged effect-worker callbacks without extending host lifetime.
+The real launch matrix covers PTY/tmux, bash/zsh, user/clean and full command/paste
+payloads. Full foreground service and final reference-host wiring remain open.
 The complete normalized twelve-action core contract and effect-free public
 decoder are present, including request/result identity checks and lossless
 foreground execution outcomes. Numeric coercion now matches pinned binary128

@@ -635,6 +635,17 @@ before publishing lost-session facts; a live writer lock prevents this path from
 reinterpreting a currently owned session as abandoned. Profile transactions end
 before results leave the worker, and cancellation cannot erase an already
 committed recovery or acknowledgement receipt.
+The resident dispatcher routes read, screen, write, wait, monitor, inspect,
+resize, signal and close through the typed owner context. Actor/writer identities
+and lease-revoke authority come from the host, not descriptive controls. Wait
+capacity is reserved before attention changes and withdrawn without cancelling
+pre-existing attention if admission fails. Pending writes and waits retain their
+typed receipt plus an explicitly admission-time facts snapshot if shutdown
+prevents a later projection. Committed-effect failures are not retry-safe, and
+monitor probes remain available to the ordinary owner observer.
+Cold read, screen and inspect share the same result projection without native
+admission. Resident and cold reads aggregate up to 1 MiB within one retained
+segment, reporting the actual normalized raw range and any retention gap.
 
 The loop pumps immediately while output is available and polls idle timers at
 10 ms intervals, with at most one command between pump opportunities. Output

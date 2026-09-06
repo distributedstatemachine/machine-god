@@ -11,8 +11,15 @@ use crate::terminal_profile::{
     TerminalJournalPersistence, TerminalProfileBudget, TerminalProfileMutationContext,
 };
 use crate::terminal_profile_store::{MAX_PROFILE_OWNERS, TerminalProfileStore};
+use crate::terminal_registry::TerminalRegistryError;
+use crate::terminal_resident_dispatch::{
+    TerminalResidentAuthority, read_terminal_action_page, resident_read_result,
+};
 use crate::terminal_session::{TerminalRecoveredSession, TerminalSessionError};
-use machine_god_core::{BackgroundOutputOwner, CancellationToken, TerminalSessionId};
+use machine_god_core::{
+    BackgroundOutputOwner, CancellationToken, TerminalActionRequest, TerminalActionResult,
+    TerminalSessionId,
+};
 
 type Result<T> = std::result::Result<T, TerminalCatalogViewError>;
 
@@ -24,6 +31,74 @@ pub(crate) struct TerminalHostCatalogs {
 }
 
 impl TerminalHostCatalogs {
+    /// The enclosing host tries resident dispatch first. Only historical
+    /// observation actions may use this path; saved facts never grant mutation.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit profile and authorized request context"
+    )]
+    pub(crate) fn dispatch_history(
+        &mut self,
+        store: &TerminalProfileStore,
+        budget: TerminalProfileBudget,
+        authority: &TerminalResidentAuthority,
+        request: &TerminalActionRequest,
+        now_ms: i64,
+        cancellation: &CancellationToken,
+    ) -> Result<TerminalActionResult> {
+        request
+            .validate()
+            .map_err(|_| TerminalCatalogViewError::Invalid)?;
+        let id = match request {
+            TerminalActionRequest::Read { session_id, .. }
+            | TerminalActionRequest::Screen { session_id }
+            | TerminalActionRequest::Inspect { session_id, .. } => session_id,
+            _ => return Err(TerminalCatalogViewError::Invalid),
+        };
+        let result = self.with_recovered(
+            store,
+            budget,
+            &authority.owner,
+            id,
+            now_ms,
+            cancellation,
+            |session, persistence| {
+                if let TerminalActionRequest::Inspect { events, .. } = request {
+                    return session.inspect_result_with(
+                        persistence,
+                        &authority.owner,
+                        authority.actor,
+                        events,
+                        &authority.controls,
+                    );
+                }
+                session.prepare_public_facts_with(persistence, &authority.owner)?;
+                let facts =
+                    session.public_facts(&authority.owner, authority.actor, &authority.controls)?;
+                match request {
+                    TerminalActionRequest::Read { cursor, .. } => {
+                        let page = read_terminal_action_page(cursor, |position, maximum| {
+                            session
+                                .read(&authority.owner, position, maximum)
+                                .map_err(TerminalRegistryError::Session)
+                        })
+                        .map_err(registry_session_error)?;
+                        resident_read_result(facts, page).map_err(registry_session_error)
+                    }
+                    TerminalActionRequest::Screen { .. } => Ok(TerminalActionResult::Screen {
+                        session: facts,
+                        snapshot: session.screen(&authority.owner)?,
+                    }),
+                    _ => unreachable!("historical action checked before effects"),
+                }
+            },
+        )?;
+        result
+            .validate_for(request)
+            .map_err(|_| TerminalCatalogViewError::Invalid)?;
+        Ok(result)
+    }
+
     /// Pure validation and empty allocation; does not prepare a profile or owner.
     pub(crate) fn new(workspace: String) -> Result<Self> {
         if !canonical_workspace(&workspace) {
@@ -134,9 +209,17 @@ impl TerminalHostCatalogs {
     }
 }
 
+fn registry_session_error(error: TerminalRegistryError) -> TerminalSessionError {
+    match error {
+        TerminalRegistryError::Session(error) => error,
+        _ => TerminalSessionError::InvalidState,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terminal_input::TerminalWriterId;
     use crate::terminal_journal::TerminalJournalLimits;
     use crate::terminal_monitor::{TerminalMonitorContext, TerminalMonitorSet};
     use crate::terminal_profile::TerminalProfileLimits;
@@ -180,6 +263,15 @@ mod tests {
             }
         }
         fn history(&mut self, name: &str, saved_owner: &BackgroundOutputOwner, workspace: &str) {
+            self.history_bytes(name, saved_owner, workspace, b"saved\x1b[31m output\r\n");
+        }
+        fn history_bytes(
+            &mut self,
+            name: &str,
+            saved_owner: &BackgroundOutputOwner,
+            workspace: &str,
+            output: &[u8],
+        ) {
             let catalog = self
                 .catalogs
                 .catalog(&self.store, &owner("a"), &CancellationToken::new())
@@ -196,7 +288,9 @@ mod tests {
                     .unwrap();
             let mut history =
                 TerminalHistory::create(journal, &TerminalDimensions::new(3, 20).unwrap()).unwrap();
-            history.append(b"saved\x1b[31m output\r\n").unwrap();
+            for chunk in output.chunks(16 * 1024) {
+                history.append(chunk).unwrap();
+            }
             let context = TerminalMonitorContext {
                 now_ms: 1,
                 cursor: history.latest(),
@@ -244,6 +338,96 @@ mod tests {
     }
     fn budget() -> TerminalProfileBudget {
         TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap()
+    }
+
+    #[test]
+    fn historical_actions_share_full_read_pages_and_never_admit_native_mutations() {
+        let mut fixture = Fixture::new();
+        let maximum = machine_god_core::MAX_TERMINAL_ACTION_OUTPUT_BYTES;
+        let output = vec![b'x'; maximum + 17];
+        fixture.history_bytes("large", &owner("a"), "/workspace", &output);
+        let authority = TerminalResidentAuthority {
+            owner: owner("a"),
+            actor: TerminalActorRole::Agent,
+            writer: TerminalWriterId::new(std::num::NonZeroU64::new(1).unwrap()),
+            controls: TerminalAllowedControls::default(),
+            revoke_authorized: false,
+        };
+        let mut cursor = TerminalCursor::new(1, 0).unwrap();
+        for expected in [&output[..maximum], &output[maximum..]] {
+            let request = TerminalActionRequest::Read {
+                session_id: id("large"),
+                cursor,
+            };
+            let result = fixture
+                .catalogs
+                .dispatch_history(
+                    &fixture.store,
+                    budget(),
+                    &authority,
+                    &request,
+                    2,
+                    &CancellationToken::new(),
+                )
+                .unwrap();
+            result.validate_for(&request).unwrap();
+            let TerminalActionResult::Read {
+                output,
+                raw_range,
+                session,
+            } = result
+            else {
+                panic!("read result")
+            };
+            assert_eq!(output, expected);
+            assert_eq!(session.lifecycle, TerminalLifecycle::Lost);
+            cursor = raw_range.unwrap().end;
+        }
+        for request in [
+            TerminalActionRequest::Screen {
+                session_id: id("large"),
+            },
+            TerminalActionRequest::Inspect {
+                session_id: id("large"),
+                events: TerminalEventQuery {
+                    after_event_id: 0,
+                    acknowledge_event_id: None,
+                    max_events: 256,
+                },
+            },
+        ] {
+            fixture
+                .catalogs
+                .dispatch_history(
+                    &fixture.store,
+                    budget(),
+                    &authority,
+                    &request,
+                    2,
+                    &CancellationToken::new(),
+                )
+                .unwrap()
+                .validate_for(&request)
+                .unwrap();
+        }
+        let before = fixture.saved_state("large");
+        assert!(
+            fixture
+                .catalogs
+                .dispatch_history(
+                    &fixture.store,
+                    budget(),
+                    &authority,
+                    &TerminalActionRequest::Signal {
+                        session_id: id("large"),
+                        signal: machine_god_core::TerminalSignal::Kill
+                    },
+                    2,
+                    &CancellationToken::new()
+                )
+                .is_err()
+        );
+        assert_eq!(fixture.saved_state("large"), before);
     }
 
     #[test]
