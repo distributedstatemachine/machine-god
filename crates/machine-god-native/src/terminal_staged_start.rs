@@ -1,7 +1,6 @@
 //! Staged native startup: admission and publication borrow the owner briefly;
 //! preparation and all rollback waits belong to a collected effect worker.
 
-use crate::NativeOwnedWorkerSpawner;
 use crate::terminal_catalog_view::TerminalCatalogViewError;
 use crate::terminal_history::{TerminalHistory, TerminalHistoryError};
 use crate::terminal_host_catalog::TerminalHostCatalogs;
@@ -22,6 +21,7 @@ use crate::terminal_runtime::{TerminalRuntimeError, TerminalRuntimeRequester};
 use crate::terminal_session::{TerminalSession, TerminalSessionBackend, TerminalSessionError};
 use crate::terminal_session_record::TerminalSessionMetadata;
 use crate::terminal_startup::TerminalStartupControl;
+use crate::{NativeOwnedWorkerScope, NativeOwnedWorkerSpawner};
 use machine_god_core::{
     BoxFuture, CancellationToken, SessionIncarnationId, TerminalMonitorOperation,
     TerminalSessionFacts, TerminalSessionId, TerminalStartRequest,
@@ -102,6 +102,7 @@ pub(crate) struct TerminalStagedStarter<S: 'static> {
     host_identity: SessionIncarnationId,
     catalogs: fn(&mut S) -> &mut TerminalHostCatalogs,
     active: Arc<AtomicUsize>,
+    worker_scope: Option<NativeOwnedWorkerScope>,
 }
 impl<S: 'static> TerminalStagedStarter<S> {
     pub(crate) fn new(
@@ -116,7 +117,12 @@ impl<S: 'static> TerminalStagedStarter<S> {
             host_identity,
             catalogs,
             active: Arc::new(AtomicUsize::new(0)),
+            worker_scope: None,
         }
+    }
+    pub(crate) fn with_worker_scope(mut self, scope: NativeOwnedWorkerScope) -> Self {
+        self.worker_scope = Some(scope);
+        self
     }
 
     /// Inert until polled. Authority acquisition runs on the effect worker only
@@ -226,6 +232,7 @@ impl<S: 'static> TerminalStagedStarter<S> {
         let host_identity = self.host_identity.clone();
         let catalogs = self.catalogs;
         let active = Arc::clone(&self.active);
+        let worker_scope = self.worker_scope.clone();
         Box::pin(async move {
             if cancellation.is_cancelled() {
                 return Err(TerminalStagedStartError::Cancelled);
@@ -245,7 +252,7 @@ impl<S: 'static> TerminalStagedStarter<S> {
             let stop = CancellationToken::new();
             let cancel_on_drop = CancelOnDrop(stop.clone());
             let worker_stop = stop.clone();
-            let result = NativeOwnedWorkerSpawner::new().run(move || {
+            let operation = move || {
                 let request = StartPublication {
                     authority,
                     session_id,
@@ -263,7 +270,11 @@ impl<S: 'static> TerminalStagedStarter<S> {
                             .commit(&stop)
                     });
                 (result, permit)
-            });
+            };
+            let result = match worker_scope {
+                Some(scope) => scope.run(operation),
+                None => NativeOwnedWorkerSpawner::new().run(operation),
+            };
             // Dropping the outer future cancels only preparation. An admitted
             // worker retains rollback and cleanup; successful registration gives
             // the startup controller an independent registry-owned token.
@@ -824,6 +835,46 @@ mod tests {
     }
 
     #[test]
+    fn scoped_staging_is_inert_and_closed_scope_never_reserves_or_prepares() {
+        let fixture = Fixture::new();
+        let scope = NativeOwnedWorkerScope::new();
+        let starter = TerminalStagedStarter::new(
+            fixture.runtime().requester(),
+            Arc::clone(&fixture.starter.config),
+            fixture.starter.host_identity.clone(),
+            fixture.starter.catalogs,
+        )
+        .with_worker_scope(scope.clone());
+        drop(starter.start(
+            authority(),
+            id(),
+            fixture.request(None),
+            || panic!("unpolled authority"),
+            Vec::new(),
+            |_, _| Ok(()),
+            Duration::from_secs(5),
+            CancellationToken::new(),
+        ));
+        scope.close();
+        scope.completion().wait_on_worker().unwrap();
+        assert!(matches!(
+            futures_executor::block_on(starter.start(
+                authority(),
+                id(),
+                fixture.request(None),
+                || panic!("closed scope authority"),
+                Vec::new(),
+                |_, _| Ok(()),
+                Duration::from_secs(5),
+                CancellationToken::new(),
+            )),
+            Err(TerminalStagedStartError::Worker)
+        ));
+        assert_eq!(fixture.initialized.load(Ordering::Acquire), 0);
+        assert_eq!(starter.active.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
     fn staged_start_is_inert_and_precancellation_or_capacity_has_no_authority_effect() {
         let fixture = Fixture::new();
         drop(fixture.starter.start(
@@ -874,7 +925,9 @@ mod tests {
 
     #[test]
     fn reservation_precedes_authority_and_owner_remains_responsive_during_preparation() {
-        let fixture = Fixture::new();
+        let mut fixture = Fixture::new();
+        let scope = NativeOwnedWorkerScope::new();
+        fixture.starter.worker_scope = Some(scope.clone());
         let poll_thread = std::thread::current().id();
         let (entered, ready) = mpsc::sync_channel(1);
         let (release, gate) = mpsc::sync_channel(1);
@@ -906,7 +959,11 @@ mod tests {
             },
         ))
         .unwrap();
+        scope.close();
+        assert!(!scope.completion().is_complete());
         release.send(()).unwrap();
+        scope.completion().wait_on_worker().unwrap();
+        assert_eq!(fixture.starter.active.load(Ordering::Acquire), 1);
         assert!(matches!(
             futures_executor::block_on(start),
             Err(TerminalStagedStartError::Launch(

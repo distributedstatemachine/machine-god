@@ -8,7 +8,9 @@ use crate::terminal_owner::{
 };
 use crate::terminal_profile::TerminalProfileBudget;
 use crate::terminal_profile_store::TerminalProfileStore;
-use crate::terminal_registry::{TerminalRegistry, TerminalRegistryStep};
+use crate::terminal_registry::{
+    TerminalRegistry, TerminalRegistryError, TerminalRegistryFailure, TerminalRegistryStep,
+};
 use crate::terminal_session::TerminalSessionBackend;
 #[cfg(test)]
 use crate::terminal_wait::TerminalWaitCoordinator;
@@ -38,6 +40,12 @@ pub(crate) trait TerminalRuntimeSpawner: Send + Sync {
 impl TerminalRuntimeSpawner for crate::NativeOwnedWorkerSpawner {
     fn spawn(&self, job: TerminalRuntimeJob) -> std::result::Result<(), ()> {
         crate::NativeOwnedWorkerSpawner::spawn(self, job).map_err(|_| ())
+    }
+}
+
+impl TerminalRuntimeSpawner for crate::NativeOwnedWorkerScope {
+    fn spawn(&self, job: TerminalRuntimeJob) -> std::result::Result<(), ()> {
+        crate::NativeOwnedWorkerScope::spawn(self, job).map_err(|_| ())
     }
 }
 
@@ -484,16 +492,25 @@ impl<B: TerminalSessionBackend, S> TerminalRuntimeWorker<B, S> {
                 &mut self.observer,
             )
         });
-        let (failure, cleaned) = match exit {
-            Ok(exit) => (
-                exit.error.map(TerminalRuntimeError::Owner),
-                exit.shutdown.is_ok_and(|failures| failures.is_empty()),
-            ),
-            Err(()) => (Some(TerminalRuntimeError::Panicked), false),
+        let mut observe;
+        let (mut failure, cleaned) = match exit {
+            Ok(exit) => {
+                // The owner does not distinguish clock/request/observer panics.
+                // Never re-enter a possibly failed callback during cleanup.
+                observe = exit.error != Some(TerminalOwnerError::Panicked);
+                let mut failure = exit.error.map(TerminalRuntimeError::Owner);
+                let cleaned = self.observe_shutdown(exit.shutdown, &mut failure, &mut observe);
+                (failure, cleaned)
+            }
+            Err(()) => {
+                observe = false;
+                (Some(TerminalRuntimeError::Panicked), false)
+            }
         };
         // An old callback/clock error does not keep a clean registry alive.
-        // Re-evaluate only current shutdown obligations, without polling more
-        // user callbacks or promoting numeric persisted process identities.
+        // Only shutdown diagnostics are observed during retries, never new
+        // requests or numeric persisted process identities. A panicking
+        // observer is disabled without interrupting native cleanup.
         if !cleaned {
             let mut backoff = CLEANUP_INITIAL_BACKOFF;
             loop {
@@ -506,7 +523,9 @@ impl<B: TerminalSessionBackend, S> TerminalRuntimeWorker<B, S> {
                         TerminalClosePolicy::Force,
                     )
                 });
-                if shutdown.is_ok_and(|result| result.is_ok_and(|failures| failures.is_empty())) {
+                if shutdown
+                    .is_ok_and(|result| self.observe_shutdown(result, &mut failure, &mut observe))
+                {
                     break;
                 }
                 backoff = backoff.saturating_mul(2).min(CLEANUP_MAX_BACKOFF);
@@ -515,6 +534,46 @@ impl<B: TerminalSessionBackend, S> TerminalRuntimeWorker<B, S> {
         // Preserve the initiating failure after native cleanup converges. A
         // clean registry is not evidence that its owner exited successfully.
         failure.map_or(Ok(()), Err)
+    }
+
+    fn observe_shutdown(
+        &mut self,
+        shutdown: std::result::Result<Vec<TerminalRegistryFailure>, TerminalRegistryError>,
+        failure: &mut Option<TerminalRuntimeError>,
+        observe: &mut bool,
+    ) -> bool {
+        let Ok(failures) = shutdown else {
+            return false;
+        };
+        if failures.is_empty() {
+            return true;
+        }
+        if *observe {
+            let steps = failures
+                .into_iter()
+                .map(|failure| TerminalRegistryStep {
+                    session_id: failure.session_id,
+                    owner: failure.owner,
+                    result: Err(failure.error),
+                    cleanup_error: Some(failure.error),
+                })
+                .collect();
+            if contain(|| {
+                (self.observer)(
+                    self.state
+                        .0
+                        .as_mut()
+                        .expect("worker owns its initialized state"),
+                    steps,
+                );
+            })
+            .is_err()
+            {
+                *observe = false;
+                failure.get_or_insert(TerminalRuntimeError::Panicked);
+            }
+        }
+        false
     }
 }
 
@@ -999,6 +1058,151 @@ mod tests {
             ),
             Err(TerminalRuntimeError::Owner(TerminalOwnerError::Closed))
         ));
+    }
+
+    #[test]
+    fn scoped_runtime_is_lazy_and_closed_scope_prevents_initialization() {
+        let fixture = Fixture::new();
+        let scope = crate::NativeOwnedWorkerScope::new();
+        let runtime = TerminalRuntime::new(fixture.initializer(true), Arc::new(scope.clone()));
+        drop(runtime.request(CancellationToken::new(), |_, _, _| ()));
+        scope.close();
+        scope.completion().wait_on_worker().unwrap();
+        assert_eq!(fixture.initialized.load(Ordering::Acquire), 0);
+        assert_eq!(
+            futures_executor::block_on(runtime.request(CancellationToken::new(), |_, _, _| ())),
+            Err(TerminalRuntimeError::Spawn)
+        );
+        assert_eq!(fixture.initialized.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn scoped_runtime_completion_collects_cleanup_without_future_or_requester_votes() {
+        let fixture = Fixture::new();
+        fixture.backend.lock().unwrap().close_failures = 2;
+        let scope = crate::NativeOwnedWorkerScope::new();
+        let runtime = TerminalRuntime::new(fixture.initializer(true), Arc::new(scope.clone()));
+        futures_executor::block_on(runtime.request(CancellationToken::new(), |_, _, _| ()))
+            .unwrap();
+        let requester = runtime.requester();
+        let response = requester.request_with_context(CancellationToken::new(), |_| ());
+        scope.close();
+        assert!(!scope.completion().is_complete());
+        drop(runtime);
+        scope.completion().wait_on_worker().unwrap();
+        assert_eq!(fixture.backend.lock().unwrap().close_attempts, 3);
+        assert!(fixture.backend.lock().unwrap().dropped_on.is_some());
+        assert!(futures_executor::block_on(response).is_err());
+        drop(requester);
+    }
+
+    #[test]
+    fn shutdown_retry_observer_receives_exact_owned_cleanup_failures() {
+        let fixture = Fixture::new();
+        fixture.backend.lock().unwrap().close_failures = 2;
+        let initialize = fixture.initializer(true);
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let worker_observed = Arc::clone(&observed);
+        let runtime = TerminalRuntime::new(
+            move || {
+                let mut worker = initialize()?;
+                worker.observer = Box::new(move |_, steps| {
+                    for step in steps {
+                        if let Err(error) = step.result {
+                            worker_observed.lock().unwrap().push((
+                                step.owner,
+                                step.session_id,
+                                error,
+                                step.cleanup_error,
+                                std::thread::current().id(),
+                            ));
+                        }
+                    }
+                });
+                Ok(worker)
+            },
+            fixture.spawner.clone(),
+        );
+        futures_executor::block_on(runtime.request(CancellationToken::new(), |_, _, _| ()))
+            .unwrap();
+        drop(runtime);
+        fixture.spawner.collect();
+        let expected_owner = BackgroundOutputOwner::new(
+            SessionId::new("owner").unwrap(),
+            SessionIncarnationId::new("incarnation").unwrap(),
+        );
+        let observed = observed.lock().unwrap();
+        assert_eq!(observed.len(), 2);
+        for (owner, id, error, cleanup_error, thread) in observed.iter() {
+            assert_eq!(owner, &expected_owner);
+            assert_eq!(id, &TerminalSessionId::new("runtime-session").unwrap());
+            assert_eq!(
+                *error,
+                crate::terminal_session::TerminalSessionError::Native
+            );
+            assert_eq!(*cleanup_error, Some(*error));
+            assert_eq!(Some(*thread), *fixture.worker_thread.lock().unwrap());
+        }
+    }
+
+    #[test]
+    fn shutdown_observer_panic_is_not_retried_and_does_not_interrupt_cleanup() {
+        let fixture = Fixture::new();
+        fixture.backend.lock().unwrap().close_failures = 2;
+        let initialize = fixture.initializer(true);
+        let diagnostics = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&diagnostics);
+        let runtime = TerminalRuntime::new(
+            move || {
+                let mut worker = initialize()?;
+                worker.observer = Box::new(move |_, steps| {
+                    if steps.iter().any(|step| step.result.is_err()) {
+                        observed.fetch_add(1, Ordering::AcqRel);
+                        panic!("shutdown observer failure");
+                    }
+                });
+                Ok(worker)
+            },
+            fixture.spawner.clone(),
+        );
+        futures_executor::block_on(runtime.request(CancellationToken::new(), |_, _, _| ()))
+            .unwrap();
+        runtime.shutdown();
+        fixture.spawner.collect();
+        assert_eq!(diagnostics.load(Ordering::Acquire), 1);
+        assert_eq!(fixture.backend.lock().unwrap().close_attempts, 3);
+        assert_eq!(
+            runtime.shared.failure(),
+            Some(TerminalRuntimeError::Panicked)
+        );
+    }
+
+    #[test]
+    fn failed_owner_observer_is_never_reentered_for_shutdown_diagnostics() {
+        let fixture = Fixture::new();
+        fixture.backend.lock().unwrap().close_failures = 2;
+        let initialize = fixture.initializer(true);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&calls);
+        let runtime = TerminalRuntime::new(
+            move || {
+                let mut worker = initialize()?;
+                worker.observer = Box::new(move |_, _| {
+                    observed.fetch_add(1, Ordering::AcqRel);
+                    panic!("owner observer failed");
+                });
+                Ok(worker)
+            },
+            fixture.spawner.clone(),
+        );
+        let _ = futures_executor::block_on(runtime.request(CancellationToken::new(), |_, _, _| ()));
+        fixture.spawner.collect();
+        assert_eq!(calls.load(Ordering::Acquire), 1);
+        assert_eq!(fixture.backend.lock().unwrap().close_attempts, 3);
+        assert_eq!(
+            runtime.shared.failure(),
+            Some(TerminalRuntimeError::Owner(TerminalOwnerError::Panicked))
+        );
     }
 
     #[test]

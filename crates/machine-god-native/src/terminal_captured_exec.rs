@@ -2,7 +2,6 @@
 //! launch framing and head/tail retention reuse the terminal's existing primitives.
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
-use crate::NativeOwnedWorkerSpawner;
 use crate::background_process::{
     BackgroundProcessExit, OwnedBackgroundProcess, TerminalChildGuard,
     ValidatedBackgroundEnvironment,
@@ -14,6 +13,7 @@ use crate::terminal_helper::{
     validate_pty_directory, write_gate,
 };
 use crate::terminal_shell::TerminalShell;
+use crate::{NativeOwnedWorkerScope, NativeOwnedWorkerSpawner};
 use machine_god_core::{
     BoxFuture, CancellationToken, MAX_TERMINAL_ACTION_OUTPUT_BYTES, MAX_TERMINAL_EXEC_DURATION,
     TerminalExecCapturedOutput, TerminalExecRequest, TerminalExecResult, TerminalExecStatus,
@@ -75,6 +75,7 @@ pub struct TerminalCapturedExec {
     timeout: Duration,
     maximum_active: usize,
     active: Arc<AtomicUsize>,
+    worker_scope: Option<NativeOwnedWorkerScope>,
 }
 
 /// Produced and consumed on the same collected effect worker. In particular,
@@ -120,7 +121,15 @@ impl TerminalCapturedExec {
             timeout,
             maximum_active,
             active: Arc::new(AtomicUsize::new(0)),
+            worker_scope: None,
         })
+    }
+
+    /// Enroll future execution workers in the host's explicit shutdown scope.
+    /// Scope metadata adds no host-lifetime vote and does not spawn work here.
+    pub(crate) fn with_worker_scope(mut self, scope: NativeOwnedWorkerScope) -> Self {
+        self.worker_scope = Some(scope);
+        self
     }
 
     /// The caller resolves and authorizes the exact shell, environment and cwd
@@ -171,6 +180,7 @@ impl TerminalCapturedExec {
         let active = Arc::clone(&self.active);
         let maximum = self.maximum_active;
         let timeout = self.timeout;
+        let worker_scope = self.worker_scope.clone();
         Box::pin(async move {
             let deadline = Instant::now() + timeout;
             if stopped(&cancellation, &[&host_stop]) {
@@ -186,46 +196,49 @@ impl TerminalCapturedExec {
             let _cancel_on_drop = CancelOnDrop(stop.clone());
             let result_cancellation = cancellation.clone();
             let result_host_stop = host_stop.clone();
-            let receipt = NativeOwnedWorkerSpawner::new()
-                .run(move || {
-                    let result = (|| {
-                        if stopped(&cancellation, &[&stop, &host_stop]) {
-                            return Err(TerminalCapturedExecError::Cancelled);
-                        }
-                        if Instant::now() >= deadline {
-                            return empty_timeout(Instant::now()).into_terminal_result();
-                        }
-                        let TerminalCapturedAuthority {
-                            request,
-                            shell,
-                            environment,
-                            cwd,
-                        } = prepare(deadline, &cancellation, &host_stop)?;
-                        request
-                            .validate()
-                            .map_err(|_| TerminalCapturedExecError::Invalid)?;
-                        let environment = ValidatedBackgroundEnvironment::new(environment)
-                            .map_err(|_| TerminalCapturedExecError::Invalid)?;
-                        if request.profile.unwrap_or(TerminalProfile::User) != shell.profile() {
-                            return Err(TerminalCapturedExecError::Invalid);
-                        }
-                        run(
-                            &helper,
-                            &request,
-                            &shell,
-                            &environment,
-                            cwd,
-                            deadline,
-                            MAX_TERMINAL_ACTION_OUTPUT_BYTES,
-                            &cancellation,
-                            &[&stop, &host_stop],
-                        )
-                        .and_then(CapturedOutcome::into_terminal_result)
-                    })();
-                    (result, permit)
-                })
-                .await
-                .map_err(|_| TerminalCapturedExecError::Worker)?;
+            let operation = move || {
+                let result = (|| {
+                    if stopped(&cancellation, &[&stop, &host_stop]) {
+                        return Err(TerminalCapturedExecError::Cancelled);
+                    }
+                    if Instant::now() >= deadline {
+                        return empty_timeout(Instant::now()).into_terminal_result();
+                    }
+                    let TerminalCapturedAuthority {
+                        request,
+                        shell,
+                        environment,
+                        cwd,
+                    } = prepare(deadline, &cancellation, &host_stop)?;
+                    request
+                        .validate()
+                        .map_err(|_| TerminalCapturedExecError::Invalid)?;
+                    let environment = ValidatedBackgroundEnvironment::new(environment)
+                        .map_err(|_| TerminalCapturedExecError::Invalid)?;
+                    if request.profile.unwrap_or(TerminalProfile::User) != shell.profile() {
+                        return Err(TerminalCapturedExecError::Invalid);
+                    }
+                    run(
+                        &helper,
+                        &request,
+                        &shell,
+                        &environment,
+                        cwd,
+                        deadline,
+                        MAX_TERMINAL_ACTION_OUTPUT_BYTES,
+                        &cancellation,
+                        &[&stop, &host_stop],
+                    )
+                    .and_then(CapturedOutcome::into_terminal_result)
+                })();
+                (result, permit)
+            };
+            let receipt = match worker_scope {
+                Some(scope) => scope.run(operation),
+                None => NativeOwnedWorkerSpawner::new().run(operation),
+            }
+            .await
+            .map_err(|_| TerminalCapturedExecError::Worker)?;
             if stopped(&result_cancellation, &[&result_host_stop]) {
                 return Err(TerminalCapturedExecError::Cancelled);
             }
@@ -1038,6 +1051,71 @@ mod tests {
     }
 
     #[test]
+    fn scoped_capture_is_inert_and_closed_scope_rejects_authority_preparation() {
+        let mut fixture = Fixture::new(Duration::from_secs(10));
+        let scope = NativeOwnedWorkerScope::new();
+        fixture.executor = TerminalCapturedExec::new(
+            fixture.executor.helper.program().to_owned(),
+            fixture.executor.helper.arguments().to_vec(),
+            Duration::from_secs(10),
+            2,
+        )
+        .unwrap()
+        .with_worker_scope(scope.clone());
+        let prepare = |_, _: &CancellationToken, _: &CancellationToken| {
+            panic!("closed or unpolled scope must not prepare authority")
+        };
+        drop(fixture.executor.execute_prepared(
+            prepare,
+            CancellationToken::new(),
+            CancellationToken::new(),
+        ));
+        scope.close();
+        scope.completion().wait_on_worker().unwrap();
+        assert_eq!(
+            futures_executor::block_on(fixture.executor.execute_prepared(
+                prepare,
+                CancellationToken::new(),
+                CancellationToken::new(),
+            )),
+            Err(TerminalCapturedExecError::Worker)
+        );
+        assert_eq!(fixture.executor.active.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn scoped_capture_collects_worker_without_waiting_for_unconsumed_receipt_permit() {
+        let mut fixture = Fixture::new(Duration::from_secs(10));
+        let scope = NativeOwnedWorkerScope::new();
+        fixture.executor.worker_scope = Some(scope.clone());
+        let (entered, ready) = std::sync::mpsc::sync_channel(1);
+        let (release, gate) = std::sync::mpsc::sync_channel(1);
+        let mut response = fixture.executor.execute_prepared(
+            move |_, _, _| {
+                entered.send(()).unwrap();
+                gate.recv().unwrap();
+                Err(TerminalCapturedExecError::Invalid)
+            },
+            CancellationToken::new(),
+            CancellationToken::new(),
+        );
+        futures_executor::block_on(async {
+            assert!(futures_util::poll!(&mut response).is_pending());
+        });
+        ready.recv_timeout(Duration::from_secs(5)).unwrap();
+        scope.close();
+        assert!(!scope.completion().is_complete());
+        release.send(()).unwrap();
+        scope.completion().wait_on_worker().unwrap();
+        assert_eq!(fixture.executor.active.load(Ordering::Acquire), 1);
+        assert_eq!(
+            futures_executor::block_on(response),
+            Err(TerminalCapturedExecError::Invalid)
+        );
+        assert_eq!(fixture.executor.active.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
     fn captured_exec_preparation_is_inert_and_host_stop_prevents_submission() {
         let fixture = Fixture::new(Duration::from_secs(5));
         let prepared = Arc::new(AtomicUsize::new(0));
@@ -1088,7 +1166,9 @@ mod tests {
 
     #[test]
     fn captured_exec_host_stop_cleans_native_process_without_response_poll() {
-        let fixture = Fixture::new(Duration::from_secs(30));
+        let mut fixture = Fixture::new(Duration::from_secs(30));
+        let scope = NativeOwnedWorkerScope::new();
+        fixture.executor.worker_scope = Some(scope.clone());
         let authority = fixture.authority("printf '%s' \"$$\" > leader; exec /bin/sleep 30");
         let stop = CancellationToken::new();
         let mut future = fixture.executor.execute_prepared(
@@ -1108,7 +1188,10 @@ mod tests {
             .parse::<i32>()
             .unwrap();
         let pid = rustix::process::Pid::from_raw(pid).unwrap();
+        scope.close();
+        assert!(!scope.completion().is_complete());
         stop.cancel();
+        scope.completion().wait_on_worker().unwrap();
         let until = Instant::now() + Duration::from_secs(10);
         while rustix::process::test_kill_process(pid).is_ok() && Instant::now() < until {
             std::thread::sleep(Duration::from_millis(5));
@@ -1149,7 +1232,10 @@ mod tests {
             fixture.run("exit 137").status,
             TerminalExecStatus::Exited { exit_code: 137 }
         );
-        let fixture = Fixture::new(Duration::from_millis(100));
+        // This assertion requires an actual shell write before expiry. Leave
+        // room for the OS to launch the signed helper; the separate 1ms case
+        // below covers deadlines that expire during helper startup itself.
+        let fixture = Fixture::new(Duration::from_secs(1));
         let result = fixture.run("printf before; exec /bin/sleep 30");
         assert_eq!(result.status, TerminalExecStatus::TimedOut {});
         assert_eq!(fixture.stdout(&result), b"before");

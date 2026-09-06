@@ -2,7 +2,6 @@
 //! never create native authority; a live, owner-bound grant is required.
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
-use crate::NativeOwnedWorkerSpawner;
 use crate::background_process::ValidatedBackgroundEnvironment;
 use crate::terminal_captured_exec::{TerminalCapturedExec, TerminalCapturedExecError};
 use crate::terminal_monitor::{
@@ -10,6 +9,7 @@ use crate::terminal_monitor::{
     TerminalProbeFailure, TerminalProbeObservation, TerminalProbeRequest, TerminalProbeTarget,
 };
 use crate::terminal_shell::TerminalShell;
+use crate::{NativeOwnedWorkerScope, NativeOwnedWorkerSpawner};
 use machine_god_core::{
     BackgroundOutputOwner, BoxFuture, CancellationToken, TerminalExecRequest, TerminalExecStatus,
     TerminalMonitorId, TerminalSessionId,
@@ -288,6 +288,7 @@ pub(crate) struct NativeTerminalProbeExecutor {
     captured: Arc<TerminalCapturedExec>,
     active: Arc<AtomicUsize>,
     maximum_active: usize,
+    worker_scope: Option<NativeOwnedWorkerScope>,
 }
 impl NativeTerminalProbeExecutor {
     pub(crate) fn new(captured: Arc<TerminalCapturedExec>, maximum_active: usize) -> Result<Self> {
@@ -298,7 +299,12 @@ impl NativeTerminalProbeExecutor {
             captured,
             active: Arc::new(AtomicUsize::new(0)),
             maximum_active,
+            worker_scope: None,
         })
+    }
+    pub(crate) fn with_worker_scope(mut self, scope: NativeOwnedWorkerScope) -> Self {
+        self.worker_scope = Some(scope);
+        self
     }
     pub(crate) fn execute(
         &self,
@@ -308,6 +314,7 @@ impl NativeTerminalProbeExecutor {
         let active = Arc::clone(&self.active);
         let captured = Arc::clone(&self.captured);
         let maximum = self.maximum_active;
+        let worker_scope = self.worker_scope.clone();
         Box::pin(async move {
             let identity = request.identity.clone();
             let revocation = request.grant.revocation.clone();
@@ -338,21 +345,23 @@ impl NativeTerminalProbeExecutor {
             let stop = CancellationToken::new();
             let _stop_on_drop = StopOnDrop(stop.clone());
             let worker_cancellation = cancellation.clone();
-            match NativeOwnedWorkerSpawner::new()
-                .run(move || {
-                    let mut run = run_probe(
-                        &request,
-                        &captured,
-                        &worker_cancellation,
-                        &[&stop, &request.grant.revocation],
-                    );
-                    if request.grant.is_revoked() {
-                        run.result = Err(TerminalProbeFailure::Denied);
-                    }
-                    (request.identity.finish(run, &worker_cancellation), permit)
-                })
-                .await
-            {
+            let operation = move || {
+                let mut run = run_probe(
+                    &request,
+                    &captured,
+                    &worker_cancellation,
+                    &[&stop, &request.grant.revocation],
+                );
+                if request.grant.is_revoked() {
+                    run.result = Err(TerminalProbeFailure::Denied);
+                }
+                (request.identity.finish(run, &worker_cancellation), permit)
+            };
+            let reply = match worker_scope {
+                Some(scope) => scope.run(operation),
+                None => NativeOwnedWorkerSpawner::new().run(operation),
+            };
+            match reply.await {
                 Ok((mut evidence, _permit)) => {
                     if revocation.is_cancelled() {
                         evidence.result = Err(TerminalProbeFailure::Denied);
@@ -1315,8 +1324,34 @@ mod tests {
     }
 
     #[test]
+    fn scoped_probe_is_inert_and_closed_scope_rejects_native_effects() {
+        let mut fixture = Fixture::new();
+        let scope = NativeOwnedWorkerScope::new();
+        fixture.executor =
+            NativeTerminalProbeExecutor::new(Arc::clone(&fixture.executor.captured), 2)
+                .unwrap()
+                .with_worker_scope(scope.clone());
+        let approved = fixture.custom("printf forbidden > forbidden".into());
+        drop(
+            fixture
+                .executor
+                .execute(bind(Arc::clone(&approved)), CancellationToken::new()),
+        );
+        scope.close();
+        scope.completion().wait_on_worker().unwrap();
+        assert!(matches!(
+            fixture.run(approved).result,
+            Err(TerminalProbeFailure::Unavailable)
+        ));
+        assert!(!fixture.root.join("forbidden").exists());
+        assert_eq!(fixture.executor.active.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
     fn probe_revocation_denies_queued_clones_and_stops_unpolled_running_workers() {
-        let fixture = Fixture::new();
+        let mut fixture = Fixture::new();
+        let scope = NativeOwnedWorkerScope::new();
+        fixture.executor.worker_scope = Some(scope.clone());
         let approved = fixture.custom("printf forbidden > forbidden".into());
         let queued = bind(Arc::clone(&approved));
         let clone = Arc::clone(&approved);
@@ -1358,8 +1393,12 @@ mod tests {
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(5));
         };
+        scope.close();
+        assert!(!scope.completion().is_complete());
         approved.revoke();
         // No more future polls: the worker observes the grant token itself.
+        scope.completion().wait_on_worker().unwrap();
+        assert_eq!(fixture.executor.active.load(Ordering::Acquire), 1);
         while rustix::process::test_kill_process(pid).is_ok() {
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(5));
