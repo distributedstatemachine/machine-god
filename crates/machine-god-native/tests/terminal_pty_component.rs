@@ -53,3 +53,5 @@ mod terminal_tmux;
 mod terminal_unicode_data;
 #[path = "../src/terminal_wait.rs"]
 mod terminal_wait;
+#[path = "../src/terminal_write_completion.rs"]
+mod terminal_write_completion;

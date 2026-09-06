@@ -147,6 +147,9 @@ The prepared-pane tmux controller is integrated with bounded whole-paste input,
 exact pane validation and receipt preservation; native platform jobs require a
 real tmux executable. Production launch, authenticated capture and recovery
 authority still need host composition, alongside complete action routing.
+Pending write completion now shares the owner loop with capacity reserved before
+effects, exact receipt identity, and final shutdown counts; cancellation does not
+resubmit or discard the queued suffix.
 The complete normalized twelve-action core contract and effect-free public
 decoder are present, including request/result identity checks and lossless
 foreground execution outcomes. Numeric coercion now matches pinned binary128

@@ -310,6 +310,12 @@ terminal. A scheduler step performs one bounded input attempt, reads at most
 
 The admitted-read path never performs a shutdown drain. Exit observed before
 or after its single read requests cleanup without consuming the remaining tail.
+For native PTYs, physical EOF immediately closes input but permits at most
+100 ms of nonblocking exit-status observation before reporting final stream
+closure. The deadline never restarts: a fast child exit can converge without a
+false backend failure, while a still-running process with a permanently closed
+stream still reaches the existing loss/cleanup path. Teardown drains use physical
+EOF directly while the close routine holds the process capability.
 The owner releases the one-read permit before draining through ordinary
 persistence authority under the same profile transaction. This preserves a
 multi-chunk exit tail without repeating an already committed read or its replies.
@@ -551,6 +557,15 @@ after releasing profile authority. Transient publication failures retry on the
 owner. Final shutdown still resolves each future, preserving its frozen outcome
 and explicitly reporting unavailable attention persistence instead of claiming
 successful cleanup or leaving the future pending indefinitely.
+
+Pending user writes also share the owner loop. A separate 32-entry bound includes
+unconsumed completions and is reserved before submission. Observation after
+pumping or shutdown uses exact owner, session, actor, writer and operation
+identity; it never resubmits input. Cancellation before submission prevents the
+effect, while later cancellation or dropping the reply cannot discard the queued
+suffix. Final replies retain accepted-byte counts and independent publication
+errors; unavailable observation reports the last known receipt. Reply wakes run
+after releasing profile and reply locks, with individual wake panics contained.
 
 The sixteen-entry resident bound is not disk-history retention. The profile
 transaction and admission components cover nonresident histories and concurrent
