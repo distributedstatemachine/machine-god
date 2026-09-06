@@ -1190,6 +1190,38 @@ mod tests {
         }
     }
 
+    #[test]
+    fn maximum_escaped_list_fits_and_oversized_command_still_rejects() {
+        let records = (1..=MAX_BACKGROUND_RECORDS)
+            .rev()
+            .map(|id| BackgroundRecordSnapshot {
+                id: id as u64,
+                state: "running".to_owned(),
+                updated_at_ms: id as u64,
+                command_preview: "\u{1b}".repeat(MAX_BACKGROUND_COMMAND_PREVIEW_BYTES),
+                preview_truncated: true,
+            })
+            .collect();
+        let host = FakeHost::ready(Ok(BackgroundSnapshot::List(BackgroundListSnapshot {
+            records,
+            truncated: false,
+        })));
+        for args in [&["--json"][..], &[][..]] {
+            let (exit, stdout, stderr) = invoke(&host, args);
+            assert_eq!(exit, 0);
+            assert!(stdout.len() <= MAX_BACKGROUND_OUTPUT_BYTES);
+            assert!(stderr.is_empty());
+        }
+        let BackgroundSnapshot::Detail(mut snapshot) = detail() else {
+            unreachable!()
+        };
+        snapshot.command = "x".repeat(MAX_BACKGROUND_COMMAND_BYTES + 1);
+        let host = FakeHost::ready(Ok(BackgroundSnapshot::Detail(snapshot)));
+        let (exit, stdout, _) = invoke(&host, &["last"]);
+        assert_eq!(exit, 1);
+        assert!(stdout.is_empty());
+    }
+
     struct BrokenWriter;
 
     impl io::Write for BrokenWriter {
