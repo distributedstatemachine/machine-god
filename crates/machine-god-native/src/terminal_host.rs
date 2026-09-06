@@ -1,7 +1,6 @@
 //! Complete native action host. Real Engine/Session handles own the resource;
 //! tools and submitted operations carry only non-owning runtime requesters.
 
-use crate::NativeOwnedWorkerSpawner;
 use crate::terminal_action_tool::{
     TerminalActionExecutor, TerminalActionInvocation, TerminalActionTool,
 };
@@ -31,6 +30,7 @@ use crate::terminal_runtime::{
 };
 use crate::terminal_session::TerminalSessionError;
 use crate::terminal_staged_start::TerminalStagedStarter;
+use crate::{NativeOwnedWorkerCompletion, NativeOwnedWorkerScope};
 use futures_util::future::{Either, select};
 use machine_god_core::{
     BackgroundOutputOwner, BoxFuture, CancellationToken, SessionIncarnationId, TerminalAction,
@@ -53,8 +53,6 @@ const MAX_EFFECTS: usize = 16;
 struct HostState {
     catalogs: TerminalHostCatalogs,
     probes: TerminalHostProbes,
-    #[cfg(test)]
-    _finished: tests::Finished,
 }
 impl TerminalCatalogState for HostState {
     fn catalogs(&mut self) -> &mut TerminalHostCatalogs {
@@ -66,21 +64,77 @@ fn probes(state: &mut HostState) -> &mut TerminalHostProbes {
 }
 type Requester = TerminalRuntimeRequester<TerminalNativeBackend, HostState>;
 
-/// Attach only through EngineBuilder::host_resource, never to an engine tool.
+/// Attach only through `EngineBuilder::host_resource`, never to an engine tool.
 pub(crate) struct NativeTerminalHostResource {
     runtime: TerminalRuntime<TerminalNativeBackend, HostState>,
     stop: CancellationToken,
-    #[cfg(test)]
-    finished: Arc<std::sync::atomic::AtomicBool>,
+    workers: NativeOwnedWorkerScope,
+}
+impl NativeTerminalHostResource {
+    pub(crate) fn worker_scope(&self) -> NativeOwnedWorkerScope {
+        self.workers.clone()
+    }
+
+    pub(crate) fn completion(&self) -> NativeOwnedWorkerCompletion {
+        self.workers.completion()
+    }
 }
 impl Drop for NativeTerminalHostResource {
     fn drop(&mut self) {
+        self.workers.close();
         self.stop.cancel();
         self.runtime.shutdown();
     }
 }
 
 pub(crate) struct NativeTerminalHost;
+
+struct PreparedHost {
+    host: Arc<CapturedTerminalHostAuthority>,
+    preparer: Arc<TerminalHostProbePreparer>,
+    captured: Arc<TerminalCapturedExec>,
+    probe_executor: Arc<NativeTerminalProbeExecutor>,
+}
+
+impl PreparedHost {
+    fn capture_on_worker(
+        inputs: TerminalHostAuthorityInputs,
+        workers: &NativeOwnedWorkerScope,
+    ) -> Result<Self, ToolError> {
+        let deadline = Instant::now() + START_TIMEOUT;
+        let captured = Arc::new(
+            TerminalCapturedExec::new(
+                inputs.cli_executable.clone(),
+                vec![TERMINAL_CAPTURED_HELPER_ARGUMENT.into()],
+                FOREGROUND_TIMEOUT,
+                MAX_EFFECTS,
+            )
+            .map_err(|_| unavailable())?
+            .with_worker_scope(workers.clone()),
+        );
+        let host = Arc::new(
+            TerminalHostAuthority::new(inputs)?
+                .capture_on_worker(deadline, &CancellationToken::new())?,
+        );
+        let preparer = Arc::new(TerminalHostProbePreparer::new_on_worker(
+            Arc::clone(&host),
+            deadline,
+            &CancellationToken::new(),
+        )?);
+        let probe_executor = Arc::new(
+            NativeTerminalProbeExecutor::new(Arc::clone(&captured), MAX_EFFECTS)
+                .map_err(|_| unavailable())?
+                .with_worker_scope(workers.clone()),
+        );
+        Ok(Self {
+            host,
+            preparer,
+            captured,
+            probe_executor,
+        })
+    }
+}
+
 impl NativeTerminalHost {
     /// The reference host invokes this on its constructor worker. Captured
     /// authority is immutable; profile preparation remains lazy on its owner.
@@ -89,48 +143,19 @@ impl NativeTerminalHost {
         state_root: OwnedFd,
         host_identity: SessionIncarnationId,
     ) -> Result<(TerminalActionTool, NativeTerminalHostResource), ToolError> {
-        let captured = Arc::new(
-            TerminalCapturedExec::new(
-                inputs.cli_executable.clone(),
-                vec![TERMINAL_CAPTURED_HELPER_ARGUMENT.into()],
-                FOREGROUND_TIMEOUT,
-                MAX_EFFECTS,
-            )
-            .map_err(|_| unavailable())?,
-        );
-        let host = Arc::new(
-            TerminalHostAuthority::new(inputs)?
-                .capture_on_worker(Instant::now() + START_TIMEOUT, &CancellationToken::new())?,
-        );
-        let preparer = Arc::new(TerminalHostProbePreparer::new_on_worker(
-            Arc::clone(&host),
-            Instant::now() + START_TIMEOUT,
-            &CancellationToken::new(),
-        )?);
-        let probe_executor = Arc::new(
-            NativeTerminalProbeExecutor::new(Arc::clone(&captured), MAX_EFFECTS)
-                .map_err(|_| unavailable())?,
-        );
+        let workers = NativeOwnedWorkerScope::new();
+        let PreparedHost {
+            host,
+            preparer,
+            captured,
+            probe_executor,
+        } = PreparedHost::capture_on_worker(inputs, &workers)?;
         let stop = CancellationToken::new();
         let worker_stop = stop.clone();
-        #[cfg(test)]
-        let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        #[cfg(test)]
-        let worker_finished = Arc::clone(&finished);
         let workspace = host.identity().workspace.clone();
         let requester_cell: Arc<OnceLock<Requester>> = Arc::new(OnceLock::new());
         let observer_requester = Arc::clone(&requester_cell);
-        let epoch = i64::try_from(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|_| unavailable())?
-                .as_millis(),
-        )
-        .map_err(|_| unavailable())?;
-        let anchor = Instant::now();
-        let clock = move || {
-            epoch.saturating_add(i64::try_from(anchor.elapsed().as_millis()).unwrap_or(i64::MAX))
-        };
+        let clock = host_clock()?;
         let runtime = TerminalRuntime::new(
             move || {
                 let store = TerminalProfileStore::prepare(state_root)
@@ -142,9 +167,7 @@ impl NativeTerminalHost {
                 let state = HostState {
                     catalogs: TerminalHostCatalogs::new(workspace)
                         .map_err(|_| TerminalRuntimeError::Initialization)?,
-                probes: TerminalHostProbes::new(probe_executor, worker_stop),
-                #[cfg(test)]
-                _finished: tests::Finished(worker_finished),
+                    probes: TerminalHostProbes::new(probe_executor, worker_stop),
                 };
                 Ok(TerminalRuntimeWorker::new_with_state(
                     registry,
@@ -153,6 +176,11 @@ impl NativeTerminalHost {
                     state,
                     clock,
                     move |state, steps| {
+                        for step in &steps {
+                            if step.cleanup_error.is_some() {
+                                state.probes.retire_session(&step.owner, &step.session_id);
+                            }
+                        }
                         if let Some(requester) = observer_requester.get() {
                             state.probes.observe(
                                 steps,
@@ -167,18 +195,21 @@ impl NativeTerminalHost {
                     },
                 ))
             },
-            Arc::new(NativeOwnedWorkerSpawner::new()),
+            Arc::new(workers.clone()),
         );
         let requester = runtime.requester();
         requester_cell
             .set(requester.clone())
             .map_err(|_| unavailable())?;
-        let starter = Arc::new(TerminalStagedStarter::new(
-            requester.clone(),
-            host.launch_config(),
-            host_identity,
-            HostState::catalogs,
-        ));
+        let starter = Arc::new(
+            TerminalStagedStarter::new(
+                requester.clone(),
+                host.launch_config(),
+                host_identity,
+                HostState::catalogs,
+            )
+            .with_worker_scope(workers.clone()),
+        );
         let identity = host.identity().clone();
         let executor = NativeTerminalActionExecutor {
             requester,
@@ -188,12 +219,17 @@ impl NativeTerminalHost {
             captured,
             stop: stop.clone(),
             active: Arc::new(AtomicUsize::new(0)),
+            workers: workers.clone(),
         };
         let tool = TerminalActionTool::new(Arc::new(executor), identity)?;
-        Ok((tool, NativeTerminalHostResource { runtime, stop,
-            #[cfg(test)]
-            finished,
-        }))
+        Ok((
+            tool,
+            NativeTerminalHostResource {
+                runtime,
+                stop,
+                workers,
+            },
+        ))
     }
 }
 
@@ -206,6 +242,7 @@ struct NativeTerminalActionExecutor {
     captured: Arc<TerminalCapturedExec>,
     stop: CancellationToken,
     active: Arc<AtomicUsize>,
+    workers: NativeOwnedWorkerScope,
 }
 
 impl TerminalActionExecutor for NativeTerminalActionExecutor {
@@ -300,7 +337,9 @@ impl NativeTerminalActionExecutor {
             let permit = EffectPermit(Arc::clone(&self.active));
             let dropped = CancellationToken::new();
             let _cancel_on_drop = CancelOnDrop(dropped.clone());
-            let receipt = NativeOwnedWorkerSpawner::new()
+            let receipt = self
+                .workers
+                .clone()
                 .run(move || {
                     let result = futures_executor::block_on(async {
                         check(&cancellation, &dropped)?;
@@ -394,20 +433,17 @@ impl NativeTerminalActionExecutor {
         let host = Arc::clone(&self.host);
         let launch_cancel = cancellation.clone();
         let launch_stop = self.stop.clone();
-        let timeout = deadline
-            .checked_duration_since(Instant::now())
-            .ok_or_else(unavailable)?;
         let receipt = self
             .starter
-            .start(
+            .start_until(
                 authority.clone(),
                 id.clone(),
                 request,
                 move || {
                     check(&launch_cancel, &launch_stop)
                         .map_err(|_| TerminalNativeLaunchError::Cancelled)?;
-                host.launch_authority_on_worker(cwd, deadline, &launch_cancel)
-                    .map_err(|_| TerminalNativeLaunchError::Process)
+                    host.launch_authority_on_worker(cwd, deadline, &launch_cancel)
+                        .map_err(|_| TerminalNativeLaunchError::Process)
                 },
                 activations,
                 move |state, mutations| {
@@ -426,11 +462,14 @@ impl NativeTerminalActionExecutor {
                     }
                     Ok(())
                 },
-                timeout,
+                deadline,
                 cancellation.clone(),
             )
             .await
             .map_err(start_error)?;
+        // Keep the admitted session resident until its final start projection,
+        // including while the follow-up wait is being admitted.
+        let residency = receipt.residency;
         let wait = TerminalActionRequest::Wait {
             session_id: id,
             request: TerminalWaitRequest {
@@ -456,14 +495,16 @@ impl NativeTerminalActionExecutor {
             }
             Err(error) => return Err(dispatch_error(error)),
         };
-        match reply_result(reply) {
+        let result = match reply_result(reply) {
             TerminalActionResult::Wait { session, outcome }
                 if session.session_id == receipt.session.session_id =>
             {
                 Ok(TerminalActionResult::Start { session, outcome })
             }
             _ => Err(effect_error()),
-        }
+        };
+        drop(residency);
+        result
     }
 
     async fn monitor_on_worker(
@@ -563,6 +604,20 @@ impl NativeTerminalActionExecutor {
     }
 }
 
+fn host_clock() -> Result<impl Fn() -> i64 + Copy, ToolError> {
+    let epoch = i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| unavailable())?
+            .as_millis(),
+    )
+    .map_err(|_| unavailable())?;
+    let anchor = Instant::now();
+    Ok(move || {
+        epoch.saturating_add(i64::try_from(anchor.elapsed().as_millis()).unwrap_or(i64::MAX))
+    })
+}
+
 fn resident_authority(context: ToolContext) -> TerminalResidentAuthority {
     TerminalResidentAuthority {
         owner: BackgroundOutputOwner::new(context.session_id, context.session_incarnation_id),
@@ -651,7 +706,12 @@ fn reply_result(reply: terminal_host_dispatch::TerminalHostReply) -> TerminalAct
 fn diagnostic(code: &str, error: impl std::fmt::Debug) -> ToolError {
     // Callers below pass only closed, data-free failure vocabularies or bounded
     // committed receipt metadata, never commands, environment or output bytes.
-    ToolError::new(ToolErrorKind::Execution, code, format!("terminal operation failed ({error:?}); an admitted effect may have committed"), false)
+    ToolError::new(
+        ToolErrorKind::Execution,
+        code,
+        format!("terminal operation failed ({error:?}); an admitted effect may have committed"),
+        false,
+    )
 }
 
 fn dispatch_error(error: terminal_host_dispatch::TerminalHostDispatchError) -> ToolError {
@@ -668,7 +728,9 @@ fn dispatch_error(error: terminal_host_dispatch::TerminalHostDispatchError) -> T
 }
 
 fn resident_error(error: crate::terminal_resident_dispatch::TerminalResidentError) -> ToolError {
-    use crate::terminal_resident_dispatch::{TerminalResidentEffect as Effect, TerminalResidentError as Error};
+    use crate::terminal_resident_dispatch::{
+        TerminalResidentEffect as Effect, TerminalResidentError as Error,
+    };
     match error {
         Error::Cancelled => cancelled(),
         Error::Invalid | Error::Unsupported | Error::UnauthorizedRevoke => unavailable(),
@@ -676,7 +738,9 @@ fn resident_error(error: crate::terminal_resident_dispatch::TerminalResidentErro
         Error::Wait(error) => diagnostic("terminal_wait", error),
         Error::Write(error) => diagnostic("terminal_write", error),
         Error::Committed { effect, error } => match effect {
-            Effect::Resize(dimensions) => diagnostic("terminal_resize_committed", (dimensions, error)),
+            Effect::Resize(dimensions) => {
+                diagnostic("terminal_resize_committed", (dimensions, error))
+            }
             Effect::Signal(signal) => diagnostic("terminal_signal_committed", (signal, error)),
             Effect::Close(policy) => diagnostic("terminal_close_committed", (policy, error)),
             Effect::Monitor(id) => diagnostic("terminal_monitor_committed", (id, error)),
@@ -693,8 +757,15 @@ fn start_error(error: crate::terminal_staged_start::TerminalStagedStartError) ->
         Error::Registry(error) => diagnostic("terminal_registry", error),
         Error::Catalog(error) => diagnostic("terminal_catalog", error),
         Error::Launch(error) => diagnostic("terminal_launch", error),
-        Error::Retained { session_id, error } => ToolError::new(ToolErrorKind::Execution,
-            "terminal_start_retained", format!("terminal {} was admitted but startup failed ({error:?}); inspect or close it rather than restarting blindly", session_id.as_str()), false),
+        Error::Retained { session_id, error } => ToolError::new(
+            ToolErrorKind::Execution,
+            "terminal_start_retained",
+            format!(
+                "terminal {} was admitted but startup failed ({error:?}); inspect or close it rather than restarting blindly",
+                session_id.as_str()
+            ),
+            false,
+        ),
     }
 }
 
@@ -707,28 +778,27 @@ mod tests {
     use serde_json::{Value, json};
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
-    use std::sync::atomic::AtomicBool;
-
-    pub(super) struct Finished(pub(super) Arc<AtomicBool>);
-    impl Drop for Finished {
-        fn drop(&mut self) { self.0.store(true, Ordering::Release); }
-    }
 
     struct Fixture {
         root: PathBuf,
         tool: TerminalActionTool,
         resource: Option<NativeTerminalHostResource>,
+        completion: NativeOwnedWorkerCompletion,
     }
     fn open(path: &Path) -> OwnedFd {
-        rustix::fs::open(path, OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC, Mode::empty()).unwrap()
+        rustix::fs::open(
+            path,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .unwrap()
     }
     impl Fixture {
         fn new() -> Self {
-            // The explicit startup authority has the platform Unix-socket path
-            // bound. macOS's per-user temp spelling is too long for this fixture.
             let mut nonce = [0_u8; 8];
             getrandom::fill(&mut nonce).unwrap();
-            let root = Path::new("/tmp").join(format!("mg-h-{:016x}", u64::from_le_bytes(nonce)));
+            let root =
+                std::env::temp_dir().join(format!("mg-h-{:016x}", u64::from_le_bytes(nonce)));
             std::fs::create_dir(&root).unwrap();
             let root = std::fs::canonicalize(root).unwrap();
             for child in ["workspace", "state", "artifacts"] {
@@ -745,26 +815,67 @@ mod tests {
                 script
             }, PathBuf::from);
             let workspace = root.join("workspace");
-            let artifacts = root.join("artifacts");
-            let (tool, resource) = NativeTerminalHost::compose_on_worker(TerminalHostAuthorityInputs {
-                workspace: open(&workspace), workspace_path: workspace.clone(), default_cwd: workspace,
-                environment: vec![("PATH".into(), "/usr/bin:/bin".into()), ("HOME".into(), root.as_os_str().to_owned())],
-                account_shell: TerminalHostAccountShell::Explicit(Some("/bin/bash".into())),
-                cli_executable: cli, tmux_executable: None,
-                artifacts: open(&artifacts), artifact_path: artifacts,
-            }, open(&root.join("state")), SessionIncarnationId::new("host-test").unwrap()).unwrap();
-            Self { root, tool, resource: Some(resource) }
+            // Exercise the composed host beyond both sockaddr_un and one
+            // canonical terminal input line, including shell-sensitive paths.
+            let mut artifacts = root.join("artifacts");
+            for _ in 0..6 {
+                artifacts.push(format!("日本語's-{}", "nested".repeat(15)));
+                std::fs::create_dir(&artifacts).unwrap();
+                std::fs::set_permissions(&artifacts, std::fs::Permissions::from_mode(0o700))
+                    .unwrap();
+            }
+            let (tool, resource) = NativeTerminalHost::compose_on_worker(
+                TerminalHostAuthorityInputs {
+                    workspace: open(&workspace),
+                    workspace_path: workspace.clone(),
+                    default_cwd: workspace,
+                    environment: vec![
+                        ("PATH".into(), "/usr/bin:/bin".into()),
+                        ("HOME".into(), root.as_os_str().to_owned()),
+                    ],
+                    account_shell: TerminalHostAccountShell::Explicit(Some("/bin/bash".into())),
+                    cli_executable: cli,
+                    tmux_executable: None,
+                    artifacts: open(&artifacts),
+                    artifact_path: artifacts,
+                },
+                open(&root.join("state")),
+                SessionIncarnationId::new("host-test").unwrap(),
+            )
+            .unwrap();
+            Self {
+                root,
+                tool,
+                completion: resource.completion(),
+                resource: Some(resource),
+            }
         }
         fn context() -> ToolContext {
-            ToolContext { session_id: SessionId::new("owner").unwrap(),
+            ToolContext {
+                session_id: SessionId::new("owner").unwrap(),
                 session_incarnation_id: SessionIncarnationId::new("incarnation").unwrap(),
-                turn_id: TurnId::new("turn").unwrap(), call_id: ToolCallId::new("call").unwrap() }
+                turn_id: TurnId::new("turn").unwrap(),
+                call_id: ToolCallId::new("call").unwrap(),
+            }
         }
-        fn future(&self, arguments: Value, cancellation: CancellationToken) -> BoxFuture<'_, Result<TerminalActionResult, ToolError>> {
-            let call = ToolCall { id: ToolCallId::new("call").unwrap(), name: ToolName::new("terminal").unwrap(), arguments };
+        fn future(
+            &self,
+            arguments: Value,
+            cancellation: CancellationToken,
+        ) -> BoxFuture<'_, Result<TerminalActionResult, ToolError>> {
+            let call = ToolCall {
+                id: ToolCallId::new("call").unwrap(),
+                name: ToolName::new("terminal").unwrap(),
+                arguments,
+            };
             let action = call.arguments["action"].as_str().unwrap().to_owned();
-            let prepared = self.tool.prepare(call).unwrap_or_else(|error| panic!("prepare {action}: {error:?}"));
-            let execution = self.tool.execute(Self::context(), prepared.arguments().clone(), cancellation);
+            let prepared = self
+                .tool
+                .prepare(call)
+                .unwrap_or_else(|error| panic!("prepare {action}: {error:?}"));
+            let execution =
+                self.tool
+                    .execute(Self::context(), prepared.arguments().clone(), cancellation);
             Box::pin(async move {
                 let output = execution.await?;
                 assert!(!output.is_error);
@@ -782,18 +893,20 @@ mod tests {
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
-            // An admitted list initializes the lazy owner even in inert-call tests.
-            if self.resource.is_some() {
-                self.action(json!({"action":"list"}));
-                let resource = self.resource.take().unwrap();
-                let finished = Arc::clone(&resource.finished);
-                drop(resource);
-                let deadline = Instant::now() + Duration::from_secs(15);
-                while !finished.load(Ordering::Acquire) && Instant::now() < deadline {
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-                assert!(finished.load(Ordering::Acquire), "worker-owned state released");
+            drop(self.resource.take());
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while !self.completion.is_complete() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
             }
+            if !self.completion.is_complete() && std::thread::panicking() {
+                // Preserve the failed fixture while cleanup still owns it;
+                // neither destroy active state nor abort on a second panic.
+                return;
+            }
+            assert!(
+                self.completion.is_complete(),
+                "host workers and transferred child cleanup joined"
+            );
             std::fs::remove_dir_all(&self.root).unwrap();
         }
     }
@@ -802,9 +915,13 @@ mod tests {
     #[ignore = "private host helper subprocess"]
     fn helper_child() {
         let status = match std::env::var("MACHINE_GOD_TEST_HOST_HELPER").as_deref() {
-            Ok(crate::TERMINAL_CAPTURED_HELPER_ARGUMENT) => crate::run_terminal_captured_helper().is_ok(),
+            Ok(crate::TERMINAL_CAPTURED_HELPER_ARGUMENT) => {
+                crate::run_terminal_captured_helper().is_ok()
+            }
             Ok(crate::TERMINAL_PTY_HELPER_ARGUMENT) => crate::run_terminal_pty_helper().is_ok(),
-            Ok(crate::TERMINAL_STARTUP_MARKER_ARGUMENT) => crate::run_terminal_startup_marker().is_ok(),
+            Ok(crate::TERMINAL_STARTUP_MARKER_ARGUMENT) => {
+                crate::run_terminal_startup_marker().is_ok()
+            }
             _ => false,
         };
         std::process::exit(if status { 0 } else { 125 });
@@ -814,10 +931,20 @@ mod tests {
     fn full_host_exec_and_unpolled_start_share_inert_adapter() {
         let fixture = Fixture::new();
         assert!(!fixture.root.join("state/terminal-v1").exists());
-        drop(fixture.future(json!({"action":"start","command":"printf forbidden > forbidden"}), CancellationToken::new()));
+        drop(fixture.future(
+            json!({"action":"start","command":"printf forbidden > forbidden"}),
+            CancellationToken::new(),
+        ));
         assert!(!fixture.root.join("workspace/forbidden").exists());
-        let TerminalActionResult::Exec { result } = fixture.action(json!({"action":"exec","profile":"clean","command":"printf foreground; exit 7"})) else { panic!("exec receipt"); };
-        assert_eq!(result.status, machine_god_core::TerminalExecStatus::Exited { exit_code: 7 });
+        let TerminalActionResult::Exec { result } = fixture.action(
+            json!({"action":"exec","profile":"clean","command":"printf foreground; exit 7"}),
+        ) else {
+            panic!("exec receipt");
+        };
+        assert_eq!(
+            result.status,
+            machine_god_core::TerminalExecStatus::Exited { exit_code: 7 }
+        );
         assert!(result.stdout.bytes.ends_with(b"foreground"));
     }
 
@@ -827,22 +954,100 @@ mod tests {
         let TerminalActionResult::Start { session, .. } = fixture.action(json!({"action":"start","profile":"clean","command":"printf host-ready; exec /bin/sleep 30"})) else { panic!("start receipt"); };
         let id = session.session_id;
         let wait = fixture.action(json!({"action":"wait","session_id":id.as_str(),"return_when":{"kind":"match","pattern":"host-ready"},"wait_ceiling_ms":5000}));
-        assert!(matches!(wait, TerminalActionResult::Wait { outcome: machine_god_core::TerminalReturnOutcome::ConditionMet {}, .. }));
-        let TerminalActionResult::Read { output, .. } = fixture.action(json!({"action":"read","session_id":id.as_str(),"cursor_segment":1})) else { panic!("read receipt"); };
-        assert!(output.windows(b"host-ready".len()).any(|bytes| bytes == b"host-ready"));
-        assert!(matches!(fixture.action(json!({"action":"screen","session_id":id.as_str()})), TerminalActionResult::Screen { .. }));
-        assert!(matches!(fixture.action(json!({"action":"resize","session_id":id.as_str(),"rows":31,"columns":97})), TerminalActionResult::Resize { .. }));
-        let TerminalActionResult::Inspect { cwd, .. } = fixture.action(json!({"action":"inspect","session_id":id.as_str()})) else { panic!("inspect receipt"); };
+        assert!(matches!(
+            wait,
+            TerminalActionResult::Wait {
+                outcome: machine_god_core::TerminalReturnOutcome::ConditionMet {},
+                ..
+            }
+        ));
+        let TerminalActionResult::Read { output, .. } =
+            fixture.action(json!({"action":"read","session_id":id.as_str(),"cursor_segment":1}))
+        else {
+            panic!("read receipt");
+        };
+        assert!(
+            output
+                .windows(b"host-ready".len())
+                .any(|bytes| bytes == b"host-ready")
+        );
+        assert!(matches!(
+            fixture.action(json!({"action":"screen","session_id":id.as_str()})),
+            TerminalActionResult::Screen { .. }
+        ));
+        assert!(matches!(
+            fixture
+                .action(json!({"action":"resize","session_id":id.as_str(),"rows":31,"columns":97})),
+            TerminalActionResult::Resize { .. }
+        ));
+        let TerminalActionResult::Inspect { cwd, .. } =
+            fixture.action(json!({"action":"inspect","session_id":id.as_str()}))
+        else {
+            panic!("inspect receipt");
+        };
         assert_eq!(cwd, fixture.root.join("workspace").to_str().unwrap());
         fixture.close(&id);
-        let TerminalActionResult::List { sessions } = fixture.action(json!({"action":"list"})) else { panic!("list receipt"); };
+        let TerminalActionResult::List { sessions } = fixture.action(json!({"action":"list"}))
+        else {
+            panic!("list receipt");
+        };
         assert!(sessions.iter().any(|session| session.session_id == id));
+    }
+
+    #[test]
+    fn full_host_shutdown_joins_foreground_work_with_an_unpolled_receipt() {
+        use std::task::{Context, Poll};
+        let mut fixture = Fixture::new();
+        let resource = fixture.resource.take().unwrap();
+        let completion = resource.completion();
+        let mut execution = fixture.future(
+            json!({"action":"exec","profile":"clean","command":"printf ready > exec-ready; exec /bin/sleep 30"}),
+            CancellationToken::new(),
+        );
+        let mut context = Context::from_waker(std::task::Waker::noop());
+        assert!(matches!(
+            execution.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !fixture.root.join("workspace/exec-ready").exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(fixture.root.join("workspace/exec-ready").exists());
+        assert!(!completion.is_complete());
+        drop(resource);
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !completion.is_complete() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            completion.is_complete(),
+            "native cleanup must not require polling the response"
+        );
+        assert!(futures_executor::block_on(execution).is_err());
+    }
+
+    #[test]
+    fn full_host_dormant_shutdown_does_not_need_to_initialize_the_owner() {
+        let mut fixture = Fixture::new();
+        let resource = fixture.resource.take().unwrap();
+        let completion = resource.completion();
+        let unpolled = fixture.future(json!({"action":"start"}), CancellationToken::new());
+        assert!(!completion.is_complete());
+        drop(resource);
+        assert!(completion.is_complete());
+        assert!(!fixture.root.join("state/terminal-v1").exists());
+        assert!(futures_executor::block_on(unpolled).is_err());
     }
 
     #[test]
     fn full_host_interactive_write_monitor_probe_and_signal() {
         let fixture = Fixture::new();
-        let TerminalActionResult::Start { session, .. } = fixture.action(json!({"action":"start","profile":"clean"})) else { panic!("start receipt"); };
+        let TerminalActionResult::Start { session, .. } =
+            fixture.action(json!({"action":"start","profile":"clean"}))
+        else {
+            panic!("start receipt");
+        };
         let id = session.session_id;
         fixture.action(json!({"action":"write","session_id":id.as_str(),"lease":"acquire"}));
         let TerminalActionResult::Write { accepted_bytes, .. } = fixture.action(json!({"action":"write","session_id":id.as_str(),"lease":"use","write":{"kind":"text","text":"printf write-ready\\n\n"}})) else { panic!("write receipt"); };
@@ -854,7 +1059,10 @@ mod tests {
         while !fixture.root.join("workspace/probe-ran").exists() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert!(fixture.root.join("workspace/probe-ran").exists(), "ordinary owner pump executes authorized grant");
+        assert!(
+            fixture.root.join("workspace/probe-ran").exists(),
+            "ordinary owner pump executes authorized grant"
+        );
         for operation in ["pause", "resume", "remove"] {
             fixture.action(json!({"action":"monitor","session_id":id.as_str(),"monitor":{"kind":operation,"monitor_id":monitor.as_str()}}));
         }

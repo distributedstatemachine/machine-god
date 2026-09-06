@@ -138,13 +138,14 @@ impl TerminalPtyRequest {
         })
     }
     pub(crate) fn with_startup_source(mut self, source: String) -> Result<Self, TerminalPtyError> {
-        // Below both platforms' canonical input-line ceilings. Only one newline
-        // terminates this host-created source command; ordinary input is gated.
+        // Each physical line remains below both canonical input-line ceilings.
+        // The host owns the bounded suffix until the committed shell can read it.
         if source.is_empty()
-            || source.len() > 512
+            || source.len() > 32 * 1024
             || source.contains('\0')
             || !source.ends_with('\n')
-            || source[..source.len() - 1].contains(['\n', '\r'])
+            || source.contains('\r')
+            || source.split_inclusive('\n').any(|line| line.len() > 512)
         {
             return Err(error(TerminalPtyErrorKind::InvalidRequest));
         }
@@ -166,6 +167,7 @@ fn encode_pty_deadline(deadline: Instant) -> Result<String, TerminalPtyError> {
 }
 
 pub(crate) struct PreparedTerminalPty {
+    startup_source: Option<crate::terminal_helper::TerminalStartupInput>,
     deadline: Instant,
     process: Option<OwnedBackgroundProcess>,
     master: Option<OwnedFd>,
@@ -226,10 +228,15 @@ impl PreparedTerminalPty {
         if ready != [READY] {
             return Err(error(TerminalPtyErrorKind::Process));
         }
-        if let Some(source) = &request.startup_source {
+        let startup_source = request
+            .startup_source
+            .as_deref()
+            .map(crate::terminal_helper::TerminalStartupInput::new)
+            .transpose()?;
+        if let Some(source) = &startup_source {
             write_gate(
                 &mut DescriptorIo(master.as_fd()),
-                source.as_bytes(),
+                source.initial(),
                 deadline,
                 cancellation,
             )?;
@@ -237,6 +244,7 @@ impl PreparedTerminalPty {
         let process = guard.into_session().map_err(process_error)?;
         check_deadline(deadline, cancellation)?;
         Ok(Self {
+            startup_source: startup_source.filter(|source| !source.complete()),
             deadline,
             process: Some(process),
             master: Some(master),
@@ -267,6 +275,8 @@ impl PreparedTerminalPty {
             .take()
             .ok_or_else(|| error(TerminalPtyErrorKind::Process))?;
         Ok(TerminalPty {
+            startup_source: std::mem::take(&mut self.startup_source),
+            startup_deadline: self.deadline,
             #[cfg(test)]
             pid: process.pid(),
             process: Some(process),
@@ -317,6 +327,8 @@ pub(crate) struct TerminalPtyClose {
 }
 
 pub(crate) struct TerminalPty {
+    startup_source: Option<crate::terminal_helper::TerminalStartupInput>,
+    startup_deadline: Instant,
     #[cfg(test)]
     pid: NonZeroU32,
     process: Option<OwnedBackgroundProcess>,
@@ -329,6 +341,30 @@ pub(crate) struct TerminalPty {
     permit: Option<PtyPermit>,
 }
 impl TerminalPty {
+    fn flush_startup_source(&mut self) -> Result<(), TerminalPtyError> {
+        let Some(source) = self.startup_source.as_mut() else {
+            return Ok(());
+        };
+        if Instant::now() >= self.startup_deadline {
+            return Err(error(TerminalPtyErrorKind::Timeout));
+        }
+        let master = self
+            .master
+            .as_ref()
+            .ok_or_else(|| error(TerminalPtyErrorKind::Closed))?;
+        let Some(bytes) = source.pending() else {
+            return Ok(());
+        };
+        match rustix::io::write(master, bytes) {
+            Ok(count) => source.advance(count)?,
+            Err(rustix::io::Errno::AGAIN | rustix::io::Errno::INTR) => {}
+            Err(failure) => return Err(process_error(failure)),
+        }
+        if source.complete() {
+            self.startup_source = None;
+        }
+        Ok(())
+    }
     pub(crate) fn restore_startup_echo(&self) -> Result<(), TerminalPtyError> {
         set_echo(
             self.master
@@ -345,6 +381,7 @@ impl TerminalPty {
         if buffer.is_empty() || buffer.len() > MAX_READ {
             return Err(error(TerminalPtyErrorKind::InvalidRequest));
         }
+        self.flush_startup_source()?;
         if self.read_closed {
             return self.observe_eof();
         }
@@ -360,6 +397,9 @@ impl TerminalPty {
                     return self.observe_eof();
                 }
                 Ok(bytes_read) => {
+                    if let Some(source) = self.startup_source.as_mut() {
+                        source.observe(&buffer[..bytes_read]);
+                    }
                     return Ok(TerminalPtyRead {
                         bytes_read,
                         closed: false,
@@ -399,6 +439,14 @@ impl TerminalPty {
     ) -> Result<BackgroundInputReceipt, TerminalPtyError> {
         if bytes.is_empty() || bytes.len() > MAX_BACKGROUND_INPUT_BYTES {
             return Err(error(TerminalPtyErrorKind::InvalidRequest));
+        }
+        self.flush_startup_source()?;
+        if self.startup_source.is_some() {
+            return Ok(BackgroundInputReceipt::new(
+                0,
+                false,
+                BackgroundInputStatus::Backpressure,
+            ));
         }
         if self.write_closed {
             return Ok(BackgroundInputReceipt::new(
@@ -523,6 +571,7 @@ impl TerminalPty {
         force: bool,
         mut output: impl FnMut(&[u8]),
     ) -> Result<TerminalPtyClose, TerminalPtyError> {
+        self.startup_source = None;
         if self.process.is_none() {
             return self
                 .observed
@@ -1357,6 +1406,65 @@ mod tests {
             ),
             Err(rustix::io::Errno::CHILD)
         ));
+    }
+
+    #[test]
+    fn queued_startup_suffix_obeys_deadline_and_close_discards_it() {
+        for expired in [false, true] {
+            let directory = Directory::new();
+            let source = if expired {
+                format!(
+                    "{}0123456789abcdef0123456789abcdef\n/bin/sleep 30\nprintf BAD > executed\n",
+                    crate::terminal_helper::PACED_STARTUP_PREFIX
+                )
+            } else {
+                format!("{}printf BAD > executed\n", ":\n".repeat(1024))
+            };
+            let prepared = PreparedTerminalPty::prepare(
+                &helper(),
+                request(&directory, &["-i"])
+                    .with_startup_source(source)
+                    .unwrap(),
+                &CancellationToken::new(),
+            )
+            .unwrap();
+            let mut pty = prepared.commit(&CancellationToken::new()).unwrap();
+            assert!(pty.startup_source.is_some());
+            if expired {
+                pty.startup_deadline = Instant::now();
+                assert!(
+                    matches!(pty.read(&mut [0; 128]), Err(error) if error.kind() == TerminalPtyErrorKind::Timeout)
+                );
+            }
+            pty.close(true).unwrap();
+            assert!(pty.startup_source.is_none());
+            assert!(!directory.0.join("executed").exists());
+        }
+    }
+
+    #[test]
+    fn startup_source_has_bounded_physical_lines_and_total_bytes() {
+        let directory = Directory::new();
+        for source in [
+            String::new(),
+            "unterminated".into(),
+            "bad\0\n".into(),
+            "bad\r\n".into(),
+            format!("{}\n", "x".repeat(512)),
+            "x\n".repeat(16 * 1024 + 1),
+        ] {
+            assert!(
+                request(&directory, &["-i"])
+                    .with_startup_source(source)
+                    .is_err()
+            );
+        }
+        let source = "x\n".repeat(16 * 1024);
+        assert!(
+            request(&directory, &["-i"])
+                .with_startup_source(source)
+                .is_ok()
+        );
     }
 
     #[test]

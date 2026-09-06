@@ -1,15 +1,13 @@
 # Native `terminal` command contract
 
-The native tool executes one bounded foreground shell command, starts one
-noninteractive background shell command after explicit process authorization,
-reads bounded process-local output from a command started by the same session
-incarnation, sends one explicit signal to that live process's supported native
-control scope after separate authorization, writes bounded bytes to explicitly
-piped stdin after separate authorization, or lists, inspects, or boundedly
-waits on persisted background records without process authority. It is
-registered by the reference host and has no top-level CLI command.
+The CLI and explicit helper-bearing reference-host constructors register the
+complete twelve-action terminal host described below. Original embedding
+constructors without helper options retain the legacy bounded foreground and
+noninteractive background adapter, whose narrower contract is documented later
+in this file. Both adapters require explicit native authority and have no
+top-level CLI command.
 
-## Complete action contract components
+## Complete action contract and host
 
 Core defines normalized, effect-free requests and responses for all twelve
 actions: `exec`, `start`, `read`, `screen`, `write`, `wait`, `monitor`, `inspect`,
@@ -24,8 +22,8 @@ an omitted or null profile unset for shell resolution; the pinned shell
 resolver defaults omission to `user`. The legacy adapter's clean-only policy
 does not constrain this complete, effect-free decoder.
 The caller must reject duplicate raw JSON fields before constructing a
-`serde_json::Value`. These internal components do not yet replace the registered
-tool adapter described below.
+`serde_json::Value`. Complete-host constructors register this contract; the
+legacy constructors retain the older adapter described below.
 
 `TerminalActionTool` exposes the full twelve-action schema with an explicitly
 injected `TerminalActionExecutor`. Preparation is effect-free and binds the
@@ -88,8 +86,8 @@ removes `-i`, user bash capture removes `-i` and enables `expand_aliases`, and
 user zsh capture retains `-i`. The command remains one exact `-c` argv item.
 The resolved program and arguments are inputs to permission identity, never
 permission grants. This native API is available for terminal-runtime
-composition; existing noninteractive tool execution below retains its stated
-fixed-shell behavior until the complete interactive runtime is integrated.
+composition; the legacy noninteractive adapter below retains its stated
+fixed-shell behavior independently of the complete interactive host.
 
 ### Captured host launch authority
 
@@ -151,6 +149,17 @@ owned-worker admission, and committed failures retain diagnostic receipt metadat
 The CLI supplies its own helper executable, captured account shell/environment
 and available PATH-selected tmux on its existing constructor worker. Embedders
 that use the original constructors without helper options retain the legacy tool.
+The complete host enrolls its runtime, captured commands, startup preparation,
+monitor effects, archive publication/paging and outer action workers in one
+explicit completion scope.
+Last-resource drop closes new worker admission and requests cleanup without
+blocking. `NativeReferenceHost::terminal_shutdown_completion` returns a
+non-owning observation handle: a blocking host thread can retain it, drop every
+real Engine/Session handle, then wait for joined workers and transferred child
+cleanup. Completed unconsumed responses do not hold completion tickets, and
+unrelated worker scopes are excluded. A dormant host settles without starting
+its lazy registry. The CLI uses this boundary before process exit, including
+when turn execution returns an error or unwinds.
 
 ## Native screen projection
 
@@ -398,12 +407,21 @@ authority. Deadline failure still stops startup when profile storage is busy,
 retaining any unavailable final-state publication for the owner to retry.
 The startup request's bounded deadline covers preparation, commit and both
 acknowledgements without restarting between phases. Private helpers receive a
-validated absolute monotonic deadline; standalone PTY preparation retains its
+validated absolute monotonic deadline in the same clock domain as Rust
+`Instant` (`CLOCK_UPTIME_RAW` on macOS, `CLOCK_MONOTONIC` on Linux);
+standalone PTY preparation retains its
 two-second default. Expiry is distinct from generic process failure, and a stale
 owner timestamp cannot authorize an acknowledgement after the actual deadline.
 Commandless startup suppresses bootstrap input echo until shell readiness.
-The short canonical artifact directory and retained directory identity are
-validated before publication; long workspace/profile paths need no shortening.
+The canonical artifact directory and retained directory identity are validated
+before publication. Private helpers bind and connect short socket leaves from
+that retained directory, without changing the host's working directory; long
+artifact, workspace and profile paths need no shortening or temporary aliases.
+Commandless startup transfers shell-quoted source in bounded ASCII fragments,
+using nonce-tagged terminal acknowledgements only to pace canonical input.
+Those acknowledgements neither establish readiness nor release user commands;
+only the authenticated private startup-control protocol can do that. All bytes
+remain observable, and stalled bootstrap input shares the original deadline.
 Polling and acknowledgements do not retire filesystem artifacts. The backend
 retains exact-artifact cleanup for owner-side retries, including after the
 control handle is dropped; failed cleanup cannot become successful close.

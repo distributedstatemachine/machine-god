@@ -493,19 +493,16 @@ impl<B: TerminalSessionBackend, S> TerminalRuntimeWorker<B, S> {
             )
         });
         let mut observe;
-        let (mut failure, cleaned) = match exit {
-            Ok(exit) => {
-                // The owner does not distinguish clock/request/observer panics.
-                // Never re-enter a possibly failed callback during cleanup.
-                observe = exit.error != Some(TerminalOwnerError::Panicked);
-                let mut failure = exit.error.map(TerminalRuntimeError::Owner);
-                let cleaned = self.observe_shutdown(exit.shutdown, &mut failure, &mut observe);
-                (failure, cleaned)
-            }
-            Err(()) => {
-                observe = false;
-                (Some(TerminalRuntimeError::Panicked), false)
-            }
+        let (mut failure, cleaned) = if let Ok(exit) = exit {
+            // The owner does not distinguish clock/request/observer panics.
+            // Never re-enter a possibly failed callback during cleanup.
+            observe = exit.error != Some(TerminalOwnerError::Panicked);
+            let mut failure = exit.error.map(TerminalRuntimeError::Owner);
+            let cleaned = self.observe_shutdown(exit.shutdown, &mut failure, &mut observe);
+            (failure, cleaned)
+        } else {
+            observe = false;
+            (Some(TerminalRuntimeError::Panicked), false)
         };
         // An old callback/clock error does not keep a clean registry alive.
         // Only shutdown diagnostics are observed during retries, never new
@@ -1106,7 +1103,7 @@ mod tests {
         let runtime = TerminalRuntime::new(
             move || {
                 let mut worker = initialize()?;
-                worker.observer = Box::new(move |_, steps| {
+                worker.observer = Box::new(move |(), steps| {
                     for step in steps {
                         if let Err(error) = step.result {
                             worker_observed.lock().unwrap().push((
@@ -1155,7 +1152,7 @@ mod tests {
         let runtime = TerminalRuntime::new(
             move || {
                 let mut worker = initialize()?;
-                worker.observer = Box::new(move |_, steps| {
+                worker.observer = Box::new(move |(), steps| {
                     if steps.iter().any(|step| step.result.is_err()) {
                         observed.fetch_add(1, Ordering::AcqRel);
                         panic!("shutdown observer failure");
@@ -1187,7 +1184,7 @@ mod tests {
         let runtime = TerminalRuntime::new(
             move || {
                 let mut worker = initialize()?;
-                worker.observer = Box::new(move |_, _| {
+                worker.observer = Box::new(move |(), _| {
                     observed.fetch_add(1, Ordering::AcqRel);
                     panic!("owner observer failed");
                 });

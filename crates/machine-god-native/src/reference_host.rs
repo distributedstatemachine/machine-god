@@ -275,6 +275,7 @@ pub struct NativeReferenceHost {
     session_lifecycle: NativeSessionLifecycle,
     loaded_config: LoadedNativeConfig,
     credential_source: Option<AiGatewayCredentialSource>,
+    terminal_shutdown: Option<crate::NativeOwnedWorkerCompletion>,
 }
 
 impl NativeReferenceHost {
@@ -768,6 +769,16 @@ impl NativeReferenceHost {
         &self.engine
     }
 
+    /// Observes settlement of this host's complete terminal workers, including
+    /// transferred child cleanup, without keeping any Engine/Session alive.
+    /// Legacy constructors return `None`. Retain this handle before dropping
+    /// all real Engine/Session handles, then wait only on a blocking host thread.
+    /// Waiting while a real host handle remains alive cannot complete.
+    #[must_use]
+    pub fn terminal_shutdown_completion(&self) -> Option<crate::NativeOwnedWorkerCompletion> {
+        self.terminal_shutdown.clone()
+    }
+
     /// Returns the concrete store shared exactly with the engine, result reader,
     /// and session lifecycle.
     #[must_use]
@@ -849,43 +860,17 @@ impl NativeReferenceHost {
         terminal_selection: Option<TerminalCompositionSelection>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         let model = loaded_config.config().model().to_owned();
-        let vision_transport = AiGatewayVisionTransport::new(model.clone(), Arc::clone(&transport))
-            .map_err(|_| {
-                NativeReferenceHostBuildError::new(
-                    NativeReferenceHostBuildErrorKind::VisionTransport,
-                )
-            })?;
-        let (vision_deadline, terminal_wait_delay) =
-            compose_deadline_adapters(&web_search_deadline);
-        let vision = VisionTool::from_root_descriptor(
+        let SharedNetworkTools {
+            vision,
+            web_search,
+            terminal_wait_delay,
+        } = compose_network_tools(
             workspace_tools.vision_root,
-            network_target.clone(),
-            Arc::new(vision_transport),
-            vision_deadline,
-            VisionLimits::default(),
-        )
-        .map_err(|_| {
-            NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::VisionConfig)
-        })?;
-        let search_transport =
-            AiGatewayWebSearchTransport::new(model.clone(), Arc::clone(&transport)).map_err(
-                |_| {
-                    NativeReferenceHostBuildError::new(
-                        NativeReferenceHostBuildErrorKind::WebSearchTransport,
-                    )
-                },
-            )?;
-        let web_search = WebSearchTool::with_bounded_transport(
+            &model,
+            &transport,
             network_target,
-            Arc::new(search_transport),
             web_search_deadline,
-            WebSearchLimits::default(),
-        )
-        .map_err(|_| {
-            NativeReferenceHostBuildError::new(
-                NativeReferenceHostBuildErrorKind::WebSearchTransport,
-            )
-        })?;
+        )?;
         let (provider, engine_limits) = if terminal_selection.is_some() {
             compose_full_terminal_provider(model, transport)?
         } else {
@@ -894,25 +879,18 @@ impl NativeReferenceHost {
         let web_fetch = compose_web_fetch()?;
         let permission_handler = AskPermissionHandler::shared_prompter(permission_prompter);
         let ask_user_question = AskUserQuestionTool::shared_prompter(question_prompter);
-        let (terminal, host_resource, archive): (Arc<dyn Tool>, _, _) =
-            if let Some(selection) = terminal_selection {
-                let full = compose_full_terminal(
-                    workspace_tools.terminal_root,
-                    workspace_tools.canonical_workspace,
-                    &session_store,
-                    selection,
-                )?;
-                (Arc::new(full.tool), Some(full.resource), Some(full.archive))
-            } else {
-                let terminal = compose_terminal(
-                    workspace_tools.terminal_root,
-                    &workspace_tools.canonical_workspace,
-                    workspace_tools.background_root,
-                    &session_store,
-                    terminal_wait_delay,
-                )?;
-                (Arc::new(terminal), None, None)
-            };
+        let SelectedTerminalComposition {
+            tool: terminal,
+            resource: host_resource,
+            archive,
+        } = compose_selected_terminal(
+            workspace_tools.terminal_root,
+            workspace_tools.canonical_workspace,
+            workspace_tools.background_root,
+            &session_store,
+            terminal_wait_delay,
+            terminal_selection,
+        )?;
         let session_store = Arc::new(session_store);
         let (engine_session_store, read_tool_result) = session_store_components(&session_store);
         let read_tool_result = match archive {
@@ -950,6 +928,9 @@ impl NativeReferenceHost {
             .tool(web_fetch)
             .tool(web_search)
             .tool(workspace_tools.write_file);
+        let terminal_shutdown = host_resource
+            .as_ref()
+            .map(NativeTerminalHostResource::completion);
         let builder = match host_resource {
             Some(resource) => builder.host_resource(resource),
             None => builder,
@@ -968,8 +949,60 @@ impl NativeReferenceHost {
             session_lifecycle,
             loaded_config,
             credential_source,
+            terminal_shutdown,
         })
     }
+}
+
+struct SharedNetworkTools {
+    vision: VisionTool,
+    web_search: WebSearchTool,
+    terminal_wait_delay: Arc<dyn TerminalBackgroundWaitDelay>,
+}
+
+fn compose_network_tools(
+    vision_root: OwnedFd,
+    model: &str,
+    transport: &Arc<dyn AiGatewayTransport>,
+    network_target: NetworkTarget,
+    deadline: Arc<dyn WebSearchDeadline>,
+) -> Result<SharedNetworkTools, NativeReferenceHostBuildError> {
+    let vision_transport = AiGatewayVisionTransport::new(model.to_owned(), Arc::clone(transport))
+        .map_err(|_| {
+        NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::VisionTransport)
+    })?;
+    let (vision_deadline, terminal_wait_delay) = compose_deadline_adapters(&deadline);
+    let vision = VisionTool::from_root_descriptor(
+        vision_root,
+        network_target.clone(),
+        Arc::new(vision_transport),
+        vision_deadline,
+        VisionLimits::default(),
+    )
+    .map_err(|_| {
+        NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::VisionConfig)
+    })?;
+    let search_transport = AiGatewayWebSearchTransport::new(
+        model.to_owned(),
+        Arc::clone(transport),
+    )
+    .map_err(|_| {
+        NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::WebSearchTransport)
+    })?;
+    let web_search = WebSearchTool::with_bounded_transport(
+        network_target,
+        Arc::new(search_transport),
+        deadline,
+        WebSearchLimits::default(),
+    )
+    .map_err(|_| {
+        NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::WebSearchTransport)
+    })?;
+    Ok(SharedNetworkTools {
+        vision,
+        web_search,
+        terminal_wait_delay,
+    })
 }
 
 fn compose_full_terminal_provider(
@@ -1013,6 +1046,43 @@ struct FullTerminalComposition {
     archive: Arc<NativeToolResultArchiveAdapter>,
 }
 
+struct SelectedTerminalComposition {
+    tool: Arc<dyn Tool>,
+    resource: Option<NativeTerminalHostResource>,
+    archive: Option<Arc<NativeToolResultArchiveAdapter>>,
+}
+
+fn compose_selected_terminal(
+    workspace: OwnedFd,
+    workspace_path: PathBuf,
+    background_root: OwnedFd,
+    session_store: &FileSessionStore,
+    wait_delay: Arc<dyn TerminalBackgroundWaitDelay>,
+    selection: Option<TerminalCompositionSelection>,
+) -> Result<SelectedTerminalComposition, NativeReferenceHostBuildError> {
+    if let Some(selection) = selection {
+        let full = compose_full_terminal(workspace, workspace_path, session_store, selection)?;
+        Ok(SelectedTerminalComposition {
+            tool: Arc::new(full.tool),
+            resource: Some(full.resource),
+            archive: Some(full.archive),
+        })
+    } else {
+        let tool = compose_terminal(
+            workspace,
+            &workspace_path,
+            background_root,
+            session_store,
+            wait_delay,
+        )?;
+        Ok(SelectedTerminalComposition {
+            tool: Arc::new(tool),
+            resource: None,
+            archive: None,
+        })
+    }
+}
+
 fn compose_full_terminal(
     workspace: OwnedFd,
     workspace_path: PathBuf,
@@ -1036,7 +1106,6 @@ fn compose_full_terminal(
             .map_err(|_| terminal_options_error())?;
     let archive = Arc::new(ToolResultArchive::from_root_descriptor(archive_root));
     archive.prepare().map_err(|_| terminal_options_error())?;
-    let archive = Arc::new(NativeToolResultArchiveAdapter::new(archive));
     let mut random = [0_u8; 32];
     getrandom::fill(&mut random).map_err(|_| terminal_options_error())?;
     let mut host_identity = String::from("terminal-host-");
@@ -1059,6 +1128,9 @@ fn compose_full_terminal(
     };
     let (tool, resource) = NativeTerminalHost::compose_on_worker(inputs, state_root, host_identity)
         .map_err(|_| terminal_options_error())?;
+    let archive = Arc::new(
+        NativeToolResultArchiveAdapter::new(archive).with_worker_scope(resource.worker_scope()),
+    );
     Ok(FullTerminalComposition {
         tool: tool
             .with_input_publisher(archive.clone())

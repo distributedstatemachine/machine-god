@@ -819,6 +819,7 @@ dependencies = [
  "futures-core",
  "machine-god-core",
  "machine-god-native",
+ "serde_json",
  "tokio",
 ]
 

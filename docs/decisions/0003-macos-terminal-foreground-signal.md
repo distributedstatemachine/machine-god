@@ -3,12 +3,14 @@
 ## Decision and scope
 
 Use an isolated OS-binding crate to close interactive-terminal control gaps on
-macOS. The exception is limited to three fixed calls:
+macOS. The exception is limited to four fixed calls:
 
 - `signal_terminal_foreground`: one `libc::ioctl` with `TIOCSIG`;
 - `ProcessIdentity::capture`: one fixed-size `proc_pidinfo` identity query;
 - `ProcessIdentity::signal_token`: one fixed audit-token signaling operation
-  through the declared `__proc_info` syscall wrapper.
+  through the declared `__proc_info` syscall wrapper;
+- `uptime_raw`: one read-only `clock_gettime(CLOCK_UPTIME_RAW)` query for
+  transferring the original Rust `Instant` deadline to a private helper.
 
 These are internal components of the complete terminal feature, subject to
 its local, adversarial and exact remote gates.
@@ -18,6 +20,8 @@ The small workspace binding crate instead denies unsafe code, with an allowance
 only on these calls and the necessary FFI declaration, and denied undocumented
 unsafe blocks. It exposes safe borrowed-descriptor and opaque incarnation APIs,
 not arbitrary requests, raw pointers or numeric-PID signal authority.
+The clock accessor accepts no clock selector and returns only a validated
+nonnegative `Duration` or an OS error.
 This exception does not authorize unsafe process setup, `pre_exec`, session
 enumeration, other ioctls, or other platform bindings.
 
@@ -60,6 +64,15 @@ token synchronously and does not retain its pointer. Before preparing any
 PTY, native probes this operation with PID zero (an invalid audit-token target,
 not a process-group selector). Only the expected ESRCH response admits startup;
 unsupported kernels fail before a shell can be committed.
+
+Rust 1.94.1 uses `CLOCK_UPTIME_RAW` for macOS `Instant`. Encoding a transferable
+deadline against `CLOCK_MONOTONIC` and decoding it against `Instant` mixes clock
+domains; their offset is not a stable conversion. The fixed clock accessor uses
+initialized `timespec` storage, checks the return value and timestamp range,
+and retains no pointer. Native samples the same clock domain on both sides of
+helper transfer and conservatively orders samples so conversion cannot extend
+the original deadline. Linux continues to use its existing safe monotonic-clock
+binding. This exception does not permit a general clock API or clock mutation.
 
 Primary implementation references:
 

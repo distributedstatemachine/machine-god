@@ -20,9 +20,11 @@ use machine_god_core::{
 };
 
 use crate::terminal_input::TerminalWriterId;
+#[cfg(test)]
+use crate::terminal_monitor::MAX_MONITOR_FEED_BYTES;
 use crate::terminal_monitor::{
-    MAX_MONITOR_FEED_BYTES, TerminalMonitorContext, TerminalMonitorError, TerminalProcessOutcome,
-    TerminalWaitOutcome, TerminalWaitState,
+    TerminalMonitorContext, TerminalMonitorError, TerminalProcessOutcome, TerminalWaitOutcome,
+    TerminalWaitState,
 };
 
 pub(crate) const MAX_TERMINAL_WAITS: usize = 32;

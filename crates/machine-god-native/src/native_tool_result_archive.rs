@@ -1,7 +1,9 @@
 //! Owned-worker binding for terminal result publication and historical paging.
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
-use crate::owned_worker::NativeOwnedWorkerSpawner;
+use crate::owned_worker::{
+    NativeOwnedWorkerScope, NativeOwnedWorkerSpawnError, NativeOwnedWorkerSpawner,
+};
 use crate::session_store::JsonValueOwner;
 use crate::terminal_action_parse::{
     MAX_TERMINAL_ACTION_ARGUMENT_BYTES, MAX_TERMINAL_ACTION_ARGUMENT_NODES,
@@ -35,6 +37,7 @@ const ACTIVE_OPERATIONS: usize = 2;
 pub struct NativeToolResultArchiveAdapter {
     archive: Arc<ToolResultArchive>,
     active: Arc<AtomicUsize>,
+    workers: Option<NativeOwnedWorkerScope>,
 }
 impl std::fmt::Debug for NativeToolResultArchiveAdapter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -95,7 +98,17 @@ impl NativeToolResultArchiveAdapter {
         Self {
             archive,
             active: Arc::new(AtomicUsize::new(0)),
+            workers: None,
         }
+    }
+
+    /// Enrolls publication and paging workers in an explicit host completion
+    /// scope without extending host lifetime. Closing the scope denies new
+    /// operations but lets already admitted archive writes finish durably.
+    #[must_use]
+    pub fn with_worker_scope(mut self, workers: NativeOwnedWorkerScope) -> Self {
+        self.workers = Some(workers);
+        self
     }
 
     fn acquire(active: Arc<AtomicUsize>, read: bool) -> Result<Permit, ToolError> {
@@ -117,30 +130,30 @@ impl NativeToolResultArchiveAdapter {
     ) -> BoxFuture<'static, Result<ToolOutput, ToolError>> {
         let archive = Arc::clone(&self.archive);
         let active = Arc::clone(&self.active);
+        let workers = self.workers.clone();
         Box::pin(async move {
             check_reader(&current, &reference, &cancellation)?;
             let permit = Self::acquire(active, true)?;
             let worker_cancellation = cancellation.clone();
-            let result = NativeOwnedWorkerSpawner::new()
-                .run(move || {
-                    let result = (|| {
-                        check_reader(&current, &reference, &worker_cancellation)?;
-                        let page = archive
-                            .read(&reference.source_context, &reference.handle, start, count)
-                            .map_err(|error| archive_error(error, true))?;
-                        if page.source_total_bytes != reference.source_total_bytes {
-                            return Err(archive_error(ToolResultArchiveError::Corrupt, true));
-                        }
-                        check_reader(&current, &reference, &worker_cancellation)?;
-                        Ok(page_output(&reference, page))
-                    })();
-                    Receipt {
-                        result,
-                        _permit: permit,
+            let result = run_owned(workers, move || {
+                let result = (|| {
+                    check_reader(&current, &reference, &worker_cancellation)?;
+                    let page = archive
+                        .read(&reference.source_context, &reference.handle, start, count)
+                        .map_err(|error| archive_error(error, true))?;
+                    if page.source_total_bytes != reference.source_total_bytes {
+                        return Err(archive_error(ToolResultArchiveError::Corrupt, true));
                     }
-                })
-                .await
-                .map_err(|_| archive_error(ToolResultArchiveError::Unavailable, true))?;
+                    check_reader(&current, &reference, &worker_cancellation)?;
+                    Ok(page_output(&reference, page))
+                })();
+                Receipt {
+                    result,
+                    _permit: permit,
+                }
+            })
+            .await
+            .map_err(|_| archive_error(ToolResultArchiveError::Unavailable, true))?;
             if cancellation.is_cancelled() {
                 return Err(archive_error(ToolResultArchiveError::Cancelled, true));
             }
@@ -157,19 +170,19 @@ impl TerminalActionResultPublisher for NativeToolResultArchiveAdapter {
     ) -> BoxFuture<'_, Result<ToolExecution, ToolError>> {
         let archive = Arc::clone(&self.archive);
         let active = Arc::clone(&self.active);
+        let workers = self.workers.clone();
         let output = OutputOwner(Some(output));
         Box::pin(async move {
             let permit = Self::acquire(active, false)?;
-            let receipt = NativeOwnedWorkerSpawner::new()
-                .run(move || {
-                    let result = publish_owned(&archive, &context, output);
-                    Receipt {
-                        result,
-                        _permit: permit,
-                    }
-                })
-                .await
-                .map_err(|_| archive_error(ToolResultArchiveError::Unavailable, false))?;
+            let receipt = run_owned(workers, move || {
+                let result = publish_owned(&archive, &context, output);
+                Receipt {
+                    result,
+                    _permit: permit,
+                }
+            })
+            .await
+            .map_err(|_| archive_error(ToolResultArchiveError::Unavailable, false))?;
             receipt.result
         })
     }
@@ -184,26 +197,36 @@ impl TerminalActionInputPublisher for NativeToolResultArchiveAdapter {
     ) -> BoxFuture<'_, Result<Option<Value>, ToolError>> {
         let archive = Arc::clone(&self.archive);
         let active = Arc::clone(&self.active);
+        let workers = self.workers.clone();
         // Direct callers may supply deeply nested JSON or abandon the future.
         let input = OutputOwner(Some(ToolOutput::success(arguments)));
         Box::pin(async move {
             check_input_cancellation(&cancellation)?;
             let permit = Self::acquire(active, true)?;
             let worker_cancellation = cancellation.clone();
-            let receipt = NativeOwnedWorkerSpawner::new()
-                .run(move || {
-                    let result =
-                        publish_arguments_owned(&archive, &context, &input, &worker_cancellation);
-                    Receipt {
-                        result,
-                        _permit: permit,
-                    }
-                })
-                .await
-                .map_err(|_| archive_error(ToolResultArchiveError::Unavailable, true))?;
+            let receipt = run_owned(workers, move || {
+                let result =
+                    publish_arguments_owned(&archive, &context, &input, &worker_cancellation);
+                Receipt {
+                    result,
+                    _permit: permit,
+                }
+            })
+            .await
+            .map_err(|_| archive_error(ToolResultArchiveError::Unavailable, true))?;
             check_input_cancellation(&cancellation)?;
             receipt.result
         })
+    }
+}
+
+fn run_owned<T: Send + 'static>(
+    workers: Option<NativeOwnedWorkerScope>,
+    operation: impl FnOnce() -> T + Send + 'static,
+) -> BoxFuture<'static, Result<T, NativeOwnedWorkerSpawnError>> {
+    match workers {
+        Some(workers) => workers.run(operation),
+        None => NativeOwnedWorkerSpawner::new().run(operation),
     }
 }
 
@@ -465,6 +488,39 @@ mod tests {
         assert!(execution.persisted_output().is_none());
         assert_eq!(execution.tool_output().content, "small");
         assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn scoped_archive_settles_durable_publication_without_consuming_its_receipt() {
+        use std::task::{Context, Poll};
+        use std::time::{Duration, Instant};
+        let directory = Directory::new();
+        let scope = NativeOwnedWorkerScope::new();
+        let completion = scope.completion();
+        let adapter = Arc::try_unwrap(directory.adapter())
+            .unwrap()
+            .with_worker_scope(scope.clone());
+        let mut publication =
+            adapter.publish(context(), ToolOutput::success("x".repeat(90 * 1024)));
+        let mut poll_context = Context::from_waker(std::task::Waker::noop());
+        assert!(matches!(
+            publication.as_mut().poll(&mut poll_context),
+            Poll::Pending
+        ));
+        scope.close();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !completion.is_complete() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            completion.is_complete(),
+            "archive worker joined independently of response consumption"
+        );
+        assert_eq!(adapter.active.load(Ordering::Acquire), 1);
+        let execution = block_on(publication).unwrap();
+        assert!(execution.persisted_output().is_some());
+        assert_eq!(adapter.active.load(Ordering::Acquire), 0);
+        assert!(block_on(adapter.publish(context(), ToolOutput::success("late"))).is_err());
     }
 
     #[test]

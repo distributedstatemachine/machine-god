@@ -17,6 +17,36 @@ use std::{
 #[cfg(target_os = "macos")]
 use rustix::process::Signal;
 
+/// Reads the boot-local clock used by Rust's macOS `Instant` implementation.
+///
+/// Unlike `CLOCK_MONOTONIC`, this clock excludes system sleep and uses the same
+/// raw timebase as `Instant`, permitting conservative cross-process deadlines.
+///
+/// # Errors
+/// Returns the clock query error or rejects an invalid kernel timestamp.
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)] // ADR 0003: fixed read-only clock, no arbitrary clock API.
+pub fn uptime_raw() -> io::Result<std::time::Duration> {
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: the fixed supported clock ID accepts a writable timespec pointer.
+    // `time` is initialized, aligned and exclusively borrowed for this call;
+    // clock_gettime writes synchronously and does not retain its address.
+    if unsafe { libc::clock_gettime(libc::CLOCK_UPTIME_RAW, &raw mut time) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    let seconds =
+        u64::try_from(time.tv_sec).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+    let nanos =
+        u32::try_from(time.tv_nsec).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+    if nanos >= 1_000_000_000 {
+        return Err(io::Error::from(io::ErrorKind::InvalidData));
+    }
+    Ok(std::time::Duration::new(seconds, nanos))
+}
+
 /// Signals the foreground process group of the supplied macOS PTY master.
 ///
 /// The kernel selects and references the group under its tty lock. No numeric
@@ -53,6 +83,18 @@ pub fn signal_terminal_foreground(master: BorrowedFd<'_>, signal: Signal) -> io:
 mod tests {
     use super::*;
     use std::{fs::File, os::fd::AsFd};
+
+    #[test]
+    fn uptime_raw_matches_instant_elapsed_interval() {
+        let before = std::time::Instant::now();
+        let raw_before = uptime_raw().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let raw_after = uptime_raw().unwrap();
+        let after = std::time::Instant::now();
+        let elapsed = raw_after.checked_sub(raw_before).unwrap();
+        assert!(!elapsed.is_zero());
+        assert!(elapsed <= after.duration_since(before));
+    }
 
     #[test]
     fn rejects_non_terminal_without_consuming_descriptor() {

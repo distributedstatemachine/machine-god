@@ -60,6 +60,11 @@ An available tmux executable is selected from that frozen PATH. The resulting
 terminal tool exposes all twelve actions with shared lossless input/result
 archives; ordinary transcript limits and permission decisions are unchanged.
 Library embeddings are not assumed to implement the CLI's private helper modes.
+After the turn succeeds, fails, or unwinds, the constructor worker drops the
+host and waits for its terminal worker scope to settle before returning the
+command outcome. Settlement includes collected worker joins and transferred
+child reaping, not consumption of tool-result futures. Other hosts' workers do
+not delay this wait; the async poll thread performs no blocking join.
 
 ## Noninteractive authority
 

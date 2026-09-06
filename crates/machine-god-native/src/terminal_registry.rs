@@ -63,6 +63,13 @@ enum Resident<B: TerminalSessionBackend> {
     Recovered(Box<TerminalRecoveredSession>),
 }
 impl<B: TerminalSessionBackend> Resident<B> {
+    #[cfg_attr(
+        not(test),
+        allow(
+            clippy::unnecessary_wraps,
+            reason = "shared registry supports recovered test residents"
+        )
+    )]
     fn live(&self) -> Option<&TerminalSession<B>> {
         match self {
             Self::Live(session) => Some(session),
@@ -70,6 +77,13 @@ impl<B: TerminalSessionBackend> Resident<B> {
             Self::Recovered(_) => None,
         }
     }
+    #[cfg_attr(
+        not(test),
+        allow(
+            clippy::unnecessary_wraps,
+            reason = "shared registry supports recovered test residents"
+        )
+    )]
     fn live_mut(&mut self) -> Option<&mut TerminalSession<B>> {
         match self {
             Self::Live(session) => Some(session),
@@ -658,6 +672,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         cancelled: bool,
     ) -> Result<TerminalAttentionState> {
         self.check_time(now_ms)?;
+        #[cfg(test)]
         let index = self.index(owner, id)?;
         #[cfg(test)]
         if let Resident::Recovered(session) = &self.entries[index].resident {

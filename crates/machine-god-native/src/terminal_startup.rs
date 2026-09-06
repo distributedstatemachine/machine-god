@@ -23,7 +23,7 @@ use crate::background_input::{BackgroundInputReceipt, BackgroundInputStatus};
 #[cfg(test)]
 use crate::terminal_helper::run_terminal_startup_marker;
 use crate::terminal_helper::{
-    MAX_SOCKET_PATH_BYTES, MAX_STARTUP_TIMEOUT, TerminalHelperError, TerminalHelperErrorKind,
+    MAX_STARTUP_PATH_BYTES, MAX_STARTUP_TIMEOUT, TerminalHelperError, TerminalHelperErrorKind,
     startup_directory_identity as identity, validate_startup_directory as validate_directory,
 };
 use crate::terminal_pty::{
@@ -43,8 +43,9 @@ pub(crate) const DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 // marker invocations, each with 8 KiB combined executable/argv bytes and a
 // bounded socket-directory path; 4 KiB covers quotes, separators and protocol
 // environment names. Command bytes occur exactly once in the bootstrap.
-const MAX_BOOTSTRAP_BYTES: usize =
-    4 * machine_god_core::MAX_TERMINAL_ACTION_COMMAND_BYTES + 2 * 4 * (8192 + 104) + 4096;
+const MAX_BOOTSTRAP_BYTES: usize = 4 * machine_god_core::MAX_TERMINAL_ACTION_COMMAND_BYTES
+    + 2 * 4 * (8192 + MAX_STARTUP_PATH_BYTES)
+    + 4096;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TerminalStartupError {
@@ -82,7 +83,7 @@ pub(crate) struct TerminalStartupRequest {
     pub(crate) command: Option<String>,
     pub(crate) environment: Vec<(OsString, OsString)>,
     pub(crate) cwd: OwnedFd,
-    /// Retained owner-only directory, with its exact canonical short path.
+    /// Retained owner-only directory, with its exact canonical path.
     pub(crate) artifacts: OwnedFd,
     pub(crate) artifact_path: PathBuf,
     pub(crate) marker_helper: TerminalPtyHelper,
@@ -105,6 +106,7 @@ pub(crate) struct PreparedTerminalBootstrap {
     nonce: [u8; 32],
     deadline: Instant,
     artifacts: StartupArtifacts,
+    marker: TerminalPtyHelper,
 }
 
 pub(crate) struct PublishedTerminalBootstrap {
@@ -238,7 +240,7 @@ impl PreparedTerminalBootstrap {
             .to_str()
             .ok_or(TerminalStartupError::InvalidRequest)?
             .to_owned();
-        let source = format!(
+        let mut source = format!(
             ". {}\n",
             quote(
                 artifacts
@@ -247,8 +249,30 @@ impl PreparedTerminalBootstrap {
                     .ok_or(TerminalStartupError::InvalidRequest)?
             )
         );
-        if source.len() > 512 {
-            return Err(TerminalStartupError::InvalidRequest);
+        if command.is_none() && (source.len() > 512 || !source.is_ascii()) {
+            // Physical lines stay below both canonical tty limits. Builtin read
+            // consumes ASCII-escaped path data, split only at Unicode chars.
+            let nonce_text = std::str::from_utf8(&nonce).map_err(process_error)?;
+            let name = format!("_mg_bootstrap_{}", &nonce_text[..16]);
+            let part = format!("_mg_chunk_{}", &nonce_text[..16]);
+            source = format!(
+                "{}{nonce_text}\n{name}=''; while builtin printf '\\033Pmg:{nonce_text}\\033\\\\'; IFS= builtin read -r {part} && [[ ${part} != . ]]; do {name}+=\"${part}\"; done; builtin printf -v {name} '%b' \"${name}\"; builtin unset {part}; . \"${name}\"; builtin unset {name}\n",
+                crate::terminal_helper::PACED_STARTUP_PREFIX
+            );
+            let path = artifacts.script_path();
+            let path = path.to_str().ok_or(TerminalStartupError::InvalidRequest)?;
+            let mut chunk = String::new();
+            for character in path.chars() {
+                chunk.push(character);
+                if chunk.len() >= 64 {
+                    writeln!(source, "{}", encode_path_fragment(&chunk)?).map_err(process_error)?;
+                    chunk.clear();
+                }
+            }
+            if !chunk.is_empty() {
+                writeln!(source, "{}", encode_path_fragment(&chunk)?).map_err(process_error)?;
+            }
+            source.push_str(".\n");
         }
         let mut arguments = shell.interactive_arguments();
         if command.is_some() {
@@ -262,6 +286,7 @@ impl PreparedTerminalBootstrap {
             nonce,
             deadline,
             artifacts,
+            marker: marker.clone(),
         })
     }
 
@@ -281,7 +306,9 @@ impl PreparedTerminalBootstrap {
         cancellation: &CancellationToken,
     ) -> Result<PublishedTerminalBootstrap> {
         crate::terminal_helper::check_deadline(self.deadline, cancellation)?;
-        let listener = self.artifacts.publish(&self.script)?;
+        let listener =
+            self.artifacts
+                .publish(&self.script, &self.marker, self.deadline, cancellation)?;
         Ok(PublishedTerminalBootstrap {
             nonce: self.nonce,
             has_command: self.source.is_none(),
@@ -689,6 +716,7 @@ impl StartupArtifacts {
     fn new(directory: OwnedFd, path: PathBuf, nonce: [u8; 32]) -> Result<Self> {
         let text = path.to_str().ok_or(TerminalStartupError::InvalidRequest)?;
         if !path.is_absolute()
+            || text.len() > MAX_STARTUP_PATH_BYTES
             || text.chars().any(char::is_control)
             || std::fs::canonicalize(&path).map_err(process_error)? != path
         {
@@ -697,9 +725,6 @@ impl StartupArtifacts {
         let nonce_text = std::str::from_utf8(&nonce).map_err(process_error)?;
         let script_name = format!("b-{nonce_text}");
         let socket_name = format!("s-{nonce_text}");
-        if path.join(&socket_name).as_os_str().as_bytes().len() > MAX_SOCKET_PATH_BYTES {
-            return Err(TerminalStartupError::InvalidRequest);
-        }
         let identity = validate_directory(&directory, &path)?;
         Ok(Self {
             directory,
@@ -715,7 +740,13 @@ impl StartupArtifacts {
     fn script_path(&self) -> PathBuf {
         self.path.join(&self.script_name)
     }
-    fn publish(&mut self, bootstrap: &str) -> Result<UnixListener> {
+    fn publish(
+        &mut self,
+        bootstrap: &str,
+        helper: &TerminalPtyHelper,
+        deadline: Instant,
+        cancellation: &CancellationToken,
+    ) -> Result<UnixListener> {
         if validate_directory(&self.directory, &self.path)? != self.identity {
             return Err(TerminalStartupError::InvalidRequest);
         }
@@ -732,8 +763,15 @@ impl StartupArtifacts {
         std::fs::File::from(writer)
             .write_all(bootstrap.as_bytes())
             .map_err(process_error)?;
-        let listener =
-            UnixListener::bind(self.path.join(&self.socket_name)).map_err(process_error)?;
+        let listener = crate::terminal_helper::bind_startup_listener(
+            helper,
+            true,
+            &self.directory,
+            &self.path,
+            &self.socket_name,
+            deadline,
+            cancellation,
+        )?;
         let socket = rustix::fs::statat(
             &self.directory,
             self.socket_name.as_str(),
@@ -744,9 +782,11 @@ impl StartupArtifacts {
             return Err(TerminalStartupError::InvalidRequest);
         }
         self.socket_identity = Some(identity(&socket));
+        crate::terminal_helper::check_deadline(deadline, cancellation)?;
         if validate_directory(&self.directory, &self.path)? != self.identity {
             return Err(TerminalStartupError::InvalidRequest);
         }
+        rustix::net::listen(&listener, 8).map_err(process_error)?;
         listener.set_nonblocking(true).map_err(process_error)?;
         Ok(listener)
     }
@@ -779,6 +819,15 @@ impl Drop for StartupArtifacts {
 
 fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+fn encode_path_fragment(value: &str) -> Result<String> {
+    // Readline under LANG=C may discard non-ASCII typed bytes. Bash and zsh
+    // decode these host-owned ASCII escapes after reading each bounded line.
+    let mut encoded = String::new();
+    for byte in value.as_bytes() {
+        write!(encoded, "\\x{byte:02x}").map_err(process_error)?;
+    }
+    Ok(encoded)
 }
 fn bootstrap_script(
     artifacts: &StartupArtifacts,
@@ -849,6 +898,7 @@ mod tests {
     struct Directory(PathBuf);
     #[derive(Default)]
     struct Forwarded {
+        output: Vec<u8>,
         writes: Vec<(usize, bool)>,
         settlements: Vec<(usize, bool)>,
         echoes: usize,
@@ -859,9 +909,13 @@ mod tests {
             self.0.lock().unwrap().echoes += 1;
             Ok(())
         }
-        fn read(&mut self, _: &mut [u8]) -> std::result::Result<TerminalPtyRead, ()> {
+        fn read(&mut self, bytes: &mut [u8]) -> std::result::Result<TerminalPtyRead, ()> {
+            let mut state = self.0.lock().unwrap();
+            let count = bytes.len().min(state.output.len());
+            bytes[..count].copy_from_slice(&state.output[..count]);
+            state.output.drain(..count);
             Ok(TerminalPtyRead {
-                bytes_read: 0,
+                bytes_read: count,
                 closed: false,
             })
         }
@@ -939,10 +993,25 @@ mod tests {
         assert!(prepared.startup_source().is_some());
         assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 0);
         let forwarded = Arc::new(Mutex::new(Forwarded::default()));
-        let (mut backend, control) = prepared
+        let (mut backend, mut control) = prepared
             .publish(&CancellationToken::new())
             .unwrap()
             .attach(AlternateBackend(Arc::clone(&forwarded)));
+        let forged = format!(
+            "ordinary\x1bPmg:{}\x1b\\output",
+            std::str::from_utf8(&control.nonce).unwrap()
+        )
+        .into_bytes();
+        forwarded.lock().unwrap().output = forged.clone();
+        let mut observed = [0; 128];
+        let read = backend.read(&mut observed).unwrap();
+        assert_eq!(&observed[..read.bytes_read], &forged);
+        assert_eq!(
+            control
+                .poll(Instant::now(), &CancellationToken::new())
+                .unwrap(),
+            None
+        );
         let bytes = vec![b'x'; 16 * 1024];
         assert_eq!(backend.input_write_limit(), 32 * 1024);
         assert!(!backend.signal_may_discard_output());
@@ -966,7 +1035,7 @@ mod tests {
     impl Directory {
         fn new() -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
-            let path = PathBuf::from("/tmp").join(format!(
+            let path = std::env::temp_dir().join(format!(
                 "machine-god-startup-{}-{}",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
@@ -1084,6 +1153,67 @@ mod tests {
             .unwrap()
             .commit(&CancellationToken::new())
             .unwrap()
+    }
+    #[test]
+    fn long_quoted_artifact_paths_preserve_command_and_commandless_startup() {
+        for shell in ["/bin/bash", "/bin/zsh"] {
+            if !Path::new(shell).exists() {
+                continue;
+            }
+            for commandless in [false, true] {
+                let cwd = Directory::new();
+                let root = Directory::new();
+                let mut path = std::fs::canonicalize(&root.0).unwrap();
+                while path.as_os_str().as_bytes().len() < 850 {
+                    path.push(format!("é{}", "'".repeat(60)));
+                    std::fs::create_dir(&path).unwrap();
+                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
+                        .unwrap();
+                }
+                let artifacts = Directory(path);
+                let original_cwd = std::env::current_dir().unwrap();
+                let (mut backend, mut control) = start(request(
+                    &cwd,
+                    &artifacts,
+                    shell,
+                    true,
+                    (!commandless).then(|| "printf long > executed; exit 17".into()),
+                ));
+                assert_eq!(std::env::current_dir().unwrap(), original_cwd);
+                let mut output = Vec::new();
+                event(
+                    &mut backend,
+                    &mut control,
+                    TerminalStartupEvent::ShellReady,
+                    &mut output,
+                );
+                shell_ack(&mut backend, &mut control);
+                if commandless {
+                    let input = b"printf long > executed; exit 17\n";
+                    assert_eq!(backend.write(input).unwrap().bytes_written(), input.len());
+                } else {
+                    event(
+                        &mut backend,
+                        &mut control,
+                        TerminalStartupEvent::CommandStarted,
+                        &mut output,
+                    );
+                    assert!(
+                        control
+                            .release_command(Instant::now(), &CancellationToken::new())
+                            .unwrap()
+                    );
+                }
+                finish(&mut backend, 17, &mut output);
+                control.retry_cleanup().unwrap();
+                assert_eq!(
+                    std::fs::read_to_string(cwd.0.join("executed")).unwrap(),
+                    "long"
+                );
+                assert_eq!(std::fs::read_dir(&artifacts.0).unwrap().count(), 0);
+                assert_eq!(std::env::current_dir().unwrap(), original_cwd);
+            }
+        }
     }
     fn delayed_helper(cwd: &Directory) -> TerminalPtyHelper {
         let helper = helper();
@@ -1901,7 +2031,7 @@ mod tests {
                 1 => request.artifact_path = std::fs::canonicalize(&other.0).unwrap(),
                 2 => request.timeout = Duration::ZERO,
                 _ => {
-                    let long = artifacts.0.join("x".repeat(80));
+                    let long = artifacts.0.join("invalid\npath");
                     std::fs::create_dir(&long).unwrap();
                     std::fs::set_permissions(&long, std::fs::Permissions::from_mode(0o700))
                         .unwrap();

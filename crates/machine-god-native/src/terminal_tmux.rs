@@ -151,6 +151,7 @@ pub(crate) trait TerminalTmuxControl: Send {
 /// exact socket inode are revalidated before each command. `-N` prevents a
 /// missing/replaced server from silently creating a new control namespace.
 pub(crate) struct NativeTerminalTmuxControl {
+    helper: Option<crate::terminal_pty::TerminalPtyHelper>,
     executable: PathBuf,
     environment: ValidatedBackgroundEnvironment,
     directory: OwnedFd,
@@ -162,7 +163,42 @@ pub(crate) struct NativeTerminalTmuxControl {
     immediate: Option<TerminalTmuxReply>,
 }
 impl NativeTerminalTmuxControl {
+    pub(crate) fn new_with_helper(
+        helper: crate::terminal_pty::TerminalPtyHelper,
+        executable: PathBuf,
+        environment: ValidatedBackgroundEnvironment,
+        directory: OwnedFd,
+        socket_path: &Path,
+        identity: TerminalTmuxIdentity,
+    ) -> Result<Self> {
+        Self::compose(
+            Some(helper),
+            executable,
+            environment,
+            directory,
+            socket_path,
+            identity,
+        )
+    }
+    #[cfg(test)]
     pub(crate) fn new(
+        executable: PathBuf,
+        environment: ValidatedBackgroundEnvironment,
+        directory: OwnedFd,
+        socket_path: &Path,
+        identity: TerminalTmuxIdentity,
+    ) -> Result<Self> {
+        Self::compose(
+            None,
+            executable,
+            environment,
+            directory,
+            socket_path,
+            identity,
+        )
+    }
+    fn compose(
+        helper: Option<crate::terminal_pty::TerminalPtyHelper>,
         executable: PathBuf,
         environment: ValidatedBackgroundEnvironment,
         directory: OwnedFd,
@@ -173,7 +209,8 @@ impl NativeTerminalTmuxControl {
             || executable.as_os_str().as_bytes().len() > 4096
             || executable.as_os_str().as_bytes().contains(&0)
             || !socket_path.is_absolute()
-            || socket_path.as_os_str().as_bytes().len() > 100
+            || socket_path.as_os_str().as_bytes().len()
+                > crate::terminal_helper::MAX_STARTUP_PATH_BYTES + 35
             || socket_path.as_os_str().as_bytes().contains(&0)
         {
             return Err(TerminalTmuxError::Invalid);
@@ -196,6 +233,7 @@ impl NativeTerminalTmuxControl {
         let socket_identity =
             socket_identity(&directory, &socket_name)?.ok_or(TerminalTmuxError::Identity)?;
         Ok(Self {
+            helper,
             executable,
             environment,
             directory,
@@ -218,7 +256,11 @@ impl NativeTerminalTmuxControl {
     }
     fn arguments(&self, operation: &TerminalTmuxCommand) -> Result<(Vec<OsString>, Vec<u8>)> {
         let mut arguments: Vec<OsString> = ["-N", "-S"].into_iter().map(Into::into).collect();
-        arguments.push(self.directory_path.join(&self.socket_name).into_os_string());
+        arguments.push(if self.helper.is_some() {
+            self.socket_name.clone()
+        } else {
+            self.directory_path.join(&self.socket_name).into_os_string()
+        });
         arguments.extend(["-f", "/dev/null"].into_iter().map(Into::into));
         let target = self.identity.pane.as_str();
         let session = format!("={}", self.identity.session);
@@ -297,9 +339,21 @@ impl TerminalTmuxControl for NativeTerminalTmuxControl {
             return Err(TerminalTmuxError::Identity);
         }
         let (arguments, input) = self.arguments(&operation)?;
-        let mut command = Command::new(&self.executable);
+        let mut command = if let Some(helper) = &self.helper {
+            crate::terminal_tmux_helper::relative_command(
+                helper,
+                &self.directory,
+                &self.directory_path,
+                &self.executable,
+                &arguments,
+            )
+            .map_err(|_| TerminalTmuxError::Identity)?
+        } else {
+            let mut command = Command::new(&self.executable);
+            command.args(arguments);
+            command
+        };
         command
-            .args(arguments)
             .env_clear()
             .envs(self.environment.entries().iter().cloned())
             .current_dir("/");

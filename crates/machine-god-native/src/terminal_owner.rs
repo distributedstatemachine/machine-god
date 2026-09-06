@@ -508,6 +508,13 @@ enum Persistence<'a> {
 }
 
 impl Persistence<'_> {
+    #[cfg_attr(
+        not(test),
+        allow(
+            clippy::unnecessary_wraps,
+            reason = "shared owner supports unmetered test authority"
+        )
+    )]
     fn authority(&self) -> Option<(&TerminalProfileStore, &TerminalProfileBudget)> {
         match self {
             Self::Profile(store, budget) => Some((store, budget)),

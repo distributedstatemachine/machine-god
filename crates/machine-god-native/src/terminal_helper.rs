@@ -10,12 +10,16 @@ use crate::background_process::{
 };
 use machine_god_core::CancellationToken;
 use rustix::fd::AsFd;
+#[cfg(any(test, feature = "ai-gateway-http"))]
+use rustix::fd::OwnedFd;
 use rustix::fs::{FileType, Mode, OFlags};
 use rustix::termios::Winsize;
 use std::ffi::OsString;
 use std::fmt;
 use std::io::{Read, Write};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
+#[cfg(any(test, feature = "ai-gateway-http"))]
+use std::os::unix::net::UnixListener;
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -56,7 +60,225 @@ fn process_error(_: impl fmt::Debug) -> TerminalHelperError {
     error(TerminalHelperErrorKind::Process)
 }
 pub(crate) const MAX_STARTUP_TIMEOUT: Duration = Duration::from_secs(300);
-pub(crate) const MAX_SOCKET_PATH_BYTES: usize = 100;
+pub(crate) const MAX_STARTUP_PATH_BYTES: usize = 4096;
+#[cfg(any(test, feature = "ai-gateway-http"))]
+pub(crate) const PACED_STARTUP_PREFIX: &str = "# machine-god-paced:";
+
+/// Output acknowledgements pace already-authorized bootstrap data only. They
+/// neither establish startup readiness nor release ordinary terminal input.
+#[cfg(any(test, feature = "ai-gateway-http"))]
+pub(crate) struct TerminalStartupInput {
+    initial: Vec<u8>,
+    fragments: Vec<u8>,
+    offset: usize,
+    fragment_end: usize,
+    acknowledgement: Option<Vec<u8>>,
+    matched: usize,
+    credits: usize,
+}
+#[cfg(any(test, feature = "ai-gateway-http"))]
+impl TerminalStartupInput {
+    pub(crate) fn new(source: &str) -> Result<Self, TerminalHelperError> {
+        if source.is_empty()
+            || source.len() > 32 * 1024
+            || !source.ends_with('\n')
+            || source.contains(['\0', '\r'])
+            || source.split_inclusive('\n').any(|line| line.len() > 512)
+        {
+            return Err(error(TerminalHelperErrorKind::InvalidRequest));
+        }
+        let (source, acknowledgement) =
+            if let Some(paced) = source.strip_prefix(PACED_STARTUP_PREFIX) {
+                let (nonce, source) = paced
+                    .split_once('\n')
+                    .ok_or_else(|| error(TerminalHelperErrorKind::InvalidRequest))?;
+                if nonce.len() != 32 || !nonce.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                    return Err(error(TerminalHelperErrorKind::InvalidRequest));
+                }
+                (source, Some(format!("\x1bPmg:{nonce}\x1b\\").into_bytes()))
+            } else {
+                (source, None)
+            };
+        let mut lines = source.split_inclusive('\n');
+        let initial = lines
+            .next()
+            .ok_or_else(|| error(TerminalHelperErrorKind::InvalidRequest))?
+            .as_bytes()
+            .to_vec();
+        let fragments = lines.collect::<String>().into_bytes();
+        let fragment_end = fragments
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(fragments.len(), |index| index + 1);
+        Ok(Self {
+            initial,
+            fragments,
+            offset: 0,
+            fragment_end,
+            acknowledgement,
+            matched: 0,
+            credits: 0,
+        })
+    }
+    pub(crate) fn initial(&self) -> &[u8] {
+        &self.initial
+    }
+    pub(crate) fn complete(&self) -> bool {
+        self.offset == self.fragments.len()
+    }
+    pub(crate) fn pending(&self) -> Option<&[u8]> {
+        if self.acknowledgement.is_some() && self.credits == 0 {
+            return None;
+        }
+        (!self.complete()).then_some(&self.fragments[self.offset..self.fragment_end])
+    }
+    pub(crate) fn advance(&mut self, count: usize) -> Result<(), TerminalHelperError> {
+        if !self.complete() {
+            if count > self.fragment_end - self.offset {
+                return Err(error(TerminalHelperErrorKind::Protocol));
+            }
+            self.offset += count;
+            if self.offset == self.fragment_end {
+                self.fragment_end = self.offset
+                    + self.fragments[self.offset..]
+                        .iter()
+                        .position(|byte| *byte == b'\n')
+                        .map_or(self.fragments.len() - self.offset, |index| index + 1);
+                self.credits = self.credits.saturating_sub(1);
+            }
+        }
+        Ok(())
+    }
+    pub(crate) fn observe(&mut self, bytes: &[u8]) {
+        let Some(pattern) = &self.acknowledgement else {
+            return;
+        };
+        for byte in bytes {
+            if *byte == pattern[self.matched] {
+                self.matched += 1;
+            } else {
+                self.matched = usize::from(*byte == pattern[0]);
+            }
+            if self.matched == pattern.len() {
+                // A tmux receipt can arrive after the shell's next ACK. Retain
+                // that one lookahead without accumulating unbounded credits.
+                self.credits = (self.credits + 1).min(2);
+                self.matched = 0;
+            }
+        }
+    }
+}
+
+/// Bind in an isolated helper using the very same socket retained by the host.
+/// Neither a filesystem alias nor a process-wide cwd change is needed.
+#[cfg(any(test, feature = "ai-gateway-http"))]
+pub(crate) fn bind_startup_listener(
+    helper: &TerminalPtyHelper,
+    marker: bool,
+    directory: &OwnedFd,
+    path: &Path,
+    leaf: &str,
+    deadline: Instant,
+    cancellation: &CancellationToken,
+) -> Result<UnixListener, TerminalHelperError> {
+    check_deadline(deadline, cancellation)?;
+    let identity = validate_startup_directory(directory, path)?;
+    #[cfg(target_os = "linux")]
+    let socket = rustix::net::socket_with(
+        rustix::net::AddressFamily::UNIX,
+        rustix::net::SocketType::STREAM,
+        rustix::net::SocketFlags::CLOEXEC,
+        None,
+    )
+    .map_err(process_error)?;
+    #[cfg(target_os = "macos")]
+    let socket = rustix::net::socket(
+        rustix::net::AddressFamily::UNIX,
+        rustix::net::SocketType::STREAM,
+        None,
+    )
+    .map_err(process_error)?;
+    #[cfg(target_os = "macos")]
+    rustix::io::fcntl_setfd(&socket, rustix::io::FdFlags::CLOEXEC).map_err(process_error)?;
+    let socket = UnixListener::from(socket);
+    let mut guard = crate::background_process::TerminalChildGuard::reserve(cancellation)
+        .map_err(process_error)?;
+    let mut command = Command::new(helper.program());
+    command
+        .args(helper.arguments())
+        .env_clear()
+        .env("LANG", "C");
+    if marker {
+        command
+            .env("MACHINE_GOD_STARTUP_MARKER", "1")
+            .env("MACHINE_GOD_STARTUP_KIND", "B")
+            .env("MACHINE_GOD_STARTUP_DIRECTORY", path)
+            .env("MACHINE_GOD_STARTUP_ID", &identity)
+            .env("MACHINE_GOD_STARTUP_NONCE", leaf);
+    } else {
+        command.args([
+            OsString::from("bind"),
+            path.as_os_str().to_owned(),
+            leaf.into(),
+            identity.into(),
+        ]);
+    }
+    command
+        .stdin(Stdio::from(
+            rustix::io::fcntl_dupfd_cloexec(&socket, 3).map_err(process_error)?,
+        ))
+        .stderr(Stdio::from(
+            rustix::io::fcntl_dupfd_cloexec(directory, 3).map_err(process_error)?,
+        ))
+        .stdout(Stdio::null());
+    guard.spawn(&mut command).map_err(process_error)?;
+    let bound = || -> Result<bool, TerminalHelperError> {
+        Ok(socket.local_addr().map_err(process_error)?.as_pathname() == Some(Path::new(leaf)))
+    };
+    let stopped = loop {
+        if bound()? {
+            break None;
+        }
+        if let Err(stopped) = check_deadline(deadline, cancellation) {
+            break Some(stopped);
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    };
+    // Retire the helper before deciding whether a cancellation raced with bind.
+    // A completed bind is returned as an owned artifact for the caller to record
+    // and clean before it propagates cancellation; never discard its receipt.
+    drop(guard);
+    if let Some(stopped) = stopped
+        && !bound()?
+    {
+        return Err(stopped);
+    }
+    // The caller records the bound artifact before fallible listen/nonblocking
+    // setup, so even those failures retain exact cleanup responsibility.
+    Ok(socket)
+}
+
+pub(crate) fn run_startup_bind(
+    path: &Path,
+    leaf: &str,
+    expected: &str,
+) -> Result<(), TerminalHelperError> {
+    if !path.is_absolute()
+        || path.as_os_str().as_bytes().len() > MAX_STARTUP_PATH_BYTES
+        || leaf.len() != 34
+        || !matches!(leaf.as_bytes().get(..2), Some(b"s-" | b"p-" | b"c-"))
+        || !leaf.as_bytes()[2..].iter().all(u8::is_ascii_hexdigit)
+    {
+        return Err(error(TerminalHelperErrorKind::InvalidRequest));
+    }
+    let directory = std::io::stderr();
+    if validate_startup_directory(&directory, path)? != expected {
+        return Err(error(TerminalHelperErrorKind::InvalidRequest));
+    }
+    rustix::process::fchdir(&directory).map_err(process_error)?;
+    let address = rustix::net::SocketAddrUnix::new(leaf).map_err(process_error)?;
+    rustix::net::bind(std::io::stdin(), &address).map_err(process_error)
+}
 
 pub(crate) const MAGIC: &[u8; 8] = b"MGPTY\0\0\x01";
 pub(crate) const READY: u8 = 0xa7;
@@ -79,11 +301,21 @@ pub(crate) const START_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const PTY_DEADLINE_ENV: &str = "MACHINE_GOD_PTY_DEADLINE";
 
 pub(crate) fn monotonic_now() -> Result<Duration, TerminalHelperError> {
-    let time = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
-    Ok(Duration::new(
-        u64::try_from(time.tv_sec).map_err(process_error)?,
-        u32::try_from(time.tv_nsec).map_err(process_error)?,
-    ))
+    // Match std::time::Instant's platform clock. On macOS CLOCK_MONOTONIC
+    // has a different rate/suspend behavior from Instant's CLOCK_UPTIME_RAW;
+    // translating between them can extend a deadline despite ordered samples.
+    #[cfg(target_os = "macos")]
+    {
+        machine_god_terminal_sys::uptime_raw().map_err(process_error)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let time = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
+        Ok(Duration::new(
+            u64::try_from(time.tv_sec).map_err(process_error)?,
+            u32::try_from(time.tv_nsec).map_err(process_error)?,
+        ))
+    }
 }
 
 fn decode_pty_deadline(value: &str) -> Result<Instant, TerminalHelperError> {
@@ -245,6 +477,7 @@ impl Write for DescriptorIo<'_> {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct TerminalPtyHelper {
     program: PathBuf,
     arguments: Vec<OsString>,
@@ -556,11 +789,14 @@ pub fn run_terminal_startup_marker() -> Result<(), TerminalHelperError> {
     }
     let path = PathBuf::from(value(
         "MACHINE_GOD_STARTUP_DIRECTORY",
-        MAX_SOCKET_PATH_BYTES,
+        MAX_STARTUP_PATH_BYTES,
     )?);
     let expected = value("MACHINE_GOD_STARTUP_ID", 64)?;
-    let nonce = value("MACHINE_GOD_STARTUP_NONCE", 32)?;
+    let nonce = value("MACHINE_GOD_STARTUP_NONCE", 34)?;
     let kind = value("MACHINE_GOD_STARTUP_KIND", 1)?;
+    if kind == "B" {
+        return run_startup_bind(&path, &nonce, &expected);
+    }
     if !path.is_absolute()
         || nonce.len() != 32
         || !nonce.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -606,6 +842,37 @@ pub(crate) fn validate_pty_directory(fd: &impl AsFd) -> Result<(), TerminalHelpe
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paced_input_requires_actual_split_ack_and_preserves_bounded_lookahead() {
+        let nonce = "0123456789abcdef0123456789abcdef";
+        let source = format!(
+            "{PACED_STARTUP_PREFIX}{nonce}\nprintf '\\033Pmg:{nonce}\\033\\\\'\nfirst\nsecond\n.\n"
+        );
+        let mut input = TerminalStartupInput::new(&source).unwrap();
+        input.observe(source.as_bytes()); // Echoed source has no control frame.
+        input.observe(b"ordinary output\x1bPmg:wrong\x1b\\");
+        assert!(input.pending().is_none());
+        let ack = format!("\x1bPmg:{nonce}\x1b\\");
+        for byte in ack.as_bytes() {
+            input.observe(&[*byte]);
+        }
+        assert_eq!(input.pending(), Some(b"first\n".as_slice()));
+        input.advance(2).unwrap();
+        assert_eq!(input.pending(), Some(b"rst\n".as_slice()));
+        input.observe(ack.as_bytes()); // Next ACK may precede the tmux receipt.
+        input.advance(4).unwrap();
+        assert_eq!(input.pending(), Some(b"second\n".as_slice()));
+        assert!(input.advance(100).is_err());
+        input.advance(7).unwrap();
+        assert!(input.pending().is_none());
+        for _ in 0..100 {
+            input.observe(ack.as_bytes());
+        }
+        assert_eq!(input.credits, 2);
+        input.advance(2).unwrap();
+        assert!(input.complete());
+    }
 
     #[test]
     fn helper_deadline_metadata_is_bounded_and_fail_closed() {
@@ -673,6 +940,17 @@ mod tests {
         assert!(
             matches!(decode_helper_deadline(&format!("{}:{}", too_far.as_secs(), too_far.subsec_nanos()), maximum), Err(error) if error.kind == TerminalHelperErrorKind::InvalidRequest)
         );
+    }
+
+    #[test]
+    fn repeated_deadline_translation_never_extends_callers_instant() {
+        let maximum = machine_god_core::MAX_TERMINAL_EXEC_DURATION;
+        for _ in 0..10_000 {
+            let deadline = Instant::now() + Duration::from_secs(1);
+            let stamp = encode_helper_deadline(deadline, maximum).unwrap();
+            let decoded = decode_helper_deadline(&stamp, maximum).unwrap();
+            assert!(decoded <= deadline);
+        }
     }
 
     #[test]

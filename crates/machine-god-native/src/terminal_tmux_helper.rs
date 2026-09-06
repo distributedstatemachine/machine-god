@@ -23,6 +23,68 @@ pub(crate) const CAPTURE_CHUNK: usize = 16 * 1024;
 pub(crate) const PAUSE: Duration = Duration::from_millis(2);
 pub(crate) const MAX_HELPER_FRAME: usize = 12 * 1024;
 
+type RelativeCommand = (PathBuf, String, PathBuf, Vec<OsString>);
+
+/// The child opens and validates the exact directory before changing cwd and
+/// exec; a path swap between the host check and spawn never selects authority.
+#[cfg(any(test, feature = "ai-gateway-http"))]
+pub(crate) fn relative_command(
+    helper: &crate::terminal_helper::TerminalPtyHelper,
+    directory: &OwnedFd,
+    path: &Path,
+    executable: &Path,
+    arguments: &[OsString],
+) -> Result<Command> {
+    let identity = validate_startup_directory(directory, path).map_err(gate_error)?;
+    let frame =
+        serde_json::to_string(&(path, identity, executable, arguments)).map_err(process_error)?;
+    if frame.len() > 64 * 1024 {
+        return Err(TerminalTmuxLaunchError::Invalid);
+    }
+    let mut command = Command::new(helper.program());
+    command
+        .args(helper.arguments())
+        .args(["exec", &frame, "-", "-"]);
+    Ok(command)
+}
+
+fn run_relative_command(frame: &std::ffi::OsStr) -> Result<()> {
+    if frame.as_bytes().len() > 64 * 1024 {
+        return Err(TerminalTmuxLaunchError::Invalid);
+    }
+    let (path, expected, executable, arguments): RelativeCommand =
+        serde_json::from_slice(frame.as_bytes()).map_err(process_error)?;
+    if !path.is_absolute()
+        || path.as_os_str().as_bytes().len() > crate::terminal_helper::MAX_STARTUP_PATH_BYTES
+        || !executable.is_absolute()
+        || executable.as_os_str().as_bytes().len() > 4096
+    {
+        return Err(TerminalTmuxLaunchError::Invalid);
+    }
+    let directory = rustix::fs::open(
+        &path,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(process_error)?;
+    if validate_startup_directory(&directory, &path).map_err(gate_error)? != expected {
+        return Err(TerminalTmuxLaunchError::Identity);
+    }
+    rustix::process::fchdir(&directory).map_err(process_error)?;
+    let mut command = Command::new(executable);
+    command.args(arguments);
+    #[cfg(test)]
+    if std::env::var("MG_TMUX_KIND").as_deref() == Ok("exec") {
+        // The unit harness writes a preamble before entering this function.
+        // Its launcher hides that preamble and retains the real output pipe
+        // on stderr; the production CLI does not need this fixture adapter.
+        command.stdout(Stdio::from(
+            rustix::io::fcntl_dupfd_cloexec(std::io::stderr(), 3).map_err(process_error)?,
+        ));
+    }
+    Err(process_error(command.exec()))
+}
+
 /// Private, bounded helper dispatch; never part of ordinary CLI configuration.
 #[doc(hidden)]
 pub const TERMINAL_TMUX_HELPER_ARGUMENT: &str = "--machine-god-terminal-tmux-helper";
@@ -56,6 +118,19 @@ pub(crate) fn gate_error(
         TerminalHelperErrorKind::Timeout => TerminalTmuxLaunchError::Timeout,
         _ => TerminalTmuxLaunchError::Protocol,
     }
+}
+
+fn connect_relative(directory: &OwnedFd, path: &Path) -> Result<UnixStream> {
+    let cwd = rustix::fs::open(
+        ".",
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(process_error)?;
+    rustix::process::fchdir(directory).map_err(process_error)?;
+    let connected = UnixStream::connect(path.file_name().ok_or(TerminalTmuxLaunchError::Invalid)?);
+    rustix::process::fchdir(&cwd).map_err(process_error)?;
+    connected.map_err(process_error)
 }
 
 fn read_helper_frame(
@@ -123,6 +198,24 @@ pub fn run_terminal_tmux_helper(arguments: &[OsString]) -> Result<()> {
     let kind = arguments[0]
         .to_str()
         .ok_or(TerminalTmuxLaunchError::Invalid)?;
+    if kind == "exec" {
+        if arguments[2] != "-" || arguments[3] != "-" {
+            return Err(TerminalTmuxLaunchError::Invalid);
+        }
+        return run_relative_command(&arguments[1]);
+    }
+    if kind == "bind" {
+        return crate::terminal_helper::run_startup_bind(
+            Path::new(&arguments[1]),
+            arguments[2]
+                .to_str()
+                .ok_or(TerminalTmuxLaunchError::Invalid)?,
+            arguments[3]
+                .to_str()
+                .ok_or(TerminalTmuxLaunchError::Invalid)?,
+        )
+        .map_err(gate_error);
+    }
     if !matches!(kind, "pane" | "capture" | "shell") {
         return Err(TerminalTmuxLaunchError::Invalid);
     }
@@ -132,7 +225,7 @@ pub fn run_terminal_tmux_helper(arguments: &[OsString]) -> Result<()> {
         .iter()
         .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
         || !socket.is_absolute()
-        || socket.as_os_str().as_bytes().len() > crate::terminal_helper::MAX_SOCKET_PATH_BYTES
+        || socket.as_os_str().as_bytes().len() > crate::terminal_helper::MAX_STARTUP_PATH_BYTES + 35
     {
         return Err(TerminalTmuxLaunchError::Invalid);
     }
@@ -149,7 +242,7 @@ pub fn run_terminal_tmux_helper(arguments: &[OsString]) -> Result<()> {
     validate_startup_directory(&directory, directory_path).map_err(gate_error)?;
     let deadline = Instant::now() + crate::terminal_helper::MAX_STARTUP_TIMEOUT;
     let cancellation = CancellationToken::new();
-    let mut channel = UnixStream::connect(&socket).map_err(process_error)?;
+    let mut channel = connect_relative(&directory, &socket)?;
     channel.set_nonblocking(true).map_err(process_error)?;
     let mut proof = [0; PROOF_BYTES];
     proof[..32].copy_from_slice(&nonce);
@@ -164,7 +257,7 @@ pub fn run_terminal_tmux_helper(arguments: &[OsString]) -> Result<()> {
         let mut completion_nonce = [0; 32];
         read_gate(&mut channel, &mut completion_nonce, deadline, &cancellation)
             .map_err(gate_error)?;
-        let mut completion = UnixStream::connect(&socket).map_err(process_error)?;
+        let mut completion = connect_relative(&directory, &socket)?;
         completion.set_nonblocking(true).map_err(process_error)?;
         proof[..32].copy_from_slice(&completion_nonce);
         write_gate(&mut completion, &proof, deadline, &cancellation).map_err(gate_error)?;

@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `finish production host integration checks, pressure-only session recycling and cold close, startup-root path handling and CLI shutdown settlement; then freeze the complete terminal feature for review and exact local/remote gates`
+- Next gate: `run complete pinned workspace and fresh release-binary gates for the integrated terminal host, then freeze the full feature for three fresh reviews and exact remote gates`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -66,8 +66,15 @@ constructors now compose foreground execution, staged startup, live/history
 dispatch, authorized monitor scheduling and shared lossless archives. The CLI
 selects that host explicitly. Real Engine/Session handles own the runtime lease;
 native lifecycle operation futures do not extend it. Focused integration checks
-are in progress alongside production module promotion, pressure-only inactive
-session recycling, durable cold close and final CLI shutdown/path handling.
+are in progress after production module promotion, pressure-only inactive
+session recycling and durable cold close. Host-scoped worker completion, CLI
+shutdown settlement and long-path startup are integrated for combined checks.
+The Gateway now replays core's empty assistant completions without poisoning
+later turns; the composed large-input archive/paging regression passes.
+macOS helper deadline transfer uses the same clock domain as Rust `Instant`.
+The combined long-path host/startup/PTY/tmux and helper regressions pass, as does
+strict workspace Clippy. Complete workspace, release-binary and delivery gates
+remain pending.
 These are internal integrations, not a delivery or a compatibility claim.
 
 Deliver complete features, not separately counted action-sized slices. The
@@ -270,7 +277,8 @@ remain part of this feature; piped input does not complete it.
 - `machine-god-cli` is a thin host and owns no product state.
 - `machine-god-testkit` owns deterministic test doubles and fixtures.
 - Unsafe Rust is forbidden in the product crates. The isolated macOS
-  PTY and exact process-incarnation bindings are the sole exception under
+  PTY, exact process-incarnation and fixed uptime-clock bindings are the sole
+  exception under
   [ADR 0003](decisions/0003-macos-terminal-foreground-signal.md); it remains subject
   to the full terminal feature's adversarial and platform gates.
 - Constructors and futures must preserve the documented inert-before-poll,

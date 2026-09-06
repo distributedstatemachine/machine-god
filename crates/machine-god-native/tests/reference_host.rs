@@ -1019,13 +1019,17 @@ fn decoded_tool_output(request: &Value, prompt_index: usize) -> Value {
 }
 
 fn assert_completed(events: &[TurnEvent]) {
-    assert!(matches!(
-        events.last(),
-        Some(TurnEvent::Completed {
-            reason: StopReason::Completed,
-            ..
-        })
-    ));
+    assert!(
+        matches!(
+            events.last(),
+            Some(TurnEvent::Completed {
+                reason: StopReason::Completed,
+                ..
+            })
+        ),
+        "unexpected terminal event: {:?}",
+        events.last()
+    );
 }
 
 fn build_error<T>(
@@ -2382,6 +2386,8 @@ fn complete_terminal_composition_registers_all_actions_and_survives_into_engine(
     assert!(!state.join("background-v1").exists());
     assert!(state.join("terminal-startup").is_dir());
     assert!(state.join("tool-result-archive/archive-lock-v1").is_file());
+    let shutdown = host.terminal_shutdown_completion().unwrap();
+    assert!(!shutdown.is_complete());
     let engine = host.into_engine();
     let terminal = engine.tool(&ToolName::new("terminal").unwrap()).unwrap();
     let schema = terminal.spec().input_schema;
@@ -2398,31 +2404,7 @@ fn complete_terminal_composition_registers_all_actions_and_survives_into_engine(
             "resize", "signal", "close"
         ]
     );
-    let ordinary = machine_god_core::EngineLimits::default();
-    assert_eq!(
-        engine.limits().max_tool_argument_bytes,
-        ordinary.max_tool_argument_bytes
-    );
-    assert_eq!(
-        engine.limits().max_transcript_bytes,
-        ordinary.max_transcript_bytes
-    );
-    assert_eq!(
-        terminal
-            .complete_input_limits()
-            .unwrap()
-            .max_argument_bytes
-            .get(),
-        machine_god_native::MAX_TERMINAL_ACTION_ARGUMENT_BYTES
-    );
-    assert_eq!(
-        terminal
-            .complete_output_limits()
-            .unwrap()
-            .max_serialized_bytes
-            .get(),
-        machine_god_native::MAX_TERMINAL_COMPLETE_TOOL_OUTPUT_BYTES
-    );
+    assert_full_terminal_limits(&engine);
     let session = engine
         .create_session(
             SessionId::new("full-list").unwrap(),
@@ -2454,6 +2436,45 @@ fn complete_terminal_composition_registers_all_actions_and_survives_into_engine(
         matches!(&prompter.requests()[0].capability, Capability::Custom { name, .. } if name == "terminal_list")
     );
     assert!(!state.join("background-v1").exists());
+    assert!(
+        !shutdown.is_complete(),
+        "the real session still owns the host"
+    );
+    drop(session);
+    shutdown.wait_on_worker().unwrap();
+    assert!(
+        shutdown.is_complete(),
+        "the completion observer does not own the host"
+    );
+}
+
+fn assert_full_terminal_limits(engine: &machine_god_core::Engine) {
+    let ordinary = machine_god_core::EngineLimits::default();
+    assert_eq!(
+        engine.limits().max_tool_argument_bytes,
+        ordinary.max_tool_argument_bytes
+    );
+    assert_eq!(
+        engine.limits().max_transcript_bytes,
+        ordinary.max_transcript_bytes
+    );
+    let terminal = engine.tool(&ToolName::new("terminal").unwrap()).unwrap();
+    assert_eq!(
+        terminal
+            .complete_input_limits()
+            .unwrap()
+            .max_argument_bytes
+            .get(),
+        machine_god_native::MAX_TERMINAL_ACTION_ARGUMENT_BYTES
+    );
+    assert_eq!(
+        terminal
+            .complete_output_limits()
+            .unwrap()
+            .max_serialized_bytes
+            .get(),
+        machine_god_native::MAX_TERMINAL_COMPLETE_TOOL_OUTPUT_BYTES
+    );
 }
 
 #[test]
@@ -2510,6 +2531,12 @@ fn complete_terminal_composition_archives_full_inputs_and_pages_prior_calls() {
         .unwrap();
     assert_eq!(reference["type"], "tool_arguments_archive");
     let handle = reference["archive"]["handle"].as_str().unwrap();
+    assert_eq!(
+        transport.requests().len(),
+        2,
+        "initial argument publication completed its model round"
+    );
+    assert!(transport.state.lock().unwrap().responses.is_empty());
     let page = json!({"type":"tool-call", "toolCallId":"archive-page", "toolName":"read_tool_result", "input":{"handle":handle, "byte_count":1024}});
     let response = format!(
         "data: {page}\n\ndata: {{\"type\":\"finish\",\"finishReason\":{{\"unified\":\"tool-calls\"}}}}\n\n"

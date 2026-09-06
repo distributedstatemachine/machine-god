@@ -38,7 +38,7 @@ use std::num::NonZeroU32;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
@@ -64,6 +64,7 @@ pub(crate) struct TerminalTmuxLaunchRequest {
 /// The directly retained foreground server owns one newly created namespace.
 /// Failed retirement keeps the same Child and descriptors for another attempt.
 struct NativeTerminalTmuxServer {
+    helper: TerminalPtyHelper,
     child: Option<Child>,
     executable: PathBuf,
     environment: ValidatedBackgroundEnvironment,
@@ -72,6 +73,7 @@ struct NativeTerminalTmuxServer {
 }
 impl NativeTerminalTmuxServer {
     fn start(
+        helper: TerminalPtyHelper,
         executable: PathBuf,
         environment: ValidatedBackgroundEnvironment,
         artifacts: Artifacts,
@@ -91,19 +93,32 @@ impl NativeTerminalTmuxServer {
         ) {
             return Err(TerminalTmuxLaunchError::Identity);
         }
-        let child = Command::new(&executable)
-            .args(["-D", "-S"])
-            .arg(&socket)
-            .args(["-f", "/dev/null"])
-            .env_clear()
-            .envs(environment.entries().iter().cloned())
-            .current_dir("/")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(process_error)?;
+        let child = crate::terminal_tmux_helper::relative_command(
+            &helper,
+            &artifacts.directory,
+            &artifacts.path,
+            &executable,
+            &[
+                "-D".into(),
+                "-S".into(),
+                socket
+                    .file_name()
+                    .ok_or(TerminalTmuxLaunchError::Invalid)?
+                    .to_owned(),
+                "-f".into(),
+                "/dev/null".into(),
+            ],
+        )?
+        .env_clear()
+        .envs(environment.entries().iter().cloned())
+        .current_dir("/")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(process_error)?;
         let mut server = Self {
+            helper,
             child: Some(child),
             executable,
             environment,
@@ -140,12 +155,25 @@ impl NativeTerminalTmuxServer {
         self.artifacts.validate()?;
         self.artifacts.validate_socket(&self.socket)?;
         check_deadline(deadline, cancellation).map_err(gate_error)?;
-        let mut command = Command::new(&self.executable);
+        let mut fields = vec![
+            OsString::from("-N"),
+            "-S".into(),
+            self.socket
+                .file_name()
+                .ok_or(TerminalTmuxLaunchError::Invalid)?
+                .to_owned(),
+            "-f".into(),
+            "/dev/null".into(),
+        ];
+        fields.extend_from_slice(arguments);
+        let mut command = crate::terminal_tmux_helper::relative_command(
+            &self.helper,
+            &self.artifacts.directory,
+            &self.artifacts.path,
+            &self.executable,
+            &fields,
+        )?;
         command
-            .args(["-N", "-S"])
-            .arg(&self.socket)
-            .args(["-f", "/dev/null"])
-            .args(arguments)
             .env_clear()
             .envs(self.environment.entries().iter().cloned())
             .current_dir("/");
@@ -219,7 +247,7 @@ pub(crate) struct PreparedTerminalTmuxLaunch {
     cwd: OwnedFd,
     cwd_path: PathBuf,
     deadline: Instant,
-    initial_source: Option<String>,
+    initial_source: Option<crate::terminal_helper::TerminalStartupInput>,
     echo: Option<OwnedFd>,
     tty: Option<OwnedFd>,
 }
@@ -274,8 +302,10 @@ impl PreparedTerminalTmuxLaunch {
         let environment =
             ValidatedBackgroundEnvironment::new(request.environment).map_err(process_error)?;
         let mut artifacts = Artifacts::new(request.artifacts, request.artifact_path)?;
-        let (pane_listener, pane_nonce, pane_path) = artifacts.listener("p")?;
-        let (capture_listener, capture_nonce, capture_path) = artifacts.listener("c")?;
+        let (pane_listener, pane_nonce, pane_path) =
+            artifacts.listener("p", &request.helper, deadline, cancellation)?;
+        let (capture_listener, capture_nonce, capture_path) =
+            artifacts.listener("c", &request.helper, deadline, cancellation)?;
         let child_arguments = helper_arguments(
             &request.helper,
             "shell",
@@ -299,6 +329,7 @@ impl PreparedTerminalTmuxLaunch {
             "-",
         )?;
         let mut server = NativeTerminalTmuxServer::start(
+            request.helper.clone(),
             request.executable,
             environment,
             artifacts,
@@ -446,7 +477,12 @@ impl PreparedTerminalTmuxLaunch {
             cwd: request.cwd,
             cwd_path: request.cwd_path,
             deadline,
-            initial_source: request.initial_source,
+            initial_source: request
+                .initial_source
+                .as_deref()
+                .map(crate::terminal_helper::TerminalStartupInput::new)
+                .transpose()
+                .map_err(gate_error)?,
             echo,
             tty: Some(tty),
         })
@@ -463,7 +499,8 @@ impl PreparedTerminalTmuxLaunch {
             return Err(TerminalTmuxLaunchError::Protocol);
         }
         validate_cwd(&self.cwd, &self.cwd_path)?;
-        let mut control = NativeTerminalTmuxControl::new(
+        let mut control = NativeTerminalTmuxControl::new_with_helper(
+            self.server.helper.clone(),
             self.server.executable.clone(),
             self.server.environment.clone(),
             rustix::io::fcntl_dupfd_cloexec(&self.server.artifacts.directory, 3)
@@ -472,9 +509,9 @@ impl PreparedTerminalTmuxLaunch {
             self.pane.identity.clone(),
         )
         .map_err(process_error)?;
-        if let Some(source) = self.initial_source.take() {
+        if let Some(source) = &self.initial_source {
             for command in [
-                TerminalTmuxCommand::Load(source.into_bytes()),
+                TerminalTmuxCommand::Load(source.initial().to_vec()),
                 TerminalTmuxCommand::Paste,
             ] {
                 control
@@ -538,6 +575,8 @@ impl PreparedTerminalTmuxLaunch {
         let backend = TerminalTmuxBackend::attach_until(control, process, capture, self.deadline)
             .map_err(process_error)?;
         Ok(NativeTerminalTmuxBackend {
+            initial_source: self.initial_source.filter(|source| !source.complete()),
+            startup_deadline: self.deadline,
             backend,
             server: self.server,
             echo: self.echo,
@@ -641,11 +680,34 @@ impl TerminalTmuxProcess for NativeTerminalTmuxProcess {
 /// One raw backend owner. The startup bootstrap may wrap this value without
 /// changing its paste, input settlement, original-tty, or native lifetime rules.
 pub(crate) struct NativeTerminalTmuxBackend {
+    initial_source: Option<crate::terminal_helper::TerminalStartupInput>,
+    startup_deadline: Instant,
     backend: TerminalTmuxBackend<NativeTerminalTmuxControl, NativeTerminalTmuxProcess>,
     server: NativeTerminalTmuxServer,
     echo: Option<OwnedFd>,
     tty: Option<OwnedFd>,
     capture_completion: CaptureCompletion,
+}
+impl NativeTerminalTmuxBackend {
+    fn flush_initial_source(&mut self) -> std::result::Result<(), ()> {
+        let Some(source) = self.initial_source.as_mut() else {
+            return Ok(());
+        };
+        if Instant::now() >= self.startup_deadline {
+            return Err(());
+        }
+        if let Some(bytes) = source.pending() {
+            let receipt = self.backend.write(bytes)?;
+            source.advance(receipt.bytes_written()).map_err(|_| ())?;
+            if receipt.stdin_closed() {
+                return Err(());
+            }
+        }
+        if source.complete() {
+            self.initial_source = None;
+        }
+        Ok(())
+    }
 }
 impl TerminalSessionBackend for NativeTerminalTmuxBackend {
     fn restore_startup_echo(&mut self) -> std::result::Result<(), ()> {
@@ -656,9 +718,21 @@ impl TerminalSessionBackend for NativeTerminalTmuxBackend {
         Ok(())
     }
     fn read(&mut self, bytes: &mut [u8]) -> std::result::Result<TerminalPtyRead, ()> {
-        self.backend.read(bytes)
+        self.flush_initial_source()?;
+        let read = self.backend.read(bytes)?;
+        if let Some(source) = self.initial_source.as_mut() {
+            source.observe(&bytes[..read.bytes_read]);
+        }
+        Ok(read)
     }
     fn write(&mut self, bytes: &[u8]) -> std::result::Result<BackgroundInputReceipt, ()> {
+        if self.initial_source.is_some() {
+            return Ok(BackgroundInputReceipt::new(
+                0,
+                false,
+                crate::background_input::BackgroundInputStatus::Backpressure,
+            ));
+        }
         self.backend.write(bytes)
     }
     fn write_with_paste(
@@ -666,6 +740,13 @@ impl TerminalSessionBackend for NativeTerminalTmuxBackend {
         bytes: &[u8],
         paste: bool,
     ) -> std::result::Result<BackgroundInputReceipt, ()> {
+        if self.initial_source.is_some() {
+            return Ok(BackgroundInputReceipt::new(
+                0,
+                false,
+                crate::background_input::BackgroundInputStatus::Backpressure,
+            ));
+        }
         self.backend.write_with_paste(bytes, paste)
     }
     fn input_write_limit(&self) -> usize {
@@ -707,6 +788,7 @@ impl TerminalSessionBackend for NativeTerminalTmuxBackend {
         force: bool,
         output: &mut dyn FnMut(&[u8]),
     ) -> std::result::Result<TerminalPtyClose, ()> {
+        self.initial_source = None;
         self.echo.take();
         self.tty.take();
         let mut receipt = self.backend.close(force, output)?;
@@ -908,8 +990,7 @@ impl Artifacts {
         validate_startup_directory(&directory, &path).map_err(gate_error)?;
         if !path.is_absolute()
             || std::fs::canonicalize(&path).map_err(process_error)? != path
-            || path.as_os_str().as_bytes().len() + 35
-                > crate::terminal_helper::MAX_SOCKET_PATH_BYTES
+            || path.as_os_str().as_bytes().len() > crate::terminal_helper::MAX_STARTUP_PATH_BYTES
         {
             return Err(TerminalTmuxLaunchError::Invalid);
         }
@@ -926,12 +1007,31 @@ impl Artifacts {
             .map(|_| ())
             .map_err(gate_error)
     }
-    fn listener(&mut self, kind: &str) -> Result<(UnixListener, [u8; 32], PathBuf)> {
+    fn listener(
+        &mut self,
+        kind: &str,
+        helper: &TerminalPtyHelper,
+        deadline: Instant,
+        cancellation: &CancellationToken,
+    ) -> Result<(UnixListener, [u8; 32], PathBuf)> {
         self.validate()?;
         let nonce = nonce()?;
         let path = self.path.join(format!("{kind}-{}", self.namespace));
-        let listener = UnixListener::bind(&path).map_err(process_error)?;
+        let listener = crate::terminal_helper::bind_startup_listener(
+            helper,
+            false,
+            &self.directory,
+            &self.path,
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .ok_or(TerminalTmuxLaunchError::Invalid)?,
+            deadline,
+            cancellation,
+        );
+        let listener = listener.map_err(gate_error)?;
         self.remember_socket(&path)?;
+        check_deadline(deadline, cancellation).map_err(gate_error)?;
+        rustix::net::listen(&listener, 8).map_err(process_error)?;
         listener.set_nonblocking(true).map_err(process_error)?;
         Ok((listener, nonce, path))
     }
@@ -1022,7 +1122,7 @@ mod tests {
     impl Directory {
         fn new() -> Self {
             let nonce = nonce().unwrap();
-            let path = PathBuf::from("/tmp").join(format!(
+            let path = std::env::temp_dir().join(format!(
                 "mg-tl-{}",
                 std::str::from_utf8(&nonce[..12]).unwrap()
             ));
@@ -1055,7 +1155,7 @@ mod tests {
         }
         let program = std::env::current_exe().unwrap();
         let script = format!(
-            "export MG_TMUX_KIND=\"$1\" MG_TMUX_SOCKET=\"$2\" MG_TMUX_NONCE=\"$3\" MG_TMUX_CWD=\"$4\"; exec '{}' --exact terminal_tmux_startup::tests::helper_entry --nocapture",
+            "export MG_TMUX_KIND=\"$1\" MG_TMUX_SOCKET=\"$2\" MG_TMUX_NONCE=\"$3\" MG_TMUX_CWD=\"$4\"; if [ \"$1\" = exec ]; then exec 2>&1; exec 1>/dev/null; fi; exec '{}' --exact terminal_tmux_startup::tests::helper_entry --nocapture",
             program.to_str().unwrap().replace('\'', "'\\''")
         );
         TerminalPtyHelper::new(
@@ -1537,7 +1637,16 @@ mod tests {
         let mut backend = prepared.commit_owned(&cancellation).unwrap();
         read_until(&mut backend, b"READY");
         std::fs::rename(&original, &parked).unwrap();
-        let replacement = UnixListener::bind(&original).unwrap();
+        let replacement = crate::terminal_helper::bind_startup_listener(
+            &helper(),
+            false,
+            &directory.fd(),
+            &directory.0,
+            original.file_name().unwrap().to_str().unwrap(),
+            Instant::now() + Duration::from_secs(10),
+            &cancellation,
+        )
+        .unwrap();
         assert!(backend.close(true, &mut |_| {}).is_err());
         assert!(backend.server.child.is_none());
         assert_eq!(backend.server.artifacts.sockets.len(), 1);
@@ -1614,7 +1723,18 @@ mod tests {
             for clean in [false, true] {
                 for commandless in [false, true] {
                     let directory = Directory::new();
-                    let artifacts = Directory::new();
+                    let artifact_root = Directory::new();
+                    let mut artifact_path = artifact_root.0.clone();
+                    while artifact_path.as_os_str().as_bytes().len() < 850 {
+                        artifact_path.push(format!("é{}", "'".repeat(60)));
+                        std::fs::create_dir(&artifact_path).unwrap();
+                        std::fs::set_permissions(
+                            &artifact_path,
+                            std::fs::Permissions::from_mode(0o700),
+                        )
+                        .unwrap();
+                    }
+                    let artifacts = Directory(artifact_path);
                     let Some(mut request) = request(&directory, "unused") else {
                         return;
                     };
@@ -1623,9 +1743,9 @@ mod tests {
                     } else {
                         ".zprofile"
                     };
-                    std::fs::write(directory.0.join(profile), "export FROM_PROFILE=user; printf PROFILE_OUTPUT; for fd in 3 4 5 6 7 8 9; do eval \"exec $fd>&-\"; done\n").unwrap();
+                    std::fs::write(directory.0.join(profile), "set -a; export FROM_PROFILE=user; printf PROFILE_OUTPUT; for fd in 3 4 5 6 7 8 9; do eval \"exec $fd>&-\"; done\n").unwrap();
                     let source = format!(
-                        "test \"${{FROM_PROFILE-unset}}\" = {} || exit 7; printf command > executed; exit 23",
+                        "test \"${{FROM_PROFILE-unset}}\" = {} || exit 7; if /usr/bin/env | /usr/bin/grep '^_mg_bootstrap_' >/dev/null; then exit 8; fi; printf command > executed; exec /bin/sh -c 'exit 23'",
                         if clean { "unset" } else { "user" }
                     );
                     let marker = marker_helper();

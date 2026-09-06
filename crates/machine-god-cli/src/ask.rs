@@ -912,8 +912,8 @@ mod production {
                                 terminal_options,
                             )
                             .map_err(|_| ())?;
-                        runtime.block_on(execute_turn(
-                            &host,
+                        with_settled_terminal_host(host, |host| runtime.block_on(execute_turn(
+                            host,
                             selection,
                             prompt,
                             OutputBridge {
@@ -922,7 +922,7 @@ mod production {
                             },
                             signals,
                             &control,
-                        ))
+                        )))
                     }),
             )?;
 
@@ -935,6 +935,22 @@ mod production {
             let _ = controller.enter_final();
             (AskCommandOutcome::OperationalFailure, controller)
         }
+    }
+
+    /// Only the blocking CLI host thread may settle native workers. The
+    /// observer carries no Engine/Session vote and never waits for other hosts.
+    fn with_settled_terminal_host(
+        host: NativeReferenceHost,
+        operation: impl FnOnce(&NativeReferenceHost) -> Result<AskCommandOutcome, ()>,
+    ) -> Result<AskCommandOutcome, ()> {
+        let shutdown = host.terminal_shutdown_completion().ok_or(())?;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| operation(&host)));
+        drop(host);
+        shutdown.wait_on_worker().map_err(|_| ())?;
+        result.map_err(|payload| {
+            // A panic payload may itself have a panicking destructor.
+            std::mem::forget(payload);
+        })?
     }
 
     /// Runs only on the existing constructor worker. This executable is the
@@ -2056,6 +2072,81 @@ mod production {
                     Message::text(Role::Assistant, "composed answer"),
                 ]
             );
+        }
+
+        #[test]
+        fn complete_terminal_host_settles_on_success_error_and_unwind() {
+            use machine_god_core::{ToolCall, ToolCallId, ToolContext, ToolName, TurnId};
+            use machine_god_native::{
+                NativeReferenceHostTerminalOptions, NativeRootSelection, PreparedNativeRoots,
+            };
+            for mode in ["success", "error", "panic"] {
+                let temporary = ScopedTestDirectory::new(&format!("terminal-settlement-{mode}"));
+                let workspace = temporary.path().join("workspace");
+                let state_base = temporary.path().join("state");
+                for path in [&workspace, &state_base] {
+                    fs::create_dir(path).unwrap();
+                    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+                }
+                let environment =
+                    NativeEnvironment::new(None, Some(state_base.into_os_string()), None);
+                let selection =
+                    NativeRootSelection::from_environment(&environment, &workspace).unwrap();
+                let host = NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_terminal(
+                    load_native_config(&NativeEnvironment::new(None, None, None)).unwrap(),
+                    Arc::new(OneShotTransport::new("")),
+                    NetworkTarget { scheme: "https".into(), host: "ai-gateway.vercel.sh".into(), port: None },
+                    PreparedNativeRoots::prepare(selection).unwrap(),
+                    Arc::new(DenyPermissionPrompter),
+                    Arc::new(UnavailableQuestionPrompter),
+                    Arc::new(NeverWebSearchDeadline),
+                    NativeReferenceHostTerminalOptions::new(
+                        "/explicit-unexecuted-terminal-helper".into(),
+                        Some("/bin/bash".into()),
+                        Vec::new(),
+                    ).unwrap(),
+                ).unwrap();
+                let completion = host.terminal_shutdown_completion().unwrap();
+                let terminal = host
+                    .engine()
+                    .tool(&ToolName::new("terminal").unwrap())
+                    .unwrap();
+                let call_id = ToolCallId::new("list").unwrap();
+                let prepared = terminal
+                    .prepare(ToolCall {
+                        id: call_id.clone(),
+                        name: ToolName::new("terminal").unwrap(),
+                        arguments: serde_json::json!({"action":"list"}),
+                    })
+                    .unwrap();
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .unwrap();
+                runtime
+                    .block_on(terminal.execute(
+                        ToolContext {
+                            session_id: SessionId::new("settlement").unwrap(),
+                            session_incarnation_id:
+                                SessionIncarnationId::new("settlement-incarnation").unwrap(),
+                            turn_id: TurnId::new("turn").unwrap(),
+                            call_id,
+                        },
+                        prepared.arguments().clone(),
+                        CancellationToken::new(),
+                    ))
+                    .unwrap();
+                assert!(!completion.is_complete());
+                let result = super::with_settled_terminal_host(host, |_| match mode {
+                    "success" => Ok(AskCommandOutcome::Completed),
+                    "error" => Err(()),
+                    _ => panic!("synthetic terminal turn unwind"),
+                });
+                assert_eq!(result.is_ok(), mode == "success");
+                assert!(
+                    completion.is_complete(),
+                    "{mode}: native owner joined before return"
+                );
+            }
         }
 
         #[test]
