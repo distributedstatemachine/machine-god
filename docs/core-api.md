@@ -100,6 +100,29 @@ defaults. [`EventSink`](crate::EventSink) is observational and defaults to
 [`NoopEventSink`](crate::NoopEventSink). Tools are registered explicitly and are
 looked up by validated [`ToolName`](crate::ToolName).
 
+`EngineBuilder::host_resource` optionally binds one opaque `Send + Sync` value
+to real `Engine` and `Session` handles, including their clones. It is not stored
+with provider/tool dependencies or durable session data. Constructors invoke no
+methods on it; replacement, an unbuilt/failed builder, or the last real handle
+drops its owned value normally. Its destructor must follow the host's own bounded
+cleanup contract; destructor panics use ordinary Rust unwinding and cannot reopen
+a closed lease. Core gains no method for invoking native authority.
+
+`Engine::requester()` returns a distinct cloneable `EngineRequester` with only
+operation dependencies and a weak host lease. Prompt, turn, tool and load futures
+do not count as host owners. Loads upgrade the weak lease only when returning a
+real `Session`; the last real handle cannot be resurrected, and successful store
+loads finishing after closure return `EngineError::HostClosed`. Unpolled prompt/load
+operations reject a closed host before calling injected components. Already
+running operations retain their ordinary cancellation/drop semantics; dropping
+the host resource, not core, owns native shutdown.
+
+For lifecycle persistence, `EngineRequester::reserve_session` returns a
+`SessionReservation` that retains canonical state and exposes only `record` and
+`has_active_turn`, without keeping the host alive or granting prompt access.
+Requester-created real sessions still require an open host. Engines configured
+without a host resource preserve their existing independent-future behavior.
+
 `Engine` debugging is structural: it reports a fixed `has_provider: true` flag
 and tool count without calling [`ModelProvider::name`](crate::ModelProvider::name)
 or formatting any provider-controlled value. Logging an engine therefore cannot

@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
-use crate::engine::{EngineInner, SessionRegistration, SessionRegistry};
+use crate::engine::{EngineInner, HostLease, HostResource, SessionRegistration, SessionRegistry};
 
 /// Optimistic-concurrency revision assigned by a [`SessionStore`]. Zero is the
 /// unsaved in-memory sentinel and is invalid in records returned by a store.
@@ -225,6 +225,7 @@ impl DrainJsonValues for ToolExecution {
 /// A clonable handle to a provider-neutral session.
 #[derive(Clone)]
 pub struct Session {
+    host_resource: Option<Arc<HostResource>>,
     pub(crate) engine: Arc<EngineInner>,
     state: Arc<SessionState>,
 }
@@ -426,9 +427,50 @@ impl fmt::Debug for Session {
     }
 }
 
+/// Retains canonical session state during host lifecycle persistence without
+/// retaining a host resource or granting prompt/execution access.
+#[derive(Clone)]
+pub struct SessionReservation {
+    state: Arc<SessionState>,
+}
+
+impl SessionReservation {
+    pub(crate) fn new(state: Arc<SessionState>) -> Self {
+        Self { state }
+    }
+
+    #[must_use]
+    pub fn record(&self) -> SessionRecord {
+        let (record, _) = self.state.snapshot();
+        (*record).clone()
+    }
+
+    #[must_use]
+    pub fn has_active_turn(&self) -> bool {
+        self.state.active_turn.load(Ordering::Acquire)
+    }
+}
+
+impl fmt::Debug for SessionReservation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SessionReservation")
+            .field("has_active_turn", &self.has_active_turn())
+            .finish_non_exhaustive()
+    }
+}
+
 impl Session {
-    pub(crate) fn from_state(engine: Arc<EngineInner>, state: Arc<SessionState>) -> Self {
-        Self { engine, state }
+    pub(crate) fn from_state(
+        engine: Arc<EngineInner>,
+        state: Arc<SessionState>,
+        host_resource: Option<Arc<HostResource>>,
+    ) -> Self {
+        Self {
+            host_resource,
+            engine,
+            state,
+        }
     }
 
     #[must_use]
@@ -484,12 +526,25 @@ impl Session {
         &self,
         prompt: impl Into<Prompt>,
     ) -> BoxFuture<'static, Result<Turn, EngineError>> {
-        let session = self.clone();
+        let session = SessionOperation {
+            engine: Arc::clone(&self.engine),
+            state: Arc::clone(&self.state),
+            host: HostLease::new(self.host_resource.as_ref()),
+        };
         let prompt = JsonOwnerGuard::new(prompt.into());
         Box::pin(async move { session.start_prompt(prompt).await })
     }
+}
 
+struct SessionOperation {
+    engine: Arc<EngineInner>,
+    state: Arc<SessionState>,
+    host: HostLease,
+}
+
+impl SessionOperation {
     async fn start_prompt(&self, prompt: JsonOwnerGuard<Prompt>) -> Result<Turn, EngineError> {
+        self.host.ensure_open()?;
         if prompt.get().text.len() > self.engine.limits.max_prompt_bytes.get() {
             return Err(EngineError::Protocol(
                 "prompt exceeded the configured byte limit".to_owned(),

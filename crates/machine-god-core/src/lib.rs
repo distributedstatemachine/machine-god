@@ -25,7 +25,7 @@ pub use background::{
     OwnedBackgroundProcess, PreparedBackgroundProcess,
 };
 pub use cancel::{CancellationToken, Cancelled};
-pub use engine::{Engine, EngineBuilder, EngineLimits, MAX_SAFE_JSON_DEPTH};
+pub use engine::{Engine, EngineBuilder, EngineLimits, EngineRequester, MAX_SAFE_JSON_DEPTH};
 pub use error::{
     BuildError, EngineError, EventSinkError, PermissionError, ProviderError, ProviderErrorKind,
     SessionStoreError, SessionStoreErrorKind, ToolError, ToolErrorKind,
@@ -47,7 +47,8 @@ pub use permission::{
     PermissionHandler, PermissionRequest, PermissionRisk, ProcessEnvironment, ProcessInput,
 };
 pub use session::{
-    Prompt, Session, SessionRecord, SessionRevision, SessionStore, Turn, TurnHandle,
+    Prompt, Session, SessionRecord, SessionReservation, SessionRevision, SessionStore, Turn,
+    TurnHandle,
 };
 pub use subagent::{
     MAX_CONCURRENT_SUBAGENTS, MAX_CONCURRENT_SUBAGENTS_PER_PARENT_TURN,

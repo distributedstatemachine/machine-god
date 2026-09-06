@@ -26,6 +26,7 @@ pub const MAX_SAFE_JSON_DEPTH: usize = 64;
 /// Builder requiring explicit authority-bearing components.
 #[derive(Default)]
 pub struct EngineBuilder {
+    host_resource: Option<Box<dyn Send + Sync>>,
     provider: Option<Arc<dyn ModelProvider>>,
     session_store: Option<Arc<dyn SessionStore>>,
     permission_handler: Option<Arc<dyn PermissionHandler>>,
@@ -125,6 +126,15 @@ impl EngineBuilder {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Retains an opaque host resource only while real engine/session handles
+    /// remain. Construction invokes no resource methods; its destructor runs
+    /// normally when the last handle (or an unbuilt builder) is dropped.
+    #[must_use]
+    pub fn host_resource(mut self, resource: impl Send + Sync + 'static) -> Self {
+        self.host_resource = Some(Box::new(resource));
+        self
     }
 
     #[must_use]
@@ -270,6 +280,11 @@ impl EngineBuilder {
             .map(|registered| registered.spec.clone())
             .collect();
         Ok(Engine {
+            host_resource: self.host_resource.take().map(|resource| {
+                Arc::new(HostResource {
+                    _resource: resource,
+                })
+            }),
             inner: Arc::new(EngineInner {
                 provider,
                 session_store,
@@ -290,7 +305,48 @@ impl EngineBuilder {
 /// Configured provider-neutral engine.
 #[derive(Clone)]
 pub struct Engine {
+    pub(crate) host_resource: Option<Arc<HostResource>>,
     pub(crate) inner: Arc<EngineInner>,
+}
+
+pub(crate) struct HostResource {
+    _resource: Box<dyn Send + Sync>,
+}
+
+/// An operation context that never extends the host resource's lifetime.
+/// Unlike an [`Engine`] clone, retaining this value or its futures cannot keep
+/// a closed host alive. It cannot reconstruct an engine handle.
+#[derive(Clone)]
+pub struct EngineRequester {
+    inner: Arc<EngineInner>,
+    host: HostLease,
+}
+
+#[derive(Clone)]
+pub(crate) struct HostLease(Option<Weak<HostResource>>);
+
+impl HostLease {
+    pub(crate) fn new(resource: Option<&Arc<HostResource>>) -> Self {
+        Self(resource.map(Arc::downgrade))
+    }
+
+    pub(crate) fn ensure_open(&self) -> Result<(), EngineError> {
+        if self
+            .0
+            .as_ref()
+            .is_some_and(|resource| resource.strong_count() == 0)
+        {
+            return Err(EngineError::HostClosed);
+        }
+        Ok(())
+    }
+
+    fn upgrade(&self) -> Result<Option<Arc<HostResource>>, EngineError> {
+        self.0
+            .as_ref()
+            .map(|resource| resource.upgrade().ok_or(EngineError::HostClosed))
+            .transpose()
+    }
 }
 
 pub(crate) struct EngineInner {
@@ -494,6 +550,15 @@ impl Engine {
         EngineBuilder::new()
     }
 
+    /// Captures operation dependencies without retaining the host resource.
+    #[must_use]
+    pub fn requester(&self) -> EngineRequester {
+        EngineRequester {
+            inner: Arc::clone(&self.inner),
+            host: HostLease::new(self.host_resource.as_ref()),
+        }
+    }
+
     /// Returns the immutable resource bounds used by this engine.
     #[must_use]
     pub fn limits(&self) -> EngineLimits {
@@ -518,7 +583,11 @@ impl Engine {
         let state = self
             .inner
             .session_state(SessionRecord::empty(id, incarnation_id), false)?;
-        Ok(Session::from_state(Arc::clone(&self.inner), state))
+        Ok(Session::from_state(
+            Arc::clone(&self.inner),
+            state,
+            self.host_resource.clone(),
+        ))
     }
 
     /// Returns a future that loads a stored session through the configured
@@ -532,35 +601,7 @@ impl Engine {
         &self,
         id: SessionId,
     ) -> BoxFuture<'static, Result<Option<Session>, EngineError>> {
-        let inner = Arc::clone(&self.inner);
-        Box::pin(async move {
-            let record = inner
-                .session_store
-                .load(id.clone())
-                .await
-                .map_err(crate::session::redact_store_error)?;
-            let record = record.map(crate::session::JsonOwnerGuard::new);
-            if let Some(record) = &record
-                && record.get().id != id
-            {
-                return Err(EngineError::Protocol(format!(
-                    "session store returned ID {} for requested ID {id}",
-                    record.get().id
-                )));
-            }
-            if let Some(record) = &record {
-                crate::session::SessionState::validate_loaded(record.get())?;
-                crate::session::validate_record_limits(record.get(), inner.limits)?;
-            }
-            record
-                .map(|record| {
-                    let record = record.into_inner();
-                    let state = inner.session_state(record.clone(), true)?;
-                    state.reconcile_loaded(record)?;
-                    Ok(Session::from_state(Arc::clone(&inner), state))
-                })
-                .transpose()
-        })
+        self.requester().load_session(id)
     }
 
     #[must_use]
@@ -591,6 +632,112 @@ impl Engine {
     #[must_use]
     pub fn tool_specs(&self) -> Vec<ToolSpec> {
         self.inner.tool_specs()
+    }
+}
+
+impl fmt::Debug for EngineRequester {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EngineRequester")
+            .field("tool_count", &self.inner.tools.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl EngineRequester {
+    /// Holds canonical state across lifecycle persistence without a host vote.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::HostClosed`] if no real host owner remains, or
+    /// the same identity errors as [`Engine::create_session`].
+    pub fn reserve_session(
+        &self,
+        id: SessionId,
+        incarnation_id: SessionIncarnationId,
+    ) -> Result<crate::SessionReservation, EngineError> {
+        self.host.ensure_open()?;
+        let state = self
+            .inner
+            .session_state(SessionRecord::empty(id, incarnation_id), false)?;
+        self.host.ensure_open()?;
+        Ok(crate::SessionReservation::new(state))
+    }
+
+    #[must_use]
+    pub fn limits(&self) -> EngineLimits {
+        self.inner.limits
+    }
+
+    #[must_use]
+    pub fn session_store(&self) -> &dyn SessionStore {
+        self.inner.session_store.as_ref()
+    }
+
+    /// Creates a real session handle if the host still has a real owner.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::HostClosed`] after the last resource-owning
+    /// handle is dropped, or the same identity errors as [`Engine::create_session`].
+    pub fn create_session(
+        &self,
+        id: SessionId,
+        incarnation_id: SessionIncarnationId,
+    ) -> Result<Session, EngineError> {
+        self.host.ensure_open()?;
+        let state = self
+            .inner
+            .session_state(SessionRecord::empty(id, incarnation_id), false)?;
+        Ok(Session::from_state(
+            Arc::clone(&self.inner),
+            state,
+            self.host.upgrade()?,
+        ))
+    }
+
+    /// Loads without retaining the host while awaiting the store. A real lease
+    /// is acquired only when publishing a returned session. A closed host
+    /// returns [`EngineError::HostClosed`] and can never be resurrected.
+    #[must_use]
+    pub fn load_session(
+        &self,
+        id: SessionId,
+    ) -> BoxFuture<'static, Result<Option<Session>, EngineError>> {
+        let inner = Arc::clone(&self.inner);
+        let host = self.host.clone();
+        Box::pin(async move {
+            host.ensure_open()?;
+            let record = inner
+                .session_store
+                .load(id.clone())
+                .await
+                .map_err(crate::session::redact_store_error)?;
+            let record = record.map(crate::session::JsonOwnerGuard::new);
+            host.ensure_open()?;
+            if let Some(record) = &record
+                && record.get().id != id
+            {
+                return Err(EngineError::Protocol(format!(
+                    "session store returned ID {} for requested ID {id}",
+                    record.get().id
+                )));
+            }
+            if let Some(record) = &record {
+                crate::session::SessionState::validate_loaded(record.get())?;
+                crate::session::validate_record_limits(record.get(), inner.limits)?;
+            }
+            record
+                .map(|record| {
+                    let record = record.into_inner();
+                    let state = inner.session_state(record.clone(), true)?;
+                    state.reconcile_loaded(record)?;
+                    Ok(Session::from_state(
+                        Arc::clone(&inner),
+                        state,
+                        host.upgrade()?,
+                    ))
+                })
+                .transpose()
+        })
     }
 }
 
@@ -707,6 +854,332 @@ mod tests {
             .permission_handler(DenyPermissions)
             .build()
             .unwrap()
+    }
+
+    struct DropResource(Arc<AtomicUsize>);
+    impl Drop for DropResource {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    struct GatedStore {
+        ready: Arc<std::sync::atomic::AtomicBool>,
+        loads: Arc<AtomicUsize>,
+    }
+    impl SessionStore for GatedStore {
+        fn load(
+            &self,
+            id: SessionId,
+        ) -> BoxFuture<'_, Result<Option<SessionRecord>, SessionStoreError>> {
+            Box::pin(async move {
+                self.loads.fetch_add(1, Ordering::SeqCst);
+                std::future::poll_fn(|_| {
+                    if self.ready.load(Ordering::SeqCst) {
+                        std::task::Poll::Ready(())
+                    } else {
+                        std::task::Poll::Pending
+                    }
+                })
+                .await;
+                let mut record = SessionRecord::empty(id.clone(), test_incarnation(&id));
+                record.revision = SessionRevision(1);
+                Ok(Some(record))
+            })
+        }
+        fn save(
+            &self,
+            record: SessionRecord,
+            _: Option<SessionRevision>,
+        ) -> BoxFuture<'_, Result<SessionRevision, SessionStoreError>> {
+            Box::pin(async move { Ok(SessionRevision(record.revision.0 + 1)) })
+        }
+    }
+    fn host_builder(drops: &Arc<AtomicUsize>) -> super::EngineBuilder {
+        super::Engine::builder()
+            .provider(UnusedProvider)
+            .permission_handler(DenyPermissions)
+            .session_store(GatedStore {
+                ready: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                loads: Arc::new(AtomicUsize::new(0)),
+            })
+            .host_resource(DropResource(Arc::clone(drops)))
+    }
+    fn poll<T>(future: &mut (impl std::future::Future<Output = T> + Unpin)) -> std::task::Poll<T> {
+        std::pin::Pin::new(future)
+            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+    }
+
+    #[test]
+    fn host_resource_counts_only_real_engine_and_session_handles() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let engine = host_builder(&drops).build().unwrap();
+        let engine_clone = engine.clone();
+        let id = SessionId::new("host-owners").unwrap();
+        let session = engine.create_test_session(id.clone());
+        let session_clone = session.clone();
+        let requester = engine.requester();
+        let requester_clone = requester.clone();
+        let mut unpolled_prompt = session.prompt("unpolled");
+        let mut unpolled_load = engine.load_session(id.clone());
+        drop(engine);
+        drop(session);
+        drop(engine_clone);
+        assert_eq!(drops.load(Ordering::SeqCst), 0);
+        drop(session_clone);
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            poll(&mut unpolled_prompt),
+            std::task::Poll::Ready(Err(EngineError::HostClosed))
+        ));
+        assert!(matches!(
+            poll(&mut unpolled_load),
+            std::task::Poll::Ready(Err(EngineError::HostClosed))
+        ));
+        assert!(matches!(
+            requester_clone.create_session(id.clone(), test_incarnation(&id)),
+            Err(EngineError::HostClosed)
+        ));
+        drop((requester, requester_clone, unpolled_prompt, unpolled_load));
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn pending_load_never_retains_or_resurrects_closed_host() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let loads = Arc::new(AtomicUsize::new(0));
+        let engine = host_builder(&drops)
+            .session_store(GatedStore {
+                ready: Arc::clone(&ready),
+                loads: Arc::clone(&loads),
+            })
+            .build()
+            .unwrap();
+        let id = SessionId::new("late-load").unwrap();
+        let mut load = engine.load_session(id);
+        assert_eq!(loads.load(Ordering::SeqCst), 0);
+        assert!(poll(&mut load).is_pending());
+        drop(engine);
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        ready.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            poll(&mut load),
+            std::task::Poll::Ready(Err(EngineError::HostClosed))
+        ));
+        assert_eq!(loads.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn loaded_session_is_a_real_owner_and_ordinary_requesters_remain_compatible() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let engine = host_builder(&drops).build().unwrap();
+        let id = SessionId::new("loaded-owner").unwrap();
+        let loaded = futures_executor::block_on(engine.requester().load_session(id.clone()))
+            .unwrap()
+            .unwrap();
+        drop(engine);
+        assert_eq!(drops.load(Ordering::SeqCst), 0);
+        drop(loaded);
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+
+        let ordinary = super::Engine::builder()
+            .provider(UnusedProvider)
+            .permission_handler(DenyPermissions)
+            .session_store(GatedStore {
+                ready: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                loads: Arc::new(AtomicUsize::new(0)),
+            })
+            .build()
+            .unwrap();
+        let requester = ordinary.requester();
+        let load = ordinary.load_session(id.clone());
+        drop(ordinary);
+        let loaded = futures_executor::block_on(load).unwrap().unwrap();
+        let created = requester
+            .create_session(id.clone(), test_incarnation(&id))
+            .unwrap();
+        let prompt = created.prompt("ordinary future remains usable");
+        drop((loaded, created, requester));
+        drop(futures_executor::block_on(prompt).unwrap());
+    }
+
+    #[test]
+    fn unbuilt_and_replaced_host_resources_drop_once_without_invoking_components() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let builder = super::Engine::builder().host_resource(DropResource(Arc::clone(&drops)));
+        assert_eq!(drops.load(Ordering::SeqCst), 0);
+        let builder = builder.host_resource(DropResource(Arc::clone(&drops)));
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        drop(builder);
+        assert_eq!(drops.load(Ordering::SeqCst), 2);
+        assert!(
+            super::Engine::builder()
+                .host_resource(DropResource(Arc::clone(&drops)))
+                .build()
+                .is_err()
+        );
+        assert_eq!(drops.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn resource_destructor_unwind_never_reopens_weak_lease() {
+        struct PanickingResource;
+        impl Drop for PanickingResource {
+            fn drop(&mut self) {
+                panic!("injected resource drop");
+            }
+        }
+        let drops = Arc::new(AtomicUsize::new(0));
+        let engine = host_builder(&drops)
+            .host_resource(PanickingResource)
+            .build()
+            .unwrap();
+        let requester = engine.requester();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(engine))).is_err());
+        let id = SessionId::new("closed-after-unwind").unwrap();
+        assert!(matches!(
+            requester.create_session(id.clone(), test_incarnation(&id)),
+            Err(EngineError::HostClosed)
+        ));
+    }
+
+    #[test]
+    fn lifecycle_reservation_retains_canonical_state_but_never_host_lifetime() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let engine = host_builder(&drops).build().unwrap();
+        let requester = engine.requester();
+        let id = SessionId::new("reserved-state").unwrap();
+        let reservation = requester
+            .reserve_session(id.clone(), test_incarnation(&id))
+            .unwrap();
+        let cloned = reservation.clone();
+        assert_eq!(reservation.record().id, id);
+        assert!(!reservation.has_active_turn());
+        let session = engine.create_test_session(id.clone());
+        let turn = futures_executor::block_on(session.prompt("held state")).unwrap();
+        assert!(reservation.has_active_turn());
+        assert_eq!(reservation.record().messages.len(), 1);
+        drop((session, engine));
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            requester.reserve_session(id.clone(), test_incarnation(&id)),
+            Err(EngineError::HostClosed)
+        ));
+        drop(turn);
+        assert!(!cloned.has_active_turn());
+    }
+
+    #[test]
+    fn pending_prompt_reservation_does_not_keep_host_alive() {
+        struct PendingSave;
+        impl SessionStore for PendingSave {
+            fn load(
+                &self,
+                _: SessionId,
+            ) -> BoxFuture<'_, Result<Option<SessionRecord>, SessionStoreError>> {
+                Box::pin(std::future::pending())
+            }
+            fn save(
+                &self,
+                _: SessionRecord,
+                _: Option<SessionRevision>,
+            ) -> BoxFuture<'_, Result<SessionRevision, SessionStoreError>> {
+                Box::pin(std::future::pending())
+            }
+        }
+        let drops = Arc::new(AtomicUsize::new(0));
+        let engine = host_builder(&drops)
+            .session_store(PendingSave)
+            .build()
+            .unwrap();
+        let session = engine.create_test_session(SessionId::new("pending-prompt").unwrap());
+        let mut prompt = session.prompt("pending reservation");
+        assert!(poll(&mut prompt).is_pending());
+        drop((session, engine));
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        drop(prompt);
+    }
+
+    struct ToolProvider;
+    impl ModelProvider for ToolProvider {
+        fn name(&self) -> &'static str {
+            "tool-test"
+        }
+        fn stream(
+            &self,
+            _: ModelRequest,
+            _: CancellationToken,
+        ) -> BoxFuture<'_, Result<ModelEventStream, ProviderError>> {
+            Box::pin(async {
+                let events = vec![
+                    Ok(crate::ModelEvent::ToolCall {
+                        call: crate::ToolCall {
+                            id: crate::ToolCallId::new("pending-call").unwrap(),
+                            name: crate::ToolName::new("pending").unwrap(),
+                            arguments: serde_json::json!({}),
+                        },
+                    }),
+                    Ok(crate::ModelEvent::Stop {
+                        reason: crate::StopReason::ToolCalls,
+                    }),
+                ];
+                Ok(Box::pin(futures_util::stream::iter(events)) as ModelEventStream)
+            })
+        }
+    }
+    struct PendingTool(Arc<AtomicUsize>);
+    impl crate::Tool for PendingTool {
+        fn spec(&self) -> crate::ToolSpec {
+            crate::ToolSpec {
+                name: crate::ToolName::new("pending").unwrap(),
+                description: "pending test".into(),
+                input_schema: serde_json::json!({}),
+            }
+        }
+        fn prepare(
+            &self,
+            call: crate::ToolCall,
+        ) -> Result<crate::PreparedToolCall, crate::ToolError> {
+            Ok(crate::PreparedToolCall::without_authority(call.arguments))
+        }
+        fn execute(
+            &self,
+            _: crate::ToolContext,
+            _: serde_json::Value,
+            _: CancellationToken,
+        ) -> BoxFuture<'_, Result<crate::ToolOutput, crate::ToolError>> {
+            Box::pin(async {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                std::future::pending().await
+            })
+        }
+    }
+
+    #[test]
+    fn pending_tool_turn_and_cancellation_handle_never_keep_host_alive() {
+        use futures_core::Stream;
+        let drops = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let engine = host_builder(&drops)
+            .provider(ToolProvider)
+            .tool(PendingTool(Arc::clone(&calls)))
+            .build()
+            .unwrap();
+        let session = engine.create_test_session(SessionId::new("tool-host").unwrap());
+        let mut turn = futures_executor::block_on(session.prompt("call pending tool")).unwrap();
+        let handle = turn.handle();
+        for _ in 0..32 {
+            if calls.load(Ordering::SeqCst) > 0 {
+                break;
+            }
+            let _ = std::pin::Pin::new(&mut turn)
+                .poll_next(&mut std::task::Context::from_waker(std::task::Waker::noop()));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        drop((session, engine));
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        drop((turn, handle));
     }
 
     #[test]

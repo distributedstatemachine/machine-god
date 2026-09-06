@@ -189,6 +189,7 @@ impl std::error::Error for BuildError {}
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum EngineError {
+    HostClosed,
     SessionBusy,
     SessionIncarnationConflict,
     Provider(ProviderError),
@@ -201,6 +202,7 @@ pub enum EngineError {
 impl fmt::Display for EngineError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::HostClosed => formatter.write_str("the engine host is closed"),
             Self::SessionBusy => formatter.write_str("the session already has an active turn"),
             Self::SessionIncarnationConflict => {
                 formatter.write_str("the session ID is already active with a different incarnation")
