@@ -38,6 +38,13 @@ native symlink/parent semantics without prematurely concatenating two bounded
 paths. Only that resolution releases an executable core request. Complete typed
 results are validated against the invocation and an encoder-derived ceiling
 before conversion to JSON; cancellation after commitment preserves receipts.
+The optional `TerminalActionResultPublisher` takes ownership of complete JSON
+on `execute_for_turn` and returns its already-durable reference through the core
+complete-output extension. It is not invoked by an unpolled future or direct
+`execute`, and publication after an executed action is not cancelled in place
+of its receipt. The native publisher owns storage/worker effects; the adapter
+does not infer durability. Rejected and unpolled argument values use iterative
+cleanup, including direct API calls that have not crossed core validation.
 This injectable adapter does not by itself compose the production runtime,
 large-result archive, provider admission or reference-host registration.
 
@@ -543,8 +550,12 @@ collection retains the capacity permit through join and thread-local cleanup.
 Opaque worker panic payloads are suppressed without destructor execution, so
 one failing worker cannot stop collection for unrelated owners.
 Lazy background initialization uses the same path while preserving its atomic
-whole-cohort reservation. Terminal worker construction can reuse this seam
-without adding a detached-thread or separate-collector lifecycle.
+whole-cohort reservation. `NativeOwnedWorkerSpawner` is an inert zero-state
+binding to this path; its first explicit spawn acquires the collector and one
+capacity reservation. The terminal runtime implements its injected spawner
+contract with this production binding, without a detached-thread or separate
+collector lifecycle. The worker job retains its own cleanup obligations even
+when the submitting future or spawner value is dropped.
 
 The lazy runtime assembly starts its injected owned-worker spawner only after
 an accepted request is polled. Registry and profile construction occur inside

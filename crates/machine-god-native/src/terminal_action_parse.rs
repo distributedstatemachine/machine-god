@@ -105,6 +105,8 @@ const PUBLIC_FIELDS: &[&str] = &[
     clippy::too_many_lines,
     reason = "one closed schema keeps all twelve public forms together"
 )]
+/// # Panics
+/// Panics if the internal closed action list and its schema field table diverge.
 pub fn terminal_action_input_schema() -> Value {
     use serde_json::json;
     fn object(mut properties: Value, required: &[&str]) -> Value {

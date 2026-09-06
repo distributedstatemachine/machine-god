@@ -3,6 +3,7 @@
     dead_code,
     reason = "private runtime components are composed here before full host integration"
 )]
+use machine_god_native::NativeOwnedWorkerSpawner;
 #[path = "../src/background_input.rs"]
 mod background_input;
 #[path = "../src/background_process.rs"]

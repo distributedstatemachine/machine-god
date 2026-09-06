@@ -33,6 +33,12 @@ pub(crate) trait TerminalRuntimeSpawner: Send + Sync {
     fn spawn(&self, job: TerminalRuntimeJob) -> std::result::Result<(), ()>;
 }
 
+impl TerminalRuntimeSpawner for crate::NativeOwnedWorkerSpawner {
+    fn spawn(&self, job: TerminalRuntimeJob) -> std::result::Result<(), ()> {
+        crate::NativeOwnedWorkerSpawner::spawn(self, job).map_err(|_| ())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TerminalRuntimeError {
     Spawn,

@@ -154,6 +154,16 @@ Native PTY EOF now closes input immediately while allowing a bounded,
 nonblocking exit-status convergence window; permanent capture loss still fails.
 Final input settlement survives teardown without sending new bytes, and journal
 writer retirement explicitly releases fork-inherited lock descriptions.
+The complete authorized twelve-action adapter is integrated as an injectable
+native API, with cwd resolution deferred to the worker. Core now separates
+explicitly bounded complete results from their already-persisted transcript
+references, retaining ordinary inline limits. Native archive/paging and full
+provider argument admission still require composition. The nonce-bound startup
+bootstrap is shared across transport backends without dropping paste or pending
+write semantics. These are internal components, not a completed feature gate.
+The runtime now binds its spawner to the production owned-worker collector;
+the action adapter has an explicit owned-result publication hook. Native
+archive publication and read-tool paging are still being integrated.
 The complete normalized twelve-action core contract and effect-free public
 decoder are present, including request/result identity checks and lossless
 foreground execution outcomes. Numeric coercion now matches pinned binary128

@@ -1,15 +1,17 @@
 //! Complete model-facing terminal adapter. Native authority is injected, never
 //! discovered during construction, preparation or creation of an execution future.
 
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
+use crate::session_store::JsonValueOwner;
 use machine_god_core::{
     BoxFuture, CancellationToken, Capability, MAX_TERMINAL_ACTION_RESULTS,
     MAX_TERMINAL_ACTION_TEXT_BYTES, MAX_TERMINAL_HYPERLINK_BYTES, MAX_TERMINAL_HYPERLINKS,
     MAX_TERMINAL_SCREEN_CELLS, MAX_TERMINAL_SCREEN_TEXT_BYTES, PreparedToolCall,
     TerminalActionRequest, TerminalActionResult, TerminalMonitorCondition,
     TerminalMonitorOperation, TerminalWriteLeaseIntent, Tool, ToolCall, ToolContext, ToolError,
-    ToolErrorKind, ToolOutput, ToolSpec,
+    ToolErrorKind, ToolExecution, ToolOutput, ToolOutputLimits, ToolSpec,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -37,6 +39,27 @@ pub const MAX_TERMINAL_ACTION_RESULT_BYTES: usize = 512 * MAX_TERMINAL_SCREEN_CE
     + 64 * MAX_TERMINAL_HYPERLINKS
     + 4096 * MAX_TERMINAL_ACTION_RESULTS
     + 4 * 1024 * 1024;
+
+/// Complete action result plus the compact `ToolOutput` envelope.
+pub const MAX_TERMINAL_COMPLETE_TOOL_OUTPUT_BYTES: usize = MAX_TERMINAL_ACTION_RESULT_BYTES + 64;
+
+/// Explicit owned-worker publication boundary for complete terminal results.
+///
+/// The publisher receives ownership without cloning the complete JSON value.
+/// It must durably publish a lossless, session/incarnation/call-scoped archive
+/// before returning `ToolExecution::with_persisted_output` with that same full
+/// result and a small reference. An error must never advertise an uncommitted
+/// reference. Construction of the returned future must be inert; effects and
+/// retained worker ownership belong to the injected native implementation.
+/// A committed terminal receipt must still finish publication after user
+/// cancellation, so this post-execution boundary has no cancellation token.
+pub trait TerminalActionResultPublisher: Send + Sync + 'static {
+    fn publish(
+        &self,
+        context: ToolContext,
+        output: ToolOutput,
+    ) -> BoxFuture<'_, Result<ToolExecution, ToolError>>;
+}
 
 /// Immutable, non-secret host selection bound into every prepared capability.
 /// Fingerprints identify the complete captured environment and shell resolver
@@ -183,12 +206,14 @@ impl TerminalActionInvocation {
 pub struct TerminalActionTool {
     executor: Arc<dyn TerminalActionExecutor>,
     identity: TerminalActionHostIdentity,
+    publisher: Option<Arc<dyn TerminalActionResultPublisher>>,
 }
 
 impl std::fmt::Debug for TerminalActionTool {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("TerminalActionTool")
+            .field("has_result_publisher", &self.publisher.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -212,7 +237,22 @@ impl TerminalActionTool {
         identity: TerminalActionHostIdentity,
     ) -> Result<Self, ToolError> {
         identity.validate()?;
-        Ok(Self { executor, identity })
+        Ok(Self {
+            executor,
+            identity,
+            publisher: None,
+        })
+    }
+
+    /// Injects an inert durable-result publisher for engine orchestration.
+    /// Direct `execute` still returns the complete output without publication.
+    #[must_use]
+    pub fn with_result_publisher(
+        mut self,
+        publisher: Arc<dyn TerminalActionResultPublisher>,
+    ) -> Self {
+        self.publisher = Some(publisher);
+        self
     }
 
     fn normalize(arguments: &Value) -> Result<TerminalActionInvocation, ToolError> {
@@ -233,6 +273,16 @@ impl TerminalActionTool {
 }
 
 impl Tool for TerminalActionTool {
+    fn complete_output_limits(&self) -> Option<ToolOutputLimits> {
+        self.publisher.as_ref().map(|_| ToolOutputLimits {
+            max_serialized_bytes: NonZeroUsize::new(MAX_TERMINAL_COMPLETE_TOOL_OUTPUT_BYTES)
+                .expect("fixed nonzero ceiling"),
+            // Every JSON node requires at least one serialized byte. The closed
+            // typed action contract imposes the tighter structural limits.
+            max_json_nodes: NonZeroUsize::new(MAX_TERMINAL_COMPLETE_TOOL_OUTPUT_BYTES)
+                .expect("fixed nonzero ceiling"),
+        })
+    }
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: machine_god_core::ToolName::new("terminal").expect("fixed tool name"),
@@ -242,10 +292,11 @@ impl Tool for TerminalActionTool {
     }
 
     fn prepare(&self, call: ToolCall) -> Result<PreparedToolCall, ToolError> {
+        let arguments = JsonValueOwner::new(call.arguments);
         if call.name.as_str() != "terminal" {
             return Err(invalid());
         }
-        let invocation = Self::normalize(&call.arguments)?;
+        let invocation = Self::normalize(arguments.get())?;
         let authority = authority_name(&invocation.draft);
         let effects = probe_authorities(&invocation.draft);
         let canonical = serde_json::to_value(Prepared {
@@ -275,6 +326,7 @@ impl Tool for TerminalActionTool {
         arguments: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        let arguments = JsonValueOwner::new(arguments);
         Box::pin(async move {
             if cancellation.is_cancelled() {
                 return Err(ToolError::new(
@@ -284,13 +336,13 @@ impl Tool for TerminalActionTool {
                     false,
                 ));
             }
-            digest_value(&arguments, MAX_TERMINAL_PREPARED_ARGUMENT_BYTES)?;
+            digest_value(arguments.get(), MAX_TERMINAL_PREPARED_ARGUMENT_BYTES)?;
             let prepared: Prepared =
-                serde_json::from_value(arguments.clone()).map_err(|_| invalid())?;
+                serde_json::from_value(arguments.get().clone()).map_err(|_| invalid())?;
             if prepared.version != 1
                 || prepared.host != self.identity
                 || prepared.call_id != context.call_id
-                || serde_json::to_value(&prepared).map_err(|_| invalid())? != arguments
+                || serde_json::to_value(&prepared).map_err(|_| invalid())? != *arguments.get()
             {
                 return Err(invalid());
             }
@@ -317,6 +369,22 @@ impl Tool for TerminalActionTool {
             Ok(ToolOutput::success(
                 serde_json::to_value(result).map_err(|_| invalid_result())?,
             ))
+        })
+    }
+
+    fn execute_for_turn(
+        &self,
+        context: ToolContext,
+        arguments: Value,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<ToolExecution, ToolError>> {
+        let execution = self.execute(context.clone(), arguments, cancellation);
+        Box::pin(async move {
+            let output = execution.await?;
+            match &self.publisher {
+                Some(publisher) => publisher.publish(context, output).await,
+                None => Ok(ToolExecution::output(output)),
+            }
         })
     }
 }
@@ -476,6 +544,154 @@ mod tests {
             default_cwd: "/workspace".into(),
             environment_sha256: "a".repeat(64),
             shell_selection_sha256: "b".repeat(64),
+        }
+    }
+
+    #[derive(Default)]
+    struct Publisher {
+        calls: Mutex<Vec<ToolContext>>,
+        fail: AtomicBool,
+    }
+    impl TerminalActionResultPublisher for Publisher {
+        fn publish(
+            &self,
+            context: ToolContext,
+            output: ToolOutput,
+        ) -> BoxFuture<'_, Result<ToolExecution, ToolError>> {
+            Box::pin(async move {
+                self.calls.lock().unwrap().push(context);
+                if self.fail.load(Ordering::Relaxed) {
+                    return Err(invalid_result());
+                }
+                Ok(ToolExecution::with_persisted_output(
+                    output,
+                    ToolOutput::success(json!({"handle":"test-durable-reference"})),
+                ))
+            })
+        }
+    }
+
+    #[test]
+    fn publisher_is_explicit_inert_and_preserves_post_commit_cancellation() {
+        let executor = Arc::new(Executor::default());
+        let publisher = Arc::new(Publisher::default());
+        let tool = TerminalActionTool::new(executor.clone(), identity()).unwrap();
+        assert!(tool.complete_output_limits().is_none());
+        let tool = tool.with_result_publisher(publisher.clone());
+        assert_eq!(
+            tool.complete_output_limits()
+                .unwrap()
+                .max_serialized_bytes
+                .get(),
+            MAX_TERMINAL_COMPLETE_TOOL_OUTPUT_BYTES
+        );
+        let prepared = tool.prepare(call(json!({"action":"list"}))).unwrap();
+        drop(tool.execute_for_turn(
+            context(),
+            prepared.arguments().clone(),
+            CancellationToken::new(),
+        ));
+        assert!(executor.calls.lock().unwrap().is_empty());
+        assert!(publisher.calls.lock().unwrap().is_empty());
+
+        executor.cancel_after_commit.store(true, Ordering::Relaxed);
+        let cancellation = CancellationToken::new();
+        let prepared = tool.prepare(call(json!({"action":"list"}))).unwrap();
+        let execution = futures_executor::block_on(tool.execute_for_turn(
+            context(),
+            prepared.arguments().clone(),
+            cancellation.clone(),
+        ))
+        .unwrap();
+        assert!(cancellation.is_cancelled());
+        assert_eq!(publisher.calls.lock().unwrap().as_slice(), &[context()]);
+        assert_eq!(execution.tool_output().content["action"], "list");
+        assert_eq!(
+            execution.persisted_output().unwrap().content["handle"],
+            "test-durable-reference"
+        );
+
+        publisher.fail.store(true, Ordering::Relaxed);
+        let prepared = tool.prepare(call(json!({"action":"list"}))).unwrap();
+        assert!(
+            futures_executor::block_on(tool.execute_for_turn(
+                context(),
+                prepared.arguments().clone(),
+                CancellationToken::new()
+            ))
+            .is_err()
+        );
+        let prepared = tool.prepare(call(json!({"action":"list"}))).unwrap();
+        assert!(
+            futures_executor::block_on(tool.execute(
+                context(),
+                prepared.arguments().clone(),
+                CancellationToken::new()
+            ))
+            .is_ok()
+        );
+        assert_eq!(publisher.calls.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn deep_argument_owner_child() {
+        let Ok(mode) = std::env::var("MACHINE_GOD_ACTION_DEEP_ARGUMENT_TEST") else {
+            return;
+        };
+        let tool = TerminalActionTool::new(Arc::new(Executor::default()), identity()).unwrap();
+        let mut value = Value::Null;
+        for _ in 0..50_000 {
+            value = Value::Array(vec![value]);
+        }
+        match mode.as_str() {
+            "prepare" => {
+                assert!(tool.prepare(call(value)).is_err());
+            }
+            "wrong-tool" => {
+                let mut request = call(value);
+                request.name = ToolName::new("other").unwrap();
+                assert!(tool.prepare(request).is_err());
+            }
+            "unpolled" => {
+                drop(tool.execute(context(), value, CancellationToken::new()));
+            }
+            "turn-unpolled" => {
+                drop(tool.execute_for_turn(context(), value, CancellationToken::new()));
+            }
+            "cancelled" | "rejected" => {
+                let cancellation = CancellationToken::new();
+                if mode == "cancelled" {
+                    cancellation.cancel();
+                }
+                assert!(
+                    futures_executor::block_on(tool.execute(context(), value, cancellation))
+                        .is_err()
+                );
+            }
+            _ => panic!("unknown child mode"),
+        }
+    }
+
+    #[test]
+    fn rejected_and_unpolled_action_arguments_drop_without_recursion() {
+        for mode in [
+            "prepare",
+            "wrong-tool",
+            "unpolled",
+            "turn-unpolled",
+            "cancelled",
+            "rejected",
+        ] {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "terminal_action_tool::tests::deep_argument_owner_child",
+                    "--test-threads=1",
+                ])
+                .env("MACHINE_GOD_ACTION_DEEP_ARGUMENT_TEST", mode)
+                .status()
+                .unwrap();
+            assert!(status.success(), "deep argument mode {mode}");
         }
     }
     fn context() -> ToolContext {

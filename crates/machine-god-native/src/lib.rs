@@ -43,6 +43,10 @@ mod background_process;
 mod background_store;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod background_supervisor;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod owned_worker;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use owned_worker::{NativeOwnedWorkerSpawnError, NativeOwnedWorkerSpawner};
 mod config;
 mod copy_file;
 mod create_folder;
@@ -81,6 +85,8 @@ mod skill;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod state_environment;
 mod terminal;
+mod terminal_action_parse;
+mod terminal_action_tool;
 mod terminal_display_width;
 mod terminal_grid;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -449,6 +455,15 @@ pub use terminal::{
     TerminalConfigError, TerminalConfigErrorKind, TerminalExecution, TerminalExecutionOutcome,
     TerminalExecutionRequest, TerminalExecutionStatus, TerminalExecutor, TerminalExecutorError,
     TerminalExecutorErrorKind, TerminalLimits, TerminalTool,
+};
+pub use terminal_action_parse::{
+    MAX_TERMINAL_ACTION_ARGUMENT_BYTES, TerminalActionParseError, decode_terminal_action,
+    terminal_action_input_schema, terminal_action_requested_cwd,
+};
+pub use terminal_action_tool::{
+    MAX_TERMINAL_ACTION_RESULT_BYTES, MAX_TERMINAL_COMPLETE_TOOL_OUTPUT_BYTES,
+    MAX_TERMINAL_PREPARED_ARGUMENT_BYTES, TerminalActionExecutor, TerminalActionHostIdentity,
+    TerminalActionInvocation, TerminalActionResultPublisher, TerminalActionTool,
 };
 pub use terminal_screen::{
     MAX_TERMINAL_SCREEN_FEED_BYTES, TerminalScreenEngine, TerminalScreenError, TerminalScreenMode,
