@@ -54,6 +54,26 @@ pub(crate) enum TerminalWaitError {
 }
 type Result<T> = std::result::Result<T, TerminalWaitError>;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TerminalWaitAttentionError {
+    Unavailable,
+}
+
+/// The observed condition and durable attention cleanup are separate facts.
+/// In particular, shutdown cannot erase a condition already met, nor turn a
+/// failed durable transition into a successful attention receipt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct TerminalWaitReceipt {
+    pub(crate) outcome: TerminalWaitOutcome,
+    pub(crate) attention_error: Option<TerminalWaitAttentionError>,
+}
+
+pub(crate) struct TerminalWaitObservation {
+    pub(crate) id: TerminalWaitId,
+    pub(crate) identity: TerminalWaitIdentity,
+    pub(crate) cursor: TerminalCursor,
+}
+
 /// History scanning belongs to the owner before admission, not this bounded
 /// registration operation. The suffix must end at the supplied committed
 /// cursor; `matched` records an earlier match in validated retained history.
@@ -70,7 +90,7 @@ impl Drop for Permit {
     }
 }
 struct Reply {
-    result: Option<TerminalWaitOutcome>,
+    result: Option<TerminalWaitReceipt>,
     waker: Option<Waker>,
 }
 struct SharedReply {
@@ -88,6 +108,8 @@ struct Registration {
     reply: Arc<SharedReply>,
     ready: Option<TerminalWaitOutcome>,
     now_ms: i64,
+    last_output_ms: i64,
+    deadline_ms: i64,
     cursor: TerminalCursor,
 }
 
@@ -139,6 +161,10 @@ impl TerminalWaitCoordinator {
             return Err(TerminalWaitError::Invalid);
         }
         let id = TerminalWaitId(self.next_id.ok_or(TerminalWaitError::Capacity)?);
+        let deadline_ms = i64::try_from(request.safety_ceiling_ms)
+            .ok()
+            .and_then(|duration| context.now_ms.checked_add(duration))
+            .ok_or(TerminalWaitError::Invalid)?;
         let matches_output = matches!(request.condition, TerminalReturnCondition::Match { .. });
         let mut state = TerminalWaitState::new(request, context, last_output_ms, history.matched)
             .map_err(TerminalWaitError::Observation)?;
@@ -174,6 +200,8 @@ impl TerminalWaitCoordinator {
             reply,
             ready: None,
             now_ms: context.now_ms,
+            last_output_ms,
+            deadline_ms,
             cursor: context.cursor.clone(),
         });
         Ok((id, future))
@@ -229,6 +257,9 @@ impl TerminalWaitCoordinator {
                 )
                 .map_err(TerminalWaitError::Observation)?;
             registration.now_ms = context.now_ms;
+            if !bytes.is_empty() {
+                registration.last_output_ms = context.now_ms;
+            }
             registration.cursor = context.cursor.clone();
         }
         self.prune();
@@ -325,6 +356,78 @@ impl TerminalWaitCoordinator {
             .min()
     }
 
+    /// One bounded durable page per pending registration lets the owner make
+    /// progress without cloning history, skipping drain tails or replaying a
+    /// pump step twice. Each returned cursor is updated only after its feed.
+    pub(crate) fn observations(&self) -> Vec<TerminalWaitObservation> {
+        self.registrations
+            .iter()
+            .filter(|registration| registration.ready.is_none())
+            .map(|registration| TerminalWaitObservation {
+                id: registration.id,
+                identity: registration.identity.clone(),
+                cursor: registration.cursor.clone(),
+            })
+            .collect()
+    }
+
+    /// Feed a validated durable page. While catching up, defer condition
+    /// polling until the committed observation cursor is reached or the
+    /// absolute safety deadline expires. A moving live tail cannot extend the
+    /// ceiling indefinitely; only matches actually observed can win that poll.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit committed observation facts"
+    )]
+    pub(crate) fn advance_one(
+        &mut self,
+        observation: &TerminalWaitObservation,
+        bytes: &[u8],
+        context: &TerminalMonitorContext,
+        last_output_ms: i64,
+        process: Option<TerminalProcessOutcome>,
+        caught_up: bool,
+    ) -> Result<()> {
+        let registration = self
+            .registrations
+            .iter_mut()
+            .find(|registration| {
+                registration.id == observation.id && registration.identity == observation.identity
+            })
+            .ok_or(TerminalWaitError::NotFound)?;
+        if registration.ready.is_some() {
+            return Ok(());
+        }
+        if observation.cursor != registration.cursor
+            || context.cursor < registration.cursor
+            || context.cursor.validate().is_err()
+            || context.now_ms < registration.now_ms
+            || last_output_ms < registration.last_output_ms
+            || !valid_process(process)
+        {
+            return Err(TerminalWaitError::Invalid);
+        }
+        registration
+            .state
+            .committed_output(bytes, context.now_ms, last_output_ms)
+            .map_err(TerminalWaitError::Observation)?;
+        registration.cursor = context.cursor.clone();
+        registration.now_ms = context.now_ms;
+        registration.last_output_ms = last_output_ms;
+        if caught_up || context.now_ms >= registration.deadline_ms {
+            registration.ready = registration
+                .state
+                .poll(
+                    context,
+                    process,
+                    registration.cancellation.is_cancelled()
+                        || registration.reply.abandoned.load(Ordering::Acquire),
+                )
+                .map_err(TerminalWaitError::Observation)?;
+        }
+        Ok(())
+    }
+
     /// Shutdown is explicit so callers can persist attention transitions and
     /// publish outside profile guards. Already frozen outcomes always win.
     pub(crate) fn close(&mut self) {
@@ -361,13 +464,27 @@ impl TerminalWaitCompletion {
     /// Returns false if a caller waker panicked. The reply remains committed
     /// and readable; other completions can still be published independently.
     pub(crate) fn publish(self) -> bool {
+        self.publish_with(None)
+    }
+
+    /// Shutdown's final bounded attempt failed to persist attention. Publish
+    /// an explicit failure alongside the already frozen condition, not an
+    /// invented successful cleanup and not a permanently pending future.
+    pub(crate) fn publish_failed(self) -> bool {
+        self.publish_with(Some(TerminalWaitAttentionError::Unavailable))
+    }
+
+    fn publish_with(self, attention_error: Option<TerminalWaitAttentionError>) -> bool {
         let waker = {
             let mut reply = self
                 .reply
                 .reply
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            reply.result = Some(self.outcome);
+            reply.result = Some(TerminalWaitReceipt {
+                outcome: self.outcome,
+                attention_error,
+            });
             self.reply.published.store(true, Ordering::Release);
             reply.waker.take()
         };
@@ -386,7 +503,7 @@ pub(crate) struct TerminalWaitFuture {
     cancellation_wait: Option<Cancelled>,
 }
 impl Future for TerminalWaitFuture {
-    type Output = TerminalWaitOutcome;
+    type Output = TerminalWaitReceipt;
 
     fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
         let shared = Arc::clone(
@@ -502,7 +619,12 @@ mod tests {
             .unwrap()
     }
     fn poll(future: &mut TerminalWaitFuture) -> Poll<TerminalWaitOutcome> {
-        Pin::new(future).poll(&mut Context::from_waker(Waker::noop()))
+        Pin::new(future)
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .map(|receipt| {
+                assert!(receipt.attention_error.is_none());
+                receipt.outcome
+            })
     }
     fn advance(
         coordinator: &mut TerminalWaitCoordinator,
@@ -1173,5 +1295,87 @@ mod tests {
         let completion = coordinator.take_ready().pop().unwrap();
         assert_eq!(completion.outcome, TerminalWaitOutcome::Cancelled);
         assert!(completion.publish());
+    }
+
+    #[test]
+    fn committed_catchup_defers_conditions_and_preserves_real_quiet_time() {
+        let mut coordinator = TerminalWaitCoordinator::new();
+        let who = identity("one", "inc", 1);
+        let (_, mut matching) = register(
+            &mut coordinator,
+            who.clone(),
+            TerminalReturnCondition::Match {
+                pattern: "hello".into(),
+            },
+        );
+        let (_, mut quiet) = register(
+            &mut coordinator,
+            who,
+            TerminalReturnCondition::Quiet { duration_ms: 10 },
+        );
+        for observation in coordinator.observations() {
+            coordinator
+                .advance_one(&observation, b"he", &context(50, 2), 2, None, false)
+                .unwrap();
+        }
+        assert!(coordinator.take_ready().is_empty());
+        for observation in coordinator.observations() {
+            coordinator
+                .advance_one(&observation, b"llo", &context(101, 5), 2, None, true)
+                .unwrap();
+        }
+        publish(&mut coordinator);
+        // The retained match outranks the elapsed ceiling; replaying at 101
+        // does not falsely reset the last real output time (2) for quiet.
+        assert_eq!(
+            poll(&mut matching),
+            Poll::Ready(TerminalWaitOutcome::ConditionMet)
+        );
+        assert_eq!(
+            poll(&mut quiet),
+            Poll::Ready(TerminalWaitOutcome::ConditionMet)
+        );
+    }
+
+    #[test]
+    fn final_publication_failure_preserves_condition_with_explicit_failure() {
+        let mut coordinator = TerminalWaitCoordinator::new();
+        let who = identity("one", "inc", 1);
+        let (_, mut future) = register(
+            &mut coordinator,
+            who.clone(),
+            TerminalReturnCondition::Started,
+        );
+        advance(&mut coordinator, &who, b"", 0, 0, None);
+        assert!(coordinator.take_ready().pop().unwrap().publish_failed());
+        assert_eq!(
+            Pin::new(&mut future).poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(TerminalWaitReceipt {
+                outcome: TerminalWaitOutcome::Started,
+                attention_error: Some(TerminalWaitAttentionError::Unavailable),
+            })
+        );
+    }
+
+    #[test]
+    fn an_unfinished_catchup_cannot_extend_the_absolute_safety_ceiling() {
+        let mut coordinator = TerminalWaitCoordinator::new();
+        let who = identity("one", "inc", 1);
+        let (_, mut future) = register(
+            &mut coordinator,
+            who,
+            TerminalReturnCondition::Match {
+                pattern: "never".into(),
+            },
+        );
+        let observation = coordinator.observations().pop().unwrap();
+        coordinator
+            .advance_one(&observation, b"x", &context(100, 1), 100, None, false)
+            .unwrap();
+        publish(&mut coordinator);
+        assert_eq!(
+            poll(&mut future),
+            Poll::Ready(TerminalWaitOutcome::SafetyCeiling)
+        );
     }
 }

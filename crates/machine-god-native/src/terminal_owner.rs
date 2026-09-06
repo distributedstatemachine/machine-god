@@ -1,6 +1,7 @@
 //! Continuous terminal pumping on an explicitly owned blocking worker.
 //! Construction and unpolled requests are inert; this module spawns no threads.
 
+use crate::terminal_monitor::{MAX_MONITOR_FEED_BYTES, TerminalWaitOutcome};
 use crate::terminal_profile::TerminalProfileBudget;
 use crate::terminal_profile_store::TerminalProfileStore;
 use crate::terminal_registry::{
@@ -8,7 +9,8 @@ use crate::terminal_registry::{
     TerminalRegistryStep,
 };
 use crate::terminal_session::TerminalSessionBackend;
-use machine_god_core::{CancellationToken, Cancelled, TerminalClosePolicy};
+use crate::terminal_wait::{TerminalWaitCompletion, TerminalWaitCoordinator};
+use machine_god_core::{CancellationToken, Cancelled, TerminalClosePolicy, TerminalLifecycle};
 use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
@@ -28,6 +30,7 @@ pub(crate) enum TerminalOwnerError {
     Cancelled,
     Panicked,
     ProfileRequired,
+    WaitAttention,
     Registry(TerminalRegistryError),
 }
 type Result<T> = std::result::Result<T, TerminalOwnerError>;
@@ -50,6 +53,7 @@ trait Job<B: TerminalSessionBackend>: Send {
     fn execute(
         self: Box<Self>,
         registry: &mut TerminalRegistry<B>,
+        waits: &mut TerminalWaitCoordinator,
         now_ms: i64,
         profile: Option<(&TerminalProfileStore, &TerminalProfileBudget)>,
     ) -> bool;
@@ -99,6 +103,7 @@ fn complete<T>(reply: &Mutex<Reply<T>>, value: Result<T>) -> bool {
 type Operation<B, T> = Box<
     dyn FnOnce(
             &mut TerminalRegistry<B>,
+            &mut TerminalWaitCoordinator,
             i64,
             &CancellationToken,
             Option<(&TerminalProfileStore, &TerminalProfileBudget)>,
@@ -118,6 +123,7 @@ impl<B: TerminalSessionBackend, T: Send> Job<B> for Request<B, T> {
     fn execute(
         mut self: Box<Self>,
         registry: &mut TerminalRegistry<B>,
+        waits: &mut TerminalWaitCoordinator,
         now_ms: i64,
         profile: Option<(&TerminalProfileStore, &TerminalProfileBudget)>,
     ) -> bool {
@@ -128,7 +134,7 @@ impl<B: TerminalSessionBackend, T: Send> Job<B> for Request<B, T> {
             Err(TerminalOwnerError::Cancelled)
         } else {
             let operation = self.operation.take().expect("request executed once");
-            catch_callback(|| operation(registry, now_ms, &self.cancellation, profile))
+            catch_callback(|| operation(registry, waits, now_ms, &self.cancellation, profile))
                 .unwrap_or(Err(TerminalOwnerError::Panicked))
         };
         let keep_running = !matches!(&result, Err(TerminalOwnerError::Panicked));
@@ -180,7 +186,7 @@ impl<B: TerminalSessionBackend + 'static> TerminalOwnerHandle<B> {
     ) -> TerminalOwnerFuture<B, T> {
         self.request_inner(
             caller,
-            Box::new(move |registry, now_ms, cancellation, _| {
+            Box::new(move |registry, _, now_ms, cancellation, _| {
                 Ok(operation(registry, now_ms, cancellation))
             }),
         )
@@ -206,9 +212,42 @@ impl<B: TerminalSessionBackend + 'static> TerminalOwnerHandle<B> {
     ) -> TerminalOwnerFuture<B, T> {
         self.request_inner(
             caller,
-            Box::new(move |registry, now_ms, cancellation, profile| {
+            Box::new(move |registry, _, now_ms, cancellation, profile| {
                 let (store, budget) = profile.ok_or(TerminalOwnerError::ProfileRequired)?;
                 Ok(operation(registry, store, budget, now_ms, cancellation))
+            }),
+        )
+    }
+
+    /// Register or cancel attention waits in a short owner request. The
+    /// returned wait future is independent of this request's bounded reply;
+    /// never block this callback waiting for a terminal condition.
+    pub(crate) fn request_with_waits<T: Send + 'static>(
+        &self,
+        caller: CancellationToken,
+        operation: impl FnOnce(
+            &mut TerminalRegistry<B>,
+            &TerminalProfileStore,
+            &TerminalProfileBudget,
+            &mut TerminalWaitCoordinator,
+            i64,
+            &CancellationToken,
+        ) -> T
+        + Send
+        + 'static,
+    ) -> TerminalOwnerFuture<B, T> {
+        self.request_inner(
+            caller,
+            Box::new(move |registry, waits, now_ms, cancellation, profile| {
+                let (store, budget) = profile.ok_or(TerminalOwnerError::ProfileRequired)?;
+                Ok(operation(
+                    registry,
+                    store,
+                    budget,
+                    waits,
+                    now_ms,
+                    cancellation,
+                ))
             }),
         )
     }
@@ -393,6 +432,116 @@ impl Persistence<'_> {
             Self::Unmetered => registry.shutdown(now_ms, TerminalClosePolicy::Force),
         }
     }
+
+    /// Registry delegation owns the short transaction and drops it before
+    /// returning. The caller publishes no reply while persistence is held.
+    fn finish_wait<B: TerminalSessionBackend>(
+        self,
+        registry: &mut TerminalRegistry<B>,
+        completion: &TerminalWaitCompletion,
+    ) -> bool {
+        match self {
+            Self::Profile(store, budget) => registry
+                .finish_attention_with(
+                    store,
+                    budget,
+                    &completion.identity.owner,
+                    &completion.identity.session,
+                    completion.identity.actor,
+                    completion.identity.writer,
+                    registry.minimum_time_ms(),
+                    completion.outcome == TerminalWaitOutcome::Cancelled,
+                )
+                .is_ok(),
+            #[cfg(test)]
+            Self::Unmetered => false,
+        }
+    }
+}
+
+/// One bounded durable page per pending wait per scheduler turn. The registry
+/// pump can commit extra drain chunks beyond `step.output`; reading from each
+/// saved cursor observes those bytes exactly once, including inactive records.
+fn observe_waits<B: TerminalSessionBackend>(
+    registry: &TerminalRegistry<B>,
+    waits: &mut TerminalWaitCoordinator,
+) -> bool {
+    let mut catching_up = false;
+    for observation in waits.observations() {
+        let owner = &observation.identity.owner;
+        let session = &observation.identity.session;
+        let Ok((mut context, last_output_ms, process)) = registry.wait_observation(owner, session)
+        else {
+            waits.lose(owner, session);
+            continue;
+        };
+        context.now_ms = registry.minimum_time_ms();
+        // Known termination/loss outranks literal/quiet conditions, regardless
+        // of remaining tail bytes. No matcher result is inferred from skipping.
+        let terminal = process.is_some() || context.lifecycle == TerminalLifecycle::Lost;
+        let result = if terminal || observation.cursor == context.cursor {
+            waits.advance_one(&observation, &[], &context, last_output_ms, process, true)
+        } else {
+            match registry.read(owner, session, &observation.cursor, MAX_MONITOR_FEED_BYTES) {
+                Ok(page)
+                    if page.gap.is_none()
+                        && page.next > observation.cursor
+                        && page.next <= context.cursor =>
+                {
+                    let caught_up = page.next == context.cursor;
+                    catching_up |= !caught_up;
+                    context.cursor = page.next;
+                    waits.advance_one(
+                        &observation,
+                        &page.bytes,
+                        &context,
+                        last_output_ms,
+                        process,
+                        caught_up,
+                    )
+                }
+                _ => {
+                    waits.lose(owner, session);
+                    continue;
+                }
+            }
+        };
+        if result.is_err() {
+            waits.lose(owner, session);
+        }
+    }
+    catching_up
+}
+
+/// Returns (waker panicked, final attention failed). Failed normal publication
+/// drops its retry token without invoking callbacks or discarding the outcome.
+fn publish_waits<B: TerminalSessionBackend>(
+    registry: &mut TerminalRegistry<B>,
+    waits: &mut TerminalWaitCoordinator,
+    persistence: Persistence<'_>,
+    final_attempt: bool,
+) -> (bool, bool) {
+    let mut panicked = false;
+    let mut failed = false;
+    for completion in waits.take_ready() {
+        let finished = if waits.has_pending_attention(&completion.identity, completion.id) {
+            true
+        } else if let Ok(finished) =
+            catch_callback(|| persistence.finish_wait(registry, &completion))
+        {
+            finished
+        } else {
+            panicked = true;
+            false
+        };
+        if finished {
+            panicked |= !completion.publish();
+        } else if final_attempt {
+            failed = true;
+            panicked |= !completion.publish_failed();
+        }
+    }
+    (panicked, failed)
 }
 impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
     /// A rejected request can run user waker or captured-value destructors.
@@ -462,6 +611,7 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
         mut observer: impl FnMut(Vec<TerminalRegistryStep>),
     ) -> TerminalOwnerExit {
         let mut error = None;
+        let mut waits = TerminalWaitCoordinator::new();
         let mut deadline = Instant::now();
         let execution = catch_callback(|| {
             while !self.shared.closing.load(Ordering::Acquire) {
@@ -473,8 +623,15 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
                                     .as_ref()
                                     .is_ok_and(|step| !step.output.is_empty())
                             });
+                            let catching_up = observe_waits(registry, &mut waits);
+                            let (panicked, _) =
+                                publish_waits(registry, &mut waits, persistence, false);
+                            if panicked {
+                                error = Some(TerminalOwnerError::Panicked);
+                                break;
+                            }
                             observer(steps);
-                            output_ready
+                            output_ready || catching_up
                         }
                         Err(failure) => {
                             error = Some(TerminalOwnerError::Registry(failure));
@@ -485,7 +642,11 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
                         + if output_ready {
                             Duration::ZERO
                         } else {
-                            PUMP_INTERVAL
+                            waits.next_deadline().map_or(PUMP_INTERVAL, |next| {
+                                let milliseconds = next.saturating_sub(registry.minimum_time_ms());
+                                Duration::from_millis(u64::try_from(milliseconds).unwrap_or(0))
+                                    .min(PUMP_INTERVAL)
+                            })
                         };
                 }
                 match self
@@ -501,12 +662,16 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
                         // second unvalidated clock read from preceding native effects.
                         if !job.execute(
                             registry,
+                            &mut waits,
                             registry.minimum_time_ms(),
                             persistence.authority(),
                         ) {
                             error = Some(TerminalOwnerError::Panicked);
                             break;
                         }
+                        // A new wait, cancellation or committed mutation must
+                        // be observed promptly without blocking registry pumps.
+                        deadline = Instant::now();
                     }
                     Ok(Message::Wake) | Err(RecvTimeoutError::Timeout) => {}
                     Err(RecvTimeoutError::Disconnected) => break,
@@ -516,13 +681,34 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
         if execution.is_err() {
             error = Some(TerminalOwnerError::Panicked);
         }
+        self.finish(registry, persistence, &mut waits, error)
+    }
+
+    fn finish(
+        &self,
+        registry: &mut TerminalRegistry<B>,
+        persistence: Persistence<'_>,
+        waits: &mut TerminalWaitCoordinator,
+        mut error: Option<TerminalOwnerError>,
+    ) -> TerminalOwnerExit {
         self.shared.close();
         // Resolve queued requests before native shutdown; no rejected operation runs.
         let rejection_panicked = self.reject_pending();
         if rejection_panicked || self.shared.callback_panicked.load(Ordering::Acquire) {
             error = Some(TerminalOwnerError::Panicked);
         }
-        let shutdown = persistence.shutdown(registry);
+        let shutdown = catch_callback(|| persistence.shutdown(registry)).unwrap_or_else(|()| {
+            error = Some(TerminalOwnerError::Panicked);
+            Err(TerminalRegistryError::Invalid)
+        });
+        observe_waits(registry, waits);
+        waits.close();
+        let (wait_panicked, attention_failed) = publish_waits(registry, waits, persistence, true);
+        if wait_panicked {
+            error = Some(TerminalOwnerError::Panicked);
+        } else if attention_failed && error.is_none() {
+            error = Some(TerminalOwnerError::WaitAttention);
+        }
         TerminalOwnerExit { error, shutdown }
     }
 }
@@ -536,6 +722,27 @@ impl<B: TerminalSessionBackend> Drop for TerminalOwnerLoop<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::background_input::{BackgroundInputReceipt, BackgroundInputStatus};
+    use crate::terminal_catalog::owner_name;
+    use crate::terminal_history::TerminalHistory;
+    use crate::terminal_input::TerminalWriterId;
+    use crate::terminal_journal::TerminalJournalLimits;
+    use crate::terminal_profile::{TerminalProfileLimits, TerminalProfileMutationContext};
+    use crate::terminal_pty::{TerminalPtyClose, TerminalPtyRead, TerminalPtyStatus};
+    use crate::terminal_session::TerminalSession;
+    use crate::terminal_session_record::test_metadata;
+    use crate::terminal_wait::{
+        TerminalWaitFuture, TerminalWaitHistory, TerminalWaitIdentity, TerminalWaitReceipt,
+    };
+    use machine_god_core::{
+        BackgroundOutputOwner, SessionId, SessionIncarnationId, TerminalActorRole,
+        TerminalDimensions, TerminalReturnCondition, TerminalSessionId, TerminalSignal,
+        TerminalWaitRequest,
+    };
+    use std::collections::VecDeque;
+    use std::num::NonZeroU64;
+    use std::os::unix::fs::DirBuilderExt;
+    use std::path::PathBuf;
     struct ReentrantWake {
         reply: std::sync::Weak<Mutex<Reply<()>>>,
         woke: AtomicBool,
@@ -560,5 +767,671 @@ mod tests {
         reply.lock().unwrap().waker = Some(Waker::from(Arc::clone(&wake)));
         complete(&reply, Ok(()));
         assert!(wake.woke.load(Ordering::Acquire));
+    }
+
+    #[derive(Default)]
+    struct NativeState {
+        output: VecDeque<Vec<u8>>,
+        closes: usize,
+        exited: bool,
+    }
+    struct Backend(Arc<Mutex<NativeState>>);
+    impl TerminalSessionBackend for Backend {
+        fn read(&mut self, buffer: &mut [u8]) -> std::result::Result<TerminalPtyRead, ()> {
+            let bytes = self
+                .0
+                .lock()
+                .unwrap()
+                .output
+                .pop_front()
+                .unwrap_or_default();
+            buffer[..bytes.len()].copy_from_slice(&bytes);
+            Ok(TerminalPtyRead {
+                bytes_read: bytes.len(),
+                closed: false,
+            })
+        }
+        fn write(&mut self, bytes: &[u8]) -> std::result::Result<BackgroundInputReceipt, ()> {
+            Ok(BackgroundInputReceipt::new(
+                bytes.len(),
+                false,
+                BackgroundInputStatus::Written,
+            ))
+        }
+        fn status(&mut self) -> std::result::Result<TerminalPtyStatus, ()> {
+            Ok(if self.0.lock().unwrap().exited {
+                TerminalPtyStatus::Exited(7)
+            } else {
+                TerminalPtyStatus::Running
+            })
+        }
+        fn resize(&mut self, _: &TerminalDimensions) -> std::result::Result<(), ()> {
+            Ok(())
+        }
+        fn signal(&mut self, _: TerminalSignal) -> std::result::Result<(), ()> {
+            Ok(())
+        }
+        fn signal_may_discard_output(&self) -> bool {
+            false
+        }
+        fn close(
+            &mut self,
+            _: bool,
+            output: &mut dyn FnMut(&[u8]),
+        ) -> std::result::Result<TerminalPtyClose, ()> {
+            let mut state = self.0.lock().unwrap();
+            state.closes += 1;
+            for bytes in state.output.drain(..) {
+                output(&bytes);
+            }
+            Ok(TerminalPtyClose {
+                status: TerminalPtyStatus::Exited(7),
+                output_incomplete: false,
+            })
+        }
+    }
+    struct Fixture {
+        path: PathBuf,
+        store: Arc<TerminalProfileStore>,
+        budget: TerminalProfileBudget,
+        state: Arc<Mutex<NativeState>>,
+    }
+    impl Fixture {
+        fn new() -> Self {
+            let mut random = [0; 16];
+            getrandom::fill(&mut random).unwrap();
+            let path = std::env::temp_dir().join(format!(
+                "machine-god-owner-wait-{:032x}",
+                u128::from_le_bytes(random)
+            ));
+            std::fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&path)
+                .unwrap();
+            let fd = rustix::fs::open(
+                &path,
+                rustix::fs::OFlags::RDONLY
+                    | rustix::fs::OFlags::DIRECTORY
+                    | rustix::fs::OFlags::CLOEXEC
+                    | rustix::fs::OFlags::NOFOLLOW,
+                rustix::fs::Mode::empty(),
+            )
+            .unwrap();
+            Self {
+                path,
+                store: Arc::new(TerminalProfileStore::prepare(fd).unwrap()),
+                budget: TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap(),
+                state: Arc::new(Mutex::new(NativeState::default())),
+            }
+        }
+        fn registry(&self, who: &TerminalWaitIdentity) -> TerminalRegistry<Backend> {
+            self.registry_with_limits(who, TerminalJournalLimits::default())
+        }
+        fn registry_with_limits(
+            &self,
+            who: &TerminalWaitIdentity,
+            limits: TerminalJournalLimits,
+        ) -> TerminalRegistry<Backend> {
+            let mut transaction = self.store.transaction().unwrap();
+            let mut catalog = transaction
+                .prepare_catalog("/workspace".into(), who.owner.clone())
+                .unwrap();
+            drop(
+                transaction
+                    .create_session(&mut catalog, &who.session)
+                    .unwrap(),
+            );
+            let completion = self
+                .budget
+                .create_journal(
+                    &mut transaction,
+                    catalog.namespace_key(),
+                    &who.session,
+                    limits,
+                )
+                .unwrap();
+            completion.accounting.unwrap();
+            let journal = completion.operation.unwrap();
+            let mut persistence = TerminalProfileMutationContext::new(
+                &mut transaction,
+                self.budget,
+                catalog.namespace_key(),
+            );
+            let history = TerminalHistory::create_with(
+                &mut persistence,
+                journal,
+                &TerminalDimensions::new(3, 20).unwrap(),
+            )
+            .unwrap();
+            let mut session = TerminalSession::new_with(
+                &mut persistence,
+                Backend(Arc::clone(&self.state)),
+                history,
+                who.owner.clone(),
+                who.session.clone(),
+                test_metadata(),
+                0,
+            )
+            .unwrap();
+            session.shell_ready_with(&mut persistence, 0).unwrap();
+            let mut registry = TerminalRegistry::new("/workspace".into()).unwrap();
+            registry
+                .start(who.owner.clone(), who.session.clone(), || Ok(session))
+                .unwrap();
+            registry
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.path).unwrap();
+        }
+    }
+    fn identity() -> TerminalWaitIdentity {
+        TerminalWaitIdentity {
+            owner: BackgroundOutputOwner::new(
+                SessionId::new("owner").unwrap(),
+                SessionIncarnationId::new("incarnation").unwrap(),
+            ),
+            session: TerminalSessionId::new("terminal").unwrap(),
+            actor: TerminalActorRole::Agent,
+            writer: TerminalWriterId::new(NonZeroU64::new(1).unwrap()),
+        }
+    }
+    fn poll_request<T: Send + 'static>(
+        request: &mut TerminalOwnerFuture<Backend, T>,
+    ) -> Poll<Result<T>> {
+        Pin::new(request).poll(&mut Context::from_waker(Waker::noop()))
+    }
+    fn poll_wait(wait: &mut TerminalWaitFuture) -> Poll<TerminalWaitReceipt> {
+        Pin::new(wait).poll(&mut Context::from_waker(Waker::noop()))
+    }
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit owner callback fixture inputs"
+    )]
+    fn admit(
+        registry: &mut TerminalRegistry<Backend>,
+        store: &TerminalProfileStore,
+        budget: &TerminalProfileBudget,
+        waits: &mut TerminalWaitCoordinator,
+        who: TerminalWaitIdentity,
+        condition: TerminalReturnCondition,
+        now_ms: i64,
+        cancellation: CancellationToken,
+    ) -> TerminalWaitFuture {
+        let (context, last_output, _) =
+            registry.wait_observation(&who.owner, &who.session).unwrap();
+        let namespace = owner_name("/workspace", &who.owner);
+        let mut transaction = store.transaction().unwrap();
+        let mut persistence =
+            TerminalProfileMutationContext::new(&mut transaction, *budget, &namespace);
+        registry
+            .live_mut(&who.owner, &who.session)
+            .unwrap()
+            .begin_attention_with(&mut persistence, &who.owner, who.actor, who.writer, now_ms)
+            .unwrap();
+        waits
+            .register(
+                who,
+                TerminalWaitRequest {
+                    condition,
+                    safety_ceiling_ms: 100,
+                },
+                &context,
+                last_output,
+                TerminalWaitHistory::default(),
+                cancellation,
+            )
+            .unwrap()
+            .1
+    }
+
+    struct ProfileWake {
+        store: Arc<TerminalProfileStore>,
+        calls: AtomicUsize,
+    }
+    impl std::task::Wake for ProfileWake {
+        fn wake(self: Arc<Self>) {
+            assert!(
+                self.store.transaction().is_ok(),
+                "wait woke before profile transaction ended"
+            );
+            self.calls.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn profile_owner_wait_matches_committed_chunks_and_wakes_after_attention_commit() {
+        let fixture = Fixture::new();
+        let who = identity();
+        let mut registry = fixture.registry(&who);
+        let (worker, handle) = TerminalOwnerLoop::new();
+        let state = Arc::clone(&fixture.state);
+        let mut request = handle.request_with_waits(
+            CancellationToken::new(),
+            move |registry, store, budget, waits, now_ms, cancellation| {
+                let wait = admit(
+                    registry,
+                    store,
+                    budget,
+                    waits,
+                    who,
+                    TerminalReturnCondition::Match {
+                        pattern: "hello".into(),
+                    },
+                    now_ms,
+                    cancellation.clone(),
+                );
+                state
+                    .lock()
+                    .unwrap()
+                    .output
+                    .extend([b"he".to_vec(), b"llo".to_vec()]);
+                wait
+            },
+        );
+        assert!(poll_request(&mut request).is_pending());
+        let wake = Arc::new(ProfileWake {
+            store: Arc::clone(&fixture.store),
+            calls: AtomicUsize::new(0),
+        });
+        let waker = Waker::from(Arc::clone(&wake));
+        let mut waiting = None;
+        let mut receipt = None;
+        let mut ticks = 0;
+        let exit = worker.run_with_profile(
+            &mut registry,
+            &fixture.store,
+            &fixture.budget,
+            || 1,
+            |steps| {
+                for step in steps {
+                    assert!(step.result.is_ok(), "pump failure: {:?}", step.result.err());
+                }
+                ticks += 1;
+                assert!(ticks < 20);
+                if waiting.is_none()
+                    && let Poll::Ready(result) = poll_request(&mut request)
+                {
+                    waiting = Some(result.unwrap());
+                }
+                if let Some(wait) = &mut waiting
+                    && let Poll::Ready(result) =
+                        Pin::new(wait).poll(&mut Context::from_waker(&waker))
+                {
+                    receipt = Some(result);
+                    assert_eq!(fixture.state.lock().unwrap().closes, 0);
+                    handle.shutdown();
+                }
+            },
+        );
+        assert!(exit.error.is_none());
+        assert!(exit.shutdown.unwrap().is_empty());
+        assert_eq!(
+            receipt.unwrap(),
+            TerminalWaitReceipt {
+                outcome: TerminalWaitOutcome::ConditionMet,
+                attention_error: None
+            }
+        );
+        assert_eq!(wake.calls.load(Ordering::Relaxed), 1);
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
+    }
+
+    #[test]
+    fn dropped_attention_wait_does_not_stop_owner_or_other_wait() {
+        let fixture = Fixture::new();
+        let who = identity();
+        let mut registry = fixture.registry(&who);
+        let (worker, handle) = TerminalOwnerLoop::new();
+        let state = Arc::clone(&fixture.state);
+        let mut request = handle.request_with_waits(
+            CancellationToken::new(),
+            move |registry, store, budget, waits, now_ms, _| {
+                let abandoned = admit(
+                    registry,
+                    store,
+                    budget,
+                    waits,
+                    who.clone(),
+                    TerminalReturnCondition::Exit,
+                    now_ms,
+                    CancellationToken::new(),
+                );
+                let survivor = admit(
+                    registry,
+                    store,
+                    budget,
+                    waits,
+                    who,
+                    TerminalReturnCondition::Match {
+                        pattern: "alive".into(),
+                    },
+                    now_ms,
+                    CancellationToken::new(),
+                );
+                drop(abandoned);
+                state.lock().unwrap().output.push_back(b"alive".to_vec());
+                survivor
+            },
+        );
+        assert!(poll_request(&mut request).is_pending());
+        let mut waiting = None;
+        let mut receipt = None;
+        let mut ticks = 0;
+        let exit = worker.run_with_profile(
+            &mut registry,
+            &fixture.store,
+            &fixture.budget,
+            || 1,
+            |_| {
+                ticks += 1;
+                assert!(ticks < 20);
+                if waiting.is_none()
+                    && let Poll::Ready(result) = poll_request(&mut request)
+                {
+                    waiting = Some(result.unwrap());
+                }
+                if let Some(wait) = &mut waiting
+                    && let Poll::Ready(result) = poll_wait(wait)
+                {
+                    receipt = Some(result);
+                    assert_eq!(fixture.state.lock().unwrap().closes, 0);
+                    handle.shutdown();
+                }
+            },
+        );
+        assert!(exit.error.is_none());
+        assert!(exit.shutdown.unwrap().is_empty());
+        assert_eq!(receipt.unwrap().outcome, TerminalWaitOutcome::ConditionMet);
+    }
+
+    #[test]
+    fn failed_attention_publication_retries_and_shutdown_reports_unavailable() {
+        for fail_shutdown in [false, true] {
+            let fixture = Fixture::new();
+            let who = identity();
+            let mut registry = fixture.registry(&who);
+            let (worker, handle) = TerminalOwnerLoop::new();
+            let mut request = handle.request_with_waits(
+                CancellationToken::new(),
+                move |registry, store, budget, waits, now_ms, _| {
+                    admit(
+                        registry,
+                        store,
+                        budget,
+                        waits,
+                        who,
+                        TerminalReturnCondition::Quiet { duration_ms: 5 },
+                        now_ms,
+                        CancellationToken::new(),
+                    )
+                },
+            );
+            assert!(poll_request(&mut request).is_pending());
+            let mut waiting = None;
+            let mut receipt = None;
+            let mut held_transaction = None;
+            let mut ticks = 0;
+            let mut now_ms = 0;
+            let exit = worker.run_with_profile(
+                &mut registry,
+                &fixture.store,
+                &fixture.budget,
+                || {
+                    now_ms += 1;
+                    now_ms
+                },
+                |_| {
+                    ticks += 1;
+                    assert!(ticks < 20);
+                    if waiting.is_none()
+                        && let Poll::Ready(result) = poll_request(&mut request)
+                    {
+                        waiting = Some(result.unwrap());
+                        held_transaction = Some(fixture.store.transaction().unwrap());
+                    }
+                    if let Some(wait) = &mut waiting {
+                        if ticks <= 8 {
+                            assert!(
+                                poll_wait(wait).is_pending(),
+                                "attention transition has not committed"
+                            );
+                        } else if let Poll::Ready(result) = poll_wait(wait) {
+                            receipt = Some(result);
+                            handle.shutdown();
+                        }
+                    }
+                    if ticks == 8 {
+                        if fail_shutdown {
+                            handle.shutdown();
+                        } else {
+                            held_transaction = None;
+                        }
+                    }
+                },
+            );
+            drop(held_transaction);
+            if fail_shutdown {
+                assert_eq!(exit.error, Some(TerminalOwnerError::WaitAttention));
+                assert!(!exit.shutdown.unwrap().is_empty());
+                let Poll::Ready(result) = poll_wait(waiting.as_mut().unwrap()) else {
+                    panic!("shutdown left a wait pending")
+                };
+                assert_eq!(result.outcome, TerminalWaitOutcome::ConditionMet);
+                assert_eq!(
+                    result.attention_error,
+                    Some(crate::terminal_wait::TerminalWaitAttentionError::Unavailable)
+                );
+            } else {
+                assert!(exit.error.is_none());
+                assert!(exit.shutdown.unwrap().is_empty());
+                assert_eq!(
+                    receipt.unwrap(),
+                    TerminalWaitReceipt {
+                        outcome: TerminalWaitOutcome::ConditionMet,
+                        attention_error: None
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn owner_waits_observe_inactive_and_recovered_records_without_native_pumps() {
+        for recover in [false, true] {
+            let fixture = Fixture::new();
+            let who = identity();
+            let mut registry = fixture.registry(&who);
+            let (worker, handle) = TerminalOwnerLoop::new();
+            let mut request = handle.request_with_waits(
+                CancellationToken::new(),
+                move |registry, store, budget, waits, now_ms, _| {
+                    let namespace = owner_name("/workspace", &who.owner);
+                    let mut transaction = store.transaction().unwrap();
+                    let mut persistence =
+                        TerminalProfileMutationContext::new(&mut transaction, *budget, &namespace);
+                    registry
+                        .live_mut(&who.owner, &who.session)
+                        .unwrap()
+                        .close_with(
+                            &mut persistence,
+                            &who.owner,
+                            TerminalClosePolicy::Force,
+                            now_ms,
+                        )
+                        .unwrap();
+                    if recover {
+                        registry.release(&who.owner, &who.session).unwrap();
+                        let journal = crate::terminal_journal::TerminalJournal::open_existing(
+                            transaction.open_session(&namespace, &who.session).unwrap(),
+                            &who.session,
+                            TerminalJournalLimits::default(),
+                        )
+                        .unwrap();
+                        let history = TerminalHistory::recover(journal).unwrap();
+                        let mut persistence = TerminalProfileMutationContext::new(
+                            &mut transaction,
+                            *budget,
+                            &namespace,
+                        );
+                        let recovered =
+                            crate::terminal_session::TerminalRecoveredSession::recover_with(
+                                &mut persistence,
+                                history,
+                                &who.owner,
+                                now_ms,
+                            )
+                            .unwrap();
+                        registry
+                            .recover(who.owner.clone(), who.session.clone(), || Ok(recovered))
+                            .unwrap();
+                    }
+                    let (context, last_output, _) =
+                        registry.wait_observation(&who.owner, &who.session).unwrap();
+                    waits
+                        .register(
+                            who,
+                            TerminalWaitRequest {
+                                condition: TerminalReturnCondition::Exit,
+                                safety_ceiling_ms: 100,
+                            },
+                            &context,
+                            last_output,
+                            TerminalWaitHistory::default(),
+                            CancellationToken::new(),
+                        )
+                        .unwrap()
+                        .1
+                },
+            );
+            assert!(poll_request(&mut request).is_pending());
+            let mut waiting = None;
+            let mut receipt = None;
+            let mut ticks = 0;
+            let exit = worker.run_with_profile(
+                &mut registry,
+                &fixture.store,
+                &fixture.budget,
+                || 1,
+                |_| {
+                    ticks += 1;
+                    assert!(ticks < 10);
+                    if waiting.is_none()
+                        && let Poll::Ready(result) = poll_request(&mut request)
+                    {
+                        waiting = Some(result.unwrap());
+                    }
+                    if let Some(wait) = &mut waiting
+                        && let Poll::Ready(result) = poll_wait(wait)
+                    {
+                        receipt = Some(result);
+                        handle.shutdown();
+                    }
+                },
+            );
+            assert!(exit.error.is_none());
+            assert!(exit.shutdown.unwrap().is_empty());
+            let receipt = receipt.unwrap();
+            assert_eq!(receipt.outcome, TerminalWaitOutcome::Exited(7));
+            assert!(receipt.attention_error.is_none());
+            assert_eq!(fixture.state.lock().unwrap().closes, 1);
+        }
+    }
+
+    #[test]
+    fn owner_catches_up_committed_pages_without_losing_segment_rollovers() {
+        for rollover in [false, true] {
+            let fixture = Fixture::new();
+            let who = identity();
+            let limits = if rollover {
+                TerminalJournalLimits {
+                    segment_bytes: 8 * MAX_MONITOR_FEED_BYTES,
+                    session_bytes: 16 * 1024 * 1024,
+                }
+            } else {
+                TerminalJournalLimits::default()
+            };
+            let mut registry = fixture.registry_with_limits(&who, limits);
+            let (worker, handle) = TerminalOwnerLoop::new();
+            let state = Arc::clone(&fixture.state);
+            let mut request = handle.request_with_waits(
+                CancellationToken::new(),
+                move |registry, store, budget, waits, now_ms, _| {
+                    let wait = admit(
+                        registry,
+                        store,
+                        budget,
+                        waits,
+                        who,
+                        TerminalReturnCondition::Match {
+                            pattern: "hello".into(),
+                        },
+                        now_ms,
+                        CancellationToken::new(),
+                    );
+                    let chunks = if rollover { 8 } else { 1 };
+                    for _ in 1..chunks {
+                        state
+                            .lock()
+                            .unwrap()
+                            .output
+                            .push_back(vec![b'x'; MAX_MONITOR_FEED_BYTES]);
+                    }
+                    let mut first = vec![b'x'; MAX_MONITOR_FEED_BYTES];
+                    first[MAX_MONITOR_FEED_BYTES - 2..].copy_from_slice(b"he");
+                    state
+                        .lock()
+                        .unwrap()
+                        .output
+                        .extend([first, b"llo".to_vec()]);
+                    for _ in 0..=chunks {
+                        let steps = registry
+                            .pump_with_profile(store, budget, now_ms, MAX_RESIDENT_TERMINALS)
+                            .unwrap();
+                        assert!(steps.iter().all(|step| step.result.is_ok()));
+                    }
+                    wait
+                },
+            );
+            assert!(poll_request(&mut request).is_pending());
+            let mut waiting = None;
+            let mut receipt = None;
+            let mut ticks = 0;
+            let exit = worker.run_with_profile(
+                &mut registry,
+                &fixture.store,
+                &fixture.budget,
+                || 1,
+                |_| {
+                    ticks += 1;
+                    assert!(ticks < 20);
+                    if waiting.is_none()
+                        && let Poll::Ready(result) = poll_request(&mut request)
+                    {
+                        waiting = Some(result.unwrap());
+                    }
+                    if let Some(wait) = &mut waiting
+                        && let Poll::Ready(result) = poll_wait(wait)
+                    {
+                        receipt = Some(result);
+                        handle.shutdown();
+                    }
+                },
+            );
+            assert!(
+                ticks >= 3,
+                "two pages must not be consumed in one unbounded turn"
+            );
+            assert!(exit.error.is_none());
+            assert!(exit.shutdown.unwrap().is_empty());
+            assert_eq!(
+                receipt.unwrap(),
+                TerminalWaitReceipt {
+                    outcome: TerminalWaitOutcome::ConditionMet,
+                    attention_error: None
+                }
+            );
+        }
     }
 }

@@ -2193,6 +2193,31 @@ impl TerminalWaitState {
         self.outcome = outcome;
         Ok(outcome)
     }
+    /// Feed already committed journal bytes without replacing their actual
+    /// last-output timestamp with the time a bounded owner catch-up reads them.
+    /// Condition polling happens separately after reaching the observation
+    /// cursor, so an earlier replay page cannot hide a later retained match.
+    pub(crate) fn committed_output(
+        &mut self,
+        bytes: &[u8],
+        now_ms: i64,
+        last_output_ms: i64,
+    ) -> Result<()> {
+        require(bytes.len() <= MAX_MONITOR_FEED_BYTES)?;
+        if now_ms < self.last_now_ms || last_output_ms < 0 || last_output_ms > now_ms {
+            return Err(TerminalMonitorError::Clock);
+        }
+        if self.outcome.is_none() {
+            self.last_now_ms = now_ms;
+            self.last_output_ms = last_output_ms;
+            if !self.matched
+                && let Some(matcher) = &mut self.matcher
+            {
+                self.matched = matcher.feed(bytes);
+            }
+        }
+        Ok(())
+    }
     pub(crate) fn next_deadline(&self) -> Option<i64> {
         if self.outcome.is_some() {
             return None;
