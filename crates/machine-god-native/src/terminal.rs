@@ -4793,18 +4793,18 @@ fn read_pipe(
     capture.finish()
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Default)]
-struct PipeCapture {
+pub(crate) struct PipeCapture {
     head: Vec<u8>,
     tail: Vec<u8>,
     tail_start: usize,
     total: u64,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl PipeCapture {
-    fn push(&mut self, bytes: &[u8]) {
+    pub(crate) fn push(&mut self, bytes: &[u8]) {
         self.total = self.total.saturating_add(bytes.len() as u64);
         let head_limit = PIPE_RETAINED_BYTES / 2;
         let missing_head = head_limit.saturating_sub(self.head.len());
@@ -4832,7 +4832,7 @@ impl PipeCapture {
         self.tail_start = (self.tail_start + bytes.len()) % tail_limit;
     }
 
-    fn finish(self) -> Result<TerminalCapturedOutput, TerminalExecutorError> {
+    pub(crate) fn finish(self) -> Result<TerminalCapturedOutput, TerminalExecutorError> {
         let mut retained = self.head;
         retained.extend_from_slice(&self.tail[self.tail_start..]);
         retained.extend_from_slice(&self.tail[..self.tail_start]);
