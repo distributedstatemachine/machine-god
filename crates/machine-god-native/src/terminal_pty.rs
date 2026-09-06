@@ -29,8 +29,9 @@ use crate::background_process::{
 };
 use crate::terminal_helper::{
     COMMIT, DescriptorIo, LaunchFrame, MAX_STARTUP_TIMEOUT, PTY_DEADLINE_ENV, READY, START_TIMEOUT,
-    TerminalHelperError, TerminalHelperErrorKind, check_deadline, monotonic_now, read_gate,
-    validate_program_arguments, validate_pty_directory as validate_directory, write_gate,
+    TerminalHelperError, TerminalHelperErrorKind, check_deadline, encode_helper_deadline,
+    read_gate, validate_program_arguments, validate_pty_directory as validate_directory,
+    write_gate,
 };
 #[cfg(test)]
 use crate::terminal_helper::{
@@ -160,24 +161,7 @@ impl TerminalPtyRequest {
 }
 
 fn encode_pty_deadline(deadline: Instant) -> Result<String, TerminalPtyError> {
-    // Sample the transferable clock first: translation must never grant time
-    // beyond the caller's original Instant deadline.
-    let monotonic = monotonic_now()?;
-    let remaining = deadline
-        .checked_duration_since(Instant::now())
-        .filter(|remaining| !remaining.is_zero())
-        .ok_or_else(|| error(TerminalPtyErrorKind::Timeout))?;
-    if remaining > MAX_STARTUP_TIMEOUT {
-        return Err(error(TerminalPtyErrorKind::InvalidRequest));
-    }
-    let absolute = monotonic
-        .checked_add(remaining)
-        .ok_or_else(|| error(TerminalPtyErrorKind::InvalidRequest))?;
-    Ok(format!(
-        "{}:{}",
-        absolute.as_secs(),
-        absolute.subsec_nanos()
-    ))
+    Ok(encode_helper_deadline(deadline, MAX_STARTUP_TIMEOUT)?)
 }
 
 pub(crate) struct PreparedTerminalPty {

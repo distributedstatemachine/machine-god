@@ -87,6 +87,37 @@ pub(crate) fn monotonic_now() -> Result<Duration, TerminalHelperError> {
 }
 
 fn decode_pty_deadline(value: &str) -> Result<Instant, TerminalHelperError> {
+    decode_helper_deadline(value, MAX_STARTUP_TIMEOUT)
+}
+
+pub(crate) fn encode_helper_deadline(
+    deadline: Instant,
+    maximum: Duration,
+) -> Result<String, TerminalHelperError> {
+    // Sample the transferable clock first: translation must never grant time
+    // beyond the caller's original Instant deadline.
+    let monotonic = monotonic_now()?;
+    let remaining = deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| error(TerminalHelperErrorKind::Timeout))?;
+    if remaining > maximum {
+        return Err(error(TerminalHelperErrorKind::InvalidRequest));
+    }
+    let absolute = monotonic
+        .checked_add(remaining)
+        .ok_or_else(|| error(TerminalHelperErrorKind::InvalidRequest))?;
+    Ok(format!(
+        "{}:{}",
+        absolute.as_secs(),
+        absolute.subsec_nanos()
+    ))
+}
+
+pub(crate) fn decode_helper_deadline(
+    value: &str,
+    maximum: Duration,
+) -> Result<Instant, TerminalHelperError> {
     let instant = Instant::now();
     let monotonic = monotonic_now()?;
     if value.len() > 30 {
@@ -117,7 +148,7 @@ fn decode_pty_deadline(value: &str) -> Result<Instant, TerminalHelperError> {
         .checked_sub(monotonic)
         .filter(|remaining| !remaining.is_zero())
         .ok_or_else(|| error(TerminalHelperErrorKind::Timeout))?;
-    if remaining > MAX_STARTUP_TIMEOUT {
+    if remaining > maximum {
         return Err(error(TerminalHelperErrorKind::InvalidRequest));
     }
     instant
@@ -607,6 +638,41 @@ mod tests {
                 .unwrap();
         assert!(deadline > before);
         assert!(deadline <= Instant::now() + Duration::from_secs(1));
+    }
+
+    #[test]
+    fn transferable_deadline_preserves_expiry_and_each_callers_maximum() {
+        let maximum = machine_god_core::MAX_TERMINAL_EXEC_DURATION;
+        let long = Instant::now() + Duration::from_secs(400);
+        let stamp = encode_helper_deadline(long, maximum).unwrap();
+        let decoded = decode_helper_deadline(&stamp, maximum).unwrap();
+        assert!(decoded <= long);
+        assert!(decoded > Instant::now() + MAX_STARTUP_TIMEOUT);
+        assert!(
+            matches!(decode_pty_deadline(&stamp), Err(error) if error.kind == TerminalHelperErrorKind::InvalidRequest)
+        );
+        assert!(
+            matches!(encode_helper_deadline(long, MAX_STARTUP_TIMEOUT), Err(error) if error.kind == TerminalHelperErrorKind::InvalidRequest)
+        );
+
+        let deadline = Instant::now() + Duration::from_millis(20);
+        let stamp = encode_helper_deadline(deadline, maximum).unwrap();
+        assert!(decode_helper_deadline(&stamp, maximum).unwrap() <= deadline);
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(
+            matches!(decode_helper_deadline(&stamp, maximum), Err(error) if error.kind == TerminalHelperErrorKind::Timeout)
+        );
+        assert!(
+            matches!(encode_helper_deadline(deadline, maximum), Err(error) if error.kind == TerminalHelperErrorKind::Timeout)
+        );
+        for invalid in ["", "0:0", "1:1000000000", "18446744073709551615:0", "1:2:3"] {
+            assert!(decode_helper_deadline(invalid, maximum).is_err());
+        }
+        let too_far =
+            crate::terminal_helper::monotonic_now().unwrap() + maximum + Duration::from_secs(1);
+        assert!(
+            matches!(decode_helper_deadline(&format!("{}:{}", too_far.as_secs(), too_far.subsec_nanos()), maximum), Err(error) if error.kind == TerminalHelperErrorKind::InvalidRequest)
+        );
     }
 
     #[test]

@@ -9,8 +9,9 @@ use crate::background_process::{
 };
 use crate::terminal::PipeCapture;
 use crate::terminal_helper::{
-    COMMIT, DescriptorIo, LaunchFrame, READY, START_TIMEOUT, TerminalPtyDimensions,
-    TerminalPtyHelper, read_frame, read_gate, validate_pty_directory, write_gate,
+    COMMIT, DescriptorIo, LaunchFrame, READY, TerminalHelperErrorKind, TerminalPtyDimensions,
+    TerminalPtyHelper, decode_helper_deadline, encode_helper_deadline, read_frame, read_gate,
+    validate_pty_directory, write_gate,
 };
 use crate::terminal_shell::TerminalShell;
 use machine_god_core::{
@@ -37,6 +38,7 @@ use std::time::{Duration, Instant};
 pub const TERMINAL_CAPTURED_HELPER_ARGUMENT: &str = "--machine-god-terminal-captured-helper";
 const EXEC_DESCRIPTOR_TOKEN: u8 = 0xc1;
 const EXEC_FAILED: u8 = 0xe1;
+const CAPTURED_DEADLINE_ENV: &str = "MACHINE_GOD_CAPTURED_DEADLINE";
 
 /// Redacted captured-execution failure; command text and environment are never included.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -231,7 +233,6 @@ fn run(
 ) -> Result<TerminalExecResult, TerminalCapturedExecError> {
     let started = Instant::now();
     let deadline = started + timeout;
-    let startup_deadline = deadline.min(started + START_TIMEOUT);
     if stopped(cancellation, stop) {
         return Err(TerminalCapturedExecError::Cancelled);
     }
@@ -269,12 +270,20 @@ fn run(
         .map_err(|_| TerminalCapturedExecError::Process)?;
     let mut guard = TerminalChildGuard::reserve(cancellation)
         .map_err(|_| TerminalCapturedExecError::Process)?;
+    let helper_deadline = match encode_helper_deadline(deadline, MAX_TERMINAL_EXEC_DURATION) {
+        Ok(stamp) => stamp,
+        Err(error) if error.kind == TerminalHelperErrorKind::Timeout => {
+            return Ok(empty_timeout(started));
+        }
+        Err(_) => return Err(TerminalCapturedExecError::Process),
+    };
     let mut command = Command::new(helper.program());
     command
         .args(helper.arguments())
         .env_clear()
         .env("LANG", "C")
         .env("LC_ALL", "C")
+        .env(CAPTURED_DEADLINE_ENV, helper_deadline)
         .stdin(Stdio::from(OwnedFd::from(child_gate)))
         .stdout(Stdio::from(child_stdout))
         .stderr(Stdio::from(cwd));
@@ -288,13 +297,9 @@ fn run(
         .spawn(&mut command)
         .map_err(|_| TerminalCapturedExecError::Process)?;
     drop(command);
-    if let Err(error) = send_exec_descriptor(
-        &stderr,
-        &child_exec_error,
-        startup_deadline,
-        cancellation,
-        stop,
-    ) {
+    if let Err(error) =
+        send_exec_descriptor(&stderr, &child_exec_error, deadline, cancellation, stop)
+    {
         return if stopped(cancellation, stop) {
             Err(TerminalCapturedExecError::Cancelled)
         } else if Instant::now() >= deadline {
@@ -309,9 +314,9 @@ fn run(
         stop,
     };
     let handshake = (|| {
-        write_gate(&mut gate, &frame, startup_deadline, cancellation).map_err(|_| ())?;
+        write_gate(&mut gate, &frame, deadline, cancellation).map_err(|_| ())?;
         let mut ready = [0];
-        read_gate(&mut gate, &mut ready, startup_deadline, cancellation).map_err(|_| ())?;
+        read_gate(&mut gate, &mut ready, deadline, cancellation).map_err(|_| ())?;
         if ready != [READY] {
             return Err(());
         }
@@ -339,7 +344,7 @@ fn run(
     if stopped(cancellation, stop) {
         return Err(TerminalCapturedExecError::Cancelled);
     }
-    if write_gate(&mut gate, &[COMMIT], startup_deadline, cancellation).is_err() {
+    if write_gate(&mut gate, &[COMMIT], deadline, cancellation).is_err() {
         return if stopped(cancellation, stop) {
             Err(TerminalCapturedExecError::Cancelled)
         } else if Instant::now() >= deadline {
@@ -352,6 +357,9 @@ fn run(
         if stopped(cancellation, stop) {
             return Err(TerminalCapturedExecError::Cancelled);
         }
+        if Instant::now() >= deadline {
+            return Ok(empty_timeout(started));
+        }
         let mut byte = [0];
         match rustix::io::read(&exec_error, &mut byte) {
             Ok(0) => break,
@@ -360,9 +368,6 @@ fn run(
         }
         if Instant::now() >= deadline {
             return Ok(empty_timeout(started));
-        }
-        if Instant::now() >= startup_deadline {
-            return Err(TerminalCapturedExecError::Process);
         }
         std::thread::sleep(Duration::from_millis(2));
     }
@@ -522,7 +527,10 @@ fn empty_timeout(started: Instant) -> TerminalExecResult {
 /// Returns a redacted error for malformed launch framing or native launch failure.
 #[doc(hidden)]
 pub fn run_terminal_captured_helper() -> Result<(), TerminalCapturedExecError> {
-    let deadline = Instant::now() + START_TIMEOUT;
+    let stamp =
+        std::env::var(CAPTURED_DEADLINE_ENV).map_err(|_| TerminalCapturedExecError::Invalid)?;
+    let deadline = decode_helper_deadline(&stamp, MAX_TERMINAL_EXEC_DURATION)
+        .map_err(|_| TerminalCapturedExecError::Invalid)?;
     let cancellation = CancellationToken::new();
     let input = std::io::stdin();
     let cwd = std::io::stderr();
@@ -563,6 +571,8 @@ pub fn run_terminal_captured_helper() -> Result<(), TerminalCapturedExecError> {
         )
         .stdin(Stdio::null())
         .stderr(Stdio::from(stderr));
+    crate::terminal_helper::check_deadline(deadline, &cancellation)
+        .map_err(|_| TerminalCapturedExecError::Process)?;
     Err({
         let _ = shell.exec();
         TerminalCapturedExecError::Process
@@ -673,6 +683,7 @@ fn receive_exec_descriptor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terminal_helper::START_TIMEOUT;
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::AtomicU64;
@@ -684,6 +695,25 @@ mod tests {
         harness: bool,
     }
     impl Fixture {
+        fn delayed(timeout: Duration) -> Self {
+            let mut fixture = Self::new(timeout);
+            fixture.executor.helper = Arc::new(
+                TerminalPtyHelper::new(
+                    std::env::current_exe().unwrap(),
+                    vec![
+                        "--exact".into(),
+                        "terminal_captured_exec::tests::captured_delayed_helper_child".into(),
+                        "--ignored".into(),
+                        "--nocapture".into(),
+                        "--quiet".into(),
+                    ],
+                )
+                .unwrap(),
+            );
+            fixture.harness = true;
+            fixture
+        }
+
         fn new(timeout: Duration) -> Self {
             let root = std::env::temp_dir().join(format!(
                 "mg-captured-{}-{}-{}",
@@ -808,6 +838,34 @@ mod tests {
         } else {
             125
         });
+    }
+
+    #[test]
+    #[ignore = "private delayed helper subprocess selected explicitly"]
+    fn captured_delayed_helper_child() {
+        // No subprocess is created during this delay: the parent owns and can
+        // terminate this exact helper before it accepts a frame or COMMIT.
+        std::thread::sleep(Duration::from_millis(2250));
+        captured_helper_child();
+    }
+
+    #[test]
+    fn captured_exec_configured_deadline_covers_delayed_helper_without_reset() {
+        let fixture = Fixture::delayed(Duration::from_secs(5));
+        let result = fixture.run("printf delayed; printf effect > effect");
+        assert_eq!(result.status, TerminalExecStatus::Exited { exit_code: 0 });
+        assert_eq!(fixture.stdout(&result), b"delayed");
+        assert!(result.duration >= Duration::from_secs(2));
+        assert_eq!(
+            std::fs::read(fixture.root.join("effect")).unwrap(),
+            b"effect"
+        );
+
+        let fixture = Fixture::delayed(Duration::from_millis(100));
+        let result = fixture.run("printf forbidden > forbidden");
+        assert_eq!(result.status, TerminalExecStatus::TimedOut {});
+        assert!(!fixture.root.join("forbidden").exists());
+        assert_eq!(fixture.executor.active.load(Ordering::Acquire), 0);
     }
 
     #[test]
