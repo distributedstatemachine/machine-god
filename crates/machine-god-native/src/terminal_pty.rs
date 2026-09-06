@@ -29,9 +29,10 @@ use crate::background_process::{
 };
 pub(crate) use crate::terminal_helper::TerminalPtyDimensions;
 use crate::terminal_helper::{
-    COMMIT, DescriptorIo, MAGIC, MAX_FRAME, READY, START_TIMEOUT, TerminalHelperError,
-    TerminalHelperErrorKind, read_gate, validate_program_arguments,
-    validate_pty_directory as validate_directory, write_gate,
+    COMMIT, DescriptorIo, MAGIC, MAX_FRAME, MAX_STARTUP_TIMEOUT, PTY_DEADLINE_ENV, READY,
+    START_TIMEOUT, TerminalHelperError, TerminalHelperErrorKind, check_deadline, monotonic_now,
+    read_gate, validate_program_arguments, validate_pty_directory as validate_directory,
+    write_gate,
 };
 #[cfg(test)]
 use crate::terminal_helper::{
@@ -63,6 +64,7 @@ impl Drop for PtyPermit {
 pub(crate) enum TerminalPtyErrorKind {
     InvalidRequest,
     Cancelled,
+    Timeout,
     Process,
     Closed,
     Capacity,
@@ -88,6 +90,7 @@ impl From<TerminalHelperError> for TerminalPtyError {
         error(match failure.kind {
             TerminalHelperErrorKind::InvalidRequest => TerminalPtyErrorKind::InvalidRequest,
             TerminalHelperErrorKind::Cancelled => TerminalPtyErrorKind::Cancelled,
+            TerminalHelperErrorKind::Timeout => TerminalPtyErrorKind::Timeout,
             TerminalHelperErrorKind::Process | TerminalHelperErrorKind::Protocol => {
                 TerminalPtyErrorKind::Process
             }
@@ -194,7 +197,29 @@ impl TerminalPtyHelper {
     }
 }
 
+fn encode_pty_deadline(deadline: Instant) -> Result<String, TerminalPtyError> {
+    // Sample the transferable clock first: translation must never grant time
+    // beyond the caller's original Instant deadline.
+    let monotonic = monotonic_now()?;
+    let remaining = deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| error(TerminalPtyErrorKind::Timeout))?;
+    if remaining > MAX_STARTUP_TIMEOUT {
+        return Err(error(TerminalPtyErrorKind::InvalidRequest));
+    }
+    let absolute = monotonic
+        .checked_add(remaining)
+        .ok_or_else(|| error(TerminalPtyErrorKind::InvalidRequest))?;
+    Ok(format!(
+        "{}:{}",
+        absolute.as_secs(),
+        absolute.subsec_nanos()
+    ))
+}
+
 pub(crate) struct PreparedTerminalPty {
+    deadline: Instant,
     process: Option<OwnedBackgroundProcess>,
     master: Option<OwnedFd>,
     gate: Option<UnixStream>,
@@ -207,9 +232,22 @@ impl PreparedTerminalPty {
         request: TerminalPtyRequest,
         cancellation: &CancellationToken,
     ) -> Result<Self, TerminalPtyError> {
-        if cancellation.is_cancelled() {
-            return Err(error(TerminalPtyErrorKind::Cancelled));
-        }
+        Self::prepare_until(
+            helper,
+            request,
+            Instant::now() + START_TIMEOUT,
+            cancellation,
+        )
+    }
+
+    pub(crate) fn prepare_until(
+        helper: &TerminalPtyHelper,
+        request: TerminalPtyRequest,
+        deadline: Instant,
+        cancellation: &CancellationToken,
+    ) -> Result<Self, TerminalPtyError> {
+        check_deadline(deadline, cancellation)?;
+        let helper_deadline = encode_pty_deadline(deadline)?;
         let permit = PtyPermit::acquire()?;
         let frame = request.frame()?;
         #[cfg(target_os = "macos")]
@@ -229,11 +267,11 @@ impl PreparedTerminalPty {
             .env("LANG", "C")
             .env("LC_ALL", "C")
             .env("MACHINE_GOD_PTY_HELPER", "1")
+            .env(PTY_DEADLINE_ENV, helper_deadline)
             .stdin(Stdio::from(OwnedFd::from(child_gate)))
             .stdout(Stdio::from(slave))
             .stderr(Stdio::from(request.cwd));
         guard.spawn(&mut command).map_err(process_error)?;
-        let deadline = Instant::now() + START_TIMEOUT;
         write_gate(&mut gate, &frame, deadline, cancellation)?;
         let mut ready = [0];
         read_gate(&mut gate, &mut ready, deadline, cancellation)?;
@@ -249,7 +287,9 @@ impl PreparedTerminalPty {
             )?;
         }
         let process = guard.into_session().map_err(process_error)?;
+        check_deadline(deadline, cancellation)?;
         Ok(Self {
+            deadline,
             process: Some(process),
             master: Some(master),
             gate: Some(gate),
@@ -265,12 +305,7 @@ impl PreparedTerminalPty {
             .gate
             .as_mut()
             .ok_or_else(|| error(TerminalPtyErrorKind::Closed))?;
-        write_gate(
-            gate,
-            &[COMMIT],
-            Instant::now() + START_TIMEOUT,
-            cancellation,
-        )?;
+        write_gate(gate, &[COMMIT], self.deadline, cancellation)?;
         // Cancellation cannot relabel or discard the committed process.
         let mut process = self
             .process

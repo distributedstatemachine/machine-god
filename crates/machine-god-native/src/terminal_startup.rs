@@ -67,6 +67,7 @@ impl From<TerminalHelperError> for TerminalStartupError {
         match error.kind {
             TerminalHelperErrorKind::InvalidRequest => Self::InvalidRequest,
             TerminalHelperErrorKind::Cancelled => Self::Cancelled,
+            TerminalHelperErrorKind::Timeout => Self::Timeout,
             TerminalHelperErrorKind::Protocol => Self::Protocol,
             TerminalHelperErrorKind::Process => Self::Process,
         }
@@ -94,7 +95,7 @@ pub(crate) struct PreparedTerminalStartup {
     pty: PreparedTerminalPty,
     nonce: [u8; 32],
     has_command: bool,
-    timeout: Duration,
+    deadline: Instant,
     listener: UnixListener,
     artifacts: StartupArtifacts,
 }
@@ -104,6 +105,7 @@ impl PreparedTerminalStartup {
         request: TerminalStartupRequest,
         cancellation: &CancellationToken,
     ) -> Result<Self> {
+        let started = Instant::now();
         if cancellation.is_cancelled() {
             return Err(TerminalStartupError::Cancelled);
         }
@@ -117,6 +119,7 @@ impl PreparedTerminalStartup {
         {
             return Err(TerminalStartupError::InvalidRequest);
         }
+        let deadline = started + request.timeout;
         let mut random = [0; 16];
         getrandom::fill(&mut random).map_err(process_error)?;
         let mut nonce = [0; 32];
@@ -168,20 +171,23 @@ impl PreparedTerminalStartup {
         }
         // All semantic, directory, source, argv and environment checks precede
         // artifact publication. No shell runs before the explicit PTY COMMIT.
+        crate::terminal_helper::check_deadline(deadline, cancellation)?;
         let listener = artifacts.publish(&bootstrap)?;
-        let pty =
-            PreparedTerminalPty::prepare(helper, pty_request, cancellation).map_err(|error| {
-                if error.kind() == crate::terminal_pty::TerminalPtyErrorKind::Cancelled {
-                    TerminalStartupError::Cancelled
-                } else {
-                    process_error(error)
-                }
-            })?;
+        let pty = PreparedTerminalPty::prepare_until(helper, pty_request, deadline, cancellation)
+            .map_err(|error| {
+            if error.kind() == crate::terminal_pty::TerminalPtyErrorKind::Cancelled {
+                TerminalStartupError::Cancelled
+            } else if error.kind() == crate::terminal_pty::TerminalPtyErrorKind::Timeout {
+                TerminalStartupError::Timeout
+            } else {
+                process_error(error)
+            }
+        })?;
         Ok(Self {
             pty,
             nonce,
             has_command,
-            timeout: request.timeout,
+            deadline,
             listener,
             artifacts,
         })
@@ -194,6 +200,8 @@ impl PreparedTerminalStartup {
         let pty = self.pty.commit(cancellation).map_err(|error| {
             if error.kind() == crate::terminal_pty::TerminalPtyErrorKind::Cancelled {
                 TerminalStartupError::Cancelled
+            } else if error.kind() == crate::terminal_pty::TerminalPtyErrorKind::Timeout {
+                TerminalStartupError::Timeout
             } else {
                 process_error(error)
             }
@@ -219,7 +227,7 @@ impl PreparedTerminalStartup {
             bytes: [0; FRAME_BYTES],
             used: 0,
             ack_used: 0,
-            deadline: Instant::now() + self.timeout,
+            deadline: self.deadline,
             latch,
         };
         Ok((backend, control))
@@ -344,7 +352,7 @@ impl TerminalStartupControl {
         now: Instant,
         cancellation: &CancellationToken,
     ) -> Result<Option<TerminalStartupEvent>> {
-        self.check(now, cancellation)?;
+        self.check(now.max(Instant::now()), cancellation)?;
         let expected = match self.phase {
             Phase::Shell => b'R',
             Phase::Command => b'C',
@@ -444,6 +452,7 @@ impl TerminalStartupControl {
             return Err(TerminalStartupError::InvalidRequest);
         }
         for _ in 0..4 {
+            self.check(now.max(Instant::now()), cancellation)?;
             let write = self
                 .channel
                 .as_mut()
@@ -841,6 +850,204 @@ mod tests {
             .unwrap()
             .commit(&CancellationToken::new())
             .unwrap()
+    }
+    fn delayed_helper(cwd: &Directory) -> TerminalPtyHelper {
+        let helper = helper();
+        let mut arguments = vec![
+            "-c".into(),
+            "printf '%s' \"$$\" > \"$1\"; shift; sleep 2.2; exec \"$@\"".into(),
+            "startup-delay".into(),
+            cwd.0.join("helper-pid").into_os_string(),
+            helper.program().as_os_str().to_owned(),
+        ];
+        arguments.extend_from_slice(helper.arguments());
+        TerminalPtyHelper::new("/bin/sh".into(), arguments).unwrap()
+    }
+    #[test]
+    fn delayed_helper_within_requested_startup_budget_executes_and_reaps() {
+        let cwd = Directory::new();
+        let artifacts = Directory::new();
+        let prepared = PreparedTerminalStartup::prepare(
+            &delayed_helper(&cwd),
+            request(
+                &cwd,
+                &artifacts,
+                "/bin/bash",
+                true,
+                Some("printf command > executed".into()),
+            ),
+            &CancellationToken::new(),
+        )
+        .unwrap();
+        let (mut backend, mut control) = prepared.commit(&CancellationToken::new()).unwrap();
+        let mut output = Vec::new();
+        event(
+            &mut backend,
+            &mut control,
+            TerminalStartupEvent::ShellReady,
+            &mut output,
+        );
+        shell_ack(&mut backend, &mut control);
+        event(
+            &mut backend,
+            &mut control,
+            TerminalStartupEvent::CommandStarted,
+            &mut output,
+        );
+        assert!(
+            control
+                .release_command(Instant::now(), &CancellationToken::new())
+                .unwrap()
+        );
+        finish(&mut backend, 0, &mut output);
+        assert_eq!(
+            std::fs::read_to_string(cwd.0.join("executed")).unwrap(),
+            "command"
+        );
+        assert_eq!(std::fs::read_dir(&artifacts.0).unwrap().count(), 0);
+    }
+    #[test]
+    fn short_prepare_budget_is_timeout_and_collects_delayed_helper() {
+        let cwd = Directory::new();
+        let artifacts = Directory::new();
+        let mut request = request(
+            &cwd,
+            &artifacts,
+            "/bin/bash",
+            true,
+            Some("printf BAD > executed".into()),
+        );
+        request.timeout = Duration::from_secs(1);
+        assert!(matches!(
+            PreparedTerminalStartup::prepare(
+                &delayed_helper(&cwd),
+                request,
+                &CancellationToken::new()
+            ),
+            Err(TerminalStartupError::Timeout)
+        ));
+        let pid = std::fs::read_to_string(cwd.0.join("helper-pid"))
+            .unwrap()
+            .parse::<i32>()
+            .unwrap();
+        assert_eq!(
+            rustix::process::test_kill_process(rustix::process::Pid::from_raw(pid).unwrap()),
+            Err(rustix::io::Errno::SRCH)
+        );
+        assert!(!cwd.0.join("executed").exists());
+        assert_eq!(std::fs::read_dir(&artifacts.0).unwrap().count(), 0);
+    }
+    #[test]
+    fn owner_pause_before_commit_uses_remaining_original_budget() {
+        let cwd = Directory::new();
+        let artifacts = Directory::new();
+        let prepared = PreparedTerminalStartup::prepare(
+            &helper(),
+            request(
+                &cwd,
+                &artifacts,
+                "/bin/bash",
+                true,
+                Some("printf command > executed".into()),
+            ),
+            &CancellationToken::new(),
+        )
+        .unwrap();
+        let deadline = prepared.deadline;
+        std::thread::sleep(Duration::from_millis(2200));
+        let (mut backend, mut control) = prepared.commit(&CancellationToken::new()).unwrap();
+        assert_eq!(control.deadline, deadline);
+        let mut output = Vec::new();
+        event(
+            &mut backend,
+            &mut control,
+            TerminalStartupEvent::ShellReady,
+            &mut output,
+        );
+        shell_ack(&mut backend, &mut control);
+        event(
+            &mut backend,
+            &mut control,
+            TerminalStartupEvent::CommandStarted,
+            &mut output,
+        );
+        assert!(
+            control
+                .release_command(Instant::now(), &CancellationToken::new())
+                .unwrap()
+        );
+        finish(&mut backend, 0, &mut output);
+        assert_eq!(
+            std::fs::read_to_string(cwd.0.join("executed")).unwrap(),
+            "command"
+        );
+        assert_eq!(std::fs::read_dir(&artifacts.0).unwrap().count(), 0);
+    }
+    #[test]
+    fn expired_commit_never_refreshes_budget_and_cancellation_wins() {
+        for cancel in [false, true] {
+            let cwd = Directory::new();
+            let artifacts = Directory::new();
+            let mut request = request(
+                &cwd,
+                &artifacts,
+                "/bin/bash",
+                true,
+                Some("printf BAD > executed".into()),
+            );
+            request.timeout = Duration::from_millis(2500);
+            let prepared =
+                PreparedTerminalStartup::prepare(&helper(), request, &CancellationToken::new())
+                    .unwrap();
+            std::thread::sleep(
+                prepared.deadline.saturating_duration_since(Instant::now())
+                    + Duration::from_millis(10),
+            );
+            let cancellation = CancellationToken::new();
+            if cancel {
+                cancellation.cancel();
+            }
+            assert!(
+                matches!(prepared.commit(&cancellation), Err(error) if error == if cancel { TerminalStartupError::Cancelled } else { TerminalStartupError::Timeout })
+            );
+            assert!(!cwd.0.join("executed").exists());
+            assert_eq!(std::fs::read_dir(&artifacts.0).unwrap().count(), 0);
+        }
+    }
+    #[test]
+    fn stale_owner_timestamp_cannot_acknowledge_after_actual_deadline() {
+        let cwd = Directory::new();
+        let artifacts = Directory::new();
+        let (mut backend, mut control) = start(request(
+            &cwd,
+            &artifacts,
+            "/bin/bash",
+            true,
+            Some("printf BAD > executed".into()),
+        ));
+        let mut output = Vec::new();
+        event(
+            &mut backend,
+            &mut control,
+            TerminalStartupEvent::ShellReady,
+            &mut output,
+        );
+        shell_ack(&mut backend, &mut control);
+        event(
+            &mut backend,
+            &mut control,
+            TerminalStartupEvent::CommandStarted,
+            &mut output,
+        );
+        let before_persistence = Instant::now();
+        control.deadline = Instant::now();
+        assert_eq!(
+            control.release_command(before_persistence, &CancellationToken::new()),
+            Err(TerminalStartupError::Timeout)
+        );
+        backend.close(true, &mut |_| {}).unwrap();
+        assert!(!cwd.0.join("executed").exists());
+        assert_eq!(std::fs::read_dir(&artifacts.0).unwrap().count(), 0);
     }
     fn event(
         backend: &mut TerminalStartupBackend,

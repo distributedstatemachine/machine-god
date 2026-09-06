@@ -39,6 +39,7 @@ pub struct TerminalHelperError {
 pub(crate) enum TerminalHelperErrorKind {
     InvalidRequest,
     Cancelled,
+    Timeout,
     Process,
     Protocol,
 }
@@ -75,6 +76,54 @@ pub(crate) const MAX_FRAME: usize = MAGIC.len()
     + MAX_BACKGROUND_PROCESS_ENVIRONMENT_BYTES
     + 4 * (3 + MAX_ARGUMENTS + 2 * MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES);
 pub(crate) const START_TIMEOUT: Duration = Duration::from_secs(2);
+pub(crate) const PTY_DEADLINE_ENV: &str = "MACHINE_GOD_PTY_DEADLINE";
+
+pub(crate) fn monotonic_now() -> Result<Duration, TerminalHelperError> {
+    let time = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
+    Ok(Duration::new(
+        u64::try_from(time.tv_sec).map_err(process_error)?,
+        u32::try_from(time.tv_nsec).map_err(process_error)?,
+    ))
+}
+
+fn decode_pty_deadline(value: &str) -> Result<Instant, TerminalHelperError> {
+    let instant = Instant::now();
+    let monotonic = monotonic_now()?;
+    if value.len() > 30 {
+        return Err(error(TerminalHelperErrorKind::InvalidRequest));
+    }
+    let (seconds, nanos) = value
+        .split_once(':')
+        .ok_or_else(|| error(TerminalHelperErrorKind::InvalidRequest))?;
+    if seconds.is_empty()
+        || nanos.is_empty()
+        || !seconds
+            .bytes()
+            .chain(nanos.bytes())
+            .all(|byte| byte.is_ascii_digit())
+    {
+        return Err(error(TerminalHelperErrorKind::InvalidRequest));
+    }
+    let seconds = seconds
+        .parse::<u64>()
+        .map_err(|_| error(TerminalHelperErrorKind::InvalidRequest))?;
+    let nanos = nanos
+        .parse::<u32>()
+        .map_err(|_| error(TerminalHelperErrorKind::InvalidRequest))?;
+    if seconds > i64::MAX as u64 || nanos >= 1_000_000_000 {
+        return Err(error(TerminalHelperErrorKind::InvalidRequest));
+    }
+    let remaining = Duration::new(seconds, nanos)
+        .checked_sub(monotonic)
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| error(TerminalHelperErrorKind::Timeout))?;
+    if remaining > MAX_STARTUP_TIMEOUT {
+        return Err(error(TerminalHelperErrorKind::InvalidRequest));
+    }
+    instant
+        .checked_add(remaining)
+        .ok_or_else(|| error(TerminalHelperErrorKind::InvalidRequest))
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct TerminalPtyDimensions {
     pub(crate) rows: u16,
@@ -104,6 +153,13 @@ impl TerminalPtyDimensions {
 /// Returns a fixed failure for invalid descriptors, frames, cancellation or launch failure.
 #[doc(hidden)]
 pub fn run_terminal_pty_helper() -> Result<(), TerminalHelperError> {
+    let deadline = match std::env::var(PTY_DEADLINE_ENV) {
+        Ok(value) => decode_pty_deadline(&value)?,
+        Err(std::env::VarError::NotPresent) => Instant::now() + START_TIMEOUT,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(error(TerminalHelperErrorKind::InvalidRequest));
+        }
+    };
     let input = std::io::stdin();
     let output = std::io::stdout();
     let cwd = std::io::stderr();
@@ -111,7 +167,6 @@ pub fn run_terminal_pty_helper() -> Result<(), TerminalHelperError> {
     let flags = rustix::fs::fcntl_getfl(input.as_fd()).map_err(process_error)?;
     rustix::fs::fcntl_setfl(input.as_fd(), flags | OFlags::NONBLOCK).map_err(process_error)?;
     let cancellation = CancellationToken::new();
-    let deadline = Instant::now() + START_TIMEOUT;
     let mut io = DescriptorIo(input.as_fd());
     let frame = read_frame(&mut io, deadline, &cancellation)?;
     rustix::process::fchdir(&cwd).map_err(process_error)?;
@@ -300,10 +355,9 @@ pub(crate) fn write_gate(
     deadline: Instant,
     cancellation: &CancellationToken,
 ) -> Result<(), TerminalHelperError> {
-    for _ in 0..65536 {
-        if bytes.is_empty() {
-            return Ok(());
-        }
+    // Progress is bounded by the supplied frame; retries by its deadline.
+    // A fixed retry count would impose an unrelated ~131-second ceiling.
+    while !bytes.is_empty() {
         check_deadline(deadline, cancellation)?;
         match output.write(bytes) {
             Ok(0) => return Err(error(TerminalHelperErrorKind::Process)),
@@ -319,7 +373,7 @@ pub(crate) fn write_gate(
             Err(other) => return Err(process_error(other)),
         }
     }
-    Err(error(TerminalHelperErrorKind::Process))
+    Ok(())
 }
 pub(crate) fn read_gate(
     input: &mut impl Read,
@@ -327,10 +381,7 @@ pub(crate) fn read_gate(
     deadline: Instant,
     cancellation: &CancellationToken,
 ) -> Result<(), TerminalHelperError> {
-    for _ in 0..65536 {
-        if bytes.is_empty() {
-            return Ok(());
-        }
+    while !bytes.is_empty() {
         check_deadline(deadline, cancellation)?;
         match input.read(bytes) {
             Ok(0) => return Err(error(TerminalHelperErrorKind::Process)),
@@ -346,16 +397,16 @@ pub(crate) fn read_gate(
             Err(other) => return Err(process_error(other)),
         }
     }
-    Err(error(TerminalHelperErrorKind::Process))
+    Ok(())
 }
-fn check_deadline(
+pub(crate) fn check_deadline(
     deadline: Instant,
     cancellation: &CancellationToken,
 ) -> Result<(), TerminalHelperError> {
     if cancellation.is_cancelled() {
         Err(error(TerminalHelperErrorKind::Cancelled))
     } else if Instant::now() >= deadline {
-        Err(error(TerminalHelperErrorKind::Process))
+        Err(error(TerminalHelperErrorKind::Timeout))
     } else {
         Ok(())
     }
@@ -457,6 +508,52 @@ pub(crate) fn validate_pty_directory(fd: &impl AsFd) -> Result<(), TerminalHelpe
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn helper_deadline_metadata_is_bounded_and_fail_closed() {
+        for invalid in [
+            "",
+            "1",
+            ":1",
+            "1:",
+            "1:1000000000",
+            "-1:0",
+            "+1:0",
+            "1:2:3",
+            "18446744073709551615:0",
+        ] {
+            assert!(
+                matches!(decode_pty_deadline(invalid), Err(error) if error.kind == TerminalHelperErrorKind::InvalidRequest)
+            );
+        }
+        assert!(
+            matches!(decode_pty_deadline("0:0"), Err(error) if error.kind == TerminalHelperErrorKind::Timeout)
+        );
+        let future = monotonic_now().unwrap() + MAX_STARTUP_TIMEOUT + Duration::from_secs(1);
+        assert!(
+            matches!(decode_pty_deadline(&format!("{}:{}", future.as_secs(), future.subsec_nanos())), Err(error) if error.kind == TerminalHelperErrorKind::InvalidRequest)
+        );
+        let before = Instant::now();
+        let future = monotonic_now().unwrap() + Duration::from_secs(1);
+        let deadline =
+            decode_pty_deadline(&format!("{}:{}", future.as_secs(), future.subsec_nanos()))
+                .unwrap();
+        assert!(deadline > before);
+        assert!(deadline <= Instant::now() + Duration::from_secs(1));
+    }
+
+    #[test]
+    fn deadline_timeout_is_distinct_and_cancellation_has_precedence() {
+        let deadline = Instant::now();
+        let cancellation = CancellationToken::new();
+        assert!(
+            matches!(check_deadline(deadline, &cancellation), Err(error) if error.kind == TerminalHelperErrorKind::Timeout)
+        );
+        cancellation.cancel();
+        assert!(
+            matches!(check_deadline(deadline, &cancellation), Err(error) if error.kind == TerminalHelperErrorKind::Cancelled)
+        );
+    }
 
     #[test]
     fn malformed_helper_entry() {
