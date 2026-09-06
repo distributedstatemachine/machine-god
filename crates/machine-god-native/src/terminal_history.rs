@@ -332,6 +332,58 @@ impl TerminalHistory {
         self.journal.latest()
     }
 
+    pub(crate) fn earliest(&self) -> TerminalCursor {
+        self.journal.earliest()
+    }
+
+    /// No checkpoint bytes are loaded or serialized to expose these bounded
+    /// facts. The history owner has already validated screen usability.
+    pub(crate) fn screen_recovery(&self) -> Result<machine_god_core::TerminalScreenRecovery> {
+        if self.screen.is_none() {
+            return Ok(machine_god_core::TerminalScreenRecovery::Unavailable {
+                reason: self.unavailable,
+            });
+        }
+        Ok(match self.journal.checkpoint_descriptor()? {
+            Some(checkpoint) => machine_god_core::TerminalScreenRecovery::Available {
+                checkpoint: machine_god_core::TerminalCheckpointEnvelope {
+                    engine_schema_revision: 1,
+                    applied_cursor: checkpoint.source,
+                    payload_len: checkpoint.payload_len,
+                    checksum: checkpoint.checksum,
+                },
+            },
+            None => machine_god_core::TerminalScreenRecovery::Unavailable {
+                reason: if self.journal.checkpoint_status()
+                    == TerminalJournalCheckpointStatus::RetentionEvicted
+                {
+                    Unavailable::RetentionEvicted
+                } else {
+                    Unavailable::Missing
+                },
+            },
+        })
+    }
+
+    /// Re-anchor an already validated/replayed screen after raw segment
+    /// rotation. Also safe on recovered read-only history: this publishes only
+    /// the existing projection, never enables ingestion or native authority.
+    pub(crate) fn prepare_public_facts_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+    ) -> Result<()> {
+        if self.screen.is_some()
+            && self
+                .journal
+                .checkpoint_descriptor()?
+                .is_some_and(|checkpoint| checkpoint.source.segment() != self.latest().segment())
+        {
+            let bytes = encode_checkpoint(self.projection()?)?;
+            self.publish_checkpoint_with(persistence, &bytes)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn session_id(&self) -> &TerminalSessionId {
         self.journal.session_id()
     }
@@ -928,6 +980,54 @@ mod tests {
     }
     fn origin() -> TerminalCursor {
         TerminalCursor::new(1, 0).unwrap()
+    }
+
+    #[test]
+    fn public_checkpoint_reanchors_replay_without_recovering_live_authority() {
+        for recovered in [false, true] {
+            let fixture = Fixture::new(TerminalJournalLimits {
+                segment_bytes: 4096,
+                session_bytes: 512 * 1024,
+            });
+            let mut history = fixture.history();
+            history.append(&vec![b'a'; 4096]).unwrap();
+            history.append(b"ef").unwrap();
+            if recovered {
+                drop(history);
+                history = TerminalHistory::recover(fixture.open()).unwrap();
+            }
+            let machine_god_core::TerminalScreenRecovery::Available { checkpoint } =
+                history.screen_recovery().unwrap()
+            else {
+                panic!("available checkpoint")
+            };
+            assert_ne!(
+                checkpoint.applied_cursor.segment(),
+                history.latest().segment()
+            );
+            let expected_screen = history.screen().unwrap();
+            history
+                .prepare_public_facts_with(&mut TerminalTestPersistence)
+                .unwrap();
+            let machine_god_core::TerminalScreenRecovery::Available { checkpoint } =
+                history.screen_recovery().unwrap()
+            else {
+                panic!("available checkpoint")
+            };
+            assert_eq!(checkpoint.applied_cursor, history.latest());
+            assert_eq!(history.screen().unwrap(), expected_screen);
+            assert_eq!(history.require_live().is_err(), recovered);
+            let generation = checkpoint.checksum;
+            history
+                .prepare_public_facts_with(&mut TerminalTestPersistence)
+                .unwrap();
+            let machine_god_core::TerminalScreenRecovery::Available { checkpoint } =
+                history.screen_recovery().unwrap()
+            else {
+                panic!("available checkpoint")
+            };
+            assert_eq!(checkpoint.checksum, generation);
+        }
     }
     fn unavailable(history: &TerminalHistory, reason: Unavailable) {
         assert_eq!(

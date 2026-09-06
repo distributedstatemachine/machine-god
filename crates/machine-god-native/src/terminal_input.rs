@@ -6,7 +6,8 @@ use std::fmt;
 use std::num::NonZeroU64;
 
 use machine_god_core::{
-    TerminalNamedKey, TerminalWriteLeaseIntent, TerminalWritePayload, TerminalWriteRequest,
+    TerminalActorRole, TerminalNamedKey, TerminalWriteLeaseIntent, TerminalWritePayload,
+    TerminalWriteRequest,
 };
 
 use crate::background_input::{
@@ -78,12 +79,12 @@ struct Frame {
     operation: Option<NonZeroU64>,
 }
 struct SavedReceipt {
-    writer: TerminalWriterId,
+    writer: (TerminalActorRole, TerminalWriterId),
     receipt: TerminalInputReceipt,
 }
 
 pub(crate) struct TerminalInput {
-    lease: Option<TerminalWriterId>,
+    lease: Option<(TerminalActorRole, TerminalWriterId)>,
     quiesced: bool,
     next_operation: Option<NonZeroU64>,
     pending_operation: Option<NonZeroU64>,
@@ -112,12 +113,25 @@ impl TerminalInput {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn submit(
         &mut self,
         writer: TerminalWriterId,
         request: &TerminalWriteRequest,
         cancelled: bool,
     ) -> Result<TerminalInputReceipt> {
+        self.submit_with_actor(TerminalActorRole::Agent, writer, request, cancelled)
+    }
+
+    /// Validate before the session publishes a lease transition. No transport
+    /// calls, payload allocation, or authority mutation occur here.
+    pub(crate) fn check_submit(
+        &self,
+        actor: TerminalActorRole,
+        writer: TerminalWriterId,
+        request: &TerminalWriteRequest,
+        cancelled: bool,
+    ) -> Result<()> {
         request
             .validate()
             .map_err(|_| TerminalInputError::Invalid)?;
@@ -127,6 +141,38 @@ impl TerminalInput {
         if self.quiesced {
             return Err(TerminalInputError::Closed);
         }
+        let writer = (actor, writer);
+        match request.lease {
+            TerminalWriteLeaseIntent::Acquire => self.check_holder(writer)?,
+            TerminalWriteLeaseIntent::Release => {
+                self.check_holder(writer)?;
+                if self.pending_operation.is_some() {
+                    return Err(TerminalInputError::Busy);
+                }
+            }
+            TerminalWriteLeaseIntent::Use => {
+                if self.lease != Some(writer) {
+                    return Err(TerminalInputError::LeaseConflict);
+                }
+                if self.pending_operation.is_some() {
+                    return Err(TerminalInputError::Busy);
+                }
+                self.next_operation.ok_or(TerminalInputError::Capacity)?;
+            }
+            TerminalWriteLeaseIntent::Revoke => {}
+        }
+        Ok(())
+    }
+
+    pub(crate) fn submit_with_actor(
+        &mut self,
+        actor: TerminalActorRole,
+        writer: TerminalWriterId,
+        request: &TerminalWriteRequest,
+        cancelled: bool,
+    ) -> Result<TerminalInputReceipt> {
+        self.check_submit(actor, writer, request, cancelled)?;
+        let writer = (actor, writer);
         match request.lease {
             TerminalWriteLeaseIntent::Revoke => self.quiesce(),
             TerminalWriteLeaseIntent::Acquire => {
@@ -264,11 +310,22 @@ impl TerminalInput {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn receipt(
         &self,
         writer: TerminalWriterId,
         operation: NonZeroU64,
     ) -> Result<TerminalInputReceipt> {
+        self.receipt_with_actor(TerminalActorRole::Agent, writer, operation)
+    }
+
+    pub(crate) fn receipt_with_actor(
+        &self,
+        actor: TerminalActorRole,
+        writer: TerminalWriterId,
+        operation: NonZeroU64,
+    ) -> Result<TerminalInputReceipt> {
+        let writer = (actor, writer);
         self.receipts
             .iter()
             .find(|saved| saved.writer == writer && saved.receipt.operation_id == Some(operation))
@@ -310,7 +367,30 @@ impl TerminalInput {
             saved.receipt.progress = TerminalInputProgress::Failed;
         }
     }
-    fn check_holder(&self, writer: TerminalWriterId) -> Result<()> {
+    pub(crate) fn check_cancel(
+        &self,
+        actor: TerminalActorRole,
+        writer: TerminalWriterId,
+    ) -> Result<()> {
+        if self
+            .lease
+            .is_some_and(|(role, holder)| role == actor && holder != writer)
+        {
+            Err(TerminalInputError::LeaseConflict)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Attention cancellation revokes only this claimant's authority. The
+    /// admitted payload, offset, and receipt remain owned by the transport.
+    pub(crate) fn cancel_claim(&mut self, actor: TerminalActorRole, writer: TerminalWriterId) {
+        if self.lease == Some((actor, writer)) {
+            self.lease = None;
+        }
+    }
+
+    fn check_holder(&self, writer: (TerminalActorRole, TerminalWriterId)) -> Result<()> {
         if self.lease.is_some_and(|holder| holder != writer) {
             Err(TerminalInputError::LeaseConflict)
         } else {

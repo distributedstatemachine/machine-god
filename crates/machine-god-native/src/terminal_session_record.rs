@@ -1,5 +1,7 @@
 //! Bounded, data-only session facts and monitor state at one committed cursor.
-//! These records never contain a PID, live input lease, or process capability.
+//! These records never contain a PID, writer identity, live input lease, or
+//! process capability. Attention is descriptive; recovery clears formerly
+//! active roles and never reconstructs a writer claim from these facts.
 
 use crate::terminal_monitor::{
     TerminalMonitorContext, TerminalMonitorError, TerminalMonitorSet, TerminalProcessOutcome,

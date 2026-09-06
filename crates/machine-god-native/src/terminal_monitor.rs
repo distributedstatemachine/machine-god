@@ -2619,6 +2619,22 @@ impl TerminalMonitorSet {
         self.monitors.len()
     }
 
+    /// Public summaries deliberately exclude matcher tails, probe definitions,
+    /// and private scheduling snapshots. At most 32 bounded identifiers.
+    pub(crate) fn summaries(&self) -> Vec<machine_god_core::TerminalMonitorSummary> {
+        self.monitors
+            .iter()
+            .map(|monitor| machine_god_core::TerminalMonitorSummary {
+                monitor_id: monitor.id.clone(),
+                state: monitor.runtime.state,
+            })
+            .collect()
+    }
+
+    pub(crate) fn next_event_id(&self) -> u64 {
+        self.next_event_id
+    }
+
     pub(crate) fn inspect(&self) -> Vec<TerminalMonitorView> {
         self.monitors
             .iter()

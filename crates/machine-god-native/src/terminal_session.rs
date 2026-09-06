@@ -24,10 +24,11 @@ use crate::terminal_session_record::{
     TerminalSessionFacts, TerminalSessionMetadata, TerminalSessionRecordError,
 };
 use machine_god_core::{
-    BackgroundOutputOwner, TerminalClosePolicy, TerminalCursor, TerminalDimensions,
-    TerminalEventQuery, TerminalGap, TerminalLifecycle, TerminalMonitorEvent,
+    BackgroundOutputOwner, TerminalActionResult, TerminalActorRole, TerminalAllowedControls,
+    TerminalAttention, TerminalAttentionState, TerminalClosePolicy, TerminalCursor,
+    TerminalDimensions, TerminalEventQuery, TerminalGap, TerminalLifecycle, TerminalMonitorEvent,
     TerminalMonitorOperation, TerminalScreen, TerminalSessionId, TerminalSignal,
-    TerminalWriteRequest,
+    TerminalWriteLease, TerminalWriteLeaseIntent, TerminalWriteRequest,
 };
 use std::fmt;
 use std::num::NonZeroU64;
@@ -35,6 +36,10 @@ use std::num::NonZeroU64;
 /// Implementations retain native authority, never reconstruct it from a PID.
 /// Read/write are nonblocking and bounded; Drop must release native ownership.
 pub(crate) trait TerminalSessionBackend {
+    /// Startup transports may disable echo until the trusted readiness marker.
+    fn restore_startup_echo(&mut self) -> std::result::Result<(), ()> {
+        Ok(())
+    }
     fn read(&mut self, buffer: &mut [u8]) -> std::result::Result<TerminalPtyRead, ()>;
     fn write(&mut self, bytes: &[u8]) -> std::result::Result<BackgroundInputReceipt, ()>;
     fn status(&mut self) -> std::result::Result<TerminalPtyStatus, ()>;
@@ -140,6 +145,8 @@ pub(crate) struct TerminalSession<B: TerminalSessionBackend> {
     owner: BackgroundOutputOwner,
     metadata: TerminalSessionMetadata,
     input: TerminalInput,
+    attention: TerminalAttentionState,
+    attention_writer: Option<(TerminalActorRole, TerminalWriterId)>,
     monitors: TerminalMonitorSet,
     lifecycle: TerminalLifecycle,
     outcome: Option<TerminalProcessOutcome>,
@@ -206,6 +213,8 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             owner,
             metadata,
             input: TerminalInput::new(),
+            attention: TerminalAttentionState::default(),
+            attention_writer: None,
             monitors,
             lifecycle: TerminalLifecycle::Starting,
             outcome: None,
@@ -237,6 +246,15 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             return Err(TerminalSessionError::InvalidState);
         }
         self.now_ms = now_ms;
+        if self
+            .backend
+            .as_mut()
+            .ok_or(TerminalSessionError::InvalidState)?
+            .restore_startup_echo()
+            .is_err()
+        {
+            return Err(self.failed_observation_with(persistence, TerminalSessionError::Native));
+        }
         self.lifecycle = TerminalLifecycle::Running;
         self.persist_with(persistence)
     }
@@ -340,6 +358,59 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         self.authorize(owner)?;
         self.facts()
     }
+
+    pub(crate) fn public_facts(
+        &self,
+        owner: &BackgroundOutputOwner,
+        actor: TerminalActorRole,
+        controls: &TerminalAllowedControls,
+    ) -> Result<machine_god_core::TerminalSessionFacts> {
+        self.authorize(owner)?;
+        let mut facts = project_facts(
+            &self.facts()?,
+            &self.history,
+            &self.monitors,
+            actor,
+            controls,
+        )?;
+        facts.next_actions.write &= !self.input.is_quiesced();
+        Ok(facts)
+    }
+
+    pub(crate) fn prepare_public_facts_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        owner: &BackgroundOutputOwner,
+    ) -> Result<()> {
+        self.authorize(owner)?;
+        self.history
+            .prepare_public_facts_with(persistence)
+            .map_err(|error| self.failed_observation_with(persistence, error.into()))
+    }
+
+    pub(crate) fn inspect_result_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        owner: &BackgroundOutputOwner,
+        actor: TerminalActorRole,
+        query: &TerminalEventQuery,
+        controls: &TerminalAllowedControls,
+    ) -> Result<TerminalActionResult> {
+        // Validate the bounded projection before an acknowledgement mutation.
+        self.authorize(owner)?;
+        query
+            .validate()
+            .map_err(|_| TerminalMonitorError::Invalid)?;
+        self.prepare_public_facts_with(persistence, owner)?;
+        self.public_facts(owner, actor, controls)?;
+        let events = self.events_with(persistence, owner, query)?;
+        project_inspect(
+            self.public_facts(owner, actor, controls)?,
+            &self.metadata,
+            &self.monitors,
+            events,
+        )
+    }
     pub(crate) fn physical_usage(
         &self,
         owner: &BackgroundOutputOwner,
@@ -424,9 +495,29 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         self.authorize(owner)?;
         Ok(self.history.screen()?)
     }
+    #[cfg(test)]
     pub(crate) fn write(
         &mut self,
         owner: &BackgroundOutputOwner,
+        writer: TerminalWriterId,
+        request: &TerminalWriteRequest,
+        cancelled: bool,
+    ) -> Result<TerminalInputReceipt> {
+        self.write_with(
+            &mut crate::terminal_profile::TerminalTestPersistence,
+            owner,
+            TerminalActorRole::Agent,
+            writer,
+            request,
+            cancelled,
+        )
+    }
+
+    pub(crate) fn write_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        owner: &BackgroundOutputOwner,
+        actor: TerminalActorRole,
         writer: TerminalWriterId,
         request: &TerminalWriteRequest,
         cancelled: bool,
@@ -435,39 +526,204 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         if self.lifecycle != TerminalLifecycle::Running {
             return Err(TerminalSessionError::InvalidState);
         }
-        request
-            .validate()
-            .map_err(|_| TerminalInputError::Invalid)?;
-        if cancelled {
-            return Err(TerminalInputError::Cancelled.into());
+        self.input.check_submit(actor, writer, request, cancelled)?;
+        if request.lease != TerminalWriteLeaseIntent::Revoke {
+            self.check_attention_writer(actor, writer)?;
         }
-        if self
+        let status = self
             .backend
             .as_mut()
             .ok_or(TerminalSessionError::InvalidState)?
-            .status()
-            .map_err(|()| TerminalSessionError::Native)?
-            != TerminalPtyStatus::Running
-        {
-            self.input.quiesce();
+            .status();
+        let status = status.map_err(|()| {
+            self.failed_observation_with(persistence, TerminalSessionError::Native)
+        })?;
+        if status != TerminalPtyStatus::Running {
+            self.clear_input_authority();
+            self.persist_with(persistence)?;
             return Err(TerminalSessionError::InvalidState);
         }
-        let receipt = self.input.submit(writer, request, cancelled)?;
+        match request.lease {
+            TerminalWriteLeaseIntent::Acquire => {
+                let attention = if actor == TerminalActorRole::Human {
+                    TerminalAttention::UserTakeover
+                } else {
+                    self.attention.attention()
+                };
+                let state = TerminalAttentionState::new(attention, actor_lease(actor))
+                    .map_err(|_| TerminalInputError::LeaseConflict)?;
+                let claimant = if actor == TerminalActorRole::Human {
+                    Some((actor, writer))
+                } else {
+                    self.attention_writer
+                };
+                self.publish_attention_with(persistence, state, claimant)?;
+            }
+            TerminalWriteLeaseIntent::Release => {
+                let state = self.attention.cancel(actor);
+                let claimant = self.remaining_attention_writer(actor);
+                self.publish_attention_with(persistence, state, claimant)?;
+            }
+            TerminalWriteLeaseIntent::Revoke => {
+                self.publish_attention_with(persistence, TerminalAttentionState::default(), None)?;
+            }
+            TerminalWriteLeaseIntent::Use => {}
+        }
+        let receipt = self
+            .input
+            .submit_with_actor(actor, writer, request, cancelled)?;
         if receipt.operation_id.is_some() {
             self.flush_input();
+            if self.input.is_quiesced() {
+                self.persist_with(persistence)?;
+            }
         }
         receipt.operation_id.map_or(Ok(receipt), |operation| {
-            Ok(self.input.receipt(writer, operation)?)
+            Ok(self.input.receipt_with_actor(actor, writer, operation)?)
         })
     }
+    #[cfg(test)]
     pub(crate) fn write_receipt(
         &self,
         owner: &BackgroundOutputOwner,
         writer: TerminalWriterId,
         operation: NonZeroU64,
     ) -> Result<TerminalInputReceipt> {
+        self.write_receipt_with_actor(owner, TerminalActorRole::Agent, writer, operation)
+    }
+
+    pub(crate) fn write_receipt_with_actor(
+        &self,
+        owner: &BackgroundOutputOwner,
+        actor: TerminalActorRole,
+        writer: TerminalWriterId,
+        operation: NonZeroU64,
+    ) -> Result<TerminalInputReceipt> {
         self.authorize(owner)?;
-        Ok(self.input.receipt(writer, operation)?)
+        Ok(self.input.receipt_with_actor(actor, writer, operation)?)
+    }
+
+    pub(crate) fn begin_attention_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        owner: &BackgroundOutputOwner,
+        actor: TerminalActorRole,
+        writer: TerminalWriterId,
+        now_ms: i64,
+    ) -> Result<TerminalAttentionState> {
+        self.authorize(owner)?;
+        self.check_time(now_ms)?;
+        if !matches!(
+            self.lifecycle,
+            TerminalLifecycle::Starting | TerminalLifecycle::Running
+        ) {
+            return Err(TerminalSessionError::InvalidState);
+        }
+        self.check_attention_writer(actor, writer)?;
+        self.input.check_cancel(actor, writer)?;
+        if actor == TerminalActorRole::Agent {
+            let state = TerminalAttentionState::new(
+                TerminalAttention::AgentWait,
+                self.attention.write_lease(),
+            )
+            .map_err(|_| TerminalInputError::LeaseConflict)?;
+            self.now_ms = now_ms;
+            self.publish_attention_with(persistence, state, Some((actor, writer)))?;
+        }
+        Ok(self.attention.clone())
+    }
+
+    pub(crate) fn cancel_attention_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        owner: &BackgroundOutputOwner,
+        actor: TerminalActorRole,
+        writer: TerminalWriterId,
+        now_ms: i64,
+    ) -> Result<TerminalAttentionState> {
+        self.finish_attention_with(persistence, owner, actor, writer, now_ms, true)
+    }
+
+    pub(crate) fn finish_attention_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        owner: &BackgroundOutputOwner,
+        actor: TerminalActorRole,
+        writer: TerminalWriterId,
+        now_ms: i64,
+        cancelled: bool,
+    ) -> Result<TerminalAttentionState> {
+        self.authorize(owner)?;
+        if let Some(error) = self.publication_error {
+            return Err(error);
+        }
+        self.check_time(now_ms)?;
+        self.check_attention_writer(actor, writer)?;
+        self.input.check_cancel(actor, writer)?;
+        let mut state = self.attention.clone();
+        if actor == TerminalActorRole::Agent && state.attention() == TerminalAttention::AgentWait {
+            state = TerminalAttentionState::new(TerminalAttention::Background, state.write_lease())
+                .map_err(|_| TerminalSessionError::InvalidState)?;
+        }
+        if cancelled {
+            state = state.cancel(actor);
+        }
+        self.now_ms = now_ms;
+        let claimant = if cancelled || actor == TerminalActorRole::Agent {
+            self.remaining_attention_writer(actor)
+        } else {
+            self.attention_writer
+        };
+        self.publish_attention_with(persistence, state, claimant)?;
+        if cancelled {
+            self.input.cancel_claim(actor, writer);
+        }
+        Ok(self.attention.clone())
+    }
+
+    fn check_attention_writer(
+        &self,
+        actor: TerminalActorRole,
+        writer: TerminalWriterId,
+    ) -> Result<()> {
+        if self
+            .attention_writer
+            .is_some_and(|(role, holder)| role == actor && holder != writer)
+        {
+            Err(TerminalInputError::LeaseConflict.into())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn remaining_attention_writer(
+        &self,
+        actor: TerminalActorRole,
+    ) -> Option<(TerminalActorRole, TerminalWriterId)> {
+        self.attention_writer.filter(|(role, _)| *role != actor)
+    }
+
+    fn publish_attention_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        state: TerminalAttentionState,
+        writer: Option<(TerminalActorRole, TerminalWriterId)>,
+    ) -> Result<()> {
+        if self.attention == state && self.attention_writer == writer {
+            return Ok(());
+        }
+        self.attention = state;
+        self.attention_writer = writer;
+        // Publication failure invokes the common loss path, clearing authority
+        // and retaining the backend solely for native cleanup. Never grant a
+        // lease after either precommit or committed-accounting failure.
+        self.persist_with(persistence)
+    }
+
+    fn clear_input_authority(&mut self) {
+        self.input.quiesce();
+        self.attention = TerminalAttentionState::default();
+        self.attention_writer = None;
     }
 
     /// One nonblocking write, one <=16 KiB read, then bounded monitor work.
@@ -794,7 +1050,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         error: TerminalSessionError,
     ) -> Result<()> {
         self.now_ms = self.now_ms.max(now_ms);
-        self.input.quiesce();
+        self.clear_input_authority();
         self.monitors.quiesce();
         self.monitor_notifications_incomplete = true;
         self.publication_error.get_or_insert(error);
@@ -829,7 +1085,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         force: bool,
         final_lifecycle: TerminalLifecycle,
     ) -> Result<()> {
-        self.input.quiesce();
+        self.clear_input_authority();
         let Some(backend) = self.backend.as_mut() else {
             if final_lifecycle == TerminalLifecycle::Closed {
                 self.lifecycle = TerminalLifecycle::Closed;
@@ -1086,6 +1342,14 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         )?;
         facts.monitor_notifications_incomplete = self.monitor_notifications_incomplete;
         facts.metadata = Some(self.metadata.clone());
+        facts.attention = if matches!(
+            self.lifecycle,
+            TerminalLifecycle::Starting | TerminalLifecycle::Running
+        ) {
+            self.attention.clone()
+        } else {
+            TerminalAttentionState::default()
+        };
         Ok(facts)
     }
     #[cfg(test)]
@@ -1149,7 +1413,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         if self.backend.is_some() {
             self.lose();
         } else {
-            self.input.quiesce();
+            self.clear_input_authority();
             self.monitors.quiesce();
         }
     }
@@ -1185,6 +1449,10 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         if let Some(backend) = &mut self.backend {
             self.input.flush(|bytes| backend.write(bytes));
         }
+        if self.input.is_quiesced() {
+            self.attention = TerminalAttentionState::default();
+            self.attention_writer = None;
+        }
     }
     fn step(&self, output: Vec<u8>, probes: Vec<TerminalProbeRequest>) -> TerminalSessionStep {
         TerminalSessionStep {
@@ -1196,19 +1464,25 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         }
     }
     fn cleanup_step(&mut self, output: Vec<u8>) -> TerminalSessionStep {
-        self.input.quiesce();
+        self.clear_input_authority();
         let mut step = self.step(output, Vec::new());
         step.cleanup_needed = true;
         step
     }
     fn lose(&mut self) {
-        self.input.quiesce();
+        self.clear_input_authority();
         self.lifecycle = TerminalLifecycle::Lost;
         self.outcome = None;
         if self.monitors.end_session(None, self.context()).is_err() {
             self.monitor_notifications_incomplete = true;
         }
         self.monitors.quiesce();
+    }
+}
+fn actor_lease(actor: TerminalActorRole) -> TerminalWriteLease {
+    match actor {
+        TerminalActorRole::Human => TerminalWriteLease::Human,
+        TerminalActorRole::Agent => TerminalWriteLease::Agent,
     }
 }
 fn require_closed_status(closed: TerminalPtyClose) -> std::result::Result<TerminalPtyClose, ()> {
@@ -1332,6 +1606,66 @@ impl TerminalRecoveredSession {
     pub(crate) fn facts(&self, owner: &BackgroundOutputOwner) -> Result<&TerminalSessionFacts> {
         self.authorize(owner)?;
         Ok(&self.facts)
+    }
+
+    pub(crate) fn public_facts(
+        &self,
+        owner: &BackgroundOutputOwner,
+        actor: TerminalActorRole,
+        controls: &TerminalAllowedControls,
+    ) -> Result<machine_god_core::TerminalSessionFacts> {
+        self.authorize(owner)?;
+        project_facts(&self.facts, &self.history, &self.monitors, actor, controls)
+    }
+
+    pub(crate) fn prepare_public_facts_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        owner: &BackgroundOutputOwner,
+    ) -> Result<()> {
+        self.authorize(owner)?;
+        self.facts
+            .metadata
+            .as_ref()
+            .ok_or(TerminalSessionError::InvalidState)?;
+        let result = self
+            .history
+            .prepare_public_facts_with(persistence)
+            .map_err(TerminalSessionError::from);
+        if let Err(error) = result {
+            self.publication_error = Some(error);
+        }
+        result
+    }
+
+    pub(crate) fn inspect_result_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        owner: &BackgroundOutputOwner,
+        actor: TerminalActorRole,
+        query: &TerminalEventQuery,
+        controls: &TerminalAllowedControls,
+    ) -> Result<TerminalActionResult> {
+        self.authorize(owner)?;
+        query
+            .validate()
+            .map_err(|_| TerminalMonitorError::Invalid)?;
+        self.facts
+            .metadata
+            .as_ref()
+            .ok_or(TerminalSessionError::InvalidState)?;
+        self.prepare_public_facts_with(persistence, owner)?;
+        self.public_facts(owner, actor, controls)?;
+        let events = self.events_with(persistence, owner, query)?;
+        project_inspect(
+            self.public_facts(owner, actor, controls)?,
+            self.facts
+                .metadata
+                .as_ref()
+                .ok_or(TerminalSessionError::InvalidState)?,
+            &self.monitors,
+            events,
+        )
     }
 
     pub(crate) fn checkpoint_reserve_bytes(&self) -> usize {
@@ -1486,6 +1820,92 @@ impl TerminalRecoveredSession {
     }
 }
 
+fn project_facts(
+    facts: &TerminalSessionFacts,
+    history: &TerminalHistory,
+    monitors: &TerminalMonitorSet,
+    actor: TerminalActorRole,
+    controls: &TerminalAllowedControls,
+) -> Result<machine_god_core::TerminalSessionFacts> {
+    let metadata = facts
+        .metadata
+        .as_ref()
+        .ok_or(TerminalSessionError::InvalidState)?;
+    let latest = history.latest();
+    let earliest = history.earliest();
+    let origin = TerminalCursor::new(1, 0).map_err(|_| TerminalSessionError::InvalidState)?;
+    let unread_range = if earliest < latest && earliest.segment() == latest.segment() {
+        Some(machine_god_core::TerminalRawRange {
+            start: earliest.clone(),
+            end: latest.clone(),
+        })
+    } else {
+        None
+    };
+    // Retained-prefix absence is an output fact, unlike observation_gap (which
+    // only describes monitor observation). No read is issued merely to inspect.
+    let raw_gap = if origin < earliest {
+        Some(TerminalGap::new(origin, earliest).map_err(|_| TerminalSessionError::InvalidState)?)
+    } else {
+        None
+    };
+    let live = matches!(
+        facts.context.lifecycle,
+        TerminalLifecycle::Starting | TerminalLifecycle::Running
+    );
+    let mut next_actions = controls.clone();
+    next_actions.write &= live
+        && (facts.attention.write_lease() == TerminalWriteLease::None
+            || facts.attention.write_lease() == actor_lease(actor));
+    next_actions.resize &= live;
+    next_actions.signal &= live;
+    next_actions.wait &= facts.context.lifecycle != TerminalLifecycle::Closed;
+    next_actions.close &= facts.context.lifecycle != TerminalLifecycle::Closed;
+    // Matches pinned lifecycle_controls; monitor operation authorization is
+    // separate from this descriptive next-action mask.
+    next_actions.monitor = false;
+    let projected = machine_god_core::TerminalSessionFacts {
+        session_id: facts.session_id.clone(),
+        lifecycle: facts.context.lifecycle,
+        attention: facts.attention.clone(),
+        backend: metadata.backend,
+        persistence: machine_god_core::TerminalPersistenceLevel::Durable,
+        output_cursor: latest,
+        unread_range,
+        raw_gap,
+        screen_recovery: history.screen_recovery()?,
+        active_monitor_count: u16::try_from(monitors.len())
+            .map_err(|_| TerminalSessionError::InvalidState)?,
+        next_actions,
+    };
+    projected
+        .validate()
+        .map_err(|_| TerminalSessionError::InvalidState)?;
+    Ok(projected)
+}
+
+fn project_inspect(
+    session: machine_god_core::TerminalSessionFacts,
+    metadata: &TerminalSessionMetadata,
+    monitors: &TerminalMonitorSet,
+    events: Vec<TerminalMonitorEvent>,
+) -> Result<TerminalActionResult> {
+    let result = TerminalActionResult::Inspect {
+        session,
+        shell: metadata.shell.clone(),
+        cwd: metadata.cwd.clone(),
+        command: metadata.command.clone(),
+        monitors: monitors.summaries(),
+        events,
+        event_gap_through: monitors.dropped_through_event_id(),
+        next_event_id: monitors.next_event_id(),
+    };
+    result
+        .validate()
+        .map_err(|_| TerminalSessionError::InvalidState)?;
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1534,6 +1954,8 @@ mod tests {
         signal_flushes: bool,
         signal_fails: bool,
         close_fails: bool,
+        echo_restore_fails: bool,
+        echo_restore_calls: usize,
     }
     impl Default for State {
         fn default() -> Self {
@@ -1552,11 +1974,22 @@ mod tests {
                 signal_flushes: false,
                 signal_fails: false,
                 close_fails: false,
+                echo_restore_fails: false,
+                echo_restore_calls: 0,
             }
         }
     }
     struct Backend(Arc<Mutex<State>>);
     impl TerminalSessionBackend for Backend {
+        fn restore_startup_echo(&mut self) -> std::result::Result<(), ()> {
+            let mut state = self.0.lock().unwrap();
+            state.echo_restore_calls += 1;
+            if state.echo_restore_fails {
+                Err(())
+            } else {
+                Ok(())
+            }
+        }
         fn read(&mut self, buffer: &mut [u8]) -> std::result::Result<TerminalPtyRead, ()> {
             let mut state = self.0.lock().unwrap();
             let Some(mut bytes) = state.output.pop_front() else {
@@ -1836,6 +2269,397 @@ mod tests {
 
     fn denied_error() -> TerminalSessionError {
         TerminalHistoryError::Profile(TerminalProfileError::ResourceLimit).into()
+    }
+
+    fn lease_request(lease: TerminalWriteLeaseIntent) -> TerminalWriteRequest {
+        TerminalWriteRequest {
+            lease,
+            payload: None,
+        }
+    }
+
+    #[test]
+    fn startup_echo_restoration_is_session_owned_and_failure_clears_authority() {
+        for fails in [false, true] {
+            let fixture = Fixture::new();
+            let mut session = fixture.session();
+            fixture.state.lock().unwrap().echo_restore_fails = fails;
+            let result = session.shell_ready(0);
+            assert_eq!(result.is_err(), fails);
+            assert_eq!(fixture.state.lock().unwrap().echo_restore_calls, 1);
+            assert_eq!(
+                session.lifecycle,
+                if fails {
+                    TerminalLifecycle::Lost
+                } else {
+                    TerminalLifecycle::Running
+                }
+            );
+            assert_eq!(session.attention, TerminalAttentionState::default());
+            assert!(session.owns_backend());
+            assert_eq!(session.input.is_quiesced(), fails);
+        }
+    }
+
+    #[test]
+    fn actor_bound_attention_cancellation_preserves_partial_payload_and_receipt() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        let mut persistence = Persistence::default();
+        let agent = TerminalActorRole::Agent;
+        let human = TerminalActorRole::Human;
+        let other = TerminalWriterId::new(NonZeroU64::new(2).unwrap());
+        acquire(&mut session);
+        fixture.state.lock().unwrap().write_limit = 2;
+        let receipt = session
+            .write_with(
+                &mut persistence,
+                &owner("owner"),
+                agent,
+                writer(),
+                &text("abcdef"),
+                false,
+            )
+            .unwrap();
+        let operation = receipt.operation_id.unwrap();
+        assert_eq!(receipt.accepted_bytes, 2);
+        session
+            .begin_attention_with(&mut persistence, &owner("owner"), agent, writer(), 1)
+            .unwrap();
+        assert!(matches!(
+            session.cancel_attention_with(&mut persistence, &owner("owner"), agent, other, 1),
+            Err(TerminalSessionError::Input(
+                TerminalInputError::LeaseConflict
+            ))
+        ));
+        assert!(matches!(
+            session.write_receipt_with_actor(&owner("owner"), human, writer(), operation),
+            Err(TerminalSessionError::Input(TerminalInputError::NotFound))
+        ));
+        session
+            .cancel_attention_with(&mut persistence, &owner("owner"), human, writer(), 1)
+            .unwrap();
+        assert_eq!(
+            session
+                .inspect(&owner("owner"))
+                .unwrap()
+                .attention
+                .attention(),
+            TerminalAttention::AgentWait
+        );
+        session
+            .cancel_attention_with(&mut persistence, &owner("owner"), agent, writer(), 2)
+            .unwrap();
+        assert_eq!(session.attention, TerminalAttentionState::default());
+        assert_eq!(session.lifecycle, TerminalLifecycle::Running);
+        session
+            .write_with(
+                &mut persistence,
+                &owner("owner"),
+                human,
+                other,
+                &lease_request(TerminalWriteLeaseIntent::Acquire),
+                false,
+            )
+            .unwrap();
+        assert!(matches!(
+            session.write_with(
+                &mut persistence,
+                &owner("owner"),
+                human,
+                other,
+                &text("X"),
+                false
+            ),
+            Err(TerminalSessionError::Input(TerminalInputError::Busy))
+        ));
+        fixture.state.lock().unwrap().write_limit = usize::MAX;
+        session.pump(3).unwrap();
+        assert_eq!(fixture.state.lock().unwrap().writes, b"abcdef");
+        assert_eq!(fixture.state.lock().unwrap().closes, 0);
+        let finished = session
+            .write_receipt_with_actor(&owner("owner"), agent, writer(), operation)
+            .unwrap();
+        assert_eq!(finished.accepted_bytes, 6);
+        assert_eq!(finished.progress, TerminalInputProgress::Complete);
+        assert_eq!(
+            session
+                .inspect(&owner("owner"))
+                .unwrap()
+                .attention
+                .attention(),
+            TerminalAttention::UserTakeover
+        );
+        session
+            .close(&owner("owner"), TerminalClosePolicy::Force, 4)
+            .unwrap();
+        assert_eq!(session.attention, TerminalAttentionState::default());
+    }
+
+    #[test]
+    fn attention_is_durable_role_scoped_and_never_recovers_authority() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        let mut persistence = Persistence::default();
+        let agent = TerminalActorRole::Agent;
+        let human = TerminalActorRole::Human;
+        session
+            .write_with(
+                &mut persistence,
+                &owner("owner"),
+                human,
+                writer(),
+                &lease_request(TerminalWriteLeaseIntent::Acquire),
+                false,
+            )
+            .unwrap();
+        assert!(matches!(
+            session.write_with(
+                &mut persistence,
+                &owner("owner"),
+                agent,
+                writer(),
+                &lease_request(TerminalWriteLeaseIntent::Acquire),
+                false
+            ),
+            Err(TerminalSessionError::Input(
+                TerminalInputError::LeaseConflict
+            ))
+        ));
+        assert!(matches!(
+            session.begin_attention_with(&mut persistence, &owner("owner"), agent, writer(), 0),
+            Err(TerminalSessionError::Input(
+                TerminalInputError::LeaseConflict
+            ))
+        ));
+        session
+            .finish_attention_with(&mut persistence, &owner("owner"), human, writer(), 0, false)
+            .unwrap();
+        assert_eq!(session.attention_writer, Some((human, writer())));
+        session.pump(1).unwrap();
+        let state = session.history.load_state().unwrap().unwrap();
+        let (decoded, _) =
+            TerminalSessionFacts::decode(&state.bytes, &id(), &state.source).unwrap();
+        assert_eq!(
+            decoded.attention.attention(),
+            TerminalAttention::UserTakeover
+        );
+        drop(session);
+        let recovered =
+            TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 2).unwrap();
+        assert_eq!(
+            recovered.facts(&owner("owner")).unwrap().attention,
+            TerminalAttentionState::default()
+        );
+        assert_eq!(
+            recovered.facts(&owner("owner")).unwrap().context.lifecycle,
+            TerminalLifecycle::Lost
+        );
+    }
+
+    #[test]
+    fn normal_wait_finish_keeps_lease_but_revoke_quiesces_pending_input() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        acquire(&mut session);
+        let mut persistence = Persistence::default();
+        session
+            .begin_attention_with(
+                &mut persistence,
+                &owner("owner"),
+                TerminalActorRole::Agent,
+                writer(),
+                1,
+            )
+            .unwrap();
+        session
+            .finish_attention_with(
+                &mut persistence,
+                &owner("owner"),
+                TerminalActorRole::Agent,
+                writer(),
+                2,
+                false,
+            )
+            .unwrap();
+        assert_eq!(session.attention.attention(), TerminalAttention::Background);
+        assert_eq!(session.attention.write_lease(), TerminalWriteLease::Agent);
+        fixture.state.lock().unwrap().write_limit = 1;
+        let receipt = session
+            .write(&owner("owner"), writer(), &text("abc"), false)
+            .unwrap();
+        session
+            .write_with(
+                &mut persistence,
+                &owner("owner"),
+                TerminalActorRole::Human,
+                writer(),
+                &lease_request(TerminalWriteLeaseIntent::Revoke),
+                false,
+            )
+            .unwrap();
+        assert_eq!(session.attention, TerminalAttentionState::default());
+        assert!(session.input.is_quiesced());
+        assert_eq!(session.lifecycle, TerminalLifecycle::Running);
+        let receipt = session
+            .write_receipt(&owner("owner"), writer(), receipt.operation_id.unwrap())
+            .unwrap();
+        assert_eq!(receipt.accepted_bytes, 1);
+        assert_eq!(receipt.progress, TerminalInputProgress::Closed);
+    }
+
+    #[test]
+    fn attention_publication_failure_never_grants_input_or_drops_accepted_count() {
+        for accounting in [false, true] {
+            let fixture = Fixture::new();
+            let mut session = fixture.session();
+            session.shell_ready(0).unwrap();
+            acquire(&mut session);
+            fixture.state.lock().unwrap().write_limit = 1;
+            let receipt = session
+                .write(&owner("owner"), writer(), &text("abc"), false)
+                .unwrap();
+            let mut persistence = Persistence {
+                denied: !accounting,
+                fail_accounting: accounting.then_some("state"),
+                ..Persistence::default()
+            };
+            assert!(
+                session
+                    .cancel_attention_with(
+                        &mut persistence,
+                        &owner("owner"),
+                        TerminalActorRole::Agent,
+                        writer(),
+                        1
+                    )
+                    .is_err()
+            );
+            assert_eq!(session.attention, TerminalAttentionState::default());
+            assert_eq!(session.lifecycle, TerminalLifecycle::Lost);
+            assert!(session.input.is_quiesced());
+            assert!(session.owns_backend());
+            let receipt = session
+                .write_receipt(&owner("owner"), writer(), receipt.operation_id.unwrap())
+                .unwrap();
+            assert_eq!(receipt.accepted_bytes, 1);
+            assert_eq!(fixture.state.lock().unwrap().closes, 0);
+        }
+    }
+
+    #[test]
+    fn wrong_incarnation_cannot_publish_attention_or_inspect_events() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        let mut persistence = Persistence::default();
+        assert!(matches!(
+            session.begin_attention_with(
+                &mut persistence,
+                &owner("replacement"),
+                TerminalActorRole::Agent,
+                writer(),
+                0
+            ),
+            Err(TerminalSessionError::NotFound)
+        ));
+        assert!(matches!(
+            session.inspect_result_with(
+                &mut persistence,
+                &owner("replacement"),
+                TerminalActorRole::Agent,
+                &query(),
+                &TerminalAllowedControls::default()
+            ),
+            Err(TerminalSessionError::NotFound)
+        ));
+        assert!(persistence.calls.is_empty());
+        assert_eq!(fixture.state.lock().unwrap().writes, b"");
+    }
+
+    #[test]
+    fn bounded_public_projection_preserves_metadata_monitors_and_event_continuation() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        let monitor_id = add(
+            &mut session,
+            Condition::OutputContains {
+                pattern: "ready".into(),
+            },
+        );
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"ready".to_vec());
+        session.pump(1).unwrap();
+        let mut persistence = Persistence::default();
+        let controls = TerminalAllowedControls {
+            read: true,
+            write: true,
+            inspect: true,
+            wait: true,
+            ..TerminalAllowedControls::default()
+        };
+        let TerminalActionResult::Inspect {
+            session: facts,
+            monitors,
+            events,
+            shell,
+            cwd,
+            next_event_id,
+            ..
+        } = session
+            .inspect_result_with(
+                &mut persistence,
+                &owner("owner"),
+                TerminalActorRole::Agent,
+                &query(),
+                &controls,
+            )
+            .unwrap()
+        else {
+            panic!("inspect variant")
+        };
+        assert_eq!(facts.active_monitor_count, 1);
+        assert_eq!(monitors[0].monitor_id, monitor_id);
+        assert_eq!(shell, session.metadata.shell);
+        assert_eq!(cwd, session.metadata.cwd);
+        assert_eq!(next_event_id, events.last().unwrap().event_id + 1);
+        assert!(facts.raw_gap.is_none());
+        assert!(facts.unread_range.is_some());
+        assert!(facts.next_actions.write);
+        assert!(matches!(
+            facts.screen_recovery,
+            machine_god_core::TerminalScreenRecovery::Available { .. }
+        ));
+        session
+            .close(&owner("owner"), TerminalClosePolicy::Force, 2)
+            .unwrap();
+        drop(session);
+        let mut recovered =
+            TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 2).unwrap();
+        let result = recovered
+            .inspect_result_with(
+                &mut persistence,
+                &owner("owner"),
+                TerminalActorRole::Human,
+                &query(),
+                &controls,
+            )
+            .unwrap();
+        let TerminalActionResult::Inspect { session: facts, .. } = result else {
+            panic!("inspect variant")
+        };
+        assert!(!facts.next_actions.write);
+        assert!(!facts.next_actions.wait);
+        assert!(facts.next_actions.read);
+        assert_eq!(facts.attention, TerminalAttentionState::default());
     }
 
     #[test]
