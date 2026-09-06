@@ -158,6 +158,8 @@ pub(crate) struct TerminalProbeEvidence {
 pub(crate) struct TerminalMonitorMutation {
     pub monitor_id: TerminalMonitorId,
     pub removed: bool,
+    /// Exact post-mutation generation, or the retired generation for removal.
+    pub generation: u64,
 }
 
 /// Bounded observation-only projection. It contains no probe approval or
@@ -357,10 +359,12 @@ impl TerminalMonitorSet {
                 let id = stable_id(self.next_monitor_id)?;
                 let monitor = Monitor::new(id.clone(), definition, now, activation)?;
                 self.next_monitor_id = increment(self.next_monitor_id)?;
+                let generation = monitor.runtime.generation;
                 self.monitors.push(monitor);
                 Ok(TerminalMonitorMutation {
                     monitor_id: id,
                     removed: false,
+                    generation,
                 })
             }
             Operation::Update {
@@ -376,6 +380,7 @@ impl TerminalMonitorSet {
                 Ok(TerminalMonitorMutation {
                     monitor_id,
                     removed: false,
+                    generation,
                 })
             }
             Operation::Pause { monitor_id } => {
@@ -392,6 +397,7 @@ impl TerminalMonitorSet {
                 Ok(TerminalMonitorMutation {
                     monitor_id,
                     removed: false,
+                    generation: self.monitors[index].runtime.generation,
                 })
             }
             Operation::Resume { monitor_id } => {
@@ -414,16 +420,18 @@ impl TerminalMonitorSet {
                 Ok(TerminalMonitorMutation {
                     monitor_id,
                     removed: false,
+                    generation: self.monitors[index].runtime.generation,
                 })
             }
             Operation::Remove { monitor_id } => {
                 require_empty_activation(&activation)?;
                 let index = self.index(&monitor_id)?;
                 self.state_event(index, Reason::Removed)?;
-                self.monitors.remove(index);
+                let removed = self.monitors.remove(index);
                 Ok(TerminalMonitorMutation {
                     monitor_id,
                     removed: true,
+                    generation: removed.runtime.generation,
                 })
             }
         }
@@ -869,6 +877,49 @@ mod tests {
     fn set() -> TerminalMonitorSet {
         TerminalMonitorSet::new(TerminalSessionId::new("session-test").unwrap(), context(0))
             .unwrap()
+    }
+    #[test]
+    fn mutation_receipts_identify_exact_live_and_retired_generation() {
+        let mut set = set();
+        let added = set
+            .apply(
+                Operation::Add {
+                    definition: definition(tcp()),
+                },
+                context(0),
+            )
+            .unwrap();
+        assert_eq!(added.generation, 1);
+        let id = added.monitor_id;
+        for (operation, generation, removed) in [
+            (
+                Operation::Update {
+                    monitor_id: id.clone(),
+                    definition: definition(tcp()),
+                },
+                2,
+                false,
+            ),
+            (
+                Operation::Pause {
+                    monitor_id: id.clone(),
+                },
+                3,
+                false,
+            ),
+            (
+                Operation::Resume {
+                    monitor_id: id.clone(),
+                },
+                4,
+                false,
+            ),
+            (Operation::Remove { monitor_id: id }, 4, true),
+        ] {
+            let receipt = set.apply(operation, context(0)).unwrap();
+            assert_eq!(receipt.generation, generation);
+            assert_eq!(receipt.removed, removed);
+        }
     }
     fn definition(condition: Condition) -> Definition {
         let check_schedule = condition

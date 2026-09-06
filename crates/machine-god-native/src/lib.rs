@@ -91,6 +91,18 @@ mod terminal_action_parse;
 mod terminal_action_tool;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod terminal_captured_exec;
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+#[allow(
+    dead_code,
+    reason = "private runtime components are composed here before full host integration"
+)]
+mod terminal_monitor;
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+#[allow(
+    dead_code,
+    reason = "private runtime components are composed here before full host integration"
+)]
+mod terminal_probe_effects;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use terminal_captured_exec::{
     TERMINAL_CAPTURED_HELPER_ARGUMENT, TerminalCapturedExec, TerminalCapturedExecError,

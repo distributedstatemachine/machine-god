@@ -865,6 +865,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokio",
+ "url",
  "webpki-root-certs",
 ]
 

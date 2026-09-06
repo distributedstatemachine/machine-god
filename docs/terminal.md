@@ -557,6 +557,39 @@ observe started/exit/quiet/literal-match conditions without owning process
 lifetime. Runtime probe authorization, profile-wide persistence coordination and model-facing
 action routing remain separate composition responsibilities.
 
+### Authorized native monitor probes
+
+The native probe executor requires a live, nonserializable grant bound to the
+exact owner incarnation, terminal session, monitor ID, generation and target.
+The grant can be shared across checks; each one-shot binding independently
+checks its request sequence and clock anchor. A successful monitor mutation
+returns its exact generation for installing or retiring that grant in the
+same trusted owner callback. Saved descriptions and observations cannot rebuild
+native grants. The host explicitly revokes grants before replacement, removal
+or shutdown: queued clones are denied, running checks observe revocation even
+without another caller poll, and late receipts cannot publish successful
+evidence after revocation.
+
+TCP and plain-HTTP probes use at most four explicitly approved socket addresses,
+without ambient DNS resolution, proxies or redirects. HTTP sends one HTTP/1.0
+GET and retains only its first 1024 response bytes; credentials and other URL
+schemes are rejected. Connection attempts retain the pinned 250 ms per-address
+bound, and HTTP reads/writes retain 500 ms phase bounds, all within the request's
+original two-second absolute deadline. Local readiness endpoints require the
+same explicit approval as other addresses. This does not change `web_fetch`
+network policy.
+
+Path probes stat one approved leaf relative to a retained parent descriptor,
+without following the leaf symlink. Custom probes retain the approved shell,
+environment, canonical-cwd fingerprint and directory descriptor; immutable
+shell/environment snapshots are shared across grants. Each execution
+rechecks the named directory's identity before launching. They reuse the owned
+captured-process executor with a separate 16 KiB aggregate output boundary and
+at most one excess byte for detecting overflow. Normal foreground execution
+keeps its independent 1 MiB contract. Effects run on bounded collected workers;
+queue time does not reset deadlines, abandoned futures cancel owned work, and
+evidence preserves the exact session/monitor/generation/request identity.
+
 ## Resident registry and disk catalog components
 
 The resident registry owns at most sixteen sessions on the host's blocking

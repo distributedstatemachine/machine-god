@@ -162,10 +162,12 @@ impl TerminalCapturedExec {
                         &shell,
                         &environment,
                         cwd,
-                        timeout,
+                        Instant::now() + timeout,
+                        MAX_TERMINAL_ACTION_OUTPUT_BYTES,
                         &cancellation,
-                        &stop,
-                    );
+                        &[&stop],
+                    )
+                    .and_then(CapturedOutcome::into_terminal_result);
                     (result, permit)
                 })
                 .await
@@ -175,6 +177,90 @@ impl TerminalCapturedExec {
             }
             receipt.0
         })
+    }
+
+    /// Already-collected worker only. The caller supplies the original deadline;
+    /// admission and queued work never restart it. Native cleanup is shared.
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn execute_probe_on_worker(
+        &self,
+        request: &TerminalExecRequest,
+        shell: &TerminalShell,
+        environment: &ValidatedBackgroundEnvironment,
+        cwd: OwnedFd,
+        deadline: Instant,
+        output_limit: usize,
+        cancellation: &CancellationToken,
+        stop: &[&CancellationToken],
+    ) -> Result<TerminalCapturedProbeOutcome, TerminalCapturedExecError> {
+        if stopped(cancellation, stop) {
+            return Err(TerminalCapturedExecError::Cancelled);
+        }
+        request
+            .validate()
+            .map_err(|_| TerminalCapturedExecError::Invalid)?;
+        if output_limit == 0
+            || output_limit > 16 * 1024
+            || request.profile.unwrap_or(TerminalProfile::User) != shell.profile()
+        {
+            return Err(TerminalCapturedExecError::Invalid);
+        }
+        self.active
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                (count < self.maximum_active).then_some(count + 1)
+            })
+            .map_err(|_| TerminalCapturedExecError::Capacity)?;
+        let _permit = Permit(Arc::clone(&self.active));
+        let outcome = run(
+            &self.helper,
+            request,
+            shell,
+            environment,
+            cwd,
+            deadline,
+            output_limit,
+            cancellation,
+            stop,
+        )?;
+        Ok(TerminalCapturedProbeOutcome {
+            output_bytes: outcome
+                .stdout
+                .total_bytes
+                .saturating_add(outcome.stderr.total_bytes),
+            truncated: outcome.stdout.total_bytes > outcome.stdout.bytes.len() as u64
+                || outcome.stderr.total_bytes > outcome.stderr.bytes.len() as u64,
+            status: outcome.status,
+        })
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct TerminalCapturedProbeOutcome {
+    pub(crate) status: TerminalExecStatus,
+    pub(crate) output_bytes: u64,
+    pub(crate) truncated: bool,
+}
+
+/// Internal capture may have a stricter limit than the public exec contract.
+struct CapturedOutcome {
+    status: TerminalExecStatus,
+    stdout: TerminalExecCapturedOutput,
+    stderr: TerminalExecCapturedOutput,
+    duration: Duration,
+}
+impl CapturedOutcome {
+    fn into_terminal_result(self) -> Result<TerminalExecResult, TerminalCapturedExecError> {
+        let result = TerminalExecResult {
+            status: self.status,
+            stdout: self.stdout,
+            stderr: self.stderr,
+            duration: self.duration,
+        };
+        result
+            .validate()
+            .map_err(|_| TerminalCapturedExecError::Process)?;
+        Ok(result)
     }
 }
 
@@ -191,18 +277,18 @@ impl Drop for CancelOnDrop {
     }
 }
 
-fn stopped(cancellation: &CancellationToken, stop: &CancellationToken) -> bool {
-    cancellation.is_cancelled() || stop.is_cancelled()
+fn stopped(cancellation: &CancellationToken, stop: &[&CancellationToken]) -> bool {
+    cancellation.is_cancelled() || stop.iter().any(|token| token.is_cancelled())
 }
 
 /// Adds cancellation-on-abandoned-future to the shared bounded gate codec.
 struct Gate<'a> {
     stream: &'a mut UnixStream,
-    stop: &'a CancellationToken,
+    stop: &'a [&'a CancellationToken],
 }
 impl Read for Gate<'_> {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
-        if self.stop.is_cancelled() {
+        if self.stop.iter().any(|token| token.is_cancelled()) {
             return Err(io::ErrorKind::BrokenPipe.into());
         }
         self.stream.read(bytes)
@@ -210,7 +296,7 @@ impl Read for Gate<'_> {
 }
 impl Write for Gate<'_> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        if self.stop.is_cancelled() {
+        if self.stop.iter().any(|token| token.is_cancelled()) {
             return Err(io::ErrorKind::BrokenPipe.into());
         }
         self.stream.write(bytes)
@@ -227,12 +313,12 @@ fn run(
     shell: &TerminalShell,
     environment: &ValidatedBackgroundEnvironment,
     cwd: OwnedFd,
-    timeout: Duration,
+    deadline: Instant,
+    output_limit: usize,
     cancellation: &CancellationToken,
-    stop: &CancellationToken,
-) -> Result<TerminalExecResult, TerminalCapturedExecError> {
+    stop: &[&CancellationToken],
+) -> Result<CapturedOutcome, TerminalCapturedExecError> {
     let started = Instant::now();
-    let deadline = started + timeout;
     if stopped(cancellation, stop) {
         return Err(TerminalCapturedExecError::Cancelled);
     }
@@ -380,9 +466,9 @@ fn run(
         }
         // Alternating fixed read attempts prevent either producer starving the
         // other stream or cancellation/deadline observation.
-        drain_once(&stdout, &mut stdout_capture, &mut total)?;
-        drain_once(&stderr, &mut stderr_capture, &mut total)?;
-        if total > MAX_TERMINAL_ACTION_OUTPUT_BYTES as u64 {
+        drain_once(&stdout, &mut stdout_capture, &mut total, output_limit)?;
+        drain_once(&stderr, &mut stderr_capture, &mut total, output_limit)?;
+        if total > output_limit as u64 {
             break TerminalExecStatus::OutputLimit {};
         }
         if Instant::now() >= deadline {
@@ -406,9 +492,21 @@ fn run(
     if !matches!(status, TerminalExecStatus::OutputLimit {}) {
         for _ in 0..64 {
             let timed_out = matches!(status, TerminalExecStatus::TimedOut {});
-            let stdout_read = drain_bounded(&stdout, &mut stdout_capture, &mut total, timed_out)?;
-            let stderr_read = drain_bounded(&stderr, &mut stderr_capture, &mut total, timed_out)?;
-            if total > MAX_TERMINAL_ACTION_OUTPUT_BYTES as u64 {
+            let stdout_read = drain_bounded(
+                &stdout,
+                &mut stdout_capture,
+                &mut total,
+                timed_out,
+                output_limit,
+            )?;
+            let stderr_read = drain_bounded(
+                &stderr,
+                &mut stderr_capture,
+                &mut total,
+                timed_out,
+                output_limit,
+            )?;
+            if total > output_limit as u64 {
                 status = TerminalExecStatus::OutputLimit {};
                 break;
             }
@@ -426,7 +524,7 @@ fn run(
     let stderr = stderr_capture
         .finish()
         .map_err(|_| TerminalCapturedExecError::Process)?;
-    let result = TerminalExecResult {
+    let result = CapturedOutcome {
         status,
         stdout: TerminalExecCapturedOutput {
             bytes: stdout.bytes().to_vec(),
@@ -438,9 +536,6 @@ fn run(
         },
         duration: started.elapsed().min(MAX_TERMINAL_EXEC_DURATION),
     };
-    result
-        .validate()
-        .map_err(|_| TerminalCapturedExecError::Process)?;
     Ok(result)
 }
 
@@ -469,18 +564,21 @@ fn drain_once(
     fd: &impl AsFd,
     capture: &mut PipeCapture,
     total: &mut u64,
+    output_limit: usize,
 ) -> Result<bool, TerminalCapturedExecError> {
-    drain_bounded(fd, capture, total, false)
+    drain_bounded(fd, capture, total, false, output_limit)
 }
 fn drain_bounded(
     fd: &impl AsFd,
     capture: &mut PipeCapture,
     total: &mut u64,
     timed_out: bool,
+    output_limit: usize,
 ) -> Result<bool, TerminalCapturedExecError> {
     let mut buffer = [0u8; 16 * 1024];
-    let limit = if timed_out {
-        usize::try_from((MAX_TERMINAL_ACTION_OUTPUT_BYTES as u64).saturating_sub(*total))
+    let limit = if timed_out || output_limit < MAX_TERMINAL_ACTION_OUTPUT_BYTES {
+        let observation_limit = output_limit as u64 + u64::from(!timed_out);
+        usize::try_from(observation_limit.saturating_sub(*total))
             .unwrap_or(0)
             .min(buffer.len())
     } else {
@@ -505,8 +603,8 @@ fn convert_status(status: BackgroundProcessExit) -> TerminalExecStatus {
         BackgroundProcessExit::Signaled(signal) => TerminalExecStatus::Signaled { signal },
     }
 }
-fn empty_timeout(started: Instant) -> TerminalExecResult {
-    TerminalExecResult {
+fn empty_timeout(started: Instant) -> CapturedOutcome {
+    CapturedOutcome {
         status: TerminalExecStatus::TimedOut {},
         stdout: TerminalExecCapturedOutput {
             bytes: Vec::new(),
@@ -596,7 +694,7 @@ fn send_exec_descriptor(
     descriptor: &impl AsFd,
     deadline: Instant,
     cancellation: &CancellationToken,
-    stop: &CancellationToken,
+    stop: &[&CancellationToken],
 ) -> Result<(), TerminalCapturedExecError> {
     use rustix::net::{SendAncillaryBuffer, SendAncillaryMessage, SendFlags, sendmsg};
     loop {
