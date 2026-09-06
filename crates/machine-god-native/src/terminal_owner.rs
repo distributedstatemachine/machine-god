@@ -10,6 +10,7 @@ use crate::terminal_registry::{
 };
 use crate::terminal_session::TerminalSessionBackend;
 use crate::terminal_wait::{TerminalWaitCompletion, TerminalWaitCoordinator};
+use crate::terminal_write_completion::TerminalWriteCoordinator;
 use machine_god_core::{CancellationToken, Cancelled, TerminalClosePolicy, TerminalLifecycle};
 use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -54,6 +55,7 @@ trait Job<B: TerminalSessionBackend>: Send {
         self: Box<Self>,
         registry: &mut TerminalRegistry<B>,
         waits: &mut TerminalWaitCoordinator,
+        writes: &mut TerminalWriteCoordinator,
         now_ms: i64,
         profile: Option<(&TerminalProfileStore, &TerminalProfileBudget)>,
     ) -> bool;
@@ -104,6 +106,7 @@ type Operation<B, T> = Box<
     dyn FnOnce(
             &mut TerminalRegistry<B>,
             &mut TerminalWaitCoordinator,
+            &mut TerminalWriteCoordinator,
             i64,
             &CancellationToken,
             Option<(&TerminalProfileStore, &TerminalProfileBudget)>,
@@ -124,6 +127,7 @@ impl<B: TerminalSessionBackend, T: Send> Job<B> for Request<B, T> {
         mut self: Box<Self>,
         registry: &mut TerminalRegistry<B>,
         waits: &mut TerminalWaitCoordinator,
+        writes: &mut TerminalWriteCoordinator,
         now_ms: i64,
         profile: Option<(&TerminalProfileStore, &TerminalProfileBudget)>,
     ) -> bool {
@@ -134,8 +138,10 @@ impl<B: TerminalSessionBackend, T: Send> Job<B> for Request<B, T> {
             Err(TerminalOwnerError::Cancelled)
         } else {
             let operation = self.operation.take().expect("request executed once");
-            catch_callback(|| operation(registry, waits, now_ms, &self.cancellation, profile))
-                .unwrap_or(Err(TerminalOwnerError::Panicked))
+            catch_callback(|| {
+                operation(registry, waits, writes, now_ms, &self.cancellation, profile)
+            })
+            .unwrap_or(Err(TerminalOwnerError::Panicked))
         };
         let keep_running = !matches!(&result, Err(TerminalOwnerError::Panicked));
         self.completed = true;
@@ -186,7 +192,7 @@ impl<B: TerminalSessionBackend + 'static> TerminalOwnerHandle<B> {
     ) -> TerminalOwnerFuture<B, T> {
         self.request_inner(
             caller,
-            Box::new(move |registry, _, now_ms, cancellation, _| {
+            Box::new(move |registry, _, _, now_ms, cancellation, _| {
                 Ok(operation(registry, now_ms, cancellation))
             }),
         )
@@ -212,7 +218,7 @@ impl<B: TerminalSessionBackend + 'static> TerminalOwnerHandle<B> {
     ) -> TerminalOwnerFuture<B, T> {
         self.request_inner(
             caller,
-            Box::new(move |registry, _, now_ms, cancellation, profile| {
+            Box::new(move |registry, _, _, now_ms, cancellation, profile| {
                 let (store, budget) = profile.ok_or(TerminalOwnerError::ProfileRequired)?;
                 Ok(operation(registry, store, budget, now_ms, cancellation))
             }),
@@ -238,13 +244,45 @@ impl<B: TerminalSessionBackend + 'static> TerminalOwnerHandle<B> {
     ) -> TerminalOwnerFuture<B, T> {
         self.request_inner(
             caller,
-            Box::new(move |registry, waits, now_ms, cancellation, profile| {
+            Box::new(move |registry, waits, _, now_ms, cancellation, profile| {
                 let (store, budget) = profile.ok_or(TerminalOwnerError::ProfileRequired)?;
                 Ok(operation(
                     registry,
                     store,
                     budget,
                     waits,
+                    now_ms,
+                    cancellation,
+                ))
+            }),
+        )
+    }
+
+    /// Submit one authorized write after reserving completion capacity. The
+    /// returned future observes owned input; this callback never waits for it.
+    pub(crate) fn request_with_writes<T: Send + 'static>(
+        &self,
+        caller: CancellationToken,
+        operation: impl FnOnce(
+            &mut TerminalRegistry<B>,
+            &TerminalProfileStore,
+            &TerminalProfileBudget,
+            &mut TerminalWriteCoordinator,
+            i64,
+            &CancellationToken,
+        ) -> T
+        + Send
+        + 'static,
+    ) -> TerminalOwnerFuture<B, T> {
+        self.request_inner(
+            caller,
+            Box::new(move |registry, _, writes, now_ms, cancellation, profile| {
+                let (store, budget) = profile.ok_or(TerminalOwnerError::ProfileRequired)?;
+                Ok(operation(
+                    registry,
+                    store,
+                    budget,
+                    writes,
                     now_ms,
                     cancellation,
                 ))
@@ -612,6 +650,7 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
     ) -> TerminalOwnerExit {
         let mut error = None;
         let mut waits = TerminalWaitCoordinator::new();
+        let mut writes = TerminalWriteCoordinator::new();
         let mut deadline = Instant::now();
         let execution = catch_callback(|| {
             while !self.shared.closing.load(Ordering::Acquire) {
@@ -626,7 +665,8 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
                             let catching_up = observe_waits(registry, &mut waits);
                             let (panicked, _) =
                                 publish_waits(registry, &mut waits, persistence, false);
-                            if panicked {
+                            let writes_woke = writes.observe(registry);
+                            if panicked || !writes_woke {
                                 error = Some(TerminalOwnerError::Panicked);
                                 break;
                             }
@@ -663,6 +703,7 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
                         if !job.execute(
                             registry,
                             &mut waits,
+                            &mut writes,
                             registry.minimum_time_ms(),
                             persistence.authority(),
                         ) {
@@ -681,7 +722,7 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
         if execution.is_err() {
             error = Some(TerminalOwnerError::Panicked);
         }
-        self.finish(registry, persistence, &mut waits, error)
+        self.finish(registry, persistence, &mut waits, &mut writes, error)
     }
 
     fn finish(
@@ -689,6 +730,7 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
         registry: &mut TerminalRegistry<B>,
         persistence: Persistence<'_>,
         waits: &mut TerminalWaitCoordinator,
+        writes: &mut TerminalWriteCoordinator,
         mut error: Option<TerminalOwnerError>,
     ) -> TerminalOwnerExit {
         self.shared.close();
@@ -704,7 +746,9 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
         observe_waits(registry, waits);
         waits.close();
         let (wait_panicked, attention_failed) = publish_waits(registry, waits, persistence, true);
-        if wait_panicked {
+        let writes_woke = writes.observe(registry);
+        let writes_closed = writes.close();
+        if wait_panicked || !writes_woke || !writes_closed {
             error = Some(TerminalOwnerError::Panicked);
         } else if attention_failed && error.is_none() {
             error = Some(TerminalOwnerError::WaitAttention);
@@ -774,6 +818,8 @@ mod tests {
         output: VecDeque<Vec<u8>>,
         closes: usize,
         exited: bool,
+        write_limit: Option<usize>,
+        written: Vec<u8>,
     }
     struct Backend(Arc<Mutex<NativeState>>);
     impl TerminalSessionBackend for Backend {
@@ -792,10 +838,17 @@ mod tests {
             })
         }
         fn write(&mut self, bytes: &[u8]) -> std::result::Result<BackgroundInputReceipt, ()> {
+            let mut state = self.0.lock().unwrap();
+            let accepted = bytes.len().min(state.write_limit.unwrap_or(usize::MAX));
+            state.written.extend_from_slice(&bytes[..accepted]);
             Ok(BackgroundInputReceipt::new(
-                bytes.len(),
+                accepted,
                 false,
-                BackgroundInputStatus::Written,
+                if accepted == bytes.len() {
+                    BackgroundInputStatus::Written
+                } else {
+                    BackgroundInputStatus::Backpressure
+                },
             ))
         }
         fn status(&mut self) -> std::result::Result<TerminalPtyStatus, ()> {
@@ -998,6 +1051,234 @@ mod tests {
             );
             self.calls.fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    fn write_fixture(
+        registry: &mut TerminalRegistry<Backend>,
+        store: &TerminalProfileStore,
+        budget: &TerminalProfileBudget,
+        who: &TerminalWaitIdentity,
+    ) -> std::result::Result<
+        crate::terminal_write_completion::TerminalWriteReceipt,
+        TerminalRegistryError,
+    > {
+        use machine_god_core::{
+            TerminalWriteLeaseIntent, TerminalWritePayload, TerminalWriteRequest,
+        };
+        registry
+            .mutate_with_profile(
+                store,
+                budget,
+                &who.owner,
+                &who.session,
+                |session, persistence| {
+                    session.write_with(
+                        persistence,
+                        &who.owner,
+                        who.actor,
+                        who.writer,
+                        &TerminalWriteRequest {
+                            lease: TerminalWriteLeaseIntent::Acquire,
+                            payload: None,
+                        },
+                        false,
+                    )?;
+                    session.write_completion_with(
+                        persistence,
+                        &who.owner,
+                        who.actor,
+                        who.writer,
+                        &TerminalWriteRequest {
+                            lease: TerminalWriteLeaseIntent::Use,
+                            payload: Some(TerminalWritePayload::Text {
+                                text: "abcdefgh".into(),
+                            }),
+                        },
+                        false,
+                    )
+                },
+            )
+            .map(|(input, publication_error)| {
+                crate::terminal_write_completion::TerminalWriteReceipt {
+                    input,
+                    publication_error: publication_error.map(TerminalRegistryError::Session),
+                }
+            })
+    }
+
+    #[test]
+    fn owner_writes_complete_once_after_cancellation_or_shutdown() {
+        use crate::terminal_input::TerminalInputProgress;
+        use crate::terminal_write_completion::TerminalWriteIdentity;
+        for close in [false, true] {
+            let fixture = Fixture::new();
+            fixture.state.lock().unwrap().write_limit = Some(2);
+            let who = identity();
+            let mut registry = fixture.registry(&who);
+            let (worker, handle) = TerminalOwnerLoop::new();
+            let caller = CancellationToken::new();
+            let mut request = handle.request_with_writes(
+                caller.clone(),
+                move |registry, store, budget, writes, _, cancellation| {
+                    let write_identity = TerminalWriteIdentity {
+                        owner: who.owner.clone(),
+                        session: who.session.clone(),
+                        actor: who.actor,
+                        writer: who.writer,
+                    };
+                    writes.submit(write_identity, cancellation, || {
+                        write_fixture(registry, store, budget, &who)
+                    })
+                },
+            );
+            assert!(poll_request(&mut request).is_pending());
+            let wake = Arc::new(ProfileWake {
+                store: Arc::clone(&fixture.store),
+                calls: AtomicUsize::new(0),
+            });
+            let waker = Waker::from(Arc::clone(&wake));
+            let mut waiting = None;
+            let mut receipt = None;
+            let mut ticks = 0;
+            let exit = worker.run_with_profile(
+                &mut registry,
+                &fixture.store,
+                &fixture.budget,
+                || 1,
+                |_| {
+                    ticks += 1;
+                    assert!(ticks < 12);
+                    if waiting.is_none()
+                        && let Poll::Ready(result) = poll_request(&mut request)
+                    {
+                        waiting = Some(result.unwrap().unwrap());
+                        caller.cancel();
+                    }
+                    if let Some(wait) = &mut waiting
+                        && let Poll::Ready(result) =
+                            Pin::new(wait).poll(&mut Context::from_waker(&waker))
+                    {
+                        receipt = Some(result.unwrap());
+                        handle.shutdown();
+                    } else if close && waiting.is_some() {
+                        handle.shutdown();
+                    }
+                },
+            );
+            assert_eq!(exit.error, None);
+            assert!(exit.shutdown.unwrap().is_empty());
+            let receipt = receipt.unwrap_or_else(|| {
+                let Poll::Ready(result) =
+                    Pin::new(waiting.as_mut().unwrap()).poll(&mut Context::from_waker(&waker))
+                else {
+                    panic!("shutdown left pending input reply")
+                };
+                result.unwrap()
+            });
+            let state = fixture.state.lock().unwrap();
+            assert_eq!(state.written, b"abcdefgh"[..receipt.input.accepted_bytes]);
+            assert_eq!(
+                receipt.input.progress,
+                if close {
+                    TerminalInputProgress::Closed
+                } else {
+                    TerminalInputProgress::Complete
+                }
+            );
+            assert_eq!(receipt.input.accepted_bytes, if close { 4 } else { 8 });
+            assert_eq!(state.closes, 1);
+            assert_eq!(wake.calls.load(Ordering::Acquire), 1);
+        }
+    }
+
+    #[test]
+    fn write_receipt_authorizes_owner_actor_and_writer_after_shutdown() {
+        use machine_god_core::{
+            TerminalWriteLeaseIntent, TerminalWritePayload, TerminalWriteRequest,
+        };
+        let fixture = Fixture::new();
+        let who = identity();
+        let mut registry = fixture.registry(&who);
+        let input = registry
+            .mutate_with_profile(
+                &fixture.store,
+                &fixture.budget,
+                &who.owner,
+                &who.session,
+                |session, persistence| {
+                    session.write_with(
+                        persistence,
+                        &who.owner,
+                        who.actor,
+                        who.writer,
+                        &TerminalWriteRequest {
+                            lease: TerminalWriteLeaseIntent::Acquire,
+                            payload: None,
+                        },
+                        false,
+                    )?;
+                    session.write_with(
+                        persistence,
+                        &who.owner,
+                        who.actor,
+                        who.writer,
+                        &TerminalWriteRequest {
+                            lease: TerminalWriteLeaseIntent::Use,
+                            payload: Some(TerminalWritePayload::Text {
+                                text: "once".into(),
+                            }),
+                        },
+                        false,
+                    )
+                },
+            )
+            .unwrap();
+        registry
+            .shutdown_with_profile(
+                &fixture.store,
+                &fixture.budget,
+                1,
+                TerminalClosePolicy::Force,
+            )
+            .unwrap();
+        let operation = input.operation_id.unwrap();
+        assert_eq!(
+            registry
+                .write_receipt(&who.owner, &who.session, who.actor, who.writer, operation)
+                .unwrap(),
+            input
+        );
+        let foreign = BackgroundOutputOwner::new(
+            SessionId::new("owner").unwrap(),
+            SessionIncarnationId::new("other").unwrap(),
+        );
+        assert_eq!(
+            registry.write_receipt(&foreign, &who.session, who.actor, who.writer, operation),
+            Err(TerminalRegistryError::NotFound)
+        );
+        assert!(
+            registry
+                .write_receipt(
+                    &who.owner,
+                    &who.session,
+                    TerminalActorRole::Human,
+                    who.writer,
+                    operation
+                )
+                .is_err()
+        );
+        assert!(
+            registry
+                .write_receipt(
+                    &who.owner,
+                    &who.session,
+                    who.actor,
+                    TerminalWriterId::new(NonZeroU64::new(2).unwrap()),
+                    operation
+                )
+                .is_err()
+        );
+        assert_eq!(fixture.state.lock().unwrap().written, b"once");
     }
 
     #[test]

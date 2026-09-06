@@ -230,6 +230,24 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         &self.workspace
     }
 
+    /// Final input receipts remain observable after registry admission closes.
+    /// Recovery never fabricates an input receipt or regains writer authority.
+    pub(crate) fn write_receipt(
+        &self,
+        owner: &BackgroundOutputOwner,
+        id: &TerminalSessionId,
+        actor: TerminalActorRole,
+        writer: crate::terminal_input::TerminalWriterId,
+        operation: std::num::NonZeroU64,
+    ) -> Result<crate::terminal_input::TerminalInputReceipt> {
+        match &self.entries[self.index(owner, id)?].resident {
+            Resident::Live(session) => {
+                Ok(session.write_receipt_with_actor(owner, actor, writer, operation)?)
+            }
+            Resident::Recovered(_) => Err(TerminalRegistryError::Closed),
+        }
+    }
+
     /// Identity-only catalog overlay; do not clone bounded but large commands.
     pub(crate) fn owner_ids(&self, owner: &BackgroundOutputOwner) -> Vec<TerminalSessionId> {
         self.entries

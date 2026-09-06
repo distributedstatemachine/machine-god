@@ -275,6 +275,23 @@ impl<B: TerminalSessionBackend + Send + 'static> TerminalRuntime<B> {
         self.wrap(self.owner.request_with_waits(caller, operation))
     }
 
+    pub(crate) fn request_with_writes<T: Send + 'static>(
+        &self,
+        caller: CancellationToken,
+        operation: impl FnOnce(
+            &mut TerminalRegistry<B>,
+            &TerminalProfileStore,
+            &TerminalProfileBudget,
+            &mut crate::terminal_write_completion::TerminalWriteCoordinator,
+            i64,
+            &CancellationToken,
+        ) -> T
+        + Send
+        + 'static,
+    ) -> TerminalRuntimeFuture<B, T> {
+        self.wrap(self.owner.request_with_writes(caller, operation))
+    }
+
     fn wrap<T>(&self, request: TerminalOwnerFuture<B, T>) -> TerminalRuntimeFuture<B, T> {
         TerminalRuntimeFuture {
             shared: Arc::clone(&self.shared),
