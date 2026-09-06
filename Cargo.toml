@@ -31,6 +31,7 @@ machine-god-core = { version = "0.1.0", path = "crates/machine-god-core" }
 machine-god-native = { version = "0.1.0", path = "crates/machine-god-native" }
 memchr = "2.8.3"
 reqwest = { version = "=0.13.4", default-features = false, features = ["rustls"] }
+rustc_apfloat = "=0.2.3"
 rustls = { version = "0.23.39", default-features = false }
 rustix = { version = "1.1.4", features = ["fs", "process", "pty", "rand", "termios"] }
 serde = { version = "1.0.228", features = ["derive"] }

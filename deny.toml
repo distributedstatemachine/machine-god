@@ -18,6 +18,7 @@ allow = [
     "Unicode-3.0",
 ]
 exceptions = [
+    { allow = ["Apache-2.0 WITH LLVM-exception"], crate = "rustc_apfloat" },
     { allow = ["CDLA-Permissive-2.0"], crate = "webpki-root-certs" },
 ]
 

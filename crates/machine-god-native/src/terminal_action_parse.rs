@@ -7,6 +7,7 @@
 
 use core::fmt;
 use machine_god_core::{
+    MAX_TERMINAL_ACTION_COMMAND_BYTES, MAX_TERMINAL_ACTION_TEXT_BYTES,
     MAX_TERMINAL_INITIAL_MONITORS, TerminalActionRequest, TerminalBackend, TerminalContractError,
     TerminalCursor, TerminalDimensions, TerminalEventQuery, TerminalExecRequest,
     TerminalListFilters, TerminalMonitorCondition, TerminalMonitorDefinition, TerminalMonitorId,
@@ -15,12 +16,39 @@ use machine_god_core::{
     TerminalStartRequest, TerminalWaitRequest, TerminalWriteLeaseIntent, TerminalWritePayload,
     TerminalWriteRequest,
 };
+use rustc_apfloat::{Float, Round, Status, ieee::Quad};
+use serde::de::DeserializeSeed;
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
 
-const MAX_ARGUMENT_BYTES: usize = 64 * 1024;
-const MAX_COMMAND_BYTES: usize = 32 * 1024;
-const MAX_CWD_BYTES: usize = 4096;
+/// Serialized public argument ceiling, including stringified composites.
+///
+/// A start can hold one command, cwd, shell path, match pattern and 32 custom
+/// probes, each with a command and cwd. Reserve 1 KiB of structural JSON per
+/// definition plus the root. Ordinary JSON needs at most six bytes per source
+/// byte; one stringified composite needs at most seven (the six-byte escape
+/// gains one escaped backslash). No nested stringified composites are accepted.
+/// This is independent of the legacy tool envelope.
+pub const MAX_TERMINAL_ACTION_ARGUMENT_BYTES: usize = 7
+    * (MAX_TERMINAL_ACTION_COMMAND_BYTES
+        + 3 * MAX_TERMINAL_ACTION_TEXT_BYTES
+        + 1024
+        + MAX_TERMINAL_INITIAL_MONITORS
+            * (MAX_TERMINAL_ACTION_COMMAND_BYTES + MAX_TERMINAL_ACTION_TEXT_BYTES + 1024));
+const MAX_ARGUMENT_BYTES: usize = MAX_TERMINAL_ACTION_ARGUMENT_BYTES;
+const MAX_COMMAND_BYTES: usize = MAX_TERMINAL_ACTION_COMMAND_BYTES;
+const MAX_CWD_BYTES: usize = MAX_TERMINAL_ACTION_TEXT_BYTES;
+// Keep software floating-point work independently bounded as the complete
+// action envelope grows to cover simultaneous initial-monitor definitions.
+const MAX_NUMBER_SPELLING_BYTES: usize = 64 * 1024;
+// One node per byte when every allowed text field uses its byte-array form,
+// with 64 structural nodes per monitor/root. This is not a serialized-byte cap.
+const MAX_ARGUMENT_NODES: usize = MAX_TERMINAL_ACTION_COMMAND_BYTES
+    + 3 * MAX_TERMINAL_ACTION_TEXT_BYTES
+    + 64
+    + MAX_TERMINAL_INITIAL_MONITORS
+        * (MAX_TERMINAL_ACTION_COMMAND_BYTES + MAX_TERMINAL_ACTION_TEXT_BYTES + 64);
+const MAX_ARGUMENT_DEPTH: usize = 64;
 
 /// Closed, data-free failure: never echoes model-supplied paths or payloads.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -141,7 +169,7 @@ fn present<'a>(object: &'a Map<String, Value>, key: &str) -> Option<&'a Value> {
 }
 
 fn checked_object(arguments: &Value) -> ParseResult<&Map<String, Value>> {
-    let mut remaining = MAX_ARGUMENT_BYTES;
+    let mut remaining = MAX_ARGUMENT_NODES;
     check_depth(arguments, 0, &mut remaining)?;
     serde_json::to_writer(ByteBudget(MAX_ARGUMENT_BYTES), arguments)
         .map_err(|_| TerminalActionParseError)?;
@@ -166,12 +194,12 @@ fn checked_object(arguments: &Value) -> ParseResult<&Map<String, Value>> {
 
 fn check_depth(value: &Value, depth: usize, remaining: &mut usize) -> ParseResult<()> {
     *remaining = remaining.checked_sub(1).ok_or(TerminalActionParseError)?;
-    if depth > 64 {
+    if depth > MAX_ARGUMENT_DEPTH {
         return Err(TerminalActionParseError);
     }
     match value {
         Value::Array(values) => {
-            if values.len() > MAX_ARGUMENT_BYTES {
+            if values.len() > MAX_ARGUMENT_NODES {
                 return Err(TerminalActionParseError);
             }
             for value in values {
@@ -179,7 +207,7 @@ fn check_depth(value: &Value, depth: usize, remaining: &mut usize) -> ParseResul
             }
         }
         Value::Object(values) => {
-            if values.len() > MAX_ARGUMENT_BYTES {
+            if values.len() > MAX_ARGUMENT_NODES {
                 return Err(TerminalActionParseError);
             }
             for value in values.values() {
@@ -251,8 +279,26 @@ fn decode<T: for<'de> Deserialize<'de>>(value: Value) -> ParseResult<T> {
 struct UniqueValue(Value);
 impl<'de> Deserialize<'de> for UniqueValue {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct Visitor;
-        impl<'de> serde::de::Visitor<'de> for Visitor {
+        let mut remaining = MAX_ARGUMENT_NODES;
+        UniqueValueSeed {
+            remaining: &mut remaining,
+            depth: 0,
+        }
+        .deserialize(deserializer)
+    }
+}
+struct UniqueValueSeed<'a> {
+    remaining: &'a mut usize,
+    depth: usize,
+}
+impl<'de> DeserializeSeed<'de> for UniqueValueSeed<'_> {
+    type Value = UniqueValue;
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<UniqueValue, D::Error> {
+        struct Visitor<'a> {
+            remaining: &'a mut usize,
+            depth: usize,
+        }
+        impl<'de> serde::de::Visitor<'de> for Visitor<'_> {
             type Value = UniqueValue;
             fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
                 formatter.write_str("terminal JSON value")
@@ -282,7 +328,10 @@ impl<'de> Deserialize<'de> for UniqueValue {
                 mut seq: A,
             ) -> Result<Self::Value, A::Error> {
                 let mut values = Vec::new();
-                while let Some(UniqueValue(value)) = seq.next_element()? {
+                while let Some(UniqueValue(value)) = seq.next_element_seed(UniqueValueSeed {
+                    remaining: self.remaining,
+                    depth: self.depth + 1,
+                })? {
                     values.push(value);
                 }
                 Ok(UniqueValue(Value::Array(values)))
@@ -296,13 +345,26 @@ impl<'de> Deserialize<'de> for UniqueValue {
                     if values.contains_key(&key) {
                         return Err(serde::de::Error::custom(TerminalActionParseError));
                     }
-                    let UniqueValue(value) = map.next_value()?;
+                    let UniqueValue(value) = map.next_value_seed(UniqueValueSeed {
+                        remaining: self.remaining,
+                        depth: self.depth + 1,
+                    })?;
                     values.insert(key, value);
                 }
                 Ok(UniqueValue(Value::Object(values)))
             }
         }
-        deserializer.deserialize_any(Visitor)
+        *self.remaining = self
+            .remaining
+            .checked_sub(1)
+            .ok_or_else(|| serde::de::Error::custom(TerminalActionParseError))?;
+        if self.depth > MAX_ARGUMENT_DEPTH {
+            return Err(serde::de::Error::custom(TerminalActionParseError));
+        }
+        deserializer.deserialize_any(Visitor {
+            remaining: self.remaining,
+            depth: self.depth,
+        })
     }
 }
 
@@ -824,8 +886,9 @@ fn integer_value(value: Value) -> ParseResult<Value> {
 }
 
 fn integer_spelling(spelling: &str) -> ParseResult<i128> {
-    // Exact bounded decimal arithmetic avoids float rounding or lossy casts.
-    if spelling.is_empty() || spelling.len() > MAX_ARGUMENT_BYTES {
+    // Pinned sliceToInt rounds floating spellings to IEEE binary128 first,
+    // then accepts only an integral, in-range rounded value.
+    if spelling.is_empty() || spelling.len() > MAX_NUMBER_SPELLING_BYTES {
         return Err(TerminalActionParseError);
     }
     let (negative, unsigned) = match spelling.as_bytes()[0] {
@@ -833,7 +896,7 @@ fn integer_spelling(spelling: &str) -> ParseResult<i128> {
         b'+' => (false, &spelling[1..]),
         _ => (false, spelling),
     };
-    if !unsigned.contains(['.', 'e', 'E']) {
+    if spelling != "-0" && !unsigned.contains(['.', 'e', 'E']) {
         if unsigned.is_empty() || unsigned.starts_with('_') || unsigned.ends_with('_') {
             return Err(TerminalActionParseError);
         }
@@ -849,56 +912,60 @@ fn integer_spelling(spelling: &str) -> ParseResult<i128> {
         }
         return Ok(if negative { -integer } else { integer });
     }
-    let mut parts = unsigned.split(['e', 'E']);
-    let mantissa = parts.next().ok_or(TerminalActionParseError)?;
-    let exponent = parts
-        .next()
-        .map(str::parse::<i32>)
-        .transpose()
+    let normalized = quad_spelling(spelling)?;
+    let value = Quad::from_str_r(&normalized, Round::NearestTiesToEven)
         .map_err(|_| TerminalActionParseError)?
-        .unwrap_or(0);
-    if parts.next().is_some() || !(-65_536..=65_536).contains(&exponent) {
+        .value;
+    // Parsing may round, including underflow to signed zero. Integer conversion
+    // itself must not round, saturate, or accept nonfinite data.
+    let integer = value.to_i128(128);
+    if !value.is_finite() || integer.status != Status::OK {
         return Err(TerminalActionParseError);
     }
-    let mut fraction = None;
-    let mut digits = String::new();
-    for byte in mantissa.bytes() {
-        match byte {
-            b'0'..=b'9' => {
-                digits.push(char::from(byte));
-                if let Some(count) = &mut fraction {
-                    *count += 1;
+    Ok(integer.value)
+}
+
+fn quad_spelling(spelling: &str) -> ParseResult<String> {
+    let unsigned = spelling.strip_prefix(['+', '-']).unwrap_or(spelling);
+    let hex = unsigned.starts_with("0x") || unsigned.starts_with("0X");
+    let exponent_marker = if hex { ['p', 'P'] } else { ['e', 'E'] };
+    // APFloat treats a missing decimal exponent as zero; Zig rejects it.
+    if let Some((_, exponent)) = unsigned.split_once(exponent_marker) {
+        let exponent = exponent.strip_prefix(['+', '-']).unwrap_or(exponent);
+        if exponent.is_empty() {
+            return Err(TerminalActionParseError);
+        }
+    }
+    let bytes = spelling.as_bytes();
+    let mut normalized = String::with_capacity(spelling.len() + 2);
+    for (index, &byte) in bytes.iter().enumerate() {
+        if byte == b'_' {
+            let digit = |byte: u8| {
+                if hex {
+                    byte.is_ascii_hexdigit()
+                } else {
+                    byte.is_ascii_digit()
                 }
+            };
+            if index == 0
+                || index + 1 == bytes.len()
+                || !digit(bytes[index - 1])
+                || !digit(bytes[index + 1])
+            {
+                return Err(TerminalActionParseError);
             }
-            b'.' if fraction.is_none() => fraction = Some(0_i32),
-            _ => return Err(TerminalActionParseError),
-        }
-    }
-    if digits.is_empty() {
-        return Err(TerminalActionParseError);
-    }
-    let scale = exponent - fraction.unwrap_or(0);
-    if scale < 0 {
-        for _ in 0..scale.unsigned_abs() {
-            match digits.pop() {
-                Some('0') | None => {}
-                _ => return Err(TerminalActionParseError),
+        } else {
+            if !byte.is_ascii() {
+                return Err(TerminalActionParseError);
             }
+            normalized.push(char::from(byte));
         }
     }
-    let mut integer = 0_i128;
-    for byte in digits.bytes() {
-        integer = integer
-            .checked_mul(10)
-            .and_then(|value| value.checked_add(i128::from(byte - b'0')))
-            .ok_or(TerminalActionParseError)?;
+    // Zig permits a hexadecimal fraction without p0; APFloat requires p0.
+    if hex && !normalized.contains(exponent_marker) {
+        normalized.push_str("p0");
     }
-    if scale > 0 {
-        for _ in 0..scale {
-            integer = integer.checked_mul(10).ok_or(TerminalActionParseError)?;
-        }
-    }
-    Ok(if negative { -integer } else { integer })
+    Ok(normalized)
 }
 
 /// Decodes all twelve public actions into validated, non-authoritative requests.
@@ -909,8 +976,8 @@ fn integer_spelling(spelling: &str) -> ParseResult<i128> {
 /// prepared the right directory. It performs no filesystem, process, environment,
 /// network, shell-resolution, or authorization effects.
 ///
-/// Foreground `exec` retains the existing clean profile default and 32 KiB
-/// command bound. Execution timeout remains a host limit, not a public argument.
+/// Foreground `exec` retains the clean profile default and uses the complete
+/// core command bound. Execution timeout remains a host limit, not a public argument.
 /// Other actions use pinned semantic defaults and the bounded core contracts.
 ///
 /// # Errors
@@ -1044,4 +1111,29 @@ fn start_request(
         dimensions: optional_composite(object, "dimensions")?,
         initial_monitors: initial_monitors(object)?,
     })
+}
+
+#[cfg(test)]
+mod parser_budget_tests {
+    use super::{DeserializeSeed, UniqueValueSeed};
+
+    #[test]
+    fn composite_seed_stops_allocating_when_node_budget_is_exhausted() {
+        let input = format!("[{}null]", "null,".repeat(10_000));
+        let mut remaining = 16;
+        let allocations = allocation_counter::measure(|| {
+            let mut deserializer = serde_json::Deserializer::from_str(&input);
+            assert!(
+                UniqueValueSeed {
+                    remaining: &mut remaining,
+                    depth: 0
+                }
+                .deserialize(&mut deserializer)
+                .is_err()
+            );
+        });
+        assert_eq!(remaining, 0);
+        assert_eq!(allocations.bytes_current, 0);
+        assert!(allocations.bytes_total < 4096, "{allocations:?}");
+    }
 }

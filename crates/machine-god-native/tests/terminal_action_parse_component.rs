@@ -114,7 +114,7 @@ fn command_profile_shell_and_wait_defaults() {
     assert_eq!(request.profile, Some(TerminalProfile::Clean));
     for value in [
         json!({"action":"exec","command":""}),
-        json!({"action":"exec","command":"x".repeat(32769)}),
+        json!({"action":"exec","command":"x".repeat(65_537)}),
         json!({"action":"exec","command":"true","profile":"user"}),
     ] {
         assert!(decode_terminal_action(&value, "/trusted").is_err());
@@ -505,5 +505,218 @@ fn remaining_composites_and_known_inactive_nested_fields() {
             "/trusted"
         )
         .is_err()
+    );
+}
+
+#[test]
+fn binary128_integer_coercion_matches_pinned_zig_oracle() {
+    // Checked with Zig 0.16.0: std.json.Value -> Stringify -> typed u64,
+    // the same path as terminal.zig at b1774fbf6c7602b503026f96f6e960e946c692ef.
+    // The long values are 1 + 2^-113 (binary128 halfway), its neighbors,
+    // and 1 - 2^-114 (the lower halfway). Ties round to the even integer.
+    let cases = [
+        ("1.0000000000000000000000000000000000000001", Some(1)),
+        (
+            "1.00000000000000000000000000000000009629649721936179265279889712924636592690508241076940976199693977832794189453125",
+            Some(1),
+        ),
+        (
+            "1.000000000000000000000000000000000096296497219361792652798897129246365926905082410769409761996939778327941894531249999999",
+            Some(1),
+        ),
+        (
+            "1.000000000000000000000000000000000096296497219361792652798897129246365926905082410769409761996939778327941894531250000001",
+            None,
+        ),
+        (
+            "0.999999999999999999999999999999999951851751390319103673600551435376817036547458794615295119001530110836029052734375",
+            Some(1),
+        ),
+        ("1e-5000", Some(0)),
+        ("1e-4966", Some(0)),
+        ("1e-4965", None),
+        ("1e5000", None),
+        ("-0", Some(0)),
+        ("-0.0", Some(0)),
+        ("-1e-5000", Some(0)),
+        (
+            "18446744073709551615.0000000000000000000000000000001",
+            Some(u64::MAX),
+        ),
+        ("18446744073709551615.9999999999999999999999999999999", None),
+        ("1.1", None),
+        ("1e", None),
+        ("1e+", None),
+        ("1e-", None),
+        ("1__0", Some(10)),
+        ("1.0__0", None),
+        ("1.0_0e0_0", Some(1)),
+        ("0x1.0", Some(1)),
+        ("0x1e0", Some(480)),
+        ("0x1p0", None),
+        ("0x1.0p0", Some(1)),
+        ("0x1.0p_0", None),
+        ("0x1._0", None),
+        ("0e999999999999999999999999999999999999999999", Some(0)),
+    ];
+    for (spelling, expected) in cases {
+        let actual = decode_terminal_action(
+            &json!({"action":"read","session_id":"s","cursor_segment":1,"cursor_offset":spelling}),
+            "/trusted",
+        );
+        match (actual, expected) {
+            (Ok(TerminalActionRequest::Read { cursor, .. }), Some(expected)) => {
+                assert_eq!(cursor.offset(), expected, "{spelling}");
+            }
+            (Err(_), None) => {}
+            _ => panic!("binary128 differential mismatch: {spelling}"),
+        }
+    }
+}
+
+#[test]
+fn binary128_conversion_preserves_field_bounds_and_nested_composites() {
+    parse(
+        &json!({"action":"resize","session_id":"s","rows":"24.00000000000000000000000000000000000001","columns":80}),
+    );
+    parse(
+        &json!({"action":"start","return_when":"{\"kind\":\"quiet\",\"duration_ms\":\"1.0000000000000000000000000000000000000001\"}","wait_ceiling_ms":1}),
+    );
+    for spelling in [
+        "-1.0",
+        "65536.0",
+        "65535.999999999999999999999999999999999999999",
+        "1e5000",
+    ] {
+        assert!(
+            decode_terminal_action(
+                &json!({"action":"resize","session_id":"s","rows":spelling,"columns":80}),
+                "/trusted"
+            )
+            .is_err()
+        );
+    }
+    // Parse rounding may produce zero, but positive session/wait bounds remain.
+    assert!(decode_terminal_action(&json!({"action":"wait","session_id":"s","return_when":{"kind":"exit"},"wait_ceiling_ms":"1e-5000"}), "/trusted").is_err());
+    assert!(decode_terminal_action(&json!({"action":"signal","session_id":"s","signal":"1.0000000000000000000000000000000000000001"}), "/trusted").is_err());
+}
+
+#[test]
+fn binary128_maximum_argument_stress_is_bounded_and_released() {
+    let spelling = format!("1.{}1", "0".repeat(60_000));
+    let arguments =
+        json!({"action":"read","session_id":"s","cursor_segment":1,"cursor_offset":spelling});
+    let allocations = allocation_counter::measure(|| {
+        let TerminalActionRequest::Read { cursor, .. } = parse(&arguments) else {
+            panic!()
+        };
+        assert_eq!(cursor.offset(), 1);
+    });
+    assert_eq!(allocations.bytes_current, 0);
+    assert!(allocations.bytes_max < 8 * 1024 * 1024, "{allocations:?}");
+    let oversized = json!({"action":"read","session_id":"s","cursor_segment":1,"cursor_offset":format!("1.{}1", "0".repeat(65_536))});
+    let rejected = allocation_counter::measure(|| {
+        assert!(decode_terminal_action(&oversized, "/trusted").is_err());
+    });
+    assert_eq!(rejected.bytes_current, 0);
+    assert!(rejected.bytes_total < 256 * 1024, "{rejected:?}");
+}
+
+#[test]
+fn full_command_bounds_allow_exact_64k_even_when_json_escaped() {
+    use machine_god_core::MAX_TERMINAL_ACTION_COMMAND_BYTES;
+    let command = "\u{1b}".repeat(MAX_TERMINAL_ACTION_COMMAND_BYTES);
+    for action in ["exec", "start"] {
+        let input = json!({"action":action,"command":command});
+        let request = parse(&input);
+        let actual = match request {
+            TerminalActionRequest::Exec { request } => request.command,
+            TerminalActionRequest::Start { request } => request.command.unwrap(),
+            _ => panic!(),
+        };
+        assert_eq!(actual, command);
+        assert!(
+            decode_terminal_action(
+                &json!({"action":action,"command":format!("{command}x")}),
+                "/trusted"
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
+fn complete_envelope_fits_32_maximum_probes_and_control_arrays() {
+    use machine_god_core::{
+        MAX_TERMINAL_ACTION_COMMAND_BYTES, MAX_TERMINAL_ACTION_TEXT_BYTES,
+        MAX_TERMINAL_INITIAL_MONITORS,
+    };
+    let command = "\u{1b}".repeat(MAX_TERMINAL_ACTION_COMMAND_BYTES);
+    let cwd = format!("/{}", "x".repeat(MAX_TERMINAL_ACTION_TEXT_BYTES - 1));
+    let monitor = definition(json!({"kind":"custom_probe","command":command,"cwd":cwd}));
+    let monitors = vec![monitor; MAX_TERMINAL_INITIAL_MONITORS];
+    let input = json!({"action":"start","command":command,"cwd":cwd,"shell":{"kind":"executable","path":cwd},"initial_monitors":serde_json::to_string(&monitors).unwrap()});
+    let TerminalActionRequest::Start { request } = parse(&input) else {
+        panic!()
+    };
+    assert_eq!(
+        request.initial_monitors.len(),
+        MAX_TERMINAL_INITIAL_MONITORS
+    );
+    assert_eq!(
+        request.command.unwrap().len(),
+        MAX_TERMINAL_ACTION_COMMAND_BYTES
+    );
+    // The byte-array input form must not be constrained by the old JSON cap.
+    let command_bytes = vec![27; MAX_TERMINAL_ACTION_COMMAND_BYTES];
+    parse(&json!({"action":"exec","command":command_bytes}));
+    let controls = vec!["6.7e1"; machine_god_core::MAX_TERMINAL_WRITE_ITEMS];
+    parse(
+        &json!({"action":"write","session_id":"s","write":{"kind":"controls","controls":controls}}),
+    );
+    parse(&json!({"action":"write","session_id":"s","write":{"kind":"text","text":vec![67;8192]}}));
+}
+
+#[test]
+fn serialized_envelope_rejects_before_allocating_decoded_fields() {
+    let oversized = json!({"action":"exec","command":"\u{1b}".repeat(terminal_action_parse::MAX_TERMINAL_ACTION_ARGUMENT_BYTES / 6 + 1)});
+    let allocations = allocation_counter::measure(|| {
+        assert!(decode_terminal_action(&oversized, "/trusted").is_err());
+    });
+    assert_eq!(allocations.bytes_current, 0);
+    assert!(allocations.bytes_total < 4096, "{allocations:?}");
+}
+
+#[test]
+fn nested_composite_is_rejected_before_cwd_preparation_and_normalization() {
+    let nested = format!("{}null{}", "[".repeat(100), "]".repeat(100));
+    let input = json!({"action":"start","cwd":"/must-not-resolve","shell":nested});
+    let allocations = allocation_counter::measure(|| {
+        assert!(terminal_action_requested_cwd(&input).is_err());
+    });
+    assert_eq!(allocations.bytes_current, 0);
+    assert!(allocations.bytes_total < 32 * 1024, "{allocations:?}");
+}
+
+#[test]
+fn schema_node_budget_fits_all_32_full_probe_byte_arrays() {
+    use machine_god_core::{
+        MAX_TERMINAL_ACTION_COMMAND_BYTES, MAX_TERMINAL_ACTION_TEXT_BYTES,
+        MAX_TERMINAL_INITIAL_MONITORS,
+    };
+    let command = vec![27; MAX_TERMINAL_ACTION_COMMAND_BYTES];
+    let cwd = vec![47; MAX_TERMINAL_ACTION_TEXT_BYTES];
+    let monitor = definition(json!({"kind":"custom_probe","command":command,"cwd":cwd}));
+    let input = json!({"action":"start","command":command,"cwd":cwd,"initial_monitors":vec![monitor;MAX_TERMINAL_INITIAL_MONITORS]});
+    let TerminalActionRequest::Start { request } = parse(&input) else {
+        panic!()
+    };
+    assert_eq!(
+        request.initial_monitors.len(),
+        MAX_TERMINAL_INITIAL_MONITORS
+    );
+    assert_eq!(
+        request.command.unwrap().len(),
+        MAX_TERMINAL_ACTION_COMMAND_BYTES
     );
 }
