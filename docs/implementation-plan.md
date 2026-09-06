@@ -143,10 +143,12 @@ under profile-lock contention. Full disk/resident catalog projection is integrat
 without resident admission, and ordered input retains paste intent and committed
 byte receipts across later publication failure. Production host assembly remains
 open.
-The prepared-pane tmux controller is integrated with bounded whole-paste input,
-exact pane validation and receipt preservation; native platform jobs require a
-real tmux executable. Production launch, authenticated capture and recovery
-authority still need host composition, alongside complete action routing.
+The tmux controller and private foreground-server launch are integrated with
+bounded whole-paste input, authenticated supervisor/process authority, exact
+child outcomes and explicit capture-completion evidence. Native platform jobs
+require a real tmux executable. The shared bootstrap and private CLI helper
+retain original-terminal user/clean behavior; full host composition and action
+routing remain open.
 Pending write completion now shares the owner loop with capacity reserved before
 effects, exact receipt identity, and final shutdown counts; cancellation does not
 resubmit or discard the queued suffix.
@@ -157,13 +159,15 @@ writer retirement explicitly releases fork-inherited lock descriptions.
 The complete authorized twelve-action adapter is integrated as an injectable
 native API, with cwd resolution deferred to the worker. Core now separates
 explicitly bounded complete results from their already-persisted transcript
-references, retaining ordinary inline limits. Native archive/paging and full
-provider argument admission still require composition. The nonce-bound startup
+references, retaining ordinary inline limits. Full provider argument admission
+still requires composition. The nonce-bound startup
 bootstrap is shared across transport backends without dropping paste or pending
 write semantics. These are internal components, not a completed feature gate.
 The runtime now binds its spawner to the production owned-worker collector;
 the action adapter has an explicit owned-result publication hook. Native
-archive publication and read-tool paging are still being integrated.
+archive publication and read-tool paging share bounded owned-worker completion
+and preserve complete results outside the small durable transcript. Full
+reference-host registration and large-input persistence/admission remain open.
 The complete normalized twelve-action core contract and effect-free public
 decoder are present, including request/result identity checks and lossless
 foreground execution outcomes. Numeric coercion now matches pinned binary128

@@ -1,11 +1,17 @@
 //! Bounded session-backed paging for projected tool results.
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use crate::native_tool_result_archive::{ArchivedReference, NativeToolResultArchiveAdapter};
 use crate::session_store::{
     JsonValueOwner, MAX_STORED_JSON_DEPTH, MAX_STORED_JSON_NODES, RecordOwner,
 };
 use crate::tool_output_serializer::{
     CompactJsonScratch, CompactToolOutputError, CompactToolOutputLimits,
     measure_json_value_compact, serialize_tool_output_compact_with_scratch,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use crate::tool_result_archive::{
+    ArchivedToolResult, TOOL_RESULT_ARCHIVE_MAX_SOURCE_BYTES, ToolResultArchiveHandle,
 };
 use crate::tool_result_projection::{
     READ_TOOL_RESULT_MAX_SOURCE_BYTES as PROJECTION_MAX_SOURCE_BYTES, tool_result_digest,
@@ -24,10 +30,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Exact registered tool name.
 pub const READ_TOOL_RESULT_TOOL_NAME: &str = "read_tool_result";
-/// Largest compact prior `ToolOutput` source that the reader can page.
+/// Largest inline transcript `ToolOutput` source that the reader can page.
 pub const READ_TOOL_RESULT_MAX_SOURCE_BYTES: usize = PROJECTION_MAX_SOURCE_BYTES;
 
-const DESCRIPTION: &str = "Read a UTF-8-safe byte range from a prior tool result using its session-scoped preview handle.";
+const DESCRIPTION: &str =
+    "Read a UTF-8-safe byte range from a prior tool result using its session-scoped result handle.";
 const MAX_ARGUMENT_BYTES: usize = 512;
 const DEFAULT_START_BYTE: usize = 1;
 const MAX_START_BYTE: usize = READ_TOOL_RESULT_MAX_SOURCE_BYTES + 1;
@@ -151,11 +158,13 @@ impl Default for ReadToolResultLimits {
     }
 }
 
-/// Rootless bounded reader over an explicitly injected session store.
+/// Bounded reader over an explicitly injected session store and optional archive.
 pub struct ReadToolResultTool {
     session_store: Arc<dyn SessionStore>,
     limits: ReadToolResultLimits,
     active_reads: Arc<AtomicUsize>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    archive: Option<Arc<NativeToolResultArchiveAdapter>>,
 }
 
 impl ReadToolResultTool {
@@ -166,6 +175,8 @@ impl ReadToolResultTool {
             session_store,
             limits: ReadToolResultLimits::default(),
             active_reads: Arc::new(AtomicUsize::new(0)),
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            archive: None,
         }
     }
 
@@ -188,7 +199,17 @@ impl ReadToolResultTool {
             session_store,
             limits,
             active_reads: Arc::new(AtomicUsize::new(0)),
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            archive: None,
         })
+    }
+    /// Adds explicitly injected native archive paging. Original source context
+    /// must come from a prior durable result, not from model-supplied arguments.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[must_use]
+    pub fn with_archive(mut self, archive: Arc<NativeToolResultArchiveAdapter>) -> Self {
+        self.archive = Some(archive);
+        self
     }
 }
 
@@ -203,7 +224,7 @@ impl fmt::Debug for ReadToolResultTool {
 
 impl Tool for ReadToolResultTool {
     fn spec(&self) -> ToolSpec {
-        ToolSpec {
+        let spec = ToolSpec {
             name: ToolName::new(READ_TOOL_RESULT_TOOL_NAME)
                 .expect("read_tool_result is a valid static tool name"),
             description: DESCRIPTION.to_owned(),
@@ -232,7 +253,21 @@ impl Tool for ReadToolResultTool {
                 "required": ["handle"],
                 "additionalProperties": false
             }),
-        }
+        };
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let spec = {
+            let mut spec = spec;
+            if self.archive.is_some() {
+                spec.input_schema["properties"]["handle"] = json!({
+                    "type":"string", "minLength":83, "maxLength":145,
+                    "pattern":"^(tool-result-sha256-[0-9a-f]{64}|tool-archive-v1-[0-9a-f]{64}-[0-9a-f]{64})$",
+                });
+                spec.input_schema["properties"]["start_byte"]["maximum"] =
+                    json!(TOOL_RESULT_ARCHIVE_MAX_SOURCE_BYTES + 1);
+            }
+            spec
+        };
+        spec
     }
 
     fn prepare(&self, call: ToolCall) -> Result<PreparedToolCall, ToolError> {
@@ -244,6 +279,10 @@ impl Tool for ReadToolResultTool {
             return Err(invalid_arguments());
         }
         let arguments = normalize_arguments(arguments.get(), &CancellationToken::new())?;
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if arguments.archive.is_some() && self.archive.is_none() {
+            return Err(invalid_arguments());
+        }
         Ok(PreparedToolCall::without_authority(arguments.into_value()))
     }
 
@@ -256,6 +295,8 @@ impl Tool for ReadToolResultTool {
         let session_store = Arc::clone(&self.session_store);
         let limits = self.limits;
         let active_reads = Arc::clone(&self.active_reads);
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let archive = self.archive.clone();
         let arguments = JsonValueOwner::new(arguments);
         Box::pin(async move {
             let mut permit = None;
@@ -266,6 +307,10 @@ impl Tool for ReadToolResultTool {
                     Ok(arguments) => arguments,
                     Err(error) => return checked_error(&cancellation, error),
                 };
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                if normalized.archive.is_some() && archive.is_none() {
+                    return Err(invalid_arguments());
+                }
                 check_cancellation(&cancellation)?;
                 let Some(acquired) = try_acquire(active_reads, limits.active_reads) else {
                     check_cancellation(&cancellation)?;
@@ -321,9 +366,23 @@ impl Tool for ReadToolResultTool {
                     limits,
                     &cancellation,
                 ) {
-                    Ok(output) => {
+                    Ok(ScannedOutput::Inline(output)) => {
                         check_cancellation(&cancellation)?;
                         Ok(output)
+                    }
+                    #[cfg(any(target_os = "linux", target_os = "macos"))]
+                    Ok(ScannedOutput::Archive(reference)) => {
+                        let archive = archive.as_ref().ok_or_else(not_found)?;
+                        record = None;
+                        archive
+                            .read(
+                                context.clone(),
+                                reference,
+                                normalized.start_byte,
+                                normalized.byte_count,
+                                cancellation.clone(),
+                            )
+                            .await
                     }
                     Err(error) => checked_error(&cancellation, error),
                 }
@@ -348,6 +407,12 @@ fn finish_execution_after_owned_teardown<T, Arguments, Record, Permit>(
     outcome
 }
 
+enum ScannedOutput {
+    Inline(ToolOutput),
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    Archive(ArchivedToolResult),
+}
+
 fn scan_record(
     record: &SessionRecord,
     prior_message_end: usize,
@@ -355,7 +420,7 @@ fn scan_record(
     arguments: &NormalizedArguments,
     limits: ReadToolResultLimits,
     cancellation: &CancellationToken,
-) -> Result<ToolOutput, ToolError> {
+) -> Result<ScannedOutput, ToolError> {
     let mut scanned_results = 0_usize;
     let mut scanned_bytes = 0_usize;
     let mut serialized = Vec::new();
@@ -392,6 +457,20 @@ fn scan_record(
                 _ => return checked_error(cancellation, not_found()),
             };
             check_cancellation(cancellation)?;
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if let Some(handle) = &arguments.archive {
+                if let Ok(ArchivedReference::ToolResultArchive { archive, .. }) =
+                    serde_json::from_value(output.content.clone())
+                    && archive.handle == *handle
+                    && archive.source_context.call_id == *call_id
+                    && archive.source_context.session_id == context.session_id
+                    && archive.source_context.session_incarnation_id
+                        == context.session_incarnation_id
+                {
+                    return Ok(ScannedOutput::Archive(archive));
+                }
+                continue;
+            }
             let candidate_digest: [u8; 32] = tool_result_digest(
                 &context.session_id,
                 &context.session_incarnation_id,
@@ -399,13 +478,13 @@ fn scan_record(
                 &serialized,
             )
             .into();
-            if candidate_digest == arguments.digest {
+            if Some(candidate_digest) == arguments.digest {
                 let output = match page_output(arguments, &serialized) {
                     Ok(output) => output,
                     Err(error) => return checked_error(cancellation, error),
                 };
                 check_cancellation(cancellation)?;
-                return Ok(output);
+                return Ok(ScannedOutput::Inline(output));
             }
         }
     }
@@ -567,7 +646,9 @@ impl<'a> Iterator for StoredJsonChildren<'a> {
 #[derive(Debug)]
 struct NormalizedArguments {
     handle: String,
-    digest: [u8; 32],
+    digest: Option<[u8; 32]>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    archive: Option<ToolResultArchiveHandle>,
     start_byte: usize,
     byte_count: usize,
 }
@@ -606,14 +687,33 @@ fn normalize_arguments(
     let handle = object
         .get("handle")
         .and_then(Value::as_str)
-        .filter(|handle| valid_tool_result_handle(handle))
         .ok_or_else(invalid_arguments)?;
-    let digest = parse_handle_digest(handle).ok_or_else(invalid_arguments)?;
+    let digest = valid_tool_result_handle(handle)
+        .then(|| parse_handle_digest(handle))
+        .flatten();
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    let archive = if digest.is_none() {
+        ToolResultArchiveHandle::parse(handle).ok()
+    } else {
+        None
+    };
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    let max_start = if archive.is_some() {
+        TOOL_RESULT_ARCHIVE_MAX_SOURCE_BYTES + 1
+    } else {
+        digest.ok_or_else(invalid_arguments)?;
+        MAX_START_BYTE
+    };
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let max_start = {
+        digest.ok_or_else(invalid_arguments)?;
+        MAX_START_BYTE
+    };
     let handle = handle.to_owned();
     let start_byte = optional_usize(object.get("start_byte"), DEFAULT_START_BYTE)?;
     let byte_count = optional_usize(object.get("byte_count"), DEFAULT_PAGE_BYTES)?;
     if start_byte == 0
-        || start_byte > MAX_START_BYTE
+        || start_byte > max_start
         || !(MIN_PAGE_BYTES..=MAX_PAGE_BYTES).contains(&byte_count)
     {
         return Err(invalid_arguments());
@@ -621,6 +721,8 @@ fn normalize_arguments(
     Ok(NormalizedArguments {
         handle,
         digest,
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        archive,
         start_byte,
         byte_count,
     })

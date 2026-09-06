@@ -46,7 +46,9 @@ of its receipt. The native publisher owns storage/worker effects; the adapter
 does not infer durability. Rejected and unpolled argument values use iterative
 cleanup, including direct API calls that have not crossed core validation.
 This injectable adapter does not by itself compose the production runtime,
-large-result archive, provider admission or reference-host registration.
+provider admission or reference-host registration. The native archive publisher
+and `read_tool_result` paging binding are described in
+[the result-reader contract](read-tool-result.md#explicit-native-archives).
 
 Numeric-string coercion uses deterministic IEEE binary128 rounding, matching
 the pinned typed decoder before integer range validation, including halfway,
@@ -377,6 +379,32 @@ an indeterminate submitted paste fails instead of claiming a reliable zero-byte
 receipt. Close retains failed native cleanup for retry. Native platform CI
 installs tmux and supplies an explicit executable path, so real private-server
 tests cannot silently skip when that dependency is missing.
+
+Private tmux launch retains a foreground server child and checks its supported
+version before releasing any shell command. A gated pane supervisor stays on
+tmux's original controlling terminal, starts the exact bash/zsh shell in its
+foreground process group, and reports the retained child's real exit/signal
+status. This distinguishes a signalled child from exit code 128 plus the signal
+even on tmux 3.2; the supervisor's lifetime alone never means the job is running.
+Its freshly authenticated native incarnation anchors bounded session discovery
+and cleanup after a fast shell exit. No saved numeric PID or pane fact restores
+process authority, and no nested PTY is introduced.
+
+Raw capture and its two-byte completion receipt use separate fresh-nonce
+authenticated streams on one private socket path. Success is reported only
+after capture reaches EOF with all observed bytes delivered; overload, missing
+receipt, truncation or reported failure retains an explicit output gap. The
+helper uses a 16 KiB buffer and nonblocking downstream delivery. Stock tmux's
+own pipe-pane queue is not a hard byte-bounded RSS guarantee. Close drains
+while waiting for actual pane teardown after supervisor retirement, independently
+of the earlier child-exit status; deadline/drain exhaustion cannot be called a
+complete capture. Failed cleanup retains the exact owned server/backend for
+retry and never unlinks a replacement artifact.
+
+The private CLI helper entrypoint bypasses ordinary configuration and accepts
+only its four bounded protocol arguments. The same shared startup bootstrap,
+owner acknowledgements and absolute deadline cover native PTY and tmux user/
+clean profiles, optional commands and commandless sessions.
 
 Close commits a discontinuity barrier, drains final output without protocol
 reply effects, and removes monitors after final observations. A positively

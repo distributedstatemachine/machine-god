@@ -2,7 +2,8 @@
 
 This page is the normative contract for the native, session-backed
 `read_tool_result` tool. It lets a model page through a large prior
-`ToolOutput` whose AI Gateway request projection supplied an opaque handle.
+`ToolOutput` whose AI Gateway request projection or injected native publisher
+supplied an opaque handle.
 It is a range-only reader, not a general session-inspection or search API.
 
 ## Model-visible schema
@@ -22,8 +23,9 @@ preparation accept only this strict object:
 integers; they default to `1` and 8,192. Unknown fields, non-integers, negative
 values, zero, floating-point values, and handles outside the exact syntax are
 rejected. `byte_count` is at least 4 and at most 16,384 bytes. `start_byte` is
-1-based and may be at most 65,537, matching one past the current engine's
-64 KiB serialized-result source ceiling.
+1-based and may be at most 65,537 for inline transcript handles, matching one
+past the ordinary engine's 64 KiB serialized-result source ceiling. Explicit
+native archive support adds the handle and source ceiling described below.
 
 The tool does not accept `query`, regular expressions, result IDs, call IDs,
 session IDs, incarnation IDs, paths, or archive locations.
@@ -49,10 +51,56 @@ not-found result as an unknown handle. Resetting a session creates a new
 incarnation, so every handle from the prior incarnation becomes unavailable.
 Changing the retained result bytes also prevents a stale handle from matching.
 
-The durable `SessionRecord` is the only result source. The tool does not create
-an index, cache, sidecar, external archive, file, or database record. A result
-that is no longer present in the current durable record cannot be read through
-its old handle.
+By default the durable `SessionRecord` is the only result source. With native
+archive support it instead supplies the original context and durable reference
+for archived bytes. The reader never creates an index, cache, archive or result
+record. A result/reference no longer present in the current durable record
+cannot be read through its old handle.
+
+## Explicit native archives
+
+`NativeToolResultArchiveAdapter` implements the terminal's injected result
+publisher and can be shared with `ReadToolResultTool::with_archive`. Its
+constructor is inert; publication and paging run through the existing owned
+worker collector, with at most two operations or unconsumed receipts per shared
+adapter. Dropping a submitted future does not detach the worker or abandon its
+storage ownership. Publication failure after an executed terminal action is
+not advertised as permission to repeat that action.
+
+Complete outputs of at most 64 KiB remain inline and create no archive files.
+Larger outputs are compactly serialized and durably published before core
+receives the complete output plus its small transcript reference. The reference
+preserves error status and contains an opaque handle, original four-part tool
+context, complete byte length and at most 1 KiB of preview text. Its serialized
+size stays below the Gateway preview threshold, so the archive handle remains
+directly visible. Core's separate complete-output admission and per-turn budget
+must be explicitly configured by the host; ordinary inline limits are unchanged.
+
+The archive syntax is `tool-archive-v1-<64 lowercase hex>-<64 lowercase hex>`.
+Only an archive-enabled reader accepts it, with a one-based start ceiling of
+210,763,777 and the same 4–16,384-byte page bounds. The source context comes from
+a matched prior durable tool result whose call ID, session and incarnation
+agree, never from additional model-supplied arguments. The worker checks owner
+scope again and verifies the recorded source length against the archived file.
+
+`ToolResultArchive` takes a dedicated retained private directory descriptor.
+Handles bind that root identity, original session/incarnation/turn/call and the
+checksummed content index. One result is at most 210,763,776 bytes; the separate
+archive root has a 512 MiB accounting budget and an 8,192-entry bounded inventory.
+This budget is independent of the terminal-history profile quota. Accounting
+includes logical/allocated bytes, conservative entry overhead and interrupted
+temporary publications. No referenced or unknown entry is silently evicted.
+Cooperating publishers use a permanent descriptor-relative lock, precharge the
+whole temporary file, publish without replacement, and complete file/directory
+durability barriers before returning a handle. It is not isolation from hostile
+code running as the same OS user.
+
+Each page verifies a bounded chunk-hash index and at most two 64 KiB chunks,
+not the entire result or a reconstructed JSON tree. Corrupt metadata, wrong
+scope, missing data, noncanonical handles and unavailable quota fail closed.
+The ordinary UTF-8 range result below is unchanged. Native archive injection is
+an explicit composition API; it does not itself replace the reference host's
+legacy terminal registration or its argument-admission policy.
 
 ## Range result
 
@@ -149,7 +197,7 @@ instead of candidate count. The prepass and iterative record destruction each
 reuse one traversal scratch across every stored JSON root for the same reason.
 Serialization checks cancellation while scanning string and key bytes in
 chunks of at most 1 KiB before fixed-digest comparison and UTF-8 range
-selection. The tool spawns no task or thread and performs no retry. Drop cancels
+selection. The default inline reader spawns no task or thread and performs no retry. Drop cancels
 ownership of the store future and releases capacity; a conforming injected
 store keeps its effects owned by that future or completes its own cleanup on
 drop.
@@ -165,7 +213,8 @@ The injected `SessionStore` is explicit host authority outside permission
 policy. The native reference host shares the exact `Arc<FileSessionStore>`
 allocation, erased as `Arc<dyn SessionStore>`, with the engine and this reader.
 The tool has no ambient filesystem, environment, process, terminal, network,
-clock, entropy, or runtime authority.
+clock, entropy, or runtime authority. The optional archive adapter receives its
+directory authority explicitly and uses the native owned-worker collector.
 
 Successful page text is intentionally model-visible and becomes an ordinary
 durable tool result. Handles and output are structural but not secret-bearing

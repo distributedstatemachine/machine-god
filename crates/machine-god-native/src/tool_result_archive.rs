@@ -253,6 +253,7 @@ impl ToolResultArchive {
         usage.check_added(&self.root, &staged.file)?;
         same_entry(&self.root, &staged.name, &staged.file)?;
         validate_lock(&self.root, &lock.0)?;
+        #[cfg(test)]
         fault(Fault::BeforeRename)?;
         cancelled(cancellation)?;
         rustix::fs::renameat_with(
@@ -264,6 +265,7 @@ impl ToolResultArchive {
         )
         .map_err(io_error)?;
         staged.published = true;
+        #[cfg(test)]
         fault(Fault::AfterRename)?;
         sync(&self.root)?;
         usage.check_added(&self.root, &staged.file)?;
@@ -715,11 +717,13 @@ fn io_error(error: rustix::io::Errno) -> ToolResultArchiveError {
         _ => ToolResultArchiveError::Unavailable,
     }
 }
+#[cfg(test)]
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum Fault {
     BeforeRename,
     AfterRename,
 }
+#[cfg(test)]
 fn fault(point: Fault) -> Result<()> {
     #[cfg(test)]
     CANCEL_AT.with(|cancel| {

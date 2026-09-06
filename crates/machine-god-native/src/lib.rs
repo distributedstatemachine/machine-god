@@ -62,6 +62,8 @@ mod mcp_features;
 mod mcp_search_tools;
 mod mcp_select_tool;
 mod memory;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod native_tool_result_archive;
 mod open_file;
 mod read_file;
 mod read_tool_result;
@@ -95,11 +97,24 @@ mod terminal_screen;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod terminal_shell;
 mod terminal_tape_replay;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod terminal_tmux_helper;
 mod terminal_unicode_data;
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
 mod tokio_web_search_deadline;
 mod tool_output_serializer;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod tool_result_archive;
 mod tool_result_projection;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use native_tool_result_archive::NativeToolResultArchiveAdapter;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use tool_result_archive::{
+    ArchivedToolResult, TOOL_RESULT_ARCHIVE_HANDLE_PREFIX, TOOL_RESULT_ARCHIVE_MAX_BYTES,
+    TOOL_RESULT_ARCHIVE_MAX_ENTRIES, TOOL_RESULT_ARCHIVE_MAX_PAGE_BYTES,
+    TOOL_RESULT_ARCHIVE_MAX_SOURCE_BYTES, ToolResultArchive, ToolResultArchiveError,
+    ToolResultArchiveHandle, ToolResultArchivePage,
+};
 mod utf8_boundary;
 #[cfg(all(feature = "vision", not(target_family = "wasm")))]
 mod vision;
@@ -223,6 +238,11 @@ pub use background_supervisor::{
 pub use terminal_helper::{
     TERMINAL_PTY_HELPER_ARGUMENT, TERMINAL_STARTUP_MARKER_ARGUMENT, TerminalHelperError,
     run_terminal_pty_helper, run_terminal_startup_marker,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[doc(hidden)]
+pub use terminal_tmux_helper::{
+    TERMINAL_TMUX_HELPER_ARGUMENT, TerminalTmuxLaunchError, run_terminal_tmux_helper,
 };
 #[cfg(all(feature = "vision", not(target_family = "wasm")))]
 pub use vision::{

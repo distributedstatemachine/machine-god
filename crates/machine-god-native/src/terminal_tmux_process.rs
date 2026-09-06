@@ -2,7 +2,8 @@
 //!
 //! A pane is not our direct child. Neither its numeric PID nor SID is signal
 //! authority. Every delivery uses a retained OS incarnation; a separately
-//! authenticated inert sentinel pins session discovery after the shell exits.
+//! authenticated supervisor or inert sentinel pins session discovery after the
+//! shell exits, independently of the actual terminal job's completion status.
 
 #[cfg(target_os = "macos")]
 use super::macos_scope_members;

@@ -1177,6 +1177,13 @@ fn classify_provider_error(error: &ProviderError) -> ModelsOperationalFailure {
 
 fn main() -> ExitCode {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
+    if let Some(arguments) = terminal_tmux_helper_arguments(env::args_os().skip(1)) {
+        return ExitCode::from(match arguments {
+            Ok(arguments) if machine_god_native::run_terminal_tmux_helper(&arguments).is_ok() => 0,
+            _ => 125,
+        });
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     if is_background_process_helper_arguments(env::args_os().skip(1)) {
         let _ = machine_god_native::run_background_process_helper();
         return ExitCode::from(125);
@@ -1205,6 +1212,28 @@ fn main() -> ExitCode {
     let mut stdout = io::stdout().lock();
     let mut stderr = io::stderr().lock();
     ExitCode::from(run(env::args_os().skip(1), &mut stdout, &mut stderr))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn terminal_tmux_helper_arguments(
+    arguments: impl IntoIterator<Item = OsString>,
+) -> Option<Result<[OsString; 4], ()>> {
+    let mut arguments = arguments.into_iter();
+    if arguments.next().as_deref()
+        != Some(std::ffi::OsStr::new(
+            machine_god_native::TERMINAL_TMUX_HELPER_ARGUMENT,
+        ))
+    {
+        return None;
+    }
+    // Four arguments plus one overflow witness; never collect an unbounded iterator.
+    Some(
+        arguments
+            .take(5)
+            .collect::<Vec<_>>()
+            .try_into()
+            .map_err(|_| ()),
+    )
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -5998,6 +6027,41 @@ mod tests {
             assert!(stdout.is_empty());
             assert_eq!(stderr, INVALID_ARGUMENTS.as_bytes());
         }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn private_tmux_helper_dispatch_is_exact_bounded_and_not_an_ordinary_command() {
+        let flag = OsString::from(machine_god_native::TERMINAL_TMUX_HELPER_ARGUMENT);
+        let values = [
+            OsString::from("pane"),
+            OsString::from("/private/socket"),
+            OsString::from("nonce"),
+            OsString::from("identity"),
+        ];
+        let exact = std::iter::once(flag.clone()).chain(values.clone());
+        assert_eq!(
+            super::terminal_tmux_helper_arguments(exact),
+            Some(Ok(values))
+        );
+        assert_eq!(
+            super::terminal_tmux_helper_arguments([flag.clone()]),
+            Some(Err(()))
+        );
+        assert_eq!(
+            super::terminal_tmux_helper_arguments(
+                std::iter::once(flag.clone()).chain(std::iter::repeat(OsString::from("overflow")))
+            ),
+            Some(Err(()))
+        );
+        assert_eq!(
+            super::terminal_tmux_helper_arguments([OsString::from("help")]),
+            None
+        );
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        assert_eq!(run([flag], &mut stdout, &mut stderr), 2);
+        assert!(stdout.is_empty());
     }
 
     #[cfg(unix)]

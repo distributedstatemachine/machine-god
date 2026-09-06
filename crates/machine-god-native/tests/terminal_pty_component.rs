@@ -50,6 +50,10 @@ mod terminal_shell;
 mod terminal_startup;
 #[path = "../src/terminal_tmux.rs"]
 mod terminal_tmux;
+#[path = "../src/terminal_tmux_helper.rs"]
+mod terminal_tmux_helper;
+#[path = "../src/terminal_tmux_startup.rs"]
+mod terminal_tmux_startup;
 #[path = "../src/terminal_unicode_data.rs"]
 mod terminal_unicode_data;
 #[path = "../src/terminal_wait.rs"]
