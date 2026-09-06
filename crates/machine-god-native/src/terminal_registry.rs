@@ -8,6 +8,7 @@ use crate::terminal_journal::{
     TerminalJournal, TerminalJournalError, TerminalJournalMutation, TerminalJournalPage,
     TerminalJournalPhysicalUsage, TerminalJournalReceipt,
 };
+use crate::terminal_monitor::{TerminalMonitorContext, TerminalProcessOutcome};
 use crate::terminal_profile::{
     TerminalJournalPersistence, TerminalProfileBudget, TerminalProfileError,
     TerminalProfileMutationContext,
@@ -222,6 +223,26 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         id: &TerminalSessionId,
     ) -> Result<TerminalSessionFacts> {
         self.entries[self.index(owner, id)?].facts()
+    }
+
+    /// Small observation snapshot for owner-side waits. Does not clone command,
+    /// shell, workspace or monitor payloads on each scheduler tick.
+    pub(crate) fn wait_observation(
+        &self,
+        owner: &BackgroundOutputOwner,
+        id: &TerminalSessionId,
+    ) -> Result<(TerminalMonitorContext, i64, Option<TerminalProcessOutcome>)> {
+        Ok(match &self.entries[self.index(owner, id)?].resident {
+            Resident::Live(session) => (
+                session.context(),
+                session.last_output_ms(),
+                session.outcome(),
+            ),
+            Resident::Recovered(session) => {
+                let facts = session.facts(owner)?;
+                (facts.context.clone(), facts.last_output_ms, facts.outcome)
+            }
+        })
     }
     pub(crate) fn list(
         &self,
