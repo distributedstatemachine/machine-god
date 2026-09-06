@@ -39,3 +39,5 @@ mod terminal_session;
 mod terminal_session_record;
 #[path = "../src/terminal_unicode_data.rs"]
 mod terminal_unicode_data;
+#[path = "../src/terminal_wait.rs"]
+mod terminal_wait;

@@ -20,8 +20,9 @@ use crate::terminal_session::{
 };
 use crate::terminal_session_record::TerminalSessionFacts;
 use machine_god_core::{
-    BackgroundOutputOwner, TerminalBackend, TerminalClosePolicy, TerminalCursor,
-    TerminalEventQuery, TerminalLifecycle, TerminalMonitorEvent, TerminalScreen, TerminalSessionId,
+    BackgroundOutputOwner, TerminalActorRole, TerminalAttentionState, TerminalBackend,
+    TerminalClosePolicy, TerminalCursor, TerminalEventQuery, TerminalLifecycle,
+    TerminalMonitorEvent, TerminalScreen, TerminalSessionId,
 };
 use std::fmt;
 
@@ -240,8 +241,76 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             ),
             Resident::Recovered(session) => {
                 let facts = session.facts(owner)?;
+                if facts.observation_gap.is_some() {
+                    return Err(TerminalSessionError::InvalidState.into());
+                }
                 (facts.context.clone(), facts.last_output_ms, facts.outcome)
             }
+        })
+    }
+
+    /// Executes one exact-owner mutation under this registry's own namespace.
+    /// Neither persistence guards nor session borrows can escape the callback.
+    pub(crate) fn mutate_with_profile<T>(
+        &mut self,
+        store: &TerminalProfileStore,
+        budget: &TerminalProfileBudget,
+        owner: &BackgroundOutputOwner,
+        id: &TerminalSessionId,
+        operation: impl FnOnce(
+            &mut TerminalSession<B>,
+            &mut dyn TerminalJournalPersistence,
+        ) -> std::result::Result<T, TerminalSessionError>,
+    ) -> Result<T> {
+        // Authorize before acquiring profile authority or executing callbacks.
+        let index = self.index(owner, id)?;
+        if !matches!(self.entries[index].resident, Resident::Live(_)) {
+            return Err(TerminalRegistryError::Closed);
+        }
+        let namespace = owner_name(&self.workspace, owner);
+        let mut transaction = store
+            .transaction()
+            .map_err(|error| profile_error(error.into()))?;
+        let mut persistence =
+            TerminalProfileMutationContext::new(&mut transaction, *budget, &namespace);
+        let Resident::Live(session) = &mut self.entries[index].resident else {
+            unreachable!("resident validated before profile admission")
+        };
+        Ok(operation(session, &mut persistence)?)
+    }
+
+    /// Finishes only the matching actor's attention. The transaction is gone
+    /// when this returns, before the owner may publish an asynchronous reply.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit profile and actor authority"
+    )]
+    pub(crate) fn finish_attention_with(
+        &mut self,
+        store: &TerminalProfileStore,
+        budget: &TerminalProfileBudget,
+        owner: &BackgroundOutputOwner,
+        id: &TerminalSessionId,
+        actor: TerminalActorRole,
+        writer: crate::terminal_input::TerminalWriterId,
+        now_ms: i64,
+        cancelled: bool,
+    ) -> Result<TerminalAttentionState> {
+        self.check_time(now_ms)?;
+        let index = self.index(owner, id)?;
+        if let Resident::Recovered(session) = &self.entries[index].resident {
+            if let Some(error) = session.publication_error() {
+                return Err(error.into());
+            }
+            // Successful recovery durably cleared all former actor authority.
+            let attention = session.facts(owner)?.attention.clone();
+            if attention != TerminalAttentionState::default() {
+                return Err(TerminalRegistryError::Invalid);
+            }
+            return Ok(attention);
+        }
+        self.mutate_with_profile(store, budget, owner, id, |session, persistence| {
+            session.finish_attention_with(persistence, owner, actor, writer, now_ms, cancelled)
         })
     }
     pub(crate) fn list(
@@ -1305,6 +1374,109 @@ mod tests {
     }
     fn registry() -> TerminalRegistry<Backend> {
         TerminalRegistry::new("/workspace".into()).unwrap()
+    }
+
+    #[test]
+    fn profile_attention_dispatch_checks_owner_and_releases_transaction_before_return() {
+        use crate::terminal_input::TerminalWriterId;
+        use machine_god_core::TerminalAttention;
+        use std::num::NonZeroU64;
+        let fixture = Fixture::new();
+        let owner = owner("attention");
+        let id = id("attention");
+        let (store, session) = fixture.profile_live(&owner, &id);
+        let budget = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+        let mut registry = registry();
+        registry
+            .start(owner.clone(), id.clone(), || Ok(session))
+            .unwrap();
+        let writer = TerminalWriterId::new(NonZeroU64::new(1).unwrap());
+        let foreign = BackgroundOutputOwner::new(
+            SessionId::new("owner").unwrap(),
+            SessionIncarnationId::new("foreign").unwrap(),
+        );
+        let transaction = store.transaction().unwrap();
+        assert_eq!(
+            registry.mutate_with_profile(&store, &budget, &foreign, &id, |_, _| {
+                panic!("foreign owner must not reach mutation")
+            }),
+            Err::<(), _>(TerminalRegistryError::NotFound)
+        );
+        drop(transaction);
+        let attention = registry
+            .mutate_with_profile(&store, &budget, &owner, &id, |session, persistence| {
+                session.begin_attention_with(
+                    persistence,
+                    &owner,
+                    TerminalActorRole::Agent,
+                    writer,
+                    1,
+                )
+            })
+            .unwrap();
+        assert_eq!(attention.attention(), TerminalAttention::AgentWait);
+        assert!(store.transaction().is_ok());
+        let attention = registry
+            .finish_attention_with(
+                &store,
+                &budget,
+                &owner,
+                &id,
+                TerminalActorRole::Agent,
+                writer,
+                2,
+                false,
+            )
+            .unwrap();
+        assert_eq!(attention, TerminalAttentionState::default());
+        assert!(store.transaction().is_ok());
+        assert_eq!(
+            registry.wait_observation(&owner, &id).unwrap().0.cursor,
+            registry.inspect(&owner, &id).unwrap().context.cursor
+        );
+        assert!(matches!(
+            registry.wait_observation(&foreign, &id),
+            Err(TerminalRegistryError::NotFound)
+        ));
+        registry
+            .shutdown_with_profile(&store, &budget, 2, TerminalClosePolicy::Force)
+            .unwrap();
+    }
+
+    #[test]
+    fn recovered_wait_observation_rejects_unknown_output_observation() {
+        let fixture = Fixture::new();
+        let owner = owner("gap");
+        let id = id("gap");
+        let mut session = fixture.live(&owner, &id, 0).unwrap();
+        session
+            .close(&owner, TerminalClosePolicy::Force, 1)
+            .unwrap();
+        drop(session);
+        let mut journal =
+            TerminalJournal::open_existing(fixture.fd(), &id, TerminalJournalLimits::default())
+                .unwrap();
+        journal.append(b"unobserved").unwrap();
+        drop(journal);
+        let mut registry = registry();
+        registry
+            .recover(owner.clone(), id.clone(), || {
+                fixture.recovered(&owner, &id, 2)
+            })
+            .unwrap();
+        assert!(
+            registry
+                .inspect(&owner, &id)
+                .unwrap()
+                .observation_gap
+                .is_some()
+        );
+        assert!(matches!(
+            registry.wait_observation(&owner, &id),
+            Err(TerminalRegistryError::Session(
+                TerminalSessionError::InvalidState
+            ))
+        ));
     }
 
     #[test]

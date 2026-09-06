@@ -310,8 +310,8 @@ authority is unavailable, explicit teardown performs no journal writes, records
 failed publication in memory, and discards drained output with an unavailable
 projection. Later state publication must first establish the missing durable
 gap barrier; a state-only write cannot erase that obligation. The driver is a
-runtime composition component; the persistent catalog/host, attention and lease
-facts, startup-control transport and full tool routing are not
+runtime composition component; the persistent catalog/host,
+startup-control transport and full tool routing are not
 provided by this driver alone.
 
 The driver binds durable lifecycle, known termination, creation/last-output
@@ -340,8 +340,22 @@ Provider-neutral attention facts enforce that a human lease exists exactly
 when attention is user takeover. Role-specific cancellation clears only the
 caller's attention/lease, never terminal lifecycle. Native recovery clears stale
 attention and lease facts before publishing a formerly live record as lost;
-inactive records cannot claim an active attention/lease. These data contracts
-do not yet implement host-side human takeover or grant input authority.
+inactive records cannot claim an active attention/lease. Native input and
+attention mutations bind both the trusted actor role and exact writer identity;
+human acquisition takes over the lease, while human waits do not acquire one.
+Completing an agent wait preserves its write lease; cancellation clears only
+that actor/writer's authority without discarding already accepted input or its
+queued suffix. Revocation requires close authorization at host dispatch.
+Profile-backed registry mutations authorize the owner before acquiring storage
+authority and release the transaction before returning a reply. Recovered wait
+observations reject a recorded observation gap rather than inventing matches.
+These components do not themselves grant tool or human-host authority.
+
+Owner-authorized inspect projections cover live and recovered sessions, masking
+controls by role, lifecycle and input quiescence. A checkpoint on an older raw
+segment is re-anchored through explicit persistence before exposing current
+facts, without granting recovered history live backend authority. Missing
+launch metadata remains an unavailable full projection, not fabricated facts.
 
 Native recovered-session views expose only owner-authorized facts, raw history,
 screens and durable event acknowledgements. A previously starting/running host
