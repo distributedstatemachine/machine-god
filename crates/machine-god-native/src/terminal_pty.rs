@@ -126,6 +126,7 @@ pub(crate) struct TerminalPtyRequest {
     environment: ValidatedBackgroundEnvironment,
     cwd: OwnedFd,
     dimensions: TerminalPtyDimensions,
+    startup_source: Option<String>,
 }
 impl TerminalPtyRequest {
     pub(crate) fn new(
@@ -145,7 +146,22 @@ impl TerminalPtyRequest {
             environment,
             cwd,
             dimensions: dimensions.validate()?,
+            startup_source: None,
         })
+    }
+    pub(crate) fn with_startup_source(mut self, source: String) -> Result<Self, TerminalPtyError> {
+        // Below both platforms' canonical input-line ceilings. Only one newline
+        // terminates this host-created source command; ordinary input is gated.
+        if source.is_empty()
+            || source.len() > 512
+            || source.contains('\0')
+            || !source.ends_with('\n')
+            || source[..source.len() - 1].contains(['\n', '\r'])
+        {
+            return Err(error(TerminalPtyErrorKind::InvalidRequest));
+        }
+        self.startup_source = Some(source);
+        Ok(self)
     }
     fn frame(&self) -> Result<Vec<u8>, TerminalPtyError> {
         let mut bytes = Vec::new();
@@ -174,6 +190,12 @@ pub(crate) struct TerminalPtyHelper {
     arguments: Vec<OsString>,
 }
 impl TerminalPtyHelper {
+    pub(crate) fn program(&self) -> &std::path::Path {
+        &self.program
+    }
+    pub(crate) fn arguments(&self) -> &[OsString] {
+        &self.arguments
+    }
     pub(crate) fn new(
         program: PathBuf,
         arguments: Vec<OsString>,
@@ -213,6 +235,9 @@ impl PreparedTerminalPty {
         machine_god_terminal_sys::ProcessIdentity::verify_signal_support()
             .map_err(process_error)?;
         let (master, slave) = open_pty(request.dimensions)?;
+        if request.startup_source.is_some() {
+            set_echo(&slave, false)?;
+        }
         let (mut gate, child_gate) = UnixStream::pair().map_err(process_error)?;
         gate.set_nonblocking(true).map_err(process_error)?;
         let mut guard = TerminalChildGuard::reserve(cancellation).map_err(process_error)?;
@@ -233,6 +258,14 @@ impl PreparedTerminalPty {
         read_gate(&mut gate, &mut ready, deadline, cancellation)?;
         if ready != [READY] {
             return Err(error(TerminalPtyErrorKind::Process));
+        }
+        if let Some(source) = &request.startup_source {
+            write_gate(
+                &mut DescriptorIo(master.as_fd()),
+                source.as_bytes(),
+                deadline,
+                cancellation,
+            )?;
         }
         let process = guard.into_session().map_err(process_error)?;
         Ok(Self {
@@ -328,6 +361,14 @@ pub(crate) struct TerminalPty {
     permit: Option<PtyPermit>,
 }
 impl TerminalPty {
+    pub(crate) fn restore_startup_echo(&self) -> Result<(), TerminalPtyError> {
+        set_echo(
+            self.master
+                .as_ref()
+                .ok_or_else(|| error(TerminalPtyErrorKind::Closed))?,
+            true,
+        )
+    }
     pub(crate) const fn pid(&self) -> NonZeroU32 {
         self.pid
     }
@@ -605,6 +646,15 @@ impl Drop for TerminalPty {
         drop(self.master.take());
         drop(self.process.take());
     }
+}
+
+fn set_echo(fd: &impl AsFd, enabled: bool) -> Result<(), TerminalPtyError> {
+    let mut termios = rustix::termios::tcgetattr(fd).map_err(process_error)?;
+    termios
+        .local_modes
+        .set(rustix::termios::LocalModes::ECHO, enabled);
+    rustix::termios::tcsetattr(fd, rustix::termios::OptionalActions::Now, &termios)
+        .map_err(process_error)
 }
 
 fn open_pty(dimensions: TerminalPtyDimensions) -> Result<(OwnedFd, OwnedFd), TerminalPtyError> {
