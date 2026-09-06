@@ -83,6 +83,8 @@ mod state_environment;
 mod terminal;
 mod terminal_display_width;
 mod terminal_grid;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod terminal_helper;
 mod terminal_screen;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod terminal_shell;
@@ -209,6 +211,12 @@ pub use background_supervisor::{
     NATIVE_BACKGROUND_HARD_MAX_ACTIVE, NativeBackgroundLimits, NativeBackgroundReconciliation,
     NativeBackgroundSupervisor, NativeBackgroundSupervisorError,
     NativeBackgroundSupervisorErrorKind,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[doc(hidden)]
+pub use terminal_helper::{
+    TERMINAL_PTY_HELPER_ARGUMENT, TERMINAL_STARTUP_MARKER_ARGUMENT, TerminalHelperError,
+    run_terminal_pty_helper, run_terminal_startup_marker,
 };
 #[cfg(all(feature = "vision", not(target_family = "wasm")))]
 pub use vision::{

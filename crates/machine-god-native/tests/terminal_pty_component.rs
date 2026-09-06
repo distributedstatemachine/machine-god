@@ -13,6 +13,8 @@ mod terminal_catalog;
 mod terminal_display_width;
 #[path = "../src/terminal_grid.rs"]
 mod terminal_grid;
+#[path = "../src/terminal_helper.rs"]
+mod terminal_helper;
 #[path = "../src/terminal_history.rs"]
 mod terminal_history;
 #[path = "../src/terminal_input.rs"]
@@ -31,12 +33,18 @@ mod terminal_profile_store;
 mod terminal_pty;
 #[path = "../src/terminal_registry.rs"]
 mod terminal_registry;
+#[path = "../src/terminal_runtime.rs"]
+mod terminal_runtime;
 #[path = "../src/terminal_screen.rs"]
 mod terminal_screen;
 #[path = "../src/terminal_session.rs"]
 mod terminal_session;
 #[path = "../src/terminal_session_record.rs"]
 mod terminal_session_record;
+#[path = "../src/terminal_shell.rs"]
+mod terminal_shell;
+#[path = "../src/terminal_startup.rs"]
+mod terminal_startup;
 #[path = "../src/terminal_unicode_data.rs"]
 mod terminal_unicode_data;
 #[path = "../src/terminal_wait.rs"]

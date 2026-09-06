@@ -279,6 +279,17 @@ even when its best-effort lost-state publication succeeds.
 The single-owner session driver composes PTY transport, history, ordered input
 and monitor observation. Raw output does not establish shell readiness: only
 the trusted startup-control path may transition from starting to running.
+The native startup transport uses a nonce-bound one-shot marker connection and
+a pinned bootstrap in an explicitly supplied private directory. It works with
+bash/zsh user and clean profiles even when profiles close inherited descriptors.
+The owner persists shell readiness before acknowledging it, and an optional
+command cannot execute before the separate command-start acknowledgement.
+Commandless startup suppresses bootstrap input echo until shell readiness.
+The short canonical artifact directory and retained directory identity are
+validated before publication; long workspace/profile paths need no shortening.
+Polling and acknowledgements do not retire filesystem artifacts. The backend
+retains exact-artifact cleanup for owner-side retries, including after the
+control handle is dropped; failed cleanup cannot become successful close.
 Same-session/different-incarnation callers cannot read or mutate the owned
 terminal. A scheduler step performs one bounded input attempt, reads at most
 16 KiB, and returns typed probe descriptions for separate authorization.
@@ -466,6 +477,13 @@ one failing worker cannot stop collection for unrelated owners.
 Lazy background initialization uses the same path while preserving its atomic
 whole-cohort reservation. Terminal worker construction can reuse this seam
 without adding a detached-thread or separate-collector lifecycle.
+
+The lazy runtime assembly starts its injected owned-worker spawner only after
+an accepted request is polled. Registry and profile construction occur inside
+that worker. Unpolled/cancelled requests do not initialize it, and tool futures
+do not keep the host alive. Last-host drop requests shutdown without joining
+on the polling thread. Unresolved cleanup stays on the same worker with capped
+backoff; completed cleanup is not held forever by an older request error.
 
 The loop pumps immediately while output is available and polls idle timers at
 10 ms intervals, with at most one command between pump opportunities. Output

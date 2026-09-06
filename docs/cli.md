@@ -26,6 +26,11 @@ Current delivery state and gate evidence are maintained only in the
   prompts, paths, provider payloads, tool arguments, and operating-system
   details unless a command contract explicitly makes a value public output.
 
+Linux/macOS process helpers use exact private single-argument modes, outside
+normal command parsing and help. PTY/startup-marker protocol failures exit
+`125` without rendering protocol data; a successful startup marker exits `0`.
+Additional arguments do not activate a helper.
+
 ## Commands
 
 | Command | Purpose | Contract |

@@ -227,6 +227,34 @@ fn run(arguments: &[&str]) -> Output {
     machine_god().args(arguments).output().unwrap()
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn terminal_helper_process_modes_are_exact_and_fail_without_protocol_authority() {
+    for helper in [
+        machine_god_native::TERMINAL_PTY_HELPER_ARGUMENT,
+        machine_god_native::TERMINAL_STARTUP_MARKER_ARGUMENT,
+    ] {
+        for (arguments, code, stdout, stderr) in [
+            (vec![helper], 125, "", ""),
+            (vec![helper, "extra"], 2, "", INVALID_ARGUMENTS),
+            (vec!["--help", helper], 0, HELP, ""),
+        ] {
+            let output = ScopedChild::spawn(
+                machine_god()
+                    .args(arguments)
+                    .env_clear()
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped()),
+            )
+            .wait_with_output(Duration::from_secs(10));
+            assert_eq!(output.status.code(), Some(code));
+            assert_eq!(output.stdout, stdout.as_bytes());
+            assert_eq!(output.stderr, stderr.as_bytes());
+        }
+    }
+}
+
 fn run_with_roots(arguments: &[&str], config: &OsStr, state: &OsStr) -> Output {
     machine_god()
         .args(arguments)

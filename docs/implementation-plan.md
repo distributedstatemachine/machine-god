@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `compose the continuous owner loop with production worker ownership, disk catalog and profile payload accounting, then attention/lease effects, startup control, tmux and authorized tool/CLI actions before the full terminal feature gate`
+- Next gate: `compose the lazy runtime with production worker ownership, disk catalog and startup; complete tmux and authorized tool/CLI action routing before the full terminal feature gate`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -125,9 +125,11 @@ checkpoint re-anchoring for live and recovered facts. Registry wait observations
 reject known observation gaps, and profile-backed completion releases storage
 authority before reply publication. Asynchronous waits now share the owner loop,
 including bounded durable catch-up, absolute ceilings and explicit shutdown
-receipts. Lazy production ownership and user-profile startup integration remain
-under active focused testing; no full-feature gate or delivery is claimed by
-these internal component commits.
+receipts. Lazy owned-runtime assembly and nonce-bound startup are implemented;
+real bash/zsh user and clean profiles pass even when profiles close inherited
+descriptors. Extracted PTY/marker helpers now have private production CLI entrypoints
+and a release-binary test seam. Full host/action assembly and delivery gates remain
+open; these internal component commits do not claim a feature delivery.
 The complete normalized twelve-action core contract and effect-free public
 decoder are present, including request/result identity checks and lossless
 foreground execution outcomes. Numeric coercion now matches pinned binary128

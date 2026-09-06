@@ -1181,6 +1181,27 @@ fn main() -> ExitCode {
         let _ = machine_god_native::run_background_process_helper();
         return ExitCode::from(125);
     }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    if is_exact_helper_arguments(
+        env::args_os().skip(1),
+        machine_god_native::TERMINAL_PTY_HELPER_ARGUMENT,
+    ) {
+        let _ = machine_god_native::run_terminal_pty_helper();
+        return ExitCode::from(125);
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    if is_exact_helper_arguments(
+        env::args_os().skip(1),
+        machine_god_native::TERMINAL_STARTUP_MARKER_ARGUMENT,
+    ) {
+        return ExitCode::from(
+            if machine_god_native::run_terminal_startup_marker().is_ok() {
+                0
+            } else {
+                125
+            },
+        );
+    }
     let mut stdout = io::stdout().lock();
     let mut stderr = io::stderr().lock();
     ExitCode::from(run(env::args_os().skip(1), &mut stdout, &mut stderr))
@@ -1188,11 +1209,19 @@ fn main() -> ExitCode {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn is_background_process_helper_arguments(arguments: impl IntoIterator<Item = OsString>) -> bool {
+    is_exact_helper_arguments(
+        arguments,
+        machine_god_native::BACKGROUND_PROCESS_HELPER_ARGUMENT,
+    )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn is_exact_helper_arguments(
+    arguments: impl IntoIterator<Item = OsString>,
+    expected: &str,
+) -> bool {
     let mut arguments = arguments.into_iter();
-    arguments.next().as_deref()
-        == Some(std::ffi::OsStr::new(
-            machine_god_native::BACKGROUND_PROCESS_HELPER_ARGUMENT,
-        ))
+    arguments.next().as_deref() == Some(std::ffi::OsStr::new(expected))
         && arguments.next().is_none()
 }
 
@@ -5939,6 +5968,36 @@ mod tests {
         assert!(!is_background_process_helper_arguments([OsString::from(
             "background"
         )]));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn private_terminal_helpers_require_exact_single_argument_without_normal_cli_dispatch() {
+        for helper in [
+            machine_god_native::TERMINAL_PTY_HELPER_ARGUMENT,
+            machine_god_native::TERMINAL_STARTUP_MARKER_ARGUMENT,
+        ] {
+            assert!(super::is_exact_helper_arguments(
+                [OsString::from(helper)],
+                helper
+            ));
+            assert!(!super::is_exact_helper_arguments([], helper));
+            assert!(!super::is_exact_helper_arguments(
+                [OsString::from(helper), OsString::from("extra")],
+                helper
+            ));
+            assert!(!super::is_exact_helper_arguments(
+                [OsString::from("terminal")],
+                helper
+            ));
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            // The ordinary parser never treats private process modes as a
+            // user command or starts a host as a side effect of parsing one.
+            assert_eq!(run([OsString::from(helper)], &mut stdout, &mut stderr), 2);
+            assert!(stdout.is_empty());
+            assert_eq!(stderr, INVALID_ARGUMENTS.as_bytes());
+        }
     }
 
     #[cfg(unix)]
