@@ -207,6 +207,13 @@ impl TerminalWaitCoordinator {
         Ok((id, future))
     }
 
+    /// Roll back a reservation whose attention admission never succeeded.
+    /// The future must not have escaped the owner request. This deliberately
+    /// emits no attention completion and cannot cancel a pre-existing lease.
+    pub(crate) fn withdraw_unadmitted(&mut self, id: TerminalWaitId) {
+        self.registrations.retain(|entry| entry.id != id);
+    }
+
     /// Feed only durably committed bytes, once, in cursor order. Empty output
     /// advances time/lifecycle without inventing a new output observation.
     /// Validation precedes mutation of *every* matching registration.
@@ -625,6 +632,20 @@ mod tests {
                 assert!(receipt.attention_error.is_none());
                 receipt.outcome
             })
+    }
+    #[test]
+    fn withdrawn_reservation_emits_no_attention_completion() {
+        let mut coordinator = TerminalWaitCoordinator::new();
+        let (id, future) = register(
+            &mut coordinator,
+            identity("terminal", "incarnation", 1),
+            TerminalReturnCondition::Exit {},
+        );
+        coordinator.withdraw_unadmitted(id);
+        drop(future);
+        assert!(coordinator.observations().is_empty());
+        assert!(coordinator.take_ready().is_empty());
+        assert_eq!(coordinator.count.load(Ordering::Acquire), 0);
     }
     fn advance(
         coordinator: &mut TerminalWaitCoordinator,

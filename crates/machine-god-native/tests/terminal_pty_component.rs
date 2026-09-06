@@ -42,6 +42,8 @@ mod terminal_profile_store;
 mod terminal_pty;
 #[path = "../src/terminal_registry.rs"]
 mod terminal_registry;
+#[path = "../src/terminal_resident_dispatch.rs"]
+mod terminal_resident_dispatch;
 #[path = "../src/terminal_runtime.rs"]
 mod terminal_runtime;
 #[path = "../src/terminal_screen.rs"]

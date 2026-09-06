@@ -230,6 +230,40 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         &self.workspace
     }
 
+    /// Identity-only admission check; does not clone retained command metadata.
+    pub(crate) fn authorize_resident(
+        &self,
+        owner: &BackgroundOutputOwner,
+        id: &TerminalSessionId,
+    ) -> Result<()> {
+        self.index(owner, id).map(|_| ())
+    }
+
+    /// Full inspect and acknowledgement projection for either resident kind.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit projection and owner authority"
+    )]
+    pub(crate) fn inspect_result_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        owner: &BackgroundOutputOwner,
+        id: &TerminalSessionId,
+        actor: TerminalActorRole,
+        query: &TerminalEventQuery,
+        controls: &machine_god_core::TerminalAllowedControls,
+    ) -> Result<machine_god_core::TerminalActionResult> {
+        let index = self.index(owner, id)?;
+        match &mut self.entries[index].resident {
+            Resident::Live(session) => {
+                Ok(session.inspect_result_with(persistence, owner, actor, query, controls)?)
+            }
+            Resident::Recovered(session) => {
+                Ok(session.inspect_result_with(persistence, owner, actor, query, controls)?)
+            }
+        }
+    }
+
     /// Final input receipts remain observable after registry admission closes.
     /// Recovery never fabricates an input receipt or regains writer authority.
     pub(crate) fn write_receipt(
@@ -1452,6 +1486,70 @@ mod tests {
     }
     fn registry() -> TerminalRegistry<Backend> {
         TerminalRegistry::new("/workspace".into()).unwrap()
+    }
+
+    #[test]
+    fn full_inspect_forwarding_supports_live_and_recovered_residents() {
+        let fixture = Fixture::new();
+        let owner = owner("inspect");
+        let id = id("inspect");
+        let mut live = fixture.live(&owner, &id, 0).unwrap();
+        live.shell_ready(0).unwrap();
+        live.close(&owner, TerminalClosePolicy::Force, 0).unwrap();
+        let mut registry = registry();
+        registry
+            .start(owner.clone(), id.clone(), || Ok(live))
+            .unwrap();
+        let query = TerminalEventQuery {
+            after_event_id: 0,
+            acknowledge_event_id: None,
+            max_events: 10,
+        };
+        let controls = machine_god_core::TerminalAllowedControls::default();
+        let live = registry
+            .inspect_result_with(
+                &mut TerminalTestPersistence,
+                &owner,
+                &id,
+                TerminalActorRole::Agent,
+                &query,
+                &controls,
+            )
+            .unwrap();
+        live.validate().unwrap();
+        registry.release(&owner, &id).unwrap();
+        registry
+            .recover(owner.clone(), id.clone(), || {
+                fixture.recovered(&owner, &id, 0)
+            })
+            .unwrap();
+        let recovered = registry
+            .inspect_result_with(
+                &mut TerminalTestPersistence,
+                &owner,
+                &id,
+                TerminalActorRole::Agent,
+                &query,
+                &controls,
+            )
+            .unwrap();
+        recovered.validate().unwrap();
+        assert_eq!(live, recovered);
+        let foreign = BackgroundOutputOwner::new(
+            SessionId::new("owner").unwrap(),
+            SessionIncarnationId::new("foreign").unwrap(),
+        );
+        assert!(matches!(
+            registry.inspect_result_with(
+                &mut TerminalTestPersistence,
+                &foreign,
+                &id,
+                TerminalActorRole::Agent,
+                &query,
+                &controls
+            ),
+            Err(TerminalRegistryError::NotFound)
+        ));
     }
 
     #[test]
