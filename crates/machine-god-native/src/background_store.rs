@@ -353,7 +353,7 @@ impl BackgroundStore {
         allocator_value: u64,
         after_record_snapshot: impl FnOnce(),
     ) -> Result<(), BackgroundStoreError> {
-        let records = scan_complete_records(self.root.as_fd(), &self.workspace)?;
+        let mut records = scan_complete_records(self.root.as_fd(), &self.workspace)?;
         if records
             .iter()
             .any(|entry| entry.record.id > allocator_value)
@@ -381,6 +381,7 @@ impl BackgroundStore {
             &mut contended_locks,
         )?;
         self.schedule_temp_cleanup(&control, &mut removable_temps, &mut contended_locks)?;
+        self.freeze_unowned_records(&mut records, &mut contended_locks)?;
         let maximum_records = maximum_occupancy
             .checked_sub(pending)
             .ok_or_else(|| error(BackgroundStoreErrorKind::ResourceLimit))?;
@@ -410,6 +411,45 @@ impl BackgroundStore {
         )?;
 
         self.commit_compaction(&victims, &orphan_locks, &removable_temps)
+    }
+
+    fn freeze_unowned_records(
+        &self,
+        records: &mut [ScannedRecord],
+        contended_locks: &mut BTreeSet<String>,
+    ) -> Result<(), BackgroundStoreError> {
+        for entry in records {
+            if !entry.may_grow {
+                continue;
+            }
+            let lock_name = record_lock_name(entry.record.id);
+            if contended_locks.contains(&lock_name) {
+                continue;
+            }
+            let lock = open_existing_private_file(self.control.as_fd(), &lock_name)?;
+            let Some(_authority) = try_acquire_exclusive(lock)? else {
+                contended_locks.insert(lock_name);
+                continue;
+            };
+            // The publisher could have completed after the initial snapshot.
+            // Re-read under its now-unowned lease before charging exact bytes.
+            let (record, encoded_bytes) = read_record(
+                self.root.as_fd(),
+                &self.workspace,
+                &background_record_name(entry.record.id),
+            )?
+            .ok_or_else(unavailable)?;
+            *entry = ScannedRecord {
+                record,
+                encoded_bytes,
+                may_grow: false,
+            };
+            // No API grants a new publisher an old ID. The allocator lock
+            // retained by our caller also excludes other reconciliation and
+            // compaction, so this proof survives dropping the per-record lock.
+            // Later stale reconciliation only shrinks the encoded state name.
+        }
+        Ok(())
     }
 
     fn classify_orphan_locks(
@@ -683,11 +723,12 @@ struct TerminalVictim {
 struct ScannedRecord {
     record: StoredBackgroundRecord,
     encoded_bytes: usize,
+    may_grow: bool,
 }
 
 impl ScannedRecord {
     fn admission_bytes(&self) -> usize {
-        if self.record.state != NativeBackgroundState::Running {
+        if !self.may_grow {
             return self.encoded_bytes;
         }
         // These strings cannot change under valid_replacement. Everything
@@ -874,6 +915,7 @@ fn scan_complete_records(
             .filter(|total| *total <= MAX_BACKGROUND_TOTAL_RECORD_BYTES)
             .ok_or_else(|| error(BackgroundStoreErrorKind::ResourceLimit))?;
         records.push(ScannedRecord {
+            may_grow: record.state == NativeBackgroundState::Running,
             record,
             encoded_bytes,
         });
@@ -1936,6 +1978,7 @@ mod tests {
         let scanned = ScannedRecord {
             record: record.clone(),
             encoded_bytes: bytes.len(),
+            may_grow: true,
         };
         record.state = NativeBackgroundState::Failed;
         record.exit_code = Some(i32::MIN);
@@ -1977,6 +2020,78 @@ mod tests {
         assert_eq!(
             store.replace(&lease, &completed).unwrap_err().kind(),
             BackgroundStoreErrorKind::Conflict
+        );
+    }
+
+    #[test]
+    fn legacy_orphaned_running_history_reopens_without_reserving_impossible_growth() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let root = fixture
+            .state_root
+            .join(BACKGROUND_DIRECTORY)
+            .join(background_workspace_name(&fixture.workspace));
+        let control = root.join(CONTROL_DIRECTORY);
+        seed_running_history(&store, &root, &control, MAX_RETAINED_BACKGROUND_RECORDS);
+        for id in 1..=MAX_RETAINED_BACKGROUND_RECORDS as u64 {
+            let mut record = running(&store, id, 10 + id);
+            record.command = "\u{1}".repeat(10_800);
+            let bytes = serde_json::to_vec(&record).unwrap();
+            // Both old semantic (32 KiB) and encoded (64 KiB) limits accepted
+            // this history, but invented future growth would exceed 8 MiB.
+            assert!(record.command.len() <= 32 * 1024);
+            assert!(bytes.len() <= 64 * 1024);
+            fs::write(root.join(background_record_name(id)), bytes).unwrap();
+        }
+        let scan = scan_complete_records(store.root.as_fd(), store.workspace()).unwrap();
+        assert!(
+            scan.iter()
+                .map(ScannedRecord::admission_bytes)
+                .sum::<usize>()
+                > MAX_BACKGROUND_TOTAL_RECORD_BYTES
+        );
+        drop(store);
+        let reopened = fixture.store();
+        assert_eq!(count_record_files(&root), MAX_RETAINED_BACKGROUND_RECORDS);
+        let reconciliation = reopened.reconcile().unwrap();
+        assert_eq!(reconciliation.marked_stale, MAX_RETAINED_BACKGROUND_RECORDS);
+        let NativeBackgroundInspection::List(list) = block_on(inspect_native_background(
+            fixture.environment(),
+            PathBuf::from(&fixture.workspace),
+            NativeBackgroundQuery::List,
+        ))
+        .unwrap() else {
+            panic!("expected list");
+        };
+        assert!(!list.truncated());
+        assert_eq!(list.records().len(), MAX_RETAINED_BACKGROUND_RECORDS);
+    }
+
+    #[test]
+    fn unowned_snapshot_refresh_observes_completed_diagnostic_growth() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let lease = reserve_eventually(&store);
+        let mut record = running(&store, lease.id(), 10);
+        store.publish_initial(&lease, &record).unwrap();
+        let mut snapshot = scan_complete_records(store.root.as_fd(), store.workspace()).unwrap();
+        record.state = NativeBackgroundState::Exited;
+        record.exit_code = Some(0);
+        record.diagnostic = Some("\u{1}".repeat(MAX_BACKGROUND_DIAGNOSTIC_BYTES));
+        store.replace(&lease, &record).unwrap();
+        drop(lease);
+        let _allocator = acquire_exclusive(
+            open_existing_private_file(store.control.as_fd(), ALLOCATOR_LOCK_NAME).unwrap(),
+        )
+        .unwrap();
+        store
+            .freeze_unowned_records(&mut snapshot, &mut BTreeSet::new())
+            .unwrap();
+        assert!(!snapshot[0].may_grow);
+        assert_eq!(snapshot[0].record, record);
+        assert_eq!(
+            snapshot[0].admission_bytes(),
+            serde_json::to_vec(&record).unwrap().len()
         );
     }
 
