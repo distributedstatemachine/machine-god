@@ -38,7 +38,7 @@ type Result<T> = std::result::Result<T, TerminalProbeFailure>;
 /// Immutable captured shell/environment shared by all authorized monitor grants.
 pub(crate) struct TerminalProbeCustomContext {
     shell: TerminalShell,
-    environment: ValidatedBackgroundEnvironment,
+    environment: Arc<ValidatedBackgroundEnvironment>,
 }
 impl TerminalProbeCustomContext {
     pub(crate) fn new(
@@ -47,9 +47,18 @@ impl TerminalProbeCustomContext {
     ) -> Result<Self> {
         Ok(Self {
             shell,
-            environment: ValidatedBackgroundEnvironment::new(environment)
-                .map_err(|_| TerminalProbeFailure::InvalidEvidence)?,
+            environment: Arc::new(
+                ValidatedBackgroundEnvironment::new(environment)
+                    .map_err(|_| TerminalProbeFailure::InvalidEvidence)?,
+            ),
         })
+    }
+
+    pub(crate) fn with_environment(
+        shell: TerminalShell,
+        environment: Arc<ValidatedBackgroundEnvironment>,
+    ) -> Self {
+        Self { shell, environment }
     }
 }
 
@@ -107,7 +116,7 @@ pub(crate) struct TerminalProbeGrant {
     monitor_id: TerminalMonitorId,
     generation: u64,
     target: TerminalProbeTarget,
-    authority: CapturedAuthority,
+    authority: Arc<CapturedAuthority>,
     revocation: CancellationToken,
 }
 impl TerminalProbeGrant {
@@ -128,7 +137,7 @@ impl TerminalProbeGrant {
             monitor_id,
             generation,
             target,
-            authority,
+            authority: Arc::new(authority),
             revocation: CancellationToken::new(),
         })
     }
@@ -154,6 +163,22 @@ impl TerminalProbeGrant {
     }
     pub(crate) fn is_revoked(&self) -> bool {
         self.revocation.is_cancelled()
+    }
+    /// Only an explicitly authorized live resume receipt may renew a retained
+    /// approval template. This does not discover authority from saved state.
+    pub(crate) fn renew_generation(&self, generation: u64) -> Result<Self> {
+        if generation <= self.generation {
+            return Err(TerminalProbeFailure::Denied);
+        }
+        Ok(Self {
+            owner: self.owner.clone(),
+            session_id: self.session_id.clone(),
+            monitor_id: self.monitor_id.clone(),
+            generation,
+            target: self.target.clone(),
+            authority: Arc::clone(&self.authority),
+            revocation: CancellationToken::new(),
+        })
     }
 }
 
@@ -404,7 +429,7 @@ fn run_probe(
     if let Err(error) = boundary(request.deadline, cancellation, stop) {
         return ProbeRun::failed(error);
     }
-    let result = match &request.grant.authority {
+    let result = match request.grant.authority.as_ref() {
         CapturedAuthority::Tcp { addresses } => {
             connect(addresses, request.deadline, cancellation, stop).map(|stream| {
                 ProbeRun::observed(
@@ -422,8 +447,10 @@ fn run_probe(
             let bytes = response_prefix.len() as u64;
             ProbeRun::observed(TerminalProbeObservation::Http { response_prefix }, bytes)
         }),
-        CapturedAuthority::Path { parent, leaf } => path_baseline(parent, leaf)
-            .map(|baseline| ProbeRun::observed(TerminalProbeObservation::Path { baseline }, 0)),
+        CapturedAuthority::Path { parent, leaf } => path_baseline_checked(parent, leaf, || {
+            boundary(request.deadline, cancellation, stop)
+        })
+        .map(|baseline| ProbeRun::observed(TerminalProbeObservation::Path { baseline }, 0)),
         CapturedAuthority::Custom {
             request: command,
             directory,
@@ -473,7 +500,7 @@ fn addresses_valid(addresses: &[SocketAddr], host: &str, port: u16) -> Result<()
     Ok(())
 }
 
-fn canonical_fingerprint(path: &std::path::Path) -> Result<(&str, [u8; 32])> {
+pub(crate) fn canonical_fingerprint(path: &std::path::Path) -> Result<(&str, [u8; 32])> {
     let canonical = path.to_str().ok_or(TerminalProbeFailure::InvalidEvidence)?;
     text(canonical, 4096)?;
     if !path.is_absolute()
@@ -489,10 +516,12 @@ fn canonical_fingerprint(path: &std::path::Path) -> Result<(&str, [u8; 32])> {
 fn validate_leaf(leaf: &std::ffi::OsStr) -> Result<()> {
     let bytes = leaf.as_bytes();
     if bytes.is_empty()
-        || bytes.len() > 255
+        || bytes.len() > 4096
         || bytes.contains(&0)
-        || bytes.contains(&b'/')
-        || matches!(bytes, b"." | b"..")
+        || (bytes != b"."
+            && bytes.split(|byte| *byte == b'/').any(|component| {
+                component.is_empty() || component.len() > 255 || matches!(component, b"." | b"..")
+            }))
     {
         return Err(TerminalProbeFailure::InvalidEvidence);
     }
@@ -695,12 +724,54 @@ fn unavailable(_: impl std::fmt::Debug) -> TerminalProbeFailure {
     TerminalProbeFailure::Unavailable
 }
 
-fn path_baseline(parent: &OwnedFd, leaf: &OsString) -> Result<TerminalPathBaseline> {
+pub(crate) fn path_baseline(parent: &OwnedFd, leaf: &OsString) -> Result<TerminalPathBaseline> {
+    path_baseline_checked(parent, leaf, || Ok(()))
+}
+
+fn path_baseline_checked(
+    parent: &OwnedFd,
+    leaf: &OsString,
+    mut checkpoint: impl FnMut() -> Result<()>,
+) -> Result<TerminalPathBaseline> {
+    validate_leaf(leaf)?;
+    checkpoint()?;
     let parent_stat = rustix::fs::fstat(parent).map_err(unavailable)?;
     if FileType::from_raw_mode(parent_stat.st_mode) != FileType::Directory {
         return Err(TerminalProbeFailure::Denied);
     }
-    match rustix::fs::statat(parent, leaf, AtFlags::SYMLINK_NOFOLLOW) {
+    let mut directory = rustix::io::fcntl_dupfd_cloexec(parent, 3).map_err(unavailable)?;
+    let mut components = leaf.as_bytes().split(|byte| *byte == b'/').peekable();
+    let final_leaf = loop {
+        checkpoint()?;
+        let component = components
+            .next()
+            .ok_or(TerminalProbeFailure::InvalidEvidence)?;
+        if components.peek().is_none() {
+            break std::ffi::OsStr::from_bytes(component);
+        }
+        directory = match rustix::fs::openat(
+            &directory,
+            std::ffi::OsStr::from_bytes(component),
+            rustix::fs::OFlags::RDONLY
+                | rustix::fs::OFlags::DIRECTORY
+                | rustix::fs::OFlags::CLOEXEC
+                | rustix::fs::OFlags::NOFOLLOW
+                | rustix::fs::OFlags::NONBLOCK,
+            rustix::fs::Mode::empty(),
+        ) {
+            Ok(directory) => directory,
+            Err(rustix::io::Errno::NOENT) => {
+                return Ok(TerminalPathBaseline {
+                    exists: false,
+                    size: 0,
+                    modified_ns: 0,
+                });
+            }
+            Err(_) => return Err(TerminalProbeFailure::Denied),
+        };
+    };
+    checkpoint()?;
+    match rustix::fs::statat(&directory, final_leaf, AtFlags::SYMLINK_NOFOLLOW) {
         Ok(stat) => Ok(TerminalPathBaseline {
             exists: true,
             size: u64::try_from(stat.st_size).map_err(unavailable)?,
@@ -1095,7 +1166,7 @@ mod tests {
                 baseline: TerminalPathBaseline { exists: true, .. }
             })
         ));
-        for leaf in ["", ".", "..", "a/b"] {
+        for leaf in ["", "..", "../b", "a//b", "a/./b", "/a"] {
             assert!(
                 TerminalProbeGrant::new(
                     owner(),

@@ -585,6 +585,21 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         self.facts()
     }
 
+    pub(crate) fn live_monitor_generations(
+        &self,
+        owner: &BackgroundOutputOwner,
+    ) -> Result<Vec<(machine_god_core::TerminalMonitorId, u64)>> {
+        self.authorize(owner)?;
+        if matches!(
+            self.lifecycle,
+            TerminalLifecycle::Starting | TerminalLifecycle::Running
+        ) {
+            Ok(self.monitors.live_generations())
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
     pub(crate) fn public_facts(
         &self,
         owner: &BackgroundOutputOwner,

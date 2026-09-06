@@ -263,6 +263,13 @@ struct Snapshot {
 }
 
 impl TerminalMonitorSet {
+    pub(crate) fn live_generations(&self) -> Vec<(TerminalMonitorId, u64)> {
+        self.monitors
+            .iter()
+            .map(|monitor| (monitor.id.clone(), monitor.runtime.generation))
+            .collect()
+    }
+
     pub(crate) fn session_id(&self) -> &TerminalSessionId {
         &self.session_id
     }

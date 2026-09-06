@@ -583,16 +583,41 @@ original two-second absolute deadline. Local readiness endpoints require the
 same explicit approval as other addresses. This does not change `web_fetch`
 network policy.
 
-Path probes stat one approved leaf relative to a retained parent descriptor,
-without following the leaf symlink. Custom probes retain the approved shell,
-environment, canonical-cwd fingerprint and directory descriptor; immutable
-shell/environment snapshots are shared across grants. Each execution
+Host preparation lexically resolves monitor paths and custom cwd against the
+trusted terminal session cwd before workspace canonicalization, matching the
+pinned monitor resolver rather than the separate command-cwd rules. Existing
+symlinks resolve during preparation. Missing nested paths retain the nearest
+existing approved ancestor descriptor and at most 4096 bytes of normalized
+relative components. Checks open intermediate directories without following new
+symlinks and stat the final leaf without following it; unresolved symlinks cannot
+become latent authority. Missing components yield an absent observation, so later
+ordinary directory/file creation remains observable.
+Custom probes retain the approved PATH-selected `sh -lc` invocation, independently
+of the terminal's bash/zsh or user/clean startup choice, matching pinned legacy
+custom execution. Shell lookup uses the captured environment on an owned worker;
+relative PATH entries use the custom probe's canonical cwd. The environment,
+canonical-cwd fingerprint and directory descriptor stay explicitly owned, with
+immutable environment storage shared across grants. Each execution
 rechecks the named directory's identity before launching. They reuse the owned
 captured-process executor with a separate 16 KiB aggregate output boundary and
 at most one excess byte for detecting overflow. Normal foreground execution
 keeps its independent 1 MiB contract. Effects run on bounded collected workers;
 queue time does not reset deadlines, abandoned futures cancel owned work, and
 evidence preserves the exact session/monitor/generation/request identity.
+
+The worker-owned host scheduler installs grants only from successful exact live
+mutation receipts. Pause revokes in-flight work while retaining the approval
+template; a matching newer resume generation renews that template without
+reacquiring paths. Update, removal, until-match completion, expiry, terminal loss
+and shutdown retire old grants and reject late evidence. At most sixteen session
+namespaces and sixty-four monitors per session retain grants; descriptions queue
+within that same 1024-entry bound. At most sixteen probe/publication futures and
+one housekeeping future are polled per owner tick. Housekeeping reads only live
+monitor IDs/generations, not saved facts or authority descriptions, and successful
+evidence publishes through the registry's exact profile transaction. The shared
+host stop and grant revocation reach owned native workers even without another
+poll of an abandoned caller future. Scheduler shutdown cancels the shared stop;
+non-owning requester futures cannot prevent last-host cleanup.
 
 ## Resident registry and disk catalog components
 

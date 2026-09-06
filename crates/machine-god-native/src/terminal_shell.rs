@@ -33,6 +33,8 @@ impl std::error::Error for TerminalShellError {}
 enum ShellKind {
     Bash,
     Zsh,
+    #[cfg(test)]
+    LegacySh,
 }
 
 /// Resolved executable and startup profile; construction does not execute it.
@@ -52,6 +54,18 @@ impl fmt::Debug for TerminalShell {
 }
 
 impl TerminalShell {
+    /// Private monitor execution preserves pinned legacy `sh -lc` semantics.
+    /// The caller resolves this absolute executable through its captured PATH;
+    /// public interactive executable selection remains restricted to bash/zsh.
+    #[cfg(test)]
+    pub(crate) fn legacy_captured_sh(program: PathBuf) -> Result<Self, TerminalShellError> {
+        validate_path(&program)?;
+        Ok(Self {
+            program,
+            kind: ShellKind::LegacySh,
+            profile: TerminalProfile::User,
+        })
+    }
     /// Resolves explicitly injected account data without filesystem or process effects.
     ///
     /// # Errors
@@ -154,6 +168,8 @@ impl TerminalShell {
             (ShellKind::Bash, TerminalProfile::Clean) => &["--noprofile", "--norc", "-i"],
             (ShellKind::Zsh, TerminalProfile::User) => &["-l", "-i"],
             (ShellKind::Zsh, TerminalProfile::Clean) => &["-f", "-i"],
+            #[cfg(test)]
+            (ShellKind::LegacySh, _) => &["-li"],
         };
         flags.iter().map(|value| (*value).to_owned()).collect()
     }
@@ -165,6 +181,10 @@ impl TerminalShell {
     pub fn captured_arguments(&self, command: &str) -> Result<Vec<String>, TerminalShellError> {
         if command.is_empty() || command.len() > MAX_SHELL_COMMAND_BYTES || command.contains('\0') {
             return Err(TerminalShellError::InvalidRequest);
+        }
+        #[cfg(test)]
+        if matches!(self.kind, ShellKind::LegacySh) {
+            return Ok(vec!["-lc".into(), command.into()]);
         }
         let mut arguments = self.interactive_arguments();
         if self.profile == TerminalProfile::Clean || matches!(self.kind, ShellKind::Bash) {

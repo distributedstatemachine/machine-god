@@ -495,8 +495,20 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         })
     }
 
-    /// Executes one exact-owner mutation under this registry's own namespace.
-    /// Neither persistence guards nor session borrows can escape the callback.
+    /// Read-only trusted live identities, without profile IO or saved-state decoding.
+    pub(crate) fn live_monitor_generations(
+        &self,
+        owner: &BackgroundOutputOwner,
+        id: &TerminalSessionId,
+    ) -> Result<Vec<(machine_god_core::TerminalMonitorId, u64)>> {
+        let index = self.index(owner, id)?;
+        match &self.entries[index].resident {
+            Resident::Live(session) => Ok(session.live_monitor_generations(owner)?),
+            Resident::Recovered(_) => Err(TerminalRegistryError::Closed),
+        }
+    }
+
+    /// Executes a mutation under the exact owner's profile authority.
     pub(crate) fn mutate_with_profile<T>(
         &mut self,
         store: &TerminalProfileStore,

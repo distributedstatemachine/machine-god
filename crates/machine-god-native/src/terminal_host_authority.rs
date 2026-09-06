@@ -274,7 +274,7 @@ impl CapturedTerminalHostAuthority {
         Ok(authority)
     }
 
-    fn resolve_directory(
+    pub(crate) fn resolve_directory(
         &self,
         raw: &str,
         deadline: Instant,

@@ -103,6 +103,43 @@ mod terminal_monitor;
     reason = "private runtime components are composed here before full host integration"
 )]
 mod terminal_probe_effects;
+// Reproducible staged host composition tests, promoted with production host wiring.
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+macro_rules! terminal_host_test_components {
+    ($($module:ident),+ $(,)?) => {$(
+        #[allow(dead_code, reason = "private runtime components are composed here before full host integration")]
+        mod $module;
+    )+};
+}
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+terminal_host_test_components!(
+    terminal_catalog,
+    terminal_catalog_view,
+    terminal_history,
+    terminal_host_catalog,
+    terminal_host_dispatch,
+    terminal_host_authority,
+    terminal_host_probes,
+    terminal_input,
+    terminal_journal,
+    terminal_native_backend,
+    terminal_native_launch,
+    terminal_owner,
+    terminal_profile,
+    terminal_profile_store,
+    terminal_pty,
+    terminal_registry,
+    terminal_resident_dispatch,
+    terminal_runtime,
+    terminal_session,
+    terminal_session_record,
+    terminal_staged_start,
+    terminal_startup,
+    terminal_tmux,
+    terminal_tmux_startup,
+    terminal_wait,
+    terminal_write_completion,
+);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use terminal_captured_exec::{
     TERMINAL_CAPTURED_HELPER_ARGUMENT, TerminalCapturedExec, TerminalCapturedExecError,
