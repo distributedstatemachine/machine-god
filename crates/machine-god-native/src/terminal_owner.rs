@@ -191,23 +191,35 @@ pub(crate) struct TerminalOwnerContext<'a, B: TerminalSessionBackend, S> {
 /// requests shutdown; it never waits for process cleanup on the polling thread.
 pub(crate) struct TerminalOwnerHandle<B: TerminalSessionBackend, S = ()> {
     shared: Arc<Shared<B, S>>,
+    owns_lifetime: bool,
 }
 impl<B: TerminalSessionBackend, S> Clone for TerminalOwnerHandle<B, S> {
     fn clone(&self) -> Self {
-        self.shared.clients.fetch_add(1, Ordering::Relaxed);
+        if self.owns_lifetime {
+            self.shared.clients.fetch_add(1, Ordering::Relaxed);
+        }
         Self {
             shared: Arc::clone(&self.shared),
+            owns_lifetime: self.owns_lifetime,
         }
     }
 }
 impl<B: TerminalSessionBackend, S> Drop for TerminalOwnerHandle<B, S> {
     fn drop(&mut self) {
-        if self.shared.clients.fetch_sub(1, Ordering::AcqRel) == 1 {
+        if self.owns_lifetime && self.shared.clients.fetch_sub(1, Ordering::AcqRel) == 1 {
             self.shared.close();
         }
     }
 }
 impl<B: TerminalSessionBackend + 'static, S: 'static> TerminalOwnerHandle<B, S> {
+    /// Request authority without a host lifetime vote, for owned effect workers.
+    /// Closing the last owning handle still rejects every subsequent request.
+    pub(crate) fn requester(&self) -> Self {
+        Self {
+            shared: Arc::clone(&self.shared),
+            owns_lifetime: false,
+        }
+    }
     pub(crate) fn request_with_context<T: Send + 'static>(
         &self,
         caller: CancellationToken,
@@ -662,7 +674,10 @@ impl<B: TerminalSessionBackend, S> TerminalOwnerLoop<B, S> {
                 shared: Arc::clone(&shared),
                 receiver,
             },
-            TerminalOwnerHandle { shared },
+            TerminalOwnerHandle {
+                shared,
+                owns_lifetime: true,
+            },
         )
     }
 }

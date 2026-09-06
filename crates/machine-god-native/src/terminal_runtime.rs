@@ -201,6 +201,36 @@ pub(crate) struct TerminalRuntime<B: TerminalSessionBackend + Send + 'static, S:
     shared: Arc<Shared<B, S>>,
     owner: TerminalOwnerHandle<B, S>,
 }
+
+/// Multi-request access for explicitly owned effect workers. Unlike a host
+/// handle, this cannot prolong native/session lifetime. It carries no `S` value.
+pub(crate) struct TerminalRuntimeRequester<B: TerminalSessionBackend + Send + 'static, S: 'static> {
+    shared: Arc<Shared<B, S>>,
+    owner: TerminalOwnerHandle<B, S>,
+}
+impl<B: TerminalSessionBackend + Send + 'static, S: 'static> Clone
+    for TerminalRuntimeRequester<B, S>
+{
+    fn clone(&self) -> Self {
+        Self {
+            shared: Arc::clone(&self.shared),
+            owner: self.owner.clone(),
+        }
+    }
+}
+impl<B: TerminalSessionBackend + Send + 'static, S: 'static> TerminalRuntimeRequester<B, S> {
+    pub(crate) fn request_with_context<T: Send + 'static>(
+        &self,
+        caller: CancellationToken,
+        operation: impl FnOnce(TerminalOwnerContext<'_, B, S>) -> T + Send + 'static,
+    ) -> TerminalRuntimeFuture<B, T, S> {
+        TerminalRuntimeFuture {
+            shared: Arc::clone(&self.shared),
+            request: self.owner.request_with_context(caller, operation),
+            finished: false,
+        }
+    }
+}
 impl<B: TerminalSessionBackend + Send + 'static, S: 'static> Clone for TerminalRuntime<B, S> {
     fn clone(&self) -> Self {
         self.shared.hosts.fetch_add(1, Ordering::Relaxed);
@@ -226,6 +256,12 @@ impl<B: TerminalSessionBackend + Send + 'static, S: 'static> fmt::Debug for Term
     }
 }
 impl<B: TerminalSessionBackend + Send + 'static, S: 'static> TerminalRuntime<B, S> {
+    pub(crate) fn requester(&self) -> TerminalRuntimeRequester<B, S> {
+        TerminalRuntimeRequester {
+            shared: Arc::clone(&self.shared),
+            owner: self.owner.requester(),
+        }
+    }
     pub(crate) fn new(
         initialize: impl FnOnce() -> Result<TerminalRuntimeWorker<B, S>> + Send + 'static,
         spawner: Arc<dyn TerminalRuntimeSpawner>,
@@ -896,6 +932,56 @@ mod tests {
             drop(runtime);
             fixture.spawner.collect();
         }
+    }
+
+    #[test]
+    fn requesters_are_inert_and_cannot_reopen_a_dropped_host() {
+        let fixture = Fixture::new();
+        let runtime = fixture.runtime(false);
+        let requester = runtime.requester();
+        let cloned = requester.clone();
+        let pending = requester.request_with_context(CancellationToken::new(), |_| {
+            panic!("closed host initialized")
+        });
+        assert_eq!(fixture.spawner.calls.load(Ordering::SeqCst), 0);
+        drop(runtime);
+        assert!(matches!(
+            futures_executor::block_on(pending),
+            Err(TerminalRuntimeError::Owner(TerminalOwnerError::Closed))
+        ));
+        assert!(matches!(
+            futures_executor::block_on(
+                cloned.request_with_context(CancellationToken::new(), |_| ())
+            ),
+            Err(TerminalRuntimeError::Owner(TerminalOwnerError::Closed))
+        ));
+        assert_eq!(fixture.spawner.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn requesters_allow_followups_but_do_not_delay_native_shutdown() {
+        let fixture = Fixture::new();
+        let runtime = fixture.runtime(true);
+        let requester = runtime.requester();
+        let cloned = requester.clone();
+        let first = futures_executor::block_on(
+            requester.request_with_context(CancellationToken::new(), |context| context.now_ms),
+        )
+        .unwrap();
+        let second = futures_executor::block_on(
+            cloned.request_with_context(CancellationToken::new(), |context| context.now_ms),
+        )
+        .unwrap();
+        assert!(second >= first);
+        drop(runtime);
+        fixture.spawner.collect();
+        assert_eq!(fixture.backend.lock().unwrap().close_attempts, 1);
+        assert!(matches!(
+            futures_executor::block_on(
+                requester.request_with_context(CancellationToken::new(), |_| ())
+            ),
+            Err(TerminalRuntimeError::Owner(TerminalOwnerError::Closed))
+        ));
     }
 
     #[test]
