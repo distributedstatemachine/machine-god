@@ -149,7 +149,9 @@ per user prompt,
 256 KiB of serialized session metadata, 64 KiB of serialized inference options,
 4,096 transcript messages, 8 MiB of serialized transcript, 1 MiB for the
 aggregate cached tool catalog, 64 KiB of serialized arguments per call, 64 KiB
-per serialized tool result, 256 KiB of cumulative tool results, and 4 KiB for a
+per serialized tool result, 256 KiB of cumulative inline tool results,
+an independent 256 KiB of cumulative explicitly persisted complete results,
+and 4 KiB for a
 host-facing permission denial reason. Hosts may replace the complete limits
 value through [`EngineBuilder::limits`](crate::EngineBuilder::limits). Counters
 use checked arithmetic and a limit failure occurs before another tool is
@@ -640,7 +642,25 @@ idempotency, replay protection, or an audit key must include the incarnation;
 the other three values can repeat after a durable reset.
 
 Ordinary implementations return only `ToolOutput`; the source-compatible
-default `Tool::execute_for_turn` wraps that value in `ToolExecution`. A bounded
+default `Tool::execute_for_turn` wraps that value in `ToolExecution`.
+An explicitly opted-in tool can instead return
+`ToolExecution::with_persisted_output(complete, persisted)`. The trusted native
+implementation must durably publish the complete result under the exact
+session/incarnation/call identity before returning its losslessly retrievable
+reference. Core performs no storage effects for that publication. Both outputs
+must agree on error status. `Tool::complete_output_limits` supplies separate
+nonzero serialized-byte and JSON-node bounds; the engine's depth ceiling still
+applies, and `max_cumulative_complete_tool_result_bytes` limits their aggregate
+per turn. Absence of the opt-in rejects this execution shape. The persisted
+representation retains the ordinary inline byte, node, transcript and cumulative
+limits. Only it is cloned into the transcript and sent to subsequent provider
+requests; `ToolFinished` carries the complete output after successful durable
+placeholder replacement. Validation or persistence failure leaves no successful
+completion event, and rejected JSON in both representations is dropped
+iteratively. This extension does not enlarge argument admission or ordinary
+tools' limits and does not itself implement a native result archive.
+
+A bounded
 extension tool may instead attach one opaque `TurnToolRegistration` containing
 a captured `ToolSpec` and the exact executable `Tool`. Core keeps registrations
 in a registry local to the current `run_turn` invocation. A candidate is

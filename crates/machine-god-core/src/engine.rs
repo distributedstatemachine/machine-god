@@ -56,6 +56,8 @@ pub struct EngineLimits {
     pub max_tool_argument_bytes: NonZeroUsize,
     pub max_serialized_tool_result_bytes: NonZeroUsize,
     pub max_cumulative_tool_result_bytes: NonZeroUsize,
+    /// Separate aggregate budget for complete outputs backed by durable references.
+    pub max_cumulative_complete_tool_result_bytes: NonZeroUsize,
     pub max_permission_denial_reason_bytes: NonZeroUsize,
 }
 
@@ -81,6 +83,8 @@ impl Default for EngineLimits {
             max_serialized_tool_result_bytes: NonZeroUsize::new(64 * 1024)
                 .expect("default is nonzero"),
             max_cumulative_tool_result_bytes: NonZeroUsize::new(256 * 1024)
+                .expect("default is nonzero"),
+            max_cumulative_complete_tool_result_bytes: NonZeroUsize::new(256 * 1024)
                 .expect("default is nonzero"),
             max_permission_denial_reason_bytes: NonZeroUsize::new(4 * 1024)
                 .expect("default is nonzero"),

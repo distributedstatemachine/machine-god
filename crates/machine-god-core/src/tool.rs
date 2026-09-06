@@ -5,6 +5,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 /// Model-visible description and JSON Schema input contract for a tool.
@@ -256,12 +257,13 @@ impl Drop for TurnToolRegistration {
 
 /// Complete result of a tool execution inside core orchestration.
 ///
-/// The ordinary output remains the only durable, model-visible result. An
-/// optional next-round registration is an ephemeral orchestration side
-/// effect. Existing tools receive this behavior through the default
-/// [`Tool::execute_for_turn`] implementation and need not opt into it.
+/// By default the complete output is also the durable, model-visible result.
+/// Explicitly opted-in tools may supply a small durable representation after
+/// publishing the complete result to host-owned storage. An optional next-round
+/// registration is ephemeral. Existing tools need not opt into either extension.
 pub struct ToolExecution {
     output: ToolOutput,
+    persisted_output: Option<ToolOutput>,
     next_round_tool: Option<Arc<TurnToolRegistration>>,
 }
 
@@ -271,6 +273,7 @@ impl ToolExecution {
     pub fn output(output: ToolOutput) -> Self {
         Self {
             output,
+            persisted_output: None,
             next_round_tool: None,
         }
     }
@@ -284,14 +287,40 @@ impl ToolExecution {
     ) -> Self {
         Self {
             output,
+            persisted_output: None,
             next_round_tool: Some(next_round_tool),
         }
     }
 
-    /// Returns the ordinary durable output carried by this execution.
+    /// Returns the complete output delivered to the host event consumer.
     #[must_use]
     pub fn tool_output(&self) -> &ToolOutput {
         &self.output
+    }
+
+    /// Carries a complete result and its already-durable bounded reference.
+    ///
+    /// This is a trusted tool assertion: all complete bytes must have been
+    /// durably published under the exact session/incarnation/call identity
+    /// before returning this value, and the reference must permit lossless
+    /// retrieval. Core stores the reference in the transcript and emits the
+    /// complete result to the event consumer. The tool must explicitly provide
+    /// [`Tool::complete_output_limits`]; ordinary result limits still constrain
+    /// the persisted representation. Both representations must agree on error
+    /// status. This constructor performs no storage effects itself.
+    #[must_use]
+    pub fn with_persisted_output(output: ToolOutput, persisted_output: ToolOutput) -> Self {
+        Self {
+            output,
+            persisted_output: Some(persisted_output),
+            next_round_tool: None,
+        }
+    }
+
+    /// Returns an explicitly persisted representation, when supplied by the tool.
+    #[must_use]
+    pub fn persisted_output(&self) -> Option<&ToolOutput> {
+        self.persisted_output.as_ref()
     }
 
     /// Returns the proposed next-round registration, when present.
@@ -300,12 +329,21 @@ impl ToolExecution {
         self.next_round_tool.as_deref()
     }
 
-    pub(crate) fn into_parts(self) -> (ToolOutput, Option<Arc<TurnToolRegistration>>) {
-        (self.output, self.next_round_tool)
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        ToolOutput,
+        Option<ToolOutput>,
+        Option<Arc<TurnToolRegistration>>,
+    ) {
+        (self.output, self.persisted_output, self.next_round_tool)
     }
 
     pub(crate) fn drain_owned_json(&mut self) {
         crate::session::drop_json_value_iterative(std::mem::take(&mut self.output.content));
+        if let Some(output) = &mut self.persisted_output {
+            crate::session::drop_json_value_iterative(std::mem::take(&mut output.content));
+        }
     }
 }
 
@@ -313,13 +351,31 @@ impl fmt::Debug for ToolExecution {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ToolExecution")
+            .field("has_persisted_output", &self.persisted_output.is_some())
             .field("has_next_round_tool", &self.next_round_tool.is_some())
             .finish_non_exhaustive()
     }
 }
 
+/// Explicit per-tool bounds for complete results with durable references.
+///
+/// The engine's JSON depth ceiling still applies. These bounds never enlarge
+/// the ordinary inline result or durable transcript admission limits.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ToolOutputLimits {
+    pub max_serialized_bytes: NonZeroUsize,
+    pub max_json_nodes: NonZeroUsize,
+}
+
 /// Object-safe tool implementation supplied explicitly by a host.
 pub trait Tool: Send + Sync + 'static {
+    /// Opts into a separately bounded complete result with an already-durable
+    /// transcript representation. These limits do not enlarge ordinary inline
+    /// results, arguments, transcript limits, or another tool's authority.
+    /// Returning `None` rejects executions with a persisted representation.
+    fn complete_output_limits(&self) -> Option<ToolOutputLimits> {
+        None
+    }
     fn spec(&self) -> ToolSpec;
 
     /// Validates and normalizes a call without exercising external authority.

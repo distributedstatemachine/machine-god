@@ -1080,6 +1080,7 @@ async fn run_turn_inner(
     let mut model_events = 0usize;
     let mut tool_calls = 0usize;
     let mut cumulative_tool_result_bytes = 0usize;
+    let mut cumulative_complete_tool_result_bytes = 0usize;
     let mut seen_call_ids = BTreeSet::new();
     let mut usage = TokenUsage::default();
     let mut assistant_bytes = 0usize;
@@ -1392,6 +1393,7 @@ async fn run_turn_inner(
             })?;
             let preparation = tool.prepare(call.clone());
             check_cancelled(&cancellation)?;
+            let mut complete_output = None;
 
             let (output, next_round_tool, emit_finished, cancellation_deferral) = match preparation
             {
@@ -1491,7 +1493,16 @@ async fn run_turn_inner(
                         )
                         .await?;
                         let (output, next_round_tool) = match result {
-                            Ok(execution) => execution.into_parts(),
+                            Ok(execution) => {
+                                let (output, persisted, registration) = execution.into_parts();
+                                match persisted {
+                                    Some(persisted) => {
+                                        complete_output = Some(JsonOwnerGuard::new(output));
+                                        (persisted, registration)
+                                    }
+                                    None => (output, registration),
+                                }
+                            }
                             Err(error) => (tool_error_output(&error), None),
                         };
                         (output, next_round_tool, true, cancellation_deferral)
@@ -1499,6 +1510,23 @@ async fn run_turn_inner(
                 }
             };
             let output = JsonOwnerGuard::new(output);
+
+            if let Some(complete) = &complete_output {
+                let validation = validate_complete_tool_output(
+                    complete.get(),
+                    output.get(),
+                    tool.complete_output_limits(),
+                    limits,
+                    cumulative_complete_tool_result_bytes,
+                );
+                match validation {
+                    Ok(total) => cumulative_complete_tool_result_bytes = total,
+                    Err(failure) => {
+                        emitter.establish_terminal();
+                        return Err(failure.into());
+                    }
+                }
+            }
 
             if let Err(failure) = validate_json_value(&output.get().content, limits) {
                 emitter.establish_terminal();
@@ -1595,7 +1623,10 @@ async fn run_turn_inner(
                 emitter
                     .emit(TurnEvent::ToolFinished {
                         call_id,
-                        output: output.into_inner(),
+                        output: match complete_output {
+                            Some(complete) => complete.into_inner(),
+                            None => output.into_inner(),
+                        },
                     })
                     .await;
             }
@@ -1603,6 +1634,57 @@ async fn run_turn_inner(
         }
         tool_calls = new_total;
     }
+}
+
+fn validate_complete_tool_output(
+    complete: &ToolOutput,
+    persisted: &ToolOutput,
+    output_limits: Option<crate::ToolOutputLimits>,
+    limits: crate::EngineLimits,
+    cumulative_bytes: usize,
+) -> Result<usize, TurnFailure> {
+    let output_limits = output_limits.ok_or_else(|| {
+        TurnFailure::protocol(
+            "complete_tool_result_not_enabled",
+            "tool returned a durable representation without complete-output admission",
+        )
+    })?;
+    if complete.is_error != persisted.is_error {
+        return Err(TurnFailure::protocol(
+            "complete_tool_result_status_mismatch",
+            "complete and persisted tool results disagree on error status",
+        ));
+    }
+    validate_json_value(
+        &complete.content,
+        crate::EngineLimits {
+            max_json_nodes: output_limits.max_json_nodes,
+            ..limits
+        },
+    )?;
+    let result_bytes =
+        serialized_json_size_bounded(complete, output_limits.max_serialized_bytes.get())
+            .map_err(|error| {
+                TurnFailure::protocol(
+                    "tool_result_serialization",
+                    format!("complete tool result could not be serialized: {error}"),
+                )
+            })?
+            .ok_or_else(|| {
+                TurnFailure::limit(
+                    "complete_tool_result_size_limit",
+                    "complete tool result exceeded its explicit serialized size limit",
+                )
+            })?;
+    cumulative_bytes
+        .checked_add(result_bytes)
+        .filter(|total| *total <= limits.max_cumulative_complete_tool_result_bytes.get())
+        .ok_or_else(|| {
+            TurnFailure::limit(
+                "cumulative_complete_tool_result_size_limit",
+                "turn exceeded the complete tool result size limit",
+            )
+        })
 }
 
 fn unknown_tool_result() -> ToolOutput {
