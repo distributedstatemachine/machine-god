@@ -1282,7 +1282,7 @@ async fn run_turn_inner(
         if calls.is_empty() {
             let assistant = Message {
                 role: Role::Assistant,
-                content: assistant_message_content(&assistant_text, &calls),
+                content: assistant_message_content(assistant_text, calls),
             };
             let _committed = commit_message(
                 &engine,
@@ -1430,7 +1430,7 @@ async fn run_turn_inner(
         let mut round_messages = Vec::with_capacity(calls.len().saturating_add(1));
         round_messages.push(Message {
             role: Role::Assistant,
-            content: assistant_message_content(&assistant_text, &persisted_calls),
+            content: assistant_message_content(assistant_text, persisted_calls),
         });
         round_messages.extend(
             calls
@@ -1820,20 +1820,43 @@ fn permission_request_id(
         .map_err(|error| TurnFailure::protocol("permission_id", error.to_string()).into())
 }
 
-fn assistant_message_content(text: &str, calls: &[ToolCall]) -> Vec<ContentBlock> {
+fn assistant_message_content(text: String, calls: Vec<ToolCall>) -> Vec<ContentBlock> {
     let mut content = Vec::with_capacity(usize::from(!text.is_empty()) + calls.len());
     if !text.is_empty() {
-        content.push(ContentBlock::Text {
-            text: text.to_owned(),
-        });
+        content.push(ContentBlock::Text { text });
     }
     content.extend(
         calls
-            .iter()
-            .cloned()
+            .into_iter()
             .map(|call| ContentBlock::ToolCall { call }),
     );
     content
+}
+
+#[cfg(test)]
+mod assistant_content_tests {
+    use super::*;
+
+    #[test]
+    fn persisted_calls_and_assistant_text_move_into_history_without_payload_clones() {
+        let text = "assistant".repeat(8192);
+        let text_pointer = text.as_ptr();
+        let arguments = Value::String("arguments".repeat(4096));
+        let arguments_pointer = arguments.as_str().unwrap().as_ptr();
+        let call = ToolCall {
+            id: crate::ToolCallId::new("call").unwrap(),
+            name: crate::ToolName::new("tool").unwrap(),
+            arguments,
+        };
+        let content = assistant_message_content(text, vec![call]);
+        let [ContentBlock::Text { text }, ContentBlock::ToolCall { call }] = content.as_slice()
+        else {
+            panic!("assistant content order");
+        };
+        assert_eq!(text.as_ptr(), text_pointer);
+        assert_eq!(call.arguments.as_str().unwrap().as_ptr(), arguments_pointer);
+        assert!(assistant_message_content(String::new(), vec![]).is_empty());
+    }
 }
 
 struct JsonByteCounter {

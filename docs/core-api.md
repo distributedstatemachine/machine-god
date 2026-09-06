@@ -599,7 +599,9 @@ that round; a publisher owns bounded cleanup of abandoned work and may retain
 unreferenced durable archive bytes.
 
 The unchanged call ID/name and bounded projection enter the transcript and all
-later provider requests, including after restart. Core never hydrates or executes
+later provider requests, including after restart. Assistant text and validated
+persisted calls transfer into the message without another payload clone.
+Core never hydrates or executes
 historical references. The original complete input remains immutable and reaches
 preparation and observer events; authorization and execution use its prepared
 form, never the historical projection. Hosts must
