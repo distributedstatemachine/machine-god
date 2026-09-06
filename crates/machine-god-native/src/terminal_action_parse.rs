@@ -96,6 +96,137 @@ const PUBLIC_FIELDS: &[&str] = &[
     "close_policy",
 ];
 
+/// Complete model-facing schema for the public decoder. Canonical JSON forms
+/// are described structurally; pinned numeric coercions, UTF-8 byte-array text
+/// and one-level stringified composites remain accepted. Cross-field semantics
+/// and UTF-8 byte ceilings are enforced by `decode_terminal_action`.
+#[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one closed schema keeps all twelve public forms together"
+)]
+pub fn terminal_action_input_schema() -> Value {
+    use serde_json::json;
+    fn object(mut properties: Value, required: &[&str]) -> Value {
+        for (name, schema) in properties.as_object_mut().expect("fixed schema object") {
+            if name == "kind"
+                && let Some(names) = schema.get("enum").and_then(Value::as_array)
+            {
+                *schema = enumeration(
+                    &names
+                        .iter()
+                        .map(|value| value.as_str().expect("fixed enum"))
+                        .collect::<Vec<_>>(),
+                );
+            }
+            if !required.contains(&name.as_str()) {
+                *schema = json!({"anyOf":[schema.take(),{"type":"null"}]});
+            }
+        }
+        json!({"type":"object", "properties":properties, "required":required, "additionalProperties":false})
+    }
+    fn composite(schema: Value) -> Value {
+        Value::Object(Map::from_iter([(
+            "anyOf".to_owned(),
+            Value::Array(vec![
+                schema,
+                json!({"type":"string", "maxLength":MAX_TERMINAL_ACTION_ARGUMENT_BYTES, "description":"One JSON-encoded composite; duplicate fields are rejected."}),
+            ]),
+        )]))
+    }
+    fn enumeration(names: &[&str]) -> Value {
+        json!({"anyOf":[{"type":"string", "enum":names}, {"type":"number"}, {"type":"string", "description":"Pinned numeric enum ordinal spelling."}]})
+    }
+    fn text(maximum: usize) -> Value {
+        json!({"anyOf":[{"type":"string", "maxLength":maximum}, {"type":"array", "maxItems":maximum, "items":{"$ref":"#/$defs/integer"}}]})
+    }
+    let integer = json!({"anyOf":[{"type":"number"}, {"type":"string", "maxLength":MAX_NUMBER_SPELLING_BYTES}], "description":"Pinned integer coercion; semantic range is checked after binary128 rounding."});
+    let number = json!({"$ref":"#/$defs/integer"});
+    let return_when = object(
+        json!({"kind":{"enum":["started","exit","quiet","match"]},"duration_ms":number,"pattern":text(4096)}),
+        &["kind"],
+    );
+    let condition = object(
+        json!({
+            "kind":{"enum":["process_exit","exit_code","signal","output_contains","output_matches","output_quiet","screen_matches","tcp_ready","http_ready","path_exists","path_changed","path_size","custom_probe"]},
+            "pattern":text(4096),"duration_ms":number,"exit_code":number,
+            "signal":enumeration(SIGNALS),"host":text(4096),"port":number,
+            "path":text(4096),"minimum_bytes":number,"command":text(MAX_COMMAND_BYTES),"cwd":text(4096)
+        }),
+        &["kind"],
+    );
+    let notify = object(
+        json!({"kind":{"enum":["on_match","on_state_change","on_exit","every_check","every_n_checks","interval"]},"count":number,"interval_ms":number}),
+        &["kind"],
+    );
+    let lifetime = object(
+        json!({"kind":{"enum":["until_match","until_session_end","duration"]},"duration_ms":number}),
+        &["kind"],
+    );
+    let definition = object(
+        json!({"condition":condition,"check_interval_ms":number,"notify":notify,"lifetime":lifetime}),
+        &["condition", "notify", "lifetime"],
+    );
+    let operation = object(
+        json!({"kind":{"enum":["add","update","pause","resume","remove"]},"monitor_id":text(128),"definition":definition}),
+        &["kind"],
+    );
+    let write = object(
+        json!({"kind":{"enum":["text","paste","keys","controls"]},"text":text(64*1024),"keys":{"type":"array","maxItems":4096,"items":enumeration(KEYS)},"controls":{"anyOf":[{"type":"string","maxLength":4096},{"type":"array","maxItems":4096,"items":number}]}}),
+        &["kind"],
+    );
+    let shell = object(
+        json!({"kind":{"enum":["user_login","executable"]},"path":text(4096),"clean_start":{"type":"boolean"}}),
+        &[],
+    );
+    let dimensions = object(
+        json!({"rows":number,"columns":number}),
+        &["rows", "columns"],
+    );
+    let properties = json!({
+        "action":{"type":"string"},"session_id":text(255),"cwd":text(4096),
+        "command":text(MAX_COMMAND_BYTES),"profile":enumeration(&["clean","user"]),
+        "shell":composite(shell),"backend":enumeration(&["native","tmux"]),
+        "return_when":composite(return_when),"wait_ceiling_ms":number,
+        "dimensions":composite(dimensions),
+        "initial_monitors":composite(json!({"type":"array","maxItems":MAX_TERMINAL_INITIAL_MONITORS,"items":definition})),
+        "cursor_segment":number,"cursor_offset":number,"after_event_id":number,
+        "acknowledge_event_id":number,"max_events":number,"write":composite(write),
+        "lease":enumeration(&["acquire","use","release","revoke"]),"monitor":composite(operation),
+        "task_id":text(4096),"workspace_root":text(4096),"rows":number,"columns":number,
+        "signal":enumeration(SIGNALS),"close_policy":enumeration(&["graceful","force"])
+    });
+    let forms = [
+        "exec", "start", "read", "screen", "write", "wait", "monitor", "inspect", "list", "resize",
+        "signal", "close",
+    ]
+    .into_iter()
+    .map(|action| {
+        let (allowed, required) = fields(action).expect("fixed public action");
+        let mut selected = Map::new();
+        // Pinned omitted optional fields may be represented by null even
+        // when they belong to another action's form.
+        for &name in PUBLIC_FIELDS {
+            if !allowed.contains(&name) {
+                selected.insert(name.to_owned(), json!({"type":"null"}));
+            }
+        }
+        for &name in allowed {
+            let schema = if name == "action" {
+                json!({"const":action})
+            } else if required.contains(&name) {
+                properties[name].clone()
+            } else {
+                json!({"anyOf":[properties[name],{"type":"null"}]})
+            };
+            selected.insert(name.to_owned(), schema);
+        }
+        object(Value::Object(selected), required)
+    })
+    .collect::<Vec<_>>();
+    json!({"$defs":{"integer":integer},"oneOf":forms})
+}
+
 fn fields(action: &str) -> ParseResult<(&'static [&'static str], &'static [&'static str])> {
     Ok(match action {
         "exec" => (
@@ -1113,6 +1244,25 @@ fn start_request(
 #[cfg(test)]
 mod parser_budget_tests {
     use super::{DeserializeSeed, UniqueValueSeed};
+
+    #[test]
+    fn public_schema_covers_every_action_and_null_inactive_field() {
+        let schema = super::terminal_action_input_schema();
+        let forms = schema["oneOf"].as_array().unwrap();
+        assert_eq!(forms.len(), 12);
+        for form in forms {
+            let action = form["properties"]["action"]["const"].as_str().unwrap();
+            let (allowed, required) = super::fields(action).unwrap();
+            assert_eq!(form["required"], serde_json::json!(required));
+            for field in super::PUBLIC_FIELDS {
+                assert!(form["properties"].get(field).is_some());
+                if !allowed.contains(field) {
+                    assert_eq!(form["properties"][field]["anyOf"][0]["type"], "null");
+                }
+            }
+        }
+        assert!(serde_json::to_vec(&schema).unwrap().len() < 64 * 1024);
+    }
 
     #[test]
     fn composite_seed_stops_allocating_when_node_budget_is_exhausted() {
