@@ -25,6 +25,8 @@ use machine_god_core::{
     TerminalMonitorEvent, TerminalScreen, TerminalSessionId,
 };
 use std::fmt;
+use std::num::NonZeroU64;
+use std::sync::Arc;
 
 pub(crate) const MAX_RESIDENT_TERMINALS: usize = 16;
 
@@ -100,9 +102,43 @@ pub(crate) struct TerminalRegistryFailure {
     pub(crate) error: TerminalSessionError,
 }
 
+/// A process-local admission token, not native process or persisted authority.
+/// Dropping it has no registry effect: the preparation job must withdraw through
+/// the owner on cancellation, or let host shutdown invalidate all pending work.
+pub(crate) struct TerminalStartReservation {
+    registry: Arc<()>,
+    serial: NonZeroU64,
+    owner: BackgroundOutputOwner,
+    id: TerminalSessionId,
+}
+impl TerminalStartReservation {
+    pub(crate) fn owner(&self) -> &BackgroundOutputOwner {
+        &self.owner
+    }
+
+    pub(crate) fn session_id(&self) -> &TerminalSessionId {
+        &self.id
+    }
+}
+impl fmt::Debug for TerminalStartReservation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TerminalStartReservation")
+            .finish_non_exhaustive()
+    }
+}
+
+struct PendingStart {
+    serial: NonZeroU64,
+    owner: BackgroundOutputOwner,
+    id: TerminalSessionId,
+}
+
 pub(crate) struct TerminalRegistry<B: TerminalSessionBackend> {
     workspace: String,
     entries: Vec<Entry<B>>,
+    identity: Arc<()>,
+    pending_starts: Vec<PendingStart>,
+    next_start_serial: Option<NonZeroU64>,
     next: usize,
     now_ms: i64,
     closing: bool,
@@ -122,10 +158,89 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         Ok(Self {
             workspace,
             entries: Vec::with_capacity(MAX_RESIDENT_TERMINALS),
+            identity: Arc::new(()),
+            pending_starts: Vec::with_capacity(MAX_RESIDENT_TERMINALS),
+            next_start_serial: NonZeroU64::new(1),
             next: 0,
             now_ms: 0,
             closing: false,
         })
+    }
+
+    /// Reserves capacity before slow off-owner preparation without admitting a
+    /// resident or invoking a native factory. Tokens remain exact to this registry
+    /// even if it moves, and cannot become valid in a later registry allocation.
+    pub(crate) fn reserve_start(
+        &mut self,
+        owner: BackgroundOutputOwner,
+        id: TerminalSessionId,
+    ) -> Result<TerminalStartReservation> {
+        self.admit(&owner, &id)?;
+        let serial = self
+            .next_start_serial
+            .ok_or(TerminalRegistryError::Capacity)?;
+        self.pending_starts.push(PendingStart {
+            serial,
+            owner: owner.clone(),
+            id: id.clone(),
+        });
+        self.next_start_serial = serial.get().checked_add(1).and_then(NonZeroU64::new);
+        Ok(TerminalStartReservation {
+            registry: Arc::clone(&self.identity),
+            serial,
+            owner,
+            id,
+        })
+    }
+
+    /// Borrows the token so a foreign-registry rejection cannot consume the
+    /// caller's ability to withdraw from its correct owner. No factory runs on
+    /// stale, foreign, cancelled or shutdown-invalidated admission. Once accepted,
+    /// the token is consumed before the factory, including failure and unwind.
+    pub(crate) fn commit_reserved_start(
+        &mut self,
+        reservation: &TerminalStartReservation,
+        create: impl FnOnce() -> std::result::Result<TerminalSession<B>, TerminalSessionError>,
+    ) -> Result<()> {
+        let index = self.reservation_index(reservation)?;
+        let pending = self.pending_starts.remove(index);
+        let session = create()?;
+        let facts = session.inspect(&pending.owner)?;
+        self.validate_facts(&facts, &pending.id, true)?;
+        self.entries.push(Entry {
+            id: pending.id,
+            owner: pending.owner,
+            resident: Resident::Live(Box::new(session)),
+        });
+        Ok(())
+    }
+
+    /// Releases uncommitted admission only. Cleanup of any already-prepared
+    /// backend remains the preparation job's responsibility on its owned worker.
+    pub(crate) fn withdraw_reserved_start(
+        &mut self,
+        reservation: &TerminalStartReservation,
+    ) -> Result<()> {
+        let index = self.reservation_index(reservation)?;
+        self.pending_starts.remove(index);
+        Ok(())
+    }
+
+    fn reservation_index(&self, reservation: &TerminalStartReservation) -> Result<usize> {
+        if !Arc::ptr_eq(&self.identity, &reservation.registry) {
+            return Err(TerminalRegistryError::Invalid);
+        }
+        if self.closing {
+            return Err(TerminalRegistryError::Closed);
+        }
+        self.pending_starts
+            .iter()
+            .position(|pending| {
+                pending.serial == reservation.serial
+                    && pending.owner == reservation.owner
+                    && pending.id == reservation.id
+            })
+            .ok_or(TerminalRegistryError::NotFound)
     }
 
     /// Reject duplicate/full/closing admission before invoking a native factory.
@@ -172,10 +287,14 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
             .entries
             .iter()
             .any(|entry| &entry.owner == owner && &entry.id == id)
+            || self
+                .pending_starts
+                .iter()
+                .any(|pending| &pending.owner == owner && &pending.id == id)
         {
             return Err(TerminalRegistryError::Conflict);
         }
-        if self.entries.len() == MAX_RESIDENT_TERMINALS {
+        if self.entries.len() + self.pending_starts.len() >= MAX_RESIDENT_TERMINALS {
             return Err(TerminalRegistryError::Capacity);
         }
         Ok(())
@@ -796,6 +915,10 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
     ) -> Result<Vec<TerminalRegistryFailure>> {
         let workspace = self.workspace.clone();
         self.check_time(now_ms)?;
+        // Invalidate slow preparation before recovered-publication retries too,
+        // not only before the subsequent native cleanup pass.
+        self.closing = true;
+        self.pending_starts.clear();
         // Recovered histories have no native cleanup, but retain failed
         // durable/accounting obligations. Retry those on this same owner.
         for entry in &mut self.entries {
@@ -836,6 +959,7 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         self.check_time(now_ms)?;
         self.now_ms = now_ms;
         self.closing = true;
+        self.pending_starts.clear();
         let mut failures = Vec::new();
         for entry in &mut self.entries {
             if let Resident::Live(session) = &mut entry.resident
@@ -4114,6 +4238,285 @@ mod tests {
             registry.list(&owner("one"), None, 0, &filter),
             Err(TerminalRegistryError::Invalid)
         ));
+    }
+
+    #[test]
+    fn reserved_start_is_exact_registry_owner_and_session_authority() {
+        let mut first = registry();
+        let mut second = registry();
+        let who = owner("one");
+        let token = first.reserve_start(who.clone(), id("pending")).unwrap();
+        assert_eq!(token.owner(), &who);
+        assert_eq!(token.session_id(), &id("pending"));
+        assert_eq!(format!("{token:?}"), "TerminalStartReservation { .. }");
+        assert_eq!(
+            second.commit_reserved_start(&token, || panic!("foreign factory")),
+            Err(TerminalRegistryError::Invalid)
+        );
+        assert_eq!(
+            second.withdraw_reserved_start(&token),
+            Err(TerminalRegistryError::Invalid)
+        );
+        // Fields are private to this module; forged-token tests show all three
+        // identity dimensions are checked, not only a numeric sequence.
+        for (owner, id) in [
+            (owner("foreign"), token.id.clone()),
+            (who.clone(), id("other")),
+        ] {
+            let forged = TerminalStartReservation {
+                registry: Arc::clone(&first.identity),
+                serial: token.serial,
+                owner,
+                id,
+            };
+            assert_eq!(
+                first.commit_reserved_start(&forged, || panic!("forged factory")),
+                Err(TerminalRegistryError::NotFound)
+            );
+            assert_eq!(
+                first.withdraw_reserved_start(&forged),
+                Err(TerminalRegistryError::NotFound)
+            );
+        }
+        first.withdraw_reserved_start(&token).unwrap();
+        assert_eq!(
+            first.commit_reserved_start(&token, || panic!("withdrawn factory")),
+            Err(TerminalRegistryError::NotFound)
+        );
+        assert_eq!(
+            first.withdraw_reserved_start(&token),
+            Err(TerminalRegistryError::NotFound)
+        );
+        let fresh = first.reserve_start(who, id("pending")).unwrap();
+        assert_ne!(fresh.serial, token.serial);
+    }
+
+    #[test]
+    fn reserved_start_capacity_is_shared_with_live_recovered_and_direct_admission() {
+        let fixture = Fixture::new();
+        let who = owner("one");
+        let live_id = id("resident");
+        let mut registry = registry();
+        registry
+            .start(who.clone(), live_id.clone(), || {
+                fixture.live(&who, &live_id, 0)
+            })
+            .unwrap();
+        let mut pending = Vec::new();
+        for number in 0..MAX_RESIDENT_TERMINALS - 1 {
+            pending.push(
+                registry
+                    .reserve_start(who.clone(), id(&format!("pending-{number}")))
+                    .unwrap(),
+            );
+        }
+        assert!(matches!(
+            registry.reserve_start(who.clone(), live_id.clone()),
+            Err(TerminalRegistryError::Conflict)
+        ));
+        assert!(matches!(
+            registry.reserve_start(who.clone(), pending[0].id.clone()),
+            Err(TerminalRegistryError::Conflict)
+        ));
+        assert!(matches!(
+            registry.reserve_start(who.clone(), id("overflow")),
+            Err(TerminalRegistryError::Capacity)
+        ));
+        assert_eq!(
+            registry.start(who.clone(), id("overflow"), || panic!("full direct start")),
+            Err(TerminalRegistryError::Capacity)
+        );
+        assert_eq!(
+            registry.recover(who.clone(), id("overflow"), || panic!("full recovery")),
+            Err(TerminalRegistryError::Capacity)
+        );
+        assert_eq!(
+            registry.start(who.clone(), pending[0].id.clone(), || panic!(
+                "duplicate direct start"
+            )),
+            Err(TerminalRegistryError::Conflict)
+        );
+        assert_eq!(
+            registry.recover(who.clone(), pending[0].id.clone(), || panic!(
+                "duplicate recovery"
+            )),
+            Err(TerminalRegistryError::Conflict)
+        );
+        registry
+            .live_mut(&who, &live_id)
+            .unwrap()
+            .close(&who, TerminalClosePolicy::Force, 0)
+            .unwrap();
+        registry.release(&who, &live_id).unwrap();
+        registry
+            .recover(who.clone(), live_id.clone(), || {
+                fixture.recovered(&who, &live_id, 0)
+            })
+            .unwrap();
+        assert!(matches!(
+            registry.reserve_start(who.clone(), id("overflow")),
+            Err(TerminalRegistryError::Capacity)
+        ));
+        registry
+            .withdraw_reserved_start(&pending.pop().unwrap())
+            .unwrap();
+        assert!(registry.reserve_start(who, id("released-slot")).is_ok());
+    }
+
+    #[test]
+    fn reserved_start_is_invisible_and_does_not_block_resident_pumping() {
+        let fixture = Fixture::new();
+        let who = owner("one");
+        let live_id = id("resident");
+        let mut registry = registry();
+        registry
+            .start(who.clone(), live_id.clone(), || {
+                fixture.live(&who, &live_id, 0)
+            })
+            .unwrap();
+        let token = registry
+            .reserve_start(who.clone(), id("preparing"))
+            .unwrap();
+        assert_eq!(registry.owner_ids(&who), vec![live_id.clone()]);
+        assert!(matches!(
+            registry.inspect(&who, token.session_id()),
+            Err(TerminalRegistryError::NotFound)
+        ));
+        assert!(matches!(
+            registry.live_mut(&who, token.session_id()),
+            Err(TerminalRegistryError::NotFound)
+        ));
+        assert_eq!(
+            registry
+                .list(&who, None, 16, &TerminalRegistryFilter::default())
+                .unwrap()
+                .len(),
+            1
+        );
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"still responsive".to_vec());
+        let mut steps = registry.pump(1, 16).unwrap();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps.remove(0).result.unwrap().output, b"still responsive");
+        registry.withdraw_reserved_start(&token).unwrap();
+    }
+
+    #[test]
+    fn reserved_start_commits_once_and_failures_allow_a_fresh_reservation() {
+        let fixture = Fixture::new();
+        let who = owner("one");
+        let terminal = id("reserved");
+        let mut registry = registry();
+        let failed = registry
+            .reserve_start(who.clone(), terminal.clone())
+            .unwrap();
+        assert_eq!(
+            registry.commit_reserved_start(&failed, || Err(TerminalSessionError::Native)),
+            Err(TerminalRegistryError::Session(TerminalSessionError::Native))
+        );
+        assert_eq!(
+            registry.commit_reserved_start(&failed, || panic!("failed token replay")),
+            Err(TerminalRegistryError::NotFound)
+        );
+        let panicked = registry
+            .reserve_start(who.clone(), terminal.clone())
+            .unwrap();
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                || registry.commit_reserved_start(&panicked, || panic!("factory panic"))
+            ))
+            .is_err()
+        );
+        assert_eq!(
+            registry.commit_reserved_start(&panicked, || panic!("panic token replay")),
+            Err(TerminalRegistryError::NotFound)
+        );
+        let committed = registry
+            .reserve_start(who.clone(), terminal.clone())
+            .unwrap();
+        registry
+            .commit_reserved_start(&committed, || fixture.live(&who, &terminal, 0))
+            .unwrap();
+        assert_eq!(
+            registry.commit_reserved_start(&committed, || panic!("committed token replay")),
+            Err(TerminalRegistryError::NotFound)
+        );
+        assert_eq!(
+            registry.withdraw_reserved_start(&committed),
+            Err(TerminalRegistryError::NotFound)
+        );
+        assert_eq!(registry.owner_ids(&who), vec![terminal]);
+        assert!(registry.pending_starts.is_empty());
+    }
+
+    #[test]
+    fn reserved_start_factory_facts_remain_bound_and_shutdown_invalidates_pending() {
+        for foreign in [false, true] {
+            let fixture = Fixture::new();
+            let who = owner("one");
+            let terminal = id("reserved");
+            let mut registry = registry();
+            let token = registry
+                .reserve_start(who.clone(), terminal.clone())
+                .unwrap();
+            let actual_owner = if foreign {
+                owner("foreign")
+            } else {
+                who.clone()
+            };
+            let actual_id = if foreign {
+                terminal.clone()
+            } else {
+                id("other")
+            };
+            assert!(
+                registry
+                    .commit_reserved_start(&token, || fixture.live(&actual_owner, &actual_id, 0))
+                    .is_err()
+            );
+            assert!(registry.entries.is_empty());
+            assert!(registry.pending_starts.is_empty());
+            let token = registry
+                .reserve_start(who.clone(), terminal.clone())
+                .unwrap();
+            registry.shutdown(0, TerminalClosePolicy::Force).unwrap();
+            assert!(registry.pending_starts.is_empty());
+            assert_eq!(
+                registry.commit_reserved_start(&token, || panic!("shutdown factory")),
+                Err(TerminalRegistryError::Closed)
+            );
+            assert_eq!(
+                registry.withdraw_reserved_start(&token),
+                Err(TerminalRegistryError::Closed)
+            );
+            assert!(matches!(
+                registry.reserve_start(who, terminal),
+                Err(TerminalRegistryError::Closed)
+            ));
+        }
+    }
+
+    #[test]
+    fn reserved_start_counter_exhaustion_never_recycles_token_identity() {
+        let mut registry = registry();
+        let who = owner("one");
+        registry.next_start_serial = NonZeroU64::new(u64::MAX);
+        let last = registry.reserve_start(who.clone(), id("last")).unwrap();
+        assert_eq!(last.serial.get(), u64::MAX);
+        registry.withdraw_reserved_start(&last).unwrap();
+        assert!(registry.pending_starts.is_empty());
+        assert!(matches!(
+            registry.reserve_start(who, id("fresh")),
+            Err(TerminalRegistryError::Capacity)
+        ));
+        assert_eq!(
+            registry.commit_reserved_start(&last, || panic!("exhausted replay")),
+            Err(TerminalRegistryError::NotFound)
+        );
     }
 
     #[test]
