@@ -566,6 +566,15 @@ effect, while later cancellation or dropping the reply cannot discard the queued
 suffix. Final replies retain accepted-byte counts and independent publication
 errors; unavailable observation reports the last known receipt. Reply wakes run
 after releasing profile and reply locks, with individual wake panics contained.
+Revoking input admission retains only bounded, already-attempted input identity
+for observation. Teardown settles it before and after native close without
+sending new bytes; completed counts survive removal of the backend, and an
+ambiguous final result is failed rather than a reliable zero-byte close.
+
+Journal writer leases explicitly unlock when their owner is dropped, including
+failed construction. A temporary fork-inherited descriptor cannot keep a retired
+writer's lease busy, and closing that descriptor cannot release a newer writer's
+independent lock.
 
 The sixteen-entry resident bound is not disk-history retention. The profile
 transaction and admission components cover nonresident histories and concurrent

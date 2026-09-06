@@ -41,6 +41,9 @@ use crate::terminal_helper::{
 };
 
 const MAX_READ: usize = 64 * 1024;
+// A slave can close just before its retained child's exit becomes waitable.
+// Allow observation to converge without sleeping or treating EOF as an exit.
+const EOF_STATUS_GRACE: Duration = Duration::from_millis(100);
 static LIVE_PTYS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 struct PtyPermit;
 impl PtyPermit {
@@ -324,6 +327,7 @@ impl PreparedTerminalPty {
             master: Some(master),
             observed: None,
             read_closed: false,
+            eof_deadline: None,
             write_closed: false,
             output_incomplete: false,
             permit: self.permit.take(),
@@ -372,6 +376,7 @@ pub(crate) struct TerminalPty {
     master: Option<OwnedFd>,
     observed: Option<TerminalPtyStatus>,
     read_closed: bool,
+    eof_deadline: Option<Instant>,
     write_closed: bool,
     output_incomplete: bool,
     permit: Option<PtyPermit>,
@@ -393,10 +398,7 @@ impl TerminalPty {
             return Err(error(TerminalPtyErrorKind::InvalidRequest));
         }
         if self.read_closed {
-            return Ok(TerminalPtyRead {
-                bytes_read: 0,
-                closed: true,
-            });
+            return self.observe_eof();
         }
         let Some(master) = self.master.as_ref() else {
             return Err(error(TerminalPtyErrorKind::Closed));
@@ -405,10 +407,9 @@ impl TerminalPty {
             match rustix::io::read(master, &mut *buffer) {
                 Ok(0) | Err(rustix::io::Errno::IO) => {
                     self.read_closed = true;
-                    return Ok(TerminalPtyRead {
-                        bytes_read: 0,
-                        closed: true,
-                    });
+                    self.write_closed = true;
+                    self.eof_deadline = Some(Instant::now() + EOF_STATUS_GRACE);
+                    return self.observe_eof();
                 }
                 Ok(bytes_read) => {
                     return Ok(TerminalPtyRead {
@@ -430,6 +431,19 @@ impl TerminalPty {
             bytes_read: 0,
             closed: false,
         })
+    }
+    fn observe_eof(&mut self) -> Result<TerminalPtyRead, TerminalPtyError> {
+        // Native close temporarily moves the process capability into its
+        // teardown routine. Its drain needs physical EOF, not another status
+        // lookup through the now-empty slot.
+        if self.process.is_none() || self.eof_deadline.is_none() {
+            return Ok(TerminalPtyRead {
+                bytes_read: 0,
+                closed: true,
+            });
+        }
+        let status = self.status()?;
+        Ok(eof_read(status, self.eof_deadline, Instant::now()))
     }
     pub(crate) fn write(
         &mut self,
@@ -656,6 +670,13 @@ impl TerminalPty {
         Ok(())
     }
 }
+
+fn eof_read(status: TerminalPtyStatus, deadline: Option<Instant>, now: Instant) -> TerminalPtyRead {
+    TerminalPtyRead {
+        bytes_read: 0,
+        closed: status != TerminalPtyStatus::Running || deadline.is_none_or(|end| now >= end),
+    }
+}
 impl Drop for TerminalPty {
     fn drop(&mut self) {
         let _ = self.close(true);
@@ -721,6 +742,37 @@ mod tests {
     use std::path::Path;
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQUENCE: AtomicU64 = AtomicU64::new(1);
+    #[test]
+    fn eof_waits_only_for_the_original_bounded_exit_observation_window() {
+        let first = Instant::now();
+        let deadline = first + EOF_STATUS_GRACE;
+        for elapsed in [0, 1, 50, 99] {
+            let read = eof_read(
+                TerminalPtyStatus::Running,
+                Some(deadline),
+                first + Duration::from_millis(elapsed),
+            );
+            assert_eq!(read.bytes_read, 0);
+            assert!(!read.closed);
+        }
+        for elapsed in [100, 101, 1000] {
+            assert!(
+                eof_read(
+                    TerminalPtyStatus::Running,
+                    Some(deadline),
+                    first + Duration::from_millis(elapsed),
+                )
+                .closed
+            );
+        }
+        for status in [
+            TerminalPtyStatus::Exited(7),
+            TerminalPtyStatus::Signalled(15),
+        ] {
+            assert!(eof_read(status, Some(deadline), first).closed);
+        }
+        assert!(eof_read(TerminalPtyStatus::Running, None, first).closed);
+    }
     struct Directory(PathBuf);
     impl Directory {
         fn new() -> Self {
@@ -1014,6 +1066,22 @@ mod tests {
         .unwrap()
         .commit(&CancellationToken::new())
         .unwrap()
+    }
+    #[test]
+    fn expired_eof_observation_cannot_hide_a_retained_running_child() {
+        let directory = Directory::new();
+        let mut pty = start(&directory, &["-c", "exec /bin/sleep 10"]);
+        // Inject the already-observed EOF state: kernels differ in whether
+        // closing all slave descriptors alone produces EOF before leader exit.
+        pty.read_closed = true;
+        pty.write_closed = true;
+        pty.eof_deadline = Some(Instant::now());
+        let mut buffer = [0; 64];
+        assert!(pty.read(&mut buffer).unwrap().closed);
+        assert_eq!(pty.write(b"ignored").unwrap().bytes_written(), 0);
+        assert_eq!(pty.status().unwrap(), TerminalPtyStatus::Running);
+        assert_ne!(pty.close(true).unwrap(), TerminalPtyStatus::Running);
+        assert!(pty.read(&mut buffer).unwrap().closed);
     }
     fn read_until(pty: &mut TerminalPty, marker: &[u8]) -> Vec<u8> {
         let deadline = Instant::now() + Duration::from_secs(4);

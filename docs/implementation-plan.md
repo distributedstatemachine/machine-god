@@ -150,6 +150,10 @@ authority still need host composition, alongside complete action routing.
 Pending write completion now shares the owner loop with capacity reserved before
 effects, exact receipt identity, and final shutdown counts; cancellation does not
 resubmit or discard the queued suffix.
+Native PTY EOF now closes input immediately while allowing a bounded,
+nonblocking exit-status convergence window; permanent capture loss still fails.
+Final input settlement survives teardown without sending new bytes, and journal
+writer retirement explicitly releases fork-inherited lock descriptions.
 The complete normalized twelve-action core contract and effect-free public
 decoder are present, including request/result identity checks and lossless
 foreground execution outcomes. Numeric coercion now matches pinned binary128

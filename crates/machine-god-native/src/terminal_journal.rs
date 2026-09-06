@@ -412,7 +412,7 @@ struct Envelope {
 /// One exclusive writer and its snapshot readers. Profile-wide accounting is external.
 pub(crate) struct TerminalJournal {
     root: OwnedFd,
-    lock: OwnedFd,
+    lock: JournalWriterLock,
     manifest: Manifest,
     current_hash: Option<(u64, Sha256)>,
     metadata_bytes: usize,
@@ -421,6 +421,21 @@ pub(crate) struct TerminalJournal {
     pending_files: BTreeSet<String>,
 }
 redacted!(TerminalJournal);
+
+struct JournalWriterLock(OwnedFd);
+impl AsFd for JournalWriterLock {
+    fn as_fd(&self) -> rustix::fd::BorrowedFd<'_> {
+        self.0.as_fd()
+    }
+}
+impl Drop for JournalWriterLock {
+    fn drop(&mut self) {
+        // Closing alone leaves flock held by a concurrently forked child's
+        // inherited open description until exec. End this owner's lease now,
+        // including failed construction, without touching a subsequent lease.
+        let _ = rustix::fs::flock(&self.0, FlockOperation::Unlock);
+    }
+}
 
 impl TerminalJournal {
     pub(crate) fn prepare_mutation<'journal, 'input>(
@@ -1955,7 +1970,7 @@ fn create_file(root: impl AsFd, name: &str) -> Result<OwnedFd> {
     private(&fd, false)?;
     Ok(fd)
 }
-fn writer_lock(root: impl AsFd, create: bool) -> Result<OwnedFd> {
+fn writer_lock(root: impl AsFd, create: bool) -> Result<JournalWriterLock> {
     let fd = match open_file(root.as_fd(), LOCK, OFlags::RDWR) {
         Err(TerminalJournalError::NotFound) if create => match create_file(root.as_fd(), LOCK) {
             Ok(file) => file,
@@ -1969,7 +1984,7 @@ fn writer_lock(root: impl AsFd, create: bool) -> Result<OwnedFd> {
         Err(rustix::io::Errno::WOULDBLOCK) => return Err(TerminalJournalError::Busy),
         Err(error) => return Err(io_error(error)),
     }
-    Ok(fd)
+    Ok(JournalWriterLock(fd))
 }
 fn sync(fd: impl AsFd) -> Result<()> {
     rustix::fs::fsync(fd).map_err(io_error)
@@ -3498,6 +3513,27 @@ mod tests {
         assert_eq!(collect(&reopened, cursor(2, 0)), b"efghijklmnop");
         assert_eq!(reopened.append(b"q").unwrap(), cursor(5, 1));
         assert_eq!(collect(&reopened, cursor(1, 0)), b"ijklmnopq");
+    }
+
+    #[test]
+    fn writer_drop_unlocks_even_while_an_inherited_description_survives() {
+        let fixture = Fixture::new();
+        let limits = limits(8, 16);
+        let journal = fixture.create(limits);
+        let inherited = rustix::io::fcntl_dupfd_cloexec(&journal.lock, 3).unwrap();
+        assert_eq!(
+            TerminalJournal::open_existing(fixture.fd(), &session(), limits).unwrap_err(),
+            TerminalJournalError::Busy
+        );
+        drop(journal);
+        let reopened = TerminalJournal::open_existing(fixture.fd(), &session(), limits).unwrap();
+        drop(inherited);
+        assert_eq!(
+            TerminalJournal::open_existing(fixture.fd(), &session(), limits).unwrap_err(),
+            TerminalJournalError::Busy
+        );
+        drop(reopened);
+        assert!(TerminalJournal::open_existing(fixture.fd(), &session(), limits).is_ok());
     }
 
     #[test]
