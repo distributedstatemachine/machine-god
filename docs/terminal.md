@@ -479,6 +479,19 @@ Suppressed opaque panic payloads are deliberately retained without invoking
 their potentially panicking destructors, matching the host's cleanup policy.
 External probes remain separately authorized, off-loop effects.
 
+Attention waits share the owner loop rather than occupying one worker per
+wait. At most 32 registrations or unconsumed completions remain resident. Each
+tick reads at most one 16 KiB durable page per pending wait; catch-up defers
+quiet/condition decisions until the observed cursor is reached, but never
+extends the absolute safety ceiling. Physical segment rollover is not an
+observation gap. Dropped wait futures cancel only their attention, not the
+session, monitor set or queued input.
+Outcomes freeze before attention completion is persisted and reply wakes occur
+after releasing profile authority. Transient publication failures retry on the
+owner. Final shutdown still resolves each future, preserving its frozen outcome
+and explicitly reporting unavailable attention persistence instead of claiming
+successful cleanup or leaving the future pending indefinitely.
+
 The sixteen-entry resident bound is not disk-history retention. The profile
 transaction and admission components cover nonresident histories and concurrent
 owner namespaces, including persistent live checkpoint reserves and bounded
