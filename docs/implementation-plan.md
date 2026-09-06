@@ -186,7 +186,11 @@ integrated with cold-history read/screen/inspect routing. Catalog leases stay on
 the worker; historical access does not consume live slots. Non-owning request
 handles support staged effect-worker callbacks without extending host lifetime.
 The real launch matrix covers PTY/tmux, bash/zsh, user/clean and full command/paste
-payloads. Full foreground service and final reference-host wiring remain open.
+payloads. The descriptor-bound foreground service and exact private CLI helper
+are registered, including separate exec-failure versus command-exit reporting.
+Pending start admission now counts against the same registry limit and is
+invalidated at shutdown. Staged startup/monitor effect orchestration and final
+reference-host wiring remain open; these are not a complete-feature delivery.
 The complete normalized twelve-action core contract and effect-free public
 decoder are present, including request/result identity checks and lossless
 foreground execution outcomes. Numeric coercion now matches pinned binary128

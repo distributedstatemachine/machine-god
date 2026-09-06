@@ -629,6 +629,13 @@ pending reply futures do not keep it alive after the last host shuts down.
 Owned effect workers can retain a non-owning request handle for staged callbacks.
 Creating or cloning that handle neither starts a worker nor counts as a host;
 last-host shutdown rejects its later requests and still closes native sessions.
+Slow startup can first reserve an exact process-local registry slot. Pending
+starts count with resident entries against the sixteen-session limit but never
+appear in observations or pumping. Reservations bind registry, owner and session
+identity without reusable numeric authority. Commitment consumes admission before
+the factory runs, including failure or panic; the owned startup job explicitly
+withdraws unused reservations. Shutdown invalidates pending admission before
+native cleanup, so a late worker cannot reopen the registry.
 One boxed native backend selection forwards PTY and tmux operations through the
 same registry contract, including whole-paste intent, input limits, observation-only
 write settlement and close receipts. The contained backend remains the sole
