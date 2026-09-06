@@ -27,6 +27,20 @@ The caller must reject duplicate raw JSON fields before constructing a
 `serde_json::Value`. These internal components do not yet replace the registered
 tool adapter described below.
 
+`TerminalActionTool` exposes the full twelve-action schema with an explicitly
+injected `TerminalActionExecutor`. Preparation is effect-free and binds the
+normalized invocation, call identity, workspace/default cwd, and captured
+environment/shell-selection fingerprints into the capability. Repeated monitor
+probes retain their network, filesystem and process authority classes; lease
+revocation requires close authority. The original cwd stays separate from the
+private command draft until the executor resolves it on its worker, preserving
+native symlink/parent semantics without prematurely concatenating two bounded
+paths. Only that resolution releases an executable core request. Complete typed
+results are validated against the invocation and an encoder-derived ceiling
+before conversion to JSON; cancellation after commitment preserves receipts.
+This injectable adapter does not by itself compose the production runtime,
+large-result archive, provider admission or reference-host registration.
+
 Numeric-string coercion uses deterministic IEEE binary128 rounding, matching
 the pinned typed decoder before integer range validation, including halfway,
 underflow, overflow and signed-zero behavior. It uses the pinned Rust
@@ -284,6 +298,12 @@ a pinned bootstrap in an explicitly supplied private directory. It works with
 bash/zsh user and clean profiles even when profiles close inherited descriptors.
 The owner persists shell readiness before acknowledging it, and an optional
 command cannot execute before the separate command-start acknowledgement.
+The bootstrap is transport-neutral: validate shell/source and transport inputs,
+publish its private artifacts, then attach the committed backend to the same
+control protocol. Its generic backend wrapper preserves whole-paste intent,
+backend-specific input limits, pending-write settlement and signal/output-loss
+semantics. Dropping the control handle closes admission but does not discard
+the backend's observational authority over an already submitted write.
 The session owns its control handle through the ordinary registry pump. With an
 initial command, shell readiness remains `Starting`; only a durably recorded
 command-start boundary becomes `Running`. The owner drains profile output in

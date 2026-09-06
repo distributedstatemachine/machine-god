@@ -150,7 +150,7 @@ impl TerminalPtyRequest {
         self.startup_source = Some(source);
         Ok(self)
     }
-    fn frame(&self) -> Result<Vec<u8>, TerminalPtyError> {
+    pub(crate) fn frame(&self) -> Result<Vec<u8>, TerminalPtyError> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(MAGIC);
         bytes.extend_from_slice(&self.dimensions.rows.to_be_bytes());

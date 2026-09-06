@@ -33,7 +33,7 @@ memchr = "2.8.3"
 reqwest = { version = "=0.13.4", default-features = false, features = ["rustls"] }
 rustc_apfloat = "=0.2.3"
 rustls = { version = "0.23.39", default-features = false }
-rustix = { version = "1.1.4", features = ["fs", "process", "pty", "rand", "termios", "time"] }
+rustix = { version = "1.1.4", features = ["event", "fs", "process", "pty", "rand", "termios", "time"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 sha2 = "0.10.9"

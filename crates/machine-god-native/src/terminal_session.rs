@@ -80,6 +80,9 @@ pub(crate) trait TerminalSessionBackend {
     ) -> std::result::Result<TerminalPtyClose, ()>;
 }
 impl TerminalSessionBackend for TerminalPty {
+    fn restore_startup_echo(&mut self) -> std::result::Result<(), ()> {
+        TerminalPty::restore_startup_echo(self).map_err(|_| ())
+    }
     fn read(&mut self, buffer: &mut [u8]) -> std::result::Result<TerminalPtyRead, ()> {
         self.read(buffer).map_err(|_| ())
     }

@@ -19,9 +19,7 @@ use machine_god_core::{CancellationToken, TerminalDimensions, TerminalSignal};
 use rustix::fd::OwnedFd;
 use rustix::fs::{AtFlags, FileType, Mode, OFlags};
 
-use crate::background_input::{
-    BackgroundInputReceipt, BackgroundInputStatus, MAX_BACKGROUND_INPUT_BYTES,
-};
+use crate::background_input::{BackgroundInputReceipt, BackgroundInputStatus};
 #[cfg(test)]
 use crate::terminal_helper::run_terminal_startup_marker;
 use crate::terminal_helper::{
@@ -93,6 +91,22 @@ pub(crate) struct TerminalStartupRequest {
 
 pub(crate) struct PreparedTerminalStartup {
     pty: PreparedTerminalPty,
+    bootstrap: PublishedTerminalBootstrap,
+}
+
+/// Transport-neutral bootstrap, validated before any artifact publication.
+/// Native PTY and tmux use the same authenticated marker and durable ACK protocol.
+pub(crate) struct PreparedTerminalBootstrap {
+    program: String,
+    arguments: Vec<String>,
+    source: Option<String>,
+    script: String,
+    nonce: [u8; 32],
+    deadline: Instant,
+    artifacts: StartupArtifacts,
+}
+
+pub(crate) struct PublishedTerminalBootstrap {
     nonce: [u8; 32],
     has_command: bool,
     deadline: Instant,
@@ -120,6 +134,75 @@ impl PreparedTerminalStartup {
             return Err(TerminalStartupError::InvalidRequest);
         }
         let deadline = started + request.timeout;
+        let bootstrap = PreparedTerminalBootstrap::new(
+            &request.shell,
+            request.command.as_deref(),
+            request.artifacts,
+            request.artifact_path,
+            &request.marker_helper,
+            deadline,
+            cancellation,
+        )?;
+        let mut pty_request = TerminalPtyRequest::new(
+            bootstrap.program().to_owned(),
+            bootstrap.arguments().to_vec(),
+            request.environment,
+            request.cwd,
+            request.dimensions,
+        )
+        .map_err(process_error)?;
+        if let Some(source) = bootstrap.startup_source() {
+            pty_request = pty_request
+                .with_startup_source(source.to_owned())
+                .map_err(process_error)?;
+        }
+        // All semantic, directory, source, argv and environment checks precede
+        // artifact publication. No shell runs before the explicit PTY COMMIT.
+        let bootstrap = bootstrap.publish(cancellation)?;
+        let pty = PreparedTerminalPty::prepare_until(helper, pty_request, deadline, cancellation)
+            .map_err(|error| {
+            if error.kind() == crate::terminal_pty::TerminalPtyErrorKind::Cancelled {
+                TerminalStartupError::Cancelled
+            } else if error.kind() == crate::terminal_pty::TerminalPtyErrorKind::Timeout {
+                TerminalStartupError::Timeout
+            } else {
+                process_error(error)
+            }
+        })?;
+        Ok(Self { pty, bootstrap })
+    }
+
+    pub(crate) fn commit(
+        self,
+        cancellation: &CancellationToken,
+    ) -> Result<(TerminalStartupBackend, TerminalStartupControl)> {
+        let pty = self.pty.commit(cancellation).map_err(|error| {
+            if error.kind() == crate::terminal_pty::TerminalPtyErrorKind::Cancelled {
+                TerminalStartupError::Cancelled
+            } else if error.kind() == crate::terminal_pty::TerminalPtyErrorKind::Timeout {
+                TerminalStartupError::Timeout
+            } else {
+                process_error(error)
+            }
+        })?;
+        Ok(self.bootstrap.attach(pty))
+    }
+}
+
+impl PreparedTerminalBootstrap {
+    pub(crate) fn new(
+        shell: &TerminalShell,
+        command: Option<&str>,
+        directory: OwnedFd,
+        path: PathBuf,
+        marker: &TerminalPtyHelper,
+        deadline: Instant,
+        cancellation: &CancellationToken,
+    ) -> Result<Self> {
+        crate::terminal_helper::check_deadline(deadline, cancellation)?;
+        if deadline.saturating_duration_since(Instant::now()) > MAX_STARTUP_TIMEOUT {
+            return Err(TerminalStartupError::InvalidRequest);
+        }
         let mut random = [0; 16];
         getrandom::fill(&mut random).map_err(process_error)?;
         let mut nonce = [0; 32];
@@ -127,14 +210,9 @@ impl PreparedTerminalStartup {
             nonce[index * 2] = b"0123456789abcdef"[usize::from(byte >> 4)];
             nonce[index * 2 + 1] = b"0123456789abcdef"[usize::from(byte & 15)];
         }
-        let mut artifacts = StartupArtifacts::new(request.artifacts, request.artifact_path, nonce)?;
-        let bootstrap = bootstrap_script(
-            &artifacts,
-            &request.marker_helper,
-            request.command.as_deref(),
-        )?;
-        let program = request
-            .shell
+        let artifacts = StartupArtifacts::new(directory, path, nonce)?;
+        let script = bootstrap_script(&artifacts, marker, command)?;
+        let program = shell
             .program()
             .to_str()
             .ok_or(TerminalStartupError::InvalidRequest)?
@@ -151,61 +229,55 @@ impl PreparedTerminalStartup {
         if source.len() > 512 {
             return Err(TerminalStartupError::InvalidRequest);
         }
-        let has_command = request.command.is_some();
-        let mut arguments = request.shell.interactive_arguments();
-        if has_command {
+        let mut arguments = shell.interactive_arguments();
+        if command.is_some() {
             arguments.extend(["-c".into(), source.clone()]);
         }
-        let mut pty_request = TerminalPtyRequest::new(
+        Ok(Self {
             program,
             arguments,
-            request.environment,
-            request.cwd,
-            request.dimensions,
-        )
-        .map_err(process_error)?;
-        if !has_command {
-            pty_request = pty_request
-                .with_startup_source(source)
-                .map_err(process_error)?;
-        }
-        // All semantic, directory, source, argv and environment checks precede
-        // artifact publication. No shell runs before the explicit PTY COMMIT.
-        crate::terminal_helper::check_deadline(deadline, cancellation)?;
-        let listener = artifacts.publish(&bootstrap)?;
-        let pty = PreparedTerminalPty::prepare_until(helper, pty_request, deadline, cancellation)
-            .map_err(|error| {
-            if error.kind() == crate::terminal_pty::TerminalPtyErrorKind::Cancelled {
-                TerminalStartupError::Cancelled
-            } else if error.kind() == crate::terminal_pty::TerminalPtyErrorKind::Timeout {
-                TerminalStartupError::Timeout
-            } else {
-                process_error(error)
-            }
-        })?;
-        Ok(Self {
-            pty,
+            source: command.is_none().then_some(source),
+            script,
             nonce,
-            has_command,
             deadline,
-            listener,
             artifacts,
         })
     }
 
-    pub(crate) fn commit(
-        self,
+    pub(crate) fn program(&self) -> &str {
+        &self.program
+    }
+    pub(crate) fn arguments(&self) -> &[String] {
+        &self.arguments
+    }
+    pub(crate) fn startup_source(&self) -> Option<&str> {
+        self.source.as_deref()
+    }
+
+    /// Call only after transport arguments, environment and cwd are validated.
+    pub(crate) fn publish(
+        mut self,
         cancellation: &CancellationToken,
-    ) -> Result<(TerminalStartupBackend, TerminalStartupControl)> {
-        let pty = self.pty.commit(cancellation).map_err(|error| {
-            if error.kind() == crate::terminal_pty::TerminalPtyErrorKind::Cancelled {
-                TerminalStartupError::Cancelled
-            } else if error.kind() == crate::terminal_pty::TerminalPtyErrorKind::Timeout {
-                TerminalStartupError::Timeout
-            } else {
-                process_error(error)
-            }
-        })?;
+    ) -> Result<PublishedTerminalBootstrap> {
+        crate::terminal_helper::check_deadline(self.deadline, cancellation)?;
+        let listener = self.artifacts.publish(&self.script)?;
+        Ok(PublishedTerminalBootstrap {
+            nonce: self.nonce,
+            has_command: self.source.is_none(),
+            deadline: self.deadline,
+            listener,
+            artifacts: self.artifacts,
+        })
+    }
+}
+
+impl PublishedTerminalBootstrap {
+    /// Attach only the committed, owned transport. Marker receipts still require
+    /// owner persistence before ACK; attachment itself does not release input.
+    pub(crate) fn attach<B: TerminalSessionBackend>(
+        self,
+        pty: B,
+    ) -> (TerminalStartupBackend<B>, TerminalStartupControl) {
         let latch = Arc::new(AtomicU8::new(BLOCKED));
         let artifacts = Arc::new(Mutex::new(ArtifactRetirement {
             artifacts: Some(self.artifacts),
@@ -230,13 +302,13 @@ impl PreparedTerminalStartup {
             deadline: self.deadline,
             latch,
         };
-        Ok((backend, control))
+        (backend, control)
     }
 }
 
 /// Owns the child and PTY. No startup-control handle grants process authority.
-pub(crate) struct TerminalStartupBackend {
-    pty: TerminalPty,
+pub(crate) struct TerminalStartupBackend<B: TerminalSessionBackend = TerminalPty> {
+    pty: B,
     latch: Arc<AtomicU8>,
     echo_disabled: bool,
     artifacts: Arc<Mutex<ArtifactRetirement>>,
@@ -245,6 +317,8 @@ impl TerminalStartupBackend {
     pub(crate) fn pid(&self) -> std::num::NonZeroU32 {
         self.pty.pid()
     }
+}
+impl<B: TerminalSessionBackend> TerminalStartupBackend<B> {
     /// Owner hook, called for a validated `ShellReady` before its ACK. This does
     /// not release an initial command or grant ordinary input admission.
     pub(crate) fn restore_startup_echo(&mut self) -> Result<()> {
@@ -255,19 +329,26 @@ impl TerminalStartupBackend {
         Ok(())
     }
 }
-impl TerminalSessionBackend for TerminalStartupBackend {
+impl<B: TerminalSessionBackend> TerminalSessionBackend for TerminalStartupBackend<B> {
     fn restore_startup_echo(&mut self) -> std::result::Result<(), ()> {
         self.restore_startup_echo().map_err(|_| ())
     }
     fn read(&mut self, buffer: &mut [u8]) -> std::result::Result<TerminalPtyRead, ()> {
-        self.pty.read(buffer).map_err(|_| ())
+        self.pty.read(buffer)
     }
     fn write(&mut self, bytes: &[u8]) -> std::result::Result<BackgroundInputReceipt, ()> {
-        if bytes.is_empty() || bytes.len() > MAX_BACKGROUND_INPUT_BYTES {
+        self.write_with_paste(bytes, false)
+    }
+    fn write_with_paste(
+        &mut self,
+        bytes: &[u8],
+        paste: bool,
+    ) -> std::result::Result<BackgroundInputReceipt, ()> {
+        if bytes.is_empty() || bytes.len() > self.pty.input_write_limit() {
             return Err(());
         }
         match self.latch.load(Ordering::Acquire) {
-            RELEASED => self.pty.write(bytes).map_err(|_| ()),
+            RELEASED => self.pty.write_with_paste(bytes, paste),
             BLOCKED => Ok(BackgroundInputReceipt::new(
                 0,
                 false,
@@ -280,13 +361,23 @@ impl TerminalSessionBackend for TerminalStartupBackend {
             )),
         }
     }
+    fn input_write_limit(&self) -> usize {
+        self.pty.input_write_limit()
+    }
+    fn settle_write(
+        &mut self,
+        bytes: &[u8],
+        paste: bool,
+    ) -> std::task::Poll<std::result::Result<BackgroundInputReceipt, ()>> {
+        self.pty.settle_write(bytes, paste)
+    }
     fn status(&mut self) -> std::result::Result<TerminalPtyStatus, ()> {
         // The owner's existing lost-session path quiesces the child and drains
         // output under its persistence authority. Do not discard that tail here.
         if self.latch.load(Ordering::Acquire) == FAILED {
             return Err(());
         }
-        self.pty.status().map_err(|_| ())
+        self.pty.status()
     }
     fn resize(&mut self, dimensions: &TerminalDimensions) -> std::result::Result<(), ()> {
         TerminalSessionBackend::resize(&mut self.pty, dimensions)
@@ -295,7 +386,7 @@ impl TerminalSessionBackend for TerminalStartupBackend {
         TerminalSessionBackend::signal(&mut self.pty, signal)
     }
     fn signal_may_discard_output(&self) -> bool {
-        cfg!(target_os = "macos")
+        self.pty.signal_may_discard_output()
     }
     fn close(
         &mut self,
@@ -303,7 +394,7 @@ impl TerminalSessionBackend for TerminalStartupBackend {
         output: &mut dyn FnMut(&[u8]),
     ) -> std::result::Result<TerminalPtyClose, ()> {
         self.latch.store(FAILED, Ordering::Release);
-        let closed = self.pty.close_with_output(force, output).map_err(|_| ());
+        let closed = self.pty.close(force, output);
         self.artifacts
             .lock()
             .map_err(|_| ())?
@@ -535,10 +626,10 @@ impl Drop for TerminalStartupControl {
     }
 }
 
-impl Drop for TerminalStartupBackend {
+impl<B: TerminalSessionBackend> Drop for TerminalStartupBackend<B> {
     fn drop(&mut self) {
         self.latch.store(FAILED, Ordering::Release);
-        let _ = self.pty.close_with_output(true, &mut |_: &[u8]| {});
+        let _ = self.pty.close(true, &mut |_: &[u8]| {});
         if let Ok(mut artifacts) = self.artifacts.lock() {
             let _ = artifacts.cleanup();
         }
@@ -733,6 +824,122 @@ mod tests {
     use std::sync::atomic::AtomicU64;
 
     struct Directory(PathBuf);
+    #[derive(Default)]
+    struct Forwarded {
+        writes: Vec<(usize, bool)>,
+        settlements: Vec<(usize, bool)>,
+        echoes: usize,
+    }
+    struct AlternateBackend(Arc<Mutex<Forwarded>>);
+    impl TerminalSessionBackend for AlternateBackend {
+        fn restore_startup_echo(&mut self) -> std::result::Result<(), ()> {
+            self.0.lock().unwrap().echoes += 1;
+            Ok(())
+        }
+        fn read(&mut self, _: &mut [u8]) -> std::result::Result<TerminalPtyRead, ()> {
+            Ok(TerminalPtyRead {
+                bytes_read: 0,
+                closed: false,
+            })
+        }
+        fn write(&mut self, bytes: &[u8]) -> std::result::Result<BackgroundInputReceipt, ()> {
+            self.write_with_paste(bytes, false)
+        }
+        fn write_with_paste(
+            &mut self,
+            bytes: &[u8],
+            paste: bool,
+        ) -> std::result::Result<BackgroundInputReceipt, ()> {
+            self.0.lock().unwrap().writes.push((bytes.len(), paste));
+            Ok(BackgroundInputReceipt::new(
+                bytes.len(),
+                false,
+                BackgroundInputStatus::Written,
+            ))
+        }
+        fn input_write_limit(&self) -> usize {
+            32 * 1024
+        }
+        fn settle_write(
+            &mut self,
+            bytes: &[u8],
+            paste: bool,
+        ) -> std::task::Poll<std::result::Result<BackgroundInputReceipt, ()>> {
+            self.0
+                .lock()
+                .unwrap()
+                .settlements
+                .push((bytes.len(), paste));
+            std::task::Poll::Ready(Ok(BackgroundInputReceipt::new(
+                bytes.len(),
+                true,
+                BackgroundInputStatus::Closed,
+            )))
+        }
+        fn status(&mut self) -> std::result::Result<TerminalPtyStatus, ()> {
+            Ok(TerminalPtyStatus::Running)
+        }
+        fn resize(&mut self, _: &TerminalDimensions) -> std::result::Result<(), ()> {
+            Ok(())
+        }
+        fn signal(&mut self, _: TerminalSignal) -> std::result::Result<(), ()> {
+            Ok(())
+        }
+        fn signal_may_discard_output(&self) -> bool {
+            false
+        }
+        fn close(
+            &mut self,
+            _: bool,
+            _: &mut dyn FnMut(&[u8]),
+        ) -> std::result::Result<TerminalPtyClose, ()> {
+            Ok(TerminalPtyClose {
+                status: TerminalPtyStatus::Exited(0),
+                output_incomplete: false,
+            })
+        }
+    }
+
+    #[test]
+    fn shared_bootstrap_preserves_alternate_transport_input_and_settlement() {
+        let directory = Directory::new();
+        let prepared = PreparedTerminalBootstrap::new(
+            &TerminalShell::from_executable(Path::new("/bin/bash"), true).unwrap(),
+            None,
+            directory.fd(),
+            std::fs::canonicalize(&directory.0).unwrap(),
+            &marker_helper(),
+            Instant::now() + DEFAULT_STARTUP_TIMEOUT,
+            &CancellationToken::new(),
+        )
+        .unwrap();
+        assert!(prepared.startup_source().is_some());
+        assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 0);
+        let forwarded = Arc::new(Mutex::new(Forwarded::default()));
+        let (mut backend, control) = prepared
+            .publish(&CancellationToken::new())
+            .unwrap()
+            .attach(AlternateBackend(Arc::clone(&forwarded)));
+        let bytes = vec![b'x'; 16 * 1024];
+        assert_eq!(backend.input_write_limit(), 32 * 1024);
+        assert!(!backend.signal_may_discard_output());
+        backend.write_with_paste(&bytes, true).unwrap();
+        assert!(forwarded.lock().unwrap().writes.is_empty());
+        backend.restore_startup_echo().unwrap();
+        backend.restore_startup_echo().unwrap();
+        assert_eq!(forwarded.lock().unwrap().echoes, 1);
+        backend.latch.store(RELEASED, Ordering::Release);
+        backend.write_with_paste(&bytes, true).unwrap();
+        assert_eq!(forwarded.lock().unwrap().writes, [(bytes.len(), true)]);
+        drop(control);
+        backend.write_with_paste(&bytes, true).unwrap();
+        assert_eq!(forwarded.lock().unwrap().writes.len(), 1);
+        assert!(backend.settle_write(&bytes, true).is_ready());
+        assert_eq!(forwarded.lock().unwrap().settlements, [(bytes.len(), true)]);
+        backend.close(true, &mut |_| {}).unwrap();
+        assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 0);
+    }
+
     impl Directory {
         fn new() -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -1185,7 +1392,7 @@ mod tests {
             &CancellationToken::new(),
         )
         .unwrap();
-        let deadline = prepared.deadline;
+        let deadline = prepared.bootstrap.deadline;
         std::thread::sleep(Duration::from_millis(2200));
         let (mut backend, mut control) = prepared.commit(&CancellationToken::new()).unwrap();
         assert_eq!(control.deadline, deadline);
@@ -1232,7 +1439,10 @@ mod tests {
                 PreparedTerminalStartup::prepare(&helper(), request, &CancellationToken::new())
                     .unwrap();
             std::thread::sleep(
-                prepared.deadline.saturating_duration_since(Instant::now())
+                prepared
+                    .bootstrap
+                    .deadline
+                    .saturating_duration_since(Instant::now())
                     + Duration::from_millis(10),
             );
             let cancellation = CancellationToken::new();
