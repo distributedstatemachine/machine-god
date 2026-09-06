@@ -96,6 +96,9 @@ opaque screen checkpoints and bounded retained events. Reopen verifies the
 committed prefix; only proven uncommitted suffixes/orphans are reconciled.
 Retention reports cursor/checkpoint gaps. Mutation failure poisons the writer
 until reopen, and one exclusive writer lease prevents concurrent publication.
+Checkpoint descriptor reads use held committed metadata without allocating or
+rehashing payloads. They do not certify payload integrity or an engine schema;
+the history projection supplies those checks separately.
 Session facts and monitor state have a separate protected, checksummed blob;
 output, event and screen-checkpoint eviction cannot silently remove it. Its
 33 MiB bound includes up to 32 MiB of monitor state and 512 KiB of framed facts.

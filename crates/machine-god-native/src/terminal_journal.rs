@@ -134,6 +134,16 @@ pub(crate) struct TerminalJournalCheckpoint {
 }
 redacted!(TerminalJournalCheckpoint);
 
+/// Committed opaque checkpoint metadata, not payload-validation or engine-schema
+/// evidence. History supplies the schema only after validating its projection.
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct TerminalJournalCheckpointDescriptor {
+    pub(crate) source: TerminalCursor,
+    pub(crate) payload_len: u32,
+    pub(crate) checksum: [u8; 32],
+}
+redacted!(TerminalJournalCheckpointDescriptor);
+
 /// A validated opaque checkpoint's exact journal and publication identity.
 /// The history layer must validate screen usability before presenting this
 /// identity for live retention; a journal cannot interpret opaque screen bytes.
@@ -1146,6 +1156,26 @@ impl TerminalJournal {
             .ok_or(TerminalJournalError::Corrupt)?
             .blob = blob;
         self.commit(next)
+    }
+
+    /// Reads only held committed metadata, without opening, hashing or allocating
+    /// the checkpoint payload. A poisoned journal cannot publish a descriptor.
+    pub(crate) fn checkpoint_descriptor(
+        &self,
+    ) -> Result<Option<TerminalJournalCheckpointDescriptor>> {
+        self.ready()?;
+        self.manifest
+            .checkpoint
+            .as_ref()
+            .map(|checkpoint| {
+                Ok(TerminalJournalCheckpointDescriptor {
+                    source: checkpoint.source.clone(),
+                    payload_len: u32::try_from(checkpoint.blob.bytes)
+                        .map_err(|_| TerminalJournalError::Corrupt)?,
+                    checksum: checkpoint.blob.sha256,
+                })
+            })
+            .transpose()
     }
 
     pub(crate) fn load_checkpoint(&self) -> Result<Option<TerminalJournalCheckpoint>> {
@@ -3629,6 +3659,62 @@ mod tests {
         assert!(fixture.path.join("unrelated-runtime-file").exists());
         assert_eq!(reopened.append(b"!").unwrap(), cursor(1, 6));
         assert_eq!(collect(&reopened, cursor(1, 0)), b"hello!");
+    }
+
+    #[test]
+    fn checkpoint_descriptor_is_metadata_only_and_tracks_committed_replacement() {
+        let fixture = Fixture::new();
+        let mut journal = fixture.create(limits(8, 128));
+        assert_eq!(journal.checkpoint_descriptor().unwrap(), None);
+        let source = journal.append(b"hello").unwrap();
+        journal
+            .publish_checkpoint(source.clone(), b"grid-v1")
+            .unwrap();
+        let descriptor = journal.checkpoint_descriptor().unwrap().unwrap();
+        assert_eq!(descriptor.source, source);
+        assert_eq!(descriptor.payload_len, 7);
+        assert_eq!(
+            descriptor.checksum,
+            <[u8; 32]>::from(Sha256::digest(b"grid-v1"))
+        );
+        let allocation = allocation_counter::measure(|| {
+            assert_eq!(
+                journal.checkpoint_descriptor().unwrap(),
+                Some(descriptor.clone())
+            );
+        });
+        assert_eq!(allocation.count_total, 0);
+        let next = journal.append(b"world").unwrap();
+        journal
+            .publish_checkpoint(next.clone(), b"grid-v2")
+            .unwrap();
+        let replacement = journal.checkpoint_descriptor().unwrap().unwrap();
+        assert_eq!(replacement.source, next);
+        assert_ne!(replacement.checksum, descriptor.checksum);
+        journal.poisoned = true;
+        assert!(journal.checkpoint_descriptor().is_err());
+    }
+
+    #[test]
+    fn checkpoint_descriptor_does_not_claim_payload_integrity() {
+        let fixture = Fixture::new();
+        let mut journal = fixture.create(limits(8, 128));
+        journal
+            .publish_checkpoint(journal.latest(), b"grid-v1")
+            .unwrap();
+        let descriptor = journal.checkpoint_descriptor().unwrap();
+        let id = journal.manifest.checkpoint.as_ref().unwrap().blob.id;
+        OpenOptions::new()
+            .write(true)
+            .open(fixture.path.join(checkpoint_name(id)))
+            .unwrap()
+            .write_all(b"X")
+            .unwrap();
+        assert_eq!(journal.checkpoint_descriptor().unwrap(), descriptor);
+        assert_eq!(
+            journal.load_checkpoint().unwrap_err(),
+            TerminalJournalError::Corrupt
+        );
     }
 
     #[test]
