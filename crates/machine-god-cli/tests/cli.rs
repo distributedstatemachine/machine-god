@@ -942,59 +942,6 @@ fn background_fresh_binary_reads_an_empty_store_with_fixed_outputs() {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn background_fresh_binary_reads_a_full_escaped_command_after_native_execution() {
-    let temporary = TestDirectory::new("background-full-command");
-    let workspace = temporary.path().join("workspace");
-    let state = temporary.path().join("state");
-    let store = state.join("machine-god");
-    private_directory(&workspace);
-    private_directory(&store);
-    let workspace = fs::canonicalize(workspace).unwrap();
-    let supervisor =
-        machine_god_native::NativeBackgroundSupervisor::open(&workspace, &store).unwrap();
-    let command = format!(
-        "#{}",
-        "\u{1b}".repeat(machine_god_native::MAX_TERMINAL_COMMAND_BYTES - 1)
-    );
-    let request =
-        machine_god_core::BackgroundStartRequest::new(command, workspace.to_str().unwrap())
-            .unwrap();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let handle = runtime
-        .block_on(supervisor.start(request, machine_god_core::CancellationToken::new()))
-        .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let expected = format!(
-        "\"command\":\"#{}\"",
-        "\\u001b".repeat(machine_god_native::MAX_TERMINAL_COMMAND_BYTES - 1)
-    );
-    loop {
-        let output = background_command(&workspace, state.as_os_str())
-            .args(["background", &handle.id().to_string(), "--json"])
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "{output:?}");
-        assert!(output.stderr.is_empty());
-        let json = String::from_utf8(output.stdout).unwrap();
-        assert!(json.contains(&expected));
-        if json.contains("\"state\":\"exited\"") {
-            assert!(json.contains("\"exit_code\":0"));
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "background completion was not published"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    drop(supervisor);
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-#[test]
 fn missing_background_detail_has_closed_human_and_json_failures() {
     let temporary = TestDirectory::new("background-not-found");
     let workspace = temporary.path().join("workspace");

@@ -11,6 +11,10 @@ publish.workspace = true
 name = "machine-god"
 path = "src/main.rs"
 
+[[test]]
+name = "terminal_command_cli"
+harness = false
+
 [dependencies]
 futures-core.workspace = true
 machine-god-core.workspace = true
