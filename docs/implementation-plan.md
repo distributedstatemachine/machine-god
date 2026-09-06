@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `run the complete replacement pinned local and release-binary gates for the integrated review corrections, then repeat three independent review tracks before exact remote gates`
+- Next gate: `complete the replacement pinned local and release-binary gates for optimized inventory and explicit close recovery, then repeat three independent review tracks before exact remote gates`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -122,6 +122,22 @@ UTF-8 cell bound during projection and checkpoint restoration. Their focused
 regressions and strict native Clippy checks pass; completed worktrees are removed.
 The correction requires the complete replacement local gate, three independent
 review tracks and exact remote CI/Benchmark gates; this is not a delivery.
+
+Candidate `b55098ffd4497eb99c71f893b596c96f75f426a9` passes the correction
+regressions, strict workspace Clippy, doctests, repository Python checks,
+supported cross-compilation, release CLI smoke and 633 release-helper terminal
+tests. Its full workspace run failed one tmux bootstrap read; bounded isolated
+and full-order diagnostics have not reproduced that failure. The diagnostic
+full native run instead exposed a PTY host close failure, reproduced in a
+focused run as expiry of the 250 ms macOS inventory budget. The integrated
+optimization rejects unrelated session rows before expensive identity queries,
+while retaining the exact identity sandwich, prior descendant pins and scan
+bounds. It reduces unnecessary queries but does not promise that bounded native
+operations cannot fail under host load. The composed fixture now observes the
+retained failure and output gap before a bounded, explicit close of the same
+session; it never replays start or write. An injected inventory failure verifies
+the initial error, retained history, successful later cleanup and one command
+execution. Full-feature review and remote delivery remain pending.
 
 Earlier internal evidence remains historical, not delivery status:
 `a327580b754e25b8c1beaa5edf744b2b2252c620` passed the pinned workspace gate,

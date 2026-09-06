@@ -416,6 +416,8 @@ pub(crate) struct CommandProcess {
     input_offset: usize,
     output_bytes: Vec<u8>,
     error_bytes: usize,
+    #[cfg(test)]
+    diagnostic_stderr: Vec<u8>,
     deadline: Instant,
     reaped: bool,
 }
@@ -443,6 +445,8 @@ impl CommandProcess {
             input_offset: 0,
             output_bytes: Vec::new(),
             error_bytes: 0,
+            #[cfg(test)]
+            diagnostic_stderr: Vec::new(),
             deadline,
             reaped: false,
         };
@@ -456,12 +460,30 @@ impl CommandProcess {
     }
     pub(crate) fn poll(&mut self) -> Poll<Result<TerminalTmuxReply>> {
         if Instant::now() >= self.deadline {
+            #[cfg(test)]
+            eprintln!(
+                "tmux command deadline expired: input={}/{} output={} stderr={:?}",
+                self.input_offset,
+                self.input_bytes.len(),
+                self.output_bytes.len(),
+                String::from_utf8_lossy(&self.diagnostic_stderr)
+            );
             return Poll::Ready(Err(TerminalTmuxError::Timeout));
         }
         match self.step() {
             Ok(Some(reply)) => Poll::Ready(Ok(reply)),
             Ok(None) => Poll::Pending,
-            Err(error) => Poll::Ready(Err(error)),
+            Err(error) => {
+                #[cfg(test)]
+                eprintln!(
+                    "tmux command failed: error={error:?} input={}/{} output={} stderr={:?}",
+                    self.input_offset,
+                    self.input_bytes.len(),
+                    self.output_bytes.len(),
+                    String::from_utf8_lossy(&self.diagnostic_stderr)
+                );
+                Poll::Ready(Err(error))
+            }
         }
     }
     fn step(&mut self) -> Result<Option<TerminalTmuxReply>> {
@@ -506,6 +528,11 @@ impl CommandProcess {
                 }
                 Some(count) => {
                     self.error_bytes += count;
+                    #[cfg(test)]
+                    self.diagnostic_stderr.extend_from_slice(
+                        &buffer[..count
+                            .min(MAX_COMMAND_ERROR.saturating_sub(self.diagnostic_stderr.len()))],
+                    );
                     if self.error_bytes > MAX_COMMAND_ERROR {
                         return Err(TerminalTmuxError::Capacity);
                     }
@@ -526,6 +553,8 @@ impl CommandProcess {
         {
             if self.input_offset != self.input_bytes.len() || !matches!(status.code(), Some(0 | 1))
             {
+                #[cfg(test)]
+                eprintln!("tmux command unexpected exit: {status}");
                 return Err(TerminalTmuxError::Command);
             }
             return Ok(Some(TerminalTmuxReply {
@@ -794,6 +823,13 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalTmuxBackend<C, P> {
             return Ok(());
         };
         let pending = self.pending.take().ok_or(TerminalTmuxError::Invalid)?;
+        #[cfg(test)]
+        let stage = match &pending {
+            Pending::Observe => "observe",
+            Pending::WriteInspect(..) => "write-inspect",
+            Pending::WriteLoad(..) => "write-load",
+            Pending::WritePaste(..) => "write-paste",
+        };
         let result = (|| {
             let bytes = success(reply?)?;
             match pending {
@@ -840,6 +876,8 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalTmuxBackend<C, P> {
             Ok(())
         })();
         if result.is_err() {
+            #[cfg(test)]
+            eprintln!("tmux drive failed: stage={stage} result={result:?}");
             self.failed = true;
             self.input_closed = true;
         }
@@ -1169,10 +1207,18 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalSessionBackend
     fn read(&mut self, buffer: &mut [u8]) -> std::result::Result<TerminalPtyRead, ()> {
         self.drive()
             .and_then(|()| self.read_capture(buffer))
-            .map_err(|_| ())
+            .map_err(|error| {
+                let _ = error;
+                #[cfg(test)]
+                eprintln!("tmux raw read failed: {error:?}");
+            })
     }
     fn write(&mut self, bytes: &[u8]) -> std::result::Result<BackgroundInputReceipt, ()> {
-        self.write_inner(bytes).map_err(|_| ())
+        self.write_inner(bytes).map_err(|error| {
+            let _ = error;
+            #[cfg(test)]
+            eprintln!("tmux write failed: {error:?}");
+        })
     }
     fn write_with_paste(
         &mut self,

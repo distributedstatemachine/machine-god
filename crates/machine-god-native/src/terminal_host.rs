@@ -788,6 +788,7 @@ mod tests {
     use machine_god_core::{SessionId, Tool, ToolCall, ToolCallId, ToolName, TurnId};
     use rustix::fs::{Mode, OFlags};
     use serde_json::{Value, json};
+    use std::num::NonZeroU32;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
 
@@ -896,12 +897,61 @@ mod tests {
         }
         fn action(&self, arguments: Value) -> TerminalActionResult {
             let action = arguments["action"].as_str().unwrap().to_owned();
-            futures_executor::block_on(self.future(arguments, CancellationToken::new()))
+            self.try_action(arguments)
                 .unwrap_or_else(|error| panic!("{action}: {error:?}"))
         }
-        fn close(&self, id: &TerminalSessionId) {
-            self.action(json!({"action":"close","session_id":id.as_str(),"close_policy":"force"}));
+        fn try_action(&self, arguments: Value) -> Result<TerminalActionResult, ToolError> {
+            futures_executor::block_on(self.future(arguments, CancellationToken::new()))
         }
+        fn close(&self, id: &TerminalSessionId) -> machine_god_core::TerminalSessionFacts {
+            // A bounded native inventory may fail under host load. Observe the
+            // retained failure before issuing another explicit close for this
+            // exact session. Never replay start, write, or arbitrary errors.
+            for attempt in 0..4 {
+                match self.try_action(json!({"action":"close","session_id":id.as_str(),"close_policy":"force"})) {
+                    Ok(TerminalActionResult::Close { session, .. }) => {
+                        assert_eq!(&session.session_id, id);
+                        assert_eq!(session.lifecycle, machine_god_core::TerminalLifecycle::Closed);
+                        return session;
+                    }
+                    Ok(_) => panic!("close receipt"),
+                    Err(error) => {
+                        assert_native_cleanup_failure(&error);
+                        self.assert_retained_close_failure(id);
+                        assert!(attempt < 3, "bounded explicit close recovery exhausted: {error:?}");
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
+            }
+            unreachable!("the last attempt returns or fails")
+        }
+        fn assert_retained_close_failure(&self, id: &TerminalSessionId) {
+            let TerminalActionResult::Inspect { session, .. } =
+                self.action(json!({"action":"inspect","session_id":id.as_str()}))
+            else {
+                panic!("retained inspection receipt");
+            };
+            assert_eq!(&session.session_id, id);
+            assert_eq!(session.lifecycle, machine_god_core::TerminalLifecycle::Lost);
+            assert!(matches!(
+                session.screen_recovery,
+                machine_god_core::TerminalScreenRecovery::Unavailable {
+                    reason: machine_god_core::TerminalScreenUnavailableReason::RawGap
+                }
+            ));
+        }
+    }
+    fn assert_native_cleanup_failure(error: &ToolError) {
+        assert_eq!(
+            error,
+            &diagnostic(
+                "terminal_registry",
+                crate::terminal_registry::TerminalRegistryError::Session(
+                    crate::terminal_session::TerminalSessionError::Native
+                )
+            ),
+            "only the exact retained native-close failure admits fixture recovery"
+        );
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
@@ -1137,5 +1187,57 @@ mod tests {
         }
         fixture.action(json!({"action":"signal","session_id":id.as_str(),"signal":"terminate"}));
         fixture.close(&id);
+    }
+
+    #[test]
+    fn full_host_failed_close_retains_history_and_explicit_cleanup_authority() {
+        struct InjectedSnapshotFailure(NonZeroU32);
+        impl Drop for InjectedSnapshotFailure {
+            fn drop(&mut self) {
+                crate::background_process::inject_group_snapshot_spawn_failures_for_test(self.0, 0);
+            }
+        }
+        let fixture = Fixture::new();
+        let TerminalActionResult::Start { session, .. } = fixture.action(json!({
+            "action":"start", "profile":"clean",
+            "command":"printf '%s\\n' \"$$\" > close-owner.pid; printf 'once\\n' >> close-count; printf CLOSE_RETAINED; exec /bin/sleep 30"
+        })) else {
+            panic!("start receipt");
+        };
+        let id = session.session_id;
+        assert!(matches!(
+            fixture.action(json!({"action":"wait","session_id":id.as_str(),"return_when":{"kind":"match","pattern":"CLOSE_RETAINED"},"wait_ceiling_ms":5000})),
+            TerminalActionResult::Wait {
+                outcome: machine_god_core::TerminalReturnOutcome::ConditionMet {},
+                ..
+            }
+        ));
+        // The owned command's PID only selects a test fault; production close
+        // still obtains all authority through the exact retained session.
+        let pid = std::fs::read_to_string(fixture.root.join("workspace/close-owner.pid"))
+            .unwrap()
+            .trim()
+            .parse::<NonZeroU32>()
+            .unwrap();
+        let injection = InjectedSnapshotFailure(pid);
+        crate::background_process::inject_group_snapshot_spawn_failures_for_test(pid, 1);
+        let failed = fixture.try_action(json!({"action":"close","session_id":id.as_str(),"close_policy":"force"}));
+        drop(injection);
+        assert_native_cleanup_failure(&failed.unwrap_err());
+        fixture.assert_retained_close_failure(&id);
+        let closed = fixture.close(&id);
+        assert!(matches!(
+            closed.screen_recovery,
+            machine_god_core::TerminalScreenRecovery::Unavailable {
+                reason: machine_god_core::TerminalScreenUnavailableReason::RawGap
+            }
+        ));
+        let TerminalActionResult::Read { output, .. } =
+            fixture.action(json!({"action":"read","session_id":id.as_str(),"cursor_segment":1}))
+        else {
+            panic!("retained output receipt");
+        };
+        assert!(output.windows(b"CLOSE_RETAINED".len()).any(|bytes| bytes == b"CLOSE_RETAINED"));
+        assert_eq!(std::fs::read_to_string(fixture.root.join("workspace/close-count")).unwrap(), "once\n");
     }
 }

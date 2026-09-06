@@ -694,12 +694,23 @@ impl NativeTerminalTmuxBackend {
             return Ok(());
         };
         if Instant::now() >= self.startup_deadline {
+            #[cfg(test)]
+            eprintln!(
+                "tmux bootstrap source deadline expired: pending_bytes={:?}",
+                source.pending().map(<[u8]>::len)
+            );
             return Err(());
         }
         if let Some(bytes) = source.pending() {
             let receipt = self.backend.write(bytes)?;
-            source.advance(receipt.bytes_written()).map_err(|_| ())?;
+            source.advance(receipt.bytes_written()).map_err(|error| {
+                let _ = error;
+                #[cfg(test)]
+                eprintln!("tmux bootstrap source advance failed: {error:?}");
+            })?;
             if receipt.stdin_closed() {
+                #[cfg(test)]
+                eprintln!("tmux bootstrap input closed");
                 return Err(());
             }
         }
@@ -1690,10 +1701,18 @@ mod tests {
         expected: crate::terminal_startup::TerminalStartupEvent,
         output: &mut Vec<u8>,
         deadline: Instant,
+        scenario: &str,
     ) {
         loop {
             let mut bytes = [0; 4096];
-            let read = backend.read(&mut bytes).unwrap();
+            let read = backend.read(&mut bytes).unwrap_or_else(|()| {
+                panic!(
+                    "{scenario}: read failed awaiting {expected:?}; deadline_remaining={:?}; output_bytes={}; tail={:?}",
+                    deadline.checked_duration_since(Instant::now()),
+                    output.len(),
+                    String::from_utf8_lossy(&output[output.len().saturating_sub(2048)..])
+                )
+            });
             output.extend_from_slice(&bytes[..read.bytes_read]);
             assert!(output.len() < 64 * 1024);
             if let Some(event) = control
@@ -1722,6 +1741,7 @@ mod tests {
             }
             for clean in [false, true] {
                 for commandless in [false, true] {
+                    let scenario = format!("shell={shell} clean={clean} commandless={commandless}");
                     let directory = Directory::new();
                     let artifact_root = Directory::new();
                     let mut artifact_path = artifact_root.0.clone();
@@ -1784,6 +1804,7 @@ mod tests {
                         TerminalStartupEvent::ShellReady,
                         &mut output,
                         deadline,
+                        &scenario,
                     );
                     assert!(!directory.0.join("executed").exists());
                     assert!(!String::from_utf8_lossy(&output).contains("_machine_god_ack"));
@@ -1812,6 +1833,7 @@ mod tests {
                             TerminalStartupEvent::CommandStarted,
                             &mut output,
                             deadline,
+                            &scenario,
                         );
                         assert!(!directory.0.join("executed").exists());
                         assert!(

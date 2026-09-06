@@ -626,6 +626,11 @@ impl TerminalPty {
         let closed = match closed {
             Ok(closed) => closed,
             Err(error) => {
+                #[cfg(test)]
+                eprintln!(
+                    "PTY native close failed: {:?}; before={before:?}",
+                    error.kind()
+                );
                 self.output_incomplete = true;
                 self.process = Some(process);
                 return Err(process_error(error));
@@ -640,6 +645,8 @@ impl TerminalPty {
         self.observed = Some(status);
         drop(self.permit.take());
         if phase_failed {
+            #[cfg(test)]
+            eprintln!("PTY close settled cleanup with failed foreground/output phase");
             return Err(error(TerminalPtyErrorKind::Process));
         }
         Ok(TerminalPtyClose {

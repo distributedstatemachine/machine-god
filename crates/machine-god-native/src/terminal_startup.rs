@@ -446,9 +446,16 @@ impl<B: TerminalSessionBackend> TerminalSessionBackend for TerminalStartupBacken
         let closed = self.pty.close(force, output);
         self.artifacts
             .lock()
-            .map_err(|_| ())?
+            .map_err(|_| {
+                #[cfg(test)]
+                eprintln!("startup close artifact lock poisoned");
+            })?
             .cleanup()
-            .map_err(|_| ())?;
+            .map_err(|error| {
+                let _ = error;
+                #[cfg(test)]
+                eprintln!("startup close artifact cleanup failed: {error:?}");
+            })?;
         closed
     }
 }

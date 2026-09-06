@@ -5280,6 +5280,8 @@ fn macos_scope_members(
     session_scope: bool,
 ) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
     #[cfg(test)]
+    let started = Instant::now();
+    #[cfg(test)]
     record_group_snapshot_for_test(group);
 
     #[cfg(test)]
@@ -5327,6 +5329,8 @@ fn macos_scope_members(
         Ok(state)
     });
     let Ok(bytes) = snapshot else {
+        #[cfg(test)]
+        report_macos_inventory_collection_failure(session_scope, started, deadline);
         terminate_and_reap_or_quarantine(&mut child, &mut reap_permit);
         return Err(cleanup_error());
     };
@@ -5343,8 +5347,13 @@ fn macos_scope_members(
         return Err(cleanup_error());
     }
     let mut members = Vec::new();
-    for pid in parse_group_members(&bytes)? {
+    #[cfg(test)]
+    let scan_started = Instant::now();
+    for (inspected, pid) in parse_group_members(&bytes)?.into_iter().enumerate() {
+        let _ = inspected;
         if Instant::now() >= deadline {
+            #[cfg(test)]
+            report_macos_scan(session_scope, started, scan_started, inspected, bytes.len());
             return Err(cleanup_error());
         }
         // Darwin hides getsid for zombies before ps removes their row. The
@@ -5353,31 +5362,91 @@ fn macos_scope_members(
         if session_scope && pid != group {
             let raw = NonZeroU32::new(pid.as_raw_nonzero().get().cast_unsigned())
                 .ok_or_else(cleanup_error)?;
-            let before = match machine_god_terminal_sys::ProcessIdentity::capture(raw) {
-                Ok(identity) => identity,
-                Err(error) if error.raw_os_error() == Some(libc::ESRCH) => continue,
-                Err(_) => return Err(cleanup_error()),
-            };
-            match rustix::process::getsid(Some(pid)) {
-                Ok(session) if session == group => {}
-                Ok(_) | Err(rustix::io::Errno::SRCH) => continue,
-                Err(_) => return Err(cleanup_error()),
+            identity = macos_session_member_identity(
+                group,
+                || rustix::process::getsid(Some(pid)).map_err(std::io::Error::from),
+                || {
+                    machine_god_terminal_sys::ProcessIdentity::capture(raw)
+                        .map(machine_god_terminal_sys::ProcessIdentity::unique_id)
+                },
+            )?;
+            if identity.is_none() {
+                continue;
             }
-            let after = match machine_god_terminal_sys::ProcessIdentity::capture(raw) {
-                Ok(identity) => identity,
-                Err(error) if error.raw_os_error() == Some(libc::ESRCH) => continue,
-                Err(_) => return Err(cleanup_error()),
-            };
-            // Capture identity on both sides of getsid: a reused PID can never
-            // turn another session's process into our retained cleanup target.
-            if !before.same_process(after) {
-                return Err(cleanup_error());
-            }
-            identity = Some(after.unique_id());
         }
         members.push(CapturedGroupMember { pid, identity });
     }
     Ok(members)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+fn report_macos_inventory_collection_failure(
+    session_scope: bool,
+    started: Instant,
+    deadline: Instant,
+) {
+    eprintln!(
+        "macOS inventory collection failed: session={session_scope} elapsed={:?} expired={}",
+        started.elapsed(),
+        Instant::now() >= deadline
+    );
+}
+
+#[cfg(all(test, target_os = "macos"))]
+fn report_macos_scan(
+    session_scope: bool,
+    started: Instant,
+    scan_started: Instant,
+    inspected: usize,
+    bytes: usize,
+) {
+    eprintln!(
+        "macOS inventory scan expired: session={session_scope} elapsed={:?} scan={:?} rows={inspected} bytes={bytes}",
+        started.elapsed(),
+        scan_started.elapsed(),
+    );
+}
+
+#[cfg(target_os = "macos")]
+fn macos_session_member_identity(
+    group: rustix::process::Pid,
+    mut session: impl FnMut() -> std::io::Result<rustix::process::Pid>,
+    mut identity: impl FnMut() -> std::io::Result<u64>,
+) -> Result<Option<u64>, BackgroundProcessError> {
+    // Reject unrelated rows before the more expensive incarnation query. This
+    // is only a hint: a match grants no authority, and the identity sandwich
+    // below still authenticates membership for the fixed PID. Retained pins
+    // from earlier inventories are checked separately even after SID escape.
+    if macos_live_observation(session())? != Some(group) {
+        return Ok(None);
+    }
+    let Some(before) = macos_live_observation(identity())? else {
+        return Ok(None);
+    };
+    if macos_live_observation(session())? != Some(group) {
+        return Ok(None);
+    }
+    let Some(after) = macos_live_observation(identity())? else {
+        return Ok(None);
+    };
+    // Capture identity on both sides of the authoritative getsid: PID reuse
+    // between the hint and this sandwich cannot authenticate an old process,
+    // and reuse inside the sandwich fails closed. Exec preserves unique_id.
+    if before != after {
+        return Err(cleanup_error());
+    }
+    Ok(Some(after))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_live_observation<T>(
+    observation: std::io::Result<T>,
+) -> Result<Option<T>, BackgroundProcessError> {
+    match observation {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.raw_os_error() == Some(libc::ESRCH) => Ok(None),
+        Err(_) => Err(cleanup_error()),
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -7198,6 +7267,131 @@ mod process_regression_tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_session_inventory_prefilters_unrelated_rows_before_identity() {
+        let group = rustix::process::Pid::from_raw(71).expect("positive owned session");
+        let unrelated = rustix::process::Pid::from_raw(72).expect("positive unrelated session");
+        let mut session_queries = 0;
+        for _ in 0..1300 {
+            assert_eq!(
+                macos_session_member_identity(
+                    group,
+                    || {
+                        session_queries += 1;
+                        Ok(unrelated)
+                    },
+                    || panic!("unrelated rows must not incur incarnation queries"),
+                )
+                .expect("unrelated rows are rejected"),
+                None
+            );
+        }
+        assert_eq!(session_queries, 1300);
+        let mut observations = Vec::new();
+        let observations = std::cell::RefCell::new(&mut observations);
+        assert_eq!(
+            macos_session_member_identity(
+                group,
+                || {
+                    observations.borrow_mut().push("session");
+                    Ok(group)
+                },
+                || {
+                    observations.borrow_mut().push("identity");
+                    Ok(9001)
+                },
+            )
+            .expect("matching row is authenticated"),
+            Some(9001)
+        );
+        assert_eq!(
+            **observations.borrow(),
+            ["session", "identity", "session", "identity"]
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_session_inventory_prefilter_never_authenticates_reused_pid() {
+        let group = rustix::process::Pid::from_raw(71).expect("positive owned session");
+        let unrelated = rustix::process::Pid::from_raw(72).expect("positive unrelated session");
+        // A PID replaced after the hint can only grant the replacement's own
+        // stable identity, and only if it independently belongs to this SID.
+        assert_eq!(
+            macos_session_member_identity(group, || Ok(group), || Ok(9002))
+                .expect("replacement independently authenticates inside the session"),
+            Some(9002)
+        );
+        let mut sessions = [group, unrelated].into_iter();
+        let mut identity_queries = 0;
+        assert_eq!(
+            macos_session_member_identity(
+                group,
+                || Ok(sessions.next().expect("two membership observations")),
+                || {
+                    identity_queries += 1;
+                    Ok(9002)
+                },
+            )
+            .expect("replacement outside the SID is rejected"),
+            None
+        );
+        assert_eq!(identity_queries, 1);
+        let mut identities = [9001, 9002].into_iter();
+        assert_eq!(
+            macos_session_member_identity(
+                group,
+                || Ok(group),
+                || Ok(identities.next().expect("two incarnation observations")),
+            )
+            .expect_err("replacement during the membership sandwich fails closed")
+            .kind(),
+            BackgroundProcessErrorKind::Cleanup
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_session_inventory_preserves_observation_failures_at_every_stage() {
+        fn observed<T>(
+            calls: &std::cell::Cell<usize>,
+            failed_stage: usize,
+            errno: i32,
+            value: T,
+        ) -> io::Result<T> {
+            let stage = calls.get();
+            calls.set(stage + 1);
+            if stage == failed_stage {
+                Err(io::Error::from_raw_os_error(errno))
+            } else {
+                Ok(value)
+            }
+        }
+        let group = rustix::process::Pid::from_raw(71).expect("positive owned session");
+        for failed_stage in 0..4 {
+            for errno in [libc::ESRCH, libc::EPERM] {
+                let calls = std::cell::Cell::new(0);
+                let result = macos_session_member_identity(
+                    group,
+                    || observed(&calls, failed_stage, errno, group),
+                    || observed(&calls, failed_stage, errno, 9001),
+                );
+                if errno == libc::ESRCH {
+                    assert_eq!(result.expect("vanished process is skipped"), None);
+                } else {
+                    assert_eq!(
+                        result
+                            .expect_err("inaccessible process is not absence")
+                            .kind(),
+                        BackgroundProcessErrorKind::Cleanup
+                    );
+                }
+                assert_eq!(calls.get(), failed_stage + 1);
+            }
+        }
+    }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn test_signal_controller() -> BackgroundProcessSignalController {

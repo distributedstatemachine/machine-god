@@ -203,6 +203,11 @@ reaping the shell. Linux retains process identities through pidfds. On macOS,
 foreground signaling uses the retained PTY master, while background job-control
 cleanup uses separately verified session-member incarnations, not numeric-PID
 signals. See [ADR 0003](decisions/0003-macos-terminal-foreground-signal.md).
+macOS session inventory rejects unrelated session IDs before querying process
+incarnations. A candidate still needs matching identity captures around a
+second session-membership check; the preliminary check grants no authority.
+Collection and identity scanning share a 250 ms budget, and previously captured
+members remain tracked even after leaving the original session.
 PTY signal flushing and incomplete drains are retained as output gaps, even if
 a later read observes EOF. These native components do not by themselves expose
 the full interactive action contract through the reference-host tool.
@@ -522,6 +527,11 @@ gap barrier; a state-only write cannot erase that obligation. The driver is a
 runtime composition component; the persistent catalog/host,
 startup-control transport and full tool routing are not
 provided by this driver alone.
+
+A failed bounded close may already have quiesced input, closed the PTY master
+or signaled jobs. Its error and output-loss evidence remain observable. A later,
+separately authorized close of that exact session can finish retained cleanup;
+the failure does not authorize replaying a start, command or write.
 
 The driver binds durable lifecycle, known termination, creation/last-output
 times, exact logical owner/incarnation and monitor snapshots to the committed
