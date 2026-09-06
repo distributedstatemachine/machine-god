@@ -58,7 +58,7 @@ fn full_command_roundtrip() {
         let output = Command::new(env!("CARGO_BIN_EXE_machine-god"))
             .current_dir(&workspace)
             .env_remove("HOME")
-            .env("XDG_STATE_HOME", &state)
+            .env("XDG_STATE_HOME", fs::canonicalize(&state).unwrap())
             .args(["background", &handle.id().to_string(), "--json"])
             .output()
             .unwrap();
