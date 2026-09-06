@@ -20,6 +20,8 @@ mod terminal_grid;
 mod terminal_helper;
 #[path = "../src/terminal_history.rs"]
 mod terminal_history;
+#[path = "../src/terminal_host_catalog.rs"]
+mod terminal_host_catalog;
 #[path = "../src/terminal_input.rs"]
 mod terminal_input;
 #[path = "../src/terminal_journal.rs"]

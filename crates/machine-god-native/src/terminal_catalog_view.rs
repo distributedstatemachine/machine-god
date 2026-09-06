@@ -21,6 +21,7 @@ use machine_god_core::{
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TerminalCatalogViewError {
+    Cancelled,
     Invalid,
     ResourceLimit,
     Catalog(TerminalCatalogError),

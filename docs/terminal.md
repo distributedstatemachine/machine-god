@@ -618,6 +618,14 @@ One boxed native backend selection forwards PTY and tmux operations through the
 same registry contract, including whole-paste intent, input limits, observation-only
 write settlement and close receipts. The contained backend remains the sole
 cleanup owner; choosing a transport adds no independent cleanup lifecycle.
+Worker-owned catalog state retains bounded, exact-profile owner leases between
+requests. Cold saved histories can be opened without admitting a live registry
+entry or constructing a backend, so live-session capacity does not cap historical
+reads. Recovery validates owner and workspace binding in its single state decode
+before publishing lost-session facts; a live writer lock prevents this path from
+reinterpreting a currently owned session as abandoned. Profile transactions end
+before results leave the worker, and cancellation cannot erase an already
+committed recovery or acknowledgement receipt.
 
 The loop pumps immediately while output is available and polls idle timers at
 10 ms intervals, with at most one command between pump opportunities. Output

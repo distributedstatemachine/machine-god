@@ -1819,8 +1819,31 @@ impl TerminalRecoveredSession {
 
     pub(crate) fn recover_with(
         persistence: &mut dyn TerminalJournalPersistence,
+        history: TerminalHistory,
+        owner: &BackgroundOutputOwner,
+        now_ms: i64,
+    ) -> Result<Self> {
+        Self::recover_bound_with(persistence, history, owner, None, now_ms)
+    }
+
+    /// Validate the exact profile namespace before recovery publishes anything.
+    /// This shares one state decode with recovery instead of a host-side second
+    /// read of the potentially large monitor snapshot.
+    pub(crate) fn recover_profile_with(
+        persistence: &mut dyn TerminalJournalPersistence,
+        history: TerminalHistory,
+        owner: &BackgroundOutputOwner,
+        namespace: &str,
+        now_ms: i64,
+    ) -> Result<Self> {
+        Self::recover_bound_with(persistence, history, owner, Some(namespace), now_ms)
+    }
+
+    fn recover_bound_with(
+        persistence: &mut dyn TerminalJournalPersistence,
         mut history: TerminalHistory,
         owner: &BackgroundOutputOwner,
+        namespace: Option<&str>,
         now_ms: i64,
     ) -> Result<Self> {
         if history.require_live().is_ok() {
@@ -1833,6 +1856,9 @@ impl TerminalRecoveredSession {
             TerminalSessionFacts::decode(&state.bytes, history.session_id(), &state.source)?;
         if !facts.owned_by(owner) {
             return Err(TerminalSessionError::NotFound);
+        }
+        if let Some(namespace) = namespace {
+            facts.validate_profile_binding(namespace)?;
         }
         if now_ms < facts.context.now_ms {
             return Err(TerminalSessionError::Clock);
