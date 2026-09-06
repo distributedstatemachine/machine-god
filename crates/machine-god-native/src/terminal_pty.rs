@@ -4,49 +4,42 @@
 
 use std::ffi::OsString;
 use std::fmt;
-use std::io::{Read, Write};
 use std::num::NonZeroU32;
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::net::UnixStream;
-use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use machine_god_core::CancellationToken;
 use rustix::fd::{AsFd, OwnedFd};
-use rustix::fs::{FileType, Mode, OFlags};
-use rustix::termios::Winsize;
+use rustix::fs::{Mode, OFlags};
 
 use crate::background_input::{
     BackgroundInputReceipt, BackgroundInputStatus, MAX_BACKGROUND_INPUT_BYTES,
 };
 use crate::background_process::{
-    BackgroundProcessExit, BackgroundProcessSignal, MAX_BACKGROUND_PROCESS_ENVIRONMENT_BYTES,
-    MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES, MAX_BACKGROUND_PROCESS_ENVIRONMENT_KEY_BYTES,
-    MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES, OwnedBackgroundProcess, TerminalChildGuard,
+    BackgroundProcessExit, BackgroundProcessSignal, OwnedBackgroundProcess, TerminalChildGuard,
     TerminalClosePhase, ValidatedBackgroundEnvironment,
 };
 
-const MAGIC: &[u8; 8] = b"MGPTY\0\0\x01";
-const READY: u8 = 0xa7;
-const COMMIT: u8 = 0x5b;
-const MAX_PROGRAM_BYTES: usize = 4096;
-const MAX_ARGUMENT_BYTES: usize = machine_god_core::MAX_TERMINAL_ACTION_COMMAND_BYTES;
-// Keep the former aggregate allowance for auxiliary argv (shell flags, etc.)
-// independently of the full command, which remains one unmodified argv item.
-const MAX_ARGUMENTS_BYTES: usize = MAX_ARGUMENT_BYTES + 32 * 1024;
-const MAX_ARGUMENTS: usize = 256;
-// Binary fields do not escape: magic, dimensions, program, argv and environment
-// bytes, with a u32 length for each string and both collection counts.
-const MAX_FRAME: usize = MAGIC.len()
-    + 4
-    + MAX_PROGRAM_BYTES
-    + MAX_ARGUMENTS_BYTES
-    + MAX_BACKGROUND_PROCESS_ENVIRONMENT_BYTES
-    + 4 * (3 + MAX_ARGUMENTS + 2 * MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES);
+#[cfg(test)]
+use crate::background_process::{
+    MAX_BACKGROUND_PROCESS_ENVIRONMENT_BYTES, MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES,
+};
+pub(crate) use crate::terminal_helper::TerminalPtyDimensions;
+use crate::terminal_helper::{
+    COMMIT, DescriptorIo, MAGIC, MAX_FRAME, READY, START_TIMEOUT, TerminalHelperError,
+    TerminalHelperErrorKind, read_gate, validate_program_arguments,
+    validate_pty_directory as validate_directory, write_gate,
+};
+#[cfg(test)]
+use crate::terminal_helper::{
+    MAX_ARGUMENT_BYTES, MAX_ARGUMENTS, MAX_ARGUMENTS_BYTES, MAX_PROGRAM_BYTES, read_frame,
+    run_terminal_pty_helper,
+};
+
 const MAX_READ: usize = 64 * 1024;
-const START_TIMEOUT: Duration = Duration::from_secs(2);
 static LIVE_PTYS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 struct PtyPermit;
 impl PtyPermit {
@@ -90,34 +83,22 @@ impl fmt::Display for TerminalPtyError {
     }
 }
 impl std::error::Error for TerminalPtyError {}
+impl From<TerminalHelperError> for TerminalPtyError {
+    fn from(failure: TerminalHelperError) -> Self {
+        error(match failure.kind {
+            TerminalHelperErrorKind::InvalidRequest => TerminalPtyErrorKind::InvalidRequest,
+            TerminalHelperErrorKind::Cancelled => TerminalPtyErrorKind::Cancelled,
+            TerminalHelperErrorKind::Process | TerminalHelperErrorKind::Protocol => {
+                TerminalPtyErrorKind::Process
+            }
+        })
+    }
+}
 const fn error(kind: TerminalPtyErrorKind) -> TerminalPtyError {
     TerminalPtyError { kind }
 }
 fn process_error(_: impl fmt::Debug) -> TerminalPtyError {
     error(TerminalPtyErrorKind::Process)
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct TerminalPtyDimensions {
-    pub(crate) rows: u16,
-    pub(crate) columns: u16,
-}
-impl TerminalPtyDimensions {
-    fn validate(self) -> Result<Self, TerminalPtyError> {
-        if self.rows == 0 || self.columns == 0 {
-            Err(error(TerminalPtyErrorKind::InvalidRequest))
-        } else {
-            Ok(self)
-        }
-    }
-    fn winsize(self) -> Winsize {
-        Winsize {
-            ws_row: self.rows,
-            ws_col: self.columns,
-            ws_xpixel: 0,
-            ws_ypixel: 0,
-        }
-    }
 }
 
 pub(crate) struct TerminalPtyRequest {
@@ -690,167 +671,6 @@ fn open_pty(dimensions: TerminalPtyDimensions) -> Result<(OwnedFd, OwnedFd), Ter
     Ok((master, slave))
 }
 
-pub(crate) fn run_terminal_pty_helper() -> Result<(), TerminalPtyError> {
-    let input = std::io::stdin();
-    let output = std::io::stdout();
-    let cwd = std::io::stderr();
-    validate_directory(&cwd)?;
-    let flags = rustix::fs::fcntl_getfl(input.as_fd()).map_err(process_error)?;
-    rustix::fs::fcntl_setfl(input.as_fd(), flags | OFlags::NONBLOCK).map_err(process_error)?;
-    let cancellation = CancellationToken::new();
-    let deadline = Instant::now() + START_TIMEOUT;
-    let mut io = DescriptorIo(input.as_fd());
-    let frame = read_frame(&mut io, deadline, &cancellation)?;
-    rustix::process::fchdir(&cwd).map_err(process_error)?;
-    rustix::process::setsid().map_err(process_error)?;
-    rustix::process::ioctl_tiocsctty(&output).map_err(process_error)?;
-    rustix::termios::tcsetwinsize(&output, frame.dimensions.winsize()).map_err(process_error)?;
-    write_gate(&mut io, &[READY], deadline, &cancellation)?;
-    let mut commit = [0];
-    read_gate(&mut io, &mut commit, deadline, &cancellation)?;
-    if commit != [COMMIT] {
-        return Err(error(TerminalPtyErrorKind::Process));
-    }
-    let slave_in = rustix::io::fcntl_dupfd_cloexec(&output, 3).map_err(process_error)?;
-    let slave_out = rustix::io::fcntl_dupfd_cloexec(&output, 3).map_err(process_error)?;
-    let slave_err = rustix::io::fcntl_dupfd_cloexec(&output, 3).map_err(process_error)?;
-    let mut shell = Command::new(frame.program);
-    shell
-        .args(frame.arguments)
-        .env_clear()
-        .envs(
-            frame
-                .environment
-                .entries()
-                .iter()
-                .map(|(key, value)| (key, value)),
-        )
-        .stdin(Stdio::from(slave_in))
-        .stdout(Stdio::from(slave_out))
-        .stderr(Stdio::from(slave_err));
-    Err(process_error(shell.exec()))
-}
-
-struct DescriptorIo<'a>(rustix::fd::BorrowedFd<'a>);
-impl Read for DescriptorIo<'_> {
-    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
-        rustix::io::read(self.0, bytes).map_err(Into::into)
-    }
-}
-impl Write for DescriptorIo<'_> {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        rustix::io::write(self.0, bytes).map_err(Into::into)
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-struct LaunchFrame {
-    program: String,
-    arguments: Vec<String>,
-    environment: ValidatedBackgroundEnvironment,
-    dimensions: TerminalPtyDimensions,
-}
-fn read_frame(
-    input: &mut impl Read,
-    deadline: Instant,
-    cancellation: &CancellationToken,
-) -> Result<LaunchFrame, TerminalPtyError> {
-    let mut magic = [0; 8];
-    read_gate(input, &mut magic, deadline, cancellation)?;
-    if &magic != MAGIC {
-        return Err(error(TerminalPtyErrorKind::InvalidRequest));
-    }
-    let mut dimensions = [0; 4];
-    read_gate(input, &mut dimensions, deadline, cancellation)?;
-    let dimensions = TerminalPtyDimensions {
-        rows: u16::from_be_bytes([dimensions[0], dimensions[1]]),
-        columns: u16::from_be_bytes([dimensions[2], dimensions[3]]),
-    }
-    .validate()?;
-    let mut budget = MAX_FRAME - 12;
-    let program = String::from_utf8(read_bytes(
-        input,
-        MAX_PROGRAM_BYTES,
-        &mut budget,
-        deadline,
-        cancellation,
-    )?)
-    .map_err(process_error)?;
-    let count = read_length(input, MAX_ARGUMENTS, &mut budget, deadline, cancellation)?;
-    let mut arguments = Vec::with_capacity(count);
-    for _ in 0..count {
-        arguments.push(
-            String::from_utf8(read_bytes(
-                input,
-                MAX_ARGUMENT_BYTES,
-                &mut budget,
-                deadline,
-                cancellation,
-            )?)
-            .map_err(process_error)?,
-        );
-    }
-    validate_program_arguments(&program, &arguments)?;
-    let count = read_length(
-        input,
-        MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES,
-        &mut budget,
-        deadline,
-        cancellation,
-    )?;
-    let mut environment = Vec::with_capacity(count);
-    for _ in 0..count {
-        let key = OsString::from_vec(read_bytes(
-            input,
-            MAX_BACKGROUND_PROCESS_ENVIRONMENT_KEY_BYTES,
-            &mut budget,
-            deadline,
-            cancellation,
-        )?);
-        let value = OsString::from_vec(read_bytes(
-            input,
-            MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES,
-            &mut budget,
-            deadline,
-            cancellation,
-        )?);
-        environment.push((key, value));
-    }
-    let environment = ValidatedBackgroundEnvironment::new(environment).map_err(process_error)?;
-    Ok(LaunchFrame {
-        program,
-        arguments,
-        environment,
-        dimensions,
-    })
-}
-fn validate_program_arguments(program: &str, arguments: &[String]) -> Result<(), TerminalPtyError> {
-    if !program.starts_with('/')
-        || program.len() > MAX_PROGRAM_BYTES
-        || program.as_bytes().contains(&0)
-        || arguments.len() > MAX_ARGUMENTS
-        || arguments
-            .iter()
-            .any(|value| value.len() > MAX_ARGUMENT_BYTES || value.as_bytes().contains(&0))
-        || arguments
-            .iter()
-            .map(String::len)
-            .try_fold(0_usize, usize::checked_add)
-            .is_none_or(|total| total > MAX_ARGUMENTS_BYTES)
-    {
-        return Err(error(TerminalPtyErrorKind::InvalidRequest));
-    }
-    Ok(())
-}
-fn validate_directory(fd: &impl AsFd) -> Result<(), TerminalPtyError> {
-    let metadata = rustix::fs::fstat(fd).map_err(process_error)?;
-    if FileType::from_raw_mode(metadata.st_mode) != FileType::Directory {
-        return Err(error(TerminalPtyErrorKind::InvalidRequest));
-    }
-    Ok(())
-}
 fn append_length(bytes: &mut Vec<u8>, length: usize) -> Result<(), TerminalPtyError> {
     bytes.extend_from_slice(&u32::try_from(length).map_err(process_error)?.to_be_bytes());
     Ok(())
@@ -860,106 +680,6 @@ fn append_bytes(bytes: &mut Vec<u8>, data: &[u8]) -> Result<(), TerminalPtyError
     bytes.extend_from_slice(data);
     Ok(())
 }
-fn read_length(
-    input: &mut impl Read,
-    maximum: usize,
-    budget: &mut usize,
-    deadline: Instant,
-    cancellation: &CancellationToken,
-) -> Result<usize, TerminalPtyError> {
-    *budget = budget
-        .checked_sub(4)
-        .ok_or_else(|| error(TerminalPtyErrorKind::InvalidRequest))?;
-    let mut bytes = [0; 4];
-    read_gate(input, &mut bytes, deadline, cancellation)?;
-    let length = usize::try_from(u32::from_be_bytes(bytes)).map_err(process_error)?;
-    if length > maximum {
-        return Err(error(TerminalPtyErrorKind::InvalidRequest));
-    }
-    Ok(length)
-}
-fn read_bytes(
-    input: &mut impl Read,
-    maximum: usize,
-    budget: &mut usize,
-    deadline: Instant,
-    cancellation: &CancellationToken,
-) -> Result<Vec<u8>, TerminalPtyError> {
-    let length = read_length(input, maximum, budget, deadline, cancellation)?;
-    *budget = budget
-        .checked_sub(length)
-        .ok_or_else(|| error(TerminalPtyErrorKind::InvalidRequest))?;
-    let mut bytes = vec![0; length];
-    read_gate(input, &mut bytes, deadline, cancellation)?;
-    Ok(bytes)
-}
-fn write_gate(
-    output: &mut impl Write,
-    mut bytes: &[u8],
-    deadline: Instant,
-    cancellation: &CancellationToken,
-) -> Result<(), TerminalPtyError> {
-    for _ in 0..65536 {
-        if bytes.is_empty() {
-            return Ok(());
-        }
-        check_deadline(deadline, cancellation)?;
-        match output.write(bytes) {
-            Ok(0) => return Err(error(TerminalPtyErrorKind::Process)),
-            Ok(count) => bytes = &bytes[count..],
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
-                ) =>
-            {
-                std::thread::sleep(Duration::from_millis(2));
-            }
-            Err(other) => return Err(process_error(other)),
-        }
-    }
-    Err(error(TerminalPtyErrorKind::Process))
-}
-fn read_gate(
-    input: &mut impl Read,
-    mut bytes: &mut [u8],
-    deadline: Instant,
-    cancellation: &CancellationToken,
-) -> Result<(), TerminalPtyError> {
-    for _ in 0..65536 {
-        if bytes.is_empty() {
-            return Ok(());
-        }
-        check_deadline(deadline, cancellation)?;
-        match input.read(bytes) {
-            Ok(0) => return Err(error(TerminalPtyErrorKind::Process)),
-            Ok(count) => bytes = &mut bytes[count..],
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
-                ) =>
-            {
-                std::thread::sleep(Duration::from_millis(2));
-            }
-            Err(other) => return Err(process_error(other)),
-        }
-    }
-    Err(error(TerminalPtyErrorKind::Process))
-}
-fn check_deadline(
-    deadline: Instant,
-    cancellation: &CancellationToken,
-) -> Result<(), TerminalPtyError> {
-    if cancellation.is_cancelled() {
-        Err(error(TerminalPtyErrorKind::Cancelled))
-    } else if Instant::now() >= deadline {
-        Err(error(TerminalPtyErrorKind::Process))
-    } else {
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -998,6 +718,18 @@ mod tests {
             SUBREAPER.call_once(|| {
                 rustix::process::set_child_subreaper(rustix::process::Pid::from_raw(1)).unwrap()
             });
+        }
+        if let Some(program) = std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY") {
+            let program = PathBuf::from(program);
+            assert!(
+                program.is_absolute(),
+                "release helper path must be absolute"
+            );
+            return TerminalPtyHelper::new(
+                program,
+                vec![crate::terminal_helper::TERMINAL_PTY_HELPER_ARGUMENT.into()],
+            )
+            .unwrap();
         }
         TerminalPtyHelper::new(
             std::env::current_exe().unwrap(),

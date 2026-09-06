@@ -10,17 +10,23 @@ use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use machine_god_core::{CancellationToken, TerminalDimensions, TerminalSignal};
-use rustix::fd::{AsFd, OwnedFd};
+use rustix::fd::OwnedFd;
 use rustix::fs::{AtFlags, FileType, Mode, OFlags};
 
 use crate::background_input::{
     BackgroundInputReceipt, BackgroundInputStatus, MAX_BACKGROUND_INPUT_BYTES,
+};
+#[cfg(test)]
+use crate::terminal_helper::run_terminal_startup_marker;
+use crate::terminal_helper::{
+    MAX_SOCKET_PATH_BYTES, MAX_STARTUP_TIMEOUT, TerminalHelperError, TerminalHelperErrorKind,
+    startup_directory_identity as identity, validate_startup_directory as validate_directory,
 };
 use crate::terminal_pty::{
     PreparedTerminalPty, TerminalPty, TerminalPtyClose, TerminalPtyDimensions, TerminalPtyHelper,
@@ -34,15 +40,12 @@ const RELEASED: u8 = 1;
 const FAILED: u8 = 2;
 const FRAME_BYTES: usize = 34;
 pub(crate) const DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
-const MAX_STARTUP_TIMEOUT: Duration = Duration::from_secs(300);
 // Single quoting expands each byte by at most four. There are at most two
 // marker invocations, each with 8 KiB combined executable/argv bytes and a
 // bounded socket-directory path; 4 KiB covers quotes, separators and protocol
 // environment names. Command bytes occur exactly once in the bootstrap.
 const MAX_BOOTSTRAP_BYTES: usize =
     4 * machine_god_core::MAX_TERMINAL_ACTION_COMMAND_BYTES + 2 * 4 * (8192 + 104) + 4096;
-pub(crate) const STARTUP_MARKER_ARGUMENT: &str = "--machine-god-terminal-startup-marker";
-const MAX_SOCKET_PATH_BYTES: usize = 100;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TerminalStartupError {
@@ -59,6 +62,16 @@ impl fmt::Display for TerminalStartupError {
     }
 }
 impl std::error::Error for TerminalStartupError {}
+impl From<TerminalHelperError> for TerminalStartupError {
+    fn from(error: TerminalHelperError) -> Self {
+        match error.kind {
+            TerminalHelperErrorKind::InvalidRequest => Self::InvalidRequest,
+            TerminalHelperErrorKind::Cancelled => Self::Cancelled,
+            TerminalHelperErrorKind::Protocol => Self::Protocol,
+            TerminalHelperErrorKind::Process => Self::Process,
+        }
+    }
+}
 type Result<T> = std::result::Result<T, TerminalStartupError>;
 fn process_error(_: impl fmt::Debug) -> TerminalStartupError {
     TerminalStartupError::Process
@@ -545,28 +558,6 @@ struct StartupArtifacts {
     script_identity: Option<String>,
     socket_identity: Option<String>,
 }
-fn identity(stat: &rustix::fs::Stat) -> String {
-    format!("{}:{}", stat.st_dev, stat.st_ino)
-}
-fn validate_directory(directory: &impl AsFd, path: &Path) -> Result<String> {
-    let stat = rustix::fs::fstat(directory).map_err(process_error)?;
-    if FileType::from_raw_mode(stat.st_mode) != FileType::Directory
-        || stat.st_mode & 0o077 != 0
-        || stat.st_uid != rustix::process::getuid().as_raw()
-    {
-        return Err(TerminalStartupError::InvalidRequest);
-    }
-    let reopened = rustix::fs::open(
-        path,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(process_error)?;
-    if identity(&stat) != identity(&rustix::fs::fstat(reopened).map_err(process_error)?) {
-        return Err(TerminalStartupError::InvalidRequest);
-    }
-    Ok(identity(&stat))
-}
 impl StartupArtifacts {
     fn new(directory: OwnedFd, path: PathBuf, nonce: [u8; 32]) -> Result<Self> {
         let text = path.to_str().ok_or(TerminalStartupError::InvalidRequest)?;
@@ -721,60 +712,6 @@ fn bootstrap_script(
     Ok(output)
 }
 
-/// Private executable mode only: its isolated process may change cwd, never
-/// the multithreaded owner. It holds no PTY/process cleanup authority.
-pub(crate) fn run_terminal_startup_marker() -> Result<()> {
-    let value = |key: &str, limit: usize| -> Result<String> {
-        let value = std::env::var(key).map_err(process_error)?;
-        if value.is_empty() || value.len() > limit || value.contains('\0') {
-            return Err(TerminalStartupError::InvalidRequest);
-        }
-        Ok(value)
-    };
-    if value("MACHINE_GOD_STARTUP_MARKER", 1)? != "1" {
-        return Err(TerminalStartupError::InvalidRequest);
-    }
-    let path = PathBuf::from(value(
-        "MACHINE_GOD_STARTUP_DIRECTORY",
-        MAX_SOCKET_PATH_BYTES,
-    )?);
-    let expected = value("MACHINE_GOD_STARTUP_ID", 64)?;
-    let nonce = value("MACHINE_GOD_STARTUP_NONCE", 32)?;
-    let kind = value("MACHINE_GOD_STARTUP_KIND", 1)?;
-    if !path.is_absolute()
-        || nonce.len() != 32
-        || !nonce.bytes().all(|byte| byte.is_ascii_hexdigit())
-        || !matches!(kind.as_str(), "R" | "C")
-    {
-        return Err(TerminalStartupError::InvalidRequest);
-    }
-    let directory = rustix::fs::open(
-        &path,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(process_error)?;
-    if validate_directory(&directory, &path)? != expected {
-        return Err(TerminalStartupError::InvalidRequest);
-    }
-    rustix::process::fchdir(&directory).map_err(process_error)?;
-    let mut stream = UnixStream::connect(format!("s-{nonce}")).map_err(process_error)?;
-    // The owner enforces the shorter request deadline and owns process-tree
-    // cancellation; the marker never invents a competing readiness timeout.
-    let timeout = Some(MAX_STARTUP_TIMEOUT);
-    stream.set_read_timeout(timeout).map_err(process_error)?;
-    stream.set_write_timeout(timeout).map_err(process_error)?;
-    stream
-        .write_all(format!("{nonce}{kind}\n").as_bytes())
-        .map_err(process_error)?;
-    let mut ack = [0; 2];
-    stream.read_exact(&mut ack).map_err(process_error)?;
-    if ack != [kind.as_bytes()[0], b'\n'] {
-        return Err(TerminalStartupError::Protocol);
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -825,11 +762,47 @@ mod tests {
                 rustix::process::set_child_subreaper(rustix::process::Pid::from_raw(1)).unwrap()
             });
         }
+        if let Some(program) = std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY") {
+            let program = PathBuf::from(program);
+            assert!(
+                program.is_absolute(),
+                "release helper path must be absolute"
+            );
+            return TerminalPtyHelper::new(
+                program,
+                vec![crate::terminal_helper::TERMINAL_PTY_HELPER_ARGUMENT.into()],
+            )
+            .unwrap();
+        }
         TerminalPtyHelper::new(
             std::env::current_exe().unwrap(),
             vec![
                 "--exact".into(),
                 "terminal_pty::tests::helper_entry".into(),
+                "--test-threads=1".into(),
+                "--quiet".into(),
+            ],
+        )
+        .unwrap()
+    }
+    fn marker_helper() -> TerminalPtyHelper {
+        if let Some(program) = std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY") {
+            let program = PathBuf::from(program);
+            assert!(
+                program.is_absolute(),
+                "release helper path must be absolute"
+            );
+            return TerminalPtyHelper::new(
+                program,
+                vec![crate::terminal_helper::TERMINAL_STARTUP_MARKER_ARGUMENT.into()],
+            )
+            .unwrap();
+        }
+        TerminalPtyHelper::new(
+            std::env::current_exe().unwrap(),
+            vec![
+                "--exact".into(),
+                "terminal_startup::tests::marker_helper_entry".into(),
                 "--test-threads=1".into(),
                 "--quiet".into(),
             ],
@@ -855,16 +828,7 @@ mod tests {
             cwd: cwd.fd(),
             artifacts: artifacts.fd(),
             artifact_path: std::fs::canonicalize(&artifacts.0).unwrap(),
-            marker_helper: TerminalPtyHelper::new(
-                std::env::current_exe().unwrap(),
-                vec![
-                    "--exact".into(),
-                    "terminal_startup::tests::marker_helper_entry".into(),
-                    "--test-threads=1".into(),
-                    "--quiet".into(),
-                ],
-            )
-            .unwrap(),
+            marker_helper: marker_helper(),
             dimensions: TerminalPtyDimensions {
                 rows: 24,
                 columns: 80,
