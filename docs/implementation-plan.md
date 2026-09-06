@@ -175,6 +175,12 @@ The actual terminal adapter preserves a full byte-array command through archival
 publication, authorization and execution while keeping subsequent model history
 small. Full reference-host registration and its explicit admission configuration
 remain open; these components are not a feature delivery.
+Typed worker-owned host state and the common PTY/tmux backend selection are
+integrated. State survives cleanup retries and is destroyed after native
+resources; transcript admission moves validated input instead of cloning it.
+The preceding input/archive integration passed the complete pinned workspace
+format, Clippy, test and doctest gate. Production action dispatch and full host
+registration remain the next work, not documentation of a compatibility exception.
 The complete normalized twelve-action core contract and effect-free public
 decoder are present, including request/result identity checks and lossless
 foreground execution outcomes. Numeric coercion now matches pinned binary128

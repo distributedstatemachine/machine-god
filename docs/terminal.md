@@ -614,6 +614,10 @@ destruction, including initialization or callback unwind. Its destructor panic
 is contained independently so teardown cannot double-panic through that state.
 Unpolled, pre-cancelled and early-closed requests do not construct state, and
 pending reply futures do not keep it alive after the last host shuts down.
+One boxed native backend selection forwards PTY and tmux operations through the
+same registry contract, including whole-paste intent, input limits, observation-only
+write settlement and close receipts. The contained backend remains the sole
+cleanup owner; choosing a transport adds no independent cleanup lifecycle.
 
 The loop pumps immediately while output is available and polls idle timers at
 10 ms intervals, with at most one command between pump opportunities. Output
