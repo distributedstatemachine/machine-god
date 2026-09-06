@@ -42,6 +42,15 @@ and globally unique ID contract. Neither source may be model- or
 configuration-controlled merely because the lifecycle exposes an injection
 boundary.
 
+Actual lifecycle handles retain the engine's optional host resource. Operation
+futures instead retain a non-owning engine requester plus their explicit store
+and identity sources; merely keeping an unpolled or pending operation does not
+keep that host resource alive. Create/reset candidate reservations hold only
+canonical session state, not a host-lifetime lease. A returned `Session` is a
+real handle and retains the resource, but a late load after the last host handle
+disappears fails rather than resurrecting it. This does not undo already
+committed persistence or prevent an admitted record-only observation.
+
 Store identity is an enforced invariant, not caller documentation. Every
 lifecycle constructor proves that the engine's configured session-store `Arc`
 and the supplied `Arc<FileSessionStore>` are the exact same allocation before

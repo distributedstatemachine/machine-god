@@ -3,8 +3,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use machine_god_core::{
-    BoxFuture, Engine, EngineError, Session, SessionId, SessionIncarnationId, SessionRecord,
-    SessionStore, SessionStoreError, SessionStoreErrorKind,
+    BoxFuture, Engine, EngineError, EngineRequester, Session, SessionId, SessionIncarnationId,
+    SessionRecord, SessionReservation, SessionStore, SessionStoreError, SessionStoreErrorKind,
 };
 
 use crate::session_listing::list_sessions_from_store;
@@ -321,6 +321,15 @@ pub struct NativeSessionLifecycle {
     incarnation_source: Arc<dyn SessionIncarnationSource>,
 }
 
+/// Pending operations retain persistence and identity inputs, not a real engine
+/// host lease. A returned Session acquires its lease only at the final handoff.
+struct LifecycleOperation {
+    engine: EngineRequester,
+    session_store: Arc<FileSessionStore>,
+    session_id_source: Arc<dyn SessionIdSource>,
+    incarnation_source: Arc<dyn SessionIncarnationSource>,
+}
+
 impl NativeSessionLifecycle {
     /// Constructs a lifecycle using 256 bits of OS randomness per incarnation.
     ///
@@ -431,13 +440,22 @@ impl NativeSessionLifecycle {
         &self.session_store
     }
 
+    fn operation(&self) -> LifecycleOperation {
+        LifecycleOperation {
+            engine: self.engine.requester(),
+            session_store: Arc::clone(&self.session_store),
+            session_id_source: Arc::clone(&self.session_id_source),
+            incarnation_source: Arc::clone(&self.incarnation_source),
+        }
+    }
+
     /// Atomically creates and persists an empty current-schema session.
     #[must_use]
     pub fn create(
         &self,
         id: SessionId,
     ) -> BoxFuture<'static, Result<Session, NativeSessionLifecycleError>> {
-        let lifecycle = self.clone();
+        let lifecycle = self.operation();
         Box::pin(async move { lifecycle.create_polled(id).await })
     }
 
@@ -450,7 +468,7 @@ impl NativeSessionLifecycle {
     pub fn create_generated(
         &self,
     ) -> BoxFuture<'static, Result<Session, NativeSessionLifecycleError>> {
-        let lifecycle = self.clone();
+        let lifecycle = self.operation();
         Box::pin(async move { lifecycle.create_generated_polled().await })
     }
 
@@ -460,7 +478,7 @@ impl NativeSessionLifecycle {
         &self,
         id: SessionId,
     ) -> BoxFuture<'static, Result<Session, NativeSessionLifecycleError>> {
-        let lifecycle = self.clone();
+        let lifecycle = self.operation();
         Box::pin(async move { lifecycle.resume_polled(id).await })
     }
 
@@ -470,7 +488,7 @@ impl NativeSessionLifecycle {
         &self,
         id: SessionId,
     ) -> BoxFuture<'static, Result<SessionRecord, NativeSessionLifecycleError>> {
-        let lifecycle = self.clone();
+        let lifecycle = self.operation();
         Box::pin(async move { lifecycle.replay_polled(id).await })
     }
 
@@ -479,7 +497,7 @@ impl NativeSessionLifecycle {
     pub fn list_sessions(
         &self,
     ) -> BoxFuture<'static, Result<NativeSessionList, NativeSessionLifecycleError>> {
-        let lifecycle = self.clone();
+        let lifecycle = self.operation();
         Box::pin(async move { lifecycle.list_sessions_polled() })
     }
 
@@ -489,10 +507,12 @@ impl NativeSessionLifecycle {
         &self,
         id: SessionId,
     ) -> BoxFuture<'static, Result<Session, NativeSessionLifecycleError>> {
-        let lifecycle = self.clone();
+        let lifecycle = self.operation();
         Box::pin(async move { lifecycle.reset_polled(id).await })
     }
+}
 
+impl LifecycleOperation {
     async fn create_polled(&self, id: SessionId) -> Result<Session, NativeSessionLifecycleError> {
         if self.load_record(id.clone()).await?.is_some() {
             return Err(NativeSessionLifecycleError::new(
@@ -593,10 +613,10 @@ impl NativeSessionLifecycle {
     fn reserve_candidate(
         &self,
         candidate: &SessionRecord,
-    ) -> Result<Session, NativeSessionLifecycleError> {
+    ) -> Result<SessionReservation, NativeSessionLifecycleError> {
         let session = self
             .engine
-            .create_session(candidate.id.clone(), candidate.incarnation_id.clone())
+            .reserve_session(candidate.id.clone(), candidate.incarnation_id.clone())
             .map_err(map_engine_error)?;
         if session.has_active_turn() || session.record() != *candidate {
             return Err(NativeSessionLifecycleError::new(
@@ -817,6 +837,100 @@ mod tests {
         )
         .unwrap();
         (lifecycle, session_store, provider)
+    }
+
+    struct HostResource(Arc<AtomicUsize>);
+    impl Drop for HostResource {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn lifecycle_with_host_resource(
+        root: &TempDirectory,
+        released: Arc<AtomicUsize>,
+    ) -> NativeSessionLifecycle {
+        let store = Arc::new(FileSessionStore::open(root.path()).unwrap());
+        let engine = Engine::builder()
+            .provider(ScriptedModelProvider::new("test", []))
+            .shared_session_store(store.clone())
+            .permission_handler(ScriptedPermissionHandler::new([]))
+            .host_resource(HostResource(released))
+            .build()
+            .unwrap();
+        NativeSessionLifecycle::with_incarnation_source(
+            engine,
+            store,
+            CountingSource(Arc::new(AtomicUsize::new(0))),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn all_lifecycle_futures_are_nonvoting_while_real_clones_retain_host() {
+        let root = TempDirectory::new("host-resource-futures");
+        let released = Arc::new(AtomicUsize::new(0));
+        let lifecycle = lifecycle_with_host_resource(&root, Arc::clone(&released));
+        let retained = lifecycle.clone();
+        let id = SessionId::new("host-resource").unwrap();
+        let create = lifecycle.create(id.clone());
+        let generated = lifecycle.create_generated();
+        let resume = lifecycle.resume(id.clone());
+        let replay = lifecycle.replay(id.clone());
+        let list = lifecycle.list_sessions();
+        let reset = lifecycle.reset(id);
+        drop(lifecycle);
+        assert_eq!(released.load(Ordering::SeqCst), 0);
+        drop(retained);
+        assert_eq!(released.load(Ordering::SeqCst), 1);
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+        assert!(
+            futures_executor::block_on(list)
+                .unwrap()
+                .session_ids()
+                .is_empty()
+        );
+        drop((create, generated, resume, replay, reset));
+        assert_eq!(released.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn returned_session_is_a_real_host_handle() {
+        let root = TempDirectory::new("host-resource-session");
+        let released = Arc::new(AtomicUsize::new(0));
+        let lifecycle = lifecycle_with_host_resource(&root, Arc::clone(&released));
+        let session =
+            futures_executor::block_on(lifecycle.create(SessionId::new("retained-host").unwrap()))
+                .unwrap();
+        drop(lifecycle);
+        assert_eq!(released.load(Ordering::SeqCst), 0);
+        let retained = session.clone();
+        drop(session);
+        assert_eq!(released.load(Ordering::SeqCst), 0);
+        drop(retained);
+        assert_eq!(released.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn canonical_candidate_reservation_never_keeps_or_resurrects_host() {
+        let root = TempDirectory::new("host-resource-reservation");
+        let released = Arc::new(AtomicUsize::new(0));
+        let lifecycle = lifecycle_with_host_resource(&root, Arc::clone(&released));
+        let operation = lifecycle.operation();
+        let candidate = SessionRecord::empty(
+            SessionId::new("reserved-host").unwrap(),
+            SessionIncarnationId::new("reserved-incarnation").unwrap(),
+        );
+        let reservation = operation.reserve_candidate(&candidate).unwrap();
+        drop(lifecycle);
+        assert_eq!(released.load(Ordering::SeqCst), 1);
+        assert_eq!(reservation.record(), candidate);
+        assert!(!reservation.has_active_turn());
+        let failure =
+            futures_executor::block_on(operation.load_canonical(candidate.id)).unwrap_err();
+        assert_eq!(failure.kind(), NativeSessionLifecycleErrorKind::Engine);
+        assert_eq!(released.load(Ordering::SeqCst), 1);
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
     }
 
     #[test]
