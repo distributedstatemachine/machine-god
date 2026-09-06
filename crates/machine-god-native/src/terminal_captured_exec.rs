@@ -235,7 +235,7 @@ impl TerminalCapturedExec {
 
     /// Already-collected worker only. The caller supplies the original deadline;
     /// admission and queued work never restart it. Native cleanup is shared.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "ai-gateway-http"))]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn execute_probe_on_worker(
         &self,
@@ -289,7 +289,7 @@ impl TerminalCapturedExec {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "ai-gateway-http"))]
 pub(crate) struct TerminalCapturedProbeOutcome {
     pub(crate) status: TerminalExecStatus,
     pub(crate) output_bytes: u64,

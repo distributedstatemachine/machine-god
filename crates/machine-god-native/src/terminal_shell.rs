@@ -33,7 +33,7 @@ impl std::error::Error for TerminalShellError {}
 enum ShellKind {
     Bash,
     Zsh,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "ai-gateway-http"))]
     LegacySh,
 }
 
@@ -57,7 +57,7 @@ impl TerminalShell {
     /// Private monitor execution preserves pinned legacy `sh -lc` semantics.
     /// The caller resolves this absolute executable through its captured PATH;
     /// public interactive executable selection remains restricted to bash/zsh.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "ai-gateway-http"))]
     pub(crate) fn legacy_captured_sh(program: PathBuf) -> Result<Self, TerminalShellError> {
         validate_path(&program)?;
         Ok(Self {
@@ -168,7 +168,7 @@ impl TerminalShell {
             (ShellKind::Bash, TerminalProfile::Clean) => &["--noprofile", "--norc", "-i"],
             (ShellKind::Zsh, TerminalProfile::User) => &["-l", "-i"],
             (ShellKind::Zsh, TerminalProfile::Clean) => &["-f", "-i"],
-            #[cfg(test)]
+            #[cfg(any(test, feature = "ai-gateway-http"))]
             (ShellKind::LegacySh, _) => &["-li"],
         };
         flags.iter().map(|value| (*value).to_owned()).collect()
@@ -182,7 +182,7 @@ impl TerminalShell {
         if command.is_empty() || command.len() > MAX_SHELL_COMMAND_BYTES || command.contains('\0') {
             return Err(TerminalShellError::InvalidRequest);
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "ai-gateway-http"))]
         if matches!(self.kind, ShellKind::LegacySh) {
             return Ok(vec!["-lc".into(), command.into()]);
         }

@@ -142,7 +142,15 @@ bounded admission slot. The host passes the required absolute
 monotonic `MACHINE_GOD_CAPTURED_DEADLINE` stamp; the helper does not start a new
 timer or impose a hidden two-second cutoff. PTY standalone helper defaults and
 its independent maximum startup interval are unchanged.
-The registered legacy adapter is unchanged until full reference-host composition.
+Explicit helper-bearing reference-host constructors compose this executor with
+staged PTY/tmux startup, resident/history dispatch and authorized monitor effects.
+Only real Engine/Session handles retain the runtime resource; operation futures
+use non-owning requesters. Last-resource drop cancels foreground/probe work before
+closing the owner registry. Start/monitor preparation has a separate bounded
+owned-worker admission, and committed failures retain diagnostic receipt metadata.
+The CLI supplies its own helper executable, captured account shell/environment
+and available PATH-selected tmux on its existing constructor worker. Embedders
+that use the original constructors without helper options retain the legacy tool.
 
 ## Native screen projection
 

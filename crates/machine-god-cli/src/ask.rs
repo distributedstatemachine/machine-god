@@ -213,9 +213,10 @@ mod production {
     use machine_god_core::{ModelEvent, Turn, TurnEvent};
     use machine_god_native::{
         AiGatewayCredentialEnvironment, NativeEnvironment, NativeReferenceHost,
-        NativeRootSelection, PermissionPromptDecision, PermissionPromptError, PermissionPrompter,
-        PreparedNativeRoots, QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest,
-        QuestionPrompter, TokioWebSearchDeadline, load_native_config,
+        NativeReferenceHostTerminalOptions, NativeRootSelection, PermissionPromptDecision,
+        PermissionPromptError, PermissionPrompter, PreparedNativeRoots, QuestionPromptError,
+        QuestionPromptOutcome, QuestionPromptRequest, QuestionPrompter, TerminalShell,
+        TokioWebSearchDeadline, load_native_config,
     };
 
     use super::{
@@ -897,16 +898,18 @@ mod production {
                                 .map_err(|_| ())?;
                         let prepared_roots =
                             PreparedNativeRoots::prepare(root_selection).map_err(|_| ())?;
+                        let terminal_options = capture_terminal_options(prepared_roots.workspace_root())?;
                         let (runtime, deadline) =
                             TokioWebSearchDeadline::build_runtime_pair().map_err(|_| ())?;
                         let host =
-                            NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots(
+                            NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots_and_terminal(
                                 loaded_config,
                                 AiGatewayCredentialEnvironment::from_process(),
                                 prepared_roots,
                                 Arc::new(DenyPermissionPrompter),
                                 Arc::new(UnavailableQuestionPrompter),
                                 Arc::new(deadline),
+                                terminal_options,
                             )
                             .map_err(|_| ())?;
                         runtime.block_on(execute_turn(
@@ -931,6 +934,40 @@ mod production {
         } else {
             let _ = controller.enter_final();
             (AskCommandOutcome::OperationalFailure, controller)
+        }
+    }
+
+    /// Runs only on the existing constructor worker. This executable is the
+    /// trusted CLI that implements all private terminal helper modes.
+    fn capture_terminal_options(
+        workspace: &std::path::Path,
+    ) -> Result<NativeReferenceHostTerminalOptions, ()> {
+        use std::os::unix::fs::PermissionsExt;
+        let environment: Vec<_> = std::env::vars_os().collect();
+        let shell = TerminalShell::for_current_user(None, None).map_err(|_| ())?;
+        let helper = std::env::current_exe().map_err(|_| ())?;
+        let tmux = environment
+            .iter()
+            .find(|(name, _)| name == "PATH")
+            .and_then(|(_, path)| {
+                std::env::split_paths(path)
+                    .map(|directory| workspace.join(directory).join("tmux"))
+                    .find(|candidate| {
+                        candidate.as_os_str().len() <= 4096
+                            && std::fs::metadata(candidate).is_ok_and(|metadata| {
+                                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+                            })
+                    })
+            });
+        let options = NativeReferenceHostTerminalOptions::new(
+            helper,
+            Some(shell.program().to_owned()),
+            environment,
+        )
+        .map_err(|_| ())?;
+        match tmux {
+            Some(program) => options.with_tmux(program).map_err(|_| ()),
+            None => Ok(options),
         }
     }
 

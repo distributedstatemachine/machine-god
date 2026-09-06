@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `wire the production terminal executor and reference host, including staged startup, foreground execution and authorized monitor effects, before the full terminal feature gate`
+- Next gate: `finish production host integration checks, pressure-only session recycling and cold close, startup-root path handling and CLI shutdown settlement; then freeze the complete terminal feature for review and exact local/remote gates`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -60,6 +60,15 @@ an internal CI integration correction, not a new delivery; full-feature
 review and exact remote gates remain pending.
 
 ### Active feature: complete terminal behavior
+
+The full native action executor and explicit helper-bearing reference-host
+constructors now compose foreground execution, staged startup, live/history
+dispatch, authorized monitor scheduling and shared lossless archives. The CLI
+selects that host explicitly. Real Engine/Session handles own the runtime lease;
+native lifecycle operation futures do not extend it. Focused integration checks
+are in progress alongside production module promotion, pressure-only inactive
+session recycling, durable cold close and final CLI shutdown/path handling.
+These are internal integrations, not a delivery or a compatibility claim.
 
 Deliver complete features, not separately counted action-sized slices. The
 terminal branch stays open across input/write, interactive PTY lifecycle,

@@ -54,6 +54,13 @@ the provider or turn later fails.
 Targets outside Linux and macOS fail through one fixed unsupported operational
 path without importing or attempting the complete reference-host composition.
 
+The constructor worker captures the account shell and full environment once,
+then explicitly supplies the CLI executable as the private terminal helper.
+An available tmux executable is selected from that frozen PATH. The resulting
+terminal tool exposes all twelve actions with shared lossless input/result
+archives; ordinary transcript limits and permission decisions are unchanged.
+Library embeddings are not assumed to implement the CLI's private helper modes.
+
 ## Noninteractive authority
 
 The command never prompts on standard input. Every permission-gated native

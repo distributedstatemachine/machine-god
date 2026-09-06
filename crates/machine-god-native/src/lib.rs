@@ -91,28 +91,46 @@ mod terminal_action_parse;
 mod terminal_action_tool;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod terminal_captured_exec;
-#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
-#[allow(
-    dead_code,
-    reason = "private runtime components are composed here before full host integration"
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(
+        dead_code,
+        reason = "shared private tests also run in the component harness"
+    )
 )]
 mod terminal_monitor;
-#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
-#[allow(
-    dead_code,
-    reason = "private runtime components are composed here before full host integration"
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+#[cfg_attr(
+    test,
+    allow(
+        dead_code,
+        reason = "shared private tests also run in the component harness"
+    )
 )]
 mod terminal_probe_effects;
-// Reproducible staged host composition tests, promoted with production host wiring.
-#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
-macro_rules! terminal_host_test_components {
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+macro_rules! terminal_host_components {
     ($($module:ident),+ $(,)?) => {$(
-        #[allow(dead_code, reason = "private runtime components are composed here before full host integration")]
+        #[cfg_attr(test, allow(dead_code, reason = "shared private tests also run in the component harness"))]
         mod $module;
     )+};
 }
-#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
-terminal_host_test_components!(
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+terminal_host_components!(
+    terminal_host,
     terminal_catalog,
     terminal_catalog_view,
     terminal_history,
