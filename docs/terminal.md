@@ -621,6 +621,12 @@ One boxed native backend selection forwards PTY and tmux operations through the
 same registry contract, including whole-paste intent, input limits, observation-only
 write settlement and close receipts. The contained backend remains the sole
 cleanup owner; choosing a transport adds no independent cleanup lifecycle.
+The shared native launch factory resolves captured shell selection and the
+24-row/80-column default before effects, then prepares either transport under
+one supplied absolute deadline. Commit rechecks the exact retained cwd and
+returns the backend, startup acknowledgement control and descriptive launch
+identity together. Neither a transport selection nor saved identity creates
+process authority; the existing prepared owner handles failed launch cleanup.
 Worker-owned catalog state retains bounded, exact-profile owner leases between
 requests. Cold saved histories can be opened without admitting a live registry
 entry or constructing a backend, so live-session capacity does not cap historical

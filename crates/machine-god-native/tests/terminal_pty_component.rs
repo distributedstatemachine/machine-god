@@ -30,6 +30,8 @@ mod terminal_journal;
 mod terminal_monitor;
 #[path = "../src/terminal_native_backend.rs"]
 mod terminal_native_backend;
+#[path = "../src/terminal_native_launch.rs"]
+mod terminal_native_launch;
 #[path = "../src/terminal_owner.rs"]
 mod terminal_owner;
 #[path = "../src/terminal_profile.rs"]
