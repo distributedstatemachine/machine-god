@@ -19,7 +19,8 @@ use std::time::SystemTime;
 
 use futures_executor::block_on;
 use machine_god_native::{
-    MAX_BACKGROUND_RECORD_BYTES, MAX_BACKGROUND_STATE_BASE_BYTES, NativeBackgroundInspection,
+    MAX_BACKGROUND_COMMAND_BYTES, MAX_BACKGROUND_RECORD_BYTES, MAX_BACKGROUND_STATE_BASE_BYTES,
+    MAX_BACKGROUND_TOTAL_RECORD_BYTES, NativeBackgroundInspection,
     NativeBackgroundInspectionErrorKind, NativeBackgroundQuery, NativeBackgroundRecordSummary,
     NativeBackgroundState, NativeEnvironment, inspect_native_background,
 };
@@ -436,6 +437,93 @@ fn record_size_limit_accepts_exact_and_rejects_one_byte_overflow_witness() {
     ))
     .unwrap_err();
     assert_eq!(error.kind(), NativeBackgroundInspectionErrorKind::Corrupt);
+}
+
+#[test]
+fn full_command_byte_boundary_is_independent_of_json_escaping() {
+    let fixture = Fixture::new();
+    for (index, command) in [
+        "\u{1}".repeat(MAX_BACKGROUND_COMMAND_BYTES),
+        "🦀".repeat(MAX_BACKGROUND_COMMAND_BYTES / 4),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let id = index as u64 + 1;
+        fixture.write_record(id, 20, &command);
+        let NativeBackgroundInspection::Detail(detail) = block_on(inspect_native_background(
+            fixture.environment(),
+            fixture.workspace.clone(),
+            NativeBackgroundQuery::Id(id),
+        ))
+        .unwrap() else {
+            panic!("expected detail");
+        };
+        assert_eq!(detail.command(), command);
+        fixture.write_record(id, 20, &format!("{command}x"));
+        let error = block_on(inspect_native_background(
+            fixture.environment(),
+            fixture.workspace.clone(),
+            NativeBackgroundQuery::Id(id),
+        ))
+        .unwrap_err();
+        assert_eq!(error.kind(), NativeBackgroundInspectionErrorKind::Corrupt);
+    }
+}
+
+#[test]
+fn listing_preserves_exact_aggregate_byte_limit_with_larger_records() {
+    let fixture = Fixture::new();
+    let full_count = MAX_BACKGROUND_TOTAL_RECORD_BYTES / MAX_BACKGROUND_RECORD_BYTES;
+    let remainder = MAX_BACKGROUND_TOTAL_RECORD_BYTES % MAX_BACKGROUND_RECORD_BYTES;
+    assert!(remainder > 1024);
+    for index in 0..=full_count {
+        let id = index as u64 + 1;
+        let mut bytes = serde_json::to_vec(&fixture.record_value(id, 20 + id, "command")).unwrap();
+        bytes.resize(
+            if index == full_count {
+                remainder
+            } else {
+                MAX_BACKGROUND_RECORD_BYTES
+            },
+            b' ',
+        );
+        fixture.write_bytes(id, &bytes);
+    }
+    let NativeBackgroundInspection::List(list) = block_on(inspect_native_background(
+        fixture.environment(),
+        fixture.workspace.clone(),
+        NativeBackgroundQuery::List,
+    ))
+    .unwrap() else {
+        panic!("expected list");
+    };
+    assert!(!list.truncated());
+    assert_eq!(list.records().len(), full_count + 1);
+
+    let id = full_count as u64 + 1;
+    let mut bytes = serde_json::to_vec(&fixture.record_value(id, 20 + id, "command")).unwrap();
+    bytes.resize(remainder + 1, b' ');
+    fixture.write_bytes(id, &bytes);
+    let NativeBackgroundInspection::List(list) = block_on(inspect_native_background(
+        fixture.environment(),
+        fixture.workspace.clone(),
+        NativeBackgroundQuery::List,
+    ))
+    .unwrap() else {
+        panic!("expected list");
+    };
+    assert!(list.truncated());
+    let error = block_on(inspect_native_background(
+        fixture.environment(),
+        fixture.workspace.clone(),
+        NativeBackgroundQuery::Last,
+    ))
+    .unwrap_err();
+    assert_eq!(
+        error.kind(),
+        NativeBackgroundInspectionErrorKind::ResourceLimit
+    );
 }
 
 #[cfg(target_os = "macos")]

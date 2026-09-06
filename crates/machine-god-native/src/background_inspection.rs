@@ -20,8 +20,15 @@ use crate::state_environment::{ProcessStateEnvironmentReader, capture_state_envi
 pub const MAX_BACKGROUND_RECORDS: usize = 100;
 /// Maximum number of non-dot entries processed by one listing.
 pub const MAX_BACKGROUND_DIRECTORY_ENTRIES: usize = 1_024;
-/// Maximum encoded size of one persisted background record.
-pub const MAX_BACKGROUND_RECORD_BYTES: usize = 64 * 1_024;
+/// Maximum encoded size of one persisted background record: JSON's worst-case
+/// six-byte escape per text byte plus all fixed keys, punctuation and scalars.
+pub const MAX_BACKGROUND_RECORD_BYTES: usize = 6
+    * (MAX_BACKGROUND_COMMAND_BYTES
+        + 2 * MAX_BACKGROUND_PATH_BYTES
+        + MAX_BACKGROUND_SERVER_URL_BYTES
+        + MAX_BACKGROUND_DIAGNOSTIC_BYTES)
+    + BACKGROUND_RECORD_ENVELOPE_BYTES;
+pub(crate) const BACKGROUND_RECORD_ENVELOPE_BYTES: usize = 512;
 /// Maximum aggregate record bytes accepted by one listing.
 pub const MAX_BACKGROUND_TOTAL_RECORD_BYTES: usize = 8 * 1_024 * 1_024;
 /// Maximum encoded workspace or working-directory path length.
@@ -29,7 +36,7 @@ pub const MAX_BACKGROUND_PATH_BYTES: usize = 4_096;
 /// Maximum raw byte length of an injected state-base environment value.
 pub const MAX_BACKGROUND_STATE_BASE_BYTES: usize = 4_096;
 /// Maximum command length in one persisted record.
-pub const MAX_BACKGROUND_COMMAND_BYTES: usize = 32 * 1_024;
+pub const MAX_BACKGROUND_COMMAND_BYTES: usize = machine_god_core::MAX_BACKGROUND_COMMAND_BYTES;
 /// Maximum command preview length in one list row.
 pub const MAX_BACKGROUND_COMMAND_PREVIEW_BYTES: usize = 256;
 /// Maximum optional server URL length.

@@ -10,8 +10,9 @@ use rustix::fd::{AsFd, BorrowedFd, OwnedFd};
 use rustix::fs::{AtFlags, Dir, FileType, FlockOperation, Mode, OFlags, RenameFlags};
 
 use crate::background_inspection::{
-    BACKGROUND_DIRECTORY, MAX_BACKGROUND_DIRECTORY_ENTRIES, MAX_BACKGROUND_PATH_BYTES,
-    MAX_BACKGROUND_RECORD_BYTES, MAX_BACKGROUND_TOTAL_RECORD_BYTES, NativeBackgroundState,
+    BACKGROUND_DIRECTORY, BACKGROUND_RECORD_ENVELOPE_BYTES, MAX_BACKGROUND_DIAGNOSTIC_BYTES,
+    MAX_BACKGROUND_DIRECTORY_ENTRIES, MAX_BACKGROUND_PATH_BYTES, MAX_BACKGROUND_RECORD_BYTES,
+    MAX_BACKGROUND_SERVER_URL_BYTES, MAX_BACKGROUND_TOTAL_RECORD_BYTES, NativeBackgroundState,
     StoredBackgroundRecord, background_record_name, background_workspace_name,
     is_background_record_name, is_canonical_absolute_background_path,
     supported::decode_stored_record, valid_background_record,
@@ -282,7 +283,8 @@ impl BackgroundStore {
         };
         after_snapshot();
 
-        for observed in records {
+        for scanned in records {
+            let observed = scanned.record;
             if observed.state != NativeBackgroundState::Running {
                 continue;
             }
@@ -352,14 +354,17 @@ impl BackgroundStore {
         after_record_snapshot: impl FnOnce(),
     ) -> Result<(), BackgroundStoreError> {
         let records = scan_complete_records(self.root.as_fd(), &self.workspace)?;
-        if records.iter().any(|record| record.id > allocator_value) {
+        if records
+            .iter()
+            .any(|entry| entry.record.id > allocator_value)
+        {
             return Err(corrupt());
         }
         after_record_snapshot();
         let control = scan_control_snapshot(self.control.as_fd())?;
         let expected_locks: BTreeSet<String> = records
             .iter()
-            .map(|record| record_lock_name(record.id))
+            .map(|entry| record_lock_name(entry.record.id))
             .collect();
         if !expected_locks.is_subset(&control.lock_names) {
             return Err(corrupt());
@@ -380,10 +385,29 @@ impl BackgroundStore {
             .checked_sub(pending)
             .ok_or_else(|| error(BackgroundStoreErrorKind::ResourceLimit))?;
         let remove_count = records.len().saturating_sub(maximum_records);
-        let victims = self.select_terminal_victims(&records, remove_count, &mut contended_locks)?;
-        if victims.len() != remove_count {
-            return Err(error(BackgroundStoreErrorKind::ResourceLimit));
-        }
+        // A pending lease can still publish any valid command, independently
+        // of the allocator lock. Charge its complete record ceiling until a
+        // later snapshot observes its immutable fields. Also reserve the new
+        // lease requested by reserve_id before compacting or allocating it.
+        let new_slots = MAX_RETAINED_BACKGROUND_RECORDS
+            .checked_sub(maximum_occupancy)
+            .ok_or_else(|| error(BackgroundStoreErrorKind::ResourceLimit))?;
+        let reserved_bytes = pending
+            .checked_add(new_slots)
+            .and_then(|slots| slots.checked_mul(MAX_BACKGROUND_RECORD_BYTES))
+            .ok_or_else(|| error(BackgroundStoreErrorKind::ResourceLimit))?;
+        let admitted_bytes = records.iter().try_fold(reserved_bytes, |total, entry| {
+            total
+                .checked_add(entry.admission_bytes())
+                .ok_or_else(|| error(BackgroundStoreErrorKind::ResourceLimit))
+        })?;
+        let remove_bytes = admitted_bytes.saturating_sub(MAX_BACKGROUND_TOTAL_RECORD_BYTES);
+        let victims = self.select_terminal_victims(
+            &records,
+            remove_count,
+            remove_bytes,
+            &mut contended_locks,
+        )?;
 
         self.commit_compaction(&victims, &orphan_locks, &removable_temps)
     }
@@ -450,24 +474,28 @@ impl BackgroundStore {
 
     fn select_terminal_victims(
         &self,
-        records: &[StoredBackgroundRecord],
+        records: &[ScannedRecord],
         remove_count: usize,
+        remove_bytes: usize,
         contended_locks: &mut BTreeSet<String>,
     ) -> Result<Vec<TerminalVictim>, BackgroundStoreError> {
         let mut terminal: Vec<_> = records
             .iter()
-            .filter(|record| record.state != NativeBackgroundState::Running)
+            .filter(|entry| entry.record.state != NativeBackgroundState::Running)
             .collect();
         terminal.sort_unstable_by(|left, right| {
-            left.updated_at_ms
-                .cmp(&right.updated_at_ms)
-                .then_with(|| left.id.cmp(&right.id))
+            left.record
+                .updated_at_ms
+                .cmp(&right.record.updated_at_ms)
+                .then_with(|| left.record.id.cmp(&right.record.id))
         });
         let mut victims = Vec::with_capacity(remove_count);
-        for record in terminal {
-            if victims.len() == remove_count {
+        let mut reclaimed_bytes = 0_usize;
+        for entry in terminal {
+            if victims.len() >= remove_count && reclaimed_bytes >= remove_bytes {
                 break;
             }
+            let record = &entry.record;
             let lock_name = record_lock_name(record.id);
             if contended_locks.contains(&lock_name) {
                 continue;
@@ -483,6 +511,7 @@ impl BackgroundStore {
                 return Err(unavailable());
             };
             if &current == record && current.state != NativeBackgroundState::Running {
+                reclaimed_bytes += entry.admission_bytes();
                 victims.push(TerminalVictim {
                     data_name,
                     lock_name,
@@ -490,7 +519,11 @@ impl BackgroundStore {
                 });
             }
         }
-        Ok(victims)
+        if victims.len() < remove_count || reclaimed_bytes < remove_bytes {
+            Err(error(BackgroundStoreErrorKind::ResourceLimit))
+        } else {
+            Ok(victims)
+        }
     }
 
     fn commit_compaction(
@@ -647,6 +680,39 @@ struct TerminalVictim {
     record: StoredBackgroundRecord,
 }
 
+struct ScannedRecord {
+    record: StoredBackgroundRecord,
+    encoded_bytes: usize,
+}
+
+impl ScannedRecord {
+    fn admission_bytes(&self) -> usize {
+        if self.record.state != NativeBackgroundState::Running {
+            return self.encoded_bytes;
+        }
+        // These strings cannot change under valid_replacement. Everything
+        // mutable reserves its full encoded ceiling, including final diagnostics,
+        // so a writer needs no allocator lock to finish after admission.
+        let replacement_bound = encoded_string_content_bytes(&self.record.workspace)
+            + encoded_string_content_bytes(&self.record.command)
+            + encoded_string_content_bytes(&self.record.cwd)
+            + 6 * (MAX_BACKGROUND_SERVER_URL_BYTES + MAX_BACKGROUND_DIAGNOSTIC_BYTES)
+            + BACKGROUND_RECORD_ENVELOPE_BYTES;
+        self.encoded_bytes.max(replacement_bound)
+    }
+}
+
+fn encoded_string_content_bytes(value: &str) -> usize {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'"' | b'\\' | b'\x08' | b'\t' | b'\n' | b'\x0c' | b'\r' => 2,
+            0..=31 => 6,
+            _ => 1,
+        })
+        .sum()
+}
+
 /// Owns one successfully acquired flock authority.
 ///
 /// Closing the descriptor alone is insufficient when a concurrently spawned
@@ -765,7 +831,7 @@ impl Write for BoundedSerialization {
 fn scan_complete_records(
     root: BorrowedFd<'_>,
     workspace: &str,
-) -> Result<Vec<StoredBackgroundRecord>, BackgroundStoreError> {
+) -> Result<Vec<ScannedRecord>, BackgroundStoreError> {
     let duplicate = rustix::fs::openat(root, ".", directory_open_flags(), Mode::empty())
         .map_err(|_| unavailable())?;
     let mut directory = Dir::new(duplicate).map_err(|_| unavailable())?;
@@ -807,7 +873,10 @@ fn scan_complete_records(
             .checked_add(encoded_bytes)
             .filter(|total| *total <= MAX_BACKGROUND_TOTAL_RECORD_BYTES)
             .ok_or_else(|| error(BackgroundStoreErrorKind::ResourceLimit))?;
-        records.push(record);
+        records.push(ScannedRecord {
+            record,
+            encoded_bytes,
+        });
     }
     Ok(records)
 }
@@ -1780,14 +1849,61 @@ mod tests {
     }
 
     #[test]
-    fn publication_rejects_serialized_overflow_without_exposing_a_record() {
+    fn publication_round_trips_full_commands_including_worst_json_escaping() {
+        for command in [
+            "x".repeat(crate::MAX_BACKGROUND_COMMAND_BYTES),
+            "\u{1}".repeat(crate::MAX_BACKGROUND_COMMAND_BYTES),
+            "🦀".repeat(crate::MAX_BACKGROUND_COMMAND_BYTES / 4),
+            "\\\"".repeat(crate::MAX_BACKGROUND_COMMAND_BYTES / 2),
+        ] {
+            let fixture = Fixture::new();
+            let store = fixture.store();
+            let lease = reserve_eventually(&store);
+            let mut record = running(&store, lease.id(), 10);
+            record.command = command;
+            store.publish_initial(&lease, &record).unwrap();
+            let (persisted, _) = read_record(
+                store.root.as_fd(),
+                store.workspace(),
+                &background_record_name(lease.id()),
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(persisted, record);
+            assert_inspected_command(&fixture, lease.id(), &record.command);
+
+            record.state = NativeBackgroundState::Exited;
+            record.exit_code = Some(0);
+            store.replace(&lease, &record).unwrap();
+            drop(lease);
+            drop(store);
+            let reopened = fixture.store();
+            assert_eq!(reopened.reconcile().unwrap().inspected, 1);
+            assert_inspected_command(&fixture, record.id, &record.command);
+        }
+    }
+
+    fn assert_inspected_command(fixture: &Fixture, id: u64, command: &str) {
+        let NativeBackgroundInspection::Detail(detail) = block_on(inspect_native_background(
+            fixture.environment(),
+            PathBuf::from(&fixture.workspace),
+            NativeBackgroundQuery::Id(id),
+        ))
+        .unwrap() else {
+            panic!("expected detail");
+        };
+        assert_eq!(detail.command(), command);
+    }
+
+    #[test]
+    fn publication_rejects_command_one_byte_overflow_without_exposing_a_record() {
         let fixture = Fixture::new();
         let store = fixture.store();
         let lease = reserve_eventually(&store);
         let mut record = running(&store, lease.id(), 10);
-        record.command = "\u{1}".repeat(crate::MAX_BACKGROUND_COMMAND_BYTES);
+        record.command = "\u{1}".repeat(crate::MAX_BACKGROUND_COMMAND_BYTES + 1);
         let error = store.publish_initial(&lease, &record).unwrap_err();
-        assert_eq!(error.kind(), BackgroundStoreErrorKind::ResourceLimit);
+        assert_eq!(error.kind(), BackgroundStoreErrorKind::Corrupt);
 
         let inspection = block_on(inspect_native_background(
             fixture.environment(),
@@ -1798,6 +1914,213 @@ mod tests {
         assert_eq!(
             inspection.kind(),
             crate::NativeBackgroundInspectionErrorKind::NotFound
+        );
+    }
+
+    #[test]
+    fn derived_record_ceiling_covers_all_maximum_fields_and_replacement_headroom() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let mut record = running(&store, u64::MAX, u64::MAX);
+        record.started_at_ms = u64::MAX;
+        record.pid = Some(u32::MAX);
+        record.workspace = format!("/{}", "\u{1}".repeat(MAX_BACKGROUND_PATH_BYTES - 1));
+        record.cwd.clone_from(&record.workspace);
+        record.command = "\u{1}".repeat(crate::MAX_BACKGROUND_COMMAND_BYTES);
+        record.server_url = Some("\u{1}".repeat(MAX_BACKGROUND_SERVER_URL_BYTES));
+        record.diagnostic = Some("\u{1}".repeat(MAX_BACKGROUND_DIAGNOSTIC_BYTES));
+        assert!(valid_background_record(&record, &record.workspace));
+        let bytes = serialize_record(&record).unwrap();
+        assert!(bytes.len() <= MAX_BACKGROUND_RECORD_BYTES);
+        assert!(bytes.len() > MAX_BACKGROUND_RECORD_BYTES - BACKGROUND_RECORD_ENVELOPE_BYTES);
+        let scanned = ScannedRecord {
+            record: record.clone(),
+            encoded_bytes: bytes.len(),
+        };
+        record.state = NativeBackgroundState::Failed;
+        record.exit_code = Some(i32::MIN);
+        assert!(valid_replacement(&scanned.record, &record));
+        assert!(serialize_record(&record).unwrap().len() <= scanned.admission_bytes());
+
+        // The arithmetic tracks serde_json's actual byte escaping, including
+        // the short control escapes, raw UTF-8, quotes and reverse solidus.
+        let all_controls: String = (0_u8..=31).map(char::from).collect();
+        let sample = format!("{all_controls}🦀\\\"");
+        assert_eq!(
+            encoded_string_content_bytes(&sample) + 2,
+            serde_json::to_vec(&sample).unwrap().len()
+        );
+    }
+
+    #[test]
+    fn replacement_cannot_enlarge_immutable_strings_or_completed_records() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let lease = reserve_eventually(&store);
+        let record = running(&store, lease.id(), 10);
+        store.publish_initial(&lease, &record).unwrap();
+        let mut changed_command = record.clone();
+        changed_command.command = "\u{1}".repeat(crate::MAX_BACKGROUND_COMMAND_BYTES);
+        let mut changed_cwd = record.clone();
+        changed_cwd.cwd = format!("/{}", "x".repeat(MAX_BACKGROUND_PATH_BYTES - 1));
+        for replacement in [changed_command, changed_cwd] {
+            assert_eq!(
+                store.replace(&lease, &replacement).unwrap_err().kind(),
+                BackgroundStoreErrorKind::Conflict
+            );
+        }
+        let mut completed = record;
+        completed.state = NativeBackgroundState::Exited;
+        completed.exit_code = Some(0);
+        store.replace(&lease, &completed).unwrap();
+        completed.diagnostic = Some("\u{1}".repeat(MAX_BACKGROUND_DIAGNOSTIC_BYTES));
+        assert_eq!(
+            store.replace(&lease, &completed).unwrap_err().kind(),
+            BackgroundStoreErrorKind::Conflict
+        );
+    }
+
+    #[test]
+    fn pending_leases_reserve_full_record_capacity_before_any_publication() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let capacity = MAX_BACKGROUND_TOTAL_RECORD_BYTES / MAX_BACKGROUND_RECORD_BYTES;
+        let mut leases = Vec::new();
+        for _ in 0..capacity {
+            leases.push(reserve_eventually(&store));
+        }
+        let error = store.reserve_id().unwrap_err();
+        assert_eq!(error.kind(), BackgroundStoreErrorKind::ResourceLimit);
+        assert_eq!(
+            read_counter(store.control.as_fd()).unwrap(),
+            capacity as u64
+        );
+        for lease in &leases {
+            let mut record = running(&store, lease.id(), 10);
+            record.command = "\u{1}".repeat(crate::MAX_BACKGROUND_COMMAND_BYTES);
+            record.server_url = Some("\u{1}".repeat(MAX_BACKGROUND_SERVER_URL_BYTES));
+            record.diagnostic = Some("\u{1}".repeat(MAX_BACKGROUND_DIAGNOSTIC_BYTES));
+            store.publish_initial(lease, &record).unwrap();
+        }
+        let records = scan_complete_records(store.root.as_fd(), store.workspace()).unwrap();
+        assert_eq!(records.len(), capacity);
+        // Publication releases unused pending headroom on the next snapshot.
+        leases.push(reserve_eventually(&store));
+        assert_eq!(leases.len(), capacity + 1);
+    }
+
+    #[test]
+    fn publication_between_snapshots_keeps_its_pending_byte_reservation() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let capacity = MAX_BACKGROUND_TOTAL_RECORD_BYTES / MAX_BACKGROUND_RECORD_BYTES;
+        let leases: Vec<_> = (0..capacity).map(|_| reserve_eventually(&store)).collect();
+        let lease = &leases[0];
+        let mut record = running(&store, lease.id(), 10);
+        record.command = "\u{1}".repeat(crate::MAX_BACKGROUND_COMMAND_BYTES);
+        let error = store
+            .compact_history_locked_inner(
+                MAX_RETAINED_BACKGROUND_RECORDS - 1,
+                capacity as u64,
+                || {
+                    store.publish_initial(lease, &record).unwrap();
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error.kind(), BackgroundStoreErrorKind::ResourceLimit);
+        assert_eq!(
+            read_counter(store.control.as_fd()).unwrap(),
+            capacity as u64
+        );
+        assert_inspected_command(&fixture, lease.id(), &record.command);
+        drop(leases);
+        // Dropping unpublished leases releases their byte reservations on the
+        // next allocator snapshot; no persisted PID is needed to prove this.
+        assert_eq!(reserve_eventually(&store).id(), capacity as u64 + 1);
+    }
+
+    #[test]
+    fn aggregate_admission_retains_replacement_headroom_and_compacts_large_history() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let mut leases = Vec::new();
+        let mut records = Vec::new();
+        loop {
+            match store.reserve_id() {
+                Ok(lease) => {
+                    let mut record = running(&store, lease.id(), 10 + lease.id());
+                    record.command = "\u{1}".repeat(crate::MAX_BACKGROUND_COMMAND_BYTES);
+                    store.publish_initial(&lease, &record).unwrap();
+                    records.push(record);
+                    leases.push(lease);
+                    assert!(leases.len() <= MAX_RETAINED_BACKGROUND_RECORDS);
+                }
+                Err(error) => {
+                    assert_eq!(error.kind(), BackgroundStoreErrorKind::ResourceLimit);
+                    break;
+                }
+            }
+        }
+        assert!(leases.len() < MAX_RETAINED_BACKGROUND_RECORDS);
+        let names_before = record_file_names(
+            &fixture
+                .state_root
+                .join(BACKGROUND_DIRECTORY)
+                .join(background_workspace_name(&fixture.workspace)),
+        );
+        for (lease, record) in leases.iter().zip(&mut records) {
+            record.state = NativeBackgroundState::Exited;
+            record.exit_code = Some(0);
+            record.server_url = Some("\u{1}".repeat(MAX_BACKGROUND_SERVER_URL_BYTES));
+            record.diagnostic = Some("\u{1}".repeat(MAX_BACKGROUND_DIAGNOSTIC_BYTES));
+            store.replace(lease, record).unwrap();
+        }
+        let scanned = scan_complete_records(store.root.as_fd(), store.workspace()).unwrap();
+        assert_eq!(scanned.len(), records.len());
+        assert!(
+            scanned
+                .iter()
+                .map(|entry| entry.encoded_bytes)
+                .sum::<usize>()
+                <= MAX_BACKGROUND_TOTAL_RECORD_BYTES
+        );
+        // Locked terminal records are not victims; refusal cannot delete a
+        // partial victim plan or advance the identifier counter.
+        assert_eq!(
+            store.reserve_id().unwrap_err().kind(),
+            BackgroundStoreErrorKind::ResourceLimit
+        );
+        assert_eq!(
+            read_counter(store.control.as_fd()).unwrap(),
+            records.len() as u64
+        );
+        assert_eq!(
+            record_file_names(
+                &fixture
+                    .state_root
+                    .join(BACKGROUND_DIRECTORY)
+                    .join(background_workspace_name(&fixture.workspace))
+            ),
+            names_before
+        );
+
+        drop(leases.remove(0));
+        let next = reserve_eventually(&store);
+        assert_eq!(next.id(), records.len() as u64 + 1);
+        assert!(
+            read_record(
+                store.root.as_fd(),
+                store.workspace(),
+                &background_record_name(records[0].id)
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert_eq!(
+            scan_complete_records(store.root.as_fd(), store.workspace())
+                .unwrap()
+                .len(),
+            records.len() - 1
         );
     }
 
