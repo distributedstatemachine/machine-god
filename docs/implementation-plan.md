@@ -137,6 +137,9 @@ Rust 1.94.1 formatting, strict workspace Clippy, workspace tests and doctests,
 all 421 terminal component tests, and the freshly built release helper's 16
 startup and 16 PTY tests, including delayed startup, deadline expiry and cleanup.
 Full-feature reviews and remote delivery remain pending.
+Session-owned startup now advances in the ordinary registry pump, with durable
+shell/command phases, a drained profile-output boundary and timeout cleanup even
+under profile-lock contention. Production host assembly remains open.
 The complete normalized twelve-action core contract and effect-free public
 decoder are present, including request/result identity checks and lossless
 foreground execution outcomes. Numeric coercion now matches pinned binary128

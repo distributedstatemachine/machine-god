@@ -532,8 +532,13 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
                 session.ensure_checkpoint_reserve_with(&mut context)?;
             }
             let mut permit = session.reserve_profile_read(&mut transaction, budget, &namespace)?;
-            let mut step = session.pump_read_with(&mut permit, now_ms)?;
+            let step = session.pump_read_with(&mut permit, now_ms);
             drop(permit);
+            let mut step = step.map_err(|error| {
+                let mut context =
+                    TerminalProfileMutationContext::new(&mut transaction, *budget, &namespace);
+                session.fail_pending_startup_with(&mut context, now_ms, error)
+            })?;
             let cleanup_error = if step.cleanup_needed {
                 // Keep the same transaction, but release the one-read permit:
                 // exited cleanup can drain multiple bounded native chunks.
@@ -548,6 +553,12 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
                 step.probes.clear();
                 error
             } else {
+                if step.output.is_empty() {
+                    let mut context =
+                        TerminalProfileMutationContext::new(&mut transaction, *budget, &namespace);
+                    session.advance_startup_with(&mut context, now_ms)?;
+                    step.lifecycle = session.context().lifecycle;
+                }
                 None
             };
             Ok((step, cleanup_error))

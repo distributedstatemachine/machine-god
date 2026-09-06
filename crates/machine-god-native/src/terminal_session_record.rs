@@ -32,6 +32,15 @@ impl From<TerminalMonitorError> for TerminalSessionRecordError {
 }
 type Result<T> = std::result::Result<T, TerminalSessionRecordError>;
 
+/// Durable observations only. Recovery never turns these into startup authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TerminalStartupStage {
+    Prepared,
+    ShellReady,
+    CommandStarted,
+}
+
 /// Display and catalog facts supplied by the trusted host at launch. Neither
 /// identities nor paths are capabilities, and recovery never executes them.
 #[derive(Clone, Serialize, Deserialize)]
@@ -91,6 +100,10 @@ pub(crate) struct TerminalSessionFacts {
     pub(crate) metadata: Option<TerminalSessionMetadata>,
     #[serde(default)]
     pub(crate) attention: TerminalAttentionState,
+    #[serde(default)]
+    pub(crate) startup_stage: Option<TerminalStartupStage>,
+    #[serde(default)]
+    pub(crate) command_start_cursor: Option<TerminalCursor>,
 }
 impl fmt::Debug for TerminalSessionFacts {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -158,6 +171,8 @@ impl TerminalSessionFacts {
             monitor_notifications_incomplete: false,
             metadata: None,
             attention: TerminalAttentionState::default(),
+            startup_stage: None,
+            command_start_cursor: None,
         };
         facts.validate()?;
         Ok(facts)
@@ -191,6 +206,31 @@ impl TerminalSessionFacts {
         if let Some(metadata) = &self.metadata {
             metadata.validate()?;
         }
+        let has_command = self
+            .metadata
+            .as_ref()
+            .is_some_and(|metadata| metadata.command.is_some());
+        require(match self.startup_stage {
+            None => self.command_start_cursor.is_none(),
+            Some(TerminalStartupStage::Prepared) => {
+                self.metadata.is_some()
+                    && self.command_start_cursor.is_none()
+                    && self.context.lifecycle != TerminalLifecycle::Running
+            }
+            Some(TerminalStartupStage::ShellReady) => {
+                self.metadata.is_some()
+                    && self.command_start_cursor.is_none()
+                    && (!has_command || self.context.lifecycle != TerminalLifecycle::Running)
+            }
+            Some(TerminalStartupStage::CommandStarted) => {
+                has_command
+                    && self.context.lifecycle != TerminalLifecycle::Starting
+                    && self
+                        .command_start_cursor
+                        .as_ref()
+                        .is_some_and(|cursor| cursor <= &self.context.cursor)
+            }
+        })?;
         self.attention
             .validate()
             .map_err(|_| TerminalSessionRecordError::Invalid)?;
@@ -323,6 +363,40 @@ mod tests {
             SessionId::new("logical-owner").unwrap(),
             SessionIncarnationId::new(incarnation).unwrap(),
         )
+    }
+
+    #[test]
+    fn startup_facts_validate_order_cursor_and_explicit_legacy_absence() {
+        let (mut facts, monitors) = fixture();
+        facts.metadata = Some(test_metadata());
+        let mut legacy = serde_json::to_value(&facts).unwrap();
+        legacy.as_object_mut().unwrap().remove("startup_stage");
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("command_start_cursor");
+        let (decoded, _) = TerminalSessionFacts::decode(
+            &reframe(&legacy, &monitors),
+            &facts.session_id,
+            &facts.context.cursor,
+        )
+        .unwrap();
+        assert_eq!(decoded.startup_stage, None);
+        assert_eq!(decoded.command_start_cursor, None);
+        facts.startup_stage = Some(TerminalStartupStage::Prepared);
+        assert!(facts.encode(&monitors).is_err());
+        facts.startup_stage = Some(TerminalStartupStage::ShellReady);
+        assert!(facts.encode(&monitors).is_ok());
+        facts.metadata.as_mut().unwrap().command = Some("command".into());
+        assert!(facts.encode(&monitors).is_err());
+        facts.startup_stage = Some(TerminalStartupStage::CommandStarted);
+        assert!(facts.encode(&monitors).is_err());
+        facts.command_start_cursor = Some(TerminalCursor::new(1, 6).unwrap());
+        assert!(facts.encode(&monitors).is_err());
+        facts.command_start_cursor = Some(TerminalCursor::new(1, 5).unwrap());
+        assert!(facts.encode(&monitors).is_ok());
+        facts.metadata.as_mut().unwrap().command = None;
+        assert!(facts.encode(&monitors).is_err());
     }
 
     #[test]

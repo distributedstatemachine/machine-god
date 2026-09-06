@@ -21,17 +21,19 @@ use crate::terminal_pty::{
     TerminalPty, TerminalPtyClose, TerminalPtyDimensions, TerminalPtyRead, TerminalPtyStatus,
 };
 use crate::terminal_session_record::{
-    TerminalSessionFacts, TerminalSessionMetadata, TerminalSessionRecordError,
+    TerminalSessionFacts, TerminalSessionMetadata, TerminalSessionRecordError, TerminalStartupStage,
 };
+use crate::terminal_startup::{TerminalStartupControl, TerminalStartupEvent};
 use machine_god_core::{
-    BackgroundOutputOwner, TerminalActionResult, TerminalActorRole, TerminalAllowedControls,
-    TerminalAttention, TerminalAttentionState, TerminalClosePolicy, TerminalCursor,
-    TerminalDimensions, TerminalEventQuery, TerminalGap, TerminalLifecycle, TerminalMonitorEvent,
-    TerminalMonitorOperation, TerminalScreen, TerminalSessionId, TerminalSignal,
-    TerminalWriteLease, TerminalWriteLeaseIntent, TerminalWriteRequest,
+    BackgroundOutputOwner, CancellationToken, TerminalActionResult, TerminalActorRole,
+    TerminalAllowedControls, TerminalAttention, TerminalAttentionState, TerminalClosePolicy,
+    TerminalCursor, TerminalDimensions, TerminalEventQuery, TerminalGap, TerminalLifecycle,
+    TerminalMonitorEvent, TerminalMonitorOperation, TerminalScreen, TerminalSessionId,
+    TerminalSignal, TerminalWriteLease, TerminalWriteLeaseIntent, TerminalWriteRequest,
 };
 use std::fmt;
 use std::num::NonZeroU64;
+use std::time::Instant;
 
 /// Implementations retain native authority, never reconstruct it from a PID.
 /// Read/write are nonblocking and bounded; Drop must release native ownership.
@@ -139,6 +141,12 @@ enum TerminalPumpMode {
     RunningRead,
     WithExitDrain,
 }
+struct SessionStartup {
+    control: TerminalStartupControl,
+    cancellation: CancellationToken,
+    /// True means the durable transition succeeded; only its ACK may be retried.
+    pending: Option<(TerminalStartupEvent, bool)>,
+}
 pub(crate) struct TerminalSession<B: TerminalSessionBackend> {
     backend: Option<B>,
     history: TerminalHistory,
@@ -156,6 +164,9 @@ pub(crate) struct TerminalSession<B: TerminalSessionBackend> {
     pending_output_gap: bool,
     now_ms: i64,
     last_output_ms: i64,
+    startup: Option<SessionStartup>,
+    startup_stage: TerminalStartupStage,
+    command_start_cursor: Option<TerminalCursor>,
 }
 impl<B: TerminalSessionBackend> fmt::Debug for TerminalSession<B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -224,6 +235,9 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             pending_output_gap: false,
             now_ms,
             last_output_ms: now_ms,
+            startup: None,
+            startup_stage: TerminalStartupStage::Prepared,
+            command_start_cursor: None,
         };
         session.persist_with(persistence)?;
         Ok(session)
@@ -242,7 +256,9 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         now_ms: i64,
     ) -> Result<()> {
         self.check_time(now_ms)?;
-        if self.lifecycle != TerminalLifecycle::Starting {
+        if self.lifecycle != TerminalLifecycle::Starting
+            || self.startup_stage != TerminalStartupStage::Prepared
+        {
             return Err(TerminalSessionError::InvalidState);
         }
         self.now_ms = now_ms;
@@ -255,8 +271,163 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         {
             return Err(self.failed_observation_with(persistence, TerminalSessionError::Native));
         }
+        self.startup_stage = TerminalStartupStage::ShellReady;
+        if self.metadata.command.is_none() {
+            self.lifecycle = TerminalLifecycle::Running;
+        }
+        self.persist_with(persistence)
+    }
+
+    /// The trusted owner has drained profile bytes before this boundary. This
+    /// durable observation alone never grants recovered process authority.
+    pub(crate) fn command_started_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        now_ms: i64,
+    ) -> Result<()> {
+        self.check_time(now_ms)?;
+        if self.lifecycle != TerminalLifecycle::Starting
+            || self.startup_stage != TerminalStartupStage::ShellReady
+            || self.metadata.command.is_none()
+        {
+            return Err(TerminalSessionError::InvalidState);
+        }
+        self.now_ms = now_ms;
+        self.command_start_cursor = Some(self.history.latest());
+        self.startup_stage = TerminalStartupStage::CommandStarted;
         self.lifecycle = TerminalLifecycle::Running;
         self.persist_with(persistence)
+    }
+
+    /// Trusted host assembly transfers the matching control half on the owner
+    /// worker. The operation token governs startup only, never later input.
+    pub(crate) fn attach_startup_control(
+        &mut self,
+        control: TerminalStartupControl,
+        cancellation: CancellationToken,
+    ) -> Result<()> {
+        if self.startup.is_some()
+            || self.lifecycle != TerminalLifecycle::Starting
+            || self.startup_stage != TerminalStartupStage::Prepared
+            || control.has_command() != self.metadata.command.is_some()
+        {
+            return Err(TerminalSessionError::InvalidState);
+        }
+        self.startup = Some(SessionStartup {
+            control,
+            cancellation,
+            pending: None,
+        });
+        Ok(())
+    }
+
+    fn poll_startup_control(&mut self) -> Result<()> {
+        if let Some(startup) = &mut self.startup
+            && let Some(event) = startup
+                .control
+                .poll(Instant::now(), &startup.cancellation)
+                .map_err(|_| TerminalSessionError::Native)?
+        {
+            if startup.pending.is_some() {
+                return Err(TerminalSessionError::InvalidState);
+            }
+            startup.pending = Some((event, false));
+        }
+        Ok(())
+    }
+
+    /// Called after an admitted read observes no more startup output, with its
+    /// read permit released. Ordinary persistence precedes every ACK; the
+    /// command cannot run while profile output is still ahead of its cursor.
+    pub(crate) fn advance_startup_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        now_ms: i64,
+    ) -> Result<()> {
+        self.check_time(now_ms)?;
+        self.now_ms = now_ms;
+        let result = (|| {
+            // The event was observed BEFORE the admitted read. Polling for a
+            // new event here would race profile bytes arriving between an
+            // empty read and marker receipt, misplacing the command cursor.
+            let Some((event, published)) =
+                self.startup.as_ref().and_then(|startup| startup.pending)
+            else {
+                return Ok(());
+            };
+            if !published {
+                match event {
+                    TerminalStartupEvent::ShellReady => {
+                        self.shell_ready_with(persistence, now_ms)?;
+                    }
+                    TerminalStartupEvent::CommandStarted => {
+                        self.command_started_with(persistence, now_ms)?;
+                    }
+                }
+                self.startup.as_mut().expect("attached startup").pending = Some((event, true));
+            }
+            let startup = self.startup.as_mut().expect("attached startup");
+            let acknowledged = match event {
+                TerminalStartupEvent::ShellReady => startup
+                    .control
+                    .acknowledge_shell_ready(Instant::now(), &startup.cancellation),
+                TerminalStartupEvent::CommandStarted => startup
+                    .control
+                    .release_command(Instant::now(), &startup.cancellation),
+            }
+            .map_err(|_| TerminalSessionError::Native)?;
+            if acknowledged {
+                startup.pending = None;
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            return Err(self.abort_startup_with(Some(persistence), now_ms, error));
+        }
+        if let Some(startup) = &mut self.startup
+            && startup.control.is_complete()
+            && startup.control.retry_cleanup().is_ok()
+        {
+            self.startup.take();
+        }
+        Ok(())
+    }
+
+    fn abort_startup_with(
+        &mut self,
+        persistence: Option<&mut dyn TerminalJournalPersistence>,
+        now_ms: i64,
+        error: TerminalSessionError,
+    ) -> TerminalSessionError {
+        self.startup.take();
+        self.now_ms = self.now_ms.max(now_ms);
+        if let Some(persistence) = persistence {
+            let native = self.finish_native_with(persistence, true, TerminalLifecycle::Lost);
+            self.lose();
+            let _ = self.persist_with(persistence);
+            if let Err(failure) = native {
+                self.publication_error.get_or_insert(failure);
+            }
+        } else {
+            let _ = self.teardown_without_persistence(true, now_ms, error);
+            self.lose();
+        }
+        error
+    }
+
+    /// A failed startup read cannot leave a blocked shell alive. The caller
+    /// must release any restricted read permit before supplying this context.
+    pub(crate) fn fail_pending_startup_with(
+        &mut self,
+        persistence: &mut dyn TerminalJournalPersistence,
+        now_ms: i64,
+        error: TerminalSessionError,
+    ) -> TerminalSessionError {
+        if self.startup.is_some() {
+            self.abort_startup_with(Some(persistence), now_ms, error)
+        } else {
+            error
+        }
     }
     pub(crate) fn context(&self) -> TerminalMonitorContext {
         TerminalMonitorContext {
@@ -278,6 +449,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
     /// bounded-read permit. Does not consume output or publish session facts;
     /// `pump_with` still rechecks status to handle a later process exit.
     pub(crate) fn needs_native_cleanup(&mut self) -> Result<bool> {
+        self.poll_startup_control()?;
         let Some(backend) = self.backend.as_mut() else {
             return Ok(false);
         };
@@ -307,6 +479,9 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         self.check_time(now_ms)?;
         self.now_ms = now_ms;
         let error = TerminalSessionError::Native;
+        if self.startup.is_some() {
+            return Err(self.abort_startup_with(persistence, now_ms, error));
+        }
         if let Some(persistence) = persistence {
             return Err(self.failed_observation_with(persistence, error));
         }
@@ -741,7 +916,23 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         persistence: &mut dyn TerminalJournalPersistence,
         now_ms: i64,
     ) -> Result<TerminalSessionStep> {
-        self.pump_mode_with(persistence, now_ms, TerminalPumpMode::WithExitDrain)
+        if let Err(error) = self.poll_startup_control() {
+            return Err(self.abort_startup_with(Some(persistence), now_ms, error));
+        }
+        let mut step = self
+            .pump_mode_with(persistence, now_ms, TerminalPumpMode::WithExitDrain)
+            .map_err(|error| self.fail_pending_startup_with(persistence, now_ms, error))?;
+        if step.output.is_empty()
+            && self.backend.is_some()
+            && matches!(
+                self.lifecycle,
+                TerminalLifecycle::Starting | TerminalLifecycle::Running
+            )
+        {
+            self.advance_startup_with(persistence, now_ms)?;
+            step.lifecycle = self.lifecycle;
+        }
+        Ok(step)
     }
 
     /// Consume at most one admitted read, never an exit drain. The owner drops
@@ -1342,6 +1533,10 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         )?;
         facts.monitor_notifications_incomplete = self.monitor_notifications_incomplete;
         facts.metadata = Some(self.metadata.clone());
+        facts.startup_stage = Some(self.startup_stage);
+        facts
+            .command_start_cursor
+            .clone_from(&self.command_start_cursor);
         facts.attention = if matches!(
             self.lifecycle,
             TerminalLifecycle::Starting | TerminalLifecycle::Running
@@ -2001,6 +2196,60 @@ mod tests {
         }
     }
     struct Backend(Arc<Mutex<State>>);
+
+    #[test]
+    fn command_start_is_distinct_durable_and_never_recovered_as_authority() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.metadata.command = Some("printf command".into());
+        let mut persistence = TerminalTestPersistence;
+        assert_eq!(
+            session.command_started_with(&mut persistence, 0),
+            Err(TerminalSessionError::InvalidState)
+        );
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .output
+            .push_back(b"profile bytes".to_vec());
+        session.pump(1).unwrap();
+        session.shell_ready_with(&mut persistence, 2).unwrap();
+        assert_eq!(session.context().lifecycle, TerminalLifecycle::Starting);
+        let state = session.history.load_state().unwrap().unwrap();
+        let (facts, _) = TerminalSessionFacts::decode(&state.bytes, &id(), &state.source).unwrap();
+        assert_eq!(facts.startup_stage, Some(TerminalStartupStage::ShellReady));
+        assert_eq!(facts.command_start_cursor, None);
+        assert_eq!(
+            session.shell_ready_with(&mut persistence, 2),
+            Err(TerminalSessionError::InvalidState)
+        );
+        session.command_started_with(&mut persistence, 3).unwrap();
+        let state = session.history.load_state().unwrap().unwrap();
+        let (facts, _) = TerminalSessionFacts::decode(&state.bytes, &id(), &state.source).unwrap();
+        assert_eq!(
+            facts.startup_stage,
+            Some(TerminalStartupStage::CommandStarted)
+        );
+        assert_eq!(facts.command_start_cursor, Some(session.context().cursor));
+        assert_eq!(facts.context.lifecycle, TerminalLifecycle::Running);
+        assert_eq!(
+            session.command_started_with(&mut persistence, 3),
+            Err(TerminalSessionError::InvalidState)
+        );
+        session
+            .close(&owner("owner"), TerminalClosePolicy::Force, 4)
+            .unwrap();
+        drop(session);
+        let recovered =
+            TerminalRecoveredSession::recover(fixture.recover(), &owner("owner"), 4).unwrap();
+        assert_eq!(
+            recovered.facts(&owner("owner")).unwrap().startup_stage,
+            Some(TerminalStartupStage::CommandStarted)
+        );
+        assert_eq!(fixture.state.lock().unwrap().closes, 1);
+    }
+
     impl TerminalSessionBackend for Backend {
         fn restore_startup_echo(&mut self) -> std::result::Result<(), ()> {
             let mut state = self.0.lock().unwrap();

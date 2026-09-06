@@ -284,6 +284,15 @@ a pinned bootstrap in an explicitly supplied private directory. It works with
 bash/zsh user and clean profiles even when profiles close inherited descriptors.
 The owner persists shell readiness before acknowledging it, and an optional
 command cannot execute before the separate command-start acknowledgement.
+The session owns its control handle through the ordinary registry pump. With an
+initial command, shell readiness remains `Starting`; only a durably recorded
+command-start boundary becomes `Running`. The owner drains profile output in
+bounded admitted reads before recording that cursor, releases the read permit,
+then publishes the transition and acknowledges it with ordinary persistence.
+Partial acknowledgements retry without repeating the durable transition.
+Startup stage and command cursor are data-only recovery facts, not native
+authority. Deadline failure still stops startup when profile storage is busy,
+retaining any unavailable final-state publication for the owner to retry.
 The startup request's bounded deadline covers preparation, commit and both
 acknowledgements without restarting between phases. Private helpers receive a
 validated absolute monotonic deadline; standalone PTY preparation retains its

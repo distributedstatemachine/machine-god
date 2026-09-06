@@ -344,6 +344,10 @@ pub(crate) struct TerminalStartupControl {
     latch: Arc<AtomicU8>,
 }
 impl TerminalStartupControl {
+    pub(crate) fn has_command(&self) -> bool {
+        self.has_command
+    }
+
     pub(crate) fn is_complete(&self) -> bool {
         self.phase == Phase::Complete
     }
@@ -862,6 +866,234 @@ mod tests {
         ];
         arguments.extend_from_slice(helper.arguments());
         TerminalPtyHelper::new("/bin/sh".into(), arguments).unwrap()
+    }
+
+    struct RegisteredStartup {
+        registry: crate::terminal_registry::TerminalRegistry<TerminalStartupBackend>,
+        store: crate::terminal_profile_store::TerminalProfileStore,
+        budget: crate::terminal_profile::TerminalProfileBudget,
+        _catalog: crate::terminal_catalog::TerminalCatalog,
+        owner: machine_god_core::BackgroundOutputOwner,
+        id: machine_god_core::TerminalSessionId,
+    }
+    fn registered_startup(
+        root: &Directory,
+        cwd: &Directory,
+        artifacts: &Directory,
+        command: Option<String>,
+        expired: bool,
+    ) -> RegisteredStartup {
+        use crate::terminal_history::TerminalHistory;
+        use crate::terminal_journal::TerminalJournalLimits;
+        use crate::terminal_profile::{
+            TerminalProfileBudget, TerminalProfileLimits, TerminalProfileMutationContext,
+        };
+        use crate::terminal_profile_store::TerminalProfileStore;
+        use crate::terminal_registry::TerminalRegistry;
+        use crate::terminal_session::TerminalSession;
+        use machine_god_core::{
+            BackgroundOutputOwner, SessionId, SessionIncarnationId, TerminalSessionId,
+        };
+        let workspace = std::fs::canonicalize(&cwd.0)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let owner = BackgroundOutputOwner::new(
+            SessionId::new("startup-owner").unwrap(),
+            SessionIncarnationId::new("startup-incarnation").unwrap(),
+        );
+        let id = TerminalSessionId::new("startup-session").unwrap();
+        let store = TerminalProfileStore::prepare(root.fd()).unwrap();
+        let budget = TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap();
+        let mut transaction = store.transaction().unwrap();
+        let mut catalog = transaction
+            .prepare_catalog(workspace.clone(), owner.clone())
+            .unwrap();
+        drop(transaction.create_session(&mut catalog, &id).unwrap());
+        let journal = budget
+            .create_journal(
+                &mut transaction,
+                catalog.namespace_key(),
+                &id,
+                TerminalJournalLimits::default(),
+            )
+            .unwrap();
+        journal.accounting.unwrap();
+        let mut context =
+            TerminalProfileMutationContext::new(&mut transaction, budget, catalog.namespace_key());
+        let history = TerminalHistory::create_with(
+            &mut context,
+            journal.operation.unwrap(),
+            &TerminalDimensions::new(24, 80).unwrap(),
+        )
+        .unwrap();
+        let mut metadata = crate::terminal_session_record::test_metadata();
+        metadata.workspace = workspace.clone();
+        metadata.cwd = workspace.clone();
+        metadata.command = command.clone();
+        metadata.profile = machine_god_core::TerminalProfile::User;
+        let (backend, mut control) = start(request(cwd, artifacts, "/bin/bash", false, command));
+        if expired {
+            control.deadline = Instant::now();
+        }
+        let mut session = TerminalSession::new_with(
+            &mut context,
+            backend,
+            history,
+            owner.clone(),
+            id.clone(),
+            metadata,
+            0,
+        )
+        .unwrap();
+        session
+            .attach_startup_control(control, CancellationToken::new())
+            .unwrap();
+        drop(transaction);
+        let mut registry = TerminalRegistry::new(workspace).unwrap();
+        registry
+            .start(owner.clone(), id.clone(), || Ok(session))
+            .unwrap();
+        RegisteredStartup {
+            registry,
+            store,
+            budget,
+            _catalog: catalog,
+            owner,
+            id,
+        }
+    }
+
+    #[test]
+    fn owner_pump_persists_command_boundary_after_profile_output_before_release() {
+        use crate::terminal_session_record::TerminalStartupStage;
+        use machine_god_core::{TerminalClosePolicy, TerminalCursor, TerminalLifecycle};
+        let root = Directory::new();
+        let cwd = Directory::new();
+        let artifacts = Directory::new();
+        std::fs::write(
+            cwd.0.join(".bash_profile"),
+            "printf PROFILE; for fd in 3 4 5 6 7 8 9; do eval \"exec $fd>&-\"; done\n",
+        )
+        .unwrap();
+        let mut fixture = registered_startup(
+            &root,
+            &cwd,
+            &artifacts,
+            Some("printf COMMAND; printf yes > executed; exit 7".into()),
+            false,
+        );
+        let started = Instant::now();
+        let mut shell_seen = false;
+        let facts = loop {
+            assert!(started.elapsed() < Duration::from_secs(10));
+            let now = i64::try_from(started.elapsed().as_millis()).unwrap();
+            for step in fixture
+                .registry
+                .pump_with_profile(&fixture.store, &fixture.budget, now, 1)
+                .unwrap()
+            {
+                assert!(step.result.is_ok(), "{:?}", step.result.err());
+                assert!(step.cleanup_error.is_none());
+            }
+            let facts = fixture
+                .registry
+                .inspect(&fixture.owner, &fixture.id)
+                .unwrap();
+            if facts.startup_stage == Some(TerminalStartupStage::ShellReady) {
+                shell_seen = true;
+                assert_eq!(facts.context.lifecycle, TerminalLifecycle::Starting);
+                assert!(!cwd.0.join("executed").exists());
+            }
+            if facts.context.lifecycle == TerminalLifecycle::Exited {
+                break facts;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        assert!(shell_seen);
+        assert_eq!(
+            facts.startup_stage,
+            Some(TerminalStartupStage::CommandStarted)
+        );
+        let boundary = facts.command_start_cursor.unwrap();
+        let prefix = fixture
+            .registry
+            .read(
+                &fixture.owner,
+                &fixture.id,
+                &TerminalCursor::new(1, 0).unwrap(),
+                16384,
+            )
+            .unwrap();
+        assert!(String::from_utf8_lossy(&prefix.bytes).contains("PROFILE"));
+        assert!(boundary.offset() > 0);
+        let command = fixture
+            .registry
+            .read(&fixture.owner, &fixture.id, &boundary, 16384)
+            .unwrap();
+        assert!(String::from_utf8_lossy(&command.bytes).contains("COMMAND"));
+        assert!(!String::from_utf8_lossy(&command.bytes).contains("PROFILE"));
+        assert_eq!(
+            std::fs::read_to_string(cwd.0.join("executed")).unwrap(),
+            "yes"
+        );
+        assert_eq!(std::fs::read_dir(&artifacts.0).unwrap().count(), 0);
+        assert!(
+            fixture
+                .registry
+                .shutdown_with_profile(
+                    &fixture.store,
+                    &fixture.budget,
+                    fixture.registry.minimum_time_ms(),
+                    TerminalClosePolicy::Force
+                )
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn startup_deadline_quiesces_owned_process_even_while_profile_is_locked() {
+        use machine_god_core::TerminalLifecycle;
+        let root = Directory::new();
+        let cwd = Directory::new();
+        let artifacts = Directory::new();
+        let mut fixture = registered_startup(
+            &root,
+            &cwd,
+            &artifacts,
+            Some("printf BAD > executed".into()),
+            true,
+        );
+        let transaction = fixture.store.transaction().unwrap();
+        let steps = fixture
+            .registry
+            .pump_with_profile(&fixture.store, &fixture.budget, 1, 1)
+            .unwrap();
+        assert!(steps[0].result.is_err());
+        let session = fixture
+            .registry
+            .live_mut(&fixture.owner, &fixture.id)
+            .unwrap();
+        assert!(!session.owns_backend());
+        assert!(session.publication_error().is_some());
+        assert_eq!(session.context().lifecycle, TerminalLifecycle::Lost);
+        assert!(!cwd.0.join("executed").exists());
+        assert_eq!(std::fs::read_dir(&artifacts.0).unwrap().count(), 0);
+        drop(transaction);
+        assert!(
+            fixture
+                .registry
+                .shutdown_with_profile(
+                    &fixture.store,
+                    &fixture.budget,
+                    2,
+                    machine_god_core::TerminalClosePolicy::Force
+                )
+                .unwrap()
+                .is_empty()
+        );
     }
     #[test]
     fn delayed_helper_within_requested_startup_budget_executes_and_reaps() {
