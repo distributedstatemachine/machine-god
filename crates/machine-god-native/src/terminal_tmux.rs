@@ -115,6 +115,11 @@ pub(crate) trait TerminalTmuxProcess: Send {
     /// Authenticated launcher/process outcome. tmux 3.2 does not expose a dead
     /// pane's signal; missing outcome is not permission to invent one.
     fn outcome(&mut self) -> Result<Option<TerminalPtyStatus>>;
+    /// Supervising launchers separate their own pane lifetime from the actual
+    /// child job. Ordinary prepared panes keep the default tmux observation.
+    fn job_status(&mut self) -> Result<Option<TerminalPtyStatus>> {
+        Ok(None)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -347,7 +352,7 @@ fn socket_identity(directory: &OwnedFd, name: &OsString) -> Result<Option<(u64, 
     Ok(Some((stat.st_dev as u64, stat.st_ino as u64)))
 }
 
-struct CommandProcess {
+pub(crate) struct CommandProcess {
     child: Child,
     input: Option<ChildStdin>,
     output: Option<ChildStdout>,
@@ -360,7 +365,11 @@ struct CommandProcess {
     reaped: bool,
 }
 impl CommandProcess {
-    fn spawn(mut command: Command, input_bytes: Vec<u8>, deadline: Instant) -> Result<Self> {
+    pub(crate) fn spawn(
+        mut command: Command,
+        input_bytes: Vec<u8>,
+        deadline: Instant,
+    ) -> Result<Self> {
         if input_bytes.len() > MAX_INPUT_BYTES {
             return Err(TerminalTmuxError::Capacity);
         }
@@ -390,7 +399,7 @@ impl CommandProcess {
         }
         Ok(value)
     }
-    fn poll(&mut self) -> Poll<Result<TerminalTmuxReply>> {
+    pub(crate) fn poll(&mut self) -> Poll<Result<TerminalTmuxReply>> {
         if Instant::now() >= self.deadline {
             return Poll::Ready(Err(TerminalTmuxError::Timeout));
         }
@@ -471,7 +480,7 @@ impl CommandProcess {
         }
         Ok(None)
     }
-    fn abort(&mut self) -> Result<()> {
+    pub(crate) fn abort(&mut self) -> Result<()> {
         self.input.take();
         self.output.take();
         self.error.take();
@@ -517,6 +526,7 @@ fn read_once(reader: &mut impl Read, buffer: &mut [u8]) -> Result<Option<usize>>
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PaneObservation {
     status: TerminalPtyStatus,
+    transport_closed: bool,
     dimensions: TerminalDimensions,
 }
 fn decimal(text: &str) -> bool {
@@ -570,11 +580,12 @@ fn inspect(
     let rows = fields[7].parse().map_err(|_| TerminalTmuxError::Protocol)?;
     Ok(PaneObservation {
         status,
+        transport_closed: fields[4] == "1",
         dimensions: TerminalDimensions::new(rows, columns)
             .map_err(|_| TerminalTmuxError::Protocol)?,
     })
 }
-fn compatible_version(bytes: &[u8]) -> bool {
+pub(crate) fn compatible_version(bytes: &[u8]) -> bool {
     if bytes.len() > 1024 {
         return false;
     }
@@ -595,6 +606,27 @@ fn compatible_version(bytes: &[u8]) -> bool {
         return false;
     }
     matches!((major.parse::<u16>(), minor[..end].parse::<u16>()), (Ok(major), Ok(minor)) if major > 3 || major == 3 && minor >= 2)
+}
+fn process_observation(
+    identity: &TerminalTmuxIdentity,
+    bytes: &[u8],
+    process: &mut impl TerminalTmuxProcess,
+) -> Result<PaneObservation> {
+    let mut observation = inspect(identity, bytes, || process.outcome())?;
+    if let Some(status) = process.job_status()? {
+        if !matches!(
+            status,
+            TerminalPtyStatus::Running
+                | TerminalPtyStatus::Exited(0..=255)
+                | TerminalPtyStatus::Signalled(1..=127)
+        ) || status == TerminalPtyStatus::Running
+            && observation.status != TerminalPtyStatus::Running
+        {
+            return Err(TerminalTmuxError::Protocol);
+        }
+        observation.status = status;
+    }
+    Ok(observation)
 }
 fn run(
     control: &mut impl TerminalTmuxControl,
@@ -652,9 +684,16 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalTmuxBackend<C, P> {
     /// Blocking-owner preparation only. The caller has authenticated the raw
     /// capture peer and installed startup/cancellation ownership before entry.
     /// This constructor also serves recovery, but never creates process authority.
-    pub(crate) fn attach(mut control: C, mut process: P, capture: UnixStream) -> Result<Self> {
+    pub(crate) fn attach(control: C, process: P, capture: UnixStream) -> Result<Self> {
+        Self::attach_until(control, process, capture, Instant::now() + COMMAND_TIMEOUT)
+    }
+    pub(crate) fn attach_until(
+        mut control: C,
+        mut process: P,
+        capture: UnixStream,
+        deadline: Instant,
+    ) -> Result<Self> {
         process.validate(control.identity())?;
-        let deadline = Instant::now() + COMMAND_TIMEOUT;
         if !compatible_version(&success(run(
             &mut control,
             TerminalTmuxCommand::Probe,
@@ -663,7 +702,7 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalTmuxBackend<C, P> {
             return Err(TerminalTmuxError::Protocol);
         }
         let output = success(run(&mut control, TerminalTmuxCommand::Inspect, deadline)?)?;
-        let observation = inspect(control.identity(), &output, || process.outcome())?;
+        let observation = process_observation(control.identity(), &output, &mut process)?;
         if observation.status == TerminalPtyStatus::Running {
             process.validate(control.identity())?;
         }
@@ -704,7 +743,7 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalTmuxBackend<C, P> {
             match pending {
                 Pending::Observe => {
                     self.observation =
-                        inspect(self.control.identity(), &bytes, || self.process.outcome())?;
+                        process_observation(self.control.identity(), &bytes, &mut self.process)?;
                     if self.observation.status == TerminalPtyStatus::Running {
                         self.process.validate(self.control.identity())?;
                     }
@@ -713,7 +752,7 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalTmuxBackend<C, P> {
                 }
                 Pending::WriteInspect(input, deadline) => {
                     self.observation =
-                        inspect(self.control.identity(), &bytes, || self.process.outcome())?;
+                        process_observation(self.control.identity(), &bytes, &mut self.process)?;
                     if self.observation.status != TerminalPtyStatus::Running {
                         return Err(TerminalTmuxError::Closed);
                     }
@@ -935,7 +974,8 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalTmuxBackend<C, P> {
             TerminalTmuxCommand::Inspect,
             Instant::now() + COMMAND_TIMEOUT,
         )?)?;
-        self.observation = inspect(self.control.identity(), &output, || self.process.outcome())?;
+        self.observation =
+            process_observation(self.control.identity(), &output, &mut self.process)?;
         if self.observation.status == TerminalPtyStatus::Running {
             self.process.validate(self.control.identity())?;
         }
@@ -1008,17 +1048,30 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalTmuxBackend<C, P> {
         }
         // Process absence must be proven before retiring the owned namespace.
         // A terminal status must be observed, never inferred from our signal.
-        if self.observation.status == TerminalPtyStatus::Running {
+        // tmux closes the pane fd only after its pipe output and PTY input
+        // drain; the supervised child's exit alone is not that transport proof.
+        let transport_deadline = Instant::now() + COMMAND_TIMEOUT;
+        while !self.observation.transport_closed {
+            if Instant::now() >= transport_deadline || budget == 0 {
+                self.output_incomplete = true;
+                break;
+            }
+            if self.drain(&mut budget, output).is_err() {
+                self.output_incomplete = true;
+            }
             let output = success(run(
                 &mut self.control,
                 TerminalTmuxCommand::Inspect,
-                Instant::now() + COMMAND_TIMEOUT,
+                transport_deadline,
             )?)?;
             self.observation =
-                inspect(self.control.identity(), &output, || self.process.outcome())?;
-            if self.observation.status == TerminalPtyStatus::Running {
-                return Err(TerminalTmuxError::Cleanup);
+                process_observation(self.control.identity(), &output, &mut self.process)?;
+            if !self.observation.transport_closed {
+                std::thread::sleep(Duration::from_millis(2));
             }
+        }
+        if self.observation.status == TerminalPtyStatus::Running {
+            return Err(TerminalTmuxError::Cleanup);
         }
         let deadline = Instant::now() + COMMAND_TIMEOUT;
         let _ = run(
@@ -1208,6 +1261,7 @@ mod tests {
         fails: VecDeque<TerminalTmuxCommand>,
         polls_pending: usize,
         suppress_resize: bool,
+        job_status: Option<TerminalPtyStatus>,
     }
     impl Default for State {
         fn default() -> Self {
@@ -1225,6 +1279,7 @@ mod tests {
                 fails: VecDeque::new(),
                 polls_pending: 0,
                 suppress_resize: false,
+                job_status: None,
             }
         }
     }
@@ -1323,6 +1378,9 @@ mod tests {
         fn outcome(&mut self) -> Result<Option<TerminalPtyStatus>> {
             let state = self.state.lock().unwrap();
             Ok(state.outcome_available.then_some(state.status))
+        }
+        fn job_status(&mut self) -> Result<Option<TerminalPtyStatus>> {
+            Ok(self.state.lock().unwrap().job_status)
         }
     }
     type Backend = TerminalTmuxBackend<Control, Process>;
@@ -1454,6 +1512,23 @@ mod tests {
         );
         assert!(matches!(result, Err(TerminalTmuxError::Identity)));
         assert!(state.lock().unwrap().commands.is_empty());
+    }
+
+    #[test]
+    fn supervised_job_exit_does_not_remain_running_because_its_helper_is_alive() {
+        for status in [
+            TerminalPtyStatus::Exited(137),
+            TerminalPtyStatus::Signalled(9),
+        ] {
+            let (mut backend, peer, state) = fixture();
+            state.lock().unwrap().job_status = Some(status);
+            backend.next_observation = Instant::now();
+            backend.status().unwrap();
+            assert_eq!(backend.status().unwrap(), status);
+            assert!(!backend.observation.transport_closed);
+            assert_eq!(state.lock().unwrap().status, TerminalPtyStatus::Running);
+            finish(backend, peer, &state);
+        }
     }
 
     #[test]
