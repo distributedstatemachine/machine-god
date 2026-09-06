@@ -4,6 +4,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::num::NonZeroU64;
+use std::task::Poll;
 
 use machine_god_core::{
     TerminalActorRole, TerminalNamedKey, TerminalWriteLeaseIntent, TerminalWritePayload,
@@ -78,6 +79,7 @@ struct Frame {
     offset: usize,
     operation: Option<NonZeroU64>,
     paste: bool,
+    attempted_end: Option<usize>,
 }
 struct SavedReceipt {
     writer: (TerminalActorRole, TerminalWriterId),
@@ -90,6 +92,7 @@ pub(crate) struct TerminalInput {
     next_operation: Option<NonZeroU64>,
     pending_operation: Option<NonZeroU64>,
     frames: VecDeque<Frame>,
+    settlement: Option<Frame>,
     reply_bytes: usize,
     reply_frames: usize,
     receipts: VecDeque<SavedReceipt>,
@@ -108,6 +111,7 @@ impl TerminalInput {
             next_operation: NonZeroU64::new(1),
             pending_operation: None,
             frames: VecDeque::new(),
+            settlement: None,
             reply_bytes: 0,
             reply_frames: 0,
             receipts: VecDeque::new(),
@@ -214,6 +218,7 @@ impl TerminalInput {
                     offset: 0,
                     operation: Some(operation),
                     paste: matches!(request.payload, Some(TerminalWritePayload::Paste { .. })),
+                    attempted_end: None,
                 });
                 self.receipts.push_back(SavedReceipt { writer, receipt });
                 if self.receipts.len() > MAX_RECEIPTS {
@@ -253,6 +258,7 @@ impl TerminalInput {
             offset: 0,
             operation: None,
             paste: false,
+            attempted_end: None,
         }));
         Ok(())
     }
@@ -285,6 +291,9 @@ impl TerminalInput {
         maximum: usize,
         write: impl FnOnce(&[u8], bool) -> std::result::Result<BackgroundInputReceipt, ()>,
     ) {
+        if self.quiesced {
+            return;
+        }
         if maximum == 0 || maximum > machine_god_core::MAX_TERMINAL_WRITE_BYTES {
             self.fail();
             return;
@@ -293,6 +302,7 @@ impl TerminalInput {
             return;
         };
         let end = frame.bytes.len().min(frame.offset + maximum);
+        frame.attempted_end = Some(end);
         let result = write(&frame.bytes[frame.offset..end], frame.paste);
         let Ok(result) = result else {
             self.fail();
@@ -303,6 +313,9 @@ impl TerminalInput {
             return;
         }
         frame.offset += result.bytes_written();
+        if result.status() != BackgroundInputStatus::Backpressure || result.stdin_closed() {
+            frame.attempted_end = None;
+        }
         if let Some(operation) = frame.operation {
             let saved = self
                 .receipts
@@ -360,13 +373,31 @@ impl TerminalInput {
     }
 
     pub(crate) fn quiesce(&mut self) {
+        if self.quiesced {
+            return;
+        }
+        if self
+            .frames
+            .front()
+            .is_some_and(|frame| frame.attempted_end.is_some())
+        {
+            self.settlement = self.frames.pop_front();
+        }
         if let Some(operation) = self.pending_operation.take()
             && let Some(saved) = self
                 .receipts
                 .iter_mut()
                 .find(|saved| saved.receipt.operation_id == Some(operation))
         {
-            saved.receipt.progress = TerminalInputProgress::Closed;
+            saved.receipt.progress = if self
+                .settlement
+                .as_ref()
+                .is_some_and(|frame| frame.operation == Some(operation))
+            {
+                TerminalInputProgress::Pending
+            } else {
+                TerminalInputProgress::Closed
+            };
         }
         self.lease = None;
         self.quiesced = true;
@@ -375,8 +406,62 @@ impl TerminalInput {
         self.reply_frames = 0;
     }
 
+    /// Reconcile only the last submitted attempt after input authority closes.
+    /// The bounded frame is identity for observation, never permission to send.
+    pub(crate) fn settle_with(
+        &mut self,
+        observe: impl FnOnce(&[u8], bool) -> Poll<std::result::Result<BackgroundInputReceipt, ()>>,
+    ) {
+        let Some(frame) = self.settlement.as_ref() else {
+            return;
+        };
+        let end = frame
+            .attempted_end
+            .expect("settlement retains an attempted range");
+        let Poll::Ready(result) = observe(&frame.bytes[frame.offset..end], frame.paste) else {
+            return;
+        };
+        let frame = self.settlement.take().expect("settlement remains present");
+        let Some(operation) = frame.operation else {
+            return;
+        };
+        let saved = self
+            .receipts
+            .iter_mut()
+            .find(|saved| saved.receipt.operation_id == Some(operation))
+            .expect("quiesced receipt remains retained");
+        match result {
+            Ok(result) if result.bytes_written() <= end - frame.offset => {
+                saved.receipt.accepted_bytes = frame.offset + result.bytes_written();
+                saved.receipt.progress = if saved.receipt.accepted_bytes == frame.bytes.len() {
+                    TerminalInputProgress::Complete
+                } else if matches!(
+                    result.status(),
+                    BackgroundInputStatus::Failed | BackgroundInputStatus::Backpressure
+                ) || saved.receipt.progress == TerminalInputProgress::Failed
+                {
+                    TerminalInputProgress::Failed
+                } else {
+                    TerminalInputProgress::Closed
+                };
+            }
+            _ => saved.receipt.progress = TerminalInputProgress::Failed,
+        }
+    }
+
     pub(crate) fn is_quiesced(&self) -> bool {
         self.quiesced
+    }
+    pub(crate) fn finish_settlement(&mut self) {
+        if let Some(frame) = self.settlement.take()
+            && let Some(operation) = frame.operation
+            && let Some(saved) = self
+                .receipts
+                .iter_mut()
+                .find(|saved| saved.receipt.operation_id == Some(operation))
+        {
+            saved.receipt.progress = TerminalInputProgress::Failed;
+        }
     }
     pub(crate) fn has_pending_bytes(&self) -> bool {
         !self.frames.is_empty()
@@ -829,6 +914,82 @@ mod tests {
             TerminalInputProgress::Complete
         );
         assert!(input.is_quiesced());
+    }
+
+    #[test]
+    fn quiescence_retains_only_attempted_identity_until_observation_settles() {
+        let mut input = TerminalInput::new();
+        acquire(&mut input, 1);
+        let operation = input
+            .submit(writer(1), &text("abcdef"), false)
+            .unwrap()
+            .operation_id
+            .unwrap();
+        input.flush(|_| Ok(accepted(2)));
+        input.replies(vec![b"reply".to_vec()]).unwrap();
+        input.flush(|_| {
+            Ok(BackgroundInputReceipt::new(
+                0,
+                false,
+                BackgroundInputStatus::Backpressure,
+            ))
+        });
+        input.quiesce();
+        assert!(input.frames.is_empty());
+        assert!(input.lease.is_none());
+        input.flush(|_| panic!("quiesced input submitted again"));
+        input.settle_with(|bytes, paste| {
+            assert_eq!(bytes, b"cdef");
+            assert!(!paste);
+            Poll::Pending
+        });
+        input.quiesce();
+        assert_eq!(
+            input.receipt(writer(1), operation).unwrap().accepted_bytes,
+            2
+        );
+        input.settle_with(|bytes, _| Poll::Ready(Ok(accepted(bytes.len()))));
+        let receipt = input.receipt(writer(1), operation).unwrap();
+        assert_eq!(receipt.accepted_bytes, 6);
+        assert_eq!(receipt.progress, TerminalInputProgress::Complete);
+        input.settle_with(|_, _| panic!("settled operation repeated"));
+        input.finish_settlement();
+        assert_eq!(input.receipt(writer(1), operation).unwrap(), receipt);
+    }
+
+    #[test]
+    fn unresolved_or_invalid_final_observation_cannot_become_closed_zero() {
+        for invalid in [false, true] {
+            let mut input = TerminalInput::new();
+            acquire(&mut input, 1);
+            let operation = input
+                .submit(writer(1), &text("pending"), false)
+                .unwrap()
+                .operation_id
+                .unwrap();
+            input.flush(|_| {
+                Ok(BackgroundInputReceipt::new(
+                    0,
+                    false,
+                    BackgroundInputStatus::Backpressure,
+                ))
+            });
+            input.quiesce();
+            if invalid {
+                input.settle_with(|bytes, _| Poll::Ready(Ok(accepted(bytes.len() + 1))));
+            } else {
+                input.settle_with(|_, _| Poll::Pending);
+            }
+            input.finish_settlement();
+            assert_eq!(
+                input.receipt(writer(1), operation).unwrap().progress,
+                TerminalInputProgress::Failed
+            );
+            assert_eq!(
+                input.receipt(writer(1), operation).unwrap().accepted_bytes,
+                0
+            );
+        }
     }
 
     #[test]

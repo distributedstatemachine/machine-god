@@ -763,6 +763,67 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalTmuxBackend<C, P> {
     pub(crate) const fn write_ambiguous(&self) -> bool {
         self.write_ambiguous
     }
+    fn settle_write_inner(
+        &mut self,
+        bytes: &[u8],
+        paste: bool,
+    ) -> Poll<Result<BackgroundInputReceipt>> {
+        self.input_closed = true;
+        if let Some(input) = self.receipt.as_ref() {
+            if input != bytes || self.paste != paste {
+                return Poll::Ready(Err(TerminalTmuxError::Identity));
+            }
+            let input = self.receipt.take().expect("matching retained completion");
+            return Poll::Ready(Ok(BackgroundInputReceipt::new(
+                input.len(),
+                false,
+                BackgroundInputStatus::Written,
+            )));
+        }
+        match self.pending.as_ref() {
+            Some(Pending::WriteInspect(input, _) | Pending::WriteLoad(input, _)) => {
+                if input != bytes || self.paste != paste {
+                    return Poll::Ready(Err(TerminalTmuxError::Identity));
+                }
+                // Cancelling preparation must never advance into paste-buffer.
+                if let Err(error) = self.control.abort() {
+                    return Poll::Ready(Err(error));
+                }
+                self.pending.take();
+            }
+            Some(Pending::WritePaste(input)) => {
+                if input != bytes || self.paste != paste {
+                    return Poll::Ready(Err(TerminalTmuxError::Identity));
+                }
+                let Poll::Ready(reply) = self.control.poll() else {
+                    return Poll::Pending;
+                };
+                let Some(Pending::WritePaste(input)) = self.pending.take() else {
+                    unreachable!()
+                };
+                if reply.and_then(success).is_err() {
+                    self.failed = true;
+                    return Poll::Ready(Err(TerminalTmuxError::WriteAmbiguous));
+                }
+                self.write_ambiguous = false;
+                return Poll::Ready(Ok(BackgroundInputReceipt::new(
+                    input.len(),
+                    false,
+                    BackgroundInputStatus::Written,
+                )));
+            }
+            _ => {}
+        }
+        if self.write_ambiguous {
+            Poll::Ready(Err(TerminalTmuxError::WriteAmbiguous))
+        } else {
+            Poll::Ready(Ok(BackgroundInputReceipt::new(
+                0,
+                true,
+                BackgroundInputStatus::Closed,
+            )))
+        }
+    }
     fn write_kind(&mut self, bytes: &[u8], paste: bool) -> Result<BackgroundInputReceipt> {
         if bytes.len() > MAX_INPUT_BYTES {
             return Err(TerminalTmuxError::Capacity);
@@ -1012,6 +1073,14 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalSessionBackend
     }
     fn input_write_limit(&self) -> usize {
         MAX_INPUT_BYTES
+    }
+    fn settle_write(
+        &mut self,
+        bytes: &[u8],
+        paste: bool,
+    ) -> Poll<std::result::Result<BackgroundInputReceipt, ()>> {
+        self.settle_write_inner(bytes, paste)
+            .map(|result| result.map_err(|_| ()))
     }
     fn status(&mut self) -> std::result::Result<TerminalPtyStatus, ()> {
         self.drive().map_err(|_| ())?;
@@ -1527,6 +1596,77 @@ mod tests {
             backend.write_inner(b"maybe committed"),
             Err(TerminalTmuxError::WriteAmbiguous)
         );
+    }
+
+    #[test]
+    fn observation_only_settlement_cancels_preparation_without_submitting_paste() {
+        for advances in [0, 1] {
+            let (mut backend, peer, state) = fixture();
+            backend.write_with_paste(b"never sent", true).unwrap();
+            for _ in 0..advances {
+                backend.drive().unwrap();
+            }
+            let Poll::Ready(Ok(receipt)) = backend.settle_write_inner(b"never sent", true) else {
+                panic!()
+            };
+            assert_eq!(receipt.bytes_written(), 0);
+            assert_eq!(receipt.status(), BackgroundInputStatus::Closed);
+            backend.status().unwrap();
+            assert!(
+                !state
+                    .lock()
+                    .unwrap()
+                    .commands
+                    .iter()
+                    .any(|command| matches!(
+                        command,
+                        TerminalTmuxCommand::Paste | TerminalTmuxCommand::PasteBracketed
+                    ))
+            );
+            finish(backend, peer, &state);
+        }
+    }
+
+    #[test]
+    fn observation_only_settlement_preserves_close_time_completion_or_ambiguity() {
+        for complete in [true, false] {
+            let (mut backend, peer, state) = fixture();
+            backend.write_with_paste(b"pending paste", true).unwrap();
+            backend.drive().unwrap();
+            backend.drive().unwrap();
+            state.lock().unwrap().polls_pending = if complete { 1 } else { 2 };
+            assert!(
+                backend
+                    .settle_write_inner(b"pending paste", true)
+                    .is_pending()
+            );
+            drop(peer);
+            backend.close_inner(true, &mut |_| {}).unwrap();
+            let completion = backend.settle_write_inner(b"pending paste", true);
+            if complete {
+                let Poll::Ready(Ok(receipt)) = completion else {
+                    panic!()
+                };
+                assert_eq!(receipt.bytes_written(), 13);
+                assert_eq!(receipt.status(), BackgroundInputStatus::Written);
+            } else {
+                assert!(matches!(
+                    completion,
+                    Poll::Ready(Err(TerminalTmuxError::WriteAmbiguous))
+                ));
+            }
+            backend.close_inner(true, &mut |_| {}).unwrap();
+            assert_eq!(
+                state
+                    .lock()
+                    .unwrap()
+                    .commands
+                    .iter()
+                    .filter(|command| **command == TerminalTmuxCommand::PasteBracketed)
+                    .count(),
+                1
+            );
+        }
     }
 
     #[test]

@@ -54,6 +54,21 @@ pub(crate) trait TerminalSessionBackend {
     fn input_write_limit(&self) -> usize {
         crate::background_input::MAX_BACKGROUND_INPUT_BYTES
     }
+    /// Observe/cancel an already submitted input attempt after admission is
+    /// revoked. Never submit bytes or advance a preparation into a new write.
+    /// Pending retains observation identity; Err means an ambiguous/failed
+    /// completion, not a reliable zero-byte accepted count.
+    fn settle_write(
+        &mut self,
+        _bytes: &[u8],
+        _paste: bool,
+    ) -> std::task::Poll<std::result::Result<BackgroundInputReceipt, ()>> {
+        std::task::Poll::Ready(Ok(BackgroundInputReceipt::new(
+            0,
+            true,
+            crate::background_input::BackgroundInputStatus::Closed,
+        )))
+    }
     fn status(&mut self) -> std::result::Result<TerminalPtyStatus, ()>;
     fn resize(&mut self, dimensions: &TerminalDimensions) -> std::result::Result<(), ()>;
     fn signal(&mut self, signal: TerminalSignal) -> std::result::Result<(), ()>;
@@ -775,6 +790,9 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         let receipt = self
             .input
             .submit_with_actor(actor, writer, request, cancelled)?;
+        if self.input.is_quiesced() {
+            self.settle_input();
+        }
         let mut publication_error = None;
         if receipt.operation_id.is_some() {
             self.flush_input();
@@ -929,6 +947,14 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         self.input.quiesce();
         self.attention = TerminalAttentionState::default();
         self.attention_writer = None;
+        self.settle_input();
+    }
+
+    fn settle_input(&mut self) {
+        if let Some(backend) = self.backend.as_mut() {
+            self.input
+                .settle_with(|bytes, paste| backend.settle_write(bytes, paste));
+        }
     }
 
     /// One nonblocking write, one <=16 KiB read, then bounded monitor work.
@@ -1286,10 +1312,12 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
                 observed_output |= !bytes.is_empty();
             })
             .and_then(require_closed_status);
+        self.settle_input();
         if observed_output {
             self.last_output_ms = self.now_ms;
         }
         if let Ok(closed) = closed {
+            self.input.finish_settlement();
             self.outcome = outcome(closed.status);
             self.lifecycle = TerminalLifecycle::Closed;
             self.backend.take();
@@ -1300,6 +1328,10 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "Drain, input settlement and retained cleanup authority share one ordered close scope."
+    )]
     fn finish_native_with(
         &mut self,
         persistence: &mut dyn TerminalJournalPersistence,
@@ -1368,6 +1400,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
                     .and_then(require_closed_status)
             }
         };
+        self.settle_input();
         if self.pending_output_gap {
             self.history.invalidate_output_without_persistence();
         }
@@ -1375,6 +1408,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
             self.last_output_ms = now_ms;
         }
         if let Ok(closed) = result {
+            self.input.finish_settlement();
             self.outcome = outcome(closed.status);
             self.lifecycle = final_lifecycle;
             self.backend.take();
@@ -1680,6 +1714,7 @@ impl<B: TerminalSessionBackend> TerminalSession<B> {
         if self.input.is_quiesced() {
             self.attention = TerminalAttentionState::default();
             self.attention_writer = None;
+            self.settle_input();
         }
     }
     fn step(&self, output: Vec<u8>, probes: Vec<TerminalProbeRequest>) -> TerminalSessionStep {
@@ -2207,6 +2242,13 @@ mod tests {
         close_fails: bool,
         echo_restore_fails: bool,
         echo_restore_calls: usize,
+        delayed_write: bool,
+        pending_write: Option<Vec<u8>>,
+        write_completion: Option<std::result::Result<usize, ()>>,
+        complete_write_on_status: bool,
+        complete_write_on_close: bool,
+        write_calls: usize,
+        settlement_calls: usize,
     }
     impl Default for State {
         fn default() -> Self {
@@ -2229,6 +2271,13 @@ mod tests {
                 close_fails: false,
                 echo_restore_fails: false,
                 echo_restore_calls: 0,
+                delayed_write: false,
+                pending_write: None,
+                write_completion: None,
+                complete_write_on_status: false,
+                complete_write_on_close: false,
+                write_calls: 0,
+                settlement_calls: 0,
             }
         }
     }
@@ -2332,6 +2381,122 @@ mod tests {
     }
 
     #[test]
+    fn status_completion_before_queue_flush_retains_accepted_write_receipt() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        acquire(&mut session);
+        {
+            let mut state = fixture.state.lock().unwrap();
+            state.delayed_write = true;
+            state.complete_write_on_status = true;
+        }
+        let initial = session
+            .write(&owner("owner"), writer(), &text("committed"), false)
+            .unwrap();
+        assert_eq!(initial.accepted_bytes, 0);
+        session.pump(1).unwrap();
+        let receipt = session
+            .write_receipt(&owner("owner"), writer(), initial.operation_id.unwrap())
+            .unwrap();
+        assert_eq!(receipt.accepted_bytes, 9);
+        assert_eq!(receipt.progress, TerminalInputProgress::Complete);
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(state.writes, b"committed");
+        assert_eq!(state.write_calls, 1);
+        assert_eq!(state.settlement_calls, 1);
+    }
+
+    #[test]
+    fn close_time_completion_survives_loss_contextless_cleanup_and_cleanup_retry() {
+        for (lost, contextless, failed_close) in [
+            (false, false, false),
+            (true, false, true),
+            (false, true, true),
+        ] {
+            let fixture = Fixture::new();
+            let mut session = fixture.session();
+            session.shell_ready(0).unwrap();
+            acquire(&mut session);
+            {
+                let mut state = fixture.state.lock().unwrap();
+                state.delayed_write = true;
+                state.complete_write_on_close = true;
+                state.close_fails = failed_close;
+            }
+            let initial = session
+                .write(&owner("owner"), writer(), &text("close committed"), false)
+                .unwrap();
+            if lost {
+                session.lose();
+            }
+            if contextless {
+                assert!(
+                    session
+                        .teardown_without_persistence(true, 1, denied_error())
+                        .is_err()
+                );
+            } else {
+                assert_eq!(
+                    session
+                        .close(&owner("owner"), TerminalClosePolicy::Force, 1)
+                        .is_err(),
+                    failed_close
+                );
+            }
+            let receipt = session
+                .write_receipt(&owner("owner"), writer(), initial.operation_id.unwrap())
+                .unwrap();
+            assert_eq!(receipt.accepted_bytes, 15);
+            assert_eq!(receipt.progress, TerminalInputProgress::Complete);
+            assert!(session.input.is_quiesced());
+            fixture.state.lock().unwrap().close_fails = false;
+            session
+                .close(&owner("owner"), TerminalClosePolicy::Force, 2)
+                .unwrap();
+            assert_eq!(
+                session
+                    .write_receipt(&owner("owner"), writer(), initial.operation_id.unwrap())
+                    .unwrap(),
+                receipt
+            );
+            let state = fixture.state.lock().unwrap();
+            assert_eq!(state.writes, b"close committed");
+            assert_eq!(state.write_calls, 1);
+        }
+    }
+
+    #[test]
+    fn ambiguous_close_receipt_is_failed_never_reliable_zero_byte_closed() {
+        let fixture = Fixture::new();
+        let mut session = fixture.session();
+        session.shell_ready(0).unwrap();
+        acquire(&mut session);
+        fixture.state.lock().unwrap().delayed_write = true;
+        let initial = session
+            .write(&owner("owner"), writer(), &text("uncertain"), false)
+            .unwrap();
+        session
+            .close(&owner("owner"), TerminalClosePolicy::Force, 1)
+            .unwrap();
+        let receipt = session
+            .write_receipt(&owner("owner"), writer(), initial.operation_id.unwrap())
+            .unwrap();
+        assert_eq!(receipt.accepted_bytes, 0);
+        assert_eq!(receipt.progress, TerminalInputProgress::Failed);
+        session
+            .close(&owner("owner"), TerminalClosePolicy::Force, 2)
+            .unwrap();
+        assert_eq!(
+            session
+                .write_receipt(&owner("owner"), writer(), initial.operation_id.unwrap())
+                .unwrap(),
+            receipt
+        );
+        assert_eq!(fixture.state.lock().unwrap().write_calls, 1);
+    }
+
+    #[test]
     fn command_start_is_distinct_durable_and_never_recovered_as_authority() {
         let fixture = Fixture::new();
         let mut session = fixture.session();
@@ -2385,6 +2550,29 @@ mod tests {
     }
 
     impl TerminalSessionBackend for Backend {
+        fn settle_write(
+            &mut self,
+            bytes: &[u8],
+            _paste: bool,
+        ) -> std::task::Poll<std::result::Result<BackgroundInputReceipt, ()>> {
+            let mut state = self.0.lock().unwrap();
+            state.settlement_calls += 1;
+            if let Some(result) = state.write_completion.take() {
+                return std::task::Poll::Ready(result.map(|count| {
+                    assert_eq!(count, bytes.len());
+                    BackgroundInputReceipt::new(count, false, BackgroundInputStatus::Written)
+                }));
+            }
+            if let Some(pending) = state.pending_write.as_ref() {
+                assert_eq!(pending, bytes);
+                return std::task::Poll::Pending;
+            }
+            std::task::Poll::Ready(Ok(BackgroundInputReceipt::new(
+                0,
+                true,
+                BackgroundInputStatus::Closed,
+            )))
+        }
         fn write_with_paste(
             &mut self,
             bytes: &[u8],
@@ -2427,6 +2615,19 @@ mod tests {
         }
         fn write(&mut self, bytes: &[u8]) -> std::result::Result<BackgroundInputReceipt, ()> {
             let mut state = self.0.lock().unwrap();
+            state.write_calls += 1;
+            if state.delayed_write {
+                assert!(
+                    state.pending_write.is_none(),
+                    "settlement must not resend input"
+                );
+                state.pending_write = Some(bytes.to_vec());
+                return Ok(BackgroundInputReceipt::new(
+                    0,
+                    false,
+                    BackgroundInputStatus::Backpressure,
+                ));
+            }
             let count = bytes.len().min(state.write_limit);
             state.writes.extend_from_slice(&bytes[..count]);
             Ok(BackgroundInputReceipt::new(
@@ -2444,6 +2645,13 @@ mod tests {
         fn status(&mut self) -> std::result::Result<TerminalPtyStatus, ()> {
             let mut state = self.0.lock().unwrap();
             state.status_calls += 1;
+            if state.complete_write_on_status
+                && let Some(bytes) = state.pending_write.take()
+            {
+                state.writes.extend_from_slice(&bytes);
+                state.write_completion = Some(Ok(bytes.len()));
+                state.status = TerminalPtyStatus::Exited(0);
+            }
             Ok(state.status)
         }
         fn resize(&mut self, dimensions: &TerminalDimensions) -> std::result::Result<(), ()> {
@@ -2466,6 +2674,14 @@ mod tests {
             let (tail, result) = {
                 let mut state = self.0.lock().unwrap();
                 state.closes += 1;
+                if let Some(bytes) = state.pending_write.take() {
+                    state.write_completion = Some(if state.complete_write_on_close {
+                        state.writes.extend_from_slice(&bytes);
+                        Ok(bytes.len())
+                    } else {
+                        Err(())
+                    });
+                }
                 let tail = std::mem::take(&mut state.tail);
                 let result = if state.close_fails {
                     Err(())
