@@ -29,6 +29,7 @@ use crate::terminal_write_completion::{
 /// Host-supplied identity and descriptive controls, never decoded from a request.
 /// The enclosing host has already authorized the particular action. Revocation
 /// additionally requires separately established close authority.
+#[derive(Clone)]
 pub(crate) struct TerminalResidentAuthority {
     pub(crate) owner: BackgroundOutputOwner,
     pub(crate) actor: TerminalActorRole,

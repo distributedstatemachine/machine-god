@@ -670,6 +670,16 @@ monitor probes remain available to the ordinary owner observer.
 Cold read, screen and inspect share the same result projection without native
 admission. Resident and cold reads aggregate up to 1 MiB within one retained
 segment, reporting the actual normalized raw range and any retention gap.
+Runtime-facing dispatch combines these routes with the complete disk/resident
+list projection on the same owner. Only a missing exact owner/session permits
+cold observation fallback; mutations never fall back to saved history. The
+asynchronous dispatcher retains a non-owning requester, waits for write/wait
+receipts outside the owner loop, and then attempts an uncancelled facts refresh.
+Its reply explicitly distinguishes refreshed facts from the admission snapshot
+retained when shutdown or publication refusal prevents that refresh. Failed
+receipt projection preserves the typed native completion instead of implying
+that retrying the operation is safe. Construction and unpolled requests perform
+no profile initialization or native effects.
 
 The loop pumps immediately while output is available and polls idle timers at
 10 ms intervals, with at most one command between pump opportunities. Output
