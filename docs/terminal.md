@@ -91,6 +91,38 @@ permission grants. This native API is available for terminal-runtime
 composition; existing noninteractive tool execution below retains its stated
 fixed-shell behavior until the complete interactive runtime is integrated.
 
+### Captured host launch authority
+
+The complete host captures one explicitly supplied workspace descriptor and
+canonical spelling, canonical default cwd, validated environment snapshot,
+private bootstrap-artifact descriptor/path, and CLI/tmux executable selections.
+Constructing this configuration performs no filesystem or account lookup and
+does not discover `current_exe` or ambient environment variables. Capture runs
+on an owned blocking worker before registering the prepared host identity.
+Account-shell data is either supplied explicitly or selected once through
+`TerminalShell`'s native current-user lookup. Environment fingerprints include
+every exact key/value byte in launch order, including non-UTF-8 bytes; shell
+fingerprints bind the captured selection, platform policy, and helper programs
+and arguments. `SHELL` never chooses the executable.
+
+Exec/start cwd resolution consumes `TerminalActionInvocation::resolve_cwd`'s
+original requested spelling on the owned worker. Native canonicalization runs
+before any lexical simplification, preserving symlink/parent semantics. The
+canonical result must remain inside the retained workspace. An original-path
+descriptor must match a no-follow descriptor-relative walk from that workspace
+by device/inode, and the workspace descriptor must still match its captured
+canonical spelling. The resulting exact cwd descriptor stays on the owned
+effect worker through launch; it is never reopened or returned to an async
+polling thread as path-based authority. Non-command actions acquire no cwd.
+Bootstrap artifacts come only from the supplied private directory, duplicated
+after start admission, not from an arbitrary command cwd. Native launch retains
+its own final descriptor/path checks and rejects replacement rather than
+silently rebinding authority. One supplied deadline and cancellation token are
+checked between synchronous boundaries; an individual filesystem or account
+lookup syscall is not preempted by those checks.
+
+### Captured foreground execution
+
 `TerminalCapturedExec` provides the complete foreground service on Linux and
 macOS. The caller supplies its exact authorized shell, captured environment and
 cwd descriptor; the worker executes the selected bash/zsh user/clean argv and
