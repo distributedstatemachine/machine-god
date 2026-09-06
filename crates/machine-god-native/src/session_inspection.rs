@@ -1136,6 +1136,8 @@ mod tests {
                 "--exact",
                 "session_inspection::tests::parser_owned_allocations_are_payload_independent",
                 "--nocapture",
+                // Serial libtest must not prefix the allocation-result line.
+                "--quiet",
             ])
             .env(ALLOCATION_CHILD_ROOT, root)
             .env(ALLOCATION_CHILD_LABEL, label)
