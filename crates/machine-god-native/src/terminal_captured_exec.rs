@@ -77,6 +77,15 @@ pub struct TerminalCapturedExec {
     active: Arc<AtomicUsize>,
 }
 
+/// Produced and consumed on the same collected effect worker. In particular,
+/// the retained directory never travels back through an asynchronous reply.
+pub(crate) struct TerminalCapturedAuthority {
+    pub(crate) request: TerminalExecRequest,
+    pub(crate) shell: TerminalShell,
+    pub(crate) environment: Vec<(OsString, OsString)>,
+    pub(crate) cwd: OwnedFd,
+}
+
 impl std::fmt::Debug for TerminalCapturedExec {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -129,21 +138,43 @@ impl TerminalCapturedExec {
         cwd: OwnedFd,
         cancellation: CancellationToken,
     ) -> BoxFuture<'static, Result<TerminalExecResult, TerminalCapturedExecError>> {
+        self.execute_prepared(
+            move |_, _, _| {
+                Ok(TerminalCapturedAuthority {
+                    request,
+                    shell,
+                    environment,
+                    cwd,
+                })
+            },
+            cancellation,
+            CancellationToken::new(),
+        )
+    }
+
+    /// Prepare authority and execute on one collected worker under one deadline
+    /// beginning at first poll. The host stop is inspected by native work even
+    /// when the caller leaves its response future unpolled after submission.
+    pub(crate) fn execute_prepared(
+        &self,
+        prepare: impl FnOnce(
+            Instant,
+            &CancellationToken,
+            &CancellationToken,
+        ) -> Result<TerminalCapturedAuthority, TerminalCapturedExecError>
+        + Send
+        + 'static,
+        cancellation: CancellationToken,
+        host_stop: CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalExecResult, TerminalCapturedExecError>> {
         let helper = Arc::clone(&self.helper);
         let active = Arc::clone(&self.active);
         let maximum = self.maximum_active;
         let timeout = self.timeout;
         Box::pin(async move {
-            if cancellation.is_cancelled() {
+            let deadline = Instant::now() + timeout;
+            if stopped(&cancellation, &[&host_stop]) {
                 return Err(TerminalCapturedExecError::Cancelled);
-            }
-            request
-                .validate()
-                .map_err(|_| TerminalCapturedExecError::Invalid)?;
-            let environment = ValidatedBackgroundEnvironment::new(environment)
-                .map_err(|_| TerminalCapturedExecError::Invalid)?;
-            if request.profile.unwrap_or(TerminalProfile::User) != shell.profile() {
-                return Err(TerminalCapturedExecError::Invalid);
             }
             active
                 .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
@@ -154,25 +185,48 @@ impl TerminalCapturedExec {
             let stop = CancellationToken::new();
             let _cancel_on_drop = CancelOnDrop(stop.clone());
             let result_cancellation = cancellation.clone();
+            let result_host_stop = host_stop.clone();
             let receipt = NativeOwnedWorkerSpawner::new()
                 .run(move || {
-                    let result = run(
-                        &helper,
-                        &request,
-                        &shell,
-                        &environment,
-                        cwd,
-                        Instant::now() + timeout,
-                        MAX_TERMINAL_ACTION_OUTPUT_BYTES,
-                        &cancellation,
-                        &[&stop],
-                    )
-                    .and_then(CapturedOutcome::into_terminal_result);
+                    let result = (|| {
+                        if stopped(&cancellation, &[&stop, &host_stop]) {
+                            return Err(TerminalCapturedExecError::Cancelled);
+                        }
+                        if Instant::now() >= deadline {
+                            return empty_timeout(Instant::now()).into_terminal_result();
+                        }
+                        let TerminalCapturedAuthority {
+                            request,
+                            shell,
+                            environment,
+                            cwd,
+                        } = prepare(deadline, &cancellation, &host_stop)?;
+                        request
+                            .validate()
+                            .map_err(|_| TerminalCapturedExecError::Invalid)?;
+                        let environment = ValidatedBackgroundEnvironment::new(environment)
+                            .map_err(|_| TerminalCapturedExecError::Invalid)?;
+                        if request.profile.unwrap_or(TerminalProfile::User) != shell.profile() {
+                            return Err(TerminalCapturedExecError::Invalid);
+                        }
+                        run(
+                            &helper,
+                            &request,
+                            &shell,
+                            &environment,
+                            cwd,
+                            deadline,
+                            MAX_TERMINAL_ACTION_OUTPUT_BYTES,
+                            &cancellation,
+                            &[&stop, &host_stop],
+                        )
+                        .and_then(CapturedOutcome::into_terminal_result)
+                    })();
                     (result, permit)
                 })
                 .await
                 .map_err(|_| TerminalCapturedExecError::Worker)?;
-            if result_cancellation.is_cancelled() {
+            if stopped(&result_cancellation, &[&result_host_stop]) {
                 return Err(TerminalCapturedExecError::Cancelled);
             }
             receipt.0
@@ -901,6 +955,23 @@ mod tests {
             ))
             .unwrap_or_else(|error| panic!("captured command {command:?} failed: {error}"))
         }
+        fn authority(&self, command: &str) -> TerminalCapturedAuthority {
+            TerminalCapturedAuthority {
+                request: TerminalExecRequest {
+                    command: command.into(),
+                    cwd: self.root.to_str().unwrap().into(),
+                    profile: Some(TerminalProfile::Clean),
+                },
+                shell: TerminalShell::from_executable(Path::new("/bin/bash"), true).unwrap(),
+                environment: vec![("PATH".into(), "/usr/bin:/bin".into())],
+                cwd: rustix::fs::open(
+                    &self.root,
+                    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+                    rustix::fs::Mode::empty(),
+                )
+                .unwrap(),
+            }
+        }
         fn stdout<'a>(&self, result: &'a TerminalExecResult) -> &'a [u8] {
             if self.harness {
                 result
@@ -963,6 +1034,95 @@ mod tests {
         let result = fixture.run("printf forbidden > forbidden");
         assert_eq!(result.status, TerminalExecStatus::TimedOut {});
         assert!(!fixture.root.join("forbidden").exists());
+        assert_eq!(fixture.executor.active.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn captured_exec_preparation_is_inert_and_host_stop_prevents_submission() {
+        let fixture = Fixture::new(Duration::from_secs(5));
+        let prepared = Arc::new(AtomicUsize::new(0));
+        for cancelled in [false, true] {
+            let calls = Arc::clone(&prepared);
+            let authority = fixture.authority("printf forbidden > forbidden");
+            let stop = CancellationToken::new();
+            let future = fixture.executor.execute_prepared(
+                move |_, _, _| {
+                    calls.fetch_add(1, Ordering::AcqRel);
+                    Ok(authority)
+                },
+                CancellationToken::new(),
+                stop.clone(),
+            );
+            if cancelled {
+                stop.cancel();
+                assert_eq!(
+                    futures_executor::block_on(future),
+                    Err(TerminalCapturedExecError::Cancelled)
+                );
+            } else {
+                drop(future);
+            }
+        }
+        assert_eq!(prepared.load(Ordering::Acquire), 0);
+        assert_eq!(fixture.executor.active.load(Ordering::Acquire), 0);
+        assert!(!fixture.root.join("forbidden").exists());
+    }
+
+    #[test]
+    fn captured_exec_preparation_consumes_original_deadline() {
+        let fixture = Fixture::new(Duration::from_millis(100));
+        let authority = fixture.authority("printf forbidden > forbidden");
+        let result = futures_executor::block_on(fixture.executor.execute_prepared(
+            move |deadline, _, _| {
+                std::thread::sleep(Duration::from_millis(150));
+                assert!(Instant::now() >= deadline);
+                Ok(authority)
+            },
+            CancellationToken::new(),
+            CancellationToken::new(),
+        ))
+        .unwrap();
+        assert_eq!(result.status, TerminalExecStatus::TimedOut {});
+        assert!(!fixture.root.join("forbidden").exists());
+    }
+
+    #[test]
+    fn captured_exec_host_stop_cleans_native_process_without_response_poll() {
+        let fixture = Fixture::new(Duration::from_secs(30));
+        let authority = fixture.authority("printf '%s' \"$$\" > leader; exec /bin/sleep 30");
+        let stop = CancellationToken::new();
+        let mut future = fixture.executor.execute_prepared(
+            move |_, _, _| Ok(authority),
+            CancellationToken::new(),
+            stop.clone(),
+        );
+        futures_executor::block_on(async {
+            assert!(futures_util::poll!(&mut future).is_pending());
+        });
+        let until = Instant::now() + Duration::from_secs(5);
+        while !fixture.root.join("leader").exists() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let pid = std::fs::read_to_string(fixture.root.join("leader"))
+            .unwrap()
+            .parse::<i32>()
+            .unwrap();
+        let pid = rustix::process::Pid::from_raw(pid).unwrap();
+        stop.cancel();
+        let until = Instant::now() + Duration::from_secs(10);
+        while rustix::process::test_kill_process(pid).is_ok() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            rustix::process::test_kill_process(pid),
+            Err(rustix::io::Errno::SRCH)
+        );
+        // Completed but unconsumed data still occupies its bounded reply slot.
+        assert_eq!(fixture.executor.active.load(Ordering::Acquire), 1);
+        assert_eq!(
+            futures_executor::block_on(future),
+            Err(TerminalCapturedExecError::Cancelled)
+        );
         assert_eq!(fixture.executor.active.load(Ordering::Acquire), 0);
     }
 
