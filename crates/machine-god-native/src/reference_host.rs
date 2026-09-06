@@ -1,7 +1,8 @@
 use std::error::Error;
+use std::ffi::OsString;
 use std::fmt;
 use std::num::NonZeroUsize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -13,6 +14,7 @@ use machine_god_core::{
 use rustix::fd::OwnedFd;
 
 use crate::background_inspection::NativeBackgroundRecordInspector;
+use crate::background_process::ValidatedBackgroundEnvironment;
 use crate::background_supervisor::LazyProductionBackgroundStarter;
 use crate::workspace::{WorkspaceRoot, WorkspaceTools};
 use crate::{
@@ -143,6 +145,121 @@ impl fmt::Display for NativeReferenceHostBuildError {
 }
 
 impl Error for NativeReferenceHostBuildError {}
+
+/// Explicit, frozen terminal launch selections for native host composition.
+///
+/// The helper must be a trusted machine-god CLI executable implementing its
+/// private terminal helper modes. No executable is inferred from `current_exe`,
+/// `PATH`, or an embedding application's test runner. Construction validates
+/// bounded data only: it neither opens nor executes the selected programs,
+/// reads the process environment, nor queries the account database.
+///
+/// This value does not construct a host or change an existing host's tool
+/// catalog. It carries no process, registry, or runtime lifetime authority.
+#[derive(Clone)]
+pub struct NativeReferenceHostTerminalOptions {
+    pub(crate) helper_program: PathBuf,
+    pub(crate) tmux_program: Option<PathBuf>,
+    pub(crate) account_shell: Option<PathBuf>,
+    pub(crate) environment: ValidatedBackgroundEnvironment,
+}
+
+impl NativeReferenceHostTerminalOptions {
+    /// Freezes explicitly supplied helper, account-shell, and environment data.
+    ///
+    /// `account_shell` is the trusted account-database selection, not `SHELL`.
+    /// `None` leaves login-shell selection unavailable; it does not trigger
+    /// discovery. A request can still select an explicit supported shell.
+    /// Unsupported account shells retain the existing platform fallback rules
+    /// when a later request resolves its shell.
+    ///
+    /// # Errors
+    /// Returns only the redacted terminal-configuration stage for invalid or
+    /// oversized paths, malformed environment entries, duplicate keys, or an
+    /// environment exceeding the existing terminal transport limits.
+    pub fn new(
+        helper_program: PathBuf,
+        account_shell: Option<PathBuf>,
+        environment: Vec<(OsString, OsString)>,
+    ) -> Result<Self, NativeReferenceHostBuildError> {
+        validate_terminal_program(&helper_program)?;
+        if let Some(account_shell) = &account_shell {
+            crate::TerminalShell::from_account_shell(Some(account_shell), None, None)
+                .map_err(|_| terminal_options_error())?;
+        }
+        let environment = ValidatedBackgroundEnvironment::new(environment)
+            .map_err(|_| terminal_options_error())?;
+        Ok(Self {
+            helper_program,
+            tmux_program: None,
+            account_shell,
+            environment,
+        })
+    }
+
+    /// Selects a trusted tmux executable without searching for or probing it.
+    ///
+    /// Omitting this selection leaves the tmux backend unavailable. Version
+    /// checks and native launch remain the explicitly owned worker's work.
+    ///
+    /// # Errors
+    /// Returns the redacted terminal-configuration stage for an invalid path.
+    pub fn with_tmux(mut self, program: PathBuf) -> Result<Self, NativeReferenceHostBuildError> {
+        validate_terminal_program(&program)?;
+        self.tmux_program = Some(program);
+        Ok(self)
+    }
+
+    /// Returns the exact caller-selected private-helper executable.
+    #[must_use]
+    pub fn helper_program(&self) -> &Path {
+        &self.helper_program
+    }
+
+    /// Returns the optional caller-selected tmux executable.
+    #[must_use]
+    pub fn tmux_program(&self) -> Option<&Path> {
+        self.tmux_program.as_deref()
+    }
+
+    /// Returns the frozen account-shell selection, without resolving a request.
+    #[must_use]
+    pub fn account_shell(&self) -> Option<&Path> {
+        self.account_shell.as_deref()
+    }
+
+    /// Borrows the exact validated caller-supplied environment snapshot.
+    ///
+    /// Unlike this explicit accessor, debug and error output never expose it.
+    #[must_use]
+    pub fn environment(&self) -> &[(OsString, OsString)] {
+        self.environment.entries()
+    }
+}
+
+impl fmt::Debug for NativeReferenceHostTerminalOptions {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NativeReferenceHostTerminalOptions")
+            .finish_non_exhaustive()
+    }
+}
+
+fn terminal_options_error() -> NativeReferenceHostBuildError {
+    NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::TerminalConfig)
+}
+
+fn validate_terminal_program(program: &Path) -> Result<(), NativeReferenceHostBuildError> {
+    let text = program.to_str().ok_or_else(terminal_options_error)?;
+    if !program.is_absolute()
+        || text.len() > crate::terminal_helper::MAX_PROGRAM_BYTES
+        || text.contains('\0')
+        || program.file_name().is_none()
+    {
+        return Err(terminal_options_error());
+    }
+    Ok(())
+}
 
 /// Fully composed native reference host for the built-in AI Gateway selection.
 pub struct NativeReferenceHost {
@@ -999,9 +1116,171 @@ fn consume_prepared_roots(
 #[cfg(test)]
 mod tests {
     use super::{
-        NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind, map_vision_deadline_error,
+        NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
+        NativeReferenceHostTerminalOptions, map_vision_deadline_error,
+    };
+    use crate::background_process::{
+        MAX_BACKGROUND_PROCESS_ENVIRONMENT_BYTES, MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES,
+        MAX_BACKGROUND_PROCESS_ENVIRONMENT_KEY_BYTES,
+        MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES,
     };
     use crate::{VisionTransportErrorKind, WebSearchTransportError, WebSearchTransportErrorKind};
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn terminal_options_freeze_explicit_inputs_without_discovery_or_execution() {
+        let environment = vec![("SHELL".into(), "/ignored/environment/shell".into())];
+        let options = NativeReferenceHostTerminalOptions::new(
+            "/not-opened/private-machine-god".into(),
+            Some("/not-opened/account/bash".into()),
+            environment.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            options.helper_program(),
+            Path::new("/not-opened/private-machine-god")
+        );
+        assert_eq!(
+            options.account_shell(),
+            Some(Path::new("/not-opened/account/bash"))
+        );
+        assert_eq!(options.environment(), environment);
+        assert_eq!(options.tmux_program(), None);
+        let options = options.with_tmux("/not-opened/tmux".into()).unwrap();
+        assert_eq!(options.tmux_program(), Some(Path::new("/not-opened/tmux")));
+        let clone = options.clone();
+        assert!(options.environment.shares_storage_with(&clone.environment));
+        assert_eq!(
+            format!("{options:?}"),
+            "NativeReferenceHostTerminalOptions { .. }"
+        );
+    }
+
+    #[test]
+    fn terminal_options_absent_account_does_not_use_environment_shell() {
+        let options = NativeReferenceHostTerminalOptions::new(
+            "/explicit/machine-god".into(),
+            None,
+            vec![("SHELL".into(), "/must-not-be-selected/zsh".into())],
+        )
+        .unwrap();
+        assert_eq!(options.account_shell(), None);
+        let options = NativeReferenceHostTerminalOptions::new(
+            "/explicit/machine-god".into(),
+            Some("/explicit/account/fish".into()),
+            Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            options.account_shell(),
+            Some(Path::new("/explicit/account/fish"))
+        );
+    }
+
+    #[test]
+    fn terminal_options_reject_invalid_programs_with_redacted_errors() {
+        for program in [
+            PathBuf::from(""),
+            "relative/machine-god".into(),
+            "/".into(),
+            "/private/secret\0suffix".into(),
+            format!("/{}", "a".repeat(crate::terminal_helper::MAX_PROGRAM_BYTES)).into(),
+            PathBuf::from(OsString::from_vec(b"/private/\xff".to_vec())),
+        ] {
+            let error = NativeReferenceHostTerminalOptions::new(program.clone(), None, Vec::new())
+                .unwrap_err();
+            assert_eq!(
+                error.kind(),
+                NativeReferenceHostBuildErrorKind::TerminalConfig
+            );
+            assert_eq!(
+                error.to_string(),
+                "native reference-host terminal construction failed"
+            );
+            let error = NativeReferenceHostTerminalOptions::new(
+                "/explicit/machine-god".into(),
+                None,
+                Vec::new(),
+            )
+            .unwrap()
+            .with_tmux(program)
+            .unwrap_err();
+            assert_eq!(
+                error.kind(),
+                NativeReferenceHostBuildErrorKind::TerminalConfig
+            );
+        }
+        for shell in ["relative/bash", "/private/secret\0bash"] {
+            assert!(
+                NativeReferenceHostTerminalOptions::new(
+                    "/explicit/machine-god".into(),
+                    Some(shell.into()),
+                    Vec::new(),
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_options_apply_existing_environment_bounds_and_uniqueness() {
+        let mut invalid = vec![
+            vec![(OsString::new(), "value".into())],
+            vec![("BAD=KEY".into(), "value".into())],
+            vec![("KEY\0".into(), "value".into())],
+            vec![("KEY".into(), "value\0".into())],
+            vec![("KEY".into(), "one".into()), ("KEY".into(), "two".into())],
+            vec![(
+                "K".repeat(MAX_BACKGROUND_PROCESS_ENVIRONMENT_KEY_BYTES + 1)
+                    .into(),
+                "v".into(),
+            )],
+            vec![(
+                "KEY".into(),
+                "v".repeat(MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES + 1)
+                    .into(),
+            )],
+        ];
+        invalid.push(
+            (0..=MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES)
+                .map(|index| (format!("K{index}").into(), "v".into()))
+                .collect(),
+        );
+        invalid.push(
+            (0..=MAX_BACKGROUND_PROCESS_ENVIRONMENT_BYTES
+                / MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES)
+                .map(|index| {
+                    (
+                        format!("K{index}").into(),
+                        "v".repeat(MAX_BACKGROUND_PROCESS_ENVIRONMENT_VALUE_BYTES)
+                            .into(),
+                    )
+                })
+                .collect(),
+        );
+        for environment in invalid {
+            let error = NativeReferenceHostTerminalOptions::new(
+                "/explicit/machine-god".into(),
+                None,
+                environment,
+            )
+            .unwrap_err();
+            assert_eq!(
+                error.kind(),
+                NativeReferenceHostBuildErrorKind::TerminalConfig
+            );
+        }
+        let raw = vec![("RAW".into(), OsString::from_vec(vec![0xff, 0xfe]))];
+        let options = NativeReferenceHostTerminalOptions::new(
+            "/explicit/machine-god".into(),
+            None,
+            raw.clone(),
+        )
+        .unwrap();
+        assert_eq!(options.environment(), raw);
+    }
 
     #[test]
     fn memory_configuration_failure_has_one_fixed_redacted_shape() {

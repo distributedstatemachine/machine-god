@@ -55,6 +55,22 @@ request limits remain independently bounded.
 
 ## Constructors
 
+`NativeReferenceHostTerminalOptions` is the explicit, data-only terminal
+launch-selection seam. It requires a trusted machine-god CLI helper path,
+an optional frozen account-shell path, and a bounded environment snapshot;
+`with_tmux` selects an optional tmux executable. Helper and tmux paths must be
+absolute Unicode paths of at most 4,096 bytes without NUL. Environment
+validation shares the native transport's limits and duplicate-key rejection;
+cloning options shares the validated environment allocation. Debug and errors
+remain redacted. Construction does not open or probe executables, search
+`PATH`, infer `current_exe`, inspect `SHELL`, snapshot ambient environment, or
+query the account database. A missing account selection stays missing; an
+explicit unsupported account shell follows the existing platform fallback
+when a request later resolves it. These options alone neither construct a
+host nor change an existing tool catalog. Trusted CLI code can explicitly
+select its own helper-capable executable; library embeddings must not mistake
+their executable or test runner for that helper.
+
 The root, transport, and MCP composition paths are:
 
 | Roots | Transport | Constructor behavior |
