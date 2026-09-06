@@ -26,6 +26,8 @@ mod terminal_input;
 mod terminal_journal;
 #[path = "../src/terminal_monitor.rs"]
 mod terminal_monitor;
+#[path = "../src/terminal_native_backend.rs"]
+mod terminal_native_backend;
 #[path = "../src/terminal_owner.rs"]
 mod terminal_owner;
 #[path = "../src/terminal_profile.rs"]
