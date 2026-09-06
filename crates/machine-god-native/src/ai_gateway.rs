@@ -570,10 +570,7 @@ fn validate_request_envelope(
         check_cancel(cancellation)?;
         let valid_count = match message.role {
             Role::System | Role::User | Role::Tool => message.content.len() == 1,
-            Role::Assistant => {
-                !message.content.is_empty()
-                    && message.content.len() <= limits.max_tool_calls.saturating_add(1)
-            }
+            Role::Assistant => message.content.len() <= limits.max_tool_calls.saturating_add(1),
             _ => false,
         };
         if !valid_count {
@@ -776,9 +773,6 @@ fn build_prompt(
                 }]),
             },
             Role::Assistant => {
-                if message.content.is_empty() {
-                    return Err(invalid_request("gateway_invalid_history"));
-                }
                 let mut parts = Vec::new();
                 let mut saw_call = false;
                 for block in message.content {
@@ -807,6 +801,14 @@ fn build_prompt(
                         }
                         _ => return Err(invalid_request("gateway_invalid_history")),
                     }
+                }
+                // Core retains an empty assistant completion when no text or
+                // tool calls were emitted. Preserve that message and encode a
+                // valid wire text part; all normal body/count limits still apply.
+                if parts.is_empty() {
+                    parts.push(GatewayPart::Text {
+                        text: String::new(),
+                    });
                 }
                 GatewayMessage {
                     role: "assistant",
@@ -874,9 +876,6 @@ fn prepare_tool_result_values<'message>(
                 }
             }
             Role::Assistant => {
-                if message.content.is_empty() {
-                    return Err(invalid_request("gateway_invalid_history"));
-                }
                 let mut saw_call = false;
                 for (index, block) in message.content.iter().enumerate() {
                     check_cancel(projection.cancellation)?;
@@ -1098,18 +1097,18 @@ mod prompt_allocation_tests {
     }
 
     #[test]
-    fn empty_assistant_message_is_rejected_before_transport() {
+    fn empty_user_message_is_rejected_before_transport() {
         let transport = Arc::new(CountingTransport::default());
         let provider = AiGatewayProvider::new("provider/default", transport.clone()).unwrap();
         let result = futures_executor::block_on(provider.stream(
             request_with(vec![Message {
-                role: Role::Assistant,
+                role: Role::User,
                 content: Vec::new(),
             }]),
             CancellationToken::new(),
         ));
         let Err(error) = result else {
-            panic!("empty assistant message unexpectedly reached transport");
+            panic!("empty user message unexpectedly reached transport");
         };
         assert_eq!(error.code, "gateway_invalid_history");
         assert_eq!(transport.calls.load(Ordering::Relaxed), 0);

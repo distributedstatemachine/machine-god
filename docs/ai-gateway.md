@@ -128,6 +128,9 @@ The accepted provider-neutral transcript projection is intentionally narrow:
 - each system or user message contains exactly one text block;
 - an assistant message contains an optional single leading text block followed
   by one or more complete tool-call blocks, or just its single text block;
+  core's empty assistant completion is also accepted and projected as one empty
+  text block, preserving its position and charging the ordinary message and
+  serialized-body budgets without changing the persisted transcript;
 - each tool message contains exactly one tool-result block whose call ID
   resolves uniquely to calls in the immediately preceding assistant group; and
 - a tool result uses that resolved call's tool name and, subject only to the

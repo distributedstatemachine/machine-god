@@ -188,6 +188,139 @@ fn request(messages: Vec<Message>) -> ModelRequest {
     }
 }
 
+fn empty_assistant() -> Message {
+    Message {
+        role: Role::Assistant,
+        content: Vec::new(),
+    }
+}
+
+#[test]
+fn empty_assistant_completion_allows_the_next_engine_turn() {
+    let transport = ScriptedTransport::new(
+        (0..2).map(|_| TransportStep::Bytes(vec![ByteStep::Chunk(finish("stop").into_bytes())])),
+    );
+    let engine = machine_god_core::Engine::builder()
+        .provider(provider(&transport))
+        .session_store(machine_god_testkit::InMemorySessionStore::new())
+        .permission_handler(machine_god_testkit::ScriptedPermissionHandler::new([]))
+        .build()
+        .unwrap();
+    let session = engine
+        .create_session(
+            SessionId::new("empty-completion").unwrap(),
+            SessionIncarnationId::new("empty-incarnation").unwrap(),
+        )
+        .unwrap();
+    for prompt in ["first", "next"] {
+        let events = futures_executor::block_on(async {
+            session
+                .prompt(prompt)
+                .await
+                .unwrap()
+                .collect::<Vec<_>>()
+                .await
+        });
+        assert!(
+            matches!(
+                &events.last().unwrap().as_ref().unwrap().payload,
+                machine_god_core::TurnEvent::Completed { .. }
+            ),
+            "{events:?}"
+        );
+    }
+    let record = session.record();
+    assert_eq!(record.messages[1], empty_assistant());
+    assert_eq!(record.messages[3], empty_assistant());
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    let body: Value = serde_json::from_slice(&requests[1].body).unwrap();
+    assert_eq!(
+        body["prompt"],
+        json!([
+            {"role":"user","content":[{"type":"text","text":"first"}]},
+            {"role":"assistant","content":[{"type":"text","text":""}]},
+            {"role":"user","content":[{"type":"text","text":"next"}]}
+        ])
+    );
+}
+
+#[test]
+fn empty_assistant_projection_preserves_message_and_wire_byte_limits() {
+    let transport = ScriptedTransport::new([TransportStep::Bytes(Vec::new())]);
+    let initial = request(vec![empty_assistant()]);
+    let stream = start(&provider(&transport), initial, CancellationToken::new()).unwrap();
+    drop(stream);
+    let exact_bytes = transport.requests()[0].body.len();
+    for (max_request_bytes, max_messages, messages, accepted, code) in [
+        (exact_bytes, 1, vec![empty_assistant()], true, ""),
+        (
+            exact_bytes - 1,
+            1,
+            vec![empty_assistant()],
+            false,
+            "gateway_request_byte_limit",
+        ),
+        (
+            exact_bytes * 2,
+            1,
+            vec![empty_assistant(), empty_assistant()],
+            false,
+            "gateway_request_count_limit",
+        ),
+    ] {
+        let transport = ScriptedTransport::new([TransportStep::Bytes(Vec::new())]);
+        let provider = AiGatewayProvider::with_limits(
+            "provider/default",
+            Arc::new(transport.clone()),
+            AiGatewayLimits {
+                max_request_bytes,
+                max_messages,
+                ..AiGatewayLimits::default()
+            },
+        )
+        .unwrap();
+        let result = start(&provider, request(messages), CancellationToken::new());
+        if accepted {
+            assert!(result.is_ok());
+        } else {
+            assert_eq!(
+                expect_start_error(result, "empty assistant budgets").code,
+                code
+            );
+        }
+        assert_eq!(transport.requests().len(), usize::from(accepted));
+    }
+}
+
+#[test]
+fn empty_assistant_does_not_relax_other_roles_or_tool_result_adjacency() {
+    let mut pending = tool_result_request(
+        ToolOutput::success("ok"),
+        false,
+        "session",
+        "incarnation",
+        "call",
+    );
+    pending.messages.insert(2, empty_assistant());
+    let mut cases = vec![pending];
+    for role in [Role::System, Role::User, Role::Tool] {
+        cases.push(request(vec![Message {
+            role,
+            content: Vec::new(),
+        }]));
+    }
+    for request in cases {
+        let transport = ScriptedTransport::new([]);
+        let error = expect_start_error(
+            start(&provider(&transport), request, CancellationToken::new()),
+            "malformed empty history",
+        );
+        assert_eq!(error.code, "gateway_invalid_history");
+        assert!(transport.requests().is_empty());
+    }
+}
+
 fn read_tool_result_spec() -> ToolSpec {
     ToolSpec {
         name: ToolName::new("read_tool_result").unwrap(),
