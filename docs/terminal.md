@@ -284,6 +284,11 @@ a pinned bootstrap in an explicitly supplied private directory. It works with
 bash/zsh user and clean profiles even when profiles close inherited descriptors.
 The owner persists shell readiness before acknowledging it, and an optional
 command cannot execute before the separate command-start acknowledgement.
+The startup request's bounded deadline covers preparation, commit and both
+acknowledgements without restarting between phases. Private helpers receive a
+validated absolute monotonic deadline; standalone PTY preparation retains its
+two-second default. Expiry is distinct from generic process failure, and a stale
+owner timestamp cannot authorize an acknowledgement after the actual deadline.
 Commandless startup suppresses bootstrap input echo until shell readiness.
 The short canonical artifact directory and retained directory identity are
 validated before publication; long workspace/profile paths need no shortening.

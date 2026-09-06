@@ -130,6 +130,13 @@ real bash/zsh user and clean profiles pass even when profiles close inherited
 descriptors. Extracted PTY/marker helpers now have private production CLI entrypoints
 and a release-binary test seam. Full host/action assembly and delivery gates remain
 open; these internal component commits do not claim a feature delivery.
+Startup now carries one bounded absolute deadline across preparation, commit and
+acknowledgements, removing the hidden two-second cutoff inside longer requests.
+Corrected component `a327580b754e25b8c1beaa5edf744b2b2252c620` passed pinned
+Rust 1.94.1 formatting, strict workspace Clippy, workspace tests and doctests,
+all 421 terminal component tests, and the freshly built release helper's 16
+startup and 16 PTY tests, including delayed startup, deadline expiry and cleanup.
+Full-feature reviews and remote delivery remain pending.
 The complete normalized twelve-action core contract and effect-free public
 decoder are present, including request/result identity checks and lossless
 foreground execution outcomes. Numeric coercion now matches pinned binary128
