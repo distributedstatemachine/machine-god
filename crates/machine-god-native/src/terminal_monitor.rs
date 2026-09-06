@@ -164,6 +164,7 @@ pub(crate) struct TerminalMonitorMutation {
 
 /// Bounded observation-only projection. It contains no probe approval or
 /// activation fingerprints, pending effect requests, or execution handles.
+#[cfg(test)]
 #[derive(Clone, Serialize)]
 pub(crate) struct TerminalMonitorView {
     pub monitor_id: TerminalMonitorId,
@@ -181,6 +182,7 @@ pub(crate) struct TerminalMonitorView {
     pub condition_matched: bool,
 }
 
+#[cfg(test)]
 impl fmt::Debug for TerminalMonitorView {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("TerminalMonitorView { .. }")
@@ -326,6 +328,7 @@ impl TerminalMonitorSet {
         Ok(result)
     }
 
+    #[cfg(test)]
     pub(crate) fn apply(
         &mut self,
         operation: Operation,
@@ -2133,6 +2136,7 @@ pub(crate) enum TerminalWaitOutcome {
 /// process side effect. The caller seeds retained-history matches explicitly.
 pub(crate) struct TerminalWaitState {
     request: TerminalWaitRequest,
+    #[cfg(test)]
     started_at_ms: i64,
     deadline_ms: i64,
     last_now_ms: i64,
@@ -2165,6 +2169,7 @@ impl TerminalWaitState {
         Ok(Self {
             deadline_ms: deadline(context.now_ms, request.safety_ceiling_ms)?,
             request,
+            #[cfg(test)]
             started_at_ms: context.now_ms,
             last_now_ms: context.now_ms,
             last_output_ms,
@@ -2290,6 +2295,7 @@ impl TerminalWaitState {
         };
         Some(quiet.map_or(self.deadline_ms, |quiet| quiet.min(self.deadline_ms)))
     }
+    #[cfg(test)]
     pub(crate) fn started_at_ms(&self) -> i64 {
         self.started_at_ms
     }
@@ -2693,6 +2699,7 @@ impl TerminalMonitorSet {
     pub(crate) fn acknowledged_event_id(&self) -> u64 {
         self.acknowledged_event_id
     }
+    #[cfg(test)]
     pub(crate) fn state(&self, id: &TerminalMonitorId) -> Option<State> {
         self.index(id)
             .ok()
@@ -2718,6 +2725,7 @@ impl TerminalMonitorSet {
         self.next_event_id
     }
 
+    #[cfg(test)]
     pub(crate) fn inspect(&self) -> Vec<TerminalMonitorView> {
         self.monitors
             .iter()

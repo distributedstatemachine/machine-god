@@ -4,6 +4,7 @@
 
 use std::ffi::OsString;
 use std::fmt;
+#[cfg(test)]
 use std::num::NonZeroU32;
 use std::os::unix::net::UnixStream;
 #[cfg(test)]
@@ -28,7 +29,7 @@ use crate::background_process::{
     MAX_BACKGROUND_PROCESS_ENVIRONMENT_BYTES, MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES,
 };
 use crate::terminal_helper::{
-    COMMIT, DescriptorIo, LaunchFrame, MAX_STARTUP_TIMEOUT, PTY_DEADLINE_ENV, READY, START_TIMEOUT,
+    COMMIT, DescriptorIo, LaunchFrame, MAX_STARTUP_TIMEOUT, PTY_DEADLINE_ENV, READY,
     TerminalHelperError, TerminalHelperErrorKind, check_deadline, encode_helper_deadline,
     read_gate, validate_program_arguments, validate_pty_directory as validate_directory,
     write_gate,
@@ -36,7 +37,7 @@ use crate::terminal_helper::{
 #[cfg(test)]
 use crate::terminal_helper::{
     MAX_ARGUMENT_BYTES, MAX_ARGUMENTS, MAX_ARGUMENTS_BYTES, MAX_FRAME, MAX_PROGRAM_BYTES,
-    read_frame, run_terminal_pty_helper,
+    START_TIMEOUT, read_frame, run_terminal_pty_helper,
 };
 pub(crate) use crate::terminal_helper::{TerminalPtyDimensions, TerminalPtyHelper};
 
@@ -173,6 +174,7 @@ pub(crate) struct PreparedTerminalPty {
 }
 
 impl PreparedTerminalPty {
+    #[cfg(test)]
     pub(crate) fn prepare(
         helper: &TerminalPtyHelper,
         request: TerminalPtyRequest,
@@ -265,6 +267,7 @@ impl PreparedTerminalPty {
             .take()
             .ok_or_else(|| error(TerminalPtyErrorKind::Process))?;
         Ok(TerminalPty {
+            #[cfg(test)]
             pid: process.pid(),
             process: Some(process),
             master: Some(master),
@@ -314,6 +317,7 @@ pub(crate) struct TerminalPtyClose {
 }
 
 pub(crate) struct TerminalPty {
+    #[cfg(test)]
     pid: NonZeroU32,
     process: Option<OwnedBackgroundProcess>,
     master: Option<OwnedFd>,
@@ -333,6 +337,7 @@ impl TerminalPty {
             true,
         )
     }
+    #[cfg(test)]
     pub(crate) const fn pid(&self) -> NonZeroU32 {
         self.pid
     }

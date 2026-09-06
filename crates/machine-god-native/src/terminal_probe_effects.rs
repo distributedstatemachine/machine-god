@@ -41,6 +41,7 @@ pub(crate) struct TerminalProbeCustomContext {
     environment: Arc<ValidatedBackgroundEnvironment>,
 }
 impl TerminalProbeCustomContext {
+    #[cfg(test)]
     pub(crate) fn new(
         shell: TerminalShell,
         environment: Vec<(OsString, OsString)>,

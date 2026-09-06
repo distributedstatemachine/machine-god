@@ -37,6 +37,7 @@ const BLOCKED: u8 = 0;
 const RELEASED: u8 = 1;
 const FAILED: u8 = 2;
 const FRAME_BYTES: usize = 34;
+#[cfg(test)]
 pub(crate) const DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 // Single quoting expands each byte by at most four. There are at most two
 // marker invocations, each with 8 KiB combined executable/argv bytes and a
@@ -114,6 +115,7 @@ pub(crate) struct PublishedTerminalBootstrap {
     artifacts: StartupArtifacts,
 }
 impl PreparedTerminalStartup {
+    #[cfg(test)]
     pub(crate) fn prepare(
         helper: &TerminalPtyHelper,
         request: TerminalStartupRequest,
@@ -333,6 +335,7 @@ pub(crate) struct TerminalStartupBackend<B: TerminalSessionBackend = TerminalPty
     artifacts: Arc<Mutex<ArtifactRetirement>>,
 }
 impl TerminalStartupBackend {
+    #[cfg(test)]
     pub(crate) fn pid(&self) -> std::num::NonZeroU32 {
         self.pty.pid()
     }
@@ -618,6 +621,7 @@ impl TerminalStartupControl {
         self.listener.take();
         Err(error)
     }
+    #[cfg(test)]
     pub(crate) fn cleanup_failed(&self) -> bool {
         self.artifacts
             .as_ref()

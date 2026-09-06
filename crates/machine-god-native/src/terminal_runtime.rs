@@ -10,6 +10,7 @@ use crate::terminal_profile::TerminalProfileBudget;
 use crate::terminal_profile_store::TerminalProfileStore;
 use crate::terminal_registry::{TerminalRegistry, TerminalRegistryStep};
 use crate::terminal_session::TerminalSessionBackend;
+#[cfg(test)]
 use crate::terminal_wait::TerminalWaitCoordinator;
 use machine_god_core::{CancellationToken, TerminalClosePolicy};
 use std::fmt;
@@ -163,10 +164,10 @@ impl<B: TerminalSessionBackend + Send + 'static, S: 'static> Shared<B, S> {
                 Ok(Ok(worker)) => {
                     shared.set_phase(Phase::Running);
                     let completed = contain(|| worker.run(owner));
-                    shared.set_phase(if completed.is_ok() {
-                        Phase::Stopped
-                    } else {
-                        Phase::Failed(TerminalRuntimeError::Panicked)
+                    shared.set_phase(match completed {
+                        Ok(Ok(())) => Phase::Stopped,
+                        Ok(Err(error)) => Phase::Failed(error),
+                        Err(()) => Phase::Failed(TerminalRuntimeError::Panicked),
                     });
                 }
                 outcome => {
@@ -281,6 +282,7 @@ impl<B: TerminalSessionBackend + Send + 'static, S: 'static> TerminalRuntime<B, 
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn request<T: Send + 'static>(
         &self,
         caller: CancellationToken,
@@ -289,6 +291,7 @@ impl<B: TerminalSessionBackend + Send + 'static, S: 'static> TerminalRuntime<B, 
         self.wrap(self.owner.request(caller, operation))
     }
 
+    #[cfg(test)]
     pub(crate) fn request_with_profile<T: Send + 'static>(
         &self,
         caller: CancellationToken,
@@ -305,6 +308,7 @@ impl<B: TerminalSessionBackend + Send + 'static, S: 'static> TerminalRuntime<B, 
         self.wrap(self.owner.request_with_profile(caller, operation))
     }
 
+    #[cfg(test)]
     pub(crate) fn request_with_waits<T: Send + 'static>(
         &self,
         caller: CancellationToken,
@@ -322,6 +326,7 @@ impl<B: TerminalSessionBackend + Send + 'static, S: 'static> TerminalRuntime<B, 
         self.wrap(self.owner.request_with_waits(caller, operation))
     }
 
+    #[cfg(test)]
     pub(crate) fn request_with_writes<T: Send + 'static>(
         &self,
         caller: CancellationToken,
@@ -341,6 +346,7 @@ impl<B: TerminalSessionBackend + Send + 'static, S: 'static> TerminalRuntime<B, 
 
     /// Borrow typed host state and the complete short-dispatch context on the
     /// owning worker. No `S` value is created or stored by this future.
+    #[cfg(test)]
     pub(crate) fn request_with_context<T: Send + 'static>(
         &self,
         caller: CancellationToken,
@@ -349,6 +355,7 @@ impl<B: TerminalSessionBackend + Send + 'static, S: 'static> TerminalRuntime<B, 
         self.wrap(self.owner.request_with_context(caller, operation))
     }
 
+    #[cfg(test)]
     fn wrap<T>(&self, request: TerminalOwnerFuture<B, T, S>) -> TerminalRuntimeFuture<B, T, S> {
         TerminalRuntimeFuture {
             shared: Arc::clone(&self.shared),
@@ -426,6 +433,7 @@ impl<S> Drop for WorkerState<S> {
     }
 }
 
+#[cfg(test)]
 impl<B: TerminalSessionBackend> TerminalRuntimeWorker<B> {
     pub(crate) fn new(
         registry: TerminalRegistry<B>,
@@ -462,7 +470,7 @@ impl<B: TerminalSessionBackend, S> TerminalRuntimeWorker<B, S> {
         }
     }
 
-    fn run(mut self, owner: TerminalOwnerLoop<B, S>) {
+    fn run(mut self, owner: TerminalOwnerLoop<B, S>) -> Result<()> {
         let exit = contain(|| {
             owner.run_with_profile_and_state(
                 &mut self.registry,
@@ -476,28 +484,37 @@ impl<B: TerminalSessionBackend, S> TerminalRuntimeWorker<B, S> {
                 &mut self.observer,
             )
         });
-        if exit.is_ok_and(|exit| exit.shutdown.is_ok_and(|failures| failures.is_empty())) {
-            return;
-        }
+        let (failure, cleaned) = match exit {
+            Ok(exit) => (
+                exit.error.map(TerminalRuntimeError::Owner),
+                exit.shutdown.is_ok_and(|failures| failures.is_empty()),
+            ),
+            Err(()) => (Some(TerminalRuntimeError::Panicked), false),
+        };
         // An old callback/clock error does not keep a clean registry alive.
         // Re-evaluate only current shutdown obligations, without polling more
         // user callbacks or promoting numeric persisted process identities.
-        let mut backoff = CLEANUP_INITIAL_BACKOFF;
-        loop {
-            std::thread::sleep(backoff);
-            let shutdown = contain(|| {
-                self.registry.shutdown_with_profile(
-                    &self.store,
-                    &self.budget,
-                    self.registry.minimum_time_ms(),
-                    TerminalClosePolicy::Force,
-                )
-            });
-            if shutdown.is_ok_and(|result| result.is_ok_and(|failures| failures.is_empty())) {
-                break;
+        if !cleaned {
+            let mut backoff = CLEANUP_INITIAL_BACKOFF;
+            loop {
+                std::thread::sleep(backoff);
+                let shutdown = contain(|| {
+                    self.registry.shutdown_with_profile(
+                        &self.store,
+                        &self.budget,
+                        self.registry.minimum_time_ms(),
+                        TerminalClosePolicy::Force,
+                    )
+                });
+                if shutdown.is_ok_and(|result| result.is_ok_and(|failures| failures.is_empty())) {
+                    break;
+                }
+                backoff = backoff.saturating_mul(2).min(CLEANUP_MAX_BACKOFF);
             }
-            backoff = backoff.saturating_mul(2).min(CLEANUP_MAX_BACKOFF);
         }
+        // Preserve the initiating failure after native cleanup converges. A
+        // clean registry is not evidence that its owner exited successfully.
+        failure.map_or(Ok(()), Err)
     }
 }
 
@@ -1014,7 +1031,41 @@ mod tests {
         );
         fixture.spawner.collect();
         assert_eq!(fixture.backend.lock().unwrap().close_attempts, 1);
+        assert_eq!(
+            runtime.shared.failure(),
+            Some(TerminalRuntimeError::Owner(TerminalOwnerError::Panicked))
+        );
         drop(runtime);
+    }
+
+    #[test]
+    fn owner_failure_survives_cleanup_retries_and_late_nonowning_requests() {
+        let fixture = Fixture::new();
+        fixture.backend.lock().unwrap().close_failures = 2;
+        let runtime = fixture.runtime(true);
+        let requester = runtime.requester();
+        assert_eq!(
+            futures_executor::block_on(
+                requester.request_with_context(CancellationToken::new(), |_| panic!(
+                    "request failure before cleanup retries"
+                ),)
+            ),
+            Err(TerminalRuntimeError::Owner(TerminalOwnerError::Panicked))
+        );
+        fixture.spawner.collect();
+        assert_eq!(fixture.backend.lock().unwrap().close_attempts, 3);
+        assert_eq!(
+            runtime.shared.failure(),
+            Some(TerminalRuntimeError::Owner(TerminalOwnerError::Panicked))
+        );
+        assert_eq!(
+            futures_executor::block_on(
+                requester.request_with_context(CancellationToken::new(), |_| panic!(
+                    "failed owner must never accept new work"
+                ),)
+            ),
+            Err(TerminalRuntimeError::Owner(TerminalOwnerError::Panicked))
+        );
     }
 
     #[derive(Default)]

@@ -92,6 +92,7 @@ impl TerminalTmuxIdentity {
     pub(crate) fn namespace(&self) -> &str {
         &self.namespace
     }
+    #[cfg(test)]
     pub(crate) fn session(&self) -> &str {
         &self.session
     }
@@ -684,6 +685,7 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalTmuxBackend<C, P> {
     /// Blocking-owner preparation only. The caller has authenticated the raw
     /// capture peer and installed startup/cancellation ownership before entry.
     /// This constructor also serves recovery, but never creates process authority.
+    #[cfg(test)]
     pub(crate) fn attach(control: C, process: P, capture: UnixStream) -> Result<Self> {
         Self::attach_until(control, process, capture, Instant::now() + COMMAND_TIMEOUT)
     }
@@ -799,6 +801,7 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalTmuxBackend<C, P> {
     ) -> std::result::Result<BackgroundInputReceipt, ()> {
         self.write_kind(bytes, paste).map_err(|_| ())
     }
+    #[cfg(test)]
     pub(crate) const fn write_ambiguous(&self) -> bool {
         self.write_ambiguous
     }

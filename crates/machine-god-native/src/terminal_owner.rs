@@ -247,6 +247,7 @@ impl<B: TerminalSessionBackend + 'static, S: 'static> TerminalOwnerHandle<B, S> 
 
     /// Operations must be bounded, authorized host commands. No tool-supplied
     /// closure, process backend, or unbounded external probe belongs here.
+    #[cfg(test)]
     pub(crate) fn request<T: Send + 'static>(
         &self,
         caller: CancellationToken,
@@ -265,6 +266,7 @@ impl<B: TerminalSessionBackend + 'static, S: 'static> TerminalOwnerHandle<B, S> 
     /// borrowed authority nor its transaction can escape through the result.
     /// Completion wakes the caller only after the operation returns and drops
     /// all transaction guards, including when the operation panics.
+    #[cfg(test)]
     pub(crate) fn request_with_profile<T: Send + 'static>(
         &self,
         caller: CancellationToken,
@@ -290,6 +292,7 @@ impl<B: TerminalSessionBackend + 'static, S: 'static> TerminalOwnerHandle<B, S> 
     /// Register or cancel attention waits in a short owner request. The
     /// returned wait future is independent of this request's bounded reply;
     /// never block this callback waiting for a terminal condition.
+    #[cfg(test)]
     pub(crate) fn request_with_waits<T: Send + 'static>(
         &self,
         caller: CancellationToken,
@@ -324,6 +327,7 @@ impl<B: TerminalSessionBackend + 'static, S: 'static> TerminalOwnerHandle<B, S> 
 
     /// Submit one authorized write after reserving completion capacity. The
     /// returned future observes owned input; this callback never waits for it.
+    #[cfg(test)]
     pub(crate) fn request_with_writes<T: Send + 'static>(
         &self,
         caller: CancellationToken,
@@ -705,6 +709,7 @@ impl<B: TerminalSessionBackend> TerminalOwnerLoop<B> {
 
     /// Profile transactions exist only inside dispatch, never across observers,
     /// job callbacks/reply wakes, or the blocking request wait.
+    #[cfg(test)]
     pub(crate) fn run_with_profile(
         self,
         registry: &mut TerminalRegistry<B>,

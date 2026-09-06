@@ -308,18 +308,22 @@ pub(crate) enum TerminalJournalCheckpointStatus {
     RetentionEvicted,
 }
 
+#[cfg(test)]
 pub(crate) struct TerminalJournalEvent {
     pub(crate) id: u64,
     pub(crate) payload: Vec<u8>,
 }
+#[cfg(test)]
 redacted!(TerminalJournalEvent);
 
+#[cfg(test)]
 pub(crate) struct TerminalJournalEvents {
     pub(crate) events: Vec<TerminalJournalEvent>,
     pub(crate) gap_through: u64,
     pub(crate) next_event_id: u64,
     pub(crate) acknowledged_through: u64,
 }
+#[cfg(test)]
 redacted!(TerminalJournalEvents);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -693,6 +697,7 @@ impl TerminalJournal {
         Ok(journal)
     }
 
+    #[cfg(test)]
     pub(crate) fn open_existing(
         root: OwnedFd,
         session: &TerminalSessionId,
@@ -760,6 +765,7 @@ impl TerminalJournal {
             TerminalJournalCheckpointStatus::Missing
         }
     }
+    #[cfg(test)]
     pub(crate) const fn recovery(&self) -> TerminalJournalRecovery {
         self.recovery
     }
@@ -770,6 +776,7 @@ impl TerminalJournal {
     /// Inspect actual artifacts without cleanup or publication. Poisoned
     /// journals remain measurable while their retained writer lock is valid.
     /// Unexplained entries fail accounting instead of silently undercounting.
+    #[cfg(test)]
     pub(crate) fn physical_usage(&self) -> Result<TerminalJournalPhysicalUsage> {
         self.validate_lock()?;
         let mut expected = owned_names(&self.manifest);
@@ -934,6 +941,7 @@ impl TerminalJournal {
             && retention_identity(&self.root, &self.manifest)? == *expected)
     }
 
+    #[cfg(test)]
     pub(crate) fn eviction_bytes(&self, eviction: &TerminalJournalEviction) -> Result<usize> {
         self.ready()?;
         Ok(self.eviction_plan(eviction)?.1)
@@ -1284,6 +1292,7 @@ impl TerminalJournal {
         Ok(id)
     }
 
+    #[cfg(test)]
     pub(crate) fn read_events(&self, after: u64, maximum: usize) -> Result<TerminalJournalEvents> {
         self.ready()?;
         ensure(

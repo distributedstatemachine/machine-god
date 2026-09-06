@@ -31,6 +31,7 @@ const MAX_PATH_BYTES: usize = MAX_TERMINAL_ACTION_TEXT_BYTES;
 /// Selection is explicit; `CurrentUser` performs its one lookup only on the worker.
 pub(crate) enum TerminalHostAccountShell {
     Explicit(Option<PathBuf>),
+    #[cfg(test)]
     CurrentUser,
 }
 
@@ -124,6 +125,7 @@ impl TerminalHostAuthority {
                 hash_field(&mut selection, b"explicit-account");
                 path
             }
+            #[cfg(test)]
             TerminalHostAccountShell::CurrentUser => {
                 hash_field(&mut selection, b"current-user-account");
                 Some(

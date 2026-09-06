@@ -11,9 +11,9 @@ use machine_god_core::{
     TerminalWriteRequest,
 };
 
-use crate::background_input::{
-    BackgroundInputReceipt, BackgroundInputStatus, MAX_BACKGROUND_INPUT_BYTES,
-};
+#[cfg(test)]
+use crate::background_input::MAX_BACKGROUND_INPUT_BYTES;
+use crate::background_input::{BackgroundInputReceipt, BackgroundInputStatus};
 
 const MAX_REPLY_BYTES: usize = 4096;
 const MAX_REPLY_FRAMES: usize = 16;

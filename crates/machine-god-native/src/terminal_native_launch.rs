@@ -111,9 +111,11 @@ impl ResolvedTerminalNativeLaunch {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn shell(&self) -> &TerminalShell {
         &self.shell
     }
+    #[cfg(test)]
     pub(crate) fn dimensions(&self) -> &TerminalDimensions {
         &self.dimensions
     }
@@ -268,6 +270,7 @@ pub(crate) struct PreparedTerminalNativeLaunch {
     cwd: OwnedFd,
 }
 impl PreparedTerminalNativeLaunch {
+    #[cfg(test)]
     pub(crate) fn identity(&self) -> &TerminalNativeLaunchIdentity {
         &self.identity
     }

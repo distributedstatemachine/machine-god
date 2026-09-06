@@ -6,14 +6,16 @@
 use std::fmt;
 
 use machine_god_core::{
-    TerminalCursor, TerminalDimensions, TerminalModes, TerminalScreen,
+    TerminalCursor, TerminalDimensions, TerminalScreen,
     TerminalScreenUnavailableReason as Unavailable, TerminalSessionId,
 };
 
+#[cfg(test)]
+use crate::terminal_journal::TerminalJournalPhysicalUsage;
 use crate::terminal_journal::{
     TerminalJournal, TerminalJournalCheckpoint, TerminalJournalCheckpointStatus,
     TerminalJournalError, TerminalJournalEviction, TerminalJournalMutation, TerminalJournalPage,
-    TerminalJournalPhysicalUsage, TerminalJournalReceipt,
+    TerminalJournalReceipt,
 };
 #[cfg(test)]
 use crate::terminal_profile::TerminalTestPersistence;
@@ -25,6 +27,8 @@ use crate::terminal_profile_store::TerminalProfileTransaction;
 use crate::terminal_screen::{
     MAX_TERMINAL_SCREEN_FEED_BYTES, TerminalScreenEngine, TerminalScreenError, TerminalScreenMode,
 };
+#[cfg(test)]
+use machine_god_core::TerminalModes;
 
 const MAGIC: &[u8; 8] = b"MGTH\0\0\0\x01";
 const GRID: u8 = 0;
@@ -388,6 +392,7 @@ impl TerminalHistory {
         self.journal.session_id()
     }
 
+    #[cfg(test)]
     pub(crate) fn physical_usage(&self) -> Result<TerminalJournalPhysicalUsage> {
         Ok(self.journal.physical_usage()?)
     }
@@ -485,6 +490,7 @@ impl TerminalHistory {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn eviction_bytes(&self, kind: TerminalHistoryEviction) -> Result<usize> {
         let Some(request) = self.retention_request(kind)? else {
             return Ok(0);
@@ -553,6 +559,7 @@ impl TerminalHistory {
         Ok(self.projection()?.screen()?)
     }
 
+    #[cfg(test)]
     pub(crate) fn modes(&self) -> Result<TerminalModes> {
         Ok(self.projection()?.modes()?)
     }
