@@ -89,6 +89,13 @@ mod state_environment;
 mod terminal;
 mod terminal_action_parse;
 mod terminal_action_tool;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod terminal_captured_exec;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use terminal_captured_exec::{
+    TERMINAL_CAPTURED_HELPER_ARGUMENT, TerminalCapturedExec, TerminalCapturedExecError,
+    run_terminal_captured_helper,
+};
 mod terminal_display_width;
 mod terminal_grid;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

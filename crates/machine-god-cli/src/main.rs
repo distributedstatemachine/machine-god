@@ -1177,6 +1177,14 @@ fn classify_provider_error(error: &ProviderError) -> ModelsOperationalFailure {
 
 fn main() -> ExitCode {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
+    if is_exact_helper_arguments(
+        env::args_os().skip(1),
+        machine_god_native::TERMINAL_CAPTURED_HELPER_ARGUMENT,
+    ) {
+        let _ = machine_god_native::run_terminal_captured_helper();
+        return ExitCode::from(125);
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     if let Some(arguments) = terminal_tmux_helper_arguments(env::args_os().skip(1)) {
         return ExitCode::from(match arguments {
             Ok(arguments) if machine_god_native::run_terminal_tmux_helper(&arguments).is_ok() => 0,
@@ -6003,6 +6011,7 @@ mod tests {
     #[test]
     fn private_terminal_helpers_require_exact_single_argument_without_normal_cli_dispatch() {
         for helper in [
+            machine_god_native::TERMINAL_CAPTURED_HELPER_ARGUMENT,
             machine_god_native::TERMINAL_PTY_HELPER_ARGUMENT,
             machine_god_native::TERMINAL_STARTUP_MARKER_ARGUMENT,
         ] {

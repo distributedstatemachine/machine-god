@@ -91,6 +91,18 @@ permission grants. This native API is available for terminal-runtime
 composition; existing noninteractive tool execution below retains its stated
 fixed-shell behavior until the complete interactive runtime is integrated.
 
+`TerminalCapturedExec` provides the complete foreground service on Linux and
+macOS. The caller supplies its exact authorized shell, captured environment and
+cwd descriptor; the worker executes the selected bash/zsh user/clean argv and
+returns separate binary stdout/stderr, observed totals, duration and exact
+exit/signal/timeout/output-limit status. Calls are inert until polled, admit at
+most the configured 1–16 executions, and retain owned cleanup after cancellation
+or caller drop. The private CLI helper accepts only its exact single flag before
+normal configuration. Its bounded, close-on-exec error channel distinguishes a
+missing/non-executable shell from a command that legitimately exits with 125;
+launch failure is never guessed from an exit status or stderr content.
+The registered legacy adapter is unchanged until full reference-host composition.
+
 ## Native screen projection
 
 `TerminalScreenEngine` projects bounded raw chunks into structured styled
