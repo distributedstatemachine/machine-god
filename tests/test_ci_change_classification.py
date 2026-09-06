@@ -780,6 +780,26 @@ class CiChangeClassificationTests(unittest.TestCase):
         self.assertIn(non_apple_condition, non_apple_step.group("body"))
         self.assertNotIn("--test-threads=1", non_apple_step.group("body"))
 
+    def test_real_tmux_is_required_only_in_selected_native_jobs(self) -> None:
+        matrix = job(self.ci, "native-target-tests")
+        name = "Install tmux for native terminal integration tests"
+        install = step_script(matrix, name)
+        self.assertIn(
+            "if: ${{ needs.change-classification.outputs.native == 'true' || "
+            "needs.change-classification.outputs.full_workspace == 'true' }}",
+            matrix,
+        )
+        self.assertIn("sudo apt-get install --yes tmux", install)
+        self.assertIn("HOMEBREW_NO_AUTO_UPDATE=1 brew install tmux", install)
+        self.assertIn('tmux_binary="$(command -v tmux)"', install)
+        self.assertIn('"${tmux_binary}" -V', install)
+        self.assertIn(
+            'echo "MACHINE_GOD_TERMINAL_TMUX_BINARY=${tmux_binary}" >> "${GITHUB_ENV}"',
+            install,
+        )
+        self.assertLess(matrix.index(name), matrix.index("Test target natively"))
+        self.assertNotIn("tmux", job(self.ci, "documentation-policy"))
+
     def test_terminal_inputs_have_explicit_filters_and_consumers(self) -> None:
         classifier = job(self.ci, "change-classification")
 

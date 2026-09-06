@@ -332,6 +332,19 @@ the host to serialize control actions without overtaking accepted input.
 After submission, a failed durable quiescence publication is reported separately
 from the retained accepted-byte receipt; it does not authorize retrying bytes.
 
+The prepared-pane tmux adapter consumes an authenticated raw capture stream and
+retained process-incarnation authority supplied by its host. An absolute tmux
+executable and exact private socket, namespace and pane identities constrain
+each command; saved numeric PIDs are comparison data only. Supported tmux
+versions start at 3.2. One input operation retains at most 64 KiB, with pipe I/O
+attempts bounded to 8 KiB. Explicit paste uses one bracketed paste operation;
+ordinary text and protocol replies use ordinary paste-buffer delivery, including
+tmux's pinned LF-to-CR conversion. Completed receipts survive later close/exit;
+an indeterminate submitted paste fails instead of claiming a reliable zero-byte
+receipt. Close retains failed native cleanup for retry. Native platform CI
+installs tmux and supplies an explicit executable path, so real private-server
+tests cannot silently skip when that dependency is missing.
+
 Close commits a discontinuity barrier, drains final output without protocol
 reply effects, and removes monitors after final observations. A positively
 complete drain may publish the final coherent screen; an incomplete drain
@@ -544,7 +557,7 @@ transaction and admission components cover nonresident histories and concurrent
 owner namespaces, including persistent live checkpoint reserves and bounded
 retention selection before running-session reads.
 Production worker ownership, disk-catalog composition, trusted
-startup control, attention and lease effects, tmux, and model/CLI routing
+startup control, attention and lease effects, tmux launch/capture/recovery, and model/CLI routing
 remain full-runtime integration work.
 
 ## Boundary

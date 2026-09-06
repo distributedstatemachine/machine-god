@@ -143,6 +143,10 @@ under profile-lock contention. Full disk/resident catalog projection is integrat
 without resident admission, and ordered input retains paste intent and committed
 byte receipts across later publication failure. Production host assembly remains
 open.
+The prepared-pane tmux controller is integrated with bounded whole-paste input,
+exact pane validation and receipt preservation; native platform jobs require a
+real tmux executable. Production launch, authenticated capture and recovery
+authority still need host composition, alongside complete action routing.
 The complete normalized twelve-action core contract and effect-free public
 decoder are present, including request/result identity checks and lossless
 foreground execution outcomes. Numeric coercion now matches pinned binary128

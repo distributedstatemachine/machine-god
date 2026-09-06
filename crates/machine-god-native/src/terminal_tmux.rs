@@ -1003,6 +1003,16 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalSessionBackend
     fn write(&mut self, bytes: &[u8]) -> std::result::Result<BackgroundInputReceipt, ()> {
         self.write_inner(bytes).map_err(|_| ())
     }
+    fn write_with_paste(
+        &mut self,
+        bytes: &[u8],
+        paste: bool,
+    ) -> std::result::Result<BackgroundInputReceipt, ()> {
+        self.write_kind(bytes, paste).map_err(|_| ())
+    }
+    fn input_write_limit(&self) -> usize {
+        MAX_INPUT_BYTES
+    }
     fn status(&mut self) -> std::result::Result<TerminalPtyStatus, ()> {
         self.drive().map_err(|_| ())?;
         if self.capture_eof
@@ -1432,8 +1442,11 @@ mod tests {
         let (mut backend, peer, state) = fixture();
         let bytes = vec![b'p'; MAX_INPUT_BYTES];
         assert_eq!(
-            backend
-                .write_with_paste(&bytes, true)
+            TerminalSessionBackend::input_write_limit(&backend),
+            bytes.len()
+        );
+        assert_eq!(
+            TerminalSessionBackend::write_with_paste(&mut backend, &bytes, true)
                 .unwrap()
                 .bytes_written(),
             0

@@ -47,6 +47,8 @@ mod terminal_session_record;
 mod terminal_shell;
 #[path = "../src/terminal_startup.rs"]
 mod terminal_startup;
+#[path = "../src/terminal_tmux.rs"]
+mod terminal_tmux;
 #[path = "../src/terminal_unicode_data.rs"]
 mod terminal_unicode_data;
 #[path = "../src/terminal_wait.rs"]
