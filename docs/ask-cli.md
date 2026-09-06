@@ -65,6 +65,17 @@ host and waits for its terminal worker scope to settle before returning the
 command outcome. Settlement includes collected worker joins and transferred
 child reaping, not consumption of tool-result futures. Other hosts' workers do
 not delay this wait; the async poll thread performs no blocking join.
+Once a turn is active, the guardian remains in turn-forwarding mode and the
+turn signal receiver stays owned through settlement, including operation errors
+and unwinds. A first signal arriving during cleanup remains deliverable and
+determines the outcome; an already accepted turn signal keeps precedence.
+Only after native workers join may the worker enter final handling or ask the
+guardian to finish a stalled output path. The signal receiver retains the first
+observed signal independently of the turn future. If an error or unwind loses
+output-progress state, that
+signal still requests final exit after settlement, so a blocked borrowed writer
+cannot trap the command in final handling. Without a signal, errors and unwinds
+retain the ordinary fixed operational-failure diagnostic.
 
 ## Noninteractive authority
 
@@ -126,7 +137,9 @@ After a turn signal, an outstanding write and any following flush share one
 absolute 100 ms post-cleanup acknowledgement deadline; the flush cannot restart
 the grace period. If the borrowed writer remains blocked, the guardian exits
 the process with the signal code only after the turn has reached terminal
-cleanup. Otherwise the scoped turn worker joins before final presentation.
+cleanup and the explicit terminal host's native workers have joined. The output
+grace does not replace or shorten host settlement. Otherwise the scoped turn
+worker joins before final presentation.
 
 Partial assistant bytes already written before a later operational failure are
 not retracted. No failure text may include the prompt, a credential, a path,

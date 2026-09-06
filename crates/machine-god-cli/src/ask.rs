@@ -273,17 +273,26 @@ mod production {
 
     struct AskSignals {
         receiver: tokio::sync::mpsc::Receiver<AskSignal>,
+        first_observed: Option<AskSignal>,
     }
 
     impl AskSignals {
         const fn new(receiver: tokio::sync::mpsc::Receiver<AskSignal>) -> Self {
-            Self { receiver }
+            Self {
+                receiver,
+                first_observed: None,
+            }
         }
 
         fn poll_signal(&mut self, context: &mut std::task::Context<'_>) -> Poll<AskSignal> {
-            self.receiver
+            let signal = self
+                .receiver
                 .poll_recv(context)
-                .map(|signal| signal.unwrap_or(AskSignal::ControlFailed))
+                .map(|signal| signal.unwrap_or(AskSignal::ControlFailed));
+            if let Poll::Ready(signal) = signal {
+                self.first_observed.get_or_insert(signal);
+            }
+            signal
         }
     }
 
@@ -316,10 +325,9 @@ mod production {
             self.transition(AskSignalControl::EnterFinal)
         }
 
-        async fn finish(&self, exit_code: u8) -> Result<(), ()> {
+        fn finish(&self, exit_code: u8) -> Result<(), ()> {
             self.sender
-                .send(AskSignalControl::Finish(exit_code))
-                .await
+                .blocking_send(AskSignalControl::Finish(exit_code))
                 .map_err(|_| ())
         }
     }
@@ -912,7 +920,7 @@ mod production {
                                 terminal_options,
                             )
                             .map_err(|_| ())?;
-                        with_settled_terminal_host(host, |host| runtime.block_on(execute_turn(
+                        with_settled_terminal_turn(host, signals, &control, |host, signals| runtime.block_on(execute_turn(
                             host,
                             selection,
                             prompt,
@@ -939,10 +947,10 @@ mod production {
 
     /// Only the blocking CLI host thread may settle native workers. The
     /// observer carries no Engine/Session vote and never waits for other hosts.
-    fn with_settled_terminal_host(
+    fn with_settled_terminal_host<T>(
         host: NativeReferenceHost,
-        operation: impl FnOnce(&NativeReferenceHost) -> Result<AskCommandOutcome, ()>,
-    ) -> Result<AskCommandOutcome, ()> {
+        operation: impl FnOnce(&NativeReferenceHost) -> Result<T, ()>,
+    ) -> Result<T, ()> {
         let shutdown = host.terminal_shutdown_completion().ok_or(())?;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| operation(&host)));
         drop(host);
@@ -951,6 +959,47 @@ mod production {
             // A panic payload may itself have a panicking destructor.
             std::mem::forget(payload);
         })?
+    }
+
+    fn with_settled_terminal_turn(
+        host: NativeReferenceHost,
+        mut signals: AskSignals,
+        control: &AskSignalControlSender,
+        operation: impl FnOnce(&NativeReferenceHost, &mut AskSignals) -> Result<TurnDriveResult, ()>,
+    ) -> Result<AskCommandOutcome, ()> {
+        // Keep the receiver outside the unwind boundary: the guardian must be
+        // able to latch a first late signal throughout native cleanup, including
+        // after an operation fails or panics. Neither final-phase signals nor a
+        // stalled writer may exit the process before these workers have joined.
+        let result = with_settled_terminal_host(host, |host| operation(host, &mut signals));
+        control.enter_final()?;
+        let operation_failed = result.is_err();
+        let mut result = result.unwrap_or(TurnDriveResult {
+            outcome: AskCommandOutcome::OperationalFailure,
+            stalled_output_after_signal: false,
+        });
+        if !matches!(
+            result.outcome,
+            AskCommandOutcome::Interrupted | AskCommandOutcome::Terminated
+        ) && let Some(signal) = signals
+            .first_observed
+            .or_else(|| signals.receiver.try_recv().ok())
+        {
+            result.outcome = signal.outcome();
+        }
+        // An unwind can lose the driver's output-progress bit while the calling
+        // thread is still inside a borrowed write. The first observed signal
+        // survives outside that unwind and may finish this path after cleanup.
+        if result.stalled_output_after_signal
+            || (operation_failed
+                && matches!(
+                    result.outcome,
+                    AskCommandOutcome::Interrupted | AskCommandOutcome::Terminated
+                ))
+        {
+            control.finish(result.outcome.exit_code())?;
+        }
+        Ok(result.outcome)
     }
 
     /// Runs only on the existing constructor worker. This executable is the
@@ -992,9 +1041,9 @@ mod production {
         selection: SessionSelection,
         prompt: String,
         output: OutputBridge,
-        mut signals: AskSignals,
+        signals: &mut AskSignals,
         control: &AskSignalControlSender,
-    ) -> Result<AskCommandOutcome, ()> {
+    ) -> Result<TurnDriveResult, ()> {
         let lifecycle = host.session_lifecycle();
         let session = match selection {
             SessionSelection::CreateGenerated => lifecycle.create_generated().await,
@@ -1003,19 +1052,7 @@ mod production {
         .map_err(|_| ())?;
         let turn = session.prompt(prompt).await.map_err(|_| ())?;
         control.activate_turn()?;
-        let mut result = drive_turn(turn, &mut signals, output).await;
-        control.enter_final()?;
-        if !matches!(
-            result.outcome,
-            AskCommandOutcome::Interrupted | AskCommandOutcome::Terminated
-        ) && let Ok(signal) = signals.receiver.try_recv()
-        {
-            result.outcome = signal.outcome();
-        }
-        if result.stalled_output_after_signal {
-            control.finish(result.outcome.exit_code()).await?;
-        }
-        Ok(result.outcome)
+        Ok(drive_turn(turn, signals, output).await)
     }
 
     async fn drive_turn(
@@ -1983,7 +2020,8 @@ mod production {
                     transitions
                 });
                 let (signal_sender, signal_receiver) = tokio::sync::mpsc::channel(1);
-                let outcome = runtime
+                let mut signals = AskSignals::new(signal_receiver);
+                let result = runtime
                     .block_on(execute_turn(
                         host,
                         selection,
@@ -1992,15 +2030,19 @@ mod production {
                             work: work_sender,
                             acknowledgements: acknowledgement_receiver,
                         },
-                        AskSignals::new(signal_receiver),
+                        &mut signals,
                         &control,
                     ))
                     .expect("composed turn should execute");
+                // These legacy-host codec tests deliberately retain the host
+                // for transcript inspection; complete-host settlement has its
+                // own ordering regression below.
+                control.enter_final().expect("legacy turn should finalize");
                 drop(signal_sender);
                 drop(control);
                 let output = output_worker.join().expect("output worker should join");
                 let transitions = control_worker.join().expect("control worker should join");
-                (outcome, output, transitions)
+                (result.outcome, output, transitions)
             })
         }
 
@@ -2075,12 +2117,46 @@ mod production {
         }
 
         #[test]
-        fn complete_terminal_host_settles_on_success_error_and_unwind() {
+        #[allow(clippy::too_many_lines)]
+        fn complete_terminal_host_settles_before_final_or_finish_and_retains_late_signals() {
             use machine_god_core::{ToolCall, ToolCallId, ToolContext, ToolName, TurnId};
             use machine_god_native::{
                 NativeReferenceHostTerminalOptions, NativeRootSelection, PreparedNativeRoots,
             };
-            for mode in ["success", "error", "panic"] {
+            for (mode, late_signal, consumed_signal) in [
+                ("success", None, None),
+                ("error", None, None),
+                ("panic", None, None),
+                ("stalled", None, None),
+                ("success", Some(AskSignal::Terminate), None),
+                ("error", Some(AskSignal::Terminate), None),
+                ("panic", Some(AskSignal::Terminate), None),
+                ("stalled", Some(AskSignal::Terminate), None),
+                ("error", None, Some(AskSignal::Terminate)),
+                ("panic", None, Some(AskSignal::Interrupt)),
+                (
+                    "error",
+                    Some(AskSignal::Terminate),
+                    Some(AskSignal::Interrupt),
+                ),
+                (
+                    "panic",
+                    Some(AskSignal::Terminate),
+                    Some(AskSignal::Interrupt),
+                ),
+            ] {
+                let expected = if mode == "stalled" {
+                    AskCommandOutcome::Interrupted
+                } else if let Some(signal) = consumed_signal.or(late_signal) {
+                    signal.outcome()
+                } else if mode == "success" {
+                    AskCommandOutcome::Completed
+                } else {
+                    AskCommandOutcome::OperationalFailure
+                };
+                let must_finish = mode == "stalled"
+                    || (matches!(mode, "error" | "panic")
+                        && consumed_signal.or(late_signal).is_some());
                 let temporary = ScopedTestDirectory::new(&format!("terminal-settlement-{mode}"));
                 let workspace = temporary.path().join("workspace");
                 let state_base = temporary.path().join("state");
@@ -2136,12 +2212,101 @@ mod production {
                     ))
                     .unwrap();
                 assert!(!completion.is_complete());
-                let result = super::with_settled_terminal_host(host, |_| match mode {
-                    "success" => Ok(AskCommandOutcome::Completed),
-                    "error" => Err(()),
-                    _ => panic!("synthetic terminal turn unwind"),
+                // An independent Engine vote holds shutdown open until the
+                // simulated guardian has checked the cleanup-period channel.
+                // No sleeps or production timeout changes establish ordering.
+                let held_engine = host.engine().clone();
+                let (control_sender, mut control_receiver) = tokio::sync::mpsc::channel(1);
+                let control = AskSignalControlSender {
+                    sender: control_sender,
+                };
+                let (signal_sender, signal_receiver) = tokio::sync::mpsc::channel(1);
+                let (operation_done, operation_finished) = mpsc::sync_channel(1);
+                let result = std::thread::scope(|scope| {
+                    let completion = &completion;
+                    let guardian = scope.spawn(move || {
+                        let Some(AskSignalControl::ActivateTurn(ready)) =
+                            control_receiver.blocking_recv()
+                        else {
+                            panic!("turn must activate first");
+                        };
+                        if let Some(signal) = consumed_signal {
+                            signal_sender.try_send(signal).unwrap();
+                        }
+                        ready.send(()).unwrap();
+                        operation_finished.recv().unwrap();
+                        assert!(
+                            !completion.is_complete(),
+                            "held Engine keeps cleanup pending"
+                        );
+                        assert!(
+                            !signal_sender.is_closed(),
+                            "signal receiver survives error and unwind"
+                        );
+                        if let Some(signal) = late_signal {
+                            signal_sender
+                                .try_send(signal)
+                                .expect("late signal remains deliverable during cleanup");
+                        }
+                        drop(held_engine);
+                        let Some(AskSignalControl::EnterFinal(ready)) =
+                            control_receiver.blocking_recv()
+                        else {
+                            panic!("settled turn must enter final before finish");
+                        };
+                        assert!(
+                            completion.is_complete(),
+                            "Final must follow native worker joins"
+                        );
+                        ready.send(()).unwrap();
+                        if must_finish {
+                            let Some(AskSignalControl::Finish(code)) =
+                                control_receiver.blocking_recv()
+                            else {
+                                panic!("signaled blocked-output path must request final exit");
+                            };
+                            assert_eq!(
+                                code,
+                                expected.exit_code(),
+                                "first turn signal retains precedence"
+                            );
+                            assert!(
+                                completion.is_complete(),
+                                "Finish must follow native worker joins"
+                            );
+                        }
+                    });
+                    let result = super::with_settled_terminal_turn(
+                        host,
+                        AskSignals::new(signal_receiver),
+                        &control,
+                        |_, signals| {
+                            control.activate_turn()?;
+                            if consumed_signal.is_some() {
+                                assert_eq!(
+                                    runtime.block_on(super::poll_signal_now(signals)),
+                                    consumed_signal
+                                );
+                            }
+                            operation_done.send(()).unwrap();
+                            match mode {
+                                "error" => Err(()),
+                                "panic" => panic!("synthetic terminal turn unwind"),
+                                _ => Ok(TurnDriveResult {
+                                    outcome: if mode == "stalled" {
+                                        AskCommandOutcome::Interrupted
+                                    } else {
+                                        AskCommandOutcome::Completed
+                                    },
+                                    stalled_output_after_signal: mode == "stalled",
+                                }),
+                            }
+                        },
+                    );
+                    guardian.join().unwrap();
+                    result
                 });
-                assert_eq!(result.is_ok(), mode == "success");
+                assert_eq!(result, Ok(expected));
                 assert!(
                     completion.is_complete(),
                     "{mode}: native owner joined before return"
@@ -2549,8 +2714,8 @@ mod production {
                     assert!(drained.load(Ordering::Acquire));
                     fs::write(drained_path, b"terminal-drained")
                         .expect("drained marker should be writable");
-                    runtime
-                        .block_on(control.finish(result.outcome.exit_code()))
+                    control
+                        .finish(result.outcome.exit_code())
                         .expect("child guardian should finish");
                 });
 

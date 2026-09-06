@@ -61,170 +61,66 @@ review and exact remote gates remain pending.
 
 ### Active feature: complete terminal behavior
 
-The full native action executor and explicit helper-bearing reference-host
-constructors now compose foreground execution, staged startup, live/history
-dispatch, authorized monitor scheduling and shared lossless archives. The CLI
-selects that host explicitly. Real Engine/Session handles own the runtime lease;
-native lifecycle operation futures do not extend it. Focused integration checks
-are in progress after production module promotion, pressure-only inactive
-session recycling and durable cold close. Host-scoped worker completion, CLI
-shutdown settlement and long-path startup are integrated for combined checks.
-The Gateway now replays core's empty assistant completions without poisoning
-later turns; the composed large-input archive/paging regression passes.
-macOS helper deadline transfer uses the same clock domain as Rust `Instant`.
-The combined long-path host/startup/PTY/tmux and helper regressions pass, as does
-strict workspace Clippy. Complete workspace, release-binary and delivery gates
-remain pending.
-These are internal integrations, not a delivery or a compatibility claim.
+Deliver the terminal as one complete feature. Internal component commits do not
+increment the delivered-slice count or establish a compatibility/performance
+claim. The native executor, explicit helper-bearing reference-host constructors
+and CLI now compose all twelve actions, interactive PTY/tmux startup, durable
+history, monitors, lossless archives and terminal-only provider admission.
 
-Deliver complete features, not separately counted action-sized slices. The
-terminal branch stays open across input/write, interactive PTY lifecycle,
-screen/monitor/resize/close, and the composed-host behavior needed to complete
-the pinned terminal action contract. Internal component commits may be tested
-and integrated independently; they are not deliveries or compatibility claims.
-Review and exact local/remote delivery gates apply to the complete feature.
+Integrated behavior is maintained in [the terminal contract](terminal.md),
+[reference-host composition](native-reference-host.md), [core API](core-api.md),
+[Gateway codec](ai-gateway.md), and [archive paging](read-tool-result.md).
+The implementation now includes:
 
-Native session lifetime belongs to the long-lived host registry, not individual
-tool futures. Pinned registry shutdown terminates native sessions; durable
-history and backend-specific recovery do not require a separate native daemon
-or a new IPC protocol. Recovered numeric PIDs never grant process authority.
-Registry shutdown tracks final-state publication independently of native
-cleanup, and catalog reopening retries interrupted directory durability
-barriers. These remain internal integration components, not a delivery.
-The continuous loop now composes resident pumping with bounded asynchronous
-requests and retained shutdown failures. Profile storage integration must cover
-nonresident histories and concurrent owner namespaces, not just resident totals.
-Reusable owned-worker spawning now shares the production collector. Retention
-integration routes physical inventory and explicit eviction through registry,
-session and validated history boundaries. Profile transactions now inventory
-nonresident and busy foreign histories; admission accounts separately for
-retained growth and whole temporary allocations, preserving committed receipts
-across accounting failures. Borrowed journal plans now derive write demand and
-bind it to the profile's exact session directory; sealed acknowledgement and
-eviction plans permit bounded metadata-first quota recovery. Profile-bound
-catalog preparation and directory creation enforce global counts before effects.
-Initial journal metadata now passes admission, and history writes take explicit
-persistence contexts. Pre-read permits reserve bounded output and follow-on
-publications using Rust-encoder-derived checkpoint bounds, keeping committed
-receipts separate from accounting errors. Session mutations now require held
-persistence authority; cleanup without that authority retains a failed
-publication and requires a durable gap barrier before later state publication.
-The owner/registry now acquires profile admission before running-session reads
-and defers contention or quota refusal without consuming output. Exit races
-release the one-read permit before multi-chunk draining under the same held
-transaction, preserving committed reads independently of cleanup errors.
-Shutdown retains failed publication even when profile authority is unavailable.
-Transaction drop explicitly releases the lock despite temporary fork inheritance.
-Native status failures take the lost-session/quiescence path even when profile
-publication is unavailable; they are not treated as harmless capacity deferrals.
-Effect-free resize validation rejects unavailable projections without stopping
-an otherwise running session or its raw-output pumping.
-Resize admission distinguishes initial barrier refusal from final checkpoint
-refusal after native effects; the latter loses/quiesces the session and retains
-the unresolved publication failure.
-Checkpoint reserves now persist in checksummed journal metadata; profile
-admission and reconciliation separately enforce physical usage and reserved
-output across busy and nonresident owners. Lifecycle registration precedes
-startup and growth resize; release follows native cleanup and durable completed
-facts. The profile owner selects bounded, oldest-first retention classes before
-reads, using resident authority or acquired nonresident writer leases. Completed
-crash-leftover reserves retire before payload eviction, including after resident
-recovery. Discovery uses bounded facts-prefix hints without recovering unselected
-payloads; classes without physical bytes are skipped, while selected histories
-still require full validation before mutation.
-Legacy metadata-less records remain readable but do not block eligible victims.
-Profile-aware owner requests now pass the worker's exact store and budget into
-bounded mutation dispatch; transaction guards end before reply wakes. Production
-worker startup and host assembly remain open.
-Actor/writer-bound attention and inspect projections are integrated, including
-checkpoint re-anchoring for live and recovered facts. Registry wait observations
-reject known observation gaps, and profile-backed completion releases storage
-authority before reply publication. Asynchronous waits now share the owner loop,
-including bounded durable catch-up, absolute ceilings and explicit shutdown
-receipts. Lazy owned-runtime assembly and nonce-bound startup are implemented;
-real bash/zsh user and clean profiles pass even when profiles close inherited
-descriptors. Extracted PTY/marker helpers now have private production CLI entrypoints
-and a release-binary test seam. Full host/action assembly and delivery gates remain
-open; these internal component commits do not claim a feature delivery.
-Startup now carries one bounded absolute deadline across preparation, commit and
-acknowledgements, removing the hidden two-second cutoff inside longer requests.
-Corrected component `a327580b754e25b8c1beaa5edf744b2b2252c620` passed pinned
-Rust 1.94.1 formatting, strict workspace Clippy, workspace tests and doctests,
-all 421 terminal component tests, and the freshly built release helper's 16
-startup and 16 PTY tests, including delayed startup, deadline expiry and cleanup.
-Full-feature reviews and remote delivery remain pending.
-Session-owned startup now advances in the ordinary registry pump, with durable
-shell/command phases, a drained profile-output boundary and timeout cleanup even
-under profile-lock contention. Full disk/resident catalog projection is integrated
-without resident admission, and ordered input retains paste intent and committed
-byte receipts across later publication failure. Production host assembly remains
-open.
-The tmux controller and private foreground-server launch are integrated with
-bounded whole-paste input, authenticated supervisor/process authority, exact
-child outcomes and explicit capture-completion evidence. Native platform jobs
-require a real tmux executable. The shared bootstrap and private CLI helper
-retain original-terminal user/clean behavior; full host composition and action
-routing remain open.
-Pending write completion now shares the owner loop with capacity reserved before
-effects, exact receipt identity, and final shutdown counts; cancellation does not
-resubmit or discard the queued suffix.
-Native PTY EOF now closes input immediately while allowing a bounded,
-nonblocking exit-status convergence window; permanent capture loss still fails.
-Final input settlement survives teardown without sending new bytes, and journal
-writer retirement explicitly releases fork-inherited lock descriptions.
-The complete authorized twelve-action adapter is integrated as an injectable
-native API, with cwd resolution deferred to the worker. Core now separates
-explicitly bounded complete results from their already-persisted transcript
-references, retaining ordinary inline limits. Full provider argument admission
-still requires composition. The nonce-bound startup
-bootstrap is shared across transport backends without dropping paste or pending
-write semantics. These are internal components, not a completed feature gate.
-The runtime now binds its spawner to the production owned-worker collector;
-the action adapter has an explicit owned-result publication hook. Native
-archive publication and read-tool paging share bounded owned-worker completion
-and preserve complete results outside the small durable transcript.
-The fresh release helper now passes all 41 tmux component checks, including
-original-terminal user/clean startup, exact child outcomes and capture-loss
-cleanup. Native input publication and prior-call paging now compose with core
-per-tool raw/prepared admission and separately bounded Gateway input framing.
-The actual terminal adapter preserves a full byte-array command through archival
-publication, authorization and execution while keeping subsequent model history
-small. Full reference-host registration and its explicit admission configuration
-remain open; these components are not a feature delivery.
-Typed worker-owned host state and the common PTY/tmux backend selection are
-integrated. State survives cleanup retries and is destroyed after native
-resources; transcript admission moves validated input instead of cloning it.
-The preceding input/archive integration passed the complete pinned workspace
-format, Clippy, test and doctest gate. Production action dispatch and full host
-registration remain the next work, not documentation of a compatibility exception.
-The shared native launch factory and nine-action resident dispatcher are now
-integrated with cold-history read/screen/inspect routing. Catalog leases stay on
-the worker; historical access does not consume live slots. Non-owning request
-handles support staged effect-worker callbacks without extending host lifetime.
-The real launch matrix covers PTY/tmux, bash/zsh, user/clean and full command/paste
-payloads. The descriptor-bound foreground service and exact private CLI helper
-are registered, including separate exec-failure versus command-exit reporting.
-Pending start admission now counts against the same registry limit and is
-invalidated at shutdown. Staged startup/monitor effect orchestration and final
-reference-host wiring remain open; these are not a complete-feature delivery.
-The complete normalized twelve-action core contract and effect-free public
-decoder are present, including request/result identity checks and lossless
-foreground execution outcomes. Numeric coercion now matches pinned binary128
-rounding. Foreground decoding preserves explicit user/clean profiles and leaves
-omission unset for the pinned user-profile default at shell resolution.
-Semantic 64 KiB commands survive native transport, background
-persistence, host/provider admission and CLI rendering with encoding-derived
-ceilings. Background storage preserves its independent aggregate quota through
-pending and live-replacement reservations, including old orphaned histories.
-These remain internal components; the complete action contracts do not yet
-replace the reference host's legacy terminal adapter. Compatibility component
-`de480453718169adf5e458a34c727833dbf32cd1` passed the exact pinned local gate,
-fresh release command round-trip and three fresh local review tracks after
-correcting the decoder's legacy-only exec profile restriction. Full-feature
-host assembly and exact remote delivery gates remain open; this is not a delivery.
-Per-session retention separates raw/checkpoint output from independently bounded
-state and events, matching the pinned output-accounting boundary. Non-output
-publications cannot evict output; recovery retains all ledger categories.
+- Complete normalized requests/results and the effect-free decoder, including
+  pinned binary128 numeric coercion, explicit user/clean shell profiles and
+  lossless 64 KiB commands. Ordinary tool/transcript limits remain independent
+  of the terminal's complete input/output admission.
+- Worker-owned PTY/tmux sessions with authenticated, deadline-bound startup,
+  original-terminal bash/zsh profiles, long quoted artifact paths, explicit
+  captured foreground execution and private production CLI helper entrypoints.
+  macOS deadline transfer uses the same uptime-clock domain as Rust `Instant`.
+- Styled Unicode screen projection, durable segmented output and checkpoints,
+  cursor gaps, retained events, owner-bound catalog/history access, native
+  resize, ordered binary/text/paste input, writer leases and committed receipts.
+- Shared owner-loop waits and authorized monitor scheduling, including bounded
+  native network/filesystem/custom probes, cancellation and notification state.
+- Profile-wide accounting across resident, nonresident and busy foreign
+  histories, separate output/state/event budgets, derived mutation reservations,
+  checkpoint headroom and bounded retention with durable recovery barriers.
+- Pressure-only reuse of inactive, native-clean, publication-clean and
+  unreferenced residency slots; cold-history reads and close do not grant
+  process authority or require live admission.
+- Host-handle-owned runtime lifetime. Non-owning operation futures do not keep
+  native sessions alive. Explicit worker scopes track joined runtime/effect/
+  archive workers and transferred child cleanup independently of unconsumed
+  responses; failed cleanup remains owned and retryable.
+- Complete argument/result archives shared with `read_tool_result`. The
+  composed large-input archive/paging regression passes after fixing Gateway
+  replay of core's empty assistant completions.
+- CI routing for terminal-sys and its native/CLI consumers, Apple binding lint,
+  and pinned-upstream Unicode generation checks.
+
+CLI signal/blocked-output finalization now waits for the terminal host's
+completion observer before the guardian may exit. The receiver and first
+observed signal survive cleanup, errors and unwinds, including loss of the
+driver's output-progress state. The focused serial ask group passes, including
+twelve deterministic ordering/signal cases; the output grace is unchanged.
+
+Component validation includes 1,343 native unit tests, all 46 Gateway integration
+tests and the supported FreeBSD/WASI compile checks. Those component results do
+not establish the complete replacement gate. A full-run startup-deadline failure
+did not reproduce in three isolated repetitions; the replacement run separates
+compilation from process-heavy tests. The corrected candidate requires the
+complete pinned local gate, freshly built release helper coverage, three fresh
+review tracks and exact remote CI/Benchmark gates.
+
+Earlier internal evidence remains historical, not delivery status:
+`a327580b754e25b8c1beaa5edf744b2b2252c620` passed the pinned workspace gate,
+421 terminal component checks and release-helper startup/PTY coverage;
+`de480453718169adf5e458a34c727833dbf32cd1` passed the pinned local gate,
+release command round-trip and three component-review tracks after the decoder
+profile correction. Full-feature review does not inherit those component seals.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:
