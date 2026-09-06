@@ -239,6 +239,19 @@ impl PermissionPrompter for AllowingPrompter {
 
 struct InertQuestionPrompter;
 
+#[derive(Clone, Default)]
+struct DenyingTerminalPrompter(AllowingPrompter);
+
+impl PermissionPrompter for DenyingTerminalPrompter {
+    fn prompt(
+        &self,
+        request: PermissionRequest,
+    ) -> BoxFuture<'_, Result<PermissionPromptDecision, PermissionPromptError>> {
+        self.0.requests.lock().unwrap().push(request);
+        Box::pin(async { Ok(PermissionPromptDecision::Deny) })
+    }
+}
+
 impl QuestionPrompter for InertQuestionPrompter {
     fn prompt(
         &self,
@@ -2324,6 +2337,59 @@ fn composed_terminal_inspect_reads_exact_record_without_permission_or_supervisor
             .to_string()
             .contains("PRIVATE_REFERENCE_HOST_COMMAND")
     );
+}
+
+#[test]
+fn composed_terminal_preserves_full_commands_through_provider_engine_and_permission() {
+    let maximum = machine_god_native::MAX_TERMINAL_COMMAND_BYTES;
+    for (case, command, accepted) in [
+        ("plain", "a".repeat(maximum), true),
+        ("escaped", "\u{1b}".repeat(maximum), true),
+        ("unicode", "é".repeat(maximum / 2), true),
+        ("oversized", "a".repeat(maximum + 1), false),
+    ] {
+        let temporary = TemporaryDirectory::new(case);
+        let (workspace, sessions) = roots(temporary.path());
+        let arguments = json!({"action": "start", "command": command});
+        assert!(serde_json::to_vec(&arguments).unwrap().len() > 64 * 1024);
+        let input = json!({
+            "type": "tool-call", "toolCallId": "bounded-command",
+            "toolName": "terminal", "input": arguments
+        });
+        let response = format!(
+            "data: {input}\n\ndata: {{\"type\":\"finish\",\"finishReason\":{{\"unified\":\"tool-calls\"}}}}\n\n"
+        );
+        let finish = "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n";
+        let transport = ScriptedTransport::new("COMMAND_BOUND", [response.as_str(), finish]);
+        let prompter = DenyingTerminalPrompter::default();
+        let host = NativeReferenceHost::compose_with_ai_gateway_transport(
+            built_in_config(),
+            Arc::new(transport.clone()),
+            production_gateway_target(),
+            &workspace,
+            &sessions,
+            Arc::new(prompter.clone()),
+            inert_question_prompter(),
+            never_deadline(),
+        )
+        .unwrap();
+        assert_eq!(
+            host.engine().limits().max_tool_argument_bytes.get(),
+            machine_god_native::MAX_TERMINAL_SERIALIZED_ARGUMENT_BYTES
+        );
+        let (_, events) = collect_turn(&host, case);
+        assert_completed(&events);
+        let permissions = prompter.0.requests();
+        assert_eq!(permissions.len(), usize::from(accepted), "{case}");
+        if accepted {
+            let Capability::Process { arguments, .. } = &permissions[0].capability else {
+                panic!("expected exact process permission");
+            };
+            assert_eq!(arguments, &["-c".to_owned(), command]);
+        }
+        assert!(!sessions.join("background-v1").exists());
+        assert_eq!(transport.requests().len(), 2);
+    }
 }
 
 #[test]

@@ -9,6 +9,20 @@ piped stdin after separate authorization, or lists, inspects, or boundedly
 waits on persisted background records without process authority. It is
 registered by the reference host and has no top-level CLI command.
 
+## Complete action contract components
+
+Core defines normalized, effect-free requests and responses for all twelve
+actions: `exec`, `start`, `read`, `screen`, `write`, `wait`, `monitor`, `inspect`,
+`list`, `resize`, `signal`, and `close`. Validation binds responses to their
+request action and session, checks mutation receipts, bounded pages and cursor
+ranges, and preserves foreground stdout/stderr bytes, totals, status and duration.
+The public JSON decoder maps flat tool arguments to these contracts; it does
+not manufacture owner, actor or writer authority. Its cwd extractor validates
+the complete request before a host resolves and authorizes a directory.
+The caller must reject duplicate raw JSON fields before constructing a
+`serde_json::Value`. These internal components do not yet replace the registered
+tool adapter described below.
+
 ## Native shell resolution
 
 `TerminalShell` resolves explicitly injected account data or performs an
@@ -529,8 +543,10 @@ An exec-only construction accepts only `exec`; a starter-only construction
 accepts `exec` and `start`.
 `cwd` is optional and defaults to `"."`. `profile` is optional and accepts
 only `"clean"`; omission has the same meaning. Unknown or duplicate fields,
-mistyped values, an empty command, and a command over 32 KiB reject. The
-complete canonical argument object is bounded by 64 KiB.
+mistyped values, an empty command, and a command over 64 KiB reject. The
+complete canonical argument object is bounded by 417,865 bytes: six times the
+command and cwd byte limits plus the maximal fixed canonical field envelope.
+The composed host aligns both provider and engine admission to this ceiling.
 
 `cwd` is a canonical workspace-relative directory spelling. `.` selects the
 workspace root. Otherwise it contains at most 256 slash-separated components,
@@ -805,7 +821,7 @@ to false. Unknown or mistyped fields reject. UTF-8 is sent exactly, without
 newline insertion, Unicode normalization, or NUL filtering. Base64 requires
 canonical padded RFC 4648 standard-alphabet spelling: whitespace, URL-safe
 characters, missing padding, and nonzero unused bits reject. The decoded
-payload is at most 8,192 bytes; the existing 64 KiB serialized argument cap
+payload is at most 8,192 bytes; the bounded canonical serialized argument cap
 also applies. An empty payload is allowed only with `eof: true`.
 
 The writer privately receives the exact caller session ID and incarnation,

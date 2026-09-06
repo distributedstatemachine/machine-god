@@ -45,6 +45,14 @@ provider, the web-search transport adapter, and the private vision worker. The
 host retains the complete `LoadedNativeConfig`, including its observable
 schema origin/version.
 
+The host configures both ordinary Gateway tool-argument decoding and engine
+preflight with the terminal's bounded canonical argument envelope (417,865
+bytes). This admits a full 64 KiB command plus cwd and JSON escaping without
+truncating the command or its process-permission identity. Individual tools
+still enforce their own semantic limits. Generic `EngineLimits` and
+`AiGatewayLimits` defaults remain unchanged; response, chunk, result and total
+request limits remain independently bounded.
+
 ## Constructors
 
 The root, transport, and MCP composition paths are:

@@ -1,13 +1,14 @@
 use std::error::Error;
 use std::fmt;
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
 use machine_god_core::{
-    BoxFuture, CancellationToken, Engine, NetworkTarget, SessionStore, SubagentAuthority,
-    SubagentAuthorityError, SubagentAuthorityErrorKind, SubagentOutcome, SubagentRequest,
-    SubagentTool,
+    BoxFuture, CancellationToken, Engine, EngineLimits, NetworkTarget, SessionStore,
+    SubagentAuthority, SubagentAuthorityError, SubagentAuthorityErrorKind, SubagentOutcome,
+    SubagentRequest, SubagentTool,
 };
 use rustix::fd::OwnedFd;
 
@@ -16,13 +17,13 @@ use crate::background_supervisor::LazyProductionBackgroundStarter;
 use crate::workspace::{WorkspaceRoot, WorkspaceTools};
 use crate::{
     AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayHttpTransport,
-    AiGatewayProvider, AiGatewayTransport, AiGatewayVisionTransport, AiGatewayWebSearchTransport,
-    AskPermissionHandler, AskUserQuestionTool, FileSessionStore, LoadedNativeConfig,
-    McpFeatureAuthority, McpFeatureError, McpFeatureErrorKind, McpFeaturePayload,
-    McpFeatureRequest, McpFeaturesTool, McpSearchToolsTool, McpSelectTool, McpToolCatalog,
-    McpToolCatalogError, McpToolCatalogSnapshot, MemoryTool, NativeCredentialSourceKind,
-    NativeProviderKind, NativeSessionLifecycle, NativeTransportKind, PermissionMode,
-    PermissionPrompter, PreparedNativeRoots, QuestionPrompter, ReadToolResultTool,
+    AiGatewayLimits, AiGatewayProvider, AiGatewayTransport, AiGatewayVisionTransport,
+    AiGatewayWebSearchTransport, AskPermissionHandler, AskUserQuestionTool, FileSessionStore,
+    LoadedNativeConfig, McpFeatureAuthority, McpFeatureError, McpFeatureErrorKind,
+    McpFeaturePayload, McpFeatureRequest, McpFeaturesTool, McpSearchToolsTool, McpSelectTool,
+    McpToolCatalog, McpToolCatalogError, McpToolCatalogSnapshot, MemoryTool,
+    NativeCredentialSourceKind, NativeProviderKind, NativeSessionLifecycle, NativeTransportKind,
+    PermissionMode, PermissionPrompter, PreparedNativeRoots, QuestionPrompter, ReadToolResultTool,
     TerminalBackgroundCatalog, TerminalBackgroundInspector, TerminalBackgroundOutputReader,
     TerminalBackgroundSignaler, TerminalBackgroundStarter, TerminalBackgroundWaitDelay,
     TerminalBackgroundWaitDelayError, TerminalBackgroundWriter, TerminalTool, VisionDeadline,
@@ -654,9 +655,23 @@ impl NativeReferenceHost {
                 NativeReferenceHostBuildErrorKind::WebSearchTransport,
             )
         })?;
-        let provider = AiGatewayProvider::new(model, transport).map_err(|_| {
-            NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Provider)
-        })?;
+        // A semantic 64 KiB command can require six JSON bytes per input byte.
+        // Keep provider admission and engine preflight aligned with the tool's
+        // bounded canonical envelope, without changing generic embedder defaults.
+        let argument_bytes = crate::MAX_TERMINAL_SERIALIZED_ARGUMENT_BYTES;
+        let provider_limits = AiGatewayLimits {
+            max_tool_arguments_bytes: argument_bytes,
+            ..AiGatewayLimits::default()
+        };
+        let engine_limits = EngineLimits {
+            max_tool_argument_bytes: NonZeroUsize::new(argument_bytes)
+                .expect("terminal argument envelope is nonzero"),
+            ..EngineLimits::default()
+        };
+        let provider =
+            AiGatewayProvider::with_limits(model, transport, provider_limits).map_err(|_| {
+                NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Provider)
+            })?;
         let web_fetch = compose_web_fetch()?;
         let permission_handler = AskPermissionHandler::shared_prompter(permission_prompter);
         let ask_user_question = AskUserQuestionTool::shared_prompter(question_prompter);
@@ -670,6 +685,7 @@ impl NativeReferenceHost {
         let session_store = Arc::new(session_store);
         let (engine_session_store, read_tool_result) = session_store_components(&session_store);
         let engine = Engine::builder()
+            .limits(engine_limits)
             .provider(provider)
             .shared_session_store(engine_session_store)
             .permission_handler(permission_handler)
