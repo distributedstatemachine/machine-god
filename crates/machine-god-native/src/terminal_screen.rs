@@ -128,6 +128,9 @@ impl TerminalScreenEngine {
     }
 
     /// Processes a bounded raw chunk and returns live replies for explicit dispatch.
+    /// Cell projection retains at most 64 UTF-8 bytes including the base scalar,
+    /// omitting excess suffix scalars without splitting them. This does not alter
+    /// the caller's raw history bytes or invalidate the remaining screen.
     ///
     /// # Errors
     /// Oversized input has no effect. A parser/resource failure invalidates the
@@ -217,6 +220,59 @@ impl TerminalScreenEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn complete_cell_bound_preserves_scalar_boundaries_and_checkpoint_screens() {
+        let exact = [
+            format!("a{}\u{20d0}", "\u{0301}".repeat(30)),
+            format!("é{}", "\u{0301}".repeat(31)),
+            format!("界{}\u{20d0}", "\u{0301}".repeat(29)),
+            format!("😀{}", "\u{0301}".repeat(30)),
+        ];
+        for text in exact {
+            assert_eq!(text.len(), 64);
+            for chunk_bytes in [1, text.len() + 1] {
+                let mut engine = TerminalScreenEngine::new(
+                    &TerminalDimensions::new(2, 8).unwrap(),
+                    TerminalScreenMode::Live,
+                )
+                .unwrap();
+                // DEL is a pinned zero-width, one-byte suffix: exact + one.
+                let over = format!("{text}\x7f");
+                for chunk in over.as_bytes().chunks(chunk_bytes) {
+                    assert!(engine.feed(chunk).unwrap().is_empty());
+                }
+                let screen = engine.screen().unwrap();
+                assert_eq!(screen.cells[0].text, text);
+                screen.validate().unwrap();
+                let checkpoint = engine.checkpoint().unwrap();
+                let restored =
+                    TerminalScreenEngine::restore(&checkpoint, TerminalScreenMode::Replay).unwrap();
+                assert_eq!(restored.screen().unwrap(), screen);
+            }
+        }
+    }
+
+    #[test]
+    fn complete_cell_bound_never_retains_part_of_a_combining_scalar() {
+        let mut engine = TerminalScreenEngine::new(
+            &TerminalDimensions::new(2, 8).unwrap(),
+            TerminalScreenMode::Live,
+        )
+        .unwrap();
+        let kept = format!("a{}", "\u{0301}".repeat(31));
+        assert_eq!(kept.len(), 63);
+        let over = format!("{kept}\u{0301}");
+        assert_eq!(over.len(), 65);
+        engine.feed(over.as_bytes()).unwrap();
+        assert_eq!(engine.screen().unwrap().cells[0].text, kept);
+        let restored = TerminalScreenEngine::restore(
+            &engine.checkpoint().unwrap(),
+            TerminalScreenMode::Replay,
+        )
+        .unwrap();
+        assert_eq!(restored.screen().unwrap(), engine.screen().unwrap());
+    }
 
     #[test]
     fn independent_checkpoint_bound_tracks_dimensions_and_fragmented_parser_state() {

@@ -262,7 +262,7 @@ impl TerminalActionExecutor for NativeTerminalActionExecutor {
             if matches!(
                 invocation.action(),
                 TerminalAction::Start | TerminalAction::Monitor
-            ) {
+            ) || invocation.has_workspace_filter() {
                 return host.owned_action(authority, invocation, cancellation).await;
             }
             let request = invocation.resolve_cwd(|_| Err(unavailable()))?;
@@ -394,6 +394,18 @@ impl NativeTerminalActionExecutor {
                 } => {
                     self.monitor_on_worker(authority, session_id, operation, deadline, cancellation)
                         .await
+                }
+                request @ TerminalActionRequest::List { .. } => {
+                    terminal_host_dispatch::dispatch(
+                        self.requester.clone(),
+                        authority,
+                        request,
+                        TerminalMonitorActivation::default(),
+                        cancellation,
+                    )
+                    .await
+                    .map(reply_result)
+                    .map_err(dispatch_error)
                 }
                 _ => Err(unavailable()),
             }
@@ -992,6 +1004,63 @@ mod tests {
             panic!("list receipt");
         };
         assert!(sessions.iter().any(|session| session.session_id == id));
+    }
+
+    #[test]
+    fn full_host_list_resolves_workspace_filters_without_expanding_owner_authority() {
+        let fixture = Fixture::new();
+        let workspace = fixture.root.join("workspace");
+        std::fs::create_dir_all(workspace.join("real/deep")).unwrap();
+        std::os::unix::fs::symlink("real/deep", workspace.join("link")).unwrap();
+        let TerminalActionResult::Start { session, .. } = fixture.action(json!({
+            "action":"start", "profile":"clean", "command":"exec /bin/sleep 30"
+        })) else { panic!("start receipt"); };
+        fixture.close(&session.session_id);
+        let ids = |arguments| {
+            let TerminalActionResult::List { sessions } = fixture.action(arguments)
+            else { panic!("list receipt"); };
+            sessions.into_iter().map(|session| session.session_id).collect::<Vec<_>>()
+        };
+        let expected = ids(json!({"action":"list"}));
+        assert_eq!(expected, vec![session.session_id]);
+        for root in [
+            ".".to_owned(), workspace.display().to_string(),
+            format!("{}/.", workspace.display()), "link/../..".to_owned(),
+            " \t.\r\n".to_owned(), "~/workspace".to_owned(), "~//workspace".to_owned(),
+        ] {
+            assert_eq!(ids(json!({"action":"list","workspace_root":root})), expected, "{root}");
+        }
+        // Native link/.. is real, not the workspace produced by lexical removal.
+        for root in ["link/..".to_owned(), fixture.root.display().to_string(), "..".to_owned()] {
+            assert!(ids(json!({"action":"list","workspace_root":root})).is_empty());
+        }
+        assert!(ids(json!({"action":"list","workspace_root":".","task_id":"other-owner"})).is_empty());
+        let mut foreign = Fixture::context();
+        foreign.session_id = SessionId::new("foreign-owner").unwrap();
+        let prepared = fixture.tool.prepare(ToolCall {
+            id: foreign.call_id.clone(), name: ToolName::new("terminal").unwrap(),
+            arguments: json!({"action":"list","workspace_root":".","task_id":"owner"}),
+        }).unwrap();
+        let output = futures_executor::block_on(fixture.tool.execute(
+            foreign, prepared.arguments().clone(), CancellationToken::new()
+        )).unwrap();
+        assert_eq!(output.content["sessions"], json!([]));
+        for root in ["missing", "missing/..", " \t ", "~other"] {
+            assert!(futures_executor::block_on(fixture.future(
+                json!({"action":"list","workspace_root":root}), CancellationToken::new()
+            )).is_err(), "{root}");
+        }
+    }
+
+    #[test]
+    fn full_host_filtered_list_is_inert_until_polled_and_cancelled_before_submission() {
+        let fixture = Fixture::new();
+        let arguments = json!({"action":"list","workspace_root":"."});
+        drop(fixture.future(arguments.clone(), CancellationToken::new()));
+        let cancelled = CancellationToken::new();
+        cancelled.cancel();
+        assert!(futures_executor::block_on(fixture.future(arguments, cancelled)).is_err());
+        assert!(!fixture.root.join("state/terminal-v1").exists());
     }
 
     #[test]

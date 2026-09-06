@@ -112,6 +112,14 @@ by device/inode, and the workspace descriptor must still match its captured
 canonical spelling. The resulting exact cwd descriptor stays on the owned
 effect worker through launch; it is never reopened or returned to an async
 polling thread as path-based authority. Non-command actions acquire no cwd.
+A supplied `list.workspace_root` uses the separate effect-free
+`TerminalActionInvocation::resolve_workspace_filter` callback, invoked on the
+bounded, scoped effect worker against the captured default cwd, preserving native
+symlink/parent order. ASCII edge whitespace is trimmed and `~` uses captured
+`HOME`; missing or invalid paths fail. An explicit existing foreign root is a
+no-match predicate, never command-directory or foreign-owner authority. The
+retained workspace identity is checked around resolution. Unfiltered lists
+perform no filter filesystem resolution and use ordinary owner-loop admission.
 Bootstrap artifacts come only from the supplied private directory, duplicated
 after start admission, not from an arbitrary command cwd. Native launch retains
 its own final descriptor/path checks and rejects replacement rather than
@@ -172,6 +180,10 @@ owner must verify checkpoint integrity and feed only contiguous later output;
 an explicit raw gap invalidates the projection rather than inventing a screen.
 Oversized feeds are rejected without mutation. Resizing this projection alone
 does not resize a process: the runtime must also resize the actual PTY.
+Each projected cell's complete UTF-8 text, including its base scalar and
+combining suffix, fits the screen contract's 64-byte limit. Excess suffix
+scalars do not expand that projection; raw journal bytes remain unchanged.
+Checkpoint restoration rejects cells that exceed the same complete-text limit.
 
 The Rust checkpoint encoder exposes a dimension-dependent reservation bound:
 `9,978,007 + 44 × cells + columns` bytes, excluding the nine-byte history
@@ -770,6 +782,10 @@ that worker. Unpolled/cancelled requests do not initialize it, and tool futures
 do not keep the host alive. Last-host drop requests shutdown without joining
 on the polling thread. Unresolved cleanup stays on the same worker with capped
 backoff; completed cleanup is not held forever by an older request error.
+An already-executed operation's stored receipt survives a later runtime failure,
+including failure of its reply waker. Unresolved or unadmitted requests still
+report the runtime's initiating failure; a committed mutation is not relabeled
+as an unexecuted operation.
 The runtime can additionally own a typed host state, created by its initializer
 on that worker. Context requests borrow the same state with the registry,
 profile store/budget, wait/write coordinators, validated time and cancellation;

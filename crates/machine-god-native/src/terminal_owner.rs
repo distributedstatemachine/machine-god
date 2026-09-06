@@ -87,14 +87,16 @@ impl Drop for Permit {
 }
 struct Reply<T> {
     result: Option<Result<T>>,
+    executed: bool,
     waker: Option<Waker>,
 }
-fn complete<T>(reply: &Mutex<Reply<T>>, value: Result<T>) -> bool {
+fn complete<T>(reply: &Mutex<Reply<T>>, value: Result<T>, executed: bool) -> bool {
     let wake = {
         let mut reply = reply
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         reply.result = Some(value);
+        reply.executed = executed;
         reply.waker.take()
     };
     // Never invoke user-controlled wakers while holding a synchronization lock.
@@ -137,9 +139,8 @@ impl<B: TerminalSessionBackend, T: Send, S> Job<B, S> for Request<B, T, S> {
         if self.caller.is_cancelled() {
             self.cancellation.cancel();
         }
-        let result = if self.cancellation.is_cancelled() {
-            Err(TerminalOwnerError::Cancelled)
-        } else {
+        let executed = !self.cancellation.is_cancelled();
+        let result = if executed {
             let operation = self.operation.take().expect("request executed once");
             catch_callback(|| {
                 operation(
@@ -153,10 +154,12 @@ impl<B: TerminalSessionBackend, T: Send, S> Job<B, S> for Request<B, T, S> {
                 )
             })
             .unwrap_or(Err(TerminalOwnerError::Panicked))
+        } else {
+            Err(TerminalOwnerError::Cancelled)
         };
         let keep_running = !matches!(&result, Err(TerminalOwnerError::Panicked));
         self.completed = true;
-        let woke = complete(&self.reply, result);
+        let woke = complete(&self.reply, result, executed);
         if !woke {
             self.callback_panicked.store(true, Ordering::Release);
         }
@@ -165,7 +168,7 @@ impl<B: TerminalSessionBackend, T: Send, S> Job<B, S> for Request<B, T, S> {
 }
 impl<B: TerminalSessionBackend, T, S> Drop for Request<B, T, S> {
     fn drop(&mut self) {
-        if !self.completed && !complete(&self.reply, Err(TerminalOwnerError::Closed)) {
+        if !self.completed && !complete(&self.reply, Err(TerminalOwnerError::Closed), false) {
             // Contain wake separately from captured-value Drop: if both panic,
             // unwinding one through the other would abort before any outer catch.
             self.callback_panicked.store(true, Ordering::Release);
@@ -370,6 +373,7 @@ impl<B: TerminalSessionBackend + 'static, S: 'static> TerminalOwnerHandle<B, S> 
             operation: Some(operation),
             reply: Arc::new(Mutex::new(Reply {
                 result: None,
+                executed: false,
                 waker: None,
             })),
             caller_wait: Some(caller.cancelled()),
@@ -394,6 +398,37 @@ pub(crate) struct TerminalOwnerFuture<B: TerminalSessionBackend, T, S = ()> {
     permit: Option<Arc<Permit>>,
     submitted: bool,
     finished: bool,
+}
+impl<B: TerminalSessionBackend, T, S> TerminalOwnerFuture<B, T, S> {
+    pub(crate) fn operation_executed(&self) -> bool {
+        self.reply
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .executed
+    }
+
+    /// Observe an executed operation without admitting work or invoking a waker.
+    /// Queue rejection and pre-execution cancellation are not operation receipts.
+    pub(crate) fn take_executed_reply(&mut self) -> Option<Result<T>> {
+        let (result, old) = {
+            let mut reply = self
+                .reply
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !reply.executed {
+                return None;
+            }
+            (reply.result.take(), reply.waker.take())
+        };
+        if result.is_some() {
+            self.finished = true;
+            self.caller_wait = None;
+            self.permit = None;
+        }
+        // User-controlled waker destruction must remain outside the reply lock.
+        drop(old);
+        result
+    }
 }
 impl<B: TerminalSessionBackend + 'static, T: Send + 'static, S: 'static> Future
     for TerminalOwnerFuture<B, T, S>
@@ -915,6 +950,7 @@ mod tests {
     fn completion_wakes_outside_reply_lock() {
         let reply = Arc::new(Mutex::new(Reply {
             result: None,
+            executed: false,
             waker: None,
         }));
         let wake = Arc::new(ReentrantWake {
@@ -922,8 +958,36 @@ mod tests {
             woke: AtomicBool::new(false),
         });
         reply.lock().unwrap().waker = Some(Waker::from(Arc::clone(&wake)));
-        complete(&reply, Ok(()));
+        complete(&reply, Ok(()), true);
         assert!(wake.woke.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn executed_reply_inspection_preserves_errors_without_admitting_requests() {
+        let (_owner, handle) = TerminalOwnerLoop::<Backend>::new();
+        let mut future = handle.request(CancellationToken::new(), |_, _, _| ());
+        assert_eq!(future.take_executed_reply(), None);
+        assert!(!future.submitted);
+        assert_eq!(handle.shared.requests.load(Ordering::Acquire), 0);
+        assert!(complete(
+            &future.reply,
+            Err(TerminalOwnerError::Closed),
+            false
+        ));
+        assert_eq!(future.take_executed_reply(), None);
+        assert!(!future.finished);
+        assert!(complete(
+            &future.reply,
+            Err(TerminalOwnerError::ProfileRequired),
+            true
+        ));
+        assert_eq!(
+            future.take_executed_reply(),
+            Some(Err(TerminalOwnerError::ProfileRequired))
+        );
+        assert!(future.finished);
+        assert!(future.caller_wait.is_none());
+        assert!(future.permit.is_none());
     }
 
     #[derive(Default)]

@@ -396,25 +396,46 @@ impl<B: TerminalSessionBackend + Send + 'static, T: Send + 'static, S: 'static> 
         );
         if let Some(error) = this.shared.failure() {
             this.finished = true;
-            return Poll::Ready(Err(error));
+            return Poll::Ready(this.completed_or_failure(error));
         }
         // The owner checks cancellation/closure/capacity before queueing. Only
         // an actually admitted Pending request may trigger worker startup.
         match Pin::new(&mut this.request).poll(cx) {
             Poll::Ready(result) => {
                 this.finished = true;
+                // Failure may have appeared during the owner poll. Preserve
+                // precise startup diagnostics over synthetic queue rejection,
+                // but never replace an executed operation's returned receipt.
+                if let Some(error) = this.shared.failure()
+                    && !this.request.operation_executed()
+                {
+                    return Poll::Ready(Err(error));
+                }
                 Poll::Ready(result.map_err(TerminalRuntimeError::Owner))
             }
             Poll::Pending => {
                 this.shared.start();
                 if let Some(error) = this.shared.failure() {
                     this.finished = true;
-                    Poll::Ready(Err(error))
+                    Poll::Ready(this.completed_or_failure(error))
                 } else {
                     Poll::Pending
                 }
             }
         }
+    }
+}
+impl<B: TerminalSessionBackend, T, S> TerminalRuntimeFuture<B, T, S> {
+    fn completed_or_failure(&mut self, error: TerminalRuntimeError) -> Result<T> {
+        // Running-worker failure is published only after the owner has finished
+        // publishing replies. Check AFTER observing failure so a just-completed
+        // receipt cannot be lost. This inspection cannot admit new work, and
+        // synthetic queue closure must not mask initialization/spawn failures.
+        self.request
+            .take_executed_reply()
+            .map_or(Err(error), |reply| {
+                reply.map_err(TerminalRuntimeError::Owner)
+            })
     }
 }
 
@@ -933,6 +954,83 @@ mod tests {
             );
             self.woke.store(true, Ordering::Release);
         }
+    }
+
+    struct PanickingWake(AtomicBool);
+    impl Wake for PanickingWake {
+        fn wake(self: Arc<Self>) {
+            assert!(
+                self.0.swap(true, Ordering::AcqRel),
+                "receipt wake failed after publication"
+            );
+        }
+    }
+
+    #[test]
+    fn executed_receipts_survive_waker_failure_cancellation_and_last_host_close() {
+        for receipt in [Ok(42), Err("committed operation error")] {
+            let fixture = Fixture::new();
+            let (release, gate) = sync_channel(1);
+            *fixture.spawner.gate.lock().unwrap() = Some(gate);
+            let runtime = fixture.runtime(true);
+            let caller = CancellationToken::new();
+            let mut completed = runtime.request(caller.clone(), move |_, _, _| receipt);
+            let waker = Waker::from(Arc::new(PanickingWake(AtomicBool::new(false))));
+            assert!(
+                Pin::new(&mut completed)
+                    .poll(&mut Context::from_waker(&waker))
+                    .is_pending()
+            );
+            let mut queued = runtime.request(CancellationToken::new(), |_, _, _| {
+                panic!("queued operation must not run after failed wake");
+            });
+            assert!(poll(&mut queued).is_pending());
+            let unadmitted = runtime.request(CancellationToken::new(), |_, _, _| {
+                panic!("failed runtime must not admit another operation");
+            });
+            release.send(()).unwrap();
+            fixture.spawner.collect();
+            let failure = TerminalRuntimeError::Owner(TerminalOwnerError::Panicked);
+            assert_eq!(runtime.shared.failure(), Some(failure));
+            caller.cancel();
+            drop(runtime);
+            assert!(fixture.backend.lock().unwrap().closed);
+            assert_eq!(poll(&mut completed), Poll::Ready(Ok(receipt)));
+            assert_eq!(poll(&mut queued), Poll::Ready(Err(failure)));
+            assert_eq!(futures_executor::block_on(unadmitted), Err(failure));
+            assert_eq!(fixture.spawner.calls.load(Ordering::Acquire), 1);
+        }
+    }
+
+    #[test]
+    fn initialization_failure_published_during_owner_poll_keeps_precise_error() {
+        let fixture = Fixture::new();
+        let (release, gate) = sync_channel(1);
+        *fixture.spawner.gate.lock().unwrap() = Some(gate);
+        let runtime: TerminalRuntime<Backend> = TerminalRuntime::new(
+            || Err(TerminalRuntimeError::Initialization),
+            fixture.spawner.clone(),
+        );
+        let mut request = runtime.request(CancellationToken::new(), |_, _, _| {
+            panic!("initialization failure must prevent execution");
+        });
+        assert!(poll(&mut request).is_pending());
+        let spawner = Arc::clone(&fixture.spawner);
+        let released = AtomicBool::new(false);
+        let (waker, _) = machine_god_reentrant_waker_test::new(
+            machine_god_reentrant_waker_test::Callback::Clone,
+            move || {
+                if !released.swap(true, Ordering::AcqRel) {
+                    release.send(()).unwrap();
+                    spawner.collect();
+                }
+            },
+        );
+        assert_eq!(
+            Pin::new(&mut request).poll(&mut Context::from_waker(&waker)),
+            Poll::Ready(Err(TerminalRuntimeError::Initialization))
+        );
+        drop(runtime);
     }
 
     #[test]

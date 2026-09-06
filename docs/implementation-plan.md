@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `run complete pinned workspace and fresh release-binary gates for the integrated terminal host, then freeze the full feature for three fresh reviews and exact remote gates`
+- Next gate: `run the complete replacement pinned local and release-binary gates for the integrated review corrections, then repeat three independent review tracks before exact remote gates`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -107,13 +107,21 @@ observed signal survive cleanup, errors and unwinds, including loss of the
 driver's output-progress state. The focused serial ask group passes, including
 twelve deterministic ordering/signal cases; the output grace is unchanged.
 
-Component validation includes 1,343 native unit tests, all 46 Gateway integration
-tests and the supported FreeBSD/WASI compile checks. Those component results do
-not establish the complete replacement gate. A full-run startup-deadline failure
-did not reproduce in three isolated repetitions; the replacement run separates
-compilation from process-heavy tests. The corrected candidate requires the
-complete pinned local gate, freshly built release helper coverage, three fresh
-review tracks and exact remote CI/Benchmark gates.
+Candidate `3414e55742b175f88cf8c803e3a573e8b31c9d09` passed the complete pinned
+workspace and doctest gate, strict Clippy, 623 release-helper terminal tests,
+CLI release smoke, repository Python checks and supported FreeBSD/WASI compile
+checks. Intermittent startup failures did not reproduce in isolated diagnostics
+or the complete replacement run; no speculative timeout change was made.
+The full-feature review rejected that candidate for three concrete issues:
+raw `list.workspace_root` predicates bypass native resolution, later runtime
+failure can hide an already-committed operation receipt, and grid suffix limits
+can admit complete cell text that the screen contract rejects. The integrated
+corrections resolve supplied list filters on scoped workers, preserve executed
+receipts without masking initialization failures, and enforce the same complete
+UTF-8 cell bound during projection and checkpoint restoration. Their focused
+regressions and strict native Clippy checks pass; completed worktrees are removed.
+The correction requires the complete replacement local gate, three independent
+review tracks and exact remote CI/Benchmark gates; this is not a delivery.
 
 Earlier internal evidence remains historical, not delivery status:
 `a327580b754e25b8c1beaa5edf744b2b2252c620` passed the pinned workspace gate,

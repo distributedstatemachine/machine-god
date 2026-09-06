@@ -161,6 +161,35 @@ impl std::fmt::Debug for TerminalActionInvocation {
 }
 
 impl TerminalActionInvocation {
+    /// Whether catalog selection needs worker-owned workspace-path resolution.
+    #[must_use]
+    pub fn has_workspace_filter(&self) -> bool {
+        matches!(&self.draft, TerminalActionRequest::List { filters } if filters.workspace_root.is_some())
+    }
+
+    /// Resolves a catalog predicate separately from command-directory authority.
+    /// The native host invokes this only on its owned effect worker.
+    ///
+    /// # Errors
+    /// Propagates resolution failures or rejects malformed invocation/filter data.
+    pub fn resolve_workspace_filter(
+        mut self,
+        resolve: impl FnOnce(&str) -> Result<String, ToolError>,
+    ) -> Result<Self, ToolError> {
+        self.validate()?;
+        if let TerminalActionRequest::List { filters } = &mut self.draft
+            && let Some(raw) = &filters.workspace_root
+        {
+            let canonical = resolve(raw)?;
+            if !canonical.starts_with('/') {
+                return Err(invalid());
+            }
+            filters.workspace_root = Some(canonical);
+        }
+        self.validate()?;
+        Ok(self)
+    }
+
     /// Returns the action without releasing unresolved command data.
     #[must_use]
     pub const fn action(&self) -> machine_god_core::TerminalAction {
@@ -1265,6 +1294,43 @@ mod tests {
         assert!(
             matches!(request, TerminalActionRequest::Exec { request } if request.cwd == "/workspace/resolved-child")
         );
+    }
+
+    #[test]
+    fn workspace_filter_resolver_preserves_raw_predicate_and_never_resolves_a_command_cwd() {
+        let (tool, _) = tool();
+        let prepared = tool
+            .prepare(call(json!({"action":"list","workspace_root":"link/.."})))
+            .unwrap();
+        let prepared: Prepared = serde_json::from_value(prepared.arguments().clone()).unwrap();
+        assert!(prepared.invocation.has_workspace_filter());
+        assert!(
+            prepared
+                .invocation
+                .clone()
+                .resolve_workspace_filter(|_| Ok("relative".into()))
+                .is_err()
+        );
+        let invocation = prepared
+            .invocation
+            .resolve_workspace_filter(|raw| {
+                assert_eq!(raw, "link/..");
+                Ok("/workspace/real".into())
+            })
+            .unwrap();
+        let request = invocation
+            .resolve_cwd(|_| panic!("a predicate is not a command cwd"))
+            .unwrap();
+        assert!(
+            matches!(request, TerminalActionRequest::List { filters } if filters.workspace_root.as_deref() == Some("/workspace/real"))
+        );
+        let prepared = tool.prepare(call(json!({"action":"list"}))).unwrap();
+        let prepared: Prepared = serde_json::from_value(prepared.arguments().clone()).unwrap();
+        assert!(!prepared.invocation.has_workspace_filter());
+        prepared
+            .invocation
+            .resolve_workspace_filter(|_| panic!("unfiltered list must not resolve"))
+            .unwrap();
     }
 
     #[test]

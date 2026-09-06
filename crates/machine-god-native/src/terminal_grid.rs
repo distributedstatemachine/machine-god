@@ -23,6 +23,7 @@ const MAX_CONTROL_STRING_BYTES: usize = 4096;
 const MAX_SYNC_BYTES: usize = 1024 * 1024;
 const MAX_SUFFIX_POOL_BYTES: usize = 4 * 1024 * 1024;
 const MAX_SUFFIX_ENTRIES: usize = 65_535;
+// Complete UTF-8 cell text, including its base scalar; matches TerminalCell.
 const MAX_CELL_TEXT_BYTES: usize = 64;
 const FEED_CANCELLATION_CHECKPOINT_BYTES: usize = 16 * 1024;
 const SYNC_RESET: &[u8] = b"\x1b[?2026l";
@@ -1941,6 +1942,18 @@ impl TerminalGrid {
         let existing = self
             .suffix(self.cells[cell_index].suffix_id)
             .unwrap_or_default();
+        let base_bytes = char::from_u32(self.cells[cell_index].codepoint)
+            .ok_or(TerminalGridError::InvalidCheckpoint)?
+            .len_utf8();
+        let available = MAX_CELL_TEXT_BYTES.saturating_sub(base_bytes + existing.len());
+        let text = std::str::from_utf8(bytes).map_err(|_| TerminalGridError::InvalidCheckpoint)?;
+        // This is only the bounded projection. The history owner has already
+        // retained every raw byte; never split a scalar or invalidate the whole
+        // screen just because one cell has more combining text than it can hold.
+        let bytes = &bytes[..text.floor_char_boundary(available.min(bytes.len()))];
+        if bytes.is_empty() {
+            return Ok(());
+        }
         let combined_len = existing
             .len()
             .checked_add(bytes.len())
@@ -2344,6 +2357,15 @@ fn validate_cells(
         {
             return Err(invalid);
         }
+        if let Some(base) = char::from_u32(cell.codepoint) {
+            let suffix_bytes = cell
+                .suffix_id
+                .checked_sub(1)
+                .map_or(0, |index| suffixes[index as usize].len());
+            if base.len_utf8() + suffix_bytes > MAX_CELL_TEXT_BYTES {
+                return Err(invalid);
+            }
+        }
         match cell.width {
             0 => {
                 if index % usize::from(cols) == 0
@@ -2660,6 +2682,52 @@ mod tests {
         assert_eq!(grid.suffix_index.len(), 1);
         assert_eq!(grid.cells[0].suffix_id, 1);
         assert_eq!(grid.cells[1].suffix_id, 1);
+    }
+
+    #[test]
+    fn complete_cell_bound_rejects_oversized_live_and_restored_cells() {
+        let mut grid = test_grid(8, 2);
+        let text = format!("a{}\u{20d0}", "\u{0301}".repeat(30));
+        assert_eq!(text.len(), MAX_CELL_TEXT_BYTES);
+        grid.feed(text.as_bytes()).unwrap();
+        let mut checkpoint = grid.checkpoint().unwrap();
+        assert_eq!(grid.structured_screen().unwrap().cells[0].text, text);
+
+        // The first cell's scalar follows magic, dimensions and cell count.
+        let scalar_offset = 6 + 2 + 2 + 4;
+        assert_eq!(
+            &checkpoint[scalar_offset..scalar_offset + 4],
+            &u32::from('a').to_le_bytes()
+        );
+        checkpoint[scalar_offset..scalar_offset + 4].copy_from_slice(&u32::from('é').to_le_bytes());
+        assert!(matches!(
+            TerminalGrid::restore(&checkpoint),
+            Err(TerminalGridError::InvalidCheckpoint)
+        ));
+        grid.cells[0].codepoint = u32::from('é');
+        assert!(matches!(
+            grid.checkpoint(),
+            Err(TerminalGridError::InvalidCheckpoint)
+        ));
+        // Saved normal screens use the same complete-cell validation.
+        grid.enter_alternate_screen();
+        assert!(matches!(
+            grid.checkpoint(),
+            Err(TerminalGridError::InvalidCheckpoint)
+        ));
+
+        grid.saved_normal_screen.as_mut().unwrap().cells[0].codepoint = u32::from('a');
+        let mut saved_checkpoint = grid.checkpoint().unwrap();
+        let saved_scalar = saved_checkpoint
+            .windows(4)
+            .rposition(|window| window == u32::from('a').to_le_bytes())
+            .unwrap();
+        saved_checkpoint[saved_scalar..saved_scalar + 4]
+            .copy_from_slice(&u32::from('é').to_le_bytes());
+        assert!(matches!(
+            TerminalGrid::restore(&saved_checkpoint),
+            Err(TerminalGridError::InvalidCheckpoint)
+        ));
     }
 
     #[test]

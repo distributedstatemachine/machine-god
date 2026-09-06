@@ -70,8 +70,8 @@ pub(crate) struct CapturedTerminalHostAuthority {
 
 /// Command requests carry their exact acquired cwd. This value stays on the
 /// owned effect worker through launch; it is not an async poll-thread response.
-/// Non-command actions carry no descriptor and cause no filesystem or account
-/// work during resolution.
+/// Non-command actions carry no descriptor. A supplied list workspace filter
+/// performs worker-only path resolution but never acquires command authority.
 pub(crate) struct ResolvedTerminalHostInvocation {
     pub(crate) request: TerminalActionRequest,
     pub(crate) cwd: Option<OwnedFd>,
@@ -244,6 +244,9 @@ impl CapturedTerminalHostAuthority {
         cancellation: &CancellationToken,
     ) -> Result<ResolvedTerminalHostInvocation, ToolError> {
         check(deadline, cancellation)?;
+        let invocation = invocation.resolve_workspace_filter(|raw| {
+            self.resolve_workspace_filter(raw, deadline, cancellation)
+        })?;
         let mut cwd = None;
         let request = invocation.resolve_cwd(|raw| {
             let (canonical, descriptor) = self.resolve_directory(raw, deadline, cancellation)?;
@@ -252,6 +255,64 @@ impl CapturedTerminalHostAuthority {
         })?;
         check(deadline, cancellation)?;
         Ok(ResolvedTerminalHostInvocation { request, cwd })
+    }
+
+    fn resolve_workspace_filter(
+        &self,
+        raw: &str,
+        deadline: Instant,
+        cancellation: &CancellationToken,
+    ) -> Result<String, ToolError> {
+        check(deadline, cancellation)?;
+        exact_directory(&self.workspace, &self.workspace_path)?;
+        let cleaned = raw.trim_matches([' ', '\t', '\r', '\n']);
+        if cleaned.is_empty() || raw.len() > MAX_PATH_BYTES || raw.contains('\0') {
+            return Err(invalid());
+        }
+        let original = if cleaned == "~" || cleaned.starts_with("~/") {
+            let home = self
+                .environment
+                .entries()
+                .iter()
+                .find(|(name, _)| name == "HOME")
+                .map(|(_, value)| Path::new(value))
+                .filter(|home| home.is_absolute())
+                .ok_or_else(invalid)?;
+            home.join(
+                cleaned
+                    .strip_prefix("~/")
+                    .unwrap_or("")
+                    .trim_start_matches('/'),
+            )
+        } else {
+            if cleaned.starts_with('~') {
+                return Err(invalid());
+            }
+            self.default_cwd.join(cleaned)
+        };
+        // Lexical intent controls only whether an explicitly foreign predicate
+        // is allowed. Never use this spelling for filesystem resolution: doing
+        // so would change symlink/parent semantics.
+        let mut lexical = PathBuf::new();
+        for component in original.components() {
+            match component {
+                Component::ParentDir => {
+                    lexical.pop();
+                }
+                Component::CurDir => {}
+                component => lexical.push(component.as_os_str()),
+            }
+        }
+        let external = cleaned.starts_with(['/', '~']) || !lexical.starts_with(&self.default_cwd);
+        check(deadline, cancellation)?;
+        let canonical = std::fs::canonicalize(original).map_err(|_| unavailable())?;
+        check(deadline, cancellation)?;
+        if !external && !canonical.starts_with(&self.default_cwd) {
+            return Err(invalid());
+        }
+        exact_directory(&self.workspace, &self.workspace_path)?;
+        check(deadline, cancellation)?;
+        Ok(path_text(&canonical)?.to_owned())
     }
 
     /// Called after start admission on the owned effect worker. The supplied cwd
@@ -691,6 +752,58 @@ mod tests {
             .resolve_on_worker(invocation, deadline(), &CancellationToken::new())
             .unwrap();
         assert!(resolved.cwd.is_none());
+    }
+
+    #[test]
+    fn workspace_filter_resolution_keeps_paths_non_authoritative_and_checks_deadlines() {
+        let fixture = Fixture::new();
+        let authority = fixture.authority();
+        let root = fixture.0.join("workspace");
+        symlink("../outside", root.join("escape")).unwrap();
+        let invoke = |raw: &str| {
+            let draft = crate::terminal_action_parse::decode_terminal_action(
+                &serde_json::json!({"action":"list","workspace_root":raw}),
+                "/",
+            )
+            .unwrap();
+            serde_json::from_value(serde_json::json!({"draft":draft,"requested_cwd":null})).unwrap()
+        };
+        assert!(
+            authority
+                .resolve_on_worker(invoke("escape"), deadline(), &CancellationToken::new())
+                .is_err()
+        );
+        let outside = fixture.0.join("outside");
+        let resolved = authority
+            .resolve_on_worker(
+                invoke(outside.to_str().unwrap()),
+                deadline(),
+                &CancellationToken::new(),
+            )
+            .unwrap();
+        assert!(resolved.cwd.is_none());
+        assert!(
+            matches!(resolved.request, TerminalActionRequest::List { filters } if filters.workspace_root.as_deref() == outside.to_str())
+        );
+        assert!(
+            authority
+                .resolve_on_worker(invoke("."), Instant::now(), &CancellationToken::new())
+                .is_err()
+        );
+        let cancelled = CancellationToken::new();
+        cancelled.cancel();
+        assert!(
+            authority
+                .resolve_on_worker(invoke("."), deadline(), &cancelled)
+                .is_err()
+        );
+        std::fs::rename(&root, fixture.0.join("old-workspace")).unwrap();
+        std::fs::create_dir(&root).unwrap();
+        assert!(
+            authority
+                .resolve_on_worker(invoke("."), deadline(), &CancellationToken::new())
+                .is_err()
+        );
     }
 
     #[test]
