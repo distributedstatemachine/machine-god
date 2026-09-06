@@ -4,6 +4,7 @@ This page is the normative contract for the native, session-backed
 `read_tool_result` tool. It lets a model page through a large prior
 `ToolOutput` whose AI Gateway request projection or injected native publisher
 supplied an opaque handle.
+Explicit archive injection also permits paging complete prior terminal inputs.
 It is a range-only reader, not a general session-inspection or search API.
 
 ## Model-visible schema
@@ -101,6 +102,17 @@ scope, missing data, noncanonical handles and unavailable quota fail closed.
 The ordinary UTF-8 range result below is unchanged. Native archive injection is
 an explicit composition API; it does not itself replace the reference host's
 legacy terminal registration or its argument-admission policy.
+
+The same archive adapter also implements pre-execution terminal input
+publication. Complete arguments are stored as the `content` of a successful
+`ToolOutput` envelope, so the existing page shape reconstructs them losslessly.
+Small inputs remain inline. Larger inputs receive a `tool_arguments_archive`
+reference in the original assistant tool call; publication honours cancellation
+and never executes the requested action. The reader accepts that reference only
+from a prior assistant `terminal` call with the matching original call ID,
+session and incarnation. Input references share the existing bounded scan and
+archive budgets. They are historical data, not executable tool arguments;
+resuming a session does not automatically hydrate or execute them.
 
 ## Range result
 
@@ -223,7 +235,7 @@ host access controls remain responsible for the underlying session data.
 
 ## Errors and cancellation
 
-Preparation and direct execution return this complete fixed `ToolError`
+Default inline preparation and execution return this fixed `ToolError`
 taxonomy. `Display` is always `<code>: <message>`.
 
 | `ToolErrorKind` | `code` | `message` | `retryable` |
@@ -250,6 +262,13 @@ message, debug detail, session identity, and persistence diagnostics are
 discarded. Public error and debug forms do not expose session IDs,
 incarnations, handles, result content, store paths, or injected diagnostics.
 
+Archive paging additionally uses `tool_result_archive_unavailable` with the fixed
+message `tool result archive operation unavailable`: invalid native ranges are
+`InvalidInput`; archive I/O, capacity, corruption and scope failures are
+`Execution`. Only busy/unavailable read operations are retryable. The direct
+archive adapter reports `Cancelled` under that same fixed code when cancelled;
+the reader's final cancellation check retains the ordinary cancelled error below.
+
 Cancellation is checked before store load, while the load future is pending,
 after it resolves, during bounded traversal and serialization, and before
 success. Before its final cancellation check, execution explicitly destroys the
@@ -260,7 +279,8 @@ turn cancellation retains core's normal cancelled-turn precedence.
 
 ## Intentional exclusions
 
-This slice does not implement `query` search, server-side filtering, external
-result archives, non-session result lookup, or a new CLI surface. It does not
-increase the engine's current 64 KiB per-result source ceiling. It makes no
+The reader does not implement `query` search, server-side filtering, ambient
+archive discovery, non-session lookup, or a new CLI surface. Explicit native
+archive injection leaves the ordinary 64 KiB inline-result ceiling unchanged.
+It makes no
 full-fx equivalence, protocol compatibility, or performance claim.

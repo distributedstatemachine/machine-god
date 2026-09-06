@@ -41,13 +41,14 @@ const MAX_CWD_BYTES: usize = MAX_TERMINAL_ACTION_TEXT_BYTES;
 // Keep software floating-point work independently bounded as the complete
 // action envelope grows to cover simultaneous initial-monitor definitions.
 const MAX_NUMBER_SPELLING_BYTES: usize = 64 * 1024;
-// One node per byte when every allowed text field uses its byte-array form,
-// with 64 structural nodes per monitor/root. This is not a serialized-byte cap.
-const MAX_ARGUMENT_NODES: usize = MAX_TERMINAL_ACTION_COMMAND_BYTES
+/// One node per byte when every allowed text field uses its byte-array form,
+/// with 64 structural nodes per monitor/root. This is not a serialized-byte cap.
+pub const MAX_TERMINAL_ACTION_ARGUMENT_NODES: usize = MAX_TERMINAL_ACTION_COMMAND_BYTES
     + 3 * MAX_TERMINAL_ACTION_TEXT_BYTES
     + 64
     + MAX_TERMINAL_INITIAL_MONITORS
         * (MAX_TERMINAL_ACTION_COMMAND_BYTES + MAX_TERMINAL_ACTION_TEXT_BYTES + 64);
+const MAX_ARGUMENT_NODES: usize = MAX_TERMINAL_ACTION_ARGUMENT_NODES;
 const MAX_ARGUMENT_DEPTH: usize = 64;
 
 /// Closed, data-free failure: never echoes model-supplied paths or payloads.

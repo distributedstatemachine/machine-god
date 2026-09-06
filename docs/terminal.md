@@ -50,6 +50,19 @@ provider admission or reference-host registration. The native archive publisher
 and `read_tool_result` paging binding are described in
 [the result-reader contract](read-tool-result.md#explicit-native-archives).
 
+`TerminalActionInputPublisher` is a separate pre-execution publication boundary.
+It may archive complete arguments but may not execute them or grant permission.
+The native archive implementation preserves the original arguments losslessly
+behind a small historical call reference, honouring cancellation before any
+action. `with_input_publisher` explicitly injects this authority; it does not
+raise the host's independent per-turn admission budget. Input and result
+archives share the bounded owned-worker and paging contract linked above.
+When an input publisher is installed, the adapter explicitly advertises its
+complete raw/prepared byte and node limits to core. Ordinary tool limits remain
+unchanged. Core commits only the small historical call representation, then
+prepares and authorizes the original full input before execution; historical
+references are never hydrated into executable arguments.
+
 Numeric-string coercion uses deterministic IEEE binary128 rounding, matching
 the pinned typed decoder before integer range validation, including halfway,
 underflow, overflow and signed-zero behavior. It uses the pinned Rust

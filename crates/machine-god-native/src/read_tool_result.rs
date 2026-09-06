@@ -1,7 +1,9 @@
 //! Bounded session-backed paging for projected tool results.
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use crate::native_tool_result_archive::{ArchivedReference, NativeToolResultArchiveAdapter};
+use crate::native_tool_result_archive::{
+    ArchivedArgumentsReference, ArchivedReference, NativeToolResultArchiveAdapter,
+};
 use crate::session_store::{
     JsonValueOwner, MAX_STORED_JSON_DEPTH, MAX_STORED_JSON_NODES, RecordOwner,
 };
@@ -258,6 +260,7 @@ impl Tool for ReadToolResultTool {
         let spec = {
             let mut spec = spec;
             if self.archive.is_some() {
+                "Read a UTF-8-safe byte range from a prior tool result or archived terminal input using its session-scoped handle.".clone_into(&mut spec.description);
                 spec.input_schema["properties"]["handle"] = json!({
                     "type":"string", "minLength":83, "maxLength":145,
                     "pattern":"^(tool-result-sha256-[0-9a-f]{64}|tool-archive-v1-[0-9a-f]{64}-[0-9a-f]{64})$",
@@ -429,6 +432,36 @@ fn scan_record(
         check_cancellation(cancellation)?;
         for block in message.content.iter().rev() {
             check_cancellation(cancellation)?;
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if let Some(handle) = &arguments.archive
+                && message.role == Role::Assistant
+                && let ContentBlock::ToolCall { call } = block
+                && call.name.as_str() == "terminal"
+                && call.arguments.get("type").and_then(Value::as_str)
+                    == Some("tool_arguments_archive")
+            {
+                scanned_results = scanned_results
+                    .checked_add(1)
+                    .filter(|count| *count <= limits.scanned_tool_results)
+                    .ok_or_else(not_found)?;
+                let remaining = limits
+                    .serialized_scan_bytes
+                    .checked_sub(scanned_bytes)
+                    .ok_or_else(not_found)?;
+                let (reference, size) =
+                    scan_argument_reference(&call.arguments, remaining, cancellation)?;
+                scanned_bytes = scanned_bytes.checked_add(size).ok_or_else(not_found)?;
+                if let Some(archive) = reference
+                    && archive.handle == *handle
+                    && archive.source_context.call_id == call.id
+                    && archive.source_context.session_id == context.session_id
+                    && archive.source_context.session_incarnation_id
+                        == context.session_incarnation_id
+                {
+                    return Ok(ScannedOutput::Archive(archive));
+                }
+                continue;
+            }
             let ContentBlock::ToolResult {
                 ref call_id,
                 ref output,
@@ -489,6 +522,28 @@ fn scan_record(
         }
     }
     checked_error(cancellation, not_found())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn scan_argument_reference(
+    arguments: &Value,
+    remaining: usize,
+    cancellation: &CancellationToken,
+) -> Result<(Option<ArchivedToolResult>, usize), ToolError> {
+    let size = measure_json_value_compact(
+        arguments,
+        CompactToolOutputLimits {
+            output_bytes: remaining.min(16 * 1024),
+            json_depth: MAX_STORED_JSON_DEPTH,
+            json_nodes: MAX_STORED_JSON_NODES,
+        },
+        cancellation,
+    )
+    .map_err(|_| not_found())?;
+    let reference = serde_json::from_value(arguments.clone())
+        .ok()
+        .map(|ArchivedArgumentsReference::ToolArgumentsArchive { archive, .. }| archive);
+    Ok((reference, size))
 }
 
 fn prepass_record(

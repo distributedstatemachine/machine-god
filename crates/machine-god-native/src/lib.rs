@@ -131,7 +131,8 @@ pub use ai_gateway::{
     AI_GATEWAY_DEFAULT_MODEL, AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION,
     AI_GATEWAY_MAX_MODEL_BYTES, AI_GATEWAY_PROTOCOL_VERSION, AI_GATEWAY_PROVIDER_NAME,
     AiGatewayByteStream, AiGatewayConfigError, AiGatewayConfigErrorKind, AiGatewayHeader,
-    AiGatewayLimits, AiGatewayProvider, AiGatewayTransport, AiGatewayTransportRequest,
+    AiGatewayLimits, AiGatewayProvider, AiGatewayToolInputLimits, AiGatewayTransport,
+    AiGatewayTransportRequest,
 };
 #[cfg(all(
     any(feature = "ai-gateway-http", feature = "ai-gateway-model-catalog-http"),
@@ -477,13 +478,15 @@ pub use terminal::{
     TerminalExecutorErrorKind, TerminalLimits, TerminalTool,
 };
 pub use terminal_action_parse::{
-    MAX_TERMINAL_ACTION_ARGUMENT_BYTES, TerminalActionParseError, decode_terminal_action,
-    terminal_action_input_schema, terminal_action_requested_cwd,
+    MAX_TERMINAL_ACTION_ARGUMENT_BYTES, MAX_TERMINAL_ACTION_ARGUMENT_NODES,
+    TerminalActionParseError, decode_terminal_action, terminal_action_input_schema,
+    terminal_action_requested_cwd,
 };
 pub use terminal_action_tool::{
     MAX_TERMINAL_ACTION_RESULT_BYTES, MAX_TERMINAL_COMPLETE_TOOL_OUTPUT_BYTES,
     MAX_TERMINAL_PREPARED_ARGUMENT_BYTES, TerminalActionExecutor, TerminalActionHostIdentity,
-    TerminalActionInvocation, TerminalActionResultPublisher, TerminalActionTool,
+    TerminalActionInputPublisher, TerminalActionInvocation, TerminalActionResultPublisher,
+    TerminalActionTool,
 };
 pub use terminal_screen::{
     MAX_TERMINAL_SCREEN_FEED_BYTES, TerminalScreenEngine, TerminalScreenError, TerminalScreenMode,

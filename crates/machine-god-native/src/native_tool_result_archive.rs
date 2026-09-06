@@ -3,8 +3,12 @@
 
 use crate::owned_worker::NativeOwnedWorkerSpawner;
 use crate::session_store::JsonValueOwner;
+use crate::terminal_action_parse::{
+    MAX_TERMINAL_ACTION_ARGUMENT_BYTES, MAX_TERMINAL_ACTION_ARGUMENT_NODES,
+};
 use crate::terminal_action_tool::{
-    MAX_TERMINAL_COMPLETE_TOOL_OUTPUT_BYTES, TerminalActionResultPublisher,
+    MAX_TERMINAL_COMPLETE_TOOL_OUTPUT_BYTES, TerminalActionInputPublisher,
+    TerminalActionResultPublisher,
 };
 use crate::tool_output_serializer::{
     CompactJsonScratch, CompactToolOutputLimits, serialize_tool_output_compact_with_scratch,
@@ -17,7 +21,7 @@ use machine_god_core::{
     ToolExecution, ToolOutput,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -43,6 +47,15 @@ impl std::fmt::Debug for NativeToolResultArchiveAdapter {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum ArchivedReference {
     ToolResultArchive {
+        archive: ArchivedToolResult,
+        preview: String,
+    },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum ArchivedArgumentsReference {
+    ToolArgumentsArchive {
         archive: ArchivedToolResult,
         preview: String,
     },
@@ -160,6 +173,104 @@ impl TerminalActionResultPublisher for NativeToolResultArchiveAdapter {
             receipt.result
         })
     }
+}
+
+impl TerminalActionInputPublisher for NativeToolResultArchiveAdapter {
+    fn publish_arguments(
+        &self,
+        context: ToolContext,
+        arguments: Value,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<Option<Value>, ToolError>> {
+        let archive = Arc::clone(&self.archive);
+        let active = Arc::clone(&self.active);
+        // Direct callers may supply deeply nested JSON or abandon the future.
+        let input = OutputOwner(Some(ToolOutput::success(arguments)));
+        Box::pin(async move {
+            check_input_cancellation(&cancellation)?;
+            let permit = Self::acquire(active, true)?;
+            let worker_cancellation = cancellation.clone();
+            let receipt = NativeOwnedWorkerSpawner::new()
+                .run(move || {
+                    let result =
+                        publish_arguments_owned(&archive, &context, &input, &worker_cancellation);
+                    Receipt {
+                        result,
+                        _permit: permit,
+                    }
+                })
+                .await
+                .map_err(|_| archive_error(ToolResultArchiveError::Unavailable, true))?;
+            check_input_cancellation(&cancellation)?;
+            receipt.result
+        })
+    }
+}
+
+fn check_input_cancellation(cancellation: &CancellationToken) -> Result<(), ToolError> {
+    if cancellation.is_cancelled() {
+        Err(archive_error(ToolResultArchiveError::Cancelled, true))
+    } else {
+        Ok(())
+    }
+}
+
+fn publish_arguments_owned(
+    archive: &ToolResultArchive,
+    context: &ToolContext,
+    input: &OutputOwner,
+    cancellation: &CancellationToken,
+) -> Result<Option<Value>, ToolError> {
+    check_input_cancellation(cancellation)?;
+    // Use the same ToolOutput source envelope as result paging. The archived
+    // content is the complete original arguments, never an executable reference.
+    let mut compact = Vec::new();
+    serialize_tool_output_compact_with_scratch(
+        input.get(),
+        &mut compact,
+        &mut CompactJsonScratch::new(),
+        CompactToolOutputLimits {
+            output_bytes: MAX_TERMINAL_ACTION_ARGUMENT_BYTES + 29,
+            json_depth: MAX_SAFE_JSON_DEPTH,
+            json_nodes: MAX_TERMINAL_ACTION_ARGUMENT_NODES,
+        },
+        cancellation,
+    )
+    .map_err(|_| {
+        if cancellation.is_cancelled() {
+            archive_error(ToolResultArchiveError::Cancelled, true)
+        } else {
+            archive_error(ToolResultArchiveError::Invalid, true)
+        }
+    })?;
+    check_input_cancellation(cancellation)?;
+    if compact.len() <= INLINE_BYTES {
+        return Ok(None);
+    }
+    archive
+        .prepare()
+        .map_err(|error| archive_error(error, true))?;
+    let published = archive
+        .publish(context, &compact, cancellation)
+        .map_err(|error| archive_error(error, true))?;
+    let source = std::str::from_utf8(&compact)
+        .map_err(|_| archive_error(ToolResultArchiveError::Corrupt, true))?;
+    let mut end = PREVIEW_BYTES.min(source.len());
+    while !source.is_char_boundary(end) {
+        end -= 1;
+    }
+    let reference = serde_json::to_value(ArchivedArgumentsReference::ToolArgumentsArchive {
+        archive: published,
+        preview: source[..end].to_owned(),
+    })
+    .map_err(|_| archive_error(ToolResultArchiveError::Invalid, true))?;
+    // The bounded preview and fixed context cap this reference well below the
+    // ordinary 64 KiB input limit; no complete input is copied into history.
+    let wrapper = ToolOutput::success(reference);
+    compact.clear();
+    serialize(&wrapper, &mut compact, REFERENCE_BYTES)?;
+    check_input_cancellation(cancellation)?;
+    Ok(Some(wrapper.content))
 }
 
 fn publish_owned(
@@ -354,6 +465,246 @@ mod tests {
         assert!(execution.persisted_output().is_none());
         assert_eq!(execution.tool_output().content, "small");
         assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn input_publication_is_inert_cancellable_and_keeps_small_arguments_inline() {
+        let directory = Directory::new();
+        let adapter = directory.adapter();
+        drop(adapter.publish_arguments(
+            context(),
+            json!({"command":"x".repeat(90 * 1024)}),
+            CancellationToken::new(),
+        ));
+        let small = block_on(adapter.publish_arguments(
+            context(),
+            json!({"action":"list"}),
+            CancellationToken::new(),
+        ))
+        .unwrap();
+        assert!(small.is_none());
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        assert_eq!(
+            block_on(adapter.publish_arguments(
+                context(),
+                json!({"command":"x".repeat(90 * 1024)}),
+                cancellation
+            ))
+            .unwrap_err()
+            .kind,
+            ToolErrorKind::Cancelled
+        );
+        let oversized = Value::String("x".repeat(MAX_TERMINAL_ACTION_ARGUMENT_BYTES));
+        assert_eq!(
+            block_on(adapter.publish_arguments(context(), oversized, CancellationToken::new()))
+                .unwrap_err()
+                .kind,
+            ToolErrorKind::InvalidInput
+        );
+        assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn archived_input_is_lossless_and_readable_only_through_its_prior_call() {
+        let directory = Directory::new();
+        let adapter = directory.adapter();
+        let arguments = json!({"command":format!("{}🦀", "x".repeat(90 * 1024))});
+        let source = serde_json::to_string(&ToolOutput::success(arguments.clone())).unwrap();
+        let reference =
+            block_on(adapter.publish_arguments(context(), arguments, CancellationToken::new()))
+                .unwrap()
+                .unwrap();
+        assert!(serde_json::to_vec(&reference).unwrap().len() < REFERENCE_BYTES);
+        let ArchivedArgumentsReference::ToolArgumentsArchive { archive, .. } =
+            serde_json::from_value(reference.clone()).unwrap();
+        let paging = json!({"handle":archive.handle.as_str(), "start_byte":70 * 1024 + 1,"byte_count":16 * 1024});
+        let mut current = context();
+        current.call_id = ToolCallId::new("reader").unwrap();
+        current.turn_id = TurnId::new("later").unwrap();
+        drop(adapter);
+        for (name, id, expected) in [
+            ("terminal", "original-call", true),
+            ("terminal", "other-call", false),
+            ("other-tool", "original-call", false),
+        ] {
+            let store = InMemorySessionStore::new();
+            let mut record =
+                SessionRecord::empty(context().session_id, context().session_incarnation_id);
+            record.messages.push(Message {
+                role: Role::Assistant,
+                content: vec![ContentBlock::ToolCall {
+                    call: ToolCall {
+                        id: ToolCallId::new(id).unwrap(),
+                        name: ToolName::new(name).unwrap(),
+                        arguments: reference.clone(),
+                    },
+                }],
+            });
+            block_on(store.save(record, None)).unwrap();
+            let tool = ReadToolResultTool::shared_session_store(Arc::new(store))
+                .with_archive(directory.adapter());
+            let result =
+                block_on(tool.execute(current.clone(), paging.clone(), CancellationToken::new()));
+            if expected {
+                assert_eq!(
+                    result.unwrap().content["serialized_tool_output"],
+                    source[70 * 1024..86 * 1024]
+                );
+            } else {
+                assert!(result.is_err());
+            }
+        }
+    }
+
+    struct InputExecutor {
+        store: InMemorySessionStore,
+        commands: std::sync::Mutex<Vec<String>>,
+    }
+    impl crate::TerminalActionExecutor for InputExecutor {
+        fn execute(
+            &self,
+            context: ToolContext,
+            invocation: crate::TerminalActionInvocation,
+            _: CancellationToken,
+        ) -> BoxFuture<'_, Result<machine_god_core::TerminalActionResult, ToolError>> {
+            Box::pin(async move {
+                let record = self.store.record(&context.session_id).unwrap();
+                let ContentBlock::ToolCall { call } = &record.messages[1].content[0] else {
+                    panic!("assistant call");
+                };
+                assert_eq!(call.arguments["type"], "tool_arguments_archive");
+                assert!(serde_json::to_vec(&record).unwrap().len() < INLINE_BYTES);
+                let machine_god_core::TerminalActionRequest::Exec { request } =
+                    invocation.resolve_cwd(|_| Ok("/workspace".into()))?
+                else {
+                    panic!("exec");
+                };
+                self.commands.lock().unwrap().push(request.command);
+                Ok(machine_god_core::TerminalActionResult::Exec {
+                    result: machine_god_core::TerminalExecResult {
+                        status: machine_god_core::TerminalExecStatus::Exited { exit_code: 0 },
+                        stdout: machine_god_core::TerminalExecCapturedOutput {
+                            bytes: vec![],
+                            total_bytes: 0,
+                        },
+                        stderr: machine_god_core::TerminalExecCapturedOutput {
+                            bytes: vec![],
+                            total_bytes: 0,
+                        },
+                        duration: std::time::Duration::ZERO,
+                    },
+                })
+            })
+        }
+    }
+    impl std::fmt::Debug for InputExecutor {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("InputExecutor")
+        }
+    }
+
+    #[test]
+    fn full_terminal_byte_array_command_crosses_engine_storage_and_execution() {
+        use futures_util::StreamExt;
+        use machine_god_core::{
+            Engine, EngineLimits, ModelEvent, PermissionDecision, PermissionGrantScope, StopReason,
+            TurnEvent,
+        };
+        use machine_god_testkit::{
+            ModelProviderStep, PermissionStep, ScriptedModelProvider, ScriptedPermissionHandler,
+        };
+        let directory = Directory::new();
+        let adapter = directory.adapter();
+        let store = InMemorySessionStore::new();
+        let executor = Arc::new(InputExecutor {
+            store: store.clone(),
+            commands: std::sync::Mutex::new(vec![]),
+        });
+        let tool = crate::TerminalActionTool::new(
+            executor.clone(),
+            crate::TerminalActionHostIdentity {
+                workspace: "/workspace".into(),
+                default_cwd: "/workspace".into(),
+                environment_sha256: "a".repeat(64),
+                shell_selection_sha256: "b".repeat(64),
+            },
+        )
+        .unwrap()
+        .with_input_publisher(adapter);
+        let command = "x".repeat(machine_god_core::MAX_TERMINAL_ACTION_COMMAND_BYTES);
+        let arguments = json!({"action":"exec", "command":command.as_bytes()});
+        assert!(serde_json::to_vec(&arguments).unwrap().len() > INLINE_BYTES);
+        let provider = ScriptedModelProvider::new(
+            "archived-terminal-input",
+            [
+                ModelProviderStep::events([
+                    ModelEvent::ToolCall {
+                        call: ToolCall {
+                            id: context().call_id,
+                            name: ToolName::new("terminal").unwrap(),
+                            arguments,
+                        },
+                    },
+                    ModelEvent::Stop {
+                        reason: StopReason::ToolCalls,
+                    },
+                ]),
+                ModelProviderStep::events([ModelEvent::Stop {
+                    reason: StopReason::Completed,
+                }]),
+            ],
+        );
+        let policy =
+            ScriptedPermissionHandler::new([PermissionStep::Decision(PermissionDecision::Allow {
+                scope: PermissionGrantScope::Once,
+            })]);
+        let limits = EngineLimits {
+            max_cumulative_complete_tool_argument_bytes: std::num::NonZeroUsize::new(
+                MAX_TERMINAL_ACTION_ARGUMENT_BYTES,
+            )
+            .unwrap(),
+            max_cumulative_complete_tool_argument_nodes: std::num::NonZeroUsize::new(
+                MAX_TERMINAL_ACTION_ARGUMENT_NODES,
+            )
+            .unwrap(),
+            ..EngineLimits::default()
+        };
+        let engine = Engine::builder()
+            .provider(provider.clone())
+            .session_store(store)
+            .permission_handler(policy.clone())
+            .tool(tool)
+            .limits(limits)
+            .build()
+            .unwrap();
+        let session = engine
+            .create_session(context().session_id, context().session_incarnation_id)
+            .unwrap();
+        let events = block_on(async {
+            session
+                .prompt("run")
+                .await
+                .unwrap()
+                .collect::<Vec<_>>()
+                .await
+        });
+        assert!(
+            matches!(
+                events.last().unwrap().as_ref().unwrap().payload,
+                TurnEvent::Completed { .. }
+            ),
+            "last event: {:?}",
+            events.last()
+        );
+        assert_eq!(executor.commands.lock().unwrap().as_slice(), &[command]);
+        assert_eq!(policy.requests().len(), 1);
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 2);
+        let ContentBlock::ToolCall { call } = &requests[1].request.messages[1].content[0] else {
+            panic!("historical call");
+        };
+        assert_eq!(call.arguments["type"], "tool_arguments_archive");
     }
 
     #[test]

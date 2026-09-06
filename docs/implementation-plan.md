@@ -166,8 +166,15 @@ write semantics. These are internal components, not a completed feature gate.
 The runtime now binds its spawner to the production owned-worker collector;
 the action adapter has an explicit owned-result publication hook. Native
 archive publication and read-tool paging share bounded owned-worker completion
-and preserve complete results outside the small durable transcript. Full
-reference-host registration and large-input persistence/admission remain open.
+and preserve complete results outside the small durable transcript.
+The fresh release helper now passes all 41 tmux component checks, including
+original-terminal user/clean startup, exact child outcomes and capture-loss
+cleanup. Native input publication and prior-call paging now compose with core
+per-tool raw/prepared admission and separately bounded Gateway input framing.
+The actual terminal adapter preserves a full byte-array command through archival
+publication, authorization and execution while keeping subsequent model history
+small. Full reference-host registration and its explicit admission configuration
+remain open; these components are not a feature delivery.
 The complete normalized twelve-action core contract and effect-free public
 decoder are present, including request/result identity checks and lossless
 foreground execution outcomes. Numeric coercion now matches pinned binary128

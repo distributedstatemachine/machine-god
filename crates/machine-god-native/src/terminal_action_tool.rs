@@ -11,15 +11,15 @@ use machine_god_core::{
     MAX_TERMINAL_SCREEN_CELLS, MAX_TERMINAL_SCREEN_TEXT_BYTES, PreparedToolCall,
     TerminalActionRequest, TerminalActionResult, TerminalMonitorCondition,
     TerminalMonitorOperation, TerminalWriteLeaseIntent, Tool, ToolCall, ToolContext, ToolError,
-    ToolErrorKind, ToolExecution, ToolOutput, ToolOutputLimits, ToolSpec,
+    ToolErrorKind, ToolExecution, ToolInputLimits, ToolOutput, ToolOutputLimits, ToolSpec,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::terminal_action_parse::{
-    MAX_TERMINAL_ACTION_ARGUMENT_BYTES, decode_terminal_action, terminal_action_input_schema,
-    terminal_action_requested_cwd,
+    MAX_TERMINAL_ACTION_ARGUMENT_BYTES, MAX_TERMINAL_ACTION_ARGUMENT_NODES, decode_terminal_action,
+    terminal_action_input_schema, terminal_action_requested_cwd,
 };
 
 /// Bound for the normalized internal envelope, including its immutable host and
@@ -59,6 +59,21 @@ pub trait TerminalActionResultPublisher: Send + Sync + 'static {
         context: ToolContext,
         output: ToolOutput,
     ) -> BoxFuture<'_, Result<ToolExecution, ToolError>>;
+}
+
+/// Pre-execution publication of complete terminal arguments.
+///
+/// Implementations may archive the owned input but must never execute it. Return
+/// `None` for inline input, or a bounded reference only after the complete input
+/// is durably retrievable under the original context. Futures are inert before
+/// polling, honour cancellation, and keep submitted workers owned on drop.
+pub trait TerminalActionInputPublisher: Send + Sync + 'static {
+    fn publish_arguments(
+        &self,
+        context: ToolContext,
+        arguments: Value,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<Option<Value>, ToolError>>;
 }
 
 /// Immutable, non-secret host selection bound into every prepared capability.
@@ -207,6 +222,7 @@ pub struct TerminalActionTool {
     executor: Arc<dyn TerminalActionExecutor>,
     identity: TerminalActionHostIdentity,
     publisher: Option<Arc<dyn TerminalActionResultPublisher>>,
+    input_publisher: Option<Arc<dyn TerminalActionInputPublisher>>,
 }
 
 impl std::fmt::Debug for TerminalActionTool {
@@ -214,6 +230,7 @@ impl std::fmt::Debug for TerminalActionTool {
         formatter
             .debug_struct("TerminalActionTool")
             .field("has_result_publisher", &self.publisher.is_some())
+            .field("has_input_publisher", &self.input_publisher.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -241,6 +258,7 @@ impl TerminalActionTool {
             executor,
             identity,
             publisher: None,
+            input_publisher: None,
         })
     }
 
@@ -252,6 +270,17 @@ impl TerminalActionTool {
         publisher: Arc<dyn TerminalActionResultPublisher>,
     ) -> Self {
         self.publisher = Some(publisher);
+        self
+    }
+
+    /// Injects pre-execution durable input publication. This does not authorize
+    /// an action or expand the host's independent per-turn input budget.
+    #[must_use]
+    pub fn with_input_publisher(
+        mut self,
+        publisher: Arc<dyn TerminalActionInputPublisher>,
+    ) -> Self {
+        self.input_publisher = Some(publisher);
         self
     }
 
@@ -273,6 +302,60 @@ impl TerminalActionTool {
 }
 
 impl Tool for TerminalActionTool {
+    fn complete_input_limits(&self) -> Option<ToolInputLimits> {
+        self.input_publisher.as_ref().map(|_| ToolInputLimits {
+            max_argument_bytes: NonZeroUsize::new(MAX_TERMINAL_ACTION_ARGUMENT_BYTES)
+                .expect("fixed nonzero ceiling"),
+            max_argument_nodes: NonZeroUsize::new(MAX_TERMINAL_ACTION_ARGUMENT_NODES)
+                .expect("fixed nonzero ceiling"),
+            max_prepared_argument_bytes: NonZeroUsize::new(MAX_TERMINAL_PREPARED_ARGUMENT_BYTES)
+                .expect("fixed nonzero ceiling"),
+            max_prepared_argument_nodes: NonZeroUsize::new(
+                MAX_TERMINAL_ACTION_ARGUMENT_NODES + 128,
+            )
+            .expect("fixed nonzero ceiling"),
+        })
+    }
+
+    fn persist_arguments<'a>(
+        &'a self,
+        context: ToolContext,
+        arguments: &'a Value,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'a, Result<Option<Value>, ToolError>> {
+        Box::pin(async move {
+            let Some(publisher) = &self.input_publisher else {
+                return Ok(None);
+            };
+            // Validate before the one bounded clone required to hand ownership
+            // to a 'static worker; direct calls do not inherit core admission.
+            crate::tool_output_serializer::measure_json_value_compact(
+                arguments,
+                crate::tool_output_serializer::CompactToolOutputLimits {
+                    output_bytes: MAX_TERMINAL_ACTION_ARGUMENT_BYTES,
+                    json_depth: machine_god_core::MAX_SAFE_JSON_DEPTH,
+                    json_nodes: MAX_TERMINAL_ACTION_ARGUMENT_NODES,
+                },
+                &cancellation,
+            )
+            .map_err(|_| {
+                if cancellation.is_cancelled() {
+                    ToolError::new(
+                        ToolErrorKind::Cancelled,
+                        "terminal_cancelled",
+                        "terminal input publication cancelled",
+                        false,
+                    )
+                } else {
+                    invalid()
+                }
+            })?;
+            publisher
+                .publish_arguments(context, arguments.clone(), cancellation)
+                .await
+        })
+    }
+
     fn complete_output_limits(&self) -> Option<ToolOutputLimits> {
         self.publisher.as_ref().map(|_| ToolOutputLimits {
             max_serialized_bytes: NonZeroUsize::new(MAX_TERMINAL_COMPLETE_TOOL_OUTPUT_BYTES)
