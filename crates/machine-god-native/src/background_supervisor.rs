@@ -1256,6 +1256,7 @@ struct SupervisorConstructionResources {
 struct WorkerOwnershipPermit {
     retained: Arc<AtomicUsize>,
     cohort: Arc<AtomicUsize>,
+    shutdown: Option<crate::owned_worker::NativeOwnedWorkerTicket>,
 }
 
 struct OwnedWorkerHandle {
@@ -1336,6 +1337,7 @@ impl WorkerOwnershipRegistry {
                     .map(|_| WorkerOwnershipPermit {
                         retained: Arc::clone(&self.retained),
                         cohort: Arc::clone(&cohort),
+                        shutdown: None,
                     })
                     .collect();
                 WorkerOwnershipReservation { permits, cohort }
@@ -1398,6 +1400,22 @@ impl Drop for WorkerOwnershipRegistry {
 }
 
 impl WorkerOwnershipReservation {
+    /// Attach metadata to the existing collector permit, which outlives join.
+    /// Child reap captures a clone only while this explicitly scoped job runs.
+    pub(crate) fn spawn_one_scoped(
+        mut self,
+        registry: &WorkerOwnershipRegistry,
+        name: &'static str,
+        ticket: crate::owned_worker::NativeOwnedWorkerTicket,
+        operation: impl FnOnce() + Send + 'static,
+    ) -> Result<(), ()> {
+        if self.permits.len() != 1 {
+            return Err(());
+        }
+        self.permits[0].shutdown = Some(ticket.clone());
+        self.spawn_one(registry, name, move || ticket.run(operation))
+    }
+
     /// Starts one reserved worker only after its handle belongs to the shared
     /// collector. This consumes exactly one permit from this registry; dropping
     /// an unused reservation releases capacity without spawning a worker.
@@ -1499,6 +1517,7 @@ impl Drop for WorkerOwnershipPermit {
     fn drop(&mut self) {
         self.cohort.fetch_sub(1, Ordering::AcqRel);
         self.retained.fetch_sub(1, Ordering::AcqRel);
+        drop(self.shutdown.take());
     }
 }
 

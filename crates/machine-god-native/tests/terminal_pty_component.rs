@@ -3,7 +3,10 @@
     dead_code,
     reason = "private runtime components are composed here before full host integration"
 )]
-use machine_god_native::{NativeOwnedWorkerSpawner, TERMINAL_CAPTURED_HELPER_ARGUMENT};
+use machine_god_native::{
+    NativeOwnedWorkerCleanup, NativeOwnedWorkerScope, NativeOwnedWorkerSpawner,
+    TERMINAL_CAPTURED_HELPER_ARGUMENT,
+};
 mod terminal_action_tool {
     pub(crate) use machine_god_native::{TerminalActionHostIdentity, TerminalActionInvocation};
 }

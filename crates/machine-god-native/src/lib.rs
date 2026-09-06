@@ -46,7 +46,10 @@ mod background_supervisor;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod owned_worker;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub use owned_worker::{NativeOwnedWorkerSpawnError, NativeOwnedWorkerSpawner};
+pub use owned_worker::{
+    NativeOwnedWorkerCleanup, NativeOwnedWorkerCompletion, NativeOwnedWorkerScope,
+    NativeOwnedWorkerSpawnError, NativeOwnedWorkerSpawner,
+};
 mod config;
 mod copy_file;
 mod create_folder;

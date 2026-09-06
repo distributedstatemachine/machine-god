@@ -2,11 +2,12 @@
 
 use crate::background_supervisor::worker_ownership_registry;
 use machine_god_core::BoxFuture;
+use std::cell::RefCell;
 use std::fmt;
 use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::task::{Context, Poll, Waker};
 
 /// Fixed, redacted failure to admit, start or complete an owned native worker.
@@ -25,6 +26,252 @@ impl std::error::Error for NativeOwnedWorkerSpawnError {}
 /// until `spawn` is called, and dropping it does not detach any running worker.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NativeOwnedWorkerSpawner;
+
+/// Explicit enrollment for one host's native workers and transferred child reap
+/// obligations. Clones carry no host-lifetime vote. Drop does not close the scope:
+/// the actual host resource must call [`Self::close`] before requesting cleanup.
+#[derive(Clone, Default)]
+pub struct NativeOwnedWorkerScope {
+    state: Arc<ScopeState>,
+}
+
+/// Observation only: retaining this value cannot admit work or retain a host,
+/// operation, response value, process handle or runtime owner.
+#[derive(Clone)]
+pub struct NativeOwnedWorkerCompletion {
+    state: Arc<ScopeState>,
+}
+
+/// Metadata-only continuation of already enrolled cleanup. Native adapters may
+/// retain it alongside transferred reap authority. It grants no admission,
+/// native capability or host-lifetime vote; dropping it discharges only this
+/// reference to the existing completion obligation.
+#[derive(Clone)]
+pub struct NativeOwnedWorkerCleanup {
+    _ticket: NativeOwnedWorkerTicket,
+}
+impl fmt::Debug for NativeOwnedWorkerCleanup {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NativeOwnedWorkerCleanup")
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Default)]
+struct ScopeState {
+    status: Mutex<ScopeStatus>,
+    wake: Condvar,
+}
+
+#[derive(Default)]
+struct ScopeStatus {
+    closed: bool,
+    tickets: usize,
+}
+
+struct ScopeTicket {
+    state: Arc<ScopeState>,
+}
+
+/// Metadata only. Clones extend an already admitted cleanup obligation; they
+/// cannot create processes or authorize a new worker after scope closure.
+#[derive(Clone)]
+pub(crate) struct NativeOwnedWorkerTicket(Arc<ScopeTicket>);
+
+thread_local! {
+    static WORKER_TICKET: RefCell<Option<Weak<ScopeTicket>>> = const { RefCell::new(None) };
+}
+
+/// Used only by existing child-reap reservation while inside an explicitly
+/// scoped worker. The ordinary zero-state spawner never installs this metadata.
+pub(crate) fn current_worker_ticket() -> Option<NativeOwnedWorkerTicket> {
+    WORKER_TICKET
+        .try_with(|slot| slot.borrow().as_ref().and_then(Weak::upgrade))
+        .ok()
+        .flatten()
+        .map(NativeOwnedWorkerTicket)
+}
+
+impl NativeOwnedWorkerTicket {
+    pub(crate) fn run<T>(&self, operation: impl FnOnce() -> T) -> T {
+        // Each collector job owns a dedicated thread. Keep weak metadata through
+        // thread-local destruction; the collector retains the strong ticket
+        // until join, so cleanup can still enroll and self-waits are rejected.
+        WORKER_TICKET.with(|slot| *slot.borrow_mut() = Some(Arc::downgrade(&self.0)));
+        operation()
+    }
+}
+
+impl Drop for ScopeTicket {
+    fn drop(&mut self) {
+        let mut status = self
+            .state
+            .status
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        status.tickets -= 1;
+        let complete = status.closed && status.tickets == 0;
+        drop(status);
+        if complete {
+            self.state.wake.notify_all();
+        }
+    }
+}
+
+impl fmt::Debug for NativeOwnedWorkerScope {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NativeOwnedWorkerScope")
+            .finish_non_exhaustive()
+    }
+}
+impl fmt::Debug for NativeOwnedWorkerCompletion {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NativeOwnedWorkerCompletion")
+            .finish_non_exhaustive()
+    }
+}
+
+impl NativeOwnedWorkerScope {
+    /// Retains completion metadata only when called inside an explicitly scoped
+    /// worker. An unscoped worker receives `None`; no ambient authority is added.
+    /// Keep this token with existing cleanup ownership, never with response data.
+    #[must_use]
+    pub fn retain_current_cleanup() -> Option<NativeOwnedWorkerCleanup> {
+        current_worker_ticket().map(|ticket| NativeOwnedWorkerCleanup { _ticket: ticket })
+    }
+
+    /// Inert: no worker, collector, process or native reservation is created.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Atomically prevents new admissions. Already admitted operations still own
+    /// their cleanup; the host separately cancels them using its existing token.
+    pub fn close(&self) {
+        let mut status = self
+            .state
+            .status
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        status.closed = true;
+        drop(status);
+        self.state.wake.notify_all();
+    }
+
+    /// Returns a handle which observes settlement without retaining host life.
+    #[must_use]
+    pub fn completion(&self) -> NativeOwnedWorkerCompletion {
+        NativeOwnedWorkerCompletion {
+            state: Arc::clone(&self.state),
+        }
+    }
+
+    fn admit(&self) -> Result<NativeOwnedWorkerTicket, NativeOwnedWorkerSpawnError> {
+        let mut status = self
+            .state
+            .status
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if status.closed {
+            return Err(NativeOwnedWorkerSpawnError);
+        }
+        status.tickets = status
+            .tickets
+            .checked_add(1)
+            .ok_or(NativeOwnedWorkerSpawnError)?;
+        Ok(NativeOwnedWorkerTicket(Arc::new(ScopeTicket {
+            state: Arc::clone(&self.state),
+        })))
+    }
+
+    /// Runs one job through the existing collector and enrolls its actual thread
+    /// completion, including thread-local destructors and quarantined child reap.
+    ///
+    /// # Errors
+    /// Rejects closed scopes, collector capacity and native thread admission.
+    /// A rejected operation never executes and retains no completion ticket.
+    pub fn spawn(
+        &self,
+        operation: impl FnOnce() + Send + 'static,
+    ) -> Result<(), NativeOwnedWorkerSpawnError> {
+        self.spawn_with(operation, |ticket, operation| {
+            let registry = worker_ownership_registry().map_err(|()| NativeOwnedWorkerSpawnError)?;
+            let reservation = registry
+                .reserve_partitioned(&[1])
+                .map_err(|()| NativeOwnedWorkerSpawnError)?
+                .pop()
+                .ok_or(NativeOwnedWorkerSpawnError)?;
+            reservation
+                .spawn_one_scoped(registry, "machine-god-owned-worker", ticket, operation)
+                .map_err(|()| NativeOwnedWorkerSpawnError)
+        })
+    }
+
+    fn spawn_with(
+        &self,
+        operation: impl FnOnce() + Send + 'static,
+        spawn: impl FnOnce(NativeOwnedWorkerTicket, OwnedJob) -> Result<(), NativeOwnedWorkerSpawnError>,
+    ) -> Result<(), NativeOwnedWorkerSpawnError> {
+        let ticket = self.admit()?;
+        spawn(ticket, Box::new(operation))
+    }
+
+    /// Inert until polled. Scope completion never waits for this response to be
+    /// consumed: the collector owns the completion ticket, not the result tuple.
+    pub fn run<T: Send + 'static>(
+        &self,
+        operation: impl FnOnce() -> T + Send + 'static,
+    ) -> BoxFuture<'static, Result<T, NativeOwnedWorkerSpawnError>> {
+        let scope = self.clone();
+        Box::pin(OwnedWorkerFuture::new(operation, move |job| {
+            scope.spawn(job)
+        }))
+    }
+}
+
+impl NativeOwnedWorkerCompletion {
+    /// True only after closure and settlement of every enrolled worker/reap
+    /// obligation. An empty but still-open scope is not complete.
+    #[must_use]
+    pub fn is_complete(&self) -> bool {
+        let status = self
+            .state
+            .status
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        status.closed && status.tickets == 0
+    }
+
+    /// Blocks a dedicated caller worker until this scope closes and settles.
+    /// This does not stop or drain unrelated workers. Never call on an async
+    /// polling thread; no timeout converts incomplete cleanup into success.
+    ///
+    /// # Errors
+    /// Rejects a wait from an enrolled worker in this same scope, which would
+    /// otherwise wait for its own thread to be joined.
+    pub fn wait_on_worker(&self) -> Result<(), NativeOwnedWorkerSpawnError> {
+        if current_worker_ticket().is_some_and(|ticket| Arc::ptr_eq(&ticket.0.state, &self.state)) {
+            return Err(NativeOwnedWorkerSpawnError);
+        }
+        let mut status = self
+            .state
+            .status
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while !status.closed || status.tickets != 0 {
+            status = self
+                .state
+                .wake
+                .wait(status)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        Ok(())
+    }
+}
 
 impl NativeOwnedWorkerSpawner {
     /// Constructs the binding without threads, native effects or reservations.
@@ -216,6 +463,157 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::mpsc::sync_channel;
     use std::time::Duration;
+
+    #[test]
+    fn scoped_dormant_close_rejects_unpolled_and_later_admissions() {
+        let scope = NativeOwnedWorkerScope::new();
+        let completion = scope.completion();
+        assert!(!completion.is_complete());
+        let future = scope.run(|| panic!("closed scope must not execute"));
+        assert_eq!(scope.state.status.lock().unwrap().tickets, 0);
+        scope.close();
+        assert!(completion.is_complete());
+        assert_eq!(
+            futures_executor::block_on(future),
+            Err::<(), _>(NativeOwnedWorkerSpawnError)
+        );
+        assert_eq!(
+            scope.spawn(|| panic!("closed spawn")),
+            Err(NativeOwnedWorkerSpawnError)
+        );
+        completion.wait_on_worker().unwrap();
+        assert!(completion.is_complete());
+    }
+
+    #[test]
+    fn scoped_failed_spawn_discharges_admission_without_execution() {
+        let scope = NativeOwnedWorkerScope::new();
+        let result = scope.spawn_with(
+            || panic!("failed native spawn"),
+            |ticket, operation| {
+                assert_eq!(scope.state.status.lock().unwrap().tickets, 1);
+                drop(operation);
+                drop(ticket);
+                Err(NativeOwnedWorkerSpawnError)
+            },
+        );
+        assert_eq!(result, Err(NativeOwnedWorkerSpawnError));
+        scope.close();
+        scope.completion().wait_on_worker().unwrap();
+        assert_eq!(scope.state.status.lock().unwrap().tickets, 0);
+    }
+
+    #[test]
+    fn scoped_completion_ignores_unconsumed_response_and_unrelated_worker() {
+        let unrelated = NativeOwnedWorkerScope::new();
+        let (started, started_rx) = sync_channel(1);
+        let (release, release_rx) = sync_channel(1);
+        unrelated
+            .spawn(move || {
+                started.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            })
+            .unwrap();
+        started_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        unrelated.close();
+        let scope = NativeOwnedWorkerScope::new();
+        let mut future = scope.run(|| 42);
+        assert!(
+            future
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending()
+        );
+        scope.close();
+        scope.completion().wait_on_worker().unwrap();
+        assert!(!unrelated.completion().is_complete());
+        assert_eq!(futures_executor::block_on(future), Ok(42));
+        release.send(()).unwrap();
+        unrelated.completion().wait_on_worker().unwrap();
+    }
+
+    #[test]
+    fn scoped_completion_waits_for_collector_join_and_thread_local_cleanup() {
+        struct TlsGate {
+            reached: std::sync::mpsc::SyncSender<()>,
+            release: std::sync::mpsc::Receiver<()>,
+            completion: NativeOwnedWorkerCompletion,
+        }
+        impl Drop for TlsGate {
+            fn drop(&mut self) {
+                assert_eq!(
+                    self.completion.wait_on_worker(),
+                    Err(NativeOwnedWorkerSpawnError)
+                );
+                self.reached.send(()).unwrap();
+                self.release.recv_timeout(Duration::from_secs(10)).unwrap();
+            }
+        }
+        thread_local! { static GATE: RefCell<Option<TlsGate>> = const { RefCell::new(None) }; }
+        let scope = NativeOwnedWorkerScope::new();
+        let (reached, reached_rx) = sync_channel(1);
+        let (release, release_rx) = sync_channel(1);
+        let completion = scope.completion();
+        scope
+            .spawn(move || {
+                GATE.with(|slot| {
+                    *slot.borrow_mut() = Some(TlsGate {
+                        reached,
+                        release: release_rx,
+                        completion,
+                    });
+                });
+            })
+            .unwrap();
+        scope.close();
+        reached_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(
+            !scope.completion().is_complete(),
+            "job return is not thread completion"
+        );
+        release.send(()).unwrap();
+        scope.completion().wait_on_worker().unwrap();
+    }
+
+    #[test]
+    fn scoped_worker_cannot_wait_for_its_own_join_and_metadata_never_leaks() {
+        let scope = NativeOwnedWorkerScope::new();
+        let completion = scope.completion();
+        let result = futures_executor::block_on(scope.run(move || {
+            assert!(current_worker_ticket().is_some());
+            completion.wait_on_worker()
+        }))
+        .unwrap();
+        assert_eq!(result, Err(NativeOwnedWorkerSpawnError));
+        assert!(current_worker_ticket().is_none());
+        scope.close();
+        scope.completion().wait_on_worker().unwrap();
+        futures_executor::block_on(
+            NativeOwnedWorkerSpawner::new().run(|| assert!(current_worker_ticket().is_none())),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn scoped_close_racing_admission_never_completes_before_admitted_work() {
+        for _ in 0..32 {
+            let scope = NativeOwnedWorkerScope::new();
+            let other = scope.clone();
+            let ran = Arc::new(AtomicBool::new(false));
+            let worker_ran = Arc::clone(&ran);
+            let result = std::thread::scope(|threads| {
+                let admission = threads.spawn(move || {
+                    other.spawn(move || {
+                        worker_ran.store(true, Ordering::Release);
+                    })
+                });
+                scope.close();
+                admission.join().unwrap()
+            });
+            scope.completion().wait_on_worker().unwrap();
+            assert_eq!(result.is_ok(), ran.load(Ordering::Acquire));
+        }
+    }
 
     #[test]
     fn worker_uses_collector_and_outlives_submitter_scope() {

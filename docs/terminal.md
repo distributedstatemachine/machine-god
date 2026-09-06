@@ -733,6 +733,19 @@ contract with this production binding, without a detached-thread or separate
 collector lifecycle. The worker job retains its own cleanup obligations even
 when the submitting future or spawner value is dropped.
 
+`NativeOwnedWorkerScope` adds explicit per-host completion enrollment to that
+same collector. Closing a scope atomically rejects new admissions; the host
+separately cancels its existing jobs. Its observation-only completion handle is
+ready only after closure and collector joins, including thread-local cleanup.
+Unconsumed response values do not hold completion tickets, and unrelated host
+or provider workers are not drained. A dedicated caller worker can wait for
+settlement; waiting from a worker enrolled in the same scope is rejected.
+Native process adapters retain metadata-only cleanup tokens while inside an
+explicitly scoped worker. Existing child-reap permits carry those tokens through
+quarantine until the exact obligation settles. These tokens grant no process,
+worker-admission or host-lifetime authority, and do not change the existing
+cleanup/reaper algorithms. Scope creation and unpolled scoped futures are inert.
+
 The lazy runtime assembly starts its injected owned-worker spawner only after
 an accepted request is polled. Registry and profile construction occur inside
 that worker. Unpolled/cancelled requests do not initialize it, and tool futures

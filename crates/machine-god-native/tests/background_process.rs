@@ -20,6 +20,7 @@ use background_process::{
     reset_leader_observations_for_test, run_background_process_helper,
 };
 use machine_god_core::CancellationToken;
+use machine_god_native::{NativeOwnedWorkerCleanup, NativeOwnedWorkerScope};
 use std::ffi::OsString;
 use std::fs;
 use std::os::unix::ffi::OsStringExt;

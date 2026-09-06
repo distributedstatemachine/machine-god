@@ -1370,12 +1370,16 @@ impl Error for BackgroundProcessError {}
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 struct ChildReapPermit {
     reaper: Arc<ChildReaper>,
+    // Metadata follows the existing permit into quarantine and is discharged
+    // only when that exact child's reap obligation is released.
+    shutdown: Option<crate::NativeOwnedWorkerCleanup>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl Drop for ChildReapPermit {
     fn drop(&mut self) {
         ACTIVE_CHILD_REAP_AUTHORITIES.fetch_sub(1, Ordering::AcqRel);
+        drop(self.shutdown.take());
     }
 }
 
@@ -1452,7 +1456,10 @@ fn reserve_child_reap_authority() -> Result<ChildReapPermit, BackgroundProcessEr
             (active < MAX_CHILD_REAP_AUTHORITIES).then_some(active + 1)
         })
         .map_err(|_| spawn_error())?;
-    Ok(ChildReapPermit { reaper })
+    Ok(ChildReapPermit {
+        reaper,
+        shutdown: crate::NativeOwnedWorkerScope::retain_current_cleanup(),
+    })
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -8430,6 +8437,85 @@ mod process_regression_tests {
         RELEASE_FAILURE_WITH_CANCELLATION_PID.store(0, Ordering::Release);
         assert!(cancellation.is_cancelled());
         assert_eq!(error.kind(), BackgroundProcessErrorKind::Release);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn scoped_worker_completion_follows_existing_child_quarantine() {
+        let scope = crate::NativeOwnedWorkerScope::new();
+        let input = futures_executor::block_on(scope.run(|| {
+            let permit = reserve_child_reap_authority().unwrap();
+            assert!(permit.shutdown.is_some());
+            let mut child = Command::new("/bin/cat")
+                .env_clear()
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            let input = child.stdin.take().unwrap();
+            quarantine_child(child, permit);
+            input
+        }))
+        .unwrap();
+        scope.close();
+        let completion = scope.completion();
+        std::thread::scope(move |threads| {
+            // This guard lives inside the scoped closure so a failed assertion
+            // closes the child's input before the waiting thread is joined.
+            let input = input;
+            let (done, done_rx) = std::sync::mpsc::sync_channel(1);
+            threads.spawn(move || done.send(completion.wait_on_worker()).unwrap());
+            assert!(matches!(
+                done_rx.recv_timeout(Duration::from_millis(100)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            ));
+            drop(input);
+            done_rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .unwrap();
+        });
+        assert!(scope.completion().is_complete());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn unscoped_quarantine_is_not_enrolled_in_unrelated_scope() {
+        let permit = reserve_child_reap_authority().unwrap();
+        assert!(permit.shutdown.is_none());
+        let mut child = Command::new("/bin/cat")
+            .env_clear()
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let input = child.stdin.take().unwrap();
+        // Keep a separate identity for checking that the existing reaper has
+        // discharged this exact test child after closing its input.
+        let pid = child.id();
+        quarantine_child(child, permit);
+        let scope = crate::NativeOwnedWorkerScope::new();
+        futures_executor::block_on(scope.run(|| ())).unwrap();
+        scope.close();
+        scope.completion().wait_on_worker().unwrap();
+        drop(input);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let reaper = child_reaper().unwrap();
+            if !reaper
+                .children
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|entry| entry.child.id() == pid)
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
