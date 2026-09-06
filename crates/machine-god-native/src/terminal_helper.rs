@@ -15,7 +15,7 @@ use rustix::termios::Winsize;
 use std::ffi::OsString;
 use std::fmt;
 use std::io::{Read, Write};
-use std::os::unix::ffi::OsStringExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -214,11 +214,78 @@ impl Write for DescriptorIo<'_> {
     }
 }
 
+pub(crate) struct TerminalPtyHelper {
+    program: PathBuf,
+    arguments: Vec<OsString>,
+}
+impl TerminalPtyHelper {
+    pub(crate) fn program(&self) -> &std::path::Path {
+        &self.program
+    }
+    pub(crate) fn arguments(&self) -> &[OsString] {
+        &self.arguments
+    }
+    pub(crate) fn new(
+        program: PathBuf,
+        arguments: Vec<OsString>,
+    ) -> Result<Self, TerminalHelperError> {
+        if !program.is_absolute()
+            || program.as_os_str().as_bytes().contains(&0)
+            || arguments.len() > 16
+            || arguments
+                .iter()
+                .any(|value| value.as_bytes().contains(&0) || value.len() > 4096)
+        {
+            return Err(error(TerminalHelperErrorKind::InvalidRequest));
+        }
+        Ok(Self { program, arguments })
+    }
+}
+
 pub(crate) struct LaunchFrame {
     pub(crate) program: String,
     pub(crate) arguments: Vec<String>,
     pub(crate) environment: ValidatedBackgroundEnvironment,
     pub(crate) dimensions: TerminalPtyDimensions,
+}
+impl LaunchFrame {
+    /// Borrowed, effect-free wire encoding shared by both terminal transports.
+    pub(crate) fn encode(
+        program: &str,
+        arguments: &[String],
+        environment: &ValidatedBackgroundEnvironment,
+        dimensions: TerminalPtyDimensions,
+    ) -> Result<Vec<u8>, TerminalHelperError> {
+        validate_program_arguments(program, arguments)?;
+        let dimensions = dimensions.validate()?;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(MAGIC);
+        bytes.extend_from_slice(&dimensions.rows.to_be_bytes());
+        bytes.extend_from_slice(&dimensions.columns.to_be_bytes());
+        append_bytes(&mut bytes, program.as_bytes())?;
+        append_length(&mut bytes, arguments.len())?;
+        for argument in arguments {
+            append_bytes(&mut bytes, argument.as_bytes())?;
+        }
+        append_length(&mut bytes, environment.entries().len())?;
+        for (key, value) in environment.entries() {
+            append_bytes(&mut bytes, key.as_bytes())?;
+            append_bytes(&mut bytes, value.as_bytes())?;
+        }
+        if bytes.len() > MAX_FRAME {
+            return Err(error(TerminalHelperErrorKind::InvalidRequest));
+        }
+        Ok(bytes)
+    }
+}
+fn append_length(bytes: &mut Vec<u8>, length: usize) -> Result<(), TerminalHelperError> {
+    bytes.extend_from_slice(&u32::try_from(length).map_err(process_error)?.to_be_bytes());
+    Ok(())
+}
+fn append_bytes(bytes: &mut Vec<u8>, data: &[u8]) -> Result<(), TerminalHelperError> {
+    append_length(bytes, data.len())?;
+    bytes.extend_from_slice(data);
+    Ok(())
 }
 pub(crate) fn read_frame(
     input: &mut impl Read,

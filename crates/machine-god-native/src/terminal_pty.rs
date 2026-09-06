@@ -5,8 +5,8 @@
 use std::ffi::OsString;
 use std::fmt;
 use std::num::NonZeroU32;
-use std::os::unix::ffi::OsStrExt;
 use std::os::unix::net::UnixStream;
+#[cfg(test)]
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -27,18 +27,17 @@ use crate::background_process::{
 use crate::background_process::{
     MAX_BACKGROUND_PROCESS_ENVIRONMENT_BYTES, MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES,
 };
-pub(crate) use crate::terminal_helper::TerminalPtyDimensions;
 use crate::terminal_helper::{
-    COMMIT, DescriptorIo, MAGIC, MAX_FRAME, MAX_STARTUP_TIMEOUT, PTY_DEADLINE_ENV, READY,
-    START_TIMEOUT, TerminalHelperError, TerminalHelperErrorKind, check_deadline, monotonic_now,
-    read_gate, validate_program_arguments, validate_pty_directory as validate_directory,
-    write_gate,
+    COMMIT, DescriptorIo, LaunchFrame, MAX_STARTUP_TIMEOUT, PTY_DEADLINE_ENV, READY, START_TIMEOUT,
+    TerminalHelperError, TerminalHelperErrorKind, check_deadline, monotonic_now, read_gate,
+    validate_program_arguments, validate_pty_directory as validate_directory, write_gate,
 };
 #[cfg(test)]
 use crate::terminal_helper::{
-    MAX_ARGUMENT_BYTES, MAX_ARGUMENTS, MAX_ARGUMENTS_BYTES, MAX_PROGRAM_BYTES, read_frame,
-    run_terminal_pty_helper,
+    MAX_ARGUMENT_BYTES, MAX_ARGUMENTS, MAX_ARGUMENTS_BYTES, MAX_FRAME, MAX_PROGRAM_BYTES,
+    read_frame, run_terminal_pty_helper,
 };
+pub(crate) use crate::terminal_helper::{TerminalPtyDimensions, TerminalPtyHelper};
 
 const MAX_READ: usize = 64 * 1024;
 // A slave can close just before its retained child's exit becomes waitable.
@@ -151,52 +150,12 @@ impl TerminalPtyRequest {
         Ok(self)
     }
     pub(crate) fn frame(&self) -> Result<Vec<u8>, TerminalPtyError> {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(MAGIC);
-        bytes.extend_from_slice(&self.dimensions.rows.to_be_bytes());
-        bytes.extend_from_slice(&self.dimensions.columns.to_be_bytes());
-        append_bytes(&mut bytes, self.program.as_bytes())?;
-        append_length(&mut bytes, self.arguments.len())?;
-        for argument in &self.arguments {
-            append_bytes(&mut bytes, argument.as_bytes())?;
-        }
-        append_length(&mut bytes, self.environment.entries().len())?;
-        for (key, value) in self.environment.entries() {
-            append_bytes(&mut bytes, key.as_bytes())?;
-            append_bytes(&mut bytes, value.as_bytes())?;
-        }
-        if bytes.len() > MAX_FRAME {
-            return Err(error(TerminalPtyErrorKind::InvalidRequest));
-        }
-        Ok(bytes)
-    }
-}
-
-pub(crate) struct TerminalPtyHelper {
-    program: PathBuf,
-    arguments: Vec<OsString>,
-}
-impl TerminalPtyHelper {
-    pub(crate) fn program(&self) -> &std::path::Path {
-        &self.program
-    }
-    pub(crate) fn arguments(&self) -> &[OsString] {
-        &self.arguments
-    }
-    pub(crate) fn new(
-        program: PathBuf,
-        arguments: Vec<OsString>,
-    ) -> Result<Self, TerminalPtyError> {
-        if !program.is_absolute()
-            || program.as_os_str().as_bytes().contains(&0)
-            || arguments.len() > 16
-            || arguments
-                .iter()
-                .any(|value| value.as_bytes().contains(&0) || value.len() > 4096)
-        {
-            return Err(error(TerminalPtyErrorKind::InvalidRequest));
-        }
-        Ok(Self { program, arguments })
+        Ok(LaunchFrame::encode(
+            &self.program,
+            &self.arguments,
+            &self.environment,
+            self.dimensions,
+        )?)
     }
 }
 
@@ -263,9 +222,9 @@ impl PreparedTerminalPty {
         let (mut gate, child_gate) = UnixStream::pair().map_err(process_error)?;
         gate.set_nonblocking(true).map_err(process_error)?;
         let mut guard = TerminalChildGuard::reserve(cancellation).map_err(process_error)?;
-        let mut command = Command::new(&helper.program);
+        let mut command = Command::new(helper.program());
         command
-            .args(&helper.arguments)
+            .args(helper.arguments())
             .env_clear()
             .env("LANG", "C")
             .env("LC_ALL", "C")
@@ -727,15 +686,6 @@ fn open_pty(dimensions: TerminalPtyDimensions) -> Result<(OwnedFd, OwnedFd), Ter
     Ok((master, slave))
 }
 
-fn append_length(bytes: &mut Vec<u8>, length: usize) -> Result<(), TerminalPtyError> {
-    bytes.extend_from_slice(&u32::try_from(length).map_err(process_error)?.to_be_bytes());
-    Ok(())
-}
-fn append_bytes(bytes: &mut Vec<u8>, data: &[u8]) -> Result<(), TerminalPtyError> {
-    append_length(bytes, data.len())?;
-    bytes.extend_from_slice(data);
-    Ok(())
-}
 #[cfg(test)]
 mod tests {
     use super::*;
