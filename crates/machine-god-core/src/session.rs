@@ -210,6 +210,12 @@ impl DrainJsonValues for ToolOutput {
     }
 }
 
+impl DrainJsonValues for Value {
+    fn drain_json_values(&mut self) {
+        drop_json_value_iterative(std::mem::take(self));
+    }
+}
+
 impl DrainJsonValues for ToolExecution {
     fn drain_json_values(&mut self) {
         self.drain_owned_json();
@@ -1081,6 +1087,8 @@ async fn run_turn_inner(
     let mut tool_calls = 0usize;
     let mut cumulative_tool_result_bytes = 0usize;
     let mut cumulative_complete_tool_result_bytes = 0usize;
+    let mut cumulative_complete_argument_bytes = 0usize;
+    let mut cumulative_complete_argument_nodes = 0usize;
     let mut seen_call_ids = BTreeSet::new();
     let mut usage = TokenUsage::default();
     let mut assistant_bytes = 0usize;
@@ -1118,6 +1126,7 @@ async fn run_turn_inner(
 
         let mut assistant_text = String::new();
         let mut calls = Vec::new();
+        let mut call_input_limits = Vec::new();
         let mut round_call_ids = BTreeSet::new();
         let mut round_usage = TokenUsage::default();
         let stop_reason = loop {
@@ -1216,31 +1225,36 @@ async fn run_turn_inner(
                                 )
                                 .into());
                             }
-                            if turn_tools.tool(&engine, &call.name).is_none() {
-                                return Err(TurnFailure::protocol(
+                            let tool = turn_tools.tool(&engine, &call.name).ok_or_else(|| {
+                                TurnFailure::protocol(
                                     "unknown_tool",
                                     format!("provider requested unregistered tool {}", call.name),
                                 )
-                                .into());
-                            }
-                            validate_json_value(&call.arguments, limits)?;
-                            let argument_bytes = serialized_json_size_bounded(
-                                &call.arguments,
-                                limits.max_tool_argument_bytes.get(),
-                            )
-                            .map_err(|error| {
-                                TurnFailure::protocol(
-                                    "tool_argument_serialization",
-                                    format!("tool arguments could not be serialized: {error}"),
-                                )
                             })?;
-                            if argument_bytes.is_none() {
-                                return Err(TurnFailure::limit(
-                                    "tool_argument_size_limit",
-                                    "tool arguments exceeded the configured serialized size limit",
-                                )
-                                .into());
+                            let input_limits = tool.complete_input_limits();
+                            let argument_limits =
+                                input_limits.map_or(limits, |input| crate::EngineLimits {
+                                    max_tool_argument_bytes: input.max_argument_bytes,
+                                    max_json_nodes: input.max_argument_nodes,
+                                    ..limits
+                                });
+                            let (argument_bytes, argument_nodes) =
+                                validate_tool_arguments(&call.arguments, argument_limits)?;
+                            if input_limits.is_some() {
+                                cumulative_complete_argument_bytes = add_complete_input_budget(
+                                    cumulative_complete_argument_bytes,
+                                    argument_bytes,
+                                    limits.max_cumulative_complete_tool_argument_bytes.get(),
+                                    "cumulative_complete_tool_argument_size_limit",
+                                )?;
+                                cumulative_complete_argument_nodes = add_complete_input_budget(
+                                    cumulative_complete_argument_nodes,
+                                    argument_nodes,
+                                    limits.max_cumulative_complete_tool_argument_nodes.get(),
+                                    "cumulative_complete_tool_argument_node_limit",
+                                )?;
                             }
+                            call_input_limits.push(input_limits);
                             calls.push(call.clone());
                         }
                         ModelEvent::Usage { usage: reported } => {
@@ -1354,6 +1368,59 @@ async fn run_turn_inner(
                 },
             })
             .await;
+        // No requested action can run until every original input is represented
+        // durably in the same commit as the round's result placeholders.
+        let mut persisted_calls = Vec::with_capacity(calls.len());
+        for (call, input_limits) in calls.iter().zip(&call_input_limits) {
+            check_cancelled(&cancellation)?;
+            let tool = turn_tools.tool(&engine, &call.name).ok_or_else(|| {
+                TurnFailure::protocol("unknown_tool", "tool disappeared before publication")
+            })?;
+            let publication = tool.persist_arguments(
+                ToolContext {
+                    session_id: session_id.clone(),
+                    session_incarnation_id: session_incarnation_id.clone(),
+                    turn_id: turn_id.clone(),
+                    call_id: call.id.clone(),
+                },
+                &call.arguments,
+                cancellation.clone(),
+            );
+            // Guard returned arbitrary JSON inside the polled future, before
+            // await_cancellable can discard a same-poll cancellation result.
+            let publication = Box::pin(async move {
+                publication
+                    .await
+                    .map(|value| value.map(JsonOwnerGuard::new))
+            });
+            let projection = await_cancellable(publication, &cancellation)
+                .await?
+                .map_err(|_| {
+                    TurnFailure::protocol(
+                        "tool_argument_publication_failed",
+                        "tool argument publication failed",
+                    )
+                })?;
+            let arguments = if let Some(projection) = projection {
+                if input_limits.is_none() {
+                    return Err(TurnFailure::protocol(
+                        "unexpected_persisted_tool_arguments",
+                        "tool supplied persisted arguments without an explicit input policy",
+                    )
+                    .into());
+                }
+                validate_tool_arguments(projection.get(), limits)?;
+                projection.into_inner()
+            } else {
+                validate_tool_arguments(&call.arguments, limits)?;
+                call.arguments.clone()
+            };
+            persisted_calls.push(ToolCall {
+                id: call.id.clone(),
+                name: call.name.clone(),
+                arguments,
+            });
+        }
         let placeholder_start = record.messages.len().checked_add(1).ok_or_else(|| {
             TurnFailure::limit(
                 "transcript_message_limit",
@@ -1363,7 +1430,7 @@ async fn run_turn_inner(
         let mut round_messages = Vec::with_capacity(calls.len().saturating_add(1));
         round_messages.push(Message {
             role: Role::Assistant,
-            content: assistant_message_content(&assistant_text, &calls),
+            content: assistant_message_content(&assistant_text, &persisted_calls),
         });
         round_messages.extend(
             calls
@@ -1381,7 +1448,9 @@ async fn run_turn_inner(
         .await?;
         cumulative_tool_result_bytes = placeholder_cumulative;
 
-        for (round_index, call) in calls.into_iter().enumerate() {
+        for (round_index, (call, input_limits)) in
+            calls.into_iter().zip(call_input_limits).enumerate()
+        {
             check_cancelled(&cancellation)?;
             let call_id = call.id.clone();
             let call_name = call.name.clone();
@@ -1399,7 +1468,7 @@ async fn run_turn_inner(
             {
                 Err(error) => (tool_error_output(&error), None, false, None),
                 Ok(prepared) => {
-                    validate_prepared_tool_call(&prepared, limits)?;
+                    validate_prepared_tool_call(&prepared, limits, input_limits)?;
                     let denied = match prepared.authorization() {
                         PreparedToolAuthorization::NoAuthorityRequired => false,
                         PreparedToolAuthorization::PermissionRequired(capability) => {
@@ -1932,6 +2001,44 @@ fn validate_json_value(value: &Value, limits: crate::EngineLimits) -> Result<(),
     validate_json_roots(std::iter::once(value), limits).map_err(json_limit_failure)
 }
 
+fn validate_tool_arguments(
+    arguments: &Value,
+    limits: crate::EngineLimits,
+) -> Result<(usize, usize), TurnFailure> {
+    let mut budget = JsonValidationBudget::new(limits);
+    budget.validate(arguments).map_err(json_limit_failure)?;
+    let bytes = serialized_json_size_bounded(arguments, limits.max_tool_argument_bytes.get())
+        .map_err(|_| {
+            TurnFailure::protocol(
+                "tool_argument_serialization",
+                "tool arguments could not be serialized",
+            )
+        })?
+        .ok_or_else(|| {
+            TurnFailure::limit(
+                "tool_argument_size_limit",
+                "tool arguments exceeded the configured serialized size limit",
+            )
+        })?;
+    Ok((bytes, budget.nodes))
+}
+
+fn add_complete_input_budget(
+    used: usize,
+    added: usize,
+    limit: usize,
+    code: &'static str,
+) -> Result<usize, TurnFailure> {
+    used.checked_add(added)
+        .filter(|total| *total <= limit)
+        .ok_or_else(|| {
+            TurnFailure::limit(
+                code,
+                "complete tool inputs exceeded the configured turn budget",
+            )
+        })
+}
+
 // A serialized capability adds enum tags, field names, and validated IDs
 // around its operation data. Reserving a fixed 1 KiB envelope preserves the
 // legacy default at the exact raw-argument boundary without granting prepared
@@ -1941,7 +2048,13 @@ const PREPARED_CAPABILITY_ENVELOPE_BYTES: usize = 1024;
 fn validate_prepared_tool_call(
     prepared: &PreparedToolCall,
     limits: crate::EngineLimits,
+    input_limits: Option<crate::ToolInputLimits>,
 ) -> Result<(), TurnFailure> {
+    let limits = input_limits.map_or(limits, |input| crate::EngineLimits {
+        max_tool_argument_bytes: input.max_prepared_argument_bytes,
+        max_json_nodes: input.max_prepared_argument_nodes,
+        ..limits
+    });
     validate_json_value(prepared.arguments(), limits)?;
     let prepared_argument_bytes =
         serialized_json_size_bounded(prepared.arguments(), limits.max_tool_argument_bytes.get())
@@ -1964,10 +2077,15 @@ fn validate_prepared_tool_call(
         }
         // Saturation keeps the derived bound representable even for a
         // host-supplied `usize::MAX` argument limit.
-        let capability_limit = limits
-            .max_tool_argument_bytes
-            .get()
-            .saturating_add(PREPARED_CAPABILITY_ENVELOPE_BYTES);
+        let capability_limit =
+            limits
+                .max_tool_argument_bytes
+                .get()
+                .saturating_add(if input_limits.is_some() {
+                    0
+                } else {
+                    PREPARED_CAPABILITY_ENVELOPE_BYTES
+                });
         let capability_bytes =
             serialized_json_size_bounded(capability, capability_limit).map_err(|error| {
                 TurnFailure::protocol(

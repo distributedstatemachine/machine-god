@@ -84,7 +84,7 @@ pub use terminal_action::{
 };
 pub use tool::{
     PreparedToolAuthorization, PreparedToolCall, Tool, ToolCall, ToolContext, ToolExecution,
-    ToolOutput, ToolOutputLimits, ToolSpec, TurnToolRegistration,
+    ToolInputLimits, ToolOutput, ToolOutputLimits, ToolSpec, TurnToolRegistration,
 };
 
 use core::future::Future;

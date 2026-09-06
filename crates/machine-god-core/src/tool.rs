@@ -367,8 +367,57 @@ pub struct ToolOutputLimits {
     pub max_json_nodes: NonZeroUsize,
 }
 
+/// Explicit bounds for a tool's complete input, independently of its bounded
+/// durable transcript projection. The engine's JSON depth ceiling still applies.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ToolInputLimits {
+    /// Compact serialized original argument bytes per call.
+    pub max_argument_bytes: NonZeroUsize,
+    /// Original scalar and container nodes per call.
+    pub max_argument_nodes: NonZeroUsize,
+    /// Bytes for each prepared argument value and whole serialized capability,
+    /// including its canonical envelope (no additional envelope allowance).
+    pub max_prepared_argument_bytes: NonZeroUsize,
+    /// Nodes in each prepared argument value and embedded capability JSON.
+    pub max_prepared_argument_nodes: NonZeroUsize,
+}
+
 /// Object-safe tool implementation supplied explicitly by a host.
 pub trait Tool: Send + Sync + 'static {
+    /// Opts into separately bounded complete arguments. Ordinary transcript
+    /// limits still apply to arguments returned by [`Self::persist_arguments`].
+    fn complete_input_limits(&self) -> Option<ToolInputLimits> {
+        None
+    }
+
+    /// Publishes a lossless durable archive of the immutable original arguments
+    /// and optionally returns their bounded historical representation.
+    ///
+    /// This runs after the whole provider round is validated, before its calls
+    /// and result placeholders are saved, and before preparation or permission.
+    /// It may only perform explicitly injected input-publication effects, never
+    /// the requested tool action. Construction must be inert; implementations
+    /// own bounded cleanup of abandoned publication futures. A successful `Some`
+    /// asserts that the complete original arguments are already durable and
+    /// losslessly retrievable under the exact context. It requires an explicit
+    /// [`Self::complete_input_limits`] policy. `None` preserves inline storage
+    /// and therefore requires the original to satisfy ordinary argument limits.
+    ///
+    /// The engine preserves original arguments for preparation and events;
+    /// authorization and execution use the resulting prepared form, never the
+    /// historical projection. Only the historical representation enters session
+    /// storage and later provider requests, including after restart; core never
+    /// hydrates or executes historical references. Cancellation or any failed
+    /// publication/save prevents every action in this round from executing.
+    fn persist_arguments<'a>(
+        &'a self,
+        _context: ToolContext,
+        _arguments: &'a Value,
+        _cancellation: CancellationToken,
+    ) -> BoxFuture<'a, Result<Option<Value>, ToolError>> {
+        Box::pin(async { Ok(None) })
+    }
+
     /// Opts into a separately bounded complete result with an already-durable
     /// transcript representation. These limits do not enlarge ordinary inline
     /// results, arguments, transcript limits, or another tool's authority.

@@ -151,6 +151,7 @@ per user prompt,
 aggregate cached tool catalog, 64 KiB of serialized arguments per call, 64 KiB
 per serialized tool result, 256 KiB of cumulative inline tool results,
 an independent 256 KiB of cumulative explicitly persisted complete results,
+and independent 256 KiB / 65,536-node cumulative complete tool-input budgets,
 and 4 KiB for a
 host-facing permission denial reason. Hosts may replace the complete limits
 value through [`EngineBuilder::limits`](crate::EngineBuilder::limits). Counters
@@ -570,8 +571,40 @@ tool-call `Stop` is delivered, core atomically commits the assistant message and
 exactly one conservative unknown-result placeholder for every call before any
 permission request or tool execution. Placeholder sizes count against both the
 per-result and cumulative budgets; a budget that cannot hold all placeholders
-fails before that commit and before external work. Calls then run serially in
+fails before that commit and before input publication. Calls then run serially in
 provider order.
+
+Tools may opt into `Tool::complete_input_limits` with `ToolInputLimits`:
+`max_argument_bytes` / `max_argument_nodes` bound complete provider input, and
+`max_prepared_argument_bytes` / `max_prepared_argument_nodes` independently bound
+normalized execution input. Core captures that policy at call admission and
+retains its ordinary JSON depth ceiling. Explicitly opted-in originals also
+consume independent per-turn `max_cumulative_complete_tool_argument_bytes` and
+`max_cumulative_complete_tool_argument_nodes` budgets before core clones or
+emits their model events. Ordinary tools keep ordinary input limits.
+
+After a valid whole round and placeholder-budget preflight, but before the
+assistant/placeholder commit, core invokes the borrowed asynchronous
+`Tool::persist_arguments(context, &original, cancellation)` hook for each call.
+The default is inert inline `Ok(None)`. An implementation may perform only
+explicitly injected archival publication, never the requested action or its
+unapproved authority. `Ok(Some(arguments))` asserts already-durable, lossless
+storage under the exact original context and requires the explicit input policy.
+Returned projections obey ordinary argument byte/node/depth limits. `None`
+requires the original to fit those same ordinary inline limits; opting in does
+not enlarge transcript or store admission. Core guards arbitrary returned JSON
+before same-poll cancellation can discard it. Publication errors are redacted.
+Cancellation, publication failure, or failed round save executes no action from
+that round; a publisher owns bounded cleanup of abandoned work and may retain
+unreferenced durable archive bytes.
+
+The unchanged call ID/name and bounded projection enter the transcript and all
+later provider requests, including after restart. Core never hydrates or executes
+historical references. The original complete input remains immutable and reaches
+preparation and observer events; authorization and execution use its prepared
+form, never the historical projection. Hosts must
+bound retained event memory and implement lossless archive retrieval; the input
+hook alone does not provide native storage or change provider transport limits.
 
 Before authorization, core passes each validated provider call by value to
 [`Tool::prepare`](crate::Tool::prepare). Its source-compatible default returns
@@ -604,6 +637,13 @@ no tool. It becomes the same fixed generic, durable tool-error result as an
 execution error, replacing that call's unknown
 placeholder so the next model round can recover without receiving the tool's
 diagnostic.
+
+For an explicit complete-input policy, prepared JSON and embedded capability
+JSON use `max_prepared_argument_nodes`, and the whole serialized capability and
+prepared arguments each use `max_prepared_argument_bytes` exactly, without the
+ordinary 1 KiB envelope allowance. The policy must therefore include its complete
+canonical authorization envelope. These bounds do not alter another tool's
+input or authorization limits.
 
 `Capability::Vision { paths, target }` presents one indivisible policy choice:
 disclose the exact ordered normalized workspace paths to the exact normalized
