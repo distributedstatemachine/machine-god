@@ -36,7 +36,8 @@ use machine_god_native::{
     McpFeatureAuthority, McpFeatureError, McpFeaturePayload, McpFeatureRequest, McpToolCatalog,
     McpToolCatalogError, McpToolCatalogSnapshot, McpToolMetadata, NativeEnvironment,
     NativeReferenceHost, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
-    OPEN_FILE_TOOL_NAME, PermissionPromptDecision, PermissionPromptError, PermissionPrompter,
+    NativeReferenceHostTerminalOptions, NativeRootSelection, OPEN_FILE_TOOL_NAME,
+    PermissionPromptDecision, PermissionPromptError, PermissionPrompter, PreparedNativeRoots,
     QuestionPromptAnswers, QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest,
     QuestionPrompter, READ_FILE_TOOL_NAME, READ_TOOL_RESULT_TOOL_NAME, RENAME_FILE_TOOL_NAME,
     SEMANTIC_SEARCH_TOOL_NAME, SKILL_TOOL_NAME, TERMINAL_TOOL_NAME, VISION_TOOL_NAME,
@@ -329,6 +330,24 @@ fn roots(base: &Path) -> (PathBuf, PathBuf) {
     fs::create_dir(&sessions).unwrap();
     fs::set_permissions(&sessions, fs::Permissions::from_mode(0o700)).unwrap();
     (workspace, sessions)
+}
+
+fn complete_terminal_roots(base: &Path) -> (PreparedNativeRoots, PathBuf) {
+    let (workspace, state_base) = roots(base);
+    let environment = NativeEnvironment::new(None, Some(state_base.into_os_string()), None);
+    let selection = NativeRootSelection::from_environment(&environment, &workspace).unwrap();
+    let roots = PreparedNativeRoots::prepare(selection).unwrap();
+    let state = roots.state_root().to_owned();
+    (roots, state)
+}
+
+fn complete_terminal_options() -> NativeReferenceHostTerminalOptions {
+    NativeReferenceHostTerminalOptions::new(
+        "/explicit-unexecuted-machine-god-helper".into(),
+        Some("/bin/bash".into()),
+        Vec::new(),
+    )
+    .unwrap()
 }
 
 fn tool_round_responses(final_text: &str) -> [Vec<u8>; 5] {
@@ -2337,6 +2356,255 @@ fn composed_terminal_inspect_reads_exact_record_without_permission_or_supervisor
             .to_string()
             .contains("PRIVATE_REFERENCE_HOST_COMMAND")
     );
+}
+
+#[test]
+fn complete_terminal_composition_registers_all_actions_and_survives_into_engine() {
+    let temporary = TemporaryDirectory::new("complete-terminal-catalog");
+    let (prepared, state) = complete_terminal_roots(temporary.path());
+    let transport = ScriptedTransport::new("COMPLETE_TERMINAL", terminal_list_round_responses());
+    let prompter = AllowingPrompter::default();
+    let host =
+        NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_terminal(
+            built_in_config(),
+            Arc::new(transport.clone()),
+            production_gateway_target(),
+            prepared,
+            Arc::new(prompter.clone()),
+            inert_question_prompter(),
+            never_deadline(),
+            complete_terminal_options(),
+        )
+        .unwrap();
+    assert!(transport.requests().is_empty());
+    assert!(prompter.requests().is_empty());
+    assert!(!state.join("terminal-v1").exists());
+    assert!(!state.join("background-v1").exists());
+    assert!(state.join("terminal-startup").is_dir());
+    assert!(state.join("tool-result-archive/archive-lock-v1").is_file());
+    let engine = host.into_engine();
+    let terminal = engine.tool(&ToolName::new("terminal").unwrap()).unwrap();
+    let schema = terminal.spec().input_schema;
+    let actions: Vec<_> = schema["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|form| form["properties"]["action"]["const"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        actions,
+        [
+            "exec", "start", "read", "screen", "write", "wait", "monitor", "inspect", "list",
+            "resize", "signal", "close"
+        ]
+    );
+    let ordinary = machine_god_core::EngineLimits::default();
+    assert_eq!(
+        engine.limits().max_tool_argument_bytes,
+        ordinary.max_tool_argument_bytes
+    );
+    assert_eq!(
+        engine.limits().max_transcript_bytes,
+        ordinary.max_transcript_bytes
+    );
+    assert_eq!(
+        terminal
+            .complete_input_limits()
+            .unwrap()
+            .max_argument_bytes
+            .get(),
+        machine_god_native::MAX_TERMINAL_ACTION_ARGUMENT_BYTES
+    );
+    assert_eq!(
+        terminal
+            .complete_output_limits()
+            .unwrap()
+            .max_serialized_bytes
+            .get(),
+        machine_god_native::MAX_TERMINAL_COMPLETE_TOOL_OUTPUT_BYTES
+    );
+    let session = engine
+        .create_session(
+            SessionId::new("full-list").unwrap(),
+            SessionIncarnationId::new("full-list-incarnation").unwrap(),
+        )
+        .unwrap();
+    drop(engine);
+    let events = futures_executor::block_on(async {
+        session
+            .prompt("list terminals")
+            .await
+            .unwrap()
+            .map(|event| event.unwrap().payload)
+            .collect::<Vec<_>>()
+            .await
+    });
+    assert_completed(&events);
+    let output = events
+        .iter()
+        .find_map(|event| match event {
+            TurnEvent::ToolFinished { output, .. } => Some(output),
+            _ => None,
+        })
+        .unwrap();
+    assert!(!output.is_error, "{output:?}");
+    assert_eq!(output.content["sessions"], json!([]));
+    assert_eq!(prompter.requests().len(), 1);
+    assert!(
+        matches!(&prompter.requests()[0].capability, Capability::Custom { name, .. } if name == "terminal_list")
+    );
+    assert!(!state.join("background-v1").exists());
+}
+
+#[test]
+fn complete_terminal_composition_archives_full_inputs_and_pages_prior_calls() {
+    let temporary = TemporaryDirectory::new("complete-terminal-archive");
+    let (prepared, state) = complete_terminal_roots(temporary.path());
+    let arguments = json!({"action":"start", "command": vec![b'a'; 64 * 1024]});
+    let input = json!({"type":"tool-call", "toolCallId":"full-command", "toolName":"terminal", "input":arguments});
+    let first = format!(
+        "data: {input}\n\ndata: {{\"type\":\"finish\",\"finishReason\":{{\"unified\":\"tool-calls\"}}}}\n\n"
+    );
+    let finish = "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n";
+    let transport = ScriptedTransport::new("COMPLETE_ARCHIVE", [first.as_str(), finish]);
+    let prompter = DenyingTerminalPrompter::default();
+    let host =
+        NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_terminal(
+            built_in_config(),
+            Arc::new(transport.clone()),
+            production_gateway_target(),
+            prepared,
+            Arc::new(prompter.clone()),
+            inert_question_prompter(),
+            never_deadline(),
+            complete_terminal_options(),
+        )
+        .unwrap();
+    let (id, events) = collect_turn(&host, "archived-input");
+    assert_completed(&events);
+    assert_eq!(prompter.0.requests().len(), 1);
+    let permissions = prompter.0.requests();
+    assert!(
+        matches!(&permissions[0].capability, Capability::Custom { name, .. } if name == "terminal_start")
+    );
+    assert!(
+        serde_json::to_string(&permissions[0].capability)
+            .unwrap()
+            .contains(&"a".repeat(64 * 1024))
+    );
+    let session = futures_executor::block_on(host.engine().load_session(id))
+        .unwrap()
+        .unwrap();
+    let record = session.record();
+    assert!(serde_json::to_vec(&record).unwrap().len() < 64 * 1024);
+    let reference = record
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .find_map(|block| match block {
+            ContentBlock::ToolCall { call } if call.id.as_str() == "full-command" => {
+                Some(&call.arguments)
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(reference["type"], "tool_arguments_archive");
+    let handle = reference["archive"]["handle"].as_str().unwrap();
+    let page = json!({"type":"tool-call", "toolCallId":"archive-page", "toolName":"read_tool_result", "input":{"handle":handle, "byte_count":1024}});
+    let response = format!(
+        "data: {page}\n\ndata: {{\"type\":\"finish\",\"finishReason\":{{\"unified\":\"tool-calls\"}}}}\n\n"
+    );
+    transport
+        .state
+        .lock()
+        .unwrap()
+        .responses
+        .extend([response.into_bytes(), finish.as_bytes().to_vec()]);
+    let (_, events) = collect_turn(&host, "archived-input");
+    assert_completed(&events);
+    let output = events
+        .iter()
+        .find_map(|event| match event {
+            TurnEvent::ToolFinished { output, .. } => Some(output),
+            _ => None,
+        })
+        .unwrap();
+    assert!(!output.is_error, "{output:?}");
+    let expected = serde_json::to_string(&ToolOutput::success(arguments)).unwrap();
+    assert_eq!(output.content["serialized_tool_output"], expected[..1024]);
+    assert_eq!(prompter.0.requests().len(), 1);
+    assert!(!state.join("terminal-v1").exists());
+    assert!(!state.join("background-v1").exists());
+    assert!(
+        transport
+            .requests()
+            .iter()
+            .all(|request| serde_json::to_vec(&body(request)["prompt"]).unwrap().len() < 64 * 1024)
+    );
+}
+
+#[test]
+fn complete_terminal_composition_rejects_symlinked_private_children() {
+    for child in ["terminal-startup", "tool-result-archive"] {
+        let temporary = TemporaryDirectory::new("complete-terminal-symlink");
+        let (prepared, state) = complete_terminal_roots(temporary.path());
+        let outside = temporary.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::set_permissions(&outside, fs::Permissions::from_mode(0o700)).unwrap();
+        symlink(&outside, state.join(child)).unwrap();
+        let transport = ScriptedTransport::new("NO_NETWORK", Vec::<Vec<u8>>::new());
+        let prompter = AllowingPrompter::default();
+        let error = build_error(
+            NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_terminal(
+                built_in_config(),
+                Arc::new(transport.clone()),
+                production_gateway_target(),
+                prepared,
+                Arc::new(prompter.clone()),
+                inert_question_prompter(),
+                never_deadline(),
+                complete_terminal_options(),
+            ),
+        );
+        assert_eq!(
+            error.kind(),
+            NativeReferenceHostBuildErrorKind::TerminalConfig
+        );
+        assert_redacted(error, &[outside.to_str().unwrap(), child]);
+        assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
+        assert!(transport.requests().is_empty());
+        assert!(prompter.requests().is_empty());
+    }
+}
+
+#[test]
+fn complete_terminal_composition_rejects_replaced_state_path_before_children() {
+    let temporary = TemporaryDirectory::new("complete-terminal-replaced-state");
+    let (prepared, state) = complete_terminal_roots(temporary.path());
+    let retained = state.with_file_name("retained-state");
+    fs::rename(&state, &retained).unwrap();
+    fs::create_dir(&state).unwrap();
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o700)).unwrap();
+    let transport = ScriptedTransport::new("NO_NETWORK", Vec::<Vec<u8>>::new());
+    let error = build_error(
+        NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_terminal(
+            built_in_config(),
+            Arc::new(transport.clone()),
+            production_gateway_target(),
+            prepared,
+            Arc::new(AllowingPrompter::default()),
+            inert_question_prompter(),
+            never_deadline(),
+            complete_terminal_options(),
+        ),
+    );
+    assert_eq!(
+        error.kind(),
+        NativeReferenceHostBuildErrorKind::TerminalConfig
+    );
+    assert_eq!(fs::read_dir(&state).unwrap().count(), 0);
+    assert_eq!(fs::read_dir(&retained).unwrap().count(), 0);
+    assert!(transport.requests().is_empty());
 }
 
 #[test]

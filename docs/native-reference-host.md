@@ -16,9 +16,11 @@ The complete reference host is compiled when all of these are true:
 - `machine-god-native` enables `ai-gateway-http`.
 
 Individual native contracts may expose portable injected seams or narrower
-system implementations. In particular, the complete host compiles on macOS,
-but the production `semantic_search` and terminal foreground executor are
-Linux-only. The private host catalog retains both tools on macOS:
+system implementations. The explicit terminal-options constructors support
+foreground and interactive terminal execution on Linux and macOS. Constructors
+without those options retain the legacy adapter: its foreground executor and
+the production `semantic_search` remain Linux-only. That legacy catalog retains
+both tools on macOS:
 `semantic_search` and terminal `exec` return their fixed unsupported results
 after strict preparation and permission, while terminal `start` uses the
 Linux/macOS background helper, terminal `read` uses the lazy starter's shared
@@ -45,13 +47,21 @@ provider, the web-search transport adapter, and the private vision worker. The
 host retains the complete `LoadedNativeConfig`, including its observable
 schema origin/version.
 
-The host configures both ordinary Gateway tool-argument decoding and engine
+The legacy host configures both ordinary Gateway tool-argument decoding and engine
 preflight with the terminal's bounded canonical argument envelope (417,865
 bytes). This admits a full 64 KiB command plus cwd and JSON escaping without
 truncating the command or its process-permission identity. Individual tools
 still enforce their own semantic limits. Generic `EngineLimits` and
 `AiGatewayLimits` defaults remain unchanged; response, chunk, result and total
 request limits remain independently bounded.
+
+The explicit terminal-options constructors instead retain ordinary Gateway and
+core argument/transcript defaults and select a trusted terminal-only input
+override (16,378,880 bytes and 2,308,160 JSON nodes). Complete inputs and outputs
+have independent per-turn aggregate budgets, each admitting one maximum
+terminal payload; multiple smaller calls share those budgets. The output
+aggregate is the terminal's encoding-derived complete-output ceiling. These
+bounds do not enlarge inline transcript references or unrelated tools.
 
 ## Constructors
 
@@ -79,6 +89,7 @@ The root, transport, and MCP composition paths are:
 | `PreparedNativeRoots` | Production AI Gateway HTTP | Consumes the already retained identity-checked roots without reopening their selected paths, then discovers credentials and constructs the transport |
 | Existing explicit workspace and session paths | Injected `Arc<dyn AiGatewayTransport>` | Opens and retains both roots, skips credential discovery, and uses the supplied canonical `NetworkTarget` |
 | `PreparedNativeRoots` | Injected transport | Consumes retained roots, skips credential discovery, and uses the supplied canonical target |
+| `PreparedNativeRoots` and explicit terminal options | Production HTTP or injected transport | Adds the complete twelve-action terminal host, dedicated durable input/result archive, and host-handle-owned native lifetime |
 | Existing explicit roots | Injected transport and `Arc<dyn McpToolCatalog>` | Uses the custom transport path and advertises search plus exact next-round selection over the injected admitted MCP metadata and attached executable source; feature access remains an inert empty authority |
 | Existing explicit roots | Injected transport, `Arc<dyn McpToolCatalog>`, and `Arc<dyn McpFeatureAuthority>` | Adds bounded exact server-qualified resource, prompt, and completion access through the separately injected read-only authority |
 | Existing explicit roots | Injected transport and `Arc<dyn SubagentAuthority>` | Adds bounded foreground one-off delegation while MCP authorities remain inert |
@@ -88,6 +99,30 @@ Every ordinary path injects an inert unavailable `SubagentAuthority`. A
 separate explicit subagent injection seam accepts the same root/transport
 composition plus one trusted authority allocation. Neither path probes or polls
 the authority during construction.
+
+`compose_ai_gateway_http_with_prepared_roots_and_terminal` and
+`compose_with_ai_gateway_transport_and_prepared_roots_and_terminal` append
+`NativeReferenceHostTerminalOptions` to their existing prepared-root
+counterparts. Call these synchronous constructors on a blocking worker. They
+capture the selected state path before consuming the retained roots, verify
+its canonical spelling against the descriptor, and use the existing bounded
+private-directory preparation for fixed `terminal-startup` and
+`tool-result-archive` children. They prepare the archive's private lock but
+start no shell, terminal session, profile-owner worker, network request, or
+hidden async runtime during composition. The terminal profile initializes
+lazily on the first authorized native request. Existing unsafe children and
+symlinks fail without repair; terminal/archive preparation errors use the
+redacted terminal-configuration category.
+
+One archive allocation and adapter are shared by terminal's complete input and
+result publishers and `read_tool_result`. Large arguments are durably archived
+before execution; later calls can page their original, session-incarnation-bound
+contents. The complete terminal tool advertises all twelve actions; it does not
+share the legacy background supervisor. Actual Engine, Session and lifecycle
+handles retain the terminal host resource through `EngineBuilder::host_resource`.
+Tools and pending operations retain only non-owning requesters. `into_engine`
+preserves this ownership, and dropping the last real host handle requests
+native shutdown even when a tool/turn future is retained.
 
 The explicit-path constructors require the trusted host to choose disjoint
 workspace and session roots; those constructors do not prove identity or
@@ -106,7 +141,9 @@ transport, permission mode, credential source, or model.
 
 ## Composition graph
 
-Every successful host contains:
+Every successful host contains the shared components below. Terminal-specific
+bullets describe constructors without explicit terminal options; the complete
+terminal selection described above replaces those legacy components.
 
 - `AiGatewayProvider` over one shared `Arc<dyn AiGatewayTransport>`;
 - `AskPermissionHandler` over an injected `Arc<dyn PermissionPrompter>`;
@@ -149,7 +186,7 @@ Every successful host contains:
   initializes the lazy supervisor, and exposes only terminal's compact ordered
   list and exact-record projections. A separately injected delay adapter adds
   bounded record-only `wait` without process authority;
-- default provider-neutral `EngineLimits` and the default no-op event sink;
+- provider-neutral limits selected as described above and the default no-op event sink;
 - one explicit `Arc<dyn WebSearchDeadline>` for bounded web-search timing,
   reused through fixed category-only adapters for terminal's persisted-record
   wait and vision's capacity wait, cooperative filesystem checkpoints, and
@@ -202,7 +239,7 @@ original descriptor. The other sixteen workspace tools receive
 identity-preserving clones: `copy_file`, `create_folder`, `delete_file`,
 `edit_file`, `file_info`, `grep_files`, `install_skill`, `list_files`,
 `open_file`, `read_file`, `rename_file`, `semantic_search`, `skill`, `terminal`,
-`vision`, and `write_file`. The terminal lazy background starter receives one
+`vision`, and `write_file`. On legacy paths, the terminal lazy background starter receives one
 additional clone of that same workspace identity; it is not another catalog
 tool. Terminal listing and inspection receive a separate retained state-root
 clone, not ambient cwd or environment discovery. Terminal wait reuses that

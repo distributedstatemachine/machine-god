@@ -7,31 +7,33 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use machine_god_core::{
-    BoxFuture, CancellationToken, Engine, EngineLimits, NetworkTarget, SessionStore,
-    SubagentAuthority, SubagentAuthorityError, SubagentAuthorityErrorKind, SubagentOutcome,
-    SubagentRequest, SubagentTool,
+    BoxFuture, CancellationToken, Engine, EngineLimits, NetworkTarget, SessionIncarnationId,
+    SessionStore, SubagentAuthority, SubagentAuthorityError, SubagentAuthorityErrorKind,
+    SubagentOutcome, SubagentRequest, SubagentTool, Tool, ToolName,
 };
 use rustix::fd::OwnedFd;
 
 use crate::background_inspection::NativeBackgroundRecordInspector;
 use crate::background_process::ValidatedBackgroundEnvironment;
 use crate::background_supervisor::LazyProductionBackgroundStarter;
+use crate::terminal_host::{NativeTerminalHost, NativeTerminalHostResource};
+use crate::terminal_host_authority::{TerminalHostAccountShell, TerminalHostAuthorityInputs};
 use crate::workspace::{WorkspaceRoot, WorkspaceTools};
 use crate::{
     AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayHttpTransport,
-    AiGatewayLimits, AiGatewayProvider, AiGatewayTransport, AiGatewayVisionTransport,
-    AiGatewayWebSearchTransport, AskPermissionHandler, AskUserQuestionTool, FileSessionStore,
-    LoadedNativeConfig, McpFeatureAuthority, McpFeatureError, McpFeatureErrorKind,
-    McpFeaturePayload, McpFeatureRequest, McpFeaturesTool, McpSearchToolsTool, McpSelectTool,
-    McpToolCatalog, McpToolCatalogError, McpToolCatalogSnapshot, MemoryTool,
-    NativeCredentialSourceKind, NativeProviderKind, NativeSessionLifecycle, NativeTransportKind,
-    PermissionMode, PermissionPrompter, PreparedNativeRoots, QuestionPrompter, ReadToolResultTool,
-    TerminalBackgroundCatalog, TerminalBackgroundInspector, TerminalBackgroundOutputReader,
-    TerminalBackgroundSignaler, TerminalBackgroundStarter, TerminalBackgroundWaitDelay,
-    TerminalBackgroundWaitDelayError, TerminalBackgroundWriter, TerminalTool, VisionDeadline,
-    VisionLimits, VisionTool, VisionTransportError, VisionTransportErrorKind, WebFetchTool,
-    WebSearchDeadline, WebSearchLimits, WebSearchTool, WebSearchTransportErrorKind,
-    discover_ai_gateway_credential,
+    AiGatewayLimits, AiGatewayProvider, AiGatewayToolInputLimits, AiGatewayTransport,
+    AiGatewayVisionTransport, AiGatewayWebSearchTransport, AskPermissionHandler,
+    AskUserQuestionTool, FileSessionStore, LoadedNativeConfig, McpFeatureAuthority,
+    McpFeatureError, McpFeatureErrorKind, McpFeaturePayload, McpFeatureRequest, McpFeaturesTool,
+    McpSearchToolsTool, McpSelectTool, McpToolCatalog, McpToolCatalogError, McpToolCatalogSnapshot,
+    MemoryTool, NativeCredentialSourceKind, NativeProviderKind, NativeSessionLifecycle,
+    NativeToolResultArchiveAdapter, NativeTransportKind, PermissionMode, PermissionPrompter,
+    PreparedNativeRoots, QuestionPrompter, ReadToolResultTool, TerminalBackgroundCatalog,
+    TerminalBackgroundInspector, TerminalBackgroundOutputReader, TerminalBackgroundSignaler,
+    TerminalBackgroundStarter, TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError,
+    TerminalBackgroundWriter, TerminalTool, ToolResultArchive, VisionDeadline, VisionLimits,
+    VisionTool, VisionTransportError, VisionTransportErrorKind, WebFetchTool, WebSearchDeadline,
+    WebSearchLimits, WebSearchTool, WebSearchTransportErrorKind, discover_ai_gateway_credential,
 };
 
 /// Stable stage at which native reference-host composition failed.
@@ -245,6 +247,11 @@ impl fmt::Debug for NativeReferenceHostTerminalOptions {
     }
 }
 
+struct TerminalCompositionSelection {
+    options: NativeReferenceHostTerminalOptions,
+    state_path: PathBuf,
+}
+
 fn terminal_options_error() -> NativeReferenceHostBuildError {
     NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::TerminalConfig)
 }
@@ -372,6 +379,60 @@ impl NativeReferenceHost {
         )
     }
 
+    /// Composes the twelve-action terminal host with explicit helper authority.
+    ///
+    /// Call this synchronous constructor on a blocking worker. It consumes the
+    /// retained roots, validates their path bindings, creates dedicated private
+    /// startup/archive directories and an archive lock, and captures native
+    /// launch/probe configuration. It starts no terminal session, hidden async
+    /// runtime, prompt, or network request. Profile-owner startup stays lazy.
+    /// Existing constructors without terminal options retain their legacy tool.
+    ///
+    /// # Errors
+    /// Returns a fixed stage-only failure for invalid selections, unavailable
+    /// credentials, unsafe roots, or failure to compose the explicit authority.
+    pub fn compose_ai_gateway_http_with_prepared_roots_and_terminal(
+        loaded_config: LoadedNativeConfig,
+        credential_environment: AiGatewayCredentialEnvironment,
+        prepared_roots: PreparedNativeRoots,
+        permission_prompter: Arc<dyn PermissionPrompter>,
+        question_prompter: Arc<dyn QuestionPrompter>,
+        web_search_deadline: Arc<dyn WebSearchDeadline>,
+        terminal_options: NativeReferenceHostTerminalOptions,
+    ) -> Result<Self, NativeReferenceHostBuildError> {
+        validate_selections(&loaded_config)?;
+        let selection = TerminalCompositionSelection {
+            options: terminal_options,
+            state_path: prepared_roots.state_root().to_owned(),
+        };
+        let (workspace_tools, session_store) = consume_prepared_roots(prepared_roots)?;
+        let memory = open_memory_tool(&session_store)?;
+        let credential = discover_ai_gateway_credential(credential_environment).map_err(|_| {
+            NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Credential)
+        })?;
+        let credential_source = credential.source();
+        let transport =
+            AiGatewayHttpTransport::new(credential.into_bearer_token()).map_err(|_| {
+                NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::HttpTransport)
+            })?;
+        Self::finish_composition_with_extensions(
+            loaded_config,
+            Arc::new(transport),
+            production_ai_gateway_target(),
+            web_search_deadline,
+            workspace_tools,
+            session_store,
+            memory,
+            permission_prompter,
+            question_prompter,
+            Some(credential_source),
+            Arc::new(EmptyMcpToolCatalog),
+            Arc::new(EmptyMcpFeatureAuthority),
+            Arc::new(EmptySubagentAuthority),
+            Some(selection),
+        )
+    }
+
     /// Composes a reference host over an explicitly injected AI Gateway transport.
     ///
     /// This path retains the same configuration, workspace, session-store, and
@@ -463,6 +524,7 @@ impl NativeReferenceHost {
             mcp_catalog,
             Arc::new(EmptyMcpFeatureAuthority),
             Arc::new(EmptySubagentAuthority),
+            None,
         )
     }
 
@@ -512,6 +574,7 @@ impl NativeReferenceHost {
             mcp_catalog,
             mcp_feature_authority,
             Arc::new(EmptySubagentAuthority),
+            None,
         )
     }
 
@@ -557,6 +620,7 @@ impl NativeReferenceHost {
             Arc::new(EmptyMcpToolCatalog),
             Arc::new(EmptyMcpFeatureAuthority),
             subagent_authority,
+            None,
         )
     }
 
@@ -604,6 +668,7 @@ impl NativeReferenceHost {
             mcp_catalog,
             mcp_feature_authority,
             subagent_authority,
+            None,
         )
     }
 
@@ -647,6 +712,53 @@ impl NativeReferenceHost {
             permission_prompter,
             question_prompter,
             None,
+        )
+    }
+
+    /// Composes the complete terminal host over injected Gateway transport.
+    ///
+    /// This is the explicit-transport counterpart of
+    /// [`Self::compose_ai_gateway_http_with_prepared_roots_and_terminal`], with
+    /// the same blocking-worker and retained-root requirements. It performs no
+    /// credential discovery and never infers an executable from `current_exe`.
+    /// The supplied target must identify the endpoint the transport contacts.
+    ///
+    /// # Errors
+    /// Returns a fixed stage-only failure for invalid selections, unsafe roots,
+    /// or failure to compose the explicitly supplied native authority.
+    #[allow(clippy::too_many_arguments)]
+    pub fn compose_with_ai_gateway_transport_and_prepared_roots_and_terminal(
+        loaded_config: LoadedNativeConfig,
+        transport: Arc<dyn AiGatewayTransport>,
+        network_target: NetworkTarget,
+        prepared_roots: PreparedNativeRoots,
+        permission_prompter: Arc<dyn PermissionPrompter>,
+        question_prompter: Arc<dyn QuestionPrompter>,
+        web_search_deadline: Arc<dyn WebSearchDeadline>,
+        terminal_options: NativeReferenceHostTerminalOptions,
+    ) -> Result<Self, NativeReferenceHostBuildError> {
+        validate_selections(&loaded_config)?;
+        let selection = TerminalCompositionSelection {
+            options: terminal_options,
+            state_path: prepared_roots.state_root().to_owned(),
+        };
+        let (workspace_tools, session_store) = consume_prepared_roots(prepared_roots)?;
+        let memory = open_memory_tool(&session_store)?;
+        Self::finish_composition_with_extensions(
+            loaded_config,
+            transport,
+            network_target,
+            web_search_deadline,
+            workspace_tools,
+            session_store,
+            memory,
+            permission_prompter,
+            question_prompter,
+            None,
+            Arc::new(EmptyMcpToolCatalog),
+            Arc::new(EmptyMcpFeatureAuthority),
+            Arc::new(EmptySubagentAuthority),
+            Some(selection),
         )
     }
 
@@ -715,6 +827,7 @@ impl NativeReferenceHost {
             Arc::new(EmptyMcpToolCatalog),
             Arc::new(EmptyMcpFeatureAuthority),
             Arc::new(EmptySubagentAuthority),
+            None,
         )
     }
 
@@ -733,6 +846,7 @@ impl NativeReferenceHost {
         mcp_catalog: Arc<dyn McpToolCatalog>,
         mcp_feature_authority: Arc<dyn McpFeatureAuthority>,
         subagent_authority: Arc<dyn SubagentAuthority>,
+        terminal_selection: Option<TerminalCompositionSelection>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         let model = loaded_config.config().model().to_owned();
         let vision_transport = AiGatewayVisionTransport::new(model.clone(), Arc::clone(&transport))
@@ -772,20 +886,40 @@ impl NativeReferenceHost {
                 NativeReferenceHostBuildErrorKind::WebSearchTransport,
             )
         })?;
-        let (provider, engine_limits) = compose_provider(model, transport)?;
+        let (provider, engine_limits) = if terminal_selection.is_some() {
+            compose_full_terminal_provider(model, transport)?
+        } else {
+            compose_provider(model, transport)?
+        };
         let web_fetch = compose_web_fetch()?;
         let permission_handler = AskPermissionHandler::shared_prompter(permission_prompter);
         let ask_user_question = AskUserQuestionTool::shared_prompter(question_prompter);
-        let terminal = compose_terminal(
-            workspace_tools.terminal_root,
-            &workspace_tools.canonical_workspace,
-            workspace_tools.background_root,
-            &session_store,
-            terminal_wait_delay,
-        )?;
+        let (terminal, host_resource, archive): (Arc<dyn Tool>, _, _) =
+            if let Some(selection) = terminal_selection {
+                let full = compose_full_terminal(
+                    workspace_tools.terminal_root,
+                    workspace_tools.canonical_workspace,
+                    &session_store,
+                    selection,
+                )?;
+                (Arc::new(full.tool), Some(full.resource), Some(full.archive))
+            } else {
+                let terminal = compose_terminal(
+                    workspace_tools.terminal_root,
+                    &workspace_tools.canonical_workspace,
+                    workspace_tools.background_root,
+                    &session_store,
+                    terminal_wait_delay,
+                )?;
+                (Arc::new(terminal), None, None)
+            };
         let session_store = Arc::new(session_store);
         let (engine_session_store, read_tool_result) = session_store_components(&session_store);
-        let engine = Engine::builder()
+        let read_tool_result = match archive {
+            Some(archive) => read_tool_result.with_archive(archive),
+            None => read_tool_result,
+        };
+        let builder = Engine::builder()
             .limits(engine_limits)
             .provider(provider)
             .shared_session_store(engine_session_store)
@@ -811,15 +945,18 @@ impl NativeReferenceHost {
             .tool(workspace_tools.semantic_search)
             .tool(workspace_tools.skill)
             .tool(SubagentTool::shared_authority(subagent_authority))
-            .tool(terminal)
+            .shared_tool(terminal)
             .tool(vision)
             .tool(web_fetch)
             .tool(web_search)
-            .tool(workspace_tools.write_file)
-            .build()
-            .map_err(|_| {
-                NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Engine)
-            })?;
+            .tool(workspace_tools.write_file);
+        let builder = match host_resource {
+            Some(resource) => builder.host_resource(resource),
+            None => builder,
+        };
+        let engine = builder.build().map_err(|_| {
+            NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Engine)
+        })?;
         let session_lifecycle =
             NativeSessionLifecycle::new(engine.clone(), Arc::clone(&session_store)).map_err(
                 |_| NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Engine),
@@ -833,6 +970,102 @@ impl NativeReferenceHost {
             credential_source,
         })
     }
+}
+
+fn compose_full_terminal_provider(
+    model: String,
+    transport: Arc<dyn AiGatewayTransport>,
+) -> Result<(AiGatewayProvider, EngineLimits), NativeReferenceHostBuildError> {
+    let input_bytes = crate::MAX_TERMINAL_ACTION_ARGUMENT_BYTES;
+    let input_nodes = crate::MAX_TERMINAL_ACTION_ARGUMENT_NODES;
+    let provider = AiGatewayProvider::with_limits(model, transport, AiGatewayLimits::default())
+        .and_then(|provider| {
+            provider.with_tool_input_limits([(
+                ToolName::new(crate::TERMINAL_TOOL_NAME).expect("terminal tool name is valid"),
+                AiGatewayToolInputLimits {
+                    max_argument_bytes: input_bytes,
+                    max_json_nodes: input_nodes,
+                },
+            )])
+        })
+        .map_err(|_| {
+            NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Provider)
+        })?;
+    // Complete payloads have an independent aggregate budget. Ordinary tools
+    // and persisted transcript references keep their conservative defaults.
+    let limits = EngineLimits {
+        max_cumulative_complete_tool_argument_bytes: NonZeroUsize::new(input_bytes)
+            .expect("terminal input byte bound is nonzero"),
+        max_cumulative_complete_tool_argument_nodes: NonZeroUsize::new(input_nodes)
+            .expect("terminal input node bound is nonzero"),
+        max_cumulative_complete_tool_result_bytes: NonZeroUsize::new(
+            crate::MAX_TERMINAL_COMPLETE_TOOL_OUTPUT_BYTES,
+        )
+        .expect("terminal output byte bound is nonzero"),
+        ..EngineLimits::default()
+    };
+    Ok((provider, limits))
+}
+
+struct FullTerminalComposition {
+    tool: crate::TerminalActionTool,
+    resource: NativeTerminalHostResource,
+    archive: Arc<NativeToolResultArchiveAdapter>,
+}
+
+fn compose_full_terminal(
+    workspace: OwnedFd,
+    workspace_path: PathBuf,
+    session_store: &FileSessionStore,
+    selection: TerminalCompositionSelection,
+) -> Result<FullTerminalComposition, NativeReferenceHostBuildError> {
+    use std::fmt::Write as _;
+    let state_root = session_store
+        .try_clone_root_descriptor()
+        .map_err(|_| terminal_options_error())?;
+    crate::background_store::BackgroundStore::validate_state_root(&state_root)
+        .map_err(|_| terminal_options_error())?;
+    let state_path =
+        std::fs::canonicalize(selection.state_path).map_err(|_| terminal_options_error())?;
+    crate::terminal_helper::validate_startup_directory(&state_root, &state_path)
+        .map_err(|_| terminal_options_error())?;
+    let artifacts = crate::terminal_catalog::prepare_directory(&state_root, "terminal-startup")
+        .map_err(|_| terminal_options_error())?;
+    let archive_root =
+        crate::terminal_catalog::prepare_directory(&state_root, "tool-result-archive")
+            .map_err(|_| terminal_options_error())?;
+    let archive = Arc::new(ToolResultArchive::from_root_descriptor(archive_root));
+    archive.prepare().map_err(|_| terminal_options_error())?;
+    let archive = Arc::new(NativeToolResultArchiveAdapter::new(archive));
+    let mut random = [0_u8; 32];
+    getrandom::fill(&mut random).map_err(|_| terminal_options_error())?;
+    let mut host_identity = String::from("terminal-host-");
+    for byte in random {
+        write!(&mut host_identity, "{byte:02x}").expect("String formatting is infallible");
+    }
+    let host_identity =
+        SessionIncarnationId::new(host_identity).map_err(|_| terminal_options_error())?;
+    let options = selection.options;
+    let inputs = TerminalHostAuthorityInputs {
+        workspace,
+        default_cwd: workspace_path.clone(),
+        workspace_path,
+        environment: options.environment.entries().to_vec(),
+        account_shell: TerminalHostAccountShell::Explicit(options.account_shell),
+        cli_executable: options.helper_program,
+        tmux_executable: options.tmux_program,
+        artifacts,
+        artifact_path: state_path.join("terminal-startup"),
+    };
+    let (tool, resource) = NativeTerminalHost::compose_on_worker(inputs, state_root, host_identity)
+        .map_err(|_| terminal_options_error())?;
+    Ok(FullTerminalComposition {
+        tool: tool
+            .with_input_publisher(archive.clone())
+            .with_result_publisher(archive.clone()),
+        resource,
+        archive,
+    })
 }
 
 fn compose_provider(
