@@ -3,7 +3,13 @@
     dead_code,
     reason = "private runtime components are composed here before full host integration"
 )]
-use machine_god_native::NativeOwnedWorkerSpawner;
+use machine_god_native::{NativeOwnedWorkerSpawner, TERMINAL_CAPTURED_HELPER_ARGUMENT};
+mod terminal_action_tool {
+    pub(crate) use machine_god_native::{TerminalActionHostIdentity, TerminalActionInvocation};
+}
+mod terminal_action_parse {
+    pub(crate) use machine_god_native::decode_terminal_action;
+}
 #[path = "../src/background_input.rs"]
 mod background_input;
 #[path = "../src/background_process.rs"]
@@ -20,6 +26,8 @@ mod terminal_grid;
 mod terminal_helper;
 #[path = "../src/terminal_history.rs"]
 mod terminal_history;
+#[path = "../src/terminal_host_authority.rs"]
+mod terminal_host_authority;
 #[path = "../src/terminal_host_catalog.rs"]
 mod terminal_host_catalog;
 #[path = "../src/terminal_host_dispatch.rs"]
