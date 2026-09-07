@@ -542,9 +542,9 @@ pub use session_listing::{
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use session_metadata::{
-    MAX_NATIVE_SESSION_TITLE_BYTES, MAX_NATIVE_SESSION_WORKSPACE_BYTES,
-    NATIVE_SESSION_METADATA_KEY, NativeSessionMetadata, NativeSessionMetadataError,
-    NativeSessionOrigin,
+    MAX_NATIVE_SESSION_LANGUAGE_BYTES, MAX_NATIVE_SESSION_TITLE_BYTES,
+    MAX_NATIVE_SESSION_WORKSPACE_BYTES, NATIVE_SESSION_METADATA_KEY, NativeSessionMetadata,
+    NativeSessionMetadataError, NativeSessionOrigin,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use session_metadata_commands::{NativeSessionMetadataMutationError, rename_native_session};

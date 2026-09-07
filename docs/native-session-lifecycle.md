@@ -139,8 +139,12 @@ mtime, current directory, identifier, or unrelated metadata value supplies
 missing history. Creation and update timestamps are signed 64-bit milliseconds;
 an update cannot regress either known timestamp. Titles trim only edge
 SP/TAB/CR/LF and must then contain 1–240 UTF-8 bytes without C0 or DEL bytes.
-Language tags contain 1–64 ASCII alphanumeric/hyphen bytes with nonempty
-components. Validation failure leaves the staged metadata unchanged.
+Language values follow the pinned `ConversationLanguage.fromSlice` byte contract:
+trim edge SP/TAB/CR/LF, then retain 1–24 UTF-8 bytes without inventing a BCP-47
+grammar. They remain untrusted presentation data, including possible interior
+controls; a terminal renderer must escape them. Validation failure leaves the
+staged metadata unchanged. The reference is pinned
+`src/core/shared/types.zig:1381` at the revision in the implementation plan.
 
 The versioned object accepts only its seven declared fields; absent or null
 optional fields mean unknown. Unknown versions, extra fields, wrong types,

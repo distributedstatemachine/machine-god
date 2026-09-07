@@ -12,6 +12,8 @@ use serde_json::{Map, Value, json};
 pub const NATIVE_SESSION_METADATA_KEY: &str = "machine_god.native_session";
 /// Maximum UTF-8 byte length of a nonempty session title after edge trimming.
 pub const MAX_NATIVE_SESSION_TITLE_BYTES: usize = 240;
+/// Pinned conversation-language byte limit after SP/TAB/CR/LF edge trimming.
+pub const MAX_NATIVE_SESSION_LANGUAGE_BYTES: usize = 24;
 /// Maximum byte length of a stored Unix workspace path.
 pub const MAX_NATIVE_SESSION_WORKSPACE_BYTES: usize = 4096;
 
@@ -167,7 +169,9 @@ impl NativeSessionMetadata {
             .transpose()?;
         let language = optional_string(object, "language")?
             .map(|language| {
-                validate_language(language)?;
+                if validate_language(language)? != language {
+                    return Err(NativeSessionMetadataError::InvalidLanguage);
+                }
                 Ok(language.to_owned())
             })
             .transpose()?;
@@ -254,7 +258,7 @@ impl NativeSessionMetadata {
         language: &str,
         now_ms: i64,
     ) -> Result<(), NativeSessionMetadataError> {
-        validate_language(language)?;
+        let language = validate_language(language)?;
         self.validate_update_time(now_ms)?;
         self.language = Some(language.to_owned());
         self.updated_at_ms = Some(now_ms);
@@ -318,16 +322,12 @@ fn validate_title(title: &str) -> Result<&str, NativeSessionMetadataError> {
     }
 }
 
-fn validate_language(language: &str) -> Result<(), NativeSessionMetadataError> {
-    if language.is_empty()
-        || language.len() > 64
-        || !language
-            .split('-')
-            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_alphanumeric()))
-    {
+fn validate_language(language: &str) -> Result<&str, NativeSessionMetadataError> {
+    let language = language.trim_matches([' ', '\t', '\r', '\n']);
+    if language.is_empty() || language.len() > MAX_NATIVE_SESSION_LANGUAGE_BYTES {
         Err(NativeSessionMetadataError::InvalidLanguage)
     } else {
-        Ok(())
+        Ok(language)
     }
 }
 
@@ -453,7 +453,7 @@ mod tests {
             Err(NativeSessionMetadataError::TimeRegression)
         );
         assert_eq!(value, previous);
-        for language in ["", "en--US", "en_US", "en\n", "-en"] {
+        for language in ["", " \t\r\n", "this-language-is-too-long!"] {
             assert_eq!(
                 value.set_language(language, 101),
                 Err(NativeSessionMetadataError::InvalidLanguage)
@@ -466,6 +466,26 @@ mod tests {
             Err(NativeSessionMetadataError::TimeRegression)
         );
         assert_eq!(value.updated_at_ms(), Some(120));
+    }
+
+    #[test]
+    fn language_uses_pinned_trimmed_byte_limit_without_inventing_tag_grammar() {
+        let mut value = metadata();
+        value.set_language(" \ten_US\r\n", 101).unwrap();
+        assert_eq!(value.language(), Some("en_US"));
+        value.set_language(&"é".repeat(12), 102).unwrap();
+        let previous = value.clone();
+        assert_eq!(
+            value.set_language(&"é".repeat(13), 103),
+            Err(NativeSessionMetadataError::InvalidLanguage)
+        );
+        assert_eq!(value, previous);
+        value.set_language("un\0known", 103).unwrap();
+        assert_eq!(value.language(), Some("un\0known"));
+        assert_eq!(
+            NativeSessionMetadata::from_value(&value.to_value()).unwrap(),
+            value
+        );
     }
 
     #[test]
