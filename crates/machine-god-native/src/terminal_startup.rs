@@ -1302,6 +1302,16 @@ mod tests {
         metadata.profile = machine_god_core::TerminalProfile::User;
         let (backend, mut control) = start(request(cwd, artifacts, "/bin/bash", false, command));
         if expired {
+            // This fixture expires during a stable builtin-only shell profile,
+            // not while /etc/profile or marker descendants are being reaped.
+            let deadline = Instant::now() + DEFAULT_STARTUP_TIMEOUT;
+            while std::fs::read(cwd.0.join("profile-ready")).ok().as_deref() != Some(b"ready\n") {
+                assert!(
+                    Instant::now() < deadline,
+                    "shell profile did not become ready"
+                );
+                std::thread::sleep(Duration::from_millis(2));
+            }
             control.deadline = Instant::now();
         }
         let mut session = TerminalSession::new_with(
@@ -1426,6 +1436,13 @@ mod tests {
         let root = Directory::new();
         let cwd = Directory::new();
         let artifacts = Directory::new();
+        // Both commands are shell builtins. After readiness, read blocks without
+        // creating a transient descendant that could disappear during capture.
+        std::fs::write(
+            cwd.0.join(".bash_profile"),
+            "printf 'ready\\n' > profile-ready; IFS= read -r _machine_god_profile_input\n",
+        )
+        .unwrap();
         let mut fixture = registered_startup(
             &root,
             &cwd,

@@ -139,7 +139,21 @@ impl CopyFileEvidence for ScriptedEvidence {
             match self.checkpoint_mutation {
                 CheckpointMutation::None => {}
                 CheckpointMutation::SourceContent => {
-                    fs::write(self.workspace.join("source"), b"changed!").unwrap();
+                    let source = self.workspace.join("source");
+                    let before = fs::metadata(&source).unwrap().modified().unwrap();
+                    fs::write(&source, b"changed!").unwrap();
+                    // Same-length writes may share a filesystem timestamp tick.
+                    // Supply the distinct fingerprint this fixture exercises.
+                    let modified = before
+                        .checked_add(std::time::Duration::from_secs(2))
+                        .unwrap();
+                    fs::OpenOptions::new()
+                        .write(true)
+                        .open(&source)
+                        .unwrap()
+                        .set_times(fs::FileTimes::new().set_modified(modified))
+                        .unwrap();
+                    assert_ne!(fs::metadata(&source).unwrap().modified().unwrap(), before);
                 }
                 CheckpointMutation::StageContent => {
                     fs::write(staged, b"tampered").unwrap();

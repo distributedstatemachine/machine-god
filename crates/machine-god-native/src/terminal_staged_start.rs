@@ -1142,13 +1142,26 @@ mod tests {
         receipt.session.validate().unwrap();
         let residency = receipt.residency.clone();
         drop(receipt);
+        // A short command can exit before the next ordinary read. Its final
+        // drain is committed to history but is not replayed in step.output;
+        // observe that authoritative history after dropping the outer receipt.
         until(|| {
-            fixture
-                .output
-                .lock()
-                .unwrap()
-                .windows(b"STAGED_OK".len())
-                .any(|bytes| bytes == b"STAGED_OK")
+            futures_executor::block_on(fixture.runtime().request_with_context(
+                CancellationToken::new(),
+                |context| {
+                    context.registry.read(
+                        &authority().owner,
+                        &id(),
+                        &machine_god_core::TerminalCursor::new(1, 0).unwrap(),
+                        16384,
+                    )
+                },
+            ))
+            .unwrap()
+            .unwrap()
+            .bytes
+            .windows(b"STAGED_OK".len())
+            .any(|bytes| bytes == b"STAGED_OK")
         });
         let facts = futures_executor::block_on(
             fixture

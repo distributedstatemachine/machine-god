@@ -13,8 +13,10 @@ use super::{
 };
 #[cfg(target_os = "linux")]
 use super::{
-    BudgetedLinuxSignalFd, GroupSnapshotAuthority, LinuxSignalDescriptorBudget,
-    budgeted_linux_signal_open, linux_scope_members, signal_pinned_linux_process,
+    BudgetedLinuxSignalFd, GroupSnapshotAuthority, LinuxProcIoBudget, LinuxProcStat,
+    LinuxSignalDescriptorBudget, MAX_LINUX_PROC_STAT_BYTES, budgeted_linux_signal_open,
+    linux_proc_record_buffer, linux_scope_members_with, read_linux_proc_stat,
+    signal_pinned_linux_process,
 };
 use machine_god_core::CancellationToken;
 #[cfg(target_os = "linux")]
@@ -100,6 +102,67 @@ impl PinnedProcess {
             Err(_) => return Err(cleanup_error()),
         };
         Ok(self.exists()? && same)
+    }
+
+    /// Only retained descendants use this operation; root/anchor exit receipts
+    /// belong to their separate owners. An exited nonchild may still become
+    /// our adopted child, including after leaving the original session.
+    #[cfg(target_os = "linux")]
+    fn cleanup_pending(&self, deadline: Instant) -> Result<bool, BackgroundProcessError> {
+        use rustix::event::{PollFd, PollFlags, Timespec, poll};
+        if Instant::now() >= deadline {
+            return Err(cleanup_error());
+        }
+        let mut fds = [PollFd::new(&self.handle, PollFlags::IN)];
+        let timeout = Timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        poll(&mut fds, Some(&timeout)).map_err(|_| cleanup_error())?;
+        let events = fds[0].revents();
+        if events.intersects(PollFlags::ERR | PollFlags::NVAL) {
+            return Err(cleanup_error());
+        }
+        if events.contains(PollFlags::HUP) {
+            return Ok(false);
+        }
+        if !events.contains(PollFlags::IN) {
+            return Ok(true);
+        }
+        self.exited_cleanup_pending(deadline)
+    }
+
+    /// Caller has positively observed complete thread-group exit on this fd.
+    #[cfg(target_os = "linux")]
+    fn exited_cleanup_pending(&self, deadline: Instant) -> Result<bool, BackgroundProcessError> {
+        if Instant::now() >= deadline {
+            return Err(cleanup_error());
+        }
+        match rustix::process::waitid(
+            rustix::process::WaitId::PidFd(self.handle.as_fd()),
+            rustix::process::WaitIdOptions::EXITED | rustix::process::WaitIdOptions::NOHANG,
+        ) {
+            Ok(Some(_)) => Ok(false),
+            Ok(None) => Ok(true),
+            Err(rustix::io::Errno::CHILD) => {
+                if Instant::now() >= deadline {
+                    return Err(cleanup_error());
+                }
+                // Older Linux pidfds report IN, without HUP, even after reap.
+                // IN proves the entire thread group has exited: this exact-fd
+                // signal cannot affect executing code. ESRCH proves removal;
+                // success means the zombie remains and ECHILD is not absence.
+                match rustix::process::pidfd_send_signal(
+                    &self.handle,
+                    rustix::process::Signal::KILL,
+                ) {
+                    Err(rustix::io::Errno::SRCH) => Ok(false),
+                    Ok(()) => Ok(true),
+                    Err(_) => Err(cleanup_error()),
+                }
+            }
+            Err(_) => Err(cleanup_error()),
+        }
     }
 
     fn signal(&self, signal: rustix::process::Signal) -> Result<(), BackgroundProcessError> {
@@ -238,7 +301,42 @@ impl AuthenticatedTerminalProcess {
             return Err(cleanup_error());
         }
         #[cfg(target_os = "linux")]
-        let snapshot = linux_scope_members(&self.authority, self.root.pid, true)?;
+        for index in (0..self.members.len()).rev() {
+            // Release positively settled obligations before any new capture.
+            // This both preserves escaped zombies and permits progress at the
+            // descriptor cap without requiring a second fd for a known job.
+            if !self.members[index].cleanup_pending(deadline)? {
+                self.members.swap_remove(index);
+            }
+        }
+        #[cfg(target_os = "linux")]
+        let retained: HashSet<_> = self.members.iter().map(|member| member.pid).collect();
+        if Instant::now() >= deadline {
+            return Err(cleanup_error());
+        }
+        #[cfg(target_os = "linux")]
+        let snapshot = {
+            let mut record = linux_proc_record_buffer(MAX_LINUX_PROC_STAT_BYTES);
+            linux_scope_members_with(
+                &self.authority,
+                self.root.pid,
+                true,
+                |pid, directory, stat, budget| {
+                    if pid != self.root.pid && pid != anchor.pid && !retained.contains(&pid) {
+                        reap_adopted_zombie(
+                            pid,
+                            directory,
+                            stat,
+                            &self.budget,
+                            &mut record,
+                            budget,
+                            anchor,
+                        )?;
+                    }
+                    Ok(())
+                },
+            )?
+        };
         #[cfg(target_os = "macos")]
         let snapshot = macos_scope_members(self.root.pid, true)?;
         let empty_inventory = snapshot.iter().all(|member| member.pid == anchor.pid);
@@ -248,6 +346,9 @@ impl AuthenticatedTerminalProcess {
             if Instant::now() >= deadline {
                 return Err(cleanup_error());
             }
+            #[cfg(target_os = "linux")]
+            let exists = true; // Live or unresolved exact reap obligation.
+            #[cfg(target_os = "macos")]
             let exists = member.exists()?;
             alive.push(exists);
             if exists {
@@ -335,16 +436,11 @@ impl AuthenticatedTerminalProcess {
         // A parent observed in the snapshot may fork and exit before the live
         // checks below. Require a snapshot with NO real jobs, not merely that
         // every previously observed process has subsequently died.
-        if !self.empty_inventory
-            || self.root.exists()?
-            || self
-                .members
-                .iter()
-                .map(PinnedProcess::exists)
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .any(|alive| alive)
-        {
+        #[cfg(target_os = "linux")]
+        let retained_pending = !self.members.is_empty();
+        #[cfg(target_os = "macos")]
+        let retained_pending = self.retained_jobs_pending()?;
+        if !self.empty_inventory || self.root.exists()? || retained_pending {
             return Ok(false);
         }
         let anchor = self.anchor.as_ref().ok_or_else(cleanup_error)?;
@@ -365,16 +461,24 @@ impl AuthenticatedTerminalProcess {
         if !self.empty_inventory {
             return Ok(false);
         }
+        #[cfg(target_os = "linux")]
+        return Ok(self.members.is_empty());
+        #[cfg(target_os = "macos")]
+        return Ok(!self.retained_jobs_pending()?);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn retained_jobs_pending(&self) -> Result<bool, BackgroundProcessError> {
         let deadline = Instant::now() + GROUP_SNAPSHOT_TIMEOUT;
         for member in &self.members {
             if Instant::now() >= deadline {
                 return Err(cleanup_error());
             }
             if member.exists()? {
-                return Ok(false);
+                return Ok(true);
             }
         }
-        Ok(true)
+        Ok(false)
     }
 
     /// The host must consume the exact child outcome before this call. Keep the
@@ -386,6 +490,73 @@ impl AuthenticatedTerminalProcess {
         self.root.signal(rustix::process::Signal::KILL)?;
         self.anchor_retiring = true;
         Ok(())
+    }
+}
+
+/// A subreaper host can adopt an exited grandchild from the authenticated SID.
+/// Reap only a zombie positively rebound through its retained proc directory to
+/// an exact pidfd. Never reap the supervisor/direct shell or by numeric PID.
+/// The visitor keeps this row in its snapshot even after successful reaping:
+/// only a subsequent complete anchored scan may prove an empty job inventory.
+#[cfg(target_os = "linux")]
+fn reap_adopted_zombie(
+    pid: rustix::process::Pid,
+    directory: rustix::fd::BorrowedFd<'_>,
+    expected: &LinuxProcStat,
+    capture: &CaptureBudget,
+    record: &mut Vec<u8>,
+    budget: &mut LinuxProcIoBudget,
+    anchor: &PinnedProcess,
+) -> Result<(), BackgroundProcessError> {
+    if !expected.zombie || expected.parent != Some(rustix::process::getpid()) {
+        return Ok(());
+    }
+    budget.preflight()?;
+    // One transient pidfd is charged to the existing per-scope/global quota;
+    // the one stat fd/read uses the current scan's original time/byte budget.
+    let process = match budgeted_linux_signal_open(&capture.descriptors, || {
+        rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty())
+    })
+    .map_err(|_| cleanup_error())?
+    {
+        Ok(process) => process,
+        Err(rustix::io::Errno::SRCH) => return Ok(()),
+        Err(_) => return Err(cleanup_error()),
+    };
+    let stat = match rustix::fs::openat(
+        directory,
+        "stat",
+        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC | rustix::fs::OFlags::NOFOLLOW,
+        rustix::fs::Mode::empty(),
+    ) {
+        Ok(stat) => stat,
+        Err(rustix::io::Errno::NOENT | rustix::io::Errno::SRCH) => return Ok(()),
+        Err(_) => return Err(cleanup_error()),
+    };
+    let Some(actual) = read_linux_proc_stat(&mut std::fs::File::from(stat), record, pid, budget)?
+    else {
+        return Ok(());
+    };
+    if actual.start_time != expected.start_time
+        || !actual.zombie
+        || actual.parent != expected.parent
+        || actual.session != expected.session
+    {
+        return Ok(());
+    }
+    // New-row ownership must be established before this irreversible effect,
+    // not merely by the full scan's final anchor check. A zombie cannot fork
+    // or change SID between this positive incarnation proof and exact waitid.
+    if !anchor.in_session(expected.session.ok_or_else(cleanup_error)?)? {
+        return Err(cleanup_error());
+    }
+    budget.require_live()?;
+    match rustix::process::waitid(
+        rustix::process::WaitId::PidFd(process.as_fd()),
+        rustix::process::WaitIdOptions::EXITED | rustix::process::WaitIdOptions::NOHANG,
+    ) {
+        Ok(_) | Err(rustix::io::Errno::CHILD | rustix::io::Errno::SRCH) => budget.require_live(),
+        Err(_) => Err(cleanup_error()),
     }
 }
 
@@ -597,16 +768,44 @@ mod tests {
         } else {
             "exec sleep 100"
         };
-        let mut child = Command::new("/bin/sh")
-            .args(["-c", script, "sh"])
-            .arg(marker)
+        let mut command = if mode == [b'q'] {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "background_process::terminal_tmux_process::tests::escaped_descendant_helper",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env("MACHINE_GOD_ESCAPE_PARENT", "1")
+                .env(
+                    "MACHINE_GOD_ESCAPE_GATE",
+                    marker.with_file_name("escape-gate"),
+                );
+            command
+        } else {
+            let mut command = Command::new("/bin/sh");
+            command.args(["-c", script, "sh"]).arg(&marker);
+            command
+        };
+        let mut child = command
             .process_group(0)
-            .stdin(Stdio::null())
+            .stdin(if mode == [b'q'] {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
         gate.write_all(&child.id().to_be_bytes()).unwrap();
+        if mode == [b'q'] {
+            let mut release = [0];
+            gate.read_exact(&mut release).unwrap();
+            assert_eq!(release, [b'R']);
+            child.stdin.take().unwrap().write_all(&release).unwrap();
+        }
         child.wait().unwrap();
         gate.write_all(b"X").unwrap();
         // The genuine supervising helper remains inert after exact outcome.
@@ -619,6 +818,58 @@ mod tests {
             assert!(Instant::now() < deadline, "process state did not converge");
             thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn adopted_exit_observed(observer: &impl rustix::fd::AsFd) -> bool {
+        matches!(
+            rustix::process::waitid(
+                rustix::process::WaitId::PidFd(observer.as_fd()),
+                rustix::process::WaitIdOptions::EXITED
+                    | rustix::process::WaitIdOptions::NOHANG
+                    | rustix::process::WaitIdOptions::NOWAIT
+            ),
+            Ok(Some(_))
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "private subprocess entrypoint; launched by the escape fixture"]
+    fn escaped_descendant_helper() {
+        let Some(path) = std::env::var_os("MACHINE_GOD_ESCAPE_GATE") else {
+            return;
+        };
+        let path = PathBuf::from(path);
+        if std::env::var_os("MACHINE_GOD_ESCAPE_PARENT").is_some() {
+            let child = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "background_process::terminal_tmux_process::tests::escaped_descendant_helper",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env_remove("MACHINE_GOD_ESCAPE_PARENT")
+                .stdin(Stdio::null())
+                .spawn()
+                .unwrap();
+            let mut release = [0];
+            std::io::stdin().read_exact(&mut release).unwrap();
+            assert_eq!(release, [b'R']);
+            // Deliberately leave the exact child waitable until host adoption.
+            drop(child);
+            return;
+        }
+        let mut gate = UnixStream::connect(&path).unwrap();
+        gate.set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        gate.write_all(&std::process::id().to_be_bytes()).unwrap();
+        let mut instruction = [0];
+        gate.read_exact(&mut instruction).unwrap();
+        assert_eq!(instruction, [b'E']);
+        rustix::process::setsid().unwrap();
+        gate.write_all(b"E").unwrap();
+        let _ = gate.read_exact(&mut instruction);
     }
 
     #[test]
@@ -740,5 +991,189 @@ mod tests {
         authority.retire_anchor().unwrap();
         fixture.child.wait().unwrap();
         assert!(authority.is_absent().unwrap());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn supervisor_reaps_adopted_zombie_only_before_a_fresh_empty_snapshot() {
+        const CHILD: &str = "MACHINE_GOD_TMUX_SUBREAPER_REGRESSION";
+        if std::env::var_os(CHILD).is_none() {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "background_process::terminal_tmux_process::tests::supervisor_reaps_adopted_zombie_only_before_a_fresh_empty_snapshot", "--nocapture", "--test-threads=1"])
+                .env(CHILD, "1")
+                .output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        rustix::process::set_child_subreaper(rustix::process::Pid::from_raw(1)).unwrap();
+        let mut unrelated = Command::new("/bin/sh")
+            .args(["-c", "exit 23"])
+            .spawn()
+            .unwrap();
+        let mut fixture = Fixture::start(false);
+        let mut authority = fixture.authenticate().unwrap();
+        authority.retain_self_as_anchor().unwrap();
+        fixture.release(b'd');
+        fixture.outcome();
+        let pid: i32 = std::fs::read_to_string(fixture.directory.join("descendant"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let observer = rustix::process::pidfd_open(
+            rustix::process::Pid::from_raw(pid).unwrap(),
+            rustix::process::PidfdFlags::empty(),
+        )
+        .unwrap();
+        // Keep this zombie unseen: the visitor, not retained-member cleanup,
+        // must reap it without removing its row from the current snapshot.
+        rustix::process::pidfd_send_signal(&observer, rustix::process::Signal::KILL).unwrap();
+        // Prove this exact adopted child has exited without consuming its status.
+        eventually(|| adopted_exit_observed(&observer));
+        assert!(
+            !authority.jobs_absent().unwrap(),
+            "reaping cannot erase a row from the current snapshot"
+        );
+        assert_eq!(
+            rustix::process::waitid(
+                rustix::process::WaitId::PidFd(observer.as_fd()),
+                rustix::process::WaitIdOptions::EXITED | rustix::process::WaitIdOptions::NOHANG
+            )
+            .unwrap_err(),
+            rustix::io::Errno::CHILD
+        );
+        assert!(
+            authority.jobs_absent().unwrap(),
+            "next complete anchored snapshot must converge"
+        );
+        assert!(fixture.child.try_wait().unwrap().is_none());
+        assert_eq!(
+            unrelated.wait().unwrap().code(),
+            Some(23),
+            "unrelated child wait authority is untouched"
+        );
+        authority.retire_anchor().unwrap();
+        fixture.child.wait().unwrap();
+        assert!(authority.is_absent().unwrap());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn supervisor_reaps_retained_descendant_after_session_escape_and_adoption() {
+        const CHILD: &str = "MACHINE_GOD_TMUX_ESCAPED_SUBREAPER_REGRESSION";
+        if std::env::var_os(CHILD).is_none() {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "background_process::terminal_tmux_process::tests::supervisor_reaps_retained_descendant_after_session_escape_and_adoption", "--nocapture", "--test-threads=1"])
+                .env(CHILD, "1").output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        rustix::process::set_child_subreaper(rustix::process::Pid::from_raw(1)).unwrap();
+        let mut unrelated = Command::new("/bin/sh")
+            .args(["-c", "exit 23"])
+            .spawn()
+            .unwrap();
+        let mut fixture = Fixture::start(false);
+        let mut authority = fixture.authenticate().unwrap();
+        authority.retain_self_as_anchor().unwrap();
+        let listener = UnixListener::bind(fixture.directory.join("escape-gate")).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        fixture.release(b'q');
+        let mut connected = None;
+        eventually(|| match listener.accept() {
+            Ok((gate, _)) => {
+                connected = Some(gate);
+                true
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => false,
+            Err(error) => panic!("escape gate: {error}"),
+        });
+        let mut gate = connected.unwrap();
+        gate.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut bytes = [0; 4];
+        gate.read_exact(&mut bytes).unwrap();
+        let pid = rustix::process::Pid::from_raw(i32::try_from(u32::from_be_bytes(bytes)).unwrap())
+            .unwrap();
+        assert!(!authority.jobs_absent().unwrap());
+        assert!(authority.members.iter().any(|member| member.pid == pid));
+        // No extra descriptor may be needed to settle already retained jobs.
+        authority.budget.descriptors.operation_maximum = authority
+            .budget
+            .descriptors
+            .operation_in_use
+            .load(std::sync::atomic::Ordering::Acquire);
+        let observer =
+            rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty()).unwrap();
+        gate.write_all(b"E").unwrap();
+        let mut escaped = [0];
+        gate.read_exact(&mut escaped).unwrap();
+        assert_eq!(escaped, [b'E']);
+        assert_eq!(rustix::process::getsid(Some(pid)).unwrap(), pid);
+        assert_ne!(pid, authority.root.pid);
+        assert!(
+            !authority.jobs_absent().unwrap(),
+            "live escaped job remains owned"
+        );
+        let member = authority
+            .members
+            .iter()
+            .find(|member| member.pid == pid)
+            .unwrap();
+        member.signal(rustix::process::Signal::KILL).unwrap();
+        eventually(|| !member.exists().unwrap());
+        assert_eq!(
+            rustix::process::waitid(
+                rustix::process::WaitId::PidFd(observer.as_fd()),
+                rustix::process::WaitIdOptions::EXITED | rustix::process::WaitIdOptions::NOHANG
+            )
+            .unwrap_err(),
+            rustix::io::Errno::CHILD
+        );
+        assert!(!authority.jobs_absent().unwrap());
+        assert!(
+            authority.members.iter().any(|member| member.pid == pid),
+            "ECHILD must not discard the not-yet-adopted zombie"
+        );
+        fixture.gate.write_all(b"R").unwrap();
+        fixture.outcome();
+        eventually(|| adopted_exit_observed(&observer));
+        assert!(authority.jobs_absent().unwrap());
+        assert_eq!(
+            rustix::process::waitid(
+                rustix::process::WaitId::PidFd(observer.as_fd()),
+                rustix::process::WaitIdOptions::EXITED | rustix::process::WaitIdOptions::NOHANG
+            )
+            .unwrap_err(),
+            rustix::io::Errno::CHILD
+        );
+        assert_eq!(unrelated.wait().unwrap().code(), Some(23));
+        authority.retire_anchor().unwrap();
+        fixture.child.wait().unwrap();
+        assert!(authority.is_absent().unwrap());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn retained_descendant_already_reaped_settles_without_poll_hup() {
+        let mut child = Command::new("/bin/sleep").arg("100").spawn().unwrap();
+        let pin =
+            PinnedProcess::capture(NonZeroU32::new(child.id()).unwrap(), &CaptureBudget::new())
+                .unwrap();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(!pin.exists().unwrap());
+        // Exercise the older-kernel IN-only path even on a kernel with HUP.
+        assert!(
+            !pin.exited_cleanup_pending(Instant::now() + GROUP_SNAPSHOT_TIMEOUT)
+                .unwrap()
+        );
+        assert!(pin.exited_cleanup_pending(Instant::now()).is_err());
     }
 }

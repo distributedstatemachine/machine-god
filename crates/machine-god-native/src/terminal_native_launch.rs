@@ -978,7 +978,35 @@ mod tests {
                 Err(TerminalStartupError::Timeout),
                 "{backend_kind:?}: original shell-ack deadline"
             );
-            backend.close(true, &mut |_| {}).unwrap();
+            #[cfg(target_os = "linux")]
+            if let TerminalNativeBackend::Pty(pty) = &backend {
+                // Timeout closes the marker connection. The shell reaps that
+                // failed foreground marker and aborts startup with status 125.
+                // Observe this transition before cleanup's ancestry snapshot,
+                // without consuming the backend's direct-child reap authority
+                // or extending the original setup deadline.
+                let pid = rustix::process::Pid::from_raw(i32::try_from(pty.pid().get()).unwrap())
+                    .unwrap();
+                loop {
+                    assert!(Instant::now() < deadline, "Native: startup abort deadline");
+                    let status = rustix::process::waitid(
+                        rustix::process::WaitId::Pid(pid),
+                        rustix::process::WaitIdOptions::EXITED
+                            | rustix::process::WaitIdOptions::NOHANG
+                            | rustix::process::WaitIdOptions::NOWAIT,
+                    )
+                    .unwrap();
+                    if let Some(status) = status {
+                        assert_eq!(status.exit_status(), Some(125));
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            }
+            let closed = backend.close(true, &mut |_| {}).unwrap();
+            if cfg!(target_os = "linux") && backend_kind == TerminalBackend::Native {
+                assert_eq!(closed.status, TerminalPtyStatus::Exited(125));
+            }
             control.retry_cleanup().unwrap();
             assert!(
                 cwd.empty() && artifacts.empty(),

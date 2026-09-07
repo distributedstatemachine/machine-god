@@ -6,8 +6,8 @@ use crate::terminal_helper::{
     write_gate,
 };
 use machine_god_core::CancellationToken;
-use rustix::fd::OwnedFd;
-use rustix::fs::{Mode, OFlags};
+use rustix::fd::{AsFd, OwnedFd};
+use rustix::fs::{FileType, Mode, OFlags};
 use std::ffi::OsString;
 use std::fmt;
 use std::io::{Read, Write};
@@ -19,11 +19,90 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 pub(crate) const PROOF_BYTES: usize = 36;
+pub(crate) const TTY_PROOF_BYTES: usize = 52;
 pub(crate) const CAPTURE_CHUNK: usize = 16 * 1024;
 pub(crate) const PAUSE: Duration = Duration::from_millis(2);
 pub(crate) const MAX_HELPER_FRAME: usize = 12 * 1024;
 
 type RelativeCommand = (PathBuf, String, PathBuf, Vec<OsString>);
+
+fn tty_proof(tty: impl AsFd, session: u32) -> Result<[u8; TTY_PROOF_BYTES]> {
+    let stat = rustix::fs::fstat(tty).map_err(process_error)?;
+    if session == 0 || FileType::from_raw_mode(stat.st_mode) != FileType::CharacterDevice {
+        return Err(TerminalTmuxLaunchError::Identity);
+    }
+    let mut proof = [0; TTY_PROOF_BYTES];
+    proof[..4].copy_from_slice(&session.to_be_bytes());
+    proof[4..20].copy_from_slice(&i128::from(stat.st_dev).to_be_bytes());
+    proof[20..36].copy_from_slice(&u128::from(stat.st_ino).to_be_bytes());
+    proof[36..].copy_from_slice(&i128::from(stat.st_rdev).to_be_bytes());
+    Ok(proof)
+}
+
+/// Only the authenticated pane helper can query its controlling slave on Linux.
+/// The host instead compares this fixed receipt with its own retained tty fd.
+fn controlling_tty_proof(tty: impl AsFd) -> Result<[u8; TTY_PROOF_BYTES]> {
+    let session = rustix::termios::tcgetsid(tty.as_fd()).map_err(process_error)?;
+    if session != rustix::process::getpid() {
+        return Err(TerminalTmuxLaunchError::Identity);
+    }
+    tty_proof(tty, session.as_raw_nonzero().get().cast_unsigned())
+}
+
+pub(crate) fn validate_tty_proof(
+    proof: &[u8; TTY_PROOF_BYTES],
+    tty: impl AsFd,
+    expected_pid: u32,
+) -> Result<()> {
+    if *proof != tty_proof(tty, expected_pid)? {
+        return Err(TerminalTmuxLaunchError::Identity);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tty_proof_tests {
+    use super::*;
+
+    #[test]
+    fn receipt_binds_exact_session_device_inode_and_character_type() {
+        let device = std::fs::File::open("/dev/null").unwrap();
+        let proof = tty_proof(&device, 41).unwrap();
+        validate_tty_proof(&proof, &device, 41).unwrap();
+        assert_eq!(
+            validate_tty_proof(&proof, &device, 42),
+            Err(TerminalTmuxLaunchError::Identity)
+        );
+        for offset in [0, 4, 20, 36] {
+            let mut changed = proof;
+            changed[offset] ^= 1;
+            assert_eq!(
+                validate_tty_proof(&changed, &device, 41),
+                Err(TerminalTmuxLaunchError::Identity)
+            );
+        }
+        let other = std::fs::File::open("/dev/zero").unwrap();
+        assert_eq!(
+            validate_tty_proof(&proof, &other, 41),
+            Err(TerminalTmuxLaunchError::Identity)
+        );
+        let (socket, _) = UnixStream::pair().unwrap();
+        assert_eq!(
+            tty_proof(&socket, 41),
+            Err(TerminalTmuxLaunchError::Identity)
+        );
+        assert_eq!(
+            tty_proof(&device, 0),
+            Err(TerminalTmuxLaunchError::Identity)
+        );
+    }
+
+    #[test]
+    fn nonterminal_character_device_cannot_generate_controlling_tty_receipt() {
+        let device = std::fs::File::open("/dev/null").unwrap();
+        assert!(controlling_tty_proof(device).is_err());
+    }
+}
 
 /// The child opens and validates the exact directory before changing cwd and
 /// exec; a path swap between the host check and spawn never selects authority.
@@ -289,6 +368,8 @@ pub fn run_terminal_tmux_helper(arguments: &[OsString]) -> Result<()> {
     {
         return Err(TerminalTmuxLaunchError::Identity);
     }
+    let tty_proof = controlling_tty_proof(std::io::stdin())?;
+    write_gate(&mut channel, &tty_proof, deadline, &cancellation).map_err(gate_error)?;
     let mut echo = [0];
     read_gate(&mut channel, &mut echo, deadline, &cancellation).map_err(gate_error)?;
     match echo {

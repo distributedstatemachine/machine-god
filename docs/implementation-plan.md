@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `fix Linux created-directory mode restoration and the compound cleanup-timing fixture, then repeat pinned local, independent review and exact remote gates`
+- Next gate: `repeat complete pinned local checks, three fresh independent review tracks and exact remote gates for the integrated Linux terminal correction`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -251,6 +251,33 @@ correction separates deterministic writer cancellation/expiry from native
 cleanup and retains both real-helper exact-reaping assertions. Its three
 focused tests pass on Linux and macOS. Complete replacement gates and fresh
 reviews remain pending; all completed agent worktrees are removed.
+
+Candidate `5d8b6e474792c915db3dfd7b4b277d75707ecf2a` passes the complete
+macOS workspace gate (1,390 native unit tests, four expected ignores), strict
+workspace and Linux native Clippy, doctests, repository Python checks and
+supported FreeBSD/WASI compilation. Broader non-root Linux execution exposes a
+second compatibility defect: host-side `TIOCGSID` on the pane slave returns
+`ENOTTY`. The integrated correction obtains a fixed controlling-terminal
+receipt from the authenticated pane helper and verifies it against the host's
+retained descriptor before launch frames. All 21 focused tmux checks pass on
+Linux and macOS, with one expected helper ignore. A later tmux close failure
+is traced to an adopted zombie owned by a subreaper host that the tmux inventory
+never reaps. The integrated correction uses exact pidfd reaping, including retained
+descendants that change sessions, and a fresh full anchored snapshot without
+consuming unrelated child status. All 24 focused Linux tmux tests pass, with
+two expected helper ignores, and strict native Clippy passes. Regressions cover
+not-yet-adopted exits, retained session changes, saturated descriptor budgets
+and older-kernel exit observations. Replacement delivery gates remain open.
+Two startup fixture corrections use durable history for close-drained output
+and a stable builtin-only profile before forced expiry; each passes 20 non-root
+Linux repetitions. The Linux shell-ack fixture observes the expected unreaped
+abort exit under its original deadline before one close, passing 30 Linux
+repetitions without a cleanup retry. A pre-existing same-length copy fixture now explicitly
+changes its timestamp rather than depending on a filesystem clock tick.
+Container execution uses a reaping init: omitting it caused a distinct
+orphan-descendant fixture failure, which passes with init enabled. These test
+arrangements do not weaken process identity checks or increase product bounds.
+The complete replacement local, independent review and remote gates stay open.
 
 Earlier internal evidence remains historical, not delivery status:
 `a327580b754e25b8c1beaa5edf744b2b2252c620` passed the pinned workspace gate,

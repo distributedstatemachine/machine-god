@@ -26,8 +26,8 @@ use crate::terminal_tmux_helper::{
     CAPTURE_CHUNK, TERMINAL_TMUX_HELPER_ARGUMENT, run_terminal_tmux_helper,
 };
 use crate::terminal_tmux_helper::{
-    MAX_HELPER_FRAME, PAUSE, PROOF_BYTES, Result, TerminalTmuxLaunchError, gate_error,
-    process_error, set_echo,
+    MAX_HELPER_FRAME, PAUSE, PROOF_BYTES, Result, TTY_PROOF_BYTES, TerminalTmuxLaunchError,
+    gate_error, process_error, set_echo, validate_tty_proof,
 };
 use machine_god_core::{CancellationToken, TerminalDimensions, TerminalSignal};
 use rustix::fd::OwnedFd;
@@ -403,15 +403,7 @@ impl PreparedTerminalTmuxLaunch {
             Mode::empty(),
         )
         .map_err(process_error)?;
-        if rustix::termios::tcgetsid(&tty)
-            .map_err(process_error)?
-            .as_raw_nonzero()
-            .get()
-            .cast_unsigned()
-            != pid.get()
-        {
-            return Err(TerminalTmuxLaunchError::Identity);
-        }
+        read_tty_proof(&mut pane.channel, &tty, pid, deadline, cancellation)?;
         let echo = if request.initial_source.is_some() {
             Some(rustix::io::fcntl_dupfd_cloexec(&tty, 3).map_err(process_error)?)
         } else {
@@ -899,6 +891,18 @@ fn authenticate(
     Ok((channel, pid))
 }
 
+fn read_tty_proof(
+    channel: &mut UnixStream,
+    tty: &OwnedFd,
+    expected_pid: NonZeroU32,
+    deadline: Instant,
+    cancellation: &CancellationToken,
+) -> Result<()> {
+    let mut proof = [0; TTY_PROOF_BYTES];
+    read_gate(channel, &mut proof, deadline, cancellation).map_err(gate_error)?;
+    validate_tty_proof(&proof, tty, expected_pid.get())
+}
+
 fn helper_frame(arguments: &[OsString]) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     payload.extend_from_slice(
@@ -1226,6 +1230,53 @@ mod tests {
             assert_eq!(completion.finish(), expected);
             assert_eq!(completion.finish(), expected);
         }
+    }
+
+    #[test]
+    fn tty_receipt_requires_complete_frame_and_original_deadline_and_cancellation() {
+        let tty =
+            rustix::fs::open("/dev/null", OFlags::RDONLY | OFlags::CLOEXEC, Mode::empty()).unwrap();
+        let pid = NonZeroU32::new(41).unwrap();
+        for length in [0, 4, TTY_PROOF_BYTES - 1] {
+            let (mut channel, mut sender) = UnixStream::pair().unwrap();
+            channel.set_nonblocking(true).unwrap();
+            sender.write_all(&[0; TTY_PROOF_BYTES][..length]).unwrap();
+            drop(sender);
+            assert_eq!(
+                read_tty_proof(
+                    &mut channel,
+                    &tty,
+                    pid,
+                    Instant::now() + Duration::from_secs(1),
+                    &CancellationToken::new()
+                ),
+                Err(TerminalTmuxLaunchError::Protocol)
+            );
+        }
+        let (mut channel, _sender) = UnixStream::pair().unwrap();
+        channel.set_nonblocking(true).unwrap();
+        assert_eq!(
+            read_tty_proof(
+                &mut channel,
+                &tty,
+                pid,
+                Instant::now(),
+                &CancellationToken::new()
+            ),
+            Err(TerminalTmuxLaunchError::Timeout)
+        );
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        assert_eq!(
+            read_tty_proof(
+                &mut channel,
+                &tty,
+                pid,
+                Instant::now() + Duration::from_secs(1),
+                &cancellation
+            ),
+            Err(TerminalTmuxLaunchError::Cancelled)
+        );
     }
     fn request(directory: &Directory, command: &str) -> Option<TerminalTmuxLaunchRequest> {
         let explicit = std::env::var_os("MACHINE_GOD_TERMINAL_TMUX_BINARY");

@@ -502,6 +502,24 @@ Its freshly authenticated native incarnation anchors bounded session discovery
 and cleanup after a fast shell exit. No saved numeric PID or pane fact restores
 process authority, and no nested PTY is introduced.
 
+Before receiving launch frames, the authenticated pane helper queries its own
+controlling-terminal session and sends a fixed 52-byte session/device/inode
+receipt. The host compares it with the authenticated pane PID and its retained,
+no-follow character-device descriptor. This supports Linux, where querying the
+session through a foreign slave-terminal descriptor returns `ENOTTY`, without
+dropping the terminal-identity check. Truncation, mismatch, cancellation and
+expiry reject startup before command release; the existing native-incarnation
+challenge and commit gate remain required.
+
+On Linux, a subreaper host may inherit dead descendants from its owned tmux
+session. Cleanup reaps only exactly identified adopted zombies; it does not
+consume unrelated child exit statuses. Previously captured descendants remain
+cleanup obligations across session changes, including exited processes still
+waitable by another parent. Retained handles are settled before new discovery;
+a zombie reaped during discovery still makes that inventory nonempty. A fresh
+complete anchored snapshot and no remaining retained obligations are required
+before the supervisor can retire. Existing descriptor and scan bounds apply.
+
 Raw capture and its two-byte completion receipt use separate fresh-nonce
 authenticated streams on one private socket path. Success is reported only
 after capture reaches EOF with all observed bytes delivered; overload, missing
