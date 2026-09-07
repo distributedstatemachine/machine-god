@@ -145,7 +145,11 @@ spawn failure remains the fixed process result when cancellation merely races
 that failure. The exclusive-child-
 reaping probe uses the same registered cancellation wakeup and a fixed 500 ms
 deadline; a stalled probe is killed and either reaped or transferred to bounded
-quarantine ownership before preparation returns.
+quarantine ownership before preparation returns. If the observation window
+expires, successful exact-child reaping during that existing bounded cleanup
+still proves the wait-authority prerequisite. Cancellation, lost authority,
+observation errors, and unresolved quarantine ownership never admit a helper.
+This does not extend either deadline or replay a requested process start.
 After readiness, release makes the gate nonblocking and transmits the frame
 under both cooperative cancellation and a fixed 500 ms deadline. Cancellation,
 timeout, or any uncommitted frame closes the gate and completes owned group
@@ -395,7 +399,9 @@ children. Immediately before each helper spawn, the adapter creates and waits
 for a fixed no-op probe. On systems where `SIGCHLD = SIG_IGN` or
 `SA_NOCLDWAIT` removes wait authority, or when a competing reaper steals that
 probe, preparation fails before the requested helper exists. Signal modes that
-remain waitable on a supported operating system are compatible.
+remain waitable on a supported operating system are compatible. Once a probe
+reports `ECHILD`, its stale handle is discharged without a later numeric kill;
+cleanup cannot regain that lost authority.
 
 Every `waitid` and direct-child `try_wait` errno is classified before public
 redaction. Bounded direct-child reaping retries `EINTR` only within the current

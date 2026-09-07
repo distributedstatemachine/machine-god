@@ -501,6 +501,7 @@ mod tests {
         request.command = command;
         request
     }
+    #[track_caller]
     fn prepare(
         config: &TerminalNativeLaunchConfig,
         request: &TerminalStartRequest,
@@ -508,15 +509,26 @@ mod tests {
         artifacts: &Directory,
         deadline: Instant,
     ) -> PreparedTerminalNativeLaunch {
+        let began = Instant::now();
+        let budget = deadline.checked_duration_since(began);
         ResolvedTerminalNativeLaunch::resolve(config, request)
-            .unwrap()
+            .unwrap_or_else(|error| {
+                panic!("native factory resolve: backend={:?} error={error:?}", request.backend)
+            })
             .prepare(
                 config,
                 authority(cwd, artifacts),
                 deadline,
                 &CancellationToken::new(),
             )
-            .unwrap()
+            .unwrap_or_else(|error| {
+                panic!(
+                    "native factory prepare: backend={:?} budget={budget:?} elapsed={:?} remaining={:?} error={error:?}",
+                    request.backend,
+                    began.elapsed(),
+                    deadline.checked_duration_since(Instant::now()),
+                )
+            })
     }
     fn read(backend: &mut TerminalNativeBackend, output: &mut Vec<u8>) {
         let mut bytes = [0; 4096];
@@ -862,38 +874,95 @@ mod tests {
     }
 
     #[test]
-    fn real_factory_late_cancel_and_deadline_do_not_extend_or_release_command() {
+    fn real_factory_late_cancel_does_not_commit_or_release_command() {
         let config = config();
         for backend_kind in [TerminalBackend::Native, TerminalBackend::Tmux] {
             if backend_kind == TerminalBackend::Tmux && config.tmux.is_none() {
                 continue;
             }
-            for expire in [false, true] {
-                let cwd = Directory::new();
-                let artifacts = Directory::new();
-                let request = request(&cwd, backend_kind, Some("touch executed".into()));
-                let deadline = Instant::now() + Duration::from_secs(2);
-                let prepared = prepare(&config, &request, &cwd, &artifacts, deadline);
-                let cancellation = CancellationToken::new();
-                if expire {
-                    std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
-                } else {
-                    cancellation.cancel();
-                }
-                let result = prepared.commit(&cancellation);
-                assert!(matches!(
-                    (result, expire),
-                    (Err(TerminalNativeLaunchError::Cancelled), false)
-                        | (Err(TerminalNativeLaunchError::Timeout), true)
-                ));
-                assert!(cwd.empty() && artifacts.empty());
+            let cwd = Directory::new();
+            let artifacts = Directory::new();
+            let request = request(&cwd, backend_kind, Some("touch executed".into()));
+            // Positive real-helper setup uses the same bounded allowance as
+            // adjacent factory tests. This test asserts late cancellation, not
+            // that cold debug helpers always start within two seconds.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let prepared = prepare(&config, &request, &cwd, &artifacts, deadline);
+            assert_eq!(
+                prepared.deadline, deadline,
+                "{backend_kind:?}: original deadline"
+            );
+            let cancellation = CancellationToken::new();
+            cancellation.cancel();
+            assert!(
+                matches!(
+                    prepared.commit(&cancellation),
+                    Err(TerminalNativeLaunchError::Cancelled)
+                ),
+                "{backend_kind:?}: late cancellation"
+            );
+            assert!(
+                cwd.empty() && artifacts.empty(),
+                "{backend_kind:?}: late-cancel cleanup"
+            );
+        }
+    }
+
+    #[test]
+    fn real_factory_expired_original_deadline_does_not_commit_or_release_command() {
+        let config = config();
+        for backend_kind in [TerminalBackend::Native, TerminalBackend::Tmux] {
+            if backend_kind == TerminalBackend::Tmux && config.tmux.is_none() {
+                continue;
             }
             let cwd = Directory::new();
             let artifacts = Directory::new();
             let request = request(&cwd, backend_kind, Some("touch executed".into()));
-            let deadline = Instant::now() + Duration::from_secs(2);
+            // No reset or synthetic mutation: real preparation and commit use
+            // one original deadline. Setup is not a startup-performance test.
+            let deadline = Instant::now() + Duration::from_secs(10);
             let prepared = prepare(&config, &request, &cwd, &artifacts, deadline);
-            let (mut backend, mut control, _) = prepared.commit(&CancellationToken::new()).unwrap();
+            assert_eq!(
+                prepared.deadline, deadline,
+                "{backend_kind:?}: original deadline"
+            );
+            std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+            assert!(Instant::now() >= deadline);
+            assert!(
+                matches!(
+                    prepared.commit(&CancellationToken::new()),
+                    Err(TerminalNativeLaunchError::Timeout)
+                ),
+                "{backend_kind:?}: expired precommit"
+            );
+            assert!(
+                cwd.empty() && artifacts.empty(),
+                "{backend_kind:?}: expired-precommit cleanup"
+            );
+        }
+    }
+
+    #[test]
+    fn real_factory_original_deadline_reaches_shell_ack_without_command_release() {
+        let config = config();
+        for backend_kind in [TerminalBackend::Native, TerminalBackend::Tmux] {
+            if backend_kind == TerminalBackend::Tmux && config.tmux.is_none() {
+                continue;
+            }
+            let cwd = Directory::new();
+            let artifacts = Directory::new();
+            let request = request(&cwd, backend_kind, Some("touch executed".into()));
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let prepared = prepare(&config, &request, &cwd, &artifacts, deadline);
+            assert_eq!(
+                prepared.deadline, deadline,
+                "{backend_kind:?}: original deadline"
+            );
+            let (mut backend, mut control, _) = prepared
+                .commit(&CancellationToken::new())
+                .unwrap_or_else(|error| {
+                    panic!("{backend_kind:?}: shell-ack setup commit: {error:?}")
+                });
             let mut output = Vec::new();
             event(
                 &mut backend,
@@ -902,14 +971,19 @@ mod tests {
                 &mut output,
                 deadline,
             );
-            std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+            // Exercise the control's existing explicit observation-time API at
+            // the original boundary, without sleeping or resetting any timer.
             assert_eq!(
-                control.acknowledge_shell_ready(Instant::now(), &CancellationToken::new()),
-                Err(TerminalStartupError::Timeout)
+                control.acknowledge_shell_ready(deadline, &CancellationToken::new()),
+                Err(TerminalStartupError::Timeout),
+                "{backend_kind:?}: original shell-ack deadline"
             );
             backend.close(true, &mut |_| {}).unwrap();
             control.retry_cleanup().unwrap();
-            assert!(cwd.empty() && artifacts.empty());
+            assert!(
+                cwd.empty() && artifacts.empty(),
+                "{backend_kind:?}: shell-ack cleanup"
+            );
         }
     }
 }

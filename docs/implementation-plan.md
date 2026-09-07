@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `complete the replacement pinned local and release-binary gates for optimized inventory and explicit close recovery, then repeat three independent review tracks before exact remote gates`
+- Next gate: `validate exact reaping-admission recovery and factory deadline fixtures, complete replacement pinned local and release-binary gates, then repeat three independent review tracks before exact remote gates`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -150,6 +150,22 @@ The retained test-only preparation diagnostics identify stages and bound helper
 output capture; they change no startup deadlines, retries or product behavior.
 They are diagnostic evidence, not a claimed fix. The complete replacement local
 gate, independent reviews and exact remote delivery gates remain open.
+
+Candidate `0535195239c0b37da3a6bdc6ed9828e38f11212f` passes the build,
+formatting, strict Clippy, doctest, Python, cross-compilation, dependency and
+release-smoke prerequisites. Its full workspace run identifies one PTY failure
+at reaping admission, before helper spawn, and another factory preparation
+timeout. The admission correction distinguishes lost wait authority from a
+bounded probe timeout: it never signals a known-stale handle and accepts a
+timed-out probe only after positive exact-child reaping and a final cancellation
+check. The existing probe/cleanup bounds and per-start proof remain intact.
+The factory tests separate setup from late cancellation, expired commit and
+expired shell acknowledgement while asserting the unchanged supplied deadline.
+Strict workspace Clippy, seven admission regressions, cancellation cleanup,
+eight factory tests and twenty PTY tests pass. The real stalled-probe regression
+crosses the unchanged observation bound and proves successful exact-child reap;
+it does not establish the subcase behind every earlier intermittent failure.
+Complete replacement gates remain required; no delivery is claimed.
 
 Earlier internal evidence remains historical, not delivery status:
 `a327580b754e25b8c1beaa5edf744b2b2252c620` passed the pinned workspace gate,

@@ -2934,34 +2934,102 @@ fn require_exclusive_child_reaping_with(
     mut probe: Command,
     cancellation: &CancellationToken,
 ) -> Result<(), BackgroundProcessError> {
-    let mut permit = Some(reserve_child_reap_authority()?);
-    let mut child = Some(probe.spawn().map_err(|_| spawn_error())?);
+    #[cfg(test)]
+    let started = Instant::now();
+    let permit = reserve_child_reap_authority();
+    #[cfg(test)]
+    if let Err(error) = &permit {
+        eprintln!("child reap admission: stage=reserve error={error:?}");
+    }
+    let mut permit = Some(permit?);
+    let spawned = probe.spawn();
+    #[cfg(test)]
+    if let Err(error) = &spawned {
+        eprintln!(
+            "child reap admission: stage=spawn error={error:?} elapsed={:?}",
+            started.elapsed()
+        );
+    }
+    let mut child = Some(spawned.map_err(|_| spawn_error())?);
     let deadline = Instant::now() + CHILD_REAP_PROBE_TIMEOUT;
-    let mut cancellation = CancellationParker::new(cancellation);
+    let mut parker = CancellationParker::new(cancellation);
     let child_handle = child.as_mut().ok_or_else(invariant_error)?;
     let outcome =
-        poll_exclusive_child_reaping(&mut cancellation, deadline, || try_wait_child(child_handle));
-    if outcome == ExclusiveReapingOutcome::Waitable {
-        drop(child.take());
-        drop(permit.take());
-        return Ok(());
+        poll_exclusive_child_reaping(&mut parker, deadline, || try_wait_child(child_handle));
+    #[cfg(test)]
+    if outcome != ExclusiveReapingOutcome::Waitable {
+        eprintln!(
+            "child reap admission: stage=observe outcome={outcome:?} elapsed={:?}",
+            started.elapsed()
+        );
     }
-    let cleanup_succeeded = terminate_and_reap_or_quarantine(&mut child, &mut permit);
-    Err(
-        if outcome == ExclusiveReapingOutcome::Cancelled && cleanup_succeeded {
-            cancelled_error()
-        } else {
-            spawn_error()
-        },
-    )
+    settle_exclusive_child_reaping(outcome, cancellation, |action| match action {
+        ExclusiveReapingCleanup::Discharge => {
+            discharge_reaped_child(&mut child, &mut permit);
+            false
+        }
+        ExclusiveReapingCleanup::TerminateAndReap => {
+            let reaped = terminate_and_reap_or_quarantine(&mut child, &mut permit);
+            #[cfg(test)]
+            eprintln!(
+                "child reap admission: stage=cleanup outcome={outcome:?} exact_reap={reaped} elapsed={:?}",
+                started.elapsed()
+            );
+            reaped
+        }
+    })
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ExclusiveReapingOutcome {
     Waitable,
-    Failed,
+    TimedOut,
+    LostAuthority,
+    UnsuccessfulExit,
+    ObservationFailed,
     Cancelled,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExclusiveReapingCleanup {
+    Discharge,
+    TerminateAndReap,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn settle_exclusive_child_reaping(
+    outcome: ExclusiveReapingOutcome,
+    cancellation: &CancellationToken,
+    mut cleanup: impl FnMut(ExclusiveReapingCleanup) -> bool,
+) -> Result<(), BackgroundProcessError> {
+    if matches!(
+        outcome,
+        ExclusiveReapingOutcome::Waitable | ExclusiveReapingOutcome::LostAuthority
+    ) {
+        // ECHILD is irreversible authority loss: do not issue a numeric kill
+        // after this observation, even as part of otherwise bounded cleanup.
+        cleanup(ExclusiveReapingCleanup::Discharge);
+        return if outcome == ExclusiveReapingOutcome::Waitable {
+            Ok(())
+        } else {
+            Err(spawn_error())
+        };
+    }
+    // This result is positive only for an actual wait status from the exact
+    // child, never for disappearance, ECHILD, or transfer to quarantine.
+    let reaped = cleanup(ExclusiveReapingCleanup::TerminateAndReap);
+    if outcome == ExclusiveReapingOutcome::TimedOut && reaped && !cancellation.is_cancelled() {
+        // The no-op probe's existing cleanup has proved wait authority. Its
+        // initial observation budget expiring does not invalidate that proof.
+        return Ok(());
+    }
+    Err(if outcome == ExclusiveReapingOutcome::Cancelled && reaped {
+        cancelled_error()
+    } else {
+        spawn_error()
+    })
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -2980,12 +3048,12 @@ fn poll_exclusive_child_reaping(
             Ok(None) | Err(ChildTryWaitError::Interrupted) if Instant::now() < deadline => {
                 observation.park_until_and_advance(cancellation, deadline);
             }
-            Ok(Some(_) | None)
-            | Err(
-                ChildTryWaitError::Interrupted
-                | ChildTryWaitError::LostAuthority
-                | ChildTryWaitError::Operation,
-            ) => return ExclusiveReapingOutcome::Failed,
+            Ok(Some(_)) => return ExclusiveReapingOutcome::UnsuccessfulExit,
+            Ok(None) | Err(ChildTryWaitError::Interrupted) => {
+                return ExclusiveReapingOutcome::TimedOut;
+            }
+            Err(ChildTryWaitError::LostAuthority) => return ExclusiveReapingOutcome::LostAuthority,
+            Err(ChildTryWaitError::Operation) => return ExclusiveReapingOutcome::ObservationFailed,
         }
     }
 }
@@ -8586,13 +8654,162 @@ mod process_regression_tests {
                 }
             });
 
-            assert_eq!(result, ExclusiveReapingOutcome::Failed);
+            assert_eq!(result, ExclusiveReapingOutcome::TimedOut);
             assert!(started.elapsed() >= timeout);
             assert!(
                 (2..=8).contains(&attempts),
                 "{label} exclusive-reaping probe made {attempts} attempts instead of backing off"
             );
         }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn exclusive_reaping_probe_preserves_distinct_observation_failures() {
+        for (observation, expected) in [
+            (
+                Ok(Some(ExitStatus::from_raw(0))),
+                ExclusiveReapingOutcome::Waitable,
+            ),
+            (
+                Ok(Some(ExitStatus::from_raw(1 << 8))),
+                ExclusiveReapingOutcome::UnsuccessfulExit,
+            ),
+            (
+                Err(ChildTryWaitError::LostAuthority),
+                ExclusiveReapingOutcome::LostAuthority,
+            ),
+            (
+                Err(ChildTryWaitError::Operation),
+                ExclusiveReapingOutcome::ObservationFailed,
+            ),
+        ] {
+            let cancellation = CancellationToken::new();
+            let mut parker = CancellationParker::new(&cancellation);
+            assert_eq!(
+                poll_exclusive_child_reaping(&mut parker, Instant::now(), || observation),
+                expected
+            );
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn exclusive_reaping_known_authority_loss_never_attempts_kill() {
+        let cancellation = CancellationToken::new();
+        let mut effects = Vec::new();
+        let error = settle_exclusive_child_reaping(
+            ExclusiveReapingOutcome::LostAuthority,
+            &cancellation,
+            |action| {
+                effects.push(action);
+                assert_eq!(action, ExclusiveReapingCleanup::Discharge);
+                true // Even a positive cleanup result cannot restore lost authority.
+            },
+        )
+        .expect_err("ECHILD prevents admission");
+        assert_eq!(error.kind(), BackgroundProcessErrorKind::Spawn);
+        assert_eq!(effects, [ExclusiveReapingCleanup::Discharge]);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn exclusive_reaping_timeout_admits_only_after_exact_reap() {
+        for reaped in [false, true] {
+            let cancellation = CancellationToken::new();
+            let mut effects = Vec::new();
+            let mut retained_permit = Some("unsettled probe authority");
+            let result = settle_exclusive_child_reaping(
+                ExclusiveReapingOutcome::TimedOut,
+                &cancellation,
+                |action| {
+                    effects.push(action);
+                    assert_eq!(action, ExclusiveReapingCleanup::TerminateAndReap);
+                    // Model exact reap versus unresolved quarantine. Settlement
+                    // must not discharge the latter's still-owned permit.
+                    if reaped {
+                        let _ = retained_permit.take();
+                    }
+                    reaped
+                },
+            );
+            assert_eq!(result.is_ok(), reaped);
+            assert_eq!(retained_permit.is_some(), !reaped);
+            assert_eq!(effects, [ExclusiveReapingCleanup::TerminateAndReap]);
+            if let Err(error) = result {
+                assert_eq!(error.kind(), BackgroundProcessErrorKind::Spawn);
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn exclusive_reaping_cleanup_does_not_hide_failure_or_cancellation() {
+        for outcome in [
+            ExclusiveReapingOutcome::UnsuccessfulExit,
+            ExclusiveReapingOutcome::ObservationFailed,
+            ExclusiveReapingOutcome::Cancelled,
+            ExclusiveReapingOutcome::TimedOut,
+        ] {
+            for reaped in [false, true] {
+                let cancellation = CancellationToken::new();
+                let mut effects = Vec::new();
+                let error = settle_exclusive_child_reaping(outcome, &cancellation, |action| {
+                    effects.push(action);
+                    assert!(cancellation.cancel(), "cancel during cleanup");
+                    reaped
+                })
+                .expect_err("cleanup cannot erase the failure or admit after cancellation");
+                assert_eq!(
+                    error.kind(),
+                    if outcome == ExclusiveReapingOutcome::Cancelled && reaped {
+                        BackgroundProcessErrorKind::Cancelled
+                    } else {
+                        BackgroundProcessErrorKind::Spawn
+                    }
+                );
+                assert_eq!(effects, [ExclusiveReapingCleanup::TerminateAndReap]);
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn exclusive_reaping_non_timeout_failures_remain_failures_after_exact_reap() {
+        for outcome in [
+            ExclusiveReapingOutcome::UnsuccessfulExit,
+            ExclusiveReapingOutcome::ObservationFailed,
+        ] {
+            let cancellation = CancellationToken::new();
+            let error = settle_exclusive_child_reaping(outcome, &cancellation, |action| {
+                assert_eq!(action, ExclusiveReapingCleanup::TerminateAndReap);
+                true
+            })
+            .expect_err("only observation timeout can be repaired by positive reap proof");
+            assert_eq!(error.kind(), BackgroundProcessErrorKind::Spawn);
+            assert!(!cancellation.is_cancelled());
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn exclusive_reaping_stalled_probe_admits_after_bounded_exact_reap() {
+        // Holding an unwritten pipe open keeps the shell's builtin read blocked
+        // regardless of scheduling: no sleeps, descendants, or probe retries.
+        let (reader, writer) = std::io::pipe().expect("probe barrier");
+        let mut probe = Command::new("/bin/sh");
+        probe
+            .arg("-c")
+            .arg("read ignored")
+            .env_clear()
+            .stdin(reader)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let started = Instant::now();
+        require_exclusive_child_reaping_with(probe, &CancellationToken::new())
+            .expect("existing bounded cleanup positively reaps the stalled probe");
+        assert!(started.elapsed() >= CHILD_REAP_PROBE_TIMEOUT);
+        drop(writer);
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
