@@ -9,6 +9,16 @@
 #[path = "terminal_tmux_process.rs"]
 pub(crate) mod terminal_tmux_process;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "tmux_child.rs"]
+mod tmux_child;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[allow(
+    unused_imports,
+    reason = "source-included process tests omit tmux callers"
+)]
+pub(crate) use tmux_child::TmuxChild;
+
 #[cfg(unix)]
 use std::collections::BTreeSet;
 #[cfg(target_os = "linux")]
@@ -1364,16 +1374,24 @@ impl Error for BackgroundProcessError {}
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 struct ChildReapPermit {
     reaper: Arc<ChildReaper>,
+    // A private tmux server's namespace must outlive unresolved child cleanup.
+    keepalive: Option<Box<dyn Send>>,
+    // Only tmux owners request a kill after a recoverable observation failure.
+    // Existing ordinary and inventory quarantine entries remain observation-only.
+    kill_pending: bool,
     // Metadata follows the existing permit into quarantine and is discharged
     // only when that exact child's reap obligation is released.
     shutdown: Option<crate::NativeOwnedWorkerCleanup>,
     #[cfg(target_os = "macos")]
     inventory_reaped: Option<Arc<AtomicBool>>,
+    #[cfg(test)]
+    deferred_reap: Option<Arc<AtomicBool>>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl Drop for ChildReapPermit {
     fn drop(&mut self) {
+        drop(self.keepalive.take());
         ACTIVE_CHILD_REAP_AUTHORITIES.fetch_sub(1, Ordering::AcqRel);
         drop(self.shutdown.take());
     }
@@ -1439,16 +1457,7 @@ fn run_child_reaper(reaper: &ChildReaper) {
             QuarantinedChild::Direct {
                 child,
                 _permit: permit,
-            } => {
-                let settled = matches!(
-                    try_wait_child(child),
-                    Ok(Some(_)) | Err(ChildTryWaitError::LostAuthority)
-                );
-                if settled {
-                    mark_inventory_reaped(permit);
-                }
-                !settled
-            }
+            } => !reap_quarantined_direct(child, permit),
             QuarantinedChild::Terminal(_) => true,
         });
         for entry in &mut batch {
@@ -1501,6 +1510,34 @@ fn run_child_reaper(reaper: &ChildReaper) {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+fn reap_quarantined_direct(child: &mut Child, permit: &mut ChildReapPermit) -> bool {
+    #[cfg(test)]
+    if permit
+        .deferred_reap
+        .as_ref()
+        .is_some_and(|deferred| deferred.load(Ordering::Acquire))
+    {
+        return false;
+    }
+    match try_wait_child(child) {
+        Ok(Some(_)) | Err(ChildTryWaitError::LostAuthority) => {
+            mark_inventory_reaped(permit);
+            true
+        }
+        Ok(None) => {
+            // One nonblocking attempt on a positively waitable exact child.
+            // Never signal after ECHILD or any failed observation. A failed
+            // tmux kill remains owned for a subsequent ordinary reaper pass.
+            if permit.kill_pending && child.kill().is_ok() {
+                permit.kill_pending = false;
+            }
+            false
+        }
+        Err(ChildTryWaitError::Interrupted | ChildTryWaitError::Operation) => false,
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn reserve_child_reap_authority() -> Result<ChildReapPermit, BackgroundProcessError> {
     reserve_child_reap_authority_for(false)
 }
@@ -1517,9 +1554,13 @@ fn reserve_child_reap_authority_for(
         .map_err(|_| spawn_error())?;
     Ok(ChildReapPermit {
         reaper,
+        keepalive: None,
+        kill_pending: false,
         shutdown: crate::NativeOwnedWorkerScope::retain_current_cleanup(),
         #[cfg(target_os = "macos")]
         inventory_reaped: None,
+        #[cfg(test)]
+        deferred_reap: None,
     })
 }
 

@@ -19,8 +19,8 @@ fn deferred_reap_server(
     directory: OwnedFd,
     path: PathBuf,
 ) -> (NativeTerminalTmuxServer, ServerReapHold, PathBuf) {
-    let mut artifacts = Artifacts::new(directory, path.clone()).unwrap();
     let socket = path.join("retained.sock");
+    let mut artifacts = Artifacts::new(directory, path).unwrap();
     let listener = UnixListener::bind(&socket).unwrap();
     artifacts.remember_socket(&socket).unwrap();
     drop(listener);

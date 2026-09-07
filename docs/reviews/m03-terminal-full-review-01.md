@@ -894,3 +894,49 @@ unpolled-receipt host shutdown, idempotent PTY close, failed-close artifact retr
 and the real tmux eight-profile/bootstrap matrix. Installed tmux is exercised;
 these are not unavailable-backend early returns. The full frozen local and
 remote gates remain required.
+
+## Reusable-service candidate `d6c1522`: local green, lifecycle rejection
+
+Candidate `d6c15229be7ab4e16a6e07367a38dd1759cb89ff` passes the complete
+exact-1.94.1 local gate: strict workspace lint on Linux/macOS, both Apple ABI
+checks, formatting, doctests, FreeBSD/WASI checks, dependency checks, 263 Python
+tests with fourteen platform skips (348.757 seconds), pinned upstream drift and
+documentation policy. Fresh release build takes 8m33s; all eight release launches
+pass (28.37 seconds), followed by release CLI smoke. Default-concurrent Linux
+passes 1,477 native/six helper ignores (25.86 seconds) and 141 CLI/four ignores
+(0.79 seconds). macOS workspace succeeds, including 1,435 native/five ignores
+(380.34 seconds) and 668 component/two ignores (136.22 seconds); the final
+release-backed all-feature terminal sweep passes 661/five ignores (200.38
+seconds). A pre-test AI Gateway process delay resolves without intervention;
+its 46 tests pass in 0.13 seconds. No runtime failure or retry is waived.
+
+Two fresh independent direct local source/diff/test reviews inspect that exact
+candidate against `46e5b70f6c5ba76a4699f5bd8ba424a1fa3813be`. Correctness/API
+establishes zero actionable findings. Lifecycle/platform establishes one P1:
+`CommandProcess::abort` and `NativeTerminalTmuxServer::retire` perform blocking
+`Child::wait()` after kill. An unreapable child can indefinitely block the single
+terminal owner, sequential cleanup of other sessions and host completion. The
+candidate is rejected. Neither reviewer independently executes tests or claims
+remote/native-Intel evidence, and neither review is attributed to Bugbot. A
+third reviewer cannot start because the host reports an agent-thread limit on
+both attempts; three-review success is not claimed. All clean review worktrees,
+including the unused third checkout, are removed. The candidate is not pushed.
+
+The correction replaces those raw owners with bounded exact-child ownership,
+reserves existing reap capacity before spawn, and retains failed explicit
+cleanup for retry. Drop transfers unresolved ownership and server-artifact
+keepalive through the original scoped permit without restarting a spent grace.
+Pending kill delivery can resume only after a later successful running-child
+observation. New caller tests defer exact-child observation through a per-permit
+test hook, checking retained command/server ownership, retry, quarantine scope
+settlement and namespace artifact lifetime. Integration inspection also catches
+nested cleanup refreshing the grace and interrupted observation being converted
+to successful running-child observation. The correction preserves one exact
+deadline across retries and retains an interrupted child without signaling. The
+PID-targeted interruption regression fails on the earlier wrapper before the
+correction. Worker commits `bc4c39e` and `d45ad68` pass exact-1.94.1 native
+all-target/all-feature strict lint (34.66 seconds), formatting and all eighteen
+focused cases (15.00 seconds, zero ignores). Seven real tmux/composed-host cases
+use the explicitly selected `d6c1522` release helper; this is focused protocol
+evidence, not a fresh candidate release gate. Complete replacement checks plus
+three fresh reviews remain required before any delivery claim.

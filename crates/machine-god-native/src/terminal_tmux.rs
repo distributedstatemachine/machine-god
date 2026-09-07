@@ -7,7 +7,7 @@
 use crate::background_input::{
     BackgroundInputReceipt, BackgroundInputStatus, MAX_BACKGROUND_INPUT_BYTES,
 };
-use crate::background_process::ValidatedBackgroundEnvironment;
+use crate::background_process::{TmuxChild, ValidatedBackgroundEnvironment};
 use crate::terminal_helper::validate_startup_directory;
 use crate::terminal_pty::{TerminalPtyClose, TerminalPtyRead, TerminalPtyStatus};
 use crate::terminal_session::TerminalSessionBackend;
@@ -21,7 +21,9 @@ use std::num::NonZeroU32;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
+#[cfg(test)]
+use std::process::Child;
+use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
@@ -419,7 +421,7 @@ fn socket_identity(directory: &OwnedFd, name: &OsString) -> Result<Option<(u64, 
 }
 
 pub(crate) struct CommandProcess {
-    child: Child,
+    child: TmuxChild,
     input: Option<ChildStdin>,
     output: Option<ChildStdout>,
     error: Option<ChildStderr>,
@@ -441,16 +443,18 @@ impl CommandProcess {
         if input_bytes.len() > MAX_INPUT_BYTES {
             return Err(TerminalTmuxError::Capacity);
         }
-        let mut child = command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|_| TerminalTmuxError::Command)?;
+        let mut child = TmuxChild::spawn(
+            command
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        )
+        .map_err(|_| TerminalTmuxError::Command)?;
+        let (input, output, error) = child.take_pipes();
         let mut value = Self {
-            input: child.stdin.take(),
-            output: child.stdout.take(),
-            error: child.stderr.take(),
+            input,
+            output,
+            error,
             child,
             input_bytes,
             input_offset: 0,
@@ -580,15 +584,7 @@ impl CommandProcess {
         self.output.take();
         self.error.take();
         if !self.reaped {
-            if self
-                .child
-                .try_wait()
-                .map_err(|_| TerminalTmuxError::Cleanup)?
-                .is_none()
-            {
-                self.child.kill().map_err(|_| TerminalTmuxError::Cleanup)?;
-            }
-            self.child.wait().map_err(|_| TerminalTmuxError::Cleanup)?;
+            self.child.abort().map_err(|_| TerminalTmuxError::Cleanup)?;
             self.reaped = true;
         }
         Ok(())
@@ -596,7 +592,11 @@ impl CommandProcess {
 }
 impl Drop for CommandProcess {
     fn drop(&mut self) {
-        let _ = self.abort();
+        // The child owner handles bounded cleanup after every transport is
+        // closed, reusing any already-expired explicit abort deadline.
+        self.input.take();
+        self.output.take();
+        self.error.take();
     }
 }
 fn set_nonblocking(fd: &impl AsFd) -> Result<()> {
@@ -1354,6 +1354,7 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> Drop for TerminalTmuxBacken
 
 #[cfg(test)]
 mod tests {
+    include!("terminal_tmux_reap_tests.rs");
     use super::*;
     use std::collections::VecDeque;
     use std::os::unix::fs::PermissionsExt;

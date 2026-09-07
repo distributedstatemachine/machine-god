@@ -6,7 +6,9 @@
 
 use crate::background_input::BackgroundInputReceipt;
 use crate::background_process::terminal_tmux_process::AuthenticatedTerminalProcess;
-use crate::background_process::{BackgroundProcessSignal, ValidatedBackgroundEnvironment};
+use crate::background_process::{
+    BackgroundProcessSignal, TmuxChild, ValidatedBackgroundEnvironment,
+};
 use crate::terminal_helper::{
     COMMIT, READY, check_deadline, read_gate, startup_directory_identity,
     validate_startup_directory, write_gate,
@@ -38,7 +40,7 @@ use std::num::NonZeroU32;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Stdio};
+use std::process::Stdio;
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
@@ -65,10 +67,10 @@ pub(crate) struct TerminalTmuxLaunchRequest {
 /// Failed retirement keeps the same Child and descriptors for another attempt.
 struct NativeTerminalTmuxServer {
     helper: TerminalPtyHelper,
-    child: Option<Child>,
+    child: Option<TmuxChild>,
     executable: PathBuf,
     environment: ValidatedBackgroundEnvironment,
-    artifacts: Artifacts,
+    artifacts: Option<Artifacts>,
     socket: PathBuf,
 }
 impl NativeTerminalTmuxServer {
@@ -93,36 +95,37 @@ impl NativeTerminalTmuxServer {
         ) {
             return Err(TerminalTmuxLaunchError::Identity);
         }
-        let child = crate::terminal_tmux_helper::relative_command(
-            &helper,
-            &artifacts.directory,
-            &artifacts.path,
-            &executable,
-            &[
-                "-D".into(),
-                "-S".into(),
-                socket
-                    .file_name()
-                    .ok_or(TerminalTmuxLaunchError::Invalid)?
-                    .to_owned(),
-                "-f".into(),
-                "/dev/null".into(),
-            ],
-        )?
-        .env_clear()
-        .envs(environment.entries().iter().cloned())
-        .current_dir("/")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
+        let child = TmuxChild::spawn(
+            crate::terminal_tmux_helper::relative_command(
+                &helper,
+                &artifacts.directory,
+                &artifacts.path,
+                &executable,
+                &[
+                    "-D".into(),
+                    "-S".into(),
+                    socket
+                        .file_name()
+                        .ok_or(TerminalTmuxLaunchError::Invalid)?
+                        .to_owned(),
+                    "-f".into(),
+                    "/dev/null".into(),
+                ],
+            )?
+            .env_clear()
+            .envs(environment.entries().iter().cloned())
+            .current_dir("/")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+        )
         .map_err(process_error)?;
         let mut server = Self {
             helper,
             child: Some(child),
             executable,
             environment,
-            artifacts,
+            artifacts: Some(artifacts),
             socket,
         };
         loop {
@@ -137,7 +140,12 @@ impl NativeTerminalTmuxServer {
             {
                 return Err(TerminalTmuxLaunchError::Process);
             }
-            match server.artifacts.remember_socket(&server.socket) {
+            match server
+                .artifacts
+                .as_mut()
+                .ok_or(TerminalTmuxLaunchError::Process)?
+                .remember_socket(&server.socket)
+            {
                 Ok(()) => break,
                 Err(TerminalTmuxLaunchError::Process) => std::thread::sleep(PAUSE),
                 Err(error) => return Err(error),
@@ -152,8 +160,8 @@ impl NativeTerminalTmuxServer {
         deadline: Instant,
         cancellation: &CancellationToken,
     ) -> Result<TerminalTmuxReply> {
-        self.artifacts.validate()?;
-        self.artifacts.validate_socket(&self.socket)?;
+        self.artifacts()?.validate()?;
+        self.artifacts()?.validate_socket(&self.socket)?;
         check_deadline(deadline, cancellation).map_err(gate_error)?;
         let mut fields = vec![
             OsString::from("-N"),
@@ -168,8 +176,8 @@ impl NativeTerminalTmuxServer {
         fields.extend_from_slice(arguments);
         let mut command = crate::terminal_tmux_helper::relative_command(
             &self.helper,
-            &self.artifacts.directory,
-            &self.artifacts.path,
+            &self.artifacts()?.directory,
+            &self.artifacts()?.path,
             &self.executable,
             &fields,
         )?;
@@ -193,18 +201,32 @@ impl NativeTerminalTmuxServer {
 
     fn retire(&mut self) -> Result<()> {
         if let Some(child) = self.child.as_mut() {
-            if child.try_wait().map_err(process_error)?.is_none() {
-                child.kill().map_err(process_error)?;
-            }
-            child.wait().map_err(process_error)?;
+            child.abort().map_err(process_error)?;
             self.child.take();
         }
-        self.artifacts.cleanup()
+        self.artifacts
+            .as_mut()
+            .ok_or(TerminalTmuxLaunchError::Cleanup)?
+            .cleanup()
+    }
+
+    fn artifacts(&self) -> Result<&Artifacts> {
+        self.artifacts
+            .as_ref()
+            .ok_or(TerminalTmuxLaunchError::Process)
     }
 }
 impl Drop for NativeTerminalTmuxServer {
     fn drop(&mut self) {
-        let _ = self.retire();
+        // Drop must not restart a failed explicit retirement's reap grace.
+        // The namespace moves with the same reap permit; quarantined children
+        // cannot lose their socket paths before their exact reap settles.
+        if let Some(mut child) = self.child.take() {
+            if let Some(artifacts) = self.artifacts.take() {
+                child.retain_until_reaped(Box::new(artifacts));
+            }
+            drop(child);
+        }
     }
 }
 
@@ -349,7 +371,7 @@ impl PreparedTerminalTmuxLaunch {
         if !version.success || !crate::terminal_tmux::compatible_version(&version.output) {
             return Err(TerminalTmuxLaunchError::Invalid);
         }
-        let session = format!("machine-god-{}", server.artifacts.namespace);
+        let session = format!("machine-god-{}", server.artifacts()?.namespace);
         let cwd_format = request
             .cwd_path
             .to_str()
@@ -391,7 +413,7 @@ impl PreparedTerminalTmuxLaunch {
         let pid = NonZeroU32::new(pid.parse().map_err(process_error)?)
             .ok_or(TerminalTmuxLaunchError::Protocol)?;
         let identity =
-            TerminalTmuxIdentity::new(server.artifacts.namespace.clone(), pane_name.into(), pid)
+            TerminalTmuxIdentity::new(server.artifacts()?.namespace.clone(), pane_name.into(), pid)
                 .map_err(process_error)?;
         let (channel, _) = authenticate(
             &pane_listener,
@@ -506,7 +528,7 @@ impl PreparedTerminalTmuxLaunch {
             self.server.helper.clone(),
             self.server.executable.clone(),
             self.server.environment.clone(),
-            rustix::io::fcntl_dupfd_cloexec(&self.server.artifacts.directory, 3)
+            rustix::io::fcntl_dupfd_cloexec(&self.server.artifacts()?.directory, 3)
                 .map_err(process_error)?,
             &self.server.socket,
             self.pane.identity.clone(),
@@ -1162,6 +1184,7 @@ fn nonce() -> Result<[u8; 32]> {
 
 #[cfg(test)]
 mod tests {
+    include!("terminal_tmux_startup_reap_tests.rs");
     use super::*;
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
@@ -1578,7 +1601,15 @@ mod tests {
         drop(capture);
         prepared.server.retire().unwrap();
         assert!(prepared.server.child.is_none());
-        assert!(prepared.server.artifacts.sockets.is_empty());
+        assert!(
+            prepared
+                .server
+                .artifacts
+                .as_ref()
+                .unwrap()
+                .sockets
+                .is_empty()
+        );
     }
     #[test]
     fn dropping_prepared_pane_and_cancelling_commit_have_no_shell_effects() {
@@ -1797,7 +1828,15 @@ mod tests {
         assert_eq!(receipt.status, TerminalPtyStatus::Exited(7));
         assert!(!receipt.output_incomplete);
         assert!(backend.server.child.is_none());
-        assert!(backend.server.artifacts.sockets.is_empty());
+        assert!(
+            backend
+                .server
+                .artifacts
+                .as_ref()
+                .unwrap()
+                .sockets
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1878,7 +1917,9 @@ mod tests {
         };
         let cancellation = CancellationToken::new();
         let prepared = PreparedTerminalTmuxLaunch::prepare(request, &cancellation).unwrap();
-        let original = prepared.server.artifacts.sockets[0].0.clone();
+        let original = prepared.server.artifacts.as_ref().unwrap().sockets[0]
+            .0
+            .clone();
         let parked = directory.0.join("parked");
         let mut backend = prepared.commit_owned(&cancellation).unwrap();
         read_until(&mut backend, b"READY");
@@ -1895,13 +1936,21 @@ mod tests {
         .unwrap();
         assert!(backend.close(true, &mut |_| {}).is_err());
         assert!(backend.server.child.is_none());
-        assert_eq!(backend.server.artifacts.sockets.len(), 1);
+        assert_eq!(backend.server.artifacts.as_ref().unwrap().sockets.len(), 1);
         assert!(original.exists() && parked.exists());
         drop(replacement);
         std::fs::remove_file(&original).unwrap();
         std::fs::rename(&parked, &original).unwrap();
         backend.close(true, &mut |_| {}).unwrap();
-        assert!(backend.server.artifacts.sockets.is_empty());
+        assert!(
+            backend
+                .server
+                .artifacts
+                .as_ref()
+                .unwrap()
+                .sockets
+                .is_empty()
+        );
         assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 0);
     }
 

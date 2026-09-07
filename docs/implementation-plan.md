@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `complete replacement local checks for the integrated owned inventory service, then three fresh reviews and exact remote gates`
+- Next gate: `run complete replacement local checks for bounded tmux reaping, then three fresh reviews and exact remote gates`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -219,6 +219,14 @@ restart barriers, delayed readiness, cancellation and stalled replies. Focused
 runtime verification passes, including original failing PTY/tmux scenarios and
 captured shutdown during service readiness. All replacement acceptance gates
 remain required, including native Intel macOS CI.
+The integrated service candidate passes the complete local gate. Fresh API
+review finds no actionable issues, but lifecycle review finds two unbounded
+tmux child waits that can stall the terminal owner. The candidate is rejected.
+The correction uses bounded retained/quarantined cleanup, one cleanup window
+per child and delayed-reap regressions. Eighteen focused cases and strict native
+lint pass, including an interrupted-observation red/green regression. Replacement
+checks and three fresh reviews remain required. Main remains unchanged; no
+terminal delivery is claimed.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:

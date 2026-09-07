@@ -569,6 +569,19 @@ of the earlier child-exit status; deadline/drain exhaustion cannot be called a
 complete capture. Failed cleanup retains the exact owned server/backend for
 retry and never unlinks a replacement artifact.
 
+Tmux command and foreground-server children reserve the existing bounded
+child-reap authority before spawn. Abort and retirement use nonblocking child
+observation with one 500 ms cleanup window per child, never an unbounded wait
+after kill. Failed explicit cleanup retains the exact child for retry; later
+retries can observe exit or retry pending kill delivery without refreshing that
+window. Drop does not restart an exhausted cleanup grace; unresolved ownership
+transfers to the existing bounded reaper with its original host-completion
+obligation. Server artifacts
+remain owned until that child is reaped or its wait authority is known lost.
+Pending tmux-child kill delivery is retried only after a later observation of
+that exact child as still running; failed observation or lost wait authority
+cannot authorize signaling. Other direct-child quarantine behavior is unchanged.
+
 The private CLI helper entrypoint bypasses ordinary configuration and accepts
 only its four bounded protocol arguments. The same shared startup bootstrap,
 owner acknowledgements and absolute deadline cover native PTY and tmux user/
