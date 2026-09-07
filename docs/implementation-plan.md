@@ -21,254 +21,79 @@ input; it is not a machine-god product language or runtime dependency.
 ## Current delivery state
 
 <!-- canonical-live-status:start -->
-- Delivered slices: `58`
-- Delivered main: `8545ea48623a40d412bce4f707c70a6be991d108`
-- Main CI: `33949137350` (`GREEN`)
-- Main Benchmark evidence: `33949136988` (`GREEN`)
-- Active branch: `agent/m59-terminal-input`
-- Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `run complete replacement local checks for bounded tmux reaping, then three fresh reviews and exact remote gates`
+- Delivered slices: `59`
+- Delivered main: `229cf94a798fa561f3ff7401c07a549b79e50616`
+- Main CI: `34163483918` (`GREEN`)
+- Main Benchmark evidence: `34163483934` (`GREEN`)
+- Active branch: `agent/m59-terminal-delivery`
+- Active phase: `documentation seal for delivered complete terminal; combined M03 CLI/slash feature next`
+- Next gate: `lightweight feature and main documentation-seal gates, then complete the combined M03 CLI/slash boundary`
 <!-- canonical-live-status:end -->
 
-The exact delivered-main CI and Benchmark runs are green, and the Benchmark
-run retains both required unexpired exact-SHA artifacts. Slice 58 adds the
-closed five-value terminal `signal` action with exact session-incarnation
-ownership, separate custom authorization, bounded off-poll-thread Linux
-process-tree or macOS original-group delivery, and close-before-reap native
-authority. The main-CI fixture race is fixed with an isolated process group,
-independent pidfd assertions, bounded readiness, and owned cleanup. The exact
-Rust 1.94.1 local gate and three fresh correction-review tracks passed.
-Detailed history is retained only in the linked review ledger.
+The complete terminal is delivered as one feature. The exact behavior commit
+passes the full Rust 1.94.1 local gate, three fresh independent reviews with zero
+actionable findings, and both feature and main CI/Benchmark gates. Native Linux
+and macOS pass on x86_64 and aarch64, including the previously failing Intel
+inventory path. Both required unexpired exact-main benchmark artifacts are
+retained. Main was advanced by fast-forward without force. This establishes
+regression acceptance, not an M07 performance claim; documentation-only seals
+do not increment the count or replace the canonical behavior evidence.
 
-The delivered non-product CI maintenance replaces binary
-full-versus-documentation routing with fail-closed dependency-aware concern
-selection while preserving stable aggregate gates and exact-SHA Benchmark
-evidence for behavior and evidence-affecting changes. It does not increment the
-delivered-slice count. Documentation-only descendants now exercise only the
-bounded documentation checks and aggregate gates, without Rust, platform,
-audit, compatibility, or benchmark-artifact jobs.
-
-The active complete terminal feature includes interactive handles, durable
-logs, restart/recovery and the action contract below. ACP, teams and extension
-slash commands retain their later milestone ownership.
-Documentation-tool maintenance remains a separate non-product task.
-
-The terminal integration now explicitly routes terminal-sys changes through
-their package and native/CLI consumers, including Apple-only binding lint,
-and verifies Unicode generation against the pinned upstream source. This is
-an internal CI integration correction, not a new delivery; full-feature
-review and exact remote gates remain pending.
-
-### Active feature: complete terminal behavior
-
-Deliver the terminal as one complete feature. Internal component commits do not
-increment the delivered-slice count or establish a compatibility/performance
-claim. The native executor, explicit helper-bearing reference-host constructors
-and CLI now compose all twelve actions, interactive PTY/tmux startup, durable
-history, monitors, lossless archives and terminal-only provider admission.
-
-Integrated behavior is maintained in [the terminal contract](terminal.md),
-[reference-host composition](native-reference-host.md), [core API](core-api.md),
-[Gateway codec](ai-gateway.md), and [archive paging](read-tool-result.md).
-The implementation now includes:
-
-- Complete normalized requests/results and the effect-free decoder, including
-  pinned binary128 numeric coercion, explicit user/clean shell profiles and
-  lossless 64 KiB commands. Ordinary tool/transcript limits remain independent
-  of the terminal's complete input/output admission.
-- Worker-owned PTY/tmux sessions with authenticated, deadline-bound startup,
-  original-terminal bash/zsh profiles, long quoted artifact paths, explicit
-  captured foreground execution and private production CLI helper entrypoints.
-  macOS deadline transfer uses the same uptime-clock domain as Rust `Instant`.
-- Styled Unicode screen projection, durable segmented output and checkpoints,
-  cursor gaps, retained events, owner-bound catalog/history access, native
-  resize, ordered binary/text/paste input, writer leases and committed receipts.
-- Shared owner-loop waits and authorized monitor scheduling, including bounded
-  native network/filesystem/custom probes, cancellation and notification state.
-- Profile-wide accounting across resident, nonresident and busy foreign
-  histories, separate output/state/event budgets, derived mutation reservations,
-  checkpoint headroom and bounded retention with durable recovery barriers.
-- Pressure-only reuse of inactive, native-clean, publication-clean and
-  unreferenced residency slots; cold-history reads and close do not grant
-  process authority or require live admission.
-- Host-handle-owned runtime lifetime. Non-owning operation futures do not keep
-  native sessions alive. Explicit worker scopes track joined runtime/effect/
-  archive workers and transferred child cleanup independently of unconsumed
-  responses; failed cleanup remains owned and retryable.
-- Complete argument/result archives shared with `read_tool_result`. The
-  composed large-input archive/paging regression passes after fixing Gateway
-  replay of core's empty assistant completions.
-- CI routing for terminal-sys and its native/CLI consumers, Apple binding lint,
-  and pinned-upstream Unicode generation checks.
-
-CLI signal/blocked-output finalization now waits for the terminal host's
-completion observer before the guardian may exit. The receiver and first
-observed signal survive cleanup, errors and unwinds, including loss of the
-driver's output-progress state. The focused serial ask group passes, including
-twelve deterministic ordering/signal cases; the output grace is unchanged.
-
-Internal candidate and review history is retained in the
+Detailed candidate, failure, remediation and review history is retained in the
 [full terminal review ledger](reviews/m03-terminal-full-review-01.md).
-Authenticated cleanup-prefix retention is integrated across Linux ancestry/SID
-and macOS PTY/tmux scans, preserving authority proofs and bounds. A full Linux
-run exposed an unrelated copy-file fixture whose same-length source mutation
-assumed a distinct filesystem timestamp tick. Both source-mutation fixtures now
-use an explicit mtime transition without changing product fingerprint or hash
-verification. All 25 copy-file tests and strict native lint pass on both
-platforms; the postcommit case passes 200 Linux repetitions. A subsequent
-macOS release-helper timeout exposed avoidable collector latency: old backoff
-survived actual output progress and EOF. The collector now resets backoff only
-on those transitions, preserving the original 250 ms deadline and requiring
-both EOF and successful child reaping. A deterministic late-progress regression
-fails before the fix and passes afterward; all ten collector tests and ten
-repetitions of the release-helper case pass. The historical timeout's exclusive
-cause is not proved. Related Linux bootstrap-abort fixtures now share positive
-unreaped child-exit observation under their saved original deadline before the
-existing single force-close. This test-only ordering removes a proved marker-
-reaping race without changing production cleanup or no-execution assertions.
-All 20 startup tests and strict native lint pass on both platforms; three Linux
-fixture callers pass 50 repetitions each, and all 20 macOS startup tests pass
-with the production release helper. Fresh review of the next locally green
-candidate exposed a retained tmux cleanup blockage under capture-budget
-pressure. The integrated correction adds default-deny cleanup-only delivery:
-after full identity checks, failed close can act on already authenticated
-handles without discovery, retaining the original error and requiring complete
-quiescence on retry. Ordinary signaling suppresses duplicate fallback delivery.
-Focused Linux/macOS tests and strict lint pass; the native quota-pressure
-regression passes 20 repetitions without increasing quota or signaling unproved
-jobs. Candidate `f29ddc7f79fcf32083acb6bd63f96f35f22ea487` passes the full
-local gate and three fresh reviews, and is pushed to the feature branch.
-Its Benchmark run passes with both exact-SHA artifacts, but remote CI exposes
-missing zsh provisioning and Linux/macOS cleanup failures. Explicit shell setup
-is corrected locally. Bounded diagnosis does not reproduce either cleanup
-failure: 50 loaded Linux factory repetitions, five concurrent terminal suites,
-and 100 exact macOS repetitions pass. Those failures remain unexplained; no
-speculative cleanup change is made. Main is unchanged. Replacement gates use
-Linux's default CI test concurrency and serial macOS execution; exact remote
-success is still required. The replacement concurrent Linux run exposes four
-foreground deadline fixtures that assume filesystem admission completes within
-1–5 ms. Test-only correction separates expired admission from already-admitted
-execution, retains output/error assertions and positively observes a real timer
-wake and executor drop. All 1,473 Linux native tests pass concurrently, with
-strict lint and 20 focused repetitions. No production deadline changes; the
-complete replacement gate remains required. Subsequent concurrent Linux runs
-reproduce tmux cleanup failing on a valid kernel final-teardown proc-stat record.
-The parser now accepts only the exact dead-task sentinel without granting scope
-authority; a captured-record regression fails before and passes after the fix.
-Seven full concurrent suites and 100 loaded tmux repetitions pass, but the next
-suite exposes a separate PTY startup-suffix close failure. Diagnosis proves
-bash's legitimate descendant process-group transition was rejected despite
-unchanged PID, parent and start-time identity. Ancestry revalidation now ignores
-only that mutable group field, preserving incarnation/parent checks and separate
-root-group authority. The regression is red before and green after the fix;
-five full concurrent Linux suites and 500 loaded fixture repetitions pass.
-Candidate `d49db6d81395b517049f0b43726bed764417f2c4` then passes the complete
-local gate and three fresh reviews and is pushed. Benchmark evidence succeeds
-with both exact-SHA artifacts, but Linux remote jobs expose Ubuntu global zsh
-completion prompting on the runner's writable completion tree. The unchanged
-binary reproduces all four failures with those conditions and passes them after
-repairing only `/usr/share/zsh` permissions. CI now performs that bounded repair
-and a noninteractive completion audit in both Linux shell-provisioning paths;
-no product or profile behavior changes. The repaired representative environment
-passes all 1,476 native tests concurrently and all 15 CI regressions pass.
-The same candidate's Intel macOS CI job fails two session-inventory collectors
-at their original 250 ms deadline. Bounded local ARM/Rosetta checks do not
-reproduce those exact failures, but isolate substantial avoidable `ps`
-task/thread work. A fixed read-only query in a separately owned helper is
-integrated under ADR 0004, retaining collection bounds and identity checks.
-Focused serial macOS PTY/tmux/captured and collector tests pass 81 cases with
-three helper ignores, with strict native/CLI lint green on both platforms.
-The integrated candidate passes prerequisites, Linux runtime and eight fresh
-release launches, but full macOS tests expose a fake-CLI dispatcher missing the
-new inventory mode. Its test-only correction is integrated with a red/green
-dispatch regression and ten passing serial host/PTY confirmations. Replacement
-gates remain required; a later PTY close timeout is not exclusively attributed
-to the proved dispatcher omission.
-A separate local ARM startup-frame timeout remains unresolved and is not
-claimed fixed by the inventory change. Main remains unchanged; replacement
-gates are required. No delivery is claimed.
+This compact plan does not repeat that history.
 
-The composed-host correction passes the complete local gate and three fresh
-reviews as candidate `932b2cf324d1a402a68c4c87d52784f0cc7c4d89`. Its remote
-Benchmark, quality, Linux x86_64 and ARM macOS jobs pass, but Intel macOS still
-exposes two inventory-collection timeouts. Linux ARM separately exposes an
-`open_file` test that assumes its first poll cannot already complete. A
-test-only barrier correction preserves both valid scheduling outcomes and
-passes focused tests and strict lint. Intel collection diagnosis continues;
-neither candidate acceptance nor delivery is claimed.
-Bounded ARM/Rosetta sampling does not reproduce the Intel timeout. Test-only
-failure counters now distinguish helper selection, reservation/spawn/setup,
-first output, EOF and child observation without altering the protocol or
-deadline. The next native Intel gate must establish the stalled phase if it
-fails again; diagnostics alone are not a compatibility fix.
-The next local run separately times out awaiting a PTY helper readiness byte;
-that case passes in isolation and does not report an inventory failure. Apple
-native checks now select the freshly built exact-target release helper through
-the existing fixture capability, preserving all tests and deadlines while
-testing the shipped host path. Explicit failure fixtures and Linux concurrency
-remain unchanged. Native Intel success is still required; harness overhead is
-measured but is not proved to be the exclusive cause of either timeout.
-The production-helper workspace comparison subsequently catches an actual
-inventory failure: process spawn consumes 189 ms of the original 250 ms budget
-and no PID output arrives before expiration. Production-helper selection alone
-is therefore insufficient. The integrated correction is an owned reusable query
-helper prepared within the original terminal startup budget, retaining bounded
-requests, independent kill/reap ownership and identity checks under ADR 0004.
-Protocol and lifecycle regressions cover framing, shared same-host leases,
-restart barriers, delayed readiness, cancellation and stalled replies. Focused
-runtime verification passes, including original failing PTY/tmux scenarios and
-captured shutdown during service readiness. All replacement acceptance gates
-remain required, including native Intel macOS CI.
-The integrated service candidate passes the complete local gate. Fresh API
-review finds no actionable issues, but lifecycle review finds two unbounded
-tmux child waits that can stall the terminal owner. The candidate is rejected.
-The correction uses bounded retained/quarantined cleanup, one cleanup window
-per child and delayed-reap regressions. Eighteen focused cases and strict native
-lint pass, including an interrupted-observation red/green regression. Replacement
-checks and three fresh reviews remain required. Main remains unchanged; no
-terminal delivery is claimed.
+### Delivered terminal acceptance boundary
 
-Completion is measured against the pinned upstream terminal schema and native
-session contracts, not the existing numeric background-record subset:
+The terminal is one complete feature; its internal input/write and cleanup
+commits are not separate deliveries. The native executor, explicit
+helper-bearing reference host and CLI compose:
 
 - All twelve actions: `exec`, `start`, `read`, `screen`, `write`, `wait`,
   `monitor`, `inspect`, `list`, `resize`, `signal`, and `close`.
-- Interactive start without a command, optional command startup, native PTY
-  and tmux backends, user/clean profiles and supported bash/zsh resolution,
-  actual terminal dimensions, and sessions that outlive individual tool calls.
-- Durable segmented raw output with explicit cursor gaps, retained events and
-  acknowledgements, validated screen checkpoints/recovery, and owner-authorized
-  session facts/catalog filters. The pinned defaults are 1 MiB segments,
-  64 MiB per session, 512 MiB per profile, and 256 retained events.
-- Styled structured screens, cursor/modes, Unicode/wide cells, terminal query
-  replies in live execution only, and real PTY resize verified by `stty size`.
-- Text, paste, named keys and control-character input; acquire/use/release/revoke
-  write leases; bounded accepted-byte receipts and input quiescence.
-- Started/exit/quiet/match waits with safety ceilings; all thirteen monitor
-  conditions, operations, schedules, notifications and lifetimes. Repeated
-  network, filesystem and custom-probe effects require explicit authorization.
-- Graceful close (terminate, up to 800 ms, then kill) and force close, monitor
-  shutdown, retained readable history, restart/recovery and backend-failure
-  behavior, without granting control from a persisted numeric PID.
+- Interactive PTY/tmux startup, commandless and command-bearing sessions,
+  user/clean bash/zsh profiles, actual dimensions and deadline-bound ownership.
+- Durable segmented raw output, styled Unicode screens and checkpoints, cursor
+  gaps, retained events, restart/recovery and owner-bound catalog/history.
+- Ordered text/binary/paste input, named/control keys, writer leases,
+  committed-byte receipts, native resize and authenticated process signaling.
+- Started/exit/quiet/match waits and all thirteen monitor conditions, with
+  separately authorized bounded network/filesystem/custom probes.
+- Profile-wide storage accounting and retention across resident/nonresident
+  histories, pressure-only safe residency reuse, and lossless argument/result
+  archives shared with `read_tool_result` and the Gateway codec.
+- Graceful/force close, retained readable history, cancellation and host-owned
+  worker completion, including CLI signal and blocked-output finalization.
+- Shared owned macOS inventory prepared during startup, with each query still
+  bounded by the original 250 ms deadline and independent kill/reap ownership.
+  Tmux command/server cleanup retains exact child and artifact ownership under
+  one bounded cleanup window, including deferred reap and interrupted observation.
 
-Reference:
-[pinned terminal schema](https://github.com/vercel-labs/fx/blob/b1774fbf6c7602b503026f96f6e960e946c692ef/src/tools/terminal/terminal.zig),
-[native sessions](https://github.com/vercel-labs/fx/blob/b1774fbf6c7602b503026f96f6e960e946c692ef/src/core/terminal/native_session.zig),
-[monitor contracts](https://github.com/vercel-labs/fx/blob/b1774fbf6c7602b503026f96f6e960e946c692ef/src/core/terminal/monitor.zig).
+Durable behavior belongs in [terminal](terminal.md),
+[reference-host composition](native-reference-host.md), [core API](core-api.md),
+[Gateway codec](ai-gateway.md), and [archive paging](read-tool-result.md).
+The pinned schema, session and monitor references are maintained there.
+ACP, teams and extension slash commands retain their later milestone ownership.
 
-As an internal component, implement `terminal write` and explicit piped stdin for
-background starts; null stdin remains the default. Freeze shared signatures,
-then parallelize core/permission contracts, native input ownership/transport,
-and terminal parsing/receipts in isolated worktrees with one integrator.
-Bound decoded writes to 8 KiB, report accepted byte counts and backpressure,
-and apply explicit EOF only after all supplied bytes are accepted. Bind writes
-to the exact session incarnation and separately authorized payload identity;
-close authority before process cleanup and preserve committed-write receipts
-across cancellation. Replace buffered helper protocol reads with exact reads
-before inheriting the pipe, so immediate post-commit input cannot be lost.
-Exercise binary/Unicode round trips, partial writes, EOF, ownership, concurrent
-cleanup, and cancellation. PTY/interactive terminal and live output behavior
-remain part of this feature; piped input does not complete it.
+### Next product work
+
+After terminal delivery and its documentation seal, complete the combined M03
+CLI/slash-command boundary below as one feature. Keep core effect-free, native
+effects explicitly owned, and CLI presentation thin. Freeze shared contracts
+before parallel implementation in isolated worktrees with non-overlapping
+ownership. Do not resume documentation-tool development during product work.
+
+### CI and documentation maintenance
+
+Delivered CI maintenance uses fail-closed dependency-aware concern selection
+and stable aggregate gates. Documentation-only descendants run bounded
+documentation checks and lightweight CI/Benchmark aggregates, without Rust,
+platform, audit, compatibility or benchmark-artifact jobs. They do not increment
+the delivered-slice count. Product/evidence changes retain artifact-producing
+gates. Terminal-sys routes through its package and native/CLI consumers,
+including Apple binding lint and pinned-upstream Unicode generation checks.
+The classification contract remains in
+[CI change classification](ci-change-classification.md).
 
 ## Architecture ownership
 
@@ -395,8 +220,9 @@ delivery identifier; the linked review ledger remains authoritative history.
 | 56 | Bounded persisted-record `terminal` list | [terminal](terminal.md), [background CLI](background-cli.md) | [review](reviews/m03-terminal-list-review-01.md) | `a8f5af3` |
 | 57 | Bounded same-incarnation `terminal` background output read | [terminal](terminal.md), [supervisor](background-supervisor.md) | [review](reviews/m03-terminal-read-review-01.md) | `b1bbb81` |
 | 58 | Bounded same-incarnation `terminal` native signal | [terminal](terminal.md), [supervisor](background-supervisor.md) | [review](reviews/m03-terminal-signal-review-01.md) | `8545ea4` |
+| 59 | Complete terminal actions, PTY/tmux sessions, durable history/screens, monitors, archives and owned cleanup | [terminal](terminal.md), [host](native-reference-host.md) | [review](reviews/m03-terminal-full-review-01.md) | `229cf94` |
 
-The exact delivered-main record after slice 58 is in the canonical live-status
+The exact delivered-main record is in the canonical live-status
 block. Historical review ledgers may name intermediate candidates, trees,
 finding counts, component commits, and older workflow runs; those records are
 not current status.

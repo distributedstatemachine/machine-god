@@ -940,3 +940,44 @@ focused cases (15.00 seconds, zero ignores). Seven real tmux/composed-host cases
 use the explicitly selected `d6c1522` release helper; this is focused protocol
 evidence, not a fresh candidate release gate. Complete replacement checks plus
 three fresh reviews remain required before any delivery claim.
+
+## Bounded-reap candidate `229cf94`: local and feature acceptance
+
+Candidate `229cf94a798fa561f3ff7401c07a549b79e50616` passes the complete
+exact-1.94.1 local gate, including Linux/macOS strict workspace lint, Apple ABI
+checks, formatting, doctests, FreeBSD/WASI checks, dependency policy/audit,
+263 Python tests with fourteen platform skips (354.699 seconds), pinned drift,
+Unicode and documentation checks. Fresh release builds in 8m43s; all eight
+release launch cases pass (28.09 seconds) and CLI smoke succeeds.
+
+Default-concurrent Linux passes 1,486 native/six helper ignores (27.06 seconds)
+and 141 CLI/four ignores (0.77 seconds). The macOS workspace succeeds, including
+1,444 native/five ignores (308.35 seconds) and 677 component/two ignores
+(139.44 seconds); the final all-feature terminal sweep passes 665/five ignores
+(199.44 seconds). A pre-test session-store launch pause is sampled at the macOS
+dynamic-loader entry point and clears without intervention. Its tests then
+pass; no runtime failure, retry or deadline relaxation is waived. The temporary
+sample report is removed after retaining its diagnostic output.
+
+Three fresh independent direct local reviews inspect this exact candidate
+against `46e5b70f6c5ba76a4699f5bd8ba424a1fa3813be`: correctness/API,
+lifecycle/platform, and performance/resources each establish zero actionable
+findings. Their evidence is source/diff and related-test inspection, not
+independent runtime or remote execution and not Bugbot. All isolated review
+and implementation worktrees are clean and removed.
+
+Feature CI `34162025877` passes, including native Linux/macOS x86_64 and aarch64.
+Benchmark `34162025876` passes and retains exact-SHA upstream artifact
+`10033053133` and bootstrap artifact `10032954531`, both unexpired through
+`2026-12-06T21:08:26Z`. Main is fast-forwarded without force to the reviewed
+candidate. These results establish regression acceptance, not an M07 performance
+claim. The implementation plan owns subsequent main and delivery gates.
+
+The same exact behavior commit subsequently passes main CI `34163483918` and
+main Benchmark `34163483934`, including native Intel macOS. The main Benchmark
+retains upstream artifact `10033522955` and bootstrap artifact `10033429570`,
+both unexpired through `2026-12-06T21:32:08Z` and bound to this exact main SHA.
+The documentation-only delivery record compacts repeated intermediate history
+out of the live plan while retaining its canonical block, milestone state,
+inventory, remaining boundary and gates. It does not change product behavior
+or require a new product-review cycle.
