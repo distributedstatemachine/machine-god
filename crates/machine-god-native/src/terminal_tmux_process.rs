@@ -231,6 +231,14 @@ pub(crate) struct AuthenticatedTerminalProcess {
 }
 
 impl AuthenticatedTerminalProcess {
+    #[cfg(all(test, target_os = "linux"))]
+    pub(crate) fn exhaust_capture_budget_for_test(&mut self) {
+        self.budget.descriptors.operation_maximum = self
+            .budget
+            .descriptors
+            .operation_in_use
+            .load(std::sync::atomic::Ordering::Acquire);
+    }
     /// The trusted launcher already checked this private connection's initial
     /// nonce/PID and exact pane identity. Acquire the OS incarnation FIRST, then
     /// issue a fresh challenge to the still-blocked helper over that connection.
@@ -416,8 +424,23 @@ impl AuthenticatedTerminalProcess {
     ) -> Result<(), BackgroundProcessError> {
         let observation = self.refresh();
         // A failed snapshot cannot revoke already captured cleanup authority.
+        let delivery = self.signal_retained(signal);
+        if observation.is_err() || delivery.is_err() {
+            Err(cleanup_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Existing pins alone grant this cleanup effect. Do not run discovery or
+    /// require a live anchor: previously authenticated descendants remain ours
+    /// even if that anchor disappears. Never infer quiescence from delivery.
+    pub(crate) fn signal_retained(
+        &self,
+        signal: BackgroundProcessSignal,
+    ) -> Result<(), BackgroundProcessError> {
         let signal = process_signal(signal);
-        let mut failed = observation.is_err();
+        let mut failed = false;
         let deadline = Instant::now() + GROUP_SNAPSHOT_TIMEOUT;
         for member in self.members.iter().rev() {
             if Instant::now() >= deadline {

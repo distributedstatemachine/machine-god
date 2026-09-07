@@ -642,6 +642,25 @@ impl TerminalTmuxProcess for NativeTerminalTmuxProcess {
             .signal(signal)
             .map_err(|_| TerminalTmuxError::Command)
     }
+    fn signal_retained_cleanup(
+        &mut self,
+        identity: &TerminalTmuxIdentity,
+        signal: TerminalSignal,
+    ) -> std::result::Result<(), TerminalTmuxError> {
+        if identity != &self.identity {
+            return Err(TerminalTmuxError::Identity);
+        }
+        let signal = match signal {
+            TerminalSignal::Hangup => BackgroundProcessSignal::Hangup,
+            TerminalSignal::Interrupt => BackgroundProcessSignal::Interrupt,
+            TerminalSignal::Quit => BackgroundProcessSignal::Quit,
+            TerminalSignal::Terminate => BackgroundProcessSignal::Terminate,
+            TerminalSignal::Kill => BackgroundProcessSignal::Kill,
+        };
+        self.authority
+            .signal_retained(signal)
+            .map_err(|_| TerminalTmuxError::Cleanup)
+    }
     fn is_absent(&mut self) -> std::result::Result<bool, TerminalTmuxError> {
         if !self.retiring {
             if self.poll_job()? == TerminalPtyStatus::Running
@@ -1320,6 +1339,155 @@ mod tests {
             timeout: Duration::from_secs(10),
         })
     }
+
+    #[cfg(target_os = "linux")]
+    struct CleanupObserver(OwnedFd);
+
+    #[cfg(target_os = "linux")]
+    impl CleanupObserver {
+        fn from_marker(path: &Path, deadline: Instant) -> Self {
+            loop {
+                if let Ok(text) = std::fs::read_to_string(path)
+                    && let Ok(pid) = text.parse::<i32>()
+                {
+                    return Self(
+                        rustix::process::pidfd_open(
+                            rustix::process::Pid::from_raw(pid).unwrap(),
+                            rustix::process::PidfdFlags::empty(),
+                        )
+                        .unwrap(),
+                    );
+                }
+                assert!(Instant::now() < deadline, "owned job marker unavailable");
+                std::thread::sleep(PAUSE);
+            }
+        }
+
+        fn exited(&self) -> bool {
+            let mut descriptors = [rustix::event::PollFd::new(
+                &self.0,
+                rustix::event::PollFlags::IN,
+            )];
+            rustix::event::poll(&mut descriptors, Some(&rustix::event::Timespec::default()))
+                .unwrap()
+                != 0
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for CleanupObserver {
+        fn drop(&mut self) {
+            // Independently retain exact fixture cleanup if an assertion fails.
+            let _ = rustix::process::pidfd_send_signal(&self.0, rustix::process::Signal::KILL);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn real_force_close_progresses_at_capture_capacity_before_and_after_shell_exit() {
+        for shell_exits in [false, true] {
+            let directory = Directory::new();
+            let ending = if shell_exits { "exit 0" } else { "wait" };
+            let script = format!(
+                "sleep 100 & printf '%s' \"$!\" > first; while [[ ! -e release ]]; do read -r -t 0.01 unused; done; sleep 100 & printf '%s' \"$!\" > second; sleep 100 & printf '%s' \"$!\" > third; {ending}"
+            );
+            let Some(request) = request(&directory, &script) else {
+                return;
+            };
+            let cancellation = CancellationToken::new();
+            let mut backend = PreparedTerminalTmuxLaunch::prepare(request, &cancellation)
+                .unwrap()
+                .commit_owned(&cancellation)
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let first = CleanupObserver::from_marker(&directory.0.join("first"), deadline);
+            {
+                let process = backend.backend.process_for_test();
+                let identity = process.identity.clone();
+                process.validate(&identity).unwrap();
+                // Full-identity mismatches never gain retained cleanup authority,
+                // including a correct PID paired with a different namespace/pane.
+                for wrong in [
+                    TerminalTmuxIdentity::new(
+                        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+                        identity.pane().into(),
+                        identity.pid(),
+                    )
+                    .unwrap(),
+                    TerminalTmuxIdentity::new(
+                        identity.namespace().into(),
+                        "%987".into(),
+                        identity.pid(),
+                    )
+                    .unwrap(),
+                    TerminalTmuxIdentity::new(
+                        identity.namespace().into(),
+                        identity.pane().into(),
+                        NonZeroU32::new(std::process::id()).unwrap(),
+                    )
+                    .unwrap(),
+                ] {
+                    assert_eq!(
+                        process.signal_retained_cleanup(&wrong, TerminalSignal::Kill),
+                        Err(TerminalTmuxError::Identity)
+                    );
+                    assert!(!first.exited());
+                }
+                process.authority.exhaust_capture_budget_for_test();
+            }
+            std::fs::write(directory.0.join("release"), b"ready").unwrap();
+            let second = CleanupObserver::from_marker(&directory.0.join("second"), deadline);
+            let third = CleanupObserver::from_marker(&directory.0.join("third"), deadline);
+            if shell_exits {
+                while backend.backend.process_for_test().poll_job().unwrap()
+                    == TerminalPtyStatus::Running
+                {
+                    assert!(Instant::now() < deadline);
+                    std::thread::sleep(PAUSE);
+                }
+            } else {
+                assert_eq!(
+                    backend.backend.process_for_test().poll_job().unwrap(),
+                    TerminalPtyStatus::Running
+                );
+            }
+            assert!(
+                backend.close(true, &mut |_| {}).is_err(),
+                "incomplete inventory is not quiescence"
+            );
+            assert!(
+                backend.server.child.is_some(),
+                "failed close retains namespace ownership"
+            );
+            while !first.exited() {
+                assert!(
+                    Instant::now() < deadline,
+                    "retained exact pin was not killed"
+                );
+                std::thread::sleep(PAUSE);
+            }
+            assert!(
+                !second.exited() || !third.exited(),
+                "partial inventory cannot signal unproved jobs"
+            );
+            // No quota is increased: each retry must free settled pins and make
+            // bounded progress until a complete inventory authorizes retirement.
+            let receipt = loop {
+                if let Ok(receipt) = backend.close(true, &mut |_| {}) {
+                    break receipt;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "retained cleanup did not converge"
+                );
+                std::thread::sleep(PAUSE);
+            };
+            assert_ne!(receipt.status, TerminalPtyStatus::Running);
+            assert!(second.exited() && third.exited());
+            assert!(backend.server.child.is_none());
+        }
+    }
+
     #[test]
     fn real_gated_pane_cannot_execute_before_challenge_commit_and_captures_exact_bytes() {
         let directory = Directory::new();

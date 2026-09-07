@@ -373,3 +373,45 @@ assertion changes. Rust 1.94.1 startup suites pass 20 tests on each platform,
 three Linux callers pass 50 repetitions each, and the macOS suite passes all
 20 again with the fresh release helper. Strict native lint on both platforms,
 formatting and diff checks pass; full replacement gates remain required.
+
+## Review of `fc3b196`
+
+Candidate `fc3b1969bcbfaff5810286fd109d2afb32e047a6` passes the complete
+Rust 1.94.1 local gate: Linux native 1,468/six helper ignores and CLI 141/four
+helper ignores; macOS full workspace/native 1,399/five helper ignores, eight
+release-launch cases, fresh CLI smoke and release-helper matrix 655/five helper
+ignores; strict lint, doctests, cross-platform checks, dependencies, 259 Python
+tests/14 expected skips, drift and documentation checks. Three fresh direct
+local reviewers inspect the full feature against merge base
+`46e5b70f6c5ba76a4699f5bd8ba424a1fa3813be`, without inherited seals:
+
+- `terminal_fc3b196_api`: zero findings; 43 cached contract/admission tests pass.
+- `terminal_fc3b196_resources`: zero findings; source/test review, no benchmark
+  claim or independent runtime rerun.
+- `terminal_fc3b196_lifecycle`: one P1 at `terminal_tmux.rs:1116`. Close requires
+  successful absence/validation discovery before native signal can use retained
+  exact-process pins. Persistent capture-budget pressure therefore blocks
+  cleanup of the very pins occupying that budget. Two bounded non-root Linux
+  reproductions use the production backend and real native ownership with a
+  two-descriptor budget: three failed force-close attempts leave one owned pin
+  alive with zero signals, while direct native signaling kills it and still
+  reports the inventory error. Wrong identity is rejected without capture or
+  signal; diagnostics restore quotas and kill/reap their owned fixture children.
+
+This rejects the candidate before push. All review worktrees are clean and
+removed; no Bugbot service was used. The correction must separate retained
+cleanup progress from fallible discovery without granting authority on identity
+mismatch or accepting incomplete quiescence.
+
+Correction `64017813b68c66c45cd3a67bcb499d4c9663df03` adds default-deny
+cleanup-only delivery to the tmux process seam. Native delivery checks full
+retained identity and uses authenticated handles without discovery. Failed close
+preserves its original error and ownership; a prior ordinary signal attempt
+suppresses duplicate fallback. Permanent production regressions cover running
+and exited shells under capture pressure, untouched unproved jobs, identity
+mismatches and successful retry without increasing quota. Portable cases cover
+abort/validation/absence/signal failures and default denial. Exact Rust 1.94.1
+checks pass: Linux 53/two helper ignores and 20 native quota repetitions;
+macOS 48/one helper ignore; strict native lint on both, formatting and diff
+checks. Only the three assigned tmux modules change. Full replacement local
+and remote gates plus three fresh independent reviews remain required.

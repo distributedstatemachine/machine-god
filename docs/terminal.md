@@ -527,6 +527,15 @@ a zombie reaped during discovery still makes that inventory nonempty. A fresh
 complete anchored snapshot and no remaining retained obligations are required
 before the supervisor can retire. Existing descriptor and scan bounds apply.
 
+If tmux close fails before ordinary process signaling, the native adapter makes
+one bounded cleanup-only attempt through its already authenticated handles,
+after checking the full retained tmux identity. Discovery failure cannot prevent
+this progress or grant authority over an unproved process. Graceful close uses
+TERM and force close uses KILL; a prior ordinary signal attempt suppresses the
+fallback. The original close error remains authoritative and the backend stays
+owned until a later complete quiescence proof succeeds. Custom process adapters
+deny this cleanup-only operation by default.
+
 Raw capture and its two-byte completion receipt use separate fresh-nonce
 authenticated streams on one private socket path. Success is reported only
 after capture reaches EOF with all observed bytes delivered; overload, missing

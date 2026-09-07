@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `repeat complete pinned local checks, three fresh independent reviews and exact remote gates for the integrated startup-fixture ordering correction`
+- Next gate: `repeat complete pinned local checks, three fresh independent reviews and exact remote gates for the integrated retained tmux cleanup correction`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -128,8 +128,16 @@ existing single force-close. This test-only ordering removes a proved marker-
 reaping race without changing production cleanup or no-execution assertions.
 All 20 startup tests and strict native lint pass on both platforms; three Linux
 fixture callers pass 50 repetitions each, and all 20 macOS startup tests pass
-with the production release helper. Complete replacement gates and fresh
-reviews remain required; no push or delivery is claimed.
+with the production release helper. Fresh review of the next locally green
+candidate exposed a retained tmux cleanup blockage under capture-budget
+pressure. The integrated correction adds default-deny cleanup-only delivery:
+after full identity checks, failed close can act on already authenticated
+handles without discovery, retaining the original error and requiring complete
+quiescence on retry. Ordinary signaling suppresses duplicate fallback delivery.
+Focused Linux/macOS tests and strict lint pass; the native quota-pressure
+regression passes 20 repetitions without increasing quota or signaling unproved
+jobs. Complete replacement gates and three fresh reviews remain required;
+no push or delivery is claimed.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:

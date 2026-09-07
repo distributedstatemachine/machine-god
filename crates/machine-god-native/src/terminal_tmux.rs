@@ -111,6 +111,17 @@ impl TerminalTmuxIdentity {
 pub(crate) trait TerminalTmuxProcess: Send {
     fn validate(&mut self, identity: &TerminalTmuxIdentity) -> Result<()>;
     fn signal(&mut self, signal: TerminalSignal) -> Result<()>;
+    /// Cleanup-only progress after a failed close phase. Implementations must
+    /// check the complete retained identity and use only already authenticated
+    /// native handles, without discovery or treating success as quiescence.
+    /// The default grants no fallback authority to an arbitrary adapter.
+    fn signal_retained_cleanup(
+        &mut self,
+        _identity: &TerminalTmuxIdentity,
+        _signal: TerminalSignal,
+    ) -> Result<()> {
+        Err(TerminalTmuxError::Identity)
+    }
     /// Includes the original scope's descendants, not merely its shell leader.
     fn is_absent(&mut self) -> Result<bool>;
     /// Authenticated launcher/process outcome. tmux 3.2 does not expose a dead
@@ -765,6 +776,10 @@ pub(crate) struct TerminalTmuxBackend<C: TerminalTmuxControl, P: TerminalTmuxPro
     retired: bool,
 }
 impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalTmuxBackend<C, P> {
+    #[cfg(all(test, target_os = "linux"))]
+    pub(crate) fn process_for_test(&mut self) -> &mut P {
+        &mut self.process
+    }
     /// Blocking-owner preparation only. The caller has authenticated the raw
     /// capture peer and installed startup/cancellation ownership before entry.
     /// This constructor also serves recovery, but never creates process authority.
@@ -1095,6 +1110,33 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalTmuxBackend<C, P> {
         force: bool,
         output: &mut dyn FnMut(&[u8]),
     ) -> Result<TerminalPtyClose> {
+        let mut delivery_attempted = false;
+        let result = self.try_close_inner(force, output, &mut delivery_attempted);
+        if result.is_err() && !delivery_attempted {
+            // Command-abort, inventory, capture and outcome errors cannot
+            // revoke existing exact-process cleanup authority. In particular,
+            // retained live pins must be killable when discovery has exhausted
+            // its own descriptor budget. No new PID can be admitted here.
+            // Preserve the original failure and every cleanup obligation:
+            // delivery is not complete inventory, exit, or namespace absence.
+            let _ = self.process.signal_retained_cleanup(
+                self.control.identity(),
+                if force {
+                    TerminalSignal::Kill
+                } else {
+                    TerminalSignal::Terminate
+                },
+            );
+        }
+        result
+    }
+
+    fn try_close_inner(
+        &mut self,
+        force: bool,
+        output: &mut dyn FnMut(&[u8]),
+        delivery_attempted: &mut bool,
+    ) -> Result<TerminalPtyClose> {
         self.input_closed = true;
         if self.retired {
             return Ok(TerminalPtyClose {
@@ -1115,6 +1157,7 @@ impl<C: TerminalTmuxControl, P: TerminalTmuxProcess> TerminalTmuxBackend<C, P> {
         }
         if !self.process.is_absent()? {
             self.process.validate(self.control.identity())?;
+            *delivery_attempted = true;
             self.process.signal(if force {
                 TerminalSignal::Kill
             } else {
@@ -1357,6 +1400,8 @@ mod tests {
         dimensions: TerminalDimensions,
         commands: Vec<TerminalTmuxCommand>,
         signals: Vec<TerminalSignal>,
+        cleanup_signals: Vec<TerminalSignal>,
+        close_failure: Option<&'static str>,
         validations: usize,
         outcome_available: bool,
         signal_exits: bool,
@@ -1375,6 +1420,8 @@ mod tests {
                 dimensions: TerminalDimensions::new(24, 80).unwrap(),
                 commands: Vec::new(),
                 signals: Vec::new(),
+                cleanup_signals: Vec::new(),
+                close_failure: None,
                 validations: 0,
                 outcome_available: true,
                 signal_exits: true,
@@ -1442,6 +1489,9 @@ mod tests {
             Poll::Ready(Ok(TerminalTmuxReply { success, output }))
         }
         fn abort(&mut self) -> Result<()> {
+            if self.state.lock().unwrap().close_failure == Some("abort") {
+                return Err(TerminalTmuxError::Cleanup);
+            }
             self.pending.take();
             Ok(())
         }
@@ -1454,7 +1504,7 @@ mod tests {
         fn validate(&mut self, identity: &TerminalTmuxIdentity) -> Result<()> {
             let mut state = self.state.lock().unwrap();
             state.validations += 1;
-            if !state.allowed || identity != &self.id {
+            if !state.allowed || identity != &self.id || state.close_failure == Some("validate") {
                 return Err(TerminalTmuxError::Identity);
             }
             Ok(())
@@ -1465,6 +1515,9 @@ mod tests {
                 return Err(TerminalTmuxError::Identity);
             }
             state.signals.push(signal);
+            if state.close_failure == Some("signal") {
+                return Err(TerminalTmuxError::Command);
+            }
             if state.signal_exits {
                 state.absent = true;
                 state.status = TerminalPtyStatus::Signalled(if signal == TerminalSignal::Kill {
@@ -1476,7 +1529,24 @@ mod tests {
             Ok(())
         }
         fn is_absent(&mut self) -> Result<bool> {
-            Ok(self.state.lock().unwrap().absent)
+            let state = self.state.lock().unwrap();
+            if state.close_failure == Some("absence") {
+                return Err(TerminalTmuxError::Cleanup);
+            }
+            Ok(state.absent)
+        }
+        fn signal_retained_cleanup(
+            &mut self,
+            identity: &TerminalTmuxIdentity,
+            signal: TerminalSignal,
+        ) -> Result<()> {
+            let mut state = self.state.lock().unwrap();
+            if !state.allowed || identity != &self.id {
+                return Err(TerminalTmuxError::Identity);
+            }
+            state.cleanup_signals.push(signal);
+            // Retained delivery may itself fail; it never certifies absence.
+            Err(TerminalTmuxError::Command)
         }
         fn outcome(&mut self) -> Result<Option<TerminalPtyStatus>> {
             let state = self.state.lock().unwrap();
@@ -1947,6 +2017,74 @@ mod tests {
         state.lock().unwrap().signal_exits = false;
         backend.signal(TerminalSignal::Interrupt).unwrap();
         assert_eq!(state.lock().unwrap().signals, [TerminalSignal::Interrupt]);
+        finish(backend, peer, &state);
+    }
+
+    #[test]
+    fn default_cleanup_fallback_grants_no_adapter_authority() {
+        struct Adapter;
+        impl TerminalTmuxProcess for Adapter {
+            fn validate(&mut self, _: &TerminalTmuxIdentity) -> Result<()> {
+                panic!("no validation fallback")
+            }
+            fn signal(&mut self, _: TerminalSignal) -> Result<()> {
+                panic!("no signal fallback")
+            }
+            fn is_absent(&mut self) -> Result<bool> {
+                panic!("no observation fallback")
+            }
+            fn outcome(&mut self) -> Result<Option<TerminalPtyStatus>> {
+                panic!("no outcome fallback")
+            }
+        }
+        assert_eq!(
+            Adapter.signal_retained_cleanup(&identity(), TerminalSignal::Kill),
+            Err(TerminalTmuxError::Identity)
+        );
+    }
+
+    #[test]
+    fn failed_close_attempts_retained_cleanup_without_repeating_prior_delivery() {
+        for force in [false, true] {
+            for phase in ["abort", "validate", "absence", "signal"] {
+                let (mut backend, peer, state) = fixture();
+                state.lock().unwrap().close_failure = Some(phase);
+                let original_error = match phase {
+                    "validate" => TerminalTmuxError::Identity,
+                    "signal" => TerminalTmuxError::Command,
+                    _ => TerminalTmuxError::Cleanup,
+                };
+                assert_eq!(backend.close_inner(force, &mut |_| {}), Err(original_error));
+                let expected = if force {
+                    TerminalSignal::Kill
+                } else {
+                    TerminalSignal::Terminate
+                };
+                {
+                    let state = state.lock().unwrap();
+                    assert!(state.namespace_present && !state.absent);
+                    if phase == "signal" {
+                        assert_eq!(state.signals, [expected]);
+                        assert!(state.cleanup_signals.is_empty());
+                    } else {
+                        assert_eq!(state.cleanup_signals, [expected]);
+                        assert!(state.signals.is_empty());
+                    }
+                }
+                state.lock().unwrap().close_failure = None;
+                finish(backend, peer, &state);
+            }
+        }
+    }
+
+    #[test]
+    fn failed_close_never_turns_identity_rejection_into_retained_authority() {
+        let (mut backend, peer, state) = fixture();
+        state.lock().unwrap().allowed = false;
+        assert!(backend.close_inner(true, &mut |_| {}).is_err());
+        assert!(state.lock().unwrap().signals.is_empty());
+        assert!(state.lock().unwrap().cleanup_signals.is_empty());
+        state.lock().unwrap().allowed = true;
         finish(backend, peer, &state);
     }
 
