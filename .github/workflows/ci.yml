@@ -1357,7 +1357,11 @@ jobs:
           echo "MACHINE_GOD_TERMINAL_TMUX_BINARY=${tmux_binary}" >> "${GITHUB_ENV}"
       - name: Lint selected Apple bindings
         if: ${{ endsWith(matrix.target, '-apple-darwin') && needs.change-classification.outputs.terminal_sys == 'true' }}
-        run: cargo +"${RUST_TOOLCHAIN}" clippy --locked -p machine-god-terminal-sys --all-targets --all-features --target "${{ matrix.target }}" -- -D warnings
+        run: |
+          set -euo pipefail
+          xcrun clang -arch arm64 -fsyntax-only -Wall -Wextra -Werror crates/machine-god-terminal-sys/tests/process_inventory_abi.c
+          xcrun clang -arch x86_64 -fsyntax-only -Wall -Wextra -Werror crates/machine-god-terminal-sys/tests/process_inventory_abi.c
+          cargo +"${RUST_TOOLCHAIN}" clippy --locked -p machine-god-terminal-sys --all-targets --all-features --target "${{ matrix.target }}" -- -D warnings
       - name: Test target natively
         if: ${{ !endsWith(matrix.target, '-apple-darwin') }}
         env: &native-affected-packages

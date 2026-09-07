@@ -68,6 +68,13 @@ mod memory;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod native_tool_result_archive;
 mod open_file;
+#[cfg(target_os = "macos")]
+mod process_inventory_helper;
+#[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub use process_inventory_helper::{
+    PROCESS_INVENTORY_HELPER_ARGUMENT, run_process_inventory_helper,
+};
 mod read_file;
 mod read_tool_result;
 #[cfg(all(

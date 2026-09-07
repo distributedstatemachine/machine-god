@@ -96,6 +96,36 @@ impl std::fmt::Debug for TerminalCapturedExec {
 }
 
 impl TerminalCapturedExec {
+    /// Supplies an explicit private PID-inventory helper for macOS session cleanup.
+    /// Construction is inert. Without this capability, the existing ps collector
+    /// remains available to legacy callers; a selected helper failure never falls back.
+    ///
+    /// # Errors
+    /// Returns [`TerminalCapturedExecError::Invalid`] for an invalid helper specification.
+    #[cfg(target_os = "macos")]
+    pub fn with_process_inventory_helper(
+        mut self,
+        program: PathBuf,
+        arguments: Vec<OsString>,
+    ) -> Result<Self, TerminalCapturedExecError> {
+        let inventory =
+            crate::process_inventory_helper::ProcessInventoryHelper::new(program, arguments)
+                .map_err(|_| TerminalCapturedExecError::Invalid)?;
+        self.helper = Arc::new(
+            self.helper
+                .as_ref()
+                .clone()
+                .with_inventory_helper(inventory),
+        );
+        Ok(self)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_test_inventory_helper(mut self) -> Self {
+        self.helper = Arc::new(self.helper.as_ref().clone().with_test_inventory_helper());
+        self
+    }
+
     /// Creates an inert executor for an explicit absolute private-helper program.
     /// Timeout is 1ms–600s and simultaneous executions are bounded to 1–16.
     ///
@@ -421,7 +451,7 @@ fn run(
     let flags = rustix::fs::fcntl_getfl(&stdout).map_err(|_| TerminalCapturedExecError::Process)?;
     rustix::fs::fcntl_setfl(&stdout, flags | OFlags::NONBLOCK)
         .map_err(|_| TerminalCapturedExecError::Process)?;
-    let mut guard = TerminalChildGuard::reserve(cancellation)
+    let mut guard = TerminalChildGuard::reserve_for_helper(cancellation, helper)
         .map_err(|_| TerminalCapturedExecError::Process)?;
     let helper_deadline = match encode_helper_deadline(deadline, MAX_TERMINAL_EXEC_DURATION) {
         Ok(stamp) => stamp,
@@ -931,7 +961,8 @@ mod tests {
                         "--quiet".into(),
                     ],
                 )
-                .unwrap(),
+                .unwrap()
+                .with_test_inventory_helper(),
             );
             fixture.harness = true;
             fixture
@@ -980,7 +1011,8 @@ mod tests {
                     timeout,
                     2,
                 )
-                .unwrap(),
+                .unwrap()
+                .with_test_inventory_helper(),
                 harness,
             }
         }
@@ -1119,6 +1151,7 @@ mod tests {
             2,
         )
         .unwrap()
+        .with_test_inventory_helper()
         .with_worker_scope(scope.clone());
         let prepare = |_, _: &CancellationToken, _: &CancellationToken| {
             panic!("closed or unpolled scope must not prepare authority")

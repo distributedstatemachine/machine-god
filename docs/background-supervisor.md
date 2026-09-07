@@ -378,8 +378,12 @@ its work linear in captured members plus wait iterations. Reaching the fixed
 disappearance deadline with any captured member unresolved fails cleanup even
 when the final original-group snapshot contains only the leader. The unreaped
 leader reserves the original group identity throughout. A raced or previously
-uncaptured survivor makes the final proof fail closed. macOS retains its fixed
-`/bin/ps` adapter with a 64 KiB output bound and one 250 ms deadline shared by
+uncaptured survivor makes the final proof fail closed. macOS group-only scans
+retain the fixed `/bin/ps` adapter. Explicitly helper-equipped terminal session
+scans instead use the bounded read-only query in
+[ADR 0004](decisions/0004-macos-process-inventory-helper.md); legacy hosts without
+that capability retain `ps`, and a selected helper failure never falls back.
+Both paths retain a 64 KiB output bound and one 250 ms deadline shared by
 nonblocking pipe reads and child observation. Before pipe EOF, readiness waits
 wake collection when output arrives; after EOF, bounded backoff observes exact
 child reaping without spinning on pipe hangup. Actual byte progress and the

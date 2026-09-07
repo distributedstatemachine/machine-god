@@ -219,6 +219,8 @@ impl PinnedProcess {
 
 /// Exclusive live authority; deliberately neither serializable nor clonable.
 pub(crate) struct AuthenticatedTerminalProcess {
+    #[cfg(target_os = "macos")]
+    inventory: Option<crate::process_inventory_helper::ProcessInventoryHelper>,
     budget: CaptureBudget,
     root: PinnedProcess,
     anchor: Option<PinnedProcess>,
@@ -231,6 +233,15 @@ pub(crate) struct AuthenticatedTerminalProcess {
 }
 
 impl AuthenticatedTerminalProcess {
+    #[cfg(target_os = "macos")]
+    pub(crate) fn with_inventory_helper(
+        mut self,
+        helper: Option<&crate::process_inventory_helper::ProcessInventoryHelper>,
+    ) -> Self {
+        self.inventory = helper.cloned();
+        self
+    }
+
     #[cfg(all(test, target_os = "linux"))]
     pub(crate) fn exhaust_capture_budget_for_test(&mut self) {
         self.budget.descriptors.operation_maximum = self
@@ -263,6 +274,8 @@ impl AuthenticatedTerminalProcess {
         require_time(deadline, cancellation)?;
         Ok(Self {
             budget,
+            #[cfg(target_os = "macos")]
+            inventory: None,
             root,
             anchor: None,
             members: Vec::new(),
@@ -377,8 +390,13 @@ impl AuthenticatedTerminalProcess {
             )?
         };
         #[cfg(target_os = "macos")]
-        let snapshot =
-            capture_macos_scope_members(&mut self.members, anchor, self.root.pid, deadline)?;
+        let snapshot = capture_macos_scope_members(
+            self.inventory.as_ref(),
+            &mut self.members,
+            anchor,
+            self.root.pid,
+            deadline,
+        )?;
         let empty_inventory = snapshot.iter().all(|member| member.pid == anchor.pid);
         let mut known = retain_pending_members(&mut self.members, anchor, self.root.pid, deadline)?;
         for member in snapshot {
@@ -529,13 +547,14 @@ impl AuthenticatedTerminalProcess {
 
 #[cfg(target_os = "macos")]
 fn capture_macos_scope_members(
+    inventory: Option<&crate::process_inventory_helper::ProcessInventoryHelper>,
     members: &mut Vec<PinnedProcess>,
     anchor: &PinnedProcess,
     session: rustix::process::Pid,
     deadline: Instant,
 ) -> Result<Vec<super::CapturedGroupMember>, BackgroundProcessError> {
     let mut known = retain_pending_members(members, anchor, session, deadline)?;
-    macos_scope_members_with(session, true, |member, identity| {
+    macos_scope_members_with(inventory, session, true, |member, identity| {
         if member.pid == session || member.pid == anchor.pid || known.contains(&member.pid) {
             return Ok(());
         }
@@ -923,13 +942,17 @@ mod tests {
         }
 
         fn authenticate(&mut self) -> Result<AuthenticatedTerminalProcess, BackgroundProcessError> {
-            AuthenticatedTerminalProcess::authenticate(
+            let authority = AuthenticatedTerminalProcess::authenticate(
                 NonZeroU32::new(self.child.id()).unwrap(),
                 &mut self.gate,
                 NONCE,
                 Instant::now() + Duration::from_secs(5),
                 &CancellationToken::new(),
-            )
+            )?;
+            #[cfg(target_os = "macos")]
+            let authority = authority
+                .with_inventory_helper(Some(&crate::process_inventory_helper::test_helper()));
+            Ok(authority)
         }
 
         fn release(&mut self, mode: u8) -> u32 {

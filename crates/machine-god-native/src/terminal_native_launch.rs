@@ -160,7 +160,7 @@ impl ResolvedTerminalNativeLaunch {
                     cwd: authority.cwd,
                     artifacts: authority.artifacts,
                     artifact_path: authority.artifact_path,
-                    marker_helper: copy_helper(&config.marker_helper)?,
+                    marker_helper: config.marker_helper.clone(),
                     dimensions,
                     timeout: MAX_STARTUP_TIMEOUT,
                 };
@@ -192,8 +192,8 @@ impl ResolvedTerminalNativeLaunch {
                 .map_err(startup_error)?;
                 let request = TerminalTmuxLaunchRequest {
                     executable: tmux.executable.clone(),
-                    helper: copy_helper(&tmux.pane_helper)?,
-                    capture_helper: copy_helper(&tmux.capture_helper)?,
+                    helper: tmux.pane_helper.clone(),
+                    capture_helper: tmux.capture_helper.clone(),
                     program: bootstrap.program().into(),
                     arguments: bootstrap.arguments().to_vec(),
                     initial_source: bootstrap.startup_source().map(str::to_owned),
@@ -337,10 +337,6 @@ fn tmux_error(error: TerminalTmuxLaunchError) -> TerminalNativeLaunchError {
 fn process_error(_: impl fmt::Debug) -> TerminalNativeLaunchError {
     TerminalNativeLaunchError::Process
 }
-fn copy_helper(helper: &TerminalPtyHelper) -> Result<TerminalPtyHelper> {
-    TerminalPtyHelper::new(helper.program().to_owned(), helper.arguments().to_vec())
-        .map_err(process_error)
-}
 fn validate_cwd(descriptor: &OwnedFd, path: &str) -> Result<()> {
     let held = rustix::fs::fstat(descriptor).map_err(process_error)?;
     let observed = rustix::fs::statat(rustix::fs::CWD, path, AtFlags::SYMLINK_NOFOLLOW)
@@ -406,7 +402,9 @@ mod tests {
 
     fn helper(mode: &str, entry: &str) -> TerminalPtyHelper {
         if let Some(program) = std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY") {
-            return TerminalPtyHelper::new(program.into(), vec![mode.into()]).unwrap();
+            return TerminalPtyHelper::new(program.into(), vec![mode.into()])
+                .unwrap()
+                .with_test_inventory_helper();
         }
         let program = std::env::current_exe().unwrap();
         if mode == crate::terminal_tmux_helper::TERMINAL_TMUX_HELPER_ARGUMENT {
@@ -418,7 +416,8 @@ mod tests {
                 "/bin/sh".into(),
                 vec!["-c".into(), script.into(), "helper".into()],
             )
-            .unwrap();
+            .unwrap()
+            .with_test_inventory_helper();
         }
         TerminalPtyHelper::new(
             program,
@@ -430,6 +429,7 @@ mod tests {
             ],
         )
         .unwrap()
+        .with_test_inventory_helper()
     }
     fn config() -> TerminalNativeLaunchConfig {
         #[cfg(target_os = "linux")]

@@ -1176,6 +1176,19 @@ fn classify_provider_error(error: &ProviderError) -> ModelsOperationalFailure {
 }
 
 fn main() -> ExitCode {
+    #[cfg(target_os = "macos")]
+    if is_exact_helper_arguments(
+        env::args_os().skip(1),
+        machine_god_native::PROCESS_INVENTORY_HELPER_ARGUMENT,
+    ) {
+        return ExitCode::from(
+            if machine_god_native::run_process_inventory_helper().is_ok() {
+                0
+            } else {
+                125
+            },
+        );
+    }
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     if is_exact_helper_arguments(
         env::args_os().skip(1),
@@ -6011,6 +6024,8 @@ mod tests {
     #[test]
     fn private_terminal_helpers_require_exact_single_argument_without_normal_cli_dispatch() {
         for helper in [
+            #[cfg(target_os = "macos")]
+            machine_god_native::PROCESS_INVENTORY_HELPER_ARGUMENT,
             machine_god_native::TERMINAL_CAPTURED_HELPER_ARGUMENT,
             machine_god_native::TERMINAL_PTY_HELPER_ARGUMENT,
             machine_god_native::TERMINAL_STARTUP_MARKER_ARGUMENT,

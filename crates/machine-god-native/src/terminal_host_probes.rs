@@ -994,7 +994,9 @@ mod tests {
                 }))
                 .unwrap();
             let captured = Arc::new(
-                TerminalCapturedExec::new(program, arguments, Duration::from_secs(10), 16).unwrap(),
+                TerminalCapturedExec::new(program, arguments, Duration::from_secs(10), 16)
+                    .unwrap()
+                    .with_test_inventory_helper(),
             );
             Self {
                 path,

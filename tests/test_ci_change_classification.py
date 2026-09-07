@@ -892,6 +892,16 @@ class CiChangeClassificationTests(unittest.TestCase):
             '--all-features --target "${{ matrix.target }}" -- -D warnings',
             matrix,
         )
+        apple_binding_script = step_script(matrix, "Lint selected Apple bindings")
+        self.assertIn("set -euo pipefail", apple_binding_script)
+        for architecture in ("arm64", "x86_64"):
+            self.assertIn(
+                f"xcrun clang -arch {architecture} -fsyntax-only "
+                "-Wall -Wextra -Werror "
+                "crates/machine-god-terminal-sys/tests/process_inventory_abi.c",
+                apple_binding_script,
+            )
+        self.assertNotIn("xcrun clang", quality)
         self.assertIn("terminal_unicode_tests == 'true'", quality)
         self.assertIn("tests/test_terminal_unicode_generator.py", quality)
         pinned = step_script(quality, "Check pinned upstream compatibility inventory")

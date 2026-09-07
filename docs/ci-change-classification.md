@@ -35,6 +35,9 @@ to the terminal-sys source or manifest select terminal-sys, native, and CLI;
 its tests, examples, and benchmarks select terminal-sys only. Selected
 terminal-sys checks include warnings-denied Clippy on both Apple runners, where
 the macOS-only implementation and its unsafe-block lint are actually compiled.
+That same selected step checks the process-inventory C ABI fixture against both
+ARM64 and x86_64 SDK layouts using syntax-only compiler assertions. C is a test
+input, not a product build or runtime dependency.
 All workspace manifests select the native-manifest agreement tests, which
 verify the isolated binding exception and product lint inheritance.
 Changes confined to a crate's tests, examples, or benchmarks select that crate

@@ -19,7 +19,9 @@ The production dependency direction is `machine-god-cli` to
 does not depend on the other workspace crates. Unsafe Rust is forbidden in the
 product crates, with one isolated macOS OS-binding exception in
 `machine-god-terminal-sys` described by
-[ADR 0003](decisions/0003-macos-terminal-foreground-signal.md).
+[ADR 0003](decisions/0003-macos-terminal-foreground-signal.md) and the fixed
+read-only helper query in
+[ADR 0004](decisions/0004-macos-process-inventory-helper.md).
 
 ## Core composition
 

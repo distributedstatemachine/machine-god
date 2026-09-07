@@ -481,8 +481,38 @@ impl Write for DescriptorIo<'_> {
 pub(crate) struct TerminalPtyHelper {
     program: PathBuf,
     arguments: Vec<OsString>,
+    #[cfg(target_os = "macos")]
+    inventory: Option<crate::process_inventory_helper::ProcessInventoryHelper>,
 }
 impl TerminalPtyHelper {
+    #[cfg(target_os = "macos")]
+    pub(crate) fn with_inventory_helper(
+        mut self,
+        helper: crate::process_inventory_helper::ProcessInventoryHelper,
+    ) -> Self {
+        self.inventory = Some(helper);
+        self
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn inventory_helper(
+        &self,
+    ) -> Option<&crate::process_inventory_helper::ProcessInventoryHelper> {
+        self.inventory.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_test_inventory_helper(self) -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            self.with_inventory_helper(crate::process_inventory_helper::test_helper())
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            self
+        }
+    }
+
     pub(crate) fn program(&self) -> &std::path::Path {
         &self.program
     }
@@ -502,7 +532,12 @@ impl TerminalPtyHelper {
         {
             return Err(error(TerminalHelperErrorKind::InvalidRequest));
         }
-        Ok(Self { program, arguments })
+        Ok(Self {
+            program,
+            arguments,
+            #[cfg(target_os = "macos")]
+            inventory: None,
+        })
     }
 }
 

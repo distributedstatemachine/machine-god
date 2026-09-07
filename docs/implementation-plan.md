@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `complete replacement pinned local checks, three fresh independent reviews and exact remote gates for the Ubuntu zsh completion-permission correction`
+- Next gate: `complete replacement pinned local checks, three fresh independent reviews and exact remote gates for the macOS session-inventory helper and Ubuntu zsh correction`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -171,7 +171,16 @@ repairing only `/usr/share/zsh` permissions. CI now performs that bounded repair
 and a noninteractive completion audit in both Linux shell-provisioning paths;
 no product or profile behavior changes. The repaired representative environment
 passes all 1,476 native tests concurrently and all 15 CI regressions pass.
-Main remains unchanged; replacement gates are required. No delivery is claimed.
+The same candidate's Intel macOS CI job fails two session-inventory collectors
+at their original 250 ms deadline. Bounded local ARM/Rosetta checks do not
+reproduce those exact failures, but isolate substantial avoidable `ps`
+task/thread work. A fixed read-only query in a separately owned helper is
+integrated under ADR 0004, retaining collection bounds and identity checks.
+Focused serial macOS PTY/tmux/captured and collector tests pass 81 cases with
+three helper ignores, with strict native/CLI lint green on both platforms.
+A separate local ARM startup-frame timeout remains unresolved and is not
+claimed fixed by the inventory change. Main remains unchanged; replacement
+gates are required. No delivery is claimed.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:
@@ -224,9 +233,10 @@ remain part of this feature; piped input does not complete it.
 - `machine-god-cli` is a thin host and owns no product state.
 - `machine-god-testkit` owns deterministic test doubles and fixtures.
 - Unsafe Rust is forbidden in the product crates. The isolated macOS
-  PTY, exact process-incarnation and fixed uptime-clock bindings are the sole
-  exception under
-  [ADR 0003](decisions/0003-macos-terminal-foreground-signal.md); it remains subject
+  PTY, exact process-incarnation, fixed uptime-clock and read-only inventory
+  bindings are the sole exception under
+  [ADR 0003](decisions/0003-macos-terminal-foreground-signal.md) and
+  [ADR 0004](decisions/0004-macos-process-inventory-helper.md); they remain subject
   to the full terminal feature's adversarial and platform gates.
 - Constructors and futures must preserve the documented inert-before-poll,
   cancellation, resource-bound, redaction, and authority invariants.

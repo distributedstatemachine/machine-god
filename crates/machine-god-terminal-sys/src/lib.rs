@@ -1,12 +1,18 @@
 //! Narrow OS binding unavailable through the pinned safe dependencies.
 //!
 //! See docs/decisions/0003-macos-terminal-foreground-signal.md in the repository.
+//! Read-only process enumeration is separately scoped by ADR 0004.
 //! All orchestration, process ownership and permission policy stay in native.
 
 #[cfg(target_os = "macos")]
 mod process_identity;
 #[cfg(target_os = "macos")]
 pub use process_identity::ProcessIdentity;
+
+#[cfg(target_os = "macos")]
+mod process_inventory;
+#[cfg(target_os = "macos")]
+pub use process_inventory::process_ids;
 
 #[cfg(target_os = "macos")]
 use std::{

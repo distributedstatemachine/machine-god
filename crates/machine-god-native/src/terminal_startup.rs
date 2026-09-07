@@ -1091,7 +1091,8 @@ mod tests {
                 program,
                 vec![crate::terminal_helper::TERMINAL_PTY_HELPER_ARGUMENT.into()],
             )
-            .unwrap();
+            .unwrap()
+            .with_test_inventory_helper();
         }
         TerminalPtyHelper::new(
             std::env::current_exe().unwrap(),
@@ -1103,6 +1104,7 @@ mod tests {
             ],
         )
         .unwrap()
+        .with_test_inventory_helper()
     }
     fn marker_helper() -> TerminalPtyHelper {
         if let Some(program) = std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY") {
@@ -1232,7 +1234,9 @@ mod tests {
             helper.program().as_os_str().to_owned(),
         ];
         arguments.extend_from_slice(helper.arguments());
-        TerminalPtyHelper::new("/bin/sh".into(), arguments).unwrap()
+        TerminalPtyHelper::new("/bin/sh".into(), arguments)
+            .unwrap()
+            .with_test_inventory_helper()
     }
 
     struct RegisteredStartup {

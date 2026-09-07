@@ -797,7 +797,9 @@ mod tests {
     }
     fn helper(mode: &str, entry: &str) -> TerminalPtyHelper {
         if let Some(program) = std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY") {
-            TerminalPtyHelper::new(program.into(), vec![mode.into()]).unwrap()
+            TerminalPtyHelper::new(program.into(), vec![mode.into()])
+                .unwrap()
+                .with_test_inventory_helper()
         } else {
             TerminalPtyHelper::new(
                 std::env::current_exe().unwrap(),
@@ -809,6 +811,7 @@ mod tests {
                 ],
             )
             .unwrap()
+            .with_test_inventory_helper()
         }
     }
     fn config() -> TerminalNativeLaunchConfig {

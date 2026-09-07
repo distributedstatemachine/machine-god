@@ -144,6 +144,10 @@ or caller drop. The private CLI helper accepts only its exact single flag before
 normal configuration. Its bounded, close-on-exec error channel distinguishes a
 missing/non-executable shell from a command that legitimately exits with 125;
 launch failure is never guessed from an exit status or stderr content.
+The additive `with_process_inventory_helper` builder supplies an explicit
+inventory executable and bounded arguments for macOS session cleanup. Existing
+constructors remain available without that capability; the complete reference
+host supplies it from its explicitly selected CLI helper path.
 The configured 1 ms–600 s timeout begins at first poll and includes worker
 admission, authorized directory/environment preparation, private helper startup
 and exec confirmation. Preparation and descriptor consumption run on the same
@@ -211,6 +215,11 @@ reaping the shell. Linux retains process identities through pidfds. On macOS,
 foreground signaling uses the retained PTY master, while background job-control
 cleanup uses separately verified session-member incarnations, not numeric-PID
 signals. See [ADR 0003](decisions/0003-macos-terminal-foreground-signal.md).
+Explicitly helper-equipped macOS terminal hosts collect session PID hints through
+the bounded read-only private helper in
+[ADR 0004](decisions/0004-macos-process-inventory-helper.md), avoiding `ps`
+task/thread inspection. Legacy constructors without the capability retain their
+existing inventory path; a configured helper failure never falls back to `ps`.
 macOS session inventory rejects unrelated session IDs before querying process
 incarnations. A candidate still needs matching identity captures around a
 second session-membership check; the preliminary check grants no authority.

@@ -105,16 +105,21 @@ impl PreparedHost {
         workers: &NativeOwnedWorkerScope,
     ) -> Result<Self, ToolError> {
         let deadline = Instant::now() + START_TIMEOUT;
-        let captured = Arc::new(
-            TerminalCapturedExec::new(
+        let captured = TerminalCapturedExec::new(
+            inputs.cli_executable.clone(),
+            vec![TERMINAL_CAPTURED_HELPER_ARGUMENT.into()],
+            FOREGROUND_TIMEOUT,
+            MAX_EFFECTS,
+        )
+        .map_err(|_| unavailable())?;
+        #[cfg(target_os = "macos")]
+        let captured = captured
+            .with_process_inventory_helper(
                 inputs.cli_executable.clone(),
-                vec![TERMINAL_CAPTURED_HELPER_ARGUMENT.into()],
-                FOREGROUND_TIMEOUT,
-                MAX_EFFECTS,
+                vec![crate::PROCESS_INVENTORY_HELPER_ARGUMENT.into()],
             )
-            .map_err(|_| unavailable())?
-            .with_worker_scope(workers.clone()),
-        );
+            .map_err(|_| unavailable())?;
+        let captured = Arc::new(captured.with_worker_scope(workers.clone()));
         let host = Arc::new(
             TerminalHostAuthority::new(inputs)?
                 .capture_on_worker(deadline, &CancellationToken::new())?,

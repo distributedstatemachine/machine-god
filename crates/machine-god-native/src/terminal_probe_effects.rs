@@ -959,7 +959,9 @@ mod tests {
                     },
                 );
             let captured = Arc::new(
-                TerminalCapturedExec::new(program, arguments, Duration::from_secs(20), 4).unwrap(),
+                TerminalCapturedExec::new(program, arguments, Duration::from_secs(20), 4)
+                    .unwrap()
+                    .with_test_inventory_helper(),
             );
             Self {
                 root,

@@ -4,6 +4,19 @@
 mod background_input;
 #[path = "../src/background_process.rs"]
 mod background_process;
+#[cfg(target_os = "macos")]
+#[allow(
+    dead_code,
+    reason = "shared private inventory protocol is exercised through lifecycle ownership"
+)]
+#[path = "../src/process_inventory_helper.rs"]
+mod process_inventory_helper;
+#[allow(
+    dead_code,
+    reason = "shared private helper dependency for the directly included lifecycle implementation"
+)]
+#[path = "../src/terminal_helper.rs"]
+mod terminal_helper;
 
 use background_process::BackgroundProcessHelper;
 use background_process::{

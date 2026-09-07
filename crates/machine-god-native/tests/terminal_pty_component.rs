@@ -17,6 +17,11 @@ mod terminal_action_parse {
 mod background_input;
 #[path = "../src/background_process.rs"]
 mod background_process;
+#[cfg(target_os = "macos")]
+#[path = "../src/process_inventory_helper.rs"]
+mod process_inventory_helper;
+#[cfg(target_os = "macos")]
+use process_inventory_helper::PROCESS_INVENTORY_HELPER_ARGUMENT;
 #[path = "../src/terminal_catalog.rs"]
 mod terminal_catalog;
 #[path = "../src/terminal_catalog_view.rs"]

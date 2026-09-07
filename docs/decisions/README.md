@@ -6,3 +6,4 @@ alternatives, consequences, and verification implications.
 - [0001: CI and toolchain](0001-ci-and-toolchain.md)
 - [0002: test-only reentrant RawWaker fixture](0002-reentrant-raw-waker-test-fixture.md)
 - [0003: macOS identity-bound terminal control bindings](0003-macos-terminal-foreground-signal.md)
+- [0004: bounded macOS process inventory helper](0004-macos-process-inventory-helper.md)

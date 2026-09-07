@@ -265,7 +265,7 @@ impl PreparedTerminalPty {
         let mut guard = prepare_step!(
             deadline,
             "reaping-admission",
-            TerminalChildGuard::reserve(cancellation)
+            TerminalChildGuard::reserve_for_helper(cancellation, helper)
         )
         .map_err(process_error)?;
         let mut command = Command::new(helper.program());
@@ -890,7 +890,8 @@ mod tests {
                 program,
                 vec![crate::terminal_helper::TERMINAL_PTY_HELPER_ARGUMENT.into()],
             )
-            .unwrap();
+            .unwrap()
+            .with_test_inventory_helper();
         }
         TerminalPtyHelper::new(
             std::env::current_exe().unwrap(),
@@ -902,6 +903,7 @@ mod tests {
             ],
         )
         .unwrap()
+        .with_test_inventory_helper()
     }
 
     #[test]

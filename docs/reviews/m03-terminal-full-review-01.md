@@ -589,3 +589,62 @@ formatting and diff checks pass; the new regression rejects missing repair.
 Diagnostic container/configuration is removed and shared binaries are unchanged.
 Complete replacement local checks, three fresh reviews and exact remote gates
 remain required.
+
+## Bounded macOS inventory replacement after `b7f69b4`
+
+CI `34137286794` ultimately fails on Intel macOS too: job `101791132224`
+reports collector expiration at 253.454726 ms in
+`real_factory_retains_full_command_and_large_paste` and 253.513073 ms in
+`real_tmux_shared_bootstrap_preserves_profiles_and_durable_command_gate`.
+The native result is 1,401 passes, two failures and five helper ignores in
+296.65 seconds. Its ARM macOS counterpart passes. Benchmark success does not
+override these failures, and main does not advance.
+
+Ubuntu repair is integrated as `b7f69b466de7c712e5dc48fbc119af5bf4cd5ed5`.
+Replacement prerequisites and default-concurrent Linux native 1,476/six ignores
+and CLI 141/four ignores pass. The full macOS/review/remote replacement gate is
+held for bounded inventory diagnosis; that candidate is not pushed or sealed.
+
+Local ARM and Rosetta runs of the two exact Intel-failing fixtures pass.
+Rosetta is not native Intel CI evidence. A production-helper ARM terminal sweep
+passes 657 cases with five ignores but fails separately in
+`dropped_pty_retains_scope_until_quarantined_cleanup_converges`: the original
+startup deadline expires before frame writing. No inventory failure is reported
+in that sweep. This separate timeout is not attributed to the inventory fix.
+
+Thirty ARM observations during an x86_64 diagnostic build, with about 1,381
+processes, measure `/bin/ps` at 31.67/36.78/51.57 ms min/median/max and fixed
+`KERN_PROC_ALL` at 0.102/0.105/0.596 ms. Raw records occupy 894,888 bytes;
+PID text is about 8.3 KiB. Source inspection confirms avoidable ps task/thread
+queries. These observations motivate removing that work, not an exclusive
+timeout-cause claim or an M07 threshold claim. Temporary diagnostics are removed.
+
+Binding component `2cb1a0c921cb4a3d3c1a1e7113c0481f40468e96` adds the fixed
+read-only query under the new narrow ADR 0004. It has an 8 MiB initialized
+scratch cap, at most three data attempts and no partial-error publication.
+Fifteen binding tests, strict exact-1.94.1 ARM64/x86_64 lint and both SDK ABI
+assertions pass. The retained C fixture is wired into the existing selected
+Apple-binding CI step. Its isolated worktree is integrated and removed.
+Native/CLI capability wiring and complete replacement gates remain required;
+no candidate acceptance or delivery is asserted by this component evidence.
+
+The native integration's focused inventory group passes 11 tests in 0.65 seconds,
+and the CLI exact-private-flag case passes. A broader 84-selection macOS run
+is accidentally executed concurrently: 59 pass, 22 fail and three helpers are
+ignored, with multiple collector timeouts. The unchanged code then passes the
+same selections under the configured macOS CI policy (`--test-threads=1`):
+81 pass, three helper ignores, no failures in 65.73 seconds. This includes both
+earlier Intel-failing fixtures, PTY/captured/tmux ownership, prefix retention and
+ten collector regressions. No deadline or production edits intervene. Concurrent
+test contention is not proof of the original serial Intel timeout's cause.
+Strict exact-1.94.1 native/CLI lint passes on macOS and Linux; the Linux cache is
+package-cleaned before checking and its temporary container is removed.
+
+Native/CLI component `bffc330f144df0f3fda3b6567ee7aa878dfe89bc` explicitly wires
+the private helper through both cleanup ownership paths, preserves full helper
+clones and legacy no-capability/group-only behavior, and rejects malformed
+helper output before identity admission. Source-included background and PTY
+component harnesses each pass five selected tests (0.94 and 0.93 seconds).
+Formatting and diff checks pass; all worker processes stop and its clean,
+integrated worktree is removed. Fresh release execution, the complete local
+gate, three independent reviews and exact remote proof remain required.

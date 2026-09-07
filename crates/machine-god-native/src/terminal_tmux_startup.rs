@@ -544,7 +544,7 @@ impl PreparedTerminalTmuxLaunch {
         mut self,
         cancellation: &CancellationToken,
     ) -> Result<NativeTerminalTmuxBackend> {
-        let mut authority = AuthenticatedTerminalProcess::authenticate(
+        let authority = AuthenticatedTerminalProcess::authenticate(
             self.pane.identity.pid(),
             &mut self.pane.channel,
             &self.pane.nonce,
@@ -552,6 +552,9 @@ impl PreparedTerminalTmuxLaunch {
             cancellation,
         )
         .map_err(process_error)?;
+        #[cfg(target_os = "macos")]
+        let authority = authority.with_inventory_helper(self.server.helper.inventory_helper());
+        let mut authority = authority;
         authority.retain_self_as_anchor().map_err(process_error)?;
         self.pane.challenged = true;
         let (control, capture) = self.commit(cancellation)?;
@@ -1185,7 +1188,8 @@ mod tests {
                 PathBuf::from(program),
                 vec![TERMINAL_TMUX_HELPER_ARGUMENT.into()],
             )
-            .unwrap();
+            .unwrap()
+            .with_test_inventory_helper();
         }
         let program = std::env::current_exe().unwrap();
         let script = format!(
@@ -1197,6 +1201,7 @@ mod tests {
             vec!["-c".into(), script.into(), "helper".into()],
         )
         .unwrap()
+        .with_test_inventory_helper()
     }
 
     fn marker_helper() -> TerminalPtyHelper {

@@ -107,11 +107,11 @@ const GROUP_SNAPSHOT_INITIAL_INTERVAL: Duration = Duration::from_millis(10);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const GROUP_SNAPSHOT_MAX_INTERVAL: Duration = Duration::from_millis(100);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-const GROUP_SNAPSHOT_TIMEOUT: Duration = Duration::from_millis(250);
+pub(crate) const GROUP_SNAPSHOT_TIMEOUT: Duration = Duration::from_millis(250);
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-const MAX_GROUP_SNAPSHOT_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_GROUP_SNAPSHOT_BYTES: usize = 64 * 1024;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-const MAX_CAPTURED_GROUP_MEMBERS: usize = 32 * 1024;
+pub(crate) const MAX_CAPTURED_GROUP_MEMBERS: usize = 32 * 1024;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_SIGNAL_TREE_PROCESSES: usize = 32 * 1024;
 #[cfg(target_os = "linux")]
@@ -2518,6 +2518,29 @@ pub(crate) struct TerminalChildGuard {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl TerminalChildGuard {
+    pub(crate) fn reserve_for_helper(
+        cancellation: &CancellationToken,
+        helper: &crate::terminal_helper::TerminalPtyHelper,
+    ) -> Result<Self, BackgroundProcessError> {
+        let guard = Self::reserve(cancellation)?;
+        #[cfg(target_os = "macos")]
+        let guard = guard.with_inventory_helper(helper.inventory_helper());
+        #[cfg(not(target_os = "macos"))]
+        let _ = helper;
+        Ok(guard)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn with_inventory_helper(
+        mut self,
+        helper: Option<&crate::process_inventory_helper::ProcessInventoryHelper>,
+    ) -> Self {
+        self.authority = Arc::new(GroupSnapshotAuthority {
+            inventory: helper.cloned(),
+        });
+        self
+    }
+
     pub(crate) fn reserve(
         cancellation: &CancellationToken,
     ) -> Result<Self, BackgroundProcessError> {
@@ -2525,7 +2548,7 @@ impl TerminalChildGuard {
         #[cfg(target_os = "linux")]
         let authority = GroupSnapshotAuthority::open()?;
         #[cfg(target_os = "macos")]
-        let authority = GroupSnapshotAuthority;
+        let authority = GroupSnapshotAuthority::default();
         Ok(Self {
             child: None,
             reap_permit: Some(reserve_child_reap_authority()?),
@@ -2681,8 +2704,7 @@ impl TerminalCleanup {
         }
         #[cfg(target_os = "macos")]
         {
-            let _ = authority;
-            let result = macos_terminal_scope_members(group, &mut self.captured);
+            let result = macos_terminal_scope_members(authority, group, &mut self.captured);
             if !self.captured.members.is_empty() {
                 self.phase = TerminalCleanupPhase::Captured;
             }
@@ -2793,7 +2815,7 @@ impl TerminalCleanup {
         }
         #[cfg(target_os = "macos")]
         require_original_group_quiescent_with(group, authority, &mut self.captured, |captured| {
-            macos_terminal_scope_members(group, captured)
+            macos_terminal_scope_members(authority, group, captured)
         })
     }
 }
@@ -2810,10 +2832,11 @@ fn require_cleanup_leader(group: rustix::process::Pid) -> Result<(), BackgroundP
 
 #[cfg(target_os = "macos")]
 fn macos_terminal_scope_members(
+    authority: &GroupSnapshotAuthority,
     group: rustix::process::Pid,
     captured: &mut CapturedMemberUnion,
 ) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
-    macos_scope_members_with(group, true, |member, _| {
+    macos_scope_members_with(authority.inventory.as_ref(), group, true, |member, _| {
         require_cleanup_leader(group)?;
         captured.retain(vec![member])
     })
@@ -3495,7 +3518,9 @@ struct GroupSnapshotAuthority {
 
 #[cfg(target_os = "macos")]
 #[derive(Default)]
-struct GroupSnapshotAuthority;
+struct GroupSnapshotAuthority {
+    inventory: Option<crate::process_inventory_helper::ProcessInventoryHelper>,
+}
 
 #[cfg(target_os = "linux")]
 impl GroupSnapshotAuthority {
@@ -3851,7 +3876,7 @@ fn prepare_system(
     #[cfg(target_os = "linux")]
     let snapshot_authority = GroupSnapshotAuthority::open()?;
     #[cfg(target_os = "macos")]
-    let snapshot_authority = GroupSnapshotAuthority;
+    let snapshot_authority = GroupSnapshotAuthority::default();
     let snapshot_authority = Arc::new(snapshot_authority);
     require_exclusive_child_reaping(cancellation)?;
     #[cfg(target_os = "linux")]
@@ -5198,7 +5223,7 @@ fn require_original_group_quiescent(
         }
         #[cfg(target_os = "macos")]
         if session_scope {
-            return macos_scope_members(group, true);
+            return macos_scope_members(authority.inventory.as_ref(), group, true);
         }
         group_members(authority, group)
     })
@@ -5849,15 +5874,16 @@ fn group_members(
     _authority: &GroupSnapshotAuthority,
     group: rustix::process::Pid,
 ) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
-    macos_scope_members(group, false)
+    macos_scope_members(None, group, false)
 }
 
 #[cfg(target_os = "macos")]
 fn macos_scope_members(
+    inventory: Option<&crate::process_inventory_helper::ProcessInventoryHelper>,
     group: rustix::process::Pid,
     session_scope: bool,
 ) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
-    macos_scope_members_with(group, session_scope, |_, _| Ok(()))
+    macos_scope_members_with(inventory, group, session_scope, |_, _| Ok(()))
 }
 
 /// Each successful incarnation/session sandwich can transfer directly into a
@@ -5868,6 +5894,7 @@ fn macos_scope_members(
     reason = "Ordered inventory keeps bounded child collection, exact identity proof and prefix publication under the original deadline."
 )]
 fn macos_scope_members_with(
+    inventory: Option<&crate::process_inventory_helper::ProcessInventoryHelper>,
     group: rustix::process::Pid,
     session_scope: bool,
     mut observe: impl FnMut(
@@ -5888,16 +5915,25 @@ fn macos_scope_members_with(
     ) {
         return Err(cleanup_error());
     }
-    let mut command = Command::new("/bin/ps");
-    if session_scope {
-        command.args(["-axo", "pid="]);
-    } else {
-        command
-            .args(["-o", "pid=", "-g"])
-            .arg(group.as_raw_nonzero().get().to_string());
+    let inventory = inventory.filter(|_| session_scope);
+    let helper_deadline = inventory.map(|_| Instant::now() + GROUP_SNAPSHOT_TIMEOUT);
+    let mut command = match (inventory, helper_deadline) {
+        (Some(helper), Some(deadline)) => helper.command(deadline).map_err(|_| cleanup_error())?,
+        _ => Command::new("/bin/ps"),
+    };
+    // The explicitly selected helper already carries only its private
+    // arguments and original deadline. Failure never falls back to ps.
+    if inventory.is_none() {
+        command.env_clear();
+        if session_scope {
+            command.args(["-axo", "pid="]);
+        } else {
+            command
+                .args(["-o", "pid=", "-g"])
+                .arg(group.as_raw_nonzero().get().to_string());
+        }
     }
     command
-        .env_clear()
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -5916,7 +5952,7 @@ fn macos_scope_members_with(
         terminate_and_reap_or_quarantine(&mut child, &mut reap_permit);
         return Err(cleanup_error());
     }
-    let deadline = Instant::now() + GROUP_SNAPSHOT_TIMEOUT;
+    let deadline = helper_deadline.unwrap_or_else(|| Instant::now() + GROUP_SNAPSHOT_TIMEOUT);
     let snapshot = collect_group_snapshot_output(&mut output, deadline, || {
         let observed = try_wait_child(child.as_mut().ok_or(())?);
         settle_group_snapshot_child_observation(observed, || {
@@ -5944,7 +5980,12 @@ fn macos_scope_members_with(
     let mut members = Vec::new();
     #[cfg(test)]
     let scan_started = Instant::now();
-    for (inspected, pid) in parse_group_members(&bytes)?.into_iter().enumerate() {
+    let pids = if inventory.is_some() {
+        crate::process_inventory_helper::decode_inventory(&bytes).map_err(|_| cleanup_error())?
+    } else {
+        parse_group_members(&bytes)?
+    };
+    for (inspected, pid) in pids.into_iter().enumerate() {
         let _ = inspected;
         if Instant::now() >= deadline {
             #[cfg(test)]
@@ -8676,9 +8717,59 @@ mod process_regression_tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    fn macos_selected_inventory_helper_is_complete_and_never_falls_back() {
+        use crate::process_inventory_helper::{ProcessInventoryHelper, test_helper};
+        let group = rustix::process::getpid();
+        let valid = test_helper();
+        let members = macos_scope_members(Some(&valid), group, true).unwrap();
+        assert!(members.iter().any(|member| member.pid == group));
+
+        for script in [
+            "printf '1\\n'; exit 7",
+            "printf '1'",
+            "printf '1\\n1\\n'",
+            "printf '0\\n'",
+            "exec /usr/bin/head -c 65537 /dev/zero",
+            "printf '1\\n'; exec /bin/sleep 10",
+        ] {
+            let helper =
+                ProcessInventoryHelper::new("/bin/sh".into(), vec!["-c".into(), script.into()])
+                    .unwrap();
+            let mut authenticated = 0;
+            let started = Instant::now();
+            assert!(
+                macos_scope_members_with(Some(&helper), group, true, |_, _| {
+                    authenticated += 1;
+                    Ok(())
+                })
+                .is_err(),
+                "{script}"
+            );
+            assert_eq!(
+                authenticated, 0,
+                "incomplete PID output must not reach identity admission"
+            );
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "helper remains independently killable"
+            );
+        }
+
+        let missing =
+            ProcessInventoryHelper::new("/machine-god-missing-inventory-helper".into(), vec![])
+                .unwrap();
+        assert!(macos_scope_members(Some(&missing), group, true).is_err());
+        // A group-only request does not acquire or use the session capability.
+        assert!(macos_scope_members(Some(&missing), rustix::process::getpgrp(), false).is_ok());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
     fn macos_terminal_capture_keeps_authenticated_prefix_on_pre_and_final_scan_failure() {
         for final_scan in [false, true] {
-            let mut guard = TerminalChildGuard::reserve(&CancellationToken::new()).unwrap();
+            let mut guard = TerminalChildGuard::reserve(&CancellationToken::new())
+                .unwrap()
+                .with_inventory_helper(Some(&crate::process_inventory_helper::test_helper()));
             guard.spawn(Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "background_process::process_regression_tests::macos_terminal_capture_helper", "--ignored", "--nocapture"])
                 .env("MACHINE_GOD_MACOS_CAPTURE_HELPER", "1")
@@ -8704,7 +8795,8 @@ mod process_regression_tests {
             let failed = if final_scan {
                 // Exercise the exact final-quiescence inventory callback in
                 // isolation: no later successful scan may hide prefix loss.
-                macos_terminal_scope_members(owned.group, &mut cleanup.captured).map(|_| ())
+                macos_terminal_scope_members(&authority, owned.group, &mut cleanup.captured)
+                    .map(|_| ())
             } else {
                 cleanup.capture(owned.group, &authority)
             };
@@ -11425,7 +11517,7 @@ mod process_regression_tests {
         #[cfg(target_os = "linux")]
         let authority = GroupSnapshotAuthority::open().expect("open group snapshot authority");
         #[cfg(target_os = "macos")]
-        let authority = GroupSnapshotAuthority;
+        let authority = GroupSnapshotAuthority::default();
         let snapshot_guard = GROUP_SNAPSHOT_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -11485,7 +11577,7 @@ mod process_regression_tests {
         #[cfg(target_os = "linux")]
         let authority = GroupSnapshotAuthority::open().expect("open group snapshot authority");
         #[cfg(target_os = "macos")]
-        let authority = GroupSnapshotAuthority;
+        let authority = GroupSnapshotAuthority::default();
         let deadline = Instant::now() + Duration::from_secs(5);
         let mut observation = ObservationBackoff::retry();
         loop {
