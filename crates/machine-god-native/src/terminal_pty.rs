@@ -1636,10 +1636,18 @@ mod tests {
     #[test]
     fn explicit_owned_signal_kills_shell_and_final_drain_preserves_bytes() {
         let directory = Directory::new();
-        let mut pty = start(
-            &directory,
-            &["-c", "printf before_signal; while :; do :; done"],
-        );
+        let helper = helper();
+        let mut pty = PreparedTerminalPty::prepare(
+            &helper,
+            request(
+                &directory,
+                &["-c", "printf before_signal; while :; do :; done"],
+            ),
+            &CancellationToken::new(),
+        )
+        .unwrap()
+        .commit(&CancellationToken::new())
+        .unwrap();
         read_until(&mut pty, b"before_signal");
         pty.signal(BackgroundProcessSignal::Kill).unwrap();
         let mut tail = Vec::new();
@@ -1649,6 +1657,14 @@ mod tests {
         assert_eq!(closed.status, TerminalPtyStatus::Signalled(9));
         assert!(tail.len() <= 512 * 1024);
         assert_eq!(pty.close(false).unwrap(), closed.status);
+        #[cfg(target_os = "macos")]
+        assert_eq!(
+            helper
+                .inventory_helper()
+                .unwrap()
+                .service_spawn_count_for_test(),
+            1
+        );
     }
 
     #[test]

@@ -859,3 +859,11 @@ No timeout is increased and no in-call retry is added. Native all-target/
 all-feature compilation passes before the final framing and reap-ticket test
 additions. Integrated focused runtime, strict lint, complete local checks,
 fresh independent reviews and exact remote acceptance remain required.
+
+The first integrated Linux strict lint run rejects a used underscore binding
+and an oversized host-composition function before runtime. Follow-up components
+`8a0e2aa`, `b1dc48c` and `be13748` add caller-level scope rebind and retired
+PTY/tmux reuse assertions, extract shared helper registration, and fix those
+lint failures plus a macOS test-only move from a drop-bearing reap permit.
+Formatting and diff checks pass; replacement compile/runtime evidence is still
+required. No failed check is treated as acceptance.

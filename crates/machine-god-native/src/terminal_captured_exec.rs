@@ -1214,6 +1214,54 @@ mod tests {
         assert_eq!(fixture.executor.active.load(Ordering::Acquire), 0);
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn captured_scope_rebinding_does_not_share_a_previous_hosts_inventory_lease() {
+        let first_scope = NativeOwnedWorkerScope::new();
+        let second_scope = NativeOwnedWorkerScope::new();
+        let inventory = crate::process_inventory_helper::test_service();
+        let executor =
+            TerminalCapturedExec::new("/bin/sh".into(), Vec::new(), Duration::from_secs(5), 1)
+                .unwrap()
+                .with_worker_scope(first_scope.clone())
+                .with_inventory_registration(inventory.clone());
+        let prepare =
+            |scope: &NativeOwnedWorkerScope,
+             helper: crate::process_inventory_helper::ProcessInventoryHelper| {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                futures_executor::block_on(
+                    scope.run(move || helper.prepare(deadline, &CancellationToken::new())),
+                )
+                .unwrap()
+                .unwrap()
+            };
+        let first = prepare(&first_scope, inventory.clone());
+        let executor = executor.with_worker_scope(second_scope.clone());
+        let rebound = executor.helper.inventory_helper().unwrap().clone();
+        assert_eq!(rebound.service_spawn_count_for_test(), 0);
+        let second = prepare(&second_scope, rebound.clone());
+        assert_eq!(inventory.service_spawn_count_for_test(), 1);
+        assert_eq!(rebound.service_spawn_count_for_test(), 1);
+        first_scope.close();
+        second_scope.close();
+        drop(first);
+        first_scope.completion().wait_on_worker().unwrap();
+        assert!(first_scope.completion().is_complete());
+        assert!(!second_scope.completion().is_complete());
+        drop(second);
+        second_scope.completion().wait_on_worker().unwrap();
+        assert!(second_scope.completion().is_complete());
+        // Retained configuration and executor add no native cleanup vote.
+        assert_eq!(
+            executor
+                .helper
+                .inventory_helper()
+                .unwrap()
+                .service_spawn_count_for_test(),
+            1
+        );
+    }
+
     #[test]
     fn scoped_capture_collects_worker_without_waiting_for_unconsumed_receipt_permit() {
         let mut fixture = Fixture::new(Duration::from_secs(10));

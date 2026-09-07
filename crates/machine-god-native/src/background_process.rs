@@ -1436,13 +1436,16 @@ fn run_child_reaper(reaper: &ChildReaper) {
         drop(children);
         // Reap ordinary children before potentially expensive terminal proofs.
         batch.retain_mut(|entry| match entry {
-            QuarantinedChild::Direct { child, _permit } => {
+            QuarantinedChild::Direct {
+                child,
+                _permit: permit,
+            } => {
                 let settled = matches!(
                     try_wait_child(child),
                     Ok(Some(_)) | Err(ChildTryWaitError::LostAuthority)
                 );
                 if settled {
-                    mark_inventory_reaped(_permit);
+                    mark_inventory_reaped(permit);
                 }
                 !settled
             }
@@ -10664,9 +10667,10 @@ mod process_regression_tests {
         let input = futures_executor::block_on(scope.run(move || {
             let permit = reserve_child_reap_authority().unwrap();
             #[cfg(target_os = "macos")]
-            let permit = ChildReapPermit {
-                inventory_reaped: Some(child_reaped),
-                ..permit
+            let permit = {
+                let mut permit = permit;
+                permit.inventory_reaped = Some(child_reaped);
+                permit
             };
             assert!(permit.shutdown.is_some());
             let mut child = Command::new("/bin/cat")

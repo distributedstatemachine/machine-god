@@ -916,6 +916,8 @@ mod tests {
     }
 
     struct Fixture {
+        #[cfg(target_os = "macos")]
+        inventory: crate::process_inventory_helper::ProcessInventoryHelper,
         child: Child,
         gate: UnixStream,
         directory: PathBuf,
@@ -952,6 +954,8 @@ mod tests {
             };
             Self {
                 child,
+                #[cfg(target_os = "macos")]
+                inventory: crate::process_inventory_helper::test_service(),
                 gate,
                 directory,
             }
@@ -967,7 +971,7 @@ mod tests {
             )?;
             #[cfg(target_os = "macos")]
             let authority = authority.with_inventory_helper(Some(
-                crate::process_inventory_helper::test_service()
+                self.inventory
                     .prepare(
                         Instant::now() + Duration::from_secs(5),
                         &CancellationToken::new(),
@@ -1243,6 +1247,14 @@ mod tests {
         authority.retire_anchor().unwrap();
         fixture.child.wait().unwrap();
         assert!(authority.is_absent().unwrap());
+        #[cfg(target_os = "macos")]
+        {
+            assert!(authority.inventory.is_none());
+            assert_eq!(fixture.inventory.service_spawn_count_for_test(), 1);
+            assert!(authority.is_absent().unwrap());
+            drop(authority);
+            assert_eq!(fixture.inventory.service_spawn_count_for_test(), 1);
+        }
     }
 
     #[test]
