@@ -854,6 +854,64 @@ mod tests {
     use std::sync::atomic::AtomicU64;
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    fn framed_leader_pid(bytes: &[u8]) -> Option<rustix::process::Pid> {
+        let digits = bytes.strip_suffix(b"\n")?;
+        if digits.is_empty() || digits.len() > 10 || !digits.iter().all(u8::is_ascii_digit) {
+            return None;
+        }
+        let raw = std::str::from_utf8(digits).ok()?.parse::<i32>().ok()?;
+        rustix::process::Pid::from_raw(raw)
+    }
+
+    fn wait_for_leader_pid(path: &Path) -> rustix::process::Pid {
+        let until = Instant::now() + Duration::from_secs(5);
+        loop {
+            let mut bytes = Vec::with_capacity(12);
+            match std::fs::File::open(path) {
+                Ok(file) => {
+                    // Ten decimal digits plus the newline complete the frame;
+                    // one extra byte detects oversized or multiple records.
+                    file.take(12).read_to_end(&mut bytes).unwrap();
+                    if let Some(pid) = framed_leader_pid(&bytes) {
+                        return pid;
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => panic!("reading leader readiness: {error}"),
+            }
+            assert!(
+                Instant::now() < until,
+                "complete leader PID frame: {bytes:?}"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn captured_exec_readiness_requires_a_complete_pid_frame() {
+        let frame = b"12345\n";
+        for end in 0..frame.len() {
+            assert_eq!(framed_leader_pid(&frame[..end]), None);
+        }
+        assert_eq!(
+            framed_leader_pid(frame),
+            rustix::process::Pid::from_raw(12345)
+        );
+        for invalid in [
+            b"\n".as_slice(),
+            b"0\n",
+            b"-1\n",
+            b"12x\n",
+            b"123\n4",
+            b"123\n\n",
+            b"2147483648\n",
+            b"12345678901\n",
+        ] {
+            assert_eq!(framed_leader_pid(invalid), None);
+        }
+    }
+
     struct Fixture {
         root: PathBuf,
         executor: TerminalCapturedExec,
@@ -1169,7 +1227,7 @@ mod tests {
         let mut fixture = Fixture::new(Duration::from_secs(30));
         let scope = NativeOwnedWorkerScope::new();
         fixture.executor.worker_scope = Some(scope.clone());
-        let authority = fixture.authority("printf '%s' \"$$\" > leader; exec /bin/sleep 30");
+        let authority = fixture.authority("printf '%s\\n' \"$$\" > leader; exec /bin/sleep 30");
         let stop = CancellationToken::new();
         let mut future = fixture.executor.execute_prepared(
             move |_, _, _| Ok(authority),
@@ -1179,15 +1237,7 @@ mod tests {
         futures_executor::block_on(async {
             assert!(futures_util::poll!(&mut future).is_pending());
         });
-        let until = Instant::now() + Duration::from_secs(5);
-        while !fixture.root.join("leader").exists() && Instant::now() < until {
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        let pid = std::fs::read_to_string(fixture.root.join("leader"))
-            .unwrap()
-            .parse::<i32>()
-            .unwrap();
-        let pid = rustix::process::Pid::from_raw(pid).unwrap();
+        let pid = wait_for_leader_pid(&fixture.root.join("leader"));
         scope.close();
         assert!(!scope.completion().is_complete());
         stop.cancel();
@@ -1416,7 +1466,7 @@ mod tests {
     #[test]
     fn captured_exec_unpolled_cancelled_and_dropped_futures_leave_no_process() {
         let fixture = Fixture::new(Duration::from_secs(10));
-        let command = "printf '%s' \"$$\" > leader; exec /bin/sleep 30";
+        let command = "printf '%s\\n' \"$$\" > leader; exec /bin/sleep 30";
         drop(fixture.future(
             command.into(),
             "/bin/bash",
@@ -1450,14 +1500,7 @@ mod tests {
             futures_executor::block_on(async {
                 assert!(futures_util::poll!(&mut future).is_pending());
             });
-            let until = Instant::now() + Duration::from_secs(5);
-            while !fixture.root.join("leader").exists() && Instant::now() < until {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            let pid = std::fs::read_to_string(fixture.root.join("leader"))
-                .unwrap()
-                .parse::<i32>()
-                .unwrap();
+            let pid = wait_for_leader_pid(&fixture.root.join("leader"));
             if cancel {
                 cancellation.cancel();
                 assert_eq!(
@@ -1473,7 +1516,7 @@ mod tests {
             }
             assert_eq!(fixture.executor.active.load(Ordering::Acquire), 0);
             assert_eq!(
-                rustix::process::test_kill_process(rustix::process::Pid::from_raw(pid).unwrap()),
+                rustix::process::test_kill_process(pid),
                 Err(rustix::io::Errno::SRCH)
             );
             std::fs::remove_file(fixture.root.join("leader")).unwrap();

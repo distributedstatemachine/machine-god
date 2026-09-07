@@ -216,6 +216,17 @@ pass (the latter excludes dormant-feature dead-code warnings); these are not
 native Linux execution evidence. Full replacement local, platform, review and
 remote gates remain pending; completed agent worktrees are removed.
 
+Candidate `13ba049f4cc58947bb50cbad8061b7f36dda57e3` passes pinned formatting,
+strict workspace Clippy, the complete workspace/doctest gate, all 259 repository
+Python checks (14 expected skips), dependency checks, supported FreeBSD/WASI
+compilation and fresh release smoke. Native unit execution passes 1,388 tests
+with four expected ignores. The release-helper matrix passes 645 tests with
+four expected ignores but fails a captured-exec fixture: file existence races
+the shell's PID write, producing an empty integer parse before cancellation is
+tested. The test-only correction waits for a complete framed PID within the
+unchanged readiness bound; it does not alter product timing or cleanup behavior.
+Replacement validation and three fresh reviews remain required before push.
+
 Earlier internal evidence remains historical, not delivery status:
 `a327580b754e25b8c1beaa5edf744b2b2252c620` passed the pinned workspace gate,
 421 terminal component checks and release-helper startup/PTY coverage;
