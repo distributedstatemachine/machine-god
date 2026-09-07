@@ -6438,14 +6438,21 @@ fn parse_linux_proc_stat(
         .next()
         .and_then(parse_linux_nonnegative_i32)
         .ok_or_else(cleanup_error)?;
-    let group = fields
-        .next()
-        .and_then(parse_linux_nonnegative_i32)
-        .ok_or_else(cleanup_error)?;
-    let session = fields
-        .next()
-        .and_then(parse_linux_nonnegative_i32)
-        .ok_or_else(cleanup_error)?;
+    let group = fields.next().ok_or_else(cleanup_error)?;
+    let session = fields.next().ok_or_else(cleanup_error)?;
+    // Linux do_task_stat retains ppid=0, pgid=sid=-1 after final
+    // sighand detachment (fs/proc/array.c; kernel/exit.c __exit_signal).
+    // Accept only the explicit dead-task sentinel, not negative live scope
+    // IDs. No group/session or adopted-zombie authority comes from this row;
+    // retained pidfds still require their independent cleanup proof.
+    let (group, session) = if state == b"X" && parent == 0 && group == b"-1" && session == b"-1" {
+        (0, 0)
+    } else {
+        (
+            parse_linux_nonnegative_i32(group).ok_or_else(cleanup_error)?,
+            parse_linux_nonnegative_i32(session).ok_or_else(cleanup_error)?,
+        )
+    };
     for _ in 0..15 {
         fields.next().ok_or_else(cleanup_error)?;
     }
@@ -7778,6 +7785,52 @@ mod linux_proc_tests {
         let oversized = vec![b'x'; MAX_LINUX_PROC_STAT_BYTES + 1];
 
         assert!(parse_linux_proc_stat(&oversized, pid(321)).is_err());
+    }
+
+    #[test]
+    fn proc_stat_accepts_detached_dead_task_without_scope_authority() {
+        // Captured from Linux 6.12 during a concurrent native cleanup run.
+        let record = b"6009 (sleep) X 0 -1 -1 0 -1 4228364 585 0 0 0 0 1 0 0 20 0 0 0 80253 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 17 4 0 0 0 0 0 0 0 0 0 0 0 0 9\n";
+        let mut reader = std::io::Cursor::new(record.as_slice());
+        let mut bytes = linux_proc_record_buffer(MAX_LINUX_PROC_STAT_BYTES);
+        let mut budget = LinuxProcIoBudget::proc_stat_pair();
+        let parsed = read_linux_proc_stat(&mut reader, &mut bytes, pid(6009), &mut budget)
+            .expect("a detached dead task must not abort unrelated scope inventory")
+            .expect("the complete record retains its original identity");
+        assert_eq!(parsed.parent, None);
+        assert_eq!(parsed.group, None);
+        assert_eq!(parsed.session, None);
+        assert_eq!(parsed.start_time, 80253);
+        assert!(
+            !parsed.zombie,
+            "a detached task is not an adopted-zombie reap grant"
+        );
+        assert!(parse_linux_proc_stat(record, pid(6010)).is_err());
+    }
+
+    #[test]
+    fn proc_stat_rejects_ambiguous_detached_task_sentinels() {
+        let suffix = "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 99";
+        for prefix in [
+            "S 0 -1 -1",
+            "R 0 -1 -1",
+            "Z 0 -1 -1",
+            "X 1 -1 -1",
+            "X 0 -1 77",
+            "X 0 77 -1",
+            "X 0 -2 -1",
+            "X 0 -1 -2",
+            "X 0 -01 -1",
+            "X 0 -1 -01",
+            "X -1 -1 -1",
+        ] {
+            let record = format!("321 (worker) {prefix} {suffix}");
+            assert!(
+                parse_linux_proc_stat(record.as_bytes(), pid(321)).is_err(),
+                "{prefix}"
+            );
+        }
+        assert!(parse_linux_proc_stat(b"321 (worker) X 0 -1 -1", pid(321)).is_err());
     }
 
     #[test]

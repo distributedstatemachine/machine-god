@@ -338,8 +338,12 @@ numeric PID directories, and each `stat` file descriptor-relatively; it does
 not reopen ambient `/proc`.
 An unrelated task that disappears while its retained `stat` descriptor is
 being read is omitted when Linux reports `ENOENT`, `ESRCH`, or an empty
-record; every other I/O failure and every nonempty malformed record still
-fails cleanup closed.
+record. A complete dead-task record with state `X`, parent `0` and exactly
+paired `-1` process-group/session IDs represents Linux's final teardown:
+it retains its PID/start-time identity but grants no group, session or adopted-
+zombie authority. Retained process handles still require independent cleanup
+proof. Other negative IDs, malformed records and other I/O failures still fail
+cleanup closed.
 It revalidates the retained filesystem type, exact mount identity, options,
 and topology before and after every scan, so a remount, bind overmount, or
 post-admission topology change fails cleanup before the leader is reaped. The

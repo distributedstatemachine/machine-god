@@ -486,3 +486,38 @@ default-concurrent Linux suite (1,473 pass/six helper ignores, 26.91 seconds),
 39 focused cases and 20 repetitions, formatting and diff checks. Containers
 are removed. macOS focused checks belong to the root's complete replacement
 gate; three fresh reviews and exact remote success are still required.
+
+## Linux detached-task record correction after `cd7ef9c`
+
+Candidate `cd7ef9cb075225961086578a6c4ab5160f5703ba` passes all prerequisite
+checks, including 39 macOS deadline cases, strict Linux/macOS lint, portability,
+doctests, dependencies, 260 Python checks/14 skips, drift/docs and release build.
+Its concurrent Linux run fails tmux reparented-job close: 1,472 pass, one fails,
+six helpers are ignored in 29.08 seconds. CLI and full macOS runtime are not
+run after rejection; no review or push seals the candidate.
+
+Isolated diagnosis reproduces failure inside the scope scan, before transport
+or server retirement, then captures a valid `6009 (sleep) X 0 -1 -1 ...` record
+rejected by the nonnegative PGID/SID parser. Actual kernel is
+`6.12.76-linuxkit`. Linux's [proc-stat implementation](https://github.com/torvalds/linux/blob/v6.12/fs/proc/array.c#L442-L510)
+retains those defaults after [final task detachment](https://github.com/torvalds/linux/blob/v6.12/kernel/exit.c#L120-L199).
+Sub-millisecond scan failure excludes deadline exhaustion in the captured case.
+
+Correction `3abf14e9fadf39a57565991a853ac0192e769d76` changes only
+`background_process.rs`. Exact state `X`, parent `0` and paired `-1` IDs map to
+no group/session authority, with full PID/start-time validation and independent
+retained-handle cleanup proof unchanged. Live/zombie states, malformed records,
+mismatched PIDs and other negative sentinel combinations remain rejected.
+The captured-record test is red before and green after the fix; all ten focused
+proc-stat tests, strict Linux/macOS native lint and formatting pass. Diagnostics
+are removed. Seven full concurrent Linux suites pass 1,475 cases/six helper
+ignores each (25.95–27.60 seconds); 100 loaded tmux repetitions pass in 107.55
+seconds, and macOS production-helper tmux tests pass 48/one ignore in 26.58
+seconds. This does not establish the historical macOS failure's cause.
+
+The eighth full Linux iteration fails a separate PTY fixture,
+`queued_startup_suffix_obeys_deadline_and_close_discards_it`, at line 1525:
+native close reports Cleanup while Running, then the fixture unwraps Process.
+That run has 1,474 passes, one failure and six ignores in 26.37 seconds. The
+campaign is not green; bounded diagnosis and replacement gates remain required.
+Worker containers are removed and caches released.
