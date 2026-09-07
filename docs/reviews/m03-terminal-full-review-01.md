@@ -885,3 +885,12 @@ settlement under a five-second test bound rather than the original thirty-
 second execution timeout, retaining executor/configuration and asserting that
 the user command never starts. Exact macOS native all-target/all-feature strict
 Clippy passes (1m22s); focused caller/PTY/tmux/host runtime is still pending.
+
+On that same implementation content, nine exact macOS focused cases pass with
+no failures or ignores (14.49 seconds; test build 1m58s): quarantine-ticket scope
+settlement, retired tmux absence/Drop without respawn, captured scope rebinding,
+stalled-startup host-stop and dropped-response cancellation, dormant and
+unpolled-receipt host shutdown, idempotent PTY close, failed-close artifact retry,
+and the real tmux eight-profile/bootstrap matrix. Installed tmux is exercised;
+these are not unavailable-backend early returns. The full frozen local and
+remote gates remain required.
