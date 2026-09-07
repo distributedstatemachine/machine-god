@@ -2,7 +2,9 @@
 
 `write_file` performs one bounded, permission-gated workspace mutation. It
 does not grant parent creation, external-path access, target-content reads, or
-general filesystem authority.
+general filesystem authority. These default/nontracking guarantees are unchanged.
+An explicit `with_undo_tracker` injection separately grants bounded selected-file
+preimage capture and registers committed publications under [file undo](file-undo.md).
 
 ## Public API, schema, and limits
 

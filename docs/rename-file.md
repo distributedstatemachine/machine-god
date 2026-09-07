@@ -6,7 +6,12 @@ at the destination. It does not accept a directory, symlink, or special-file
 source, read content, overwrite a destination, create a parent, access an
 external path, or fall back to copy-and-delete. The unavoidable final source-
 replacement race is qualified below. It is library-only. The
-product remains Rust; Zig remains solely a pinned upstream benchmark build
+default constructors remain nontracking. Optional `with_undo_tracker` injection
+adds bounded identity/content observation and committed inverse tracking under
+[file undo](file-undo.md); it does not enable destination replacement. The separate
+explicit native `FileUndoTracker::rename_replace` seam supports actual tracked
+replacement and restoration of both endpoints. The product remains Rust; Zig
+remains solely a pinned upstream benchmark build
 input.
 
 ## Public API and schema

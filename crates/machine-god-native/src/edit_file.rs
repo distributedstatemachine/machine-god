@@ -122,6 +122,7 @@ impl Error for EditFileToolOpenError {}
 /// Supported Linux and macOS implementations retain the opened root descriptor;
 /// later calls never reopen the workspace root by its injected path.
 pub struct EditFileTool {
+    undo: Option<std::sync::Arc<crate::file_undo::FileUndoTracker>>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     root: OwnedFd,
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -131,7 +132,17 @@ pub struct EditFileTool {
 impl EditFileTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
-        Self { root }
+        Self { root, undo: None }
+    }
+
+    /// Injects shared process-local undo authority for committed edits.
+    #[must_use]
+    pub fn with_undo_tracker(
+        mut self,
+        tracker: std::sync::Arc<crate::file_undo::FileUndoTracker>,
+    ) -> Self {
+        self.undo = Some(tracker);
+        self
     }
 
     /// Opens and retains an absolute workspace directory without following its
@@ -2079,6 +2090,18 @@ impl EditFileTool {
         check_cancellation(cancellation)?;
         let initial_walk =
             self.walk_parent_with_evidence(normalized, cancellation, WalkPhase::Initial, evidence)?;
+        let mut undo = self
+            .undo
+            .as_ref()
+            .map(|tracker| {
+                tracker.begin(
+                    self.root.as_fd(),
+                    crate::file_undo::Operation::Replace(normalized),
+                    cancellation,
+                )
+            })
+            .transpose()
+            .map_err(crate::file_undo::FileUndoError::tool)?;
         let initial_parent_metadata = evidence
             .fstat(ReadPhase::Initial, initial_walk.parent.as_fd())
             .map_err(|_| unavailable(true))?;
@@ -2266,9 +2289,22 @@ impl EditFileTool {
             cancellation,
         )?;
         check_cancellation(cancellation)?;
-        publish(final_walk.parent.as_fd(), &staged.name, final_walk.basename)
-            .map_err(map_publish_error)?;
+        if let Some(undo) = &undo {
+            undo.revalidate(cancellation)
+                .map_err(crate::file_undo::FileUndoError::tool)?;
+        }
+        publish(final_walk.parent.as_fd(), &staged.name, final_walk.basename).map_err(|error| {
+            if error == rustix::io::Errno::INTR
+                && let Some(undo) = &mut undo
+            {
+                undo.uncertain();
+            }
+            map_publish_error(error)
+        })?;
         staged.mark_published();
+        if let Some(undo) = &mut undo {
+            undo.committed(Some(staged.file.as_fd()));
+        }
 
         let after_rename = evidence.after_rename(
             final_walk.parent.as_fd(),

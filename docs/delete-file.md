@@ -3,7 +3,10 @@
 `delete_file` deletes exactly one existing confined regular file or empty
 directory. It does not recurse, follow a symlink, remove the workspace root,
 read file content, enumerate a directory, create a path, or grant general
-filesystem authority. It is library-only. The product remains
+filesystem authority by default. Optional `with_undo_tracker` injection separately
+grants bounded regular-file preimage reads and typed empty-directory restoration
+under [file undo](file-undo.md). Nontracking guarantees below remain unchanged.
+It is library-only. The product remains
 Rust; Zig remains solely a pinned upstream benchmark build input.
 
 ## Public API, schema, and limits

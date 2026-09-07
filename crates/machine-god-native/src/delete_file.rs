@@ -110,6 +110,7 @@ impl Error for DeleteFileToolOpenError {}
 /// without following a symlink referent. A directory-class delete can remove a
 /// different empty directory. File/directory flag mismatches fail.
 pub struct DeleteFileTool {
+    undo: Option<std::sync::Arc<crate::file_undo::FileUndoTracker>>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     root: OwnedFd,
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -119,7 +120,17 @@ pub struct DeleteFileTool {
 impl DeleteFileTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
-        Self { root }
+        Self { root, undo: None }
+    }
+
+    /// Injects shared process-local undo authority, including bounded preimage reads.
+    #[must_use]
+    pub fn with_undo_tracker(
+        mut self,
+        tracker: std::sync::Arc<crate::file_undo::FileUndoTracker>,
+    ) -> Self {
+        self.undo = Some(tracker);
+        self
     }
 
     /// Opens and retains an absolute workspace directory without following its
@@ -593,6 +604,18 @@ impl DeleteFileTool {
         let success_output =
             build_success_output_with_limit(normalized, MAX_DELETE_FILE_SERIALIZED_RESULT_BYTES)?;
         let mut ordinals = OperationOrdinals::default();
+        let mut undo = self
+            .undo
+            .as_ref()
+            .map(|tracker| {
+                tracker.begin(
+                    self.root.as_fd(),
+                    crate::file_undo::Operation::Delete(normalized),
+                    cancellation,
+                )
+            })
+            .transpose()
+            .map_err(crate::file_undo::FileUndoError::tool)?;
 
         let initial = self.walk_parent_with_evidence(
             normalized,
@@ -661,6 +684,10 @@ impl DeleteFileTool {
             cancellation,
         )?;
         evidence.checkpoint(DeleteCheckpoint::FinalPreUnlink, cancellation);
+        if let Some(undo) = &undo {
+            undo.revalidate(cancellation)
+                .map_err(crate::file_undo::FileUndoError::tool)?;
+        }
         check_cancellation(cancellation)?;
 
         let flags = match final_target.kind {
@@ -669,6 +696,11 @@ impl DeleteFileTool {
         };
         let unlink_outcome =
             evidence.unlink(revalidated.parent.as_fd(), revalidated.basename, flags);
+        if unlink_outcome.is_ok()
+            && let Some(undo) = &mut undo
+        {
+            undo.committed(None);
+        }
         let after_unlink = evidence.after_unlink(
             revalidated.parent.as_fd(),
             revalidated.basename,
@@ -692,6 +724,9 @@ impl DeleteFileTool {
                 Ok(success_output)
             }
             Err(error) if error == rustix::io::Errno::INTR => {
+                if let Some(undo) = &mut undo {
+                    undo.uncertain();
+                }
                 evidence.checkpoint(DeleteCheckpoint::AfterDelete, cancellation);
                 let _ = sync_parent_bounded(revalidated.parent.as_fd(), evidence);
                 Err(commit_ambiguous())

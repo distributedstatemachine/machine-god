@@ -110,6 +110,7 @@ impl Error for RenameFileToolOpenError {}
 /// special-file replacement can be moved; postcommit identity verification
 /// prevents that outcome from being reported as success.
 pub struct RenameFileTool {
+    undo: Option<std::sync::Arc<crate::file_undo::FileUndoTracker>>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     root: OwnedFd,
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -119,7 +120,17 @@ pub struct RenameFileTool {
 impl RenameFileTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
-        Self { root }
+        Self { root, undo: None }
+    }
+
+    /// Injects shared process-local undo authority; destination replacement stays forbidden.
+    #[must_use]
+    pub fn with_undo_tracker(
+        mut self,
+        tracker: std::sync::Arc<crate::file_undo::FileUndoTracker>,
+    ) -> Self {
+        self.undo = Some(tracker);
+        self
     }
 
     /// Opens and retains an absolute workspace directory without following its
@@ -636,6 +647,18 @@ impl RenameFileTool {
     ) -> Result<ToolOutput, ToolError> {
         let success = build_success_output(old_path, new_path)?;
         let mut ordinals = OperationOrdinals::default();
+        let mut undo = self
+            .undo
+            .as_ref()
+            .map(|tracker| {
+                tracker.begin(
+                    self.root.as_fd(),
+                    crate::file_undo::Operation::Rename(old_path, new_path),
+                    cancellation,
+                )
+            })
+            .transpose()
+            .map_err(crate::file_undo::FileUndoError::tool)?;
 
         let initial_source = self.walk_parent(
             old_path,
@@ -746,6 +769,10 @@ impl RenameFileTool {
             cancellation,
         )?;
         precommit_checkpoint(evidence, RenameCheckpoint::FinalPreRename, cancellation)?;
+        if let Some(undo) = &undo {
+            undo.revalidate(cancellation)
+                .map_err(crate::file_undo::FileUndoError::tool)?;
+        }
 
         let outcome = evidence.rename(
             final_source.parent.as_fd(),
@@ -753,6 +780,11 @@ impl RenameFileTool {
             final_destination.parent.as_fd(),
             final_destination.basename,
         );
+        if outcome.is_ok()
+            && let Some(undo) = &mut undo
+        {
+            undo.committed(Some(retained_source.descriptor.as_fd()));
+        }
         let after_rename = evidence.after_rename(
             retained_source.descriptor.as_fd(),
             final_source.parent.as_fd(),
@@ -797,6 +829,9 @@ impl RenameFileTool {
                 Ok(success)
             }
             Err(error) if error == rustix::io::Errno::INTR => {
+                if let Some(undo) = &mut undo {
+                    undo.uncertain();
+                }
                 evidence.checkpoint(RenameCheckpoint::AfterRename, cancellation);
                 let _ = sync_parent_bounded(
                     final_source.parent.as_fd(),
@@ -1270,12 +1305,12 @@ fn open_flags(site: RenameOpenSite) -> OFlags {
 }
 
 #[cfg(target_os = "linux")]
-fn source_open_flags() -> OFlags {
+pub(crate) fn source_open_flags() -> OFlags {
     OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC
 }
 
 #[cfg(target_os = "macos")]
-fn source_open_flags() -> OFlags {
+pub(crate) fn source_open_flags() -> OFlags {
     let event_only = u32::try_from(libc::O_EVTONLY).expect("O_EVTONLY fits in u32");
     OFlags::from_bits_retain(event_only) | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK
 }

@@ -120,6 +120,7 @@ impl Error for WriteFileToolOpenError {}
 /// tool. Supported Linux and macOS implementations retain the opened directory
 /// descriptor; later calls never reopen the workspace root by its injected path.
 pub struct WriteFileTool {
+    undo: Option<std::sync::Arc<crate::file_undo::FileUndoTracker>>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     root: OwnedFd,
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -129,7 +130,17 @@ pub struct WriteFileTool {
 impl WriteFileTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
-        Self { root }
+        Self { root, undo: None }
+    }
+
+    /// Injects shared process-local undo authority, including bounded preimage reads.
+    #[must_use]
+    pub fn with_undo_tracker(
+        mut self,
+        tracker: std::sync::Arc<crate::file_undo::FileUndoTracker>,
+    ) -> Self {
+        self.undo = Some(tracker);
+        self
     }
 
     /// Opens and retains an absolute workspace root without following its final
@@ -461,7 +472,7 @@ impl WriteFileTool {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     fn execute_supported_with<
         SetMode,
         WriteContent,
@@ -494,6 +505,18 @@ impl WriteFileTool {
         SyncParent: for<'fd> FnMut(BorrowedFd<'fd>) -> Result<(), rustix::io::Errno>,
     {
         check_cancellation(cancellation)?;
+        let mut undo = self
+            .undo
+            .as_ref()
+            .map(|tracker| {
+                tracker.begin(
+                    self.root.as_fd(),
+                    crate::file_undo::Operation::Replace(normalized),
+                    cancellation,
+                )
+            })
+            .transpose()
+            .map_err(crate::file_undo::FileUndoError::tool)?;
         let initial = self.walk_parent(normalized, cancellation, WalkPhase::Initial)?;
         let initial_parent_metadata =
             rustix::fs::fstat(&initial.parent).map_err(|_| unavailable(true))?;
@@ -543,6 +566,10 @@ impl WriteFileTool {
         )?;
 
         before_rename();
+        if let Some(undo) = &undo {
+            undo.revalidate(cancellation)
+                .map_err(crate::file_undo::FileUndoError::tool)?;
+        }
         check_cancellation(cancellation)?;
         let creating = matches!(initial_target, TargetSnapshot::Missing);
         publish(
@@ -552,6 +579,11 @@ impl WriteFileTool {
             creating,
         )
         .map_err(|error| {
+            if error == rustix::io::Errno::INTR
+                && let Some(undo) = &mut undo
+            {
+                undo.uncertain();
+            }
             if creating {
                 map_create_rename_error(error)
             } else {
@@ -559,6 +591,9 @@ impl WriteFileTool {
             }
         })?;
         staged.mark_published();
+        if let Some(undo) = &mut undo {
+            undo.committed(Some(staged.file.as_fd()));
+        }
 
         let published_identity_matches = published_target_matches(
             final_walk.parent.as_fd(),
@@ -1865,6 +1900,68 @@ mod tests {
             assert!(!error.retryable);
             assert_eq!(fs::read(&target_path).unwrap(), b"committed content");
             assert_no_staged_files(temporary.path());
+        }
+
+        #[test]
+        fn file_undo_retains_committed_write_despite_sync_failure_and_late_cancellation() {
+            let temporary = TempDirectory::new("undo-committed-sync-failure");
+            let target = temporary.path().join("target");
+            fs::write(&target, b"original").unwrap();
+            let tracker = std::sync::Arc::new(crate::file_undo::FileUndoTracker::new());
+            let tool = WriteFileTool::open(temporary.path())
+                .unwrap()
+                .with_undo_tracker(tracker.clone());
+            let cancel = CancellationToken::new();
+            let result = tool.execute_supported_with(
+                "target",
+                b"committed",
+                &cancel,
+                native_set_mode,
+                write_content,
+                sync_before_commit,
+                |_, _| {},
+                || {},
+                native_publish_staged,
+                |_| {
+                    cancel.cancel();
+                    Err(rustix::io::Errno::IO)
+                },
+            );
+            assert_eq!(result.unwrap_err().code, "write_file_commit_ambiguous");
+            assert_eq!(fs::read(&target).unwrap(), b"committed");
+            tracker.undo_last(&CancellationToken::new()).unwrap();
+            assert_eq!(fs::read(&target).unwrap(), b"original");
+        }
+
+        #[test]
+        fn file_undo_precommit_change_does_not_publish_or_record() {
+            let temporary = TempDirectory::new("undo-precommit-change");
+            let target = temporary.path().join("target");
+            fs::write(&target, b"original").unwrap();
+            let tracker = std::sync::Arc::new(crate::file_undo::FileUndoTracker::new());
+            let tool = WriteFileTool::open(temporary.path())
+                .unwrap()
+                .with_undo_tracker(tracker.clone());
+            let result = tool.execute_supported_with(
+                "target",
+                b"new",
+                &CancellationToken::new(),
+                native_set_mode,
+                write_content,
+                sync_before_commit,
+                |_, _| {},
+                || {
+                    fs::write(&target, b"external").unwrap();
+                },
+                native_publish_staged,
+                native_sync_parent,
+            );
+            assert!(result.is_err());
+            assert_eq!(fs::read(&target).unwrap(), b"external");
+            assert_eq!(
+                tracker.undo_last(&CancellationToken::new()),
+                Ok(crate::file_undo::FileUndoOutcome::Empty)
+            );
         }
 
         #[test]

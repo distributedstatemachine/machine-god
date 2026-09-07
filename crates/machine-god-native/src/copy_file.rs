@@ -112,6 +112,7 @@ impl Error for CopyFileToolOpenError {}
 
 /// Native bounded file copier confined to one retained workspace root.
 pub struct CopyFileTool {
+    undo: Option<std::sync::Arc<crate::file_undo::FileUndoTracker>>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     root: OwnedFd,
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -121,7 +122,17 @@ pub struct CopyFileTool {
 impl CopyFileTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
-        Self { root }
+        Self { root, undo: None }
+    }
+
+    /// Injects shared process-local destination undo authority; defaults stay no-replace.
+    #[must_use]
+    pub fn with_undo_tracker(
+        mut self,
+        tracker: std::sync::Arc<crate::file_undo::FileUndoTracker>,
+    ) -> Self {
+        self.undo = Some(tracker);
+        self
     }
 
     /// Opens and retains an absolute workspace directory without following its
@@ -1640,6 +1651,18 @@ impl CopyFileTool {
     ) -> Result<ToolOutput, ToolError> {
         check_cancellation(cancellation)?;
         let mut buffer = vec![0_u8; MAX_COPY_FILE_CHUNK_BYTES].into_boxed_slice();
+        let mut undo = self
+            .undo
+            .as_ref()
+            .map(|tracker| {
+                tracker.begin(
+                    self.root.as_fd(),
+                    crate::file_undo::Operation::Replace(destination_path),
+                    cancellation,
+                )
+            })
+            .transpose()
+            .map_err(crate::file_undo::FileUndoError::tool)?;
 
         let initial_source_parent =
             self.walk_parent(source_path, WalkPhase::Initial, cancellation)?;
@@ -1797,6 +1820,10 @@ impl CopyFileTool {
         )?;
 
         precommit_checkpoint(evidence, CopyCheckpoint::FinalPrePublish, cancellation)?;
+        if let Some(undo) = &undo {
+            undo.revalidate(cancellation)
+                .map_err(crate::file_undo::FileUndoError::tool)?;
+        }
         let publish = evidence.publish(
             initial_destination_parent.parent.as_fd(),
             &staged.name,
@@ -1804,6 +1831,16 @@ impl CopyFileTool {
             final_destination_parent.basename,
         );
         evidence.after_publish(publish, cancellation);
+        if publish.is_ok()
+            && let Some(undo) = &mut undo
+        {
+            undo.committed(Some(staged.file.as_fd()));
+        }
+        if publish == Err(rustix::io::Errno::INTR)
+            && let Some(undo) = &mut undo
+        {
+            undo.uncertain();
+        }
         evidence.checkpoint(CopyCheckpoint::AfterPublish, cancellation);
         match publish {
             Ok(()) => {

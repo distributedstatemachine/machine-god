@@ -50,7 +50,8 @@ SHAs, workflow IDs, review counts, or slice-by-slice history.
   [install_skill](install-skill.md).
 - Workspace mutation: [write_file](write-file.md), [edit_file](edit-file.md),
   [delete_file](delete-file.md), [rename_file](rename-file.md),
-  [copy_file](copy-file.md), and [create_folder](create-folder.md).
+  [copy_file](copy-file.md), [create_folder](create-folder.md), and
+  [shared file undo](file-undo.md).
 - Host interaction: [open_file](open-file.md), [terminal](terminal.md), and
   [ask_user_question](ask-user-question.md).
 - Session-result paging: [read_tool_result](read-tool-result.md).

@@ -60,6 +60,7 @@ mod delete_file;
 mod doctor;
 mod edit_file;
 mod file_info;
+mod file_undo;
 mod glob_files;
 mod grep_files;
 mod install_skill;
@@ -400,6 +401,11 @@ pub use edit_file::{
 pub use file_info::{
     FILE_INFO_TOOL_NAME, FileInfoTool, FileInfoToolOpenError, FileInfoToolOpenErrorKind,
     MAX_FILE_INFO_PATH_BYTES,
+};
+pub use file_undo::{
+    FileUndoError, FileUndoOutcome, FileUndoTracker, FileUndoUnavailableReason,
+    MAX_FILE_UNDO_ENTRIES, MAX_FILE_UNDO_OBSERVATION_BYTES, MAX_FILE_UNDO_PREIMAGE_BYTES,
+    MAX_FILE_UNDO_RETAINED_BYTES,
 };
 pub use glob_files::{
     GLOB_FILES_TOOL_NAME, GlobFilesTool, GlobFilesToolOpenError, GlobFilesToolOpenErrorKind,

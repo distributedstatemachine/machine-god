@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
 - Active phase: `implementing the full combined M03 top-level CLI and slash-command feature`
-- Next gate: `integrate session-state, slash-routing and file-undo foundations, then complete native conversation ownership and all pinned runtime scenarios before full feature gates`
+- Next gate: `complete native conversation ownership, checkpoint/context projection and all pinned CLI runtime scenarios before full feature gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -119,9 +119,9 @@ hardening remain M04 work. Required scenarios cannot close with unsupported
 stubs. Three independent scope inspections accepted this sequencing; they are
 not substitutes for the final exact-candidate product reviews.
 
-Internal implementation now includes exclusive core metadata transactions and
-the native metadata codec, with persistent title mutation and slash routing being
-integrated. Continuation and file-undo foundations are in parallel implementation.
+Internal implementation now includes exclusive core metadata transactions,
+the native metadata codec and durable title mutation, slash routing, explicit
+continuation turns, and shared bounded file-undo tracking for all five file tools.
 These component commits are not deliveries: interactive ownership, checkpoint
 production, context projection, models, policy/sandbox/workspace enforcement,
 rich session commands and the complete feature gates are still required.

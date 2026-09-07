@@ -3,7 +3,9 @@
 `edit_file` replaces exactly one occurrence of exact text in one existing
 workspace file. It does not grant file creation, a general read capability, or
 unbounded filesystem mutation. The product remains Rust. Zig remains only the
-pinned upstream fx benchmark build input.
+pinned upstream fx benchmark build input. Optional `with_undo_tracker` injection
+retains bounded preimages only for committed edits under [file undo](file-undo.md);
+default constructors retain the nontracking contract below.
 
 ## Public API, schema, and limits
 

@@ -5,7 +5,11 @@ one absent confined destination without modifying the source. It does not
 overwrite a destination, create a parent, copy a directory, follow a symlink,
 access an external path, or allocate the complete file in memory. It is
 library-only. The product remains Rust; Zig remains solely a
-pinned upstream benchmark build input.
+pinned upstream benchmark build input. Optional `with_undo_tracker` injection
+registers committed destinations under [file undo](file-undo.md) without changing
+the 16 MiB streaming source contract below. Undo retains destination preimages,
+not copied source bytes; source/postimage hashes are separately bounded. The separate native `FileUndoTracker::copy_replace`
+seam supports real tracked replacement; the tool schema/defaults stay no-replace.
 
 ## Public API and schema
 
