@@ -309,11 +309,39 @@ impl FileSessionStore {
 
     pub(crate) fn create_empty_record(
         &self,
-        mut record: SessionRecord,
+        record: SessionRecord,
     ) -> Result<SessionRecord, SessionStoreError> {
         if !is_empty_unsaved_record(&record) || validate_record_json(&record).is_err() {
             return Err(serialization_failed());
         }
+        self.publish_initial_record(record)
+    }
+
+    /// Separate typed creation path; reset and ordinary creation keep their
+    /// strict empty-metadata predicate. The caller cannot supply arbitrary JSON.
+    pub(crate) fn create_record_with_metadata(
+        &self,
+        id: SessionId,
+        incarnation_id: SessionIncarnationId,
+        metadata: &crate::NativeSessionMetadata,
+    ) -> Result<SessionRecord, SessionStoreError> {
+        let mut record = SessionRecord::empty(id, incarnation_id);
+        record.metadata.insert(
+            crate::NATIVE_SESSION_METADATA_KEY.to_owned(),
+            metadata.to_value(),
+        );
+        if crate::NativeSessionMetadata::from_metadata(&record.metadata).as_ref() != Ok(metadata)
+            || validate_record_json(&record).is_err()
+        {
+            return Err(serialization_failed());
+        }
+        self.publish_initial_record(record)
+    }
+
+    fn publish_initial_record(
+        &self,
+        mut record: SessionRecord,
+    ) -> Result<SessionRecord, SessionStoreError> {
         let names = SessionNames::for_id(&record.id);
         let lock = open_lock(self.root.as_fd(), &names.lock)?;
         lock_exclusive(&lock)?;

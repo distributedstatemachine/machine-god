@@ -209,6 +209,16 @@ lineage is retained in the
 
 ## Save, compare-and-swap, and durability
 
+The lifecycle's separate typed initial-metadata creation seam constructs an
+unsaved empty-history record internally from validated session/incarnation IDs
+and `NativeSessionMetadata`. It admits only the codec's reserved native entry,
+validates its bounded schema, and publishes that entry with revision `1` and
+allocator `1` in the initial new-record CAS. No arbitrary recursive metadata map
+is accepted by this seam, and there is no intermediate empty durable record or
+second metadata CAS. Ordinary creation and reset retain their strict empty-
+metadata predicates. This shares the publication protocol below and does not
+alter the public `SessionStore` trait, schema, layout, or ordinary save behavior.
+
 Calling `save` likewise produces an inert future. Its first poll performs
 resource-capped serialization and successful transfer work, plus locking,
 filesystem writes, and synchronization, synchronously on that executor thread.

@@ -8,7 +8,9 @@ use machine_god_core::{
 };
 
 use crate::session_listing::list_sessions_from_store;
-use crate::{FileSessionStore, NativeSessionList};
+use crate::{
+    FileSessionStore, NATIVE_SESSION_METADATA_KEY, NativeSessionList, NativeSessionMetadata,
+};
 
 /// Maximum number of source values considered while avoiding the current
 /// session incarnation during reset.
@@ -456,7 +458,19 @@ impl NativeSessionLifecycle {
         id: SessionId,
     ) -> BoxFuture<'static, Result<Session, NativeSessionLifecycleError>> {
         let lifecycle = self.operation();
-        Box::pin(async move { lifecycle.create_polled(id).await })
+        Box::pin(async move { lifecycle.create_polled(id, None).await })
+    }
+
+    /// Atomically publishes typed native metadata with the initial revision-one
+    /// empty-history record. No source or filesystem work occurs before polling.
+    #[must_use]
+    pub fn create_with_metadata(
+        &self,
+        id: SessionId,
+        metadata: NativeSessionMetadata,
+    ) -> BoxFuture<'static, Result<Session, NativeSessionLifecycleError>> {
+        let lifecycle = self.operation();
+        Box::pin(async move { lifecycle.create_polled(id, Some(&metadata)).await })
     }
 
     /// Generates a fresh session ID and atomically persists an empty session.
@@ -469,7 +483,18 @@ impl NativeSessionLifecycle {
         &self,
     ) -> BoxFuture<'static, Result<Session, NativeSessionLifecycleError>> {
         let lifecycle = self.operation();
-        Box::pin(async move { lifecycle.create_generated_polled().await })
+        Box::pin(async move { lifecycle.create_generated_polled(None).await })
+    }
+
+    /// Generates an identity and publishes typed native metadata in the same
+    /// initial record. Only proven identity collisions are retried, at most eight.
+    #[must_use]
+    pub fn create_generated_with_metadata(
+        &self,
+        metadata: NativeSessionMetadata,
+    ) -> BoxFuture<'static, Result<Session, NativeSessionLifecycleError>> {
+        let lifecycle = self.operation();
+        Box::pin(async move { lifecycle.create_generated_polled(Some(&metadata)).await })
     }
 
     /// Resumes the engine-canonical handle for one durable session.
@@ -513,7 +538,23 @@ impl NativeSessionLifecycle {
 }
 
 impl LifecycleOperation {
-    async fn create_polled(&self, id: SessionId) -> Result<Session, NativeSessionLifecycleError> {
+    async fn create_polled(
+        &self,
+        id: SessionId,
+        metadata: Option<&NativeSessionMetadata>,
+    ) -> Result<Session, NativeSessionLifecycleError> {
+        self.create_polled_with(id, metadata, || {}).await
+    }
+
+    async fn create_polled_with(
+        &self,
+        id: SessionId,
+        metadata: Option<&NativeSessionMetadata>,
+        after_publication: impl FnOnce(),
+    ) -> Result<Session, NativeSessionLifecycleError> {
+        if let Some(metadata) = metadata {
+            self.validate_initial_metadata(metadata)?;
+        }
         if self.load_record(id.clone()).await?.is_some() {
             return Err(NativeSessionLifecycleError::new(
                 NativeSessionLifecycleErrorKind::AlreadyExists,
@@ -522,7 +563,15 @@ impl LifecycleOperation {
         let incarnation_id = self.next_incarnation_id()?;
         let candidate = SessionRecord::empty(id.clone(), incarnation_id);
         let reservation = self.reserve_candidate(&candidate)?;
-        match self.session_store.create_empty_record(candidate) {
+        let publication = match metadata {
+            Some(metadata) => self.session_store.create_record_with_metadata(
+                candidate.id,
+                candidate.incarnation_id,
+                metadata,
+            ),
+            None => self.session_store.create_empty_record(candidate),
+        };
+        match publication {
             Ok(_) => {}
             Err(error) if error.kind == SessionStoreErrorKind::Conflict => {
                 return Err(NativeSessionLifecycleError::new(
@@ -531,15 +580,28 @@ impl LifecycleOperation {
             }
             Err(error) => return Err(map_store_error(error)),
         }
-        let loaded = self.load_canonical(id).await?;
+        after_publication();
+        let loaded = self.load_canonical(id).await.map_err(|error| {
+            // Once this path published metadata, a late incompatible load is
+            // not proof of a pre-publication ID collision. Never orphan that
+            // publication by generating another ID. Legacy creation is unchanged.
+            if metadata.is_some() && error.kind() == NativeSessionLifecycleErrorKind::LiveSession {
+                NativeSessionLifecycleError::new(NativeSessionLifecycleErrorKind::Conflict)
+            } else {
+                error
+            }
+        })?;
         drop(reservation);
         Ok(loaded)
     }
 
-    async fn create_generated_polled(&self) -> Result<Session, NativeSessionLifecycleError> {
+    async fn create_generated_polled(
+        &self,
+        metadata: Option<&NativeSessionMetadata>,
+    ) -> Result<Session, NativeSessionLifecycleError> {
         for _ in 0..MAX_SESSION_ID_ATTEMPTS {
             let id = self.next_session_id()?;
-            match self.create_polled(id).await {
+            match self.create_polled(id, metadata).await {
                 Ok(session) => return Ok(session),
                 Err(error)
                     if matches!(
@@ -553,6 +615,36 @@ impl LifecycleOperation {
         Err(NativeSessionLifecycleError::new(
             NativeSessionLifecycleErrorKind::SessionIdExhausted,
         ))
+    }
+
+    fn validate_initial_metadata(
+        &self,
+        metadata: &NativeSessionMetadata,
+    ) -> Result<(), NativeSessionLifecycleError> {
+        // The private typed codec emits one shallow object with bounded scalar
+        // fields. No caller-controlled recursive Value enters this validation.
+        let value = metadata.to_value();
+        let object = value.as_object().ok_or_else(initial_metadata_failed)?;
+        if object
+            .values()
+            .any(|value| value.is_object() || value.is_array())
+        {
+            return Err(initial_metadata_failed());
+        }
+        let nodes = object.len() + 1;
+        let map = std::collections::BTreeMap::from([(NATIVE_SESSION_METADATA_KEY, value)]);
+        let bytes = serde_json::to_vec(&map).map_err(|_| initial_metadata_failed())?;
+        let limits = self.engine.limits();
+        // Core counts each embedded value root, not the outer metadata map.
+        // The codec has exactly one container level; EngineLimits is nonzero.
+        // An empty transcript still serializes as the two-byte `[]`.
+        if nodes > limits.max_json_nodes.get()
+            || bytes.len() > limits.max_session_metadata_bytes.get()
+            || limits.max_transcript_bytes.get() < 2
+        {
+            return Err(initial_metadata_failed());
+        }
+        Ok(())
     }
 
     async fn resume_polled(&self, id: SessionId) -> Result<Session, NativeSessionLifecycleError> {
@@ -652,6 +744,10 @@ impl LifecycleOperation {
             NativeSessionLifecycleErrorKind::IncarnationSource,
         ))
     }
+}
+
+fn initial_metadata_failed() -> NativeSessionLifecycleError {
+    NativeSessionLifecycleError::new(NativeSessionLifecycleErrorKind::Engine)
 }
 
 impl fmt::Debug for NativeSessionLifecycle {
@@ -931,6 +1027,301 @@ mod tests {
         assert_eq!(failure.kind(), NativeSessionLifecycleErrorKind::Engine);
         assert_eq!(released.load(Ordering::SeqCst), 1);
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn initial_metadata_futures_are_lazy_and_do_not_resurrect_a_dropped_host() {
+        let root = TempDirectory::new("metadata-inert");
+        let (source, session_id_calls) = ScriptedSessionIdSource::ids(["unused"]);
+        let incarnation_calls = Arc::new(AtomicUsize::new(0));
+        let (lifecycle, _, provider) =
+            lifecycle_with_session_ids(&root, source, incarnation_calls.clone());
+        drop(lifecycle.create_with_metadata(
+            SessionId::new("unused").unwrap(),
+            NativeSessionMetadata::default(),
+        ));
+        drop(lifecycle.create_generated_with_metadata(NativeSessionMetadata::default()));
+        assert_eq!(session_id_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(incarnation_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+        assert!(provider.requests().is_empty());
+        drop(lifecycle);
+        let released = Arc::new(AtomicUsize::new(0));
+        let host = lifecycle_with_host_resource(&root, released.clone());
+        let explicit = host.create_with_metadata(
+            SessionId::new("closed").unwrap(),
+            NativeSessionMetadata::default(),
+        );
+        let generated = host.create_generated_with_metadata(NativeSessionMetadata::default());
+        drop(host);
+        assert_eq!(released.load(Ordering::SeqCst), 1);
+        for operation in [explicit, generated] {
+            assert_eq!(
+                futures_executor::block_on(operation).unwrap_err().kind(),
+                NativeSessionLifecycleErrorKind::Engine
+            );
+        }
+        assert_eq!(released.load(Ordering::SeqCst), 1);
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn initial_metadata_generated_collision_keeps_facts_and_noncollision_errors_stop() {
+        let root = TempDirectory::new("metadata-generated");
+        let (source, calls) =
+            ScriptedSessionIdSource::ids(["occupied", "fresh", "corrupt", "never"]);
+        let incarnation_calls = Arc::new(AtomicUsize::new(0));
+        let (lifecycle, store, _) =
+            lifecycle_with_session_ids(&root, source, incarnation_calls.clone());
+        let occupied = store
+            .create_empty_record(SessionRecord::empty(
+                SessionId::new("occupied").unwrap(),
+                SessionIncarnationId::new("occupied-life").unwrap(),
+            ))
+            .unwrap();
+        let mut metadata = NativeSessionMetadata::default();
+        metadata.rename("generated title", 50).unwrap();
+        let created =
+            futures_executor::block_on(lifecycle.create_generated_with_metadata(metadata.clone()))
+                .unwrap();
+        assert_eq!(created.id().as_str(), "fresh");
+        assert_eq!(created.record().revision.0, 1);
+        assert_eq!(
+            NativeSessionMetadata::from_metadata(&created.record().metadata).unwrap(),
+            metadata
+        );
+        assert_eq!(
+            futures_executor::block_on(lifecycle.replay(created.id().clone())).unwrap(),
+            created.record()
+        );
+        assert_eq!(
+            futures_executor::block_on(store.load(occupied.id.clone())).unwrap(),
+            Some(occupied)
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
+        assert_eq!(incarnation_calls.load(Ordering::Relaxed), 1);
+        store
+            .create_empty_record(SessionRecord::empty(
+                SessionId::new("corrupt").unwrap(),
+                SessionIncarnationId::new("corrupt-life").unwrap(),
+            ))
+            .unwrap();
+        let corrupt_path = fs::read_dir(root.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "json")
+                    && serde_json::from_slice::<serde_json::Value>(&fs::read(path).unwrap())
+                        .unwrap()["record"]["id"]
+                        == "corrupt"
+            })
+            .unwrap();
+        fs::write(&corrupt_path, b"invalid stored record").unwrap();
+        assert_eq!(
+            futures_executor::block_on(lifecycle.create_generated_with_metadata(metadata.clone()))
+                .unwrap_err()
+                .kind(),
+            NativeSessionLifecycleErrorKind::Corrupt
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), 3);
+        assert_eq!(incarnation_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(fs::read(corrupt_path).unwrap(), b"invalid stored record");
+        assert!(
+            futures_executor::block_on(store.load(SessionId::new("never").unwrap()))
+                .unwrap()
+                .is_none()
+        );
+        let (failing_source, failing_calls) = ScriptedSessionIdSource::failing();
+        let (failing, _, _) =
+            lifecycle_with_session_ids(&root, failing_source, incarnation_calls.clone());
+        assert_eq!(
+            futures_executor::block_on(failing.create_generated_with_metadata(metadata))
+                .unwrap_err()
+                .kind(),
+            NativeSessionLifecycleErrorKind::SessionIdSource
+        );
+        assert_eq!(failing_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(incarnation_calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn initial_metadata_does_not_relax_empty_creation_or_reset_predicates() {
+        let root = TempDirectory::new("metadata-empty-predicate");
+        let store = FileSessionStore::open(root.path()).unwrap();
+        let mut candidate = SessionRecord::empty(
+            SessionId::new("strict-empty").unwrap(),
+            SessionIncarnationId::new("first-life").unwrap(),
+        );
+        candidate.metadata.insert(
+            NATIVE_SESSION_METADATA_KEY.to_owned(),
+            NativeSessionMetadata::default().to_value(),
+        );
+        assert_eq!(
+            store
+                .create_empty_record(candidate.clone())
+                .unwrap_err()
+                .kind,
+            SessionStoreErrorKind::Other
+        );
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+        let observed = store
+            .create_empty_record(SessionRecord::empty(
+                candidate.id.clone(),
+                candidate.incarnation_id.clone(),
+            ))
+            .unwrap();
+        candidate.incarnation_id = SessionIncarnationId::new("different-life").unwrap();
+        assert_eq!(
+            store.reset_record(&observed, candidate).unwrap_err().kind,
+            SessionStoreErrorKind::Other
+        );
+        assert_eq!(
+            futures_executor::block_on(store.load(observed.id.clone())).unwrap(),
+            Some(observed)
+        );
+    }
+
+    #[test]
+    fn initial_metadata_generation_keeps_eight_attempt_bound_and_unknown_facts() {
+        let root = TempDirectory::new("metadata-exhaustion");
+        let (source, calls) =
+            ScriptedSessionIdSource::ids(["occupied"; MAX_SESSION_ID_ATTEMPTS + 1]);
+        let incarnation_calls = Arc::new(AtomicUsize::new(0));
+        let (lifecycle, store, _) =
+            lifecycle_with_session_ids(&root, source, incarnation_calls.clone());
+        store
+            .create_empty_record(SessionRecord::empty(
+                SessionId::new("occupied").unwrap(),
+                SessionIncarnationId::new("occupied-life").unwrap(),
+            ))
+            .unwrap();
+        assert_eq!(
+            futures_executor::block_on(
+                lifecycle.create_generated_with_metadata(NativeSessionMetadata::default())
+            )
+            .unwrap_err()
+            .kind(),
+            NativeSessionLifecycleErrorKind::SessionIdExhausted
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), MAX_SESSION_ID_ATTEMPTS);
+        assert_eq!(incarnation_calls.load(Ordering::Relaxed), 0);
+        let created = futures_executor::block_on(lifecycle.create_with_metadata(
+            SessionId::new("unknown-facts").unwrap(),
+            NativeSessionMetadata::default(),
+        ))
+        .unwrap();
+        assert_eq!(created.record().revision.0, 1);
+        assert_eq!(
+            NativeSessionMetadata::from_metadata(&created.record().metadata).unwrap(),
+            NativeSessionMetadata::default()
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), MAX_SESSION_ID_ATTEMPTS);
+    }
+
+    #[test]
+    fn initial_metadata_postpublication_load_conflict_is_not_a_retryable_collision() {
+        use futures_util::FutureExt;
+        let root = TempDirectory::new("metadata-postpublication");
+        let (source, calls) = ScriptedSessionIdSource::ids(["unused"]);
+        let (lifecycle, store, _) =
+            lifecycle_with_session_ids(&root, source, Arc::new(AtomicUsize::new(0)));
+        let id = SessionId::new("published-first").unwrap();
+        let metadata = NativeSessionMetadata::default();
+        let result = futures_executor::block_on(lifecycle.operation().create_polled_with(
+            id.clone(),
+            Some(&metadata),
+            || {
+                let first = store
+                    .load(id.clone())
+                    .now_or_never()
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(first.revision.0, 1);
+                assert_eq!(
+                    NativeSessionMetadata::from_metadata(&first.metadata).unwrap(),
+                    metadata
+                );
+                store
+                    .reset_record(
+                        &first,
+                        SessionRecord::empty(
+                            id.clone(),
+                            SessionIncarnationId::new("external-life").unwrap(),
+                        ),
+                    )
+                    .unwrap();
+            },
+        ));
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeSessionLifecycleErrorKind::Conflict
+        );
+        let observed = futures_executor::block_on(store.load(id)).unwrap().unwrap();
+        assert_eq!(observed.revision.0, 2);
+        assert_eq!(observed.incarnation_id.as_str(), "external-life");
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn initial_metadata_configured_limits_reject_before_record_publication() {
+        use machine_god_core::EngineLimits;
+        use std::num::NonZeroUsize;
+        let one = NonZeroUsize::new(1).unwrap();
+        for limits in [
+            EngineLimits {
+                max_session_metadata_bytes: one,
+                ..EngineLimits::default()
+            },
+            EngineLimits {
+                max_json_nodes: one,
+                ..EngineLimits::default()
+            },
+            EngineLimits {
+                max_transcript_bytes: one,
+                ..EngineLimits::default()
+            },
+        ] {
+            let root = TempDirectory::new("metadata-limits");
+            let store = Arc::new(FileSessionStore::open(root.path()).unwrap());
+            let engine = Engine::builder()
+                .provider(ScriptedModelProvider::new("test", []))
+                .shared_session_store(store.clone())
+                .permission_handler(ScriptedPermissionHandler::new([]))
+                .limits(limits)
+                .build()
+                .unwrap();
+            let (source, calls) = ScriptedSessionIdSource::ids(["first", "not-retried"]);
+            let incarnation_calls = Arc::new(AtomicUsize::new(0));
+            let lifecycle = NativeSessionLifecycle::with_identity_sources(
+                engine,
+                store,
+                source,
+                CountingSource(incarnation_calls.clone()),
+            )
+            .unwrap();
+            assert_eq!(
+                futures_executor::block_on(lifecycle.create_with_metadata(
+                    SessionId::new("explicit").unwrap(),
+                    NativeSessionMetadata::default()
+                ))
+                .unwrap_err()
+                .kind(),
+                NativeSessionLifecycleErrorKind::Engine
+            );
+            assert_eq!(
+                futures_executor::block_on(
+                    lifecycle.create_generated_with_metadata(NativeSessionMetadata::default())
+                )
+                .unwrap_err()
+                .kind(),
+                NativeSessionLifecycleErrorKind::Engine
+            );
+            assert_eq!(calls.load(Ordering::Relaxed), 1);
+            assert_eq!(incarnation_calls.load(Ordering::Relaxed), 0);
+            assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+        }
     }
 
     #[test]

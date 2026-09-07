@@ -5,10 +5,12 @@ boundary for creating, listing, resuming, replaying, and resetting sessions in
 the current file-session schema. Callers may supply a validated core
 `SessionId` to `create`, or ask the lifecycle to generate a new identity with
 `create_generated`. The host allocates the `SessionIncarnationId` for every new
-logical lifetime.
+logical lifetime. `create_with_metadata` and `create_generated_with_metadata`
+add explicitly supplied typed native metadata to that same initial publication.
 
 The owning component is `NativeSessionLifecycle`. Its public API exposes typed
 construction and operation errors plus inert `create`, `create_generated`,
+`create_with_metadata`, `create_generated_with_metadata`,
 `list_sessions`, `resume`, `replay`, and `reset` futures.
 `NativeReferenceHost` retains it and
 exposes lifecycle and session-store observation over the same shared
@@ -107,6 +109,8 @@ NativeSessionLifecycle::create_generated(
 | --- | --- | --- |
 | `create` | Atomically creates one empty current-schema record at revision `1` with a new host-generated incarnation. | A live core `Session` for that exact durable record. |
 | `create_generated` | Generates a bounded random identity and applies `create`, retrying only identity collisions. | A live core `Session` for the newly generated durable record. |
+| `create_with_metadata` | Atomically creates revision `1`, empty history and allocator `1` together with the validated reserved native metadata entry. | A canonical live `Session` containing that exact initial metadata. |
+| `create_generated_with_metadata` | Generates an identity and applies typed-metadata creation, retrying only proven pre-publication identity collisions. | A canonical live `Session` for the newly generated durable record. |
 | `resume` | No record write; loads and validates the current durable record. A present load may create the store's permanent lock sidecar. | The engine-canonical live `Session` for the stored incarnation. |
 | `replay` | No record write; loads and validates one current durable snapshot. A present load may create the lock sidecar. | An owned `SessionRecord` snapshot, not a UI transcript or event stream. |
 | `reset` | Atomically replaces the current record with an empty record under the same ID, a new incarnation, revision `old + 1`, and turn allocator `1`. | A live core `Session` for the newly persisted incarnation. |
@@ -213,6 +217,43 @@ sync failure after rename is an `Unavailable` error with an ambiguous outcome:
 the new record may already be visible. The caller must `resume` or `replay` to
 reconcile before deciding what to do. Blindly retrying `create` is not a safe
 generic response to that error.
+
+### Atomic initial native metadata
+
+`create_with_metadata(id: SessionId, metadata: NativeSessionMetadata)` and
+`create_generated_with_metadata(metadata: NativeSessionMetadata)` return the same
+`BoxFuture<'static, Result<Session, NativeSessionLifecycleError>>` as ordinary
+creation. The input is the private-field bounded native codec, not an arbitrary
+recursive JSON value or caller-supplied metadata map. Default codec fields remain
+unknown; creation does not supply a clock, current directory, title, or provenance
+that the caller did not provide.
+
+These methods publish exactly one initial record containing only the reserved
+`machine_god.native_session` metadata entry, with revision `1`, empty messages,
+and allocator `1`. They never first write an empty record and then perform a
+metadata update. The store validates the typed codec and performs the same
+new-record CAS, file sync, atomic rename, and directory sync as ordinary create.
+Existing `create`, `create_generated`, and `reset` still publish empty metadata;
+the strict empty-record store predicate is not broadened.
+
+Before metadata creation consults the store or incarnation source, its shallow
+scalar codec output is checked against configured engine metadata-byte and JSON-
+node limits, plus the two-byte empty-transcript requirement. Rejection is fixed
+`Engine` and publishes no record or lock. Generated creation may already have
+consumed one session-ID source value; validation failure is not a collision and
+does not retry. The native map has one JSON container level and does not add
+arbitrary JSON traversal authority.
+
+The existing weak canonical reservation remains exactly empty and grants no
+host-lifetime vote. After publication, canonical loading reconciles the initial
+revision and metadata before returning the real session handle. An immediate
+replay and a fresh engine resume observe that same revision-one metadata. A late
+host closure cannot resurrect the host. If the post-publication canonical load
+finds an incompatible live lifetime, metadata creation returns `Conflict`, not
+a pre-publication `LiveSession` collision; generated creation must not allocate
+another ID after that successful publication. Other unknown or ambiguous
+publication errors likewise return without retry. The eight-attempt collision
+bound and source-failure behavior remain unchanged.
 
 ## Resume
 
@@ -372,7 +413,8 @@ With the default OS source, per-call retained application data is bounded by:
   structural limits before a record becomes a live session. Replay remains
   bounded by the fixed store limits above and does not register engine state.
 
-Create and reset serialize only an empty record. Resume and replay do not read
+Ordinary create and reset serialize only an empty record. Typed-metadata create
+adds only the bounded native codec entry to the empty history. Resume and replay do not read
 past the file-store cap. Each attempt touches only the fixed record, lock, and
 temporary names derived from one ID and performs no directory enumeration.
 Successful byte-transfer and default-source work are bounded; advisory-lock

@@ -19,8 +19,9 @@ use machine_god_core::{
 };
 use machine_god_native::{
     FILE_SESSION_SCHEMA_VERSION, FileSessionStore, MAX_SESSION_INCARNATION_ATTEMPTS,
-    NativeSessionLifecycle, NativeSessionLifecycleBuildErrorKind, NativeSessionLifecycleError,
-    NativeSessionLifecycleErrorKind, SessionIncarnationSource, SessionIncarnationSourceError,
+    NATIVE_SESSION_METADATA_KEY, NativeSessionLifecycle, NativeSessionLifecycleBuildErrorKind,
+    NativeSessionLifecycleError, NativeSessionLifecycleErrorKind, NativeSessionMetadata,
+    NativeSessionOrigin, SessionIncarnationSource, SessionIncarnationSourceError,
 };
 use machine_god_testkit::{ModelProviderStep, ScriptedModelProvider, ScriptedPermissionHandler};
 use serde_json::json;
@@ -281,6 +282,68 @@ fn assert_complete(events: &[EngineEvent]) {
             ..
         })
     ));
+}
+
+#[test]
+fn initial_native_metadata_is_atomic_at_revision_one_and_resumes_canonically() {
+    let temporary = TemporaryDirectory::new("initial-native-metadata");
+    let store = Arc::new(FileSessionStore::open(temporary.path()).unwrap());
+    let source = ScriptedIncarnationSource::ids(["metadata-life", "metadata-reset"]);
+    let (lifecycle, provider) = lifecycle(&store, source, []);
+    let mut metadata = NativeSessionMetadata::new(
+        &fs::canonicalize(temporary.path()).unwrap(),
+        100,
+        NativeSessionOrigin::Cli,
+    )
+    .unwrap();
+    metadata.rename("Initial title", 101).unwrap();
+    metadata.set_language("fr", 102).unwrap();
+    let created =
+        ready(lifecycle.create_with_metadata(id("initial-metadata"), metadata.clone())).unwrap();
+    let expected = created.record();
+    assert_eq!(expected.revision, SessionRevision(1));
+    assert_eq!(expected.next_turn_sequence, 1);
+    assert!(expected.messages.is_empty());
+    assert_eq!(expected.metadata.len(), 1);
+    assert_eq!(
+        NativeSessionMetadata::from_metadata(&expected.metadata).unwrap(),
+        metadata
+    );
+    assert_eq!(
+        ready(lifecycle.replay(created.id().clone())).unwrap(),
+        expected
+    );
+    let bytes = fs::read(data_path(temporary.path())).unwrap();
+    let disk: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(disk["record"]["revision"], 1);
+    assert_eq!(disk["record"]["next_turn_sequence"], 1);
+    assert_eq!(disk["record"]["messages"], json!([]));
+    assert_eq!(
+        disk["record"]["metadata"][NATIVE_SESSION_METADATA_KEY],
+        metadata.to_value()
+    );
+    let duplicate = ready(
+        lifecycle.create_with_metadata(created.id().clone(), NativeSessionMetadata::default()),
+    )
+    .unwrap_err();
+    assert_eq!(
+        duplicate.kind(),
+        NativeSessionLifecycleErrorKind::AlreadyExists
+    );
+    assert_eq!(fs::read(data_path(temporary.path())).unwrap(), bytes);
+    drop(created);
+    let fresh_store = Arc::new(FileSessionStore::open(temporary.path()).unwrap());
+    let (fresh_engine, fresh_provider) = engine(&fresh_store, []);
+    let resumed = ready(fresh_engine.load_session(expected.id.clone()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(resumed.record(), expected);
+    drop(resumed);
+    let reset = ready(lifecycle.reset(expected.id)).unwrap();
+    assert!(reset.record().metadata.is_empty());
+    assert_eq!(reset.record().revision, SessionRevision(2));
+    assert!(provider.requests().is_empty());
+    assert!(fresh_provider.requests().is_empty());
 }
 
 #[test]
