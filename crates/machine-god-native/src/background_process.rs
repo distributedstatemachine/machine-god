@@ -5389,12 +5389,10 @@ fn macos_scope_members(
     }
     let deadline = Instant::now() + GROUP_SNAPSHOT_TIMEOUT;
     let snapshot = collect_group_snapshot_output(&mut output, deadline, || {
-        let state = match try_wait_child(child.as_mut().ok_or(())?) {
-            Ok(Some(status)) => SnapshotChildState::Exited(status.success()),
-            Ok(None) | Err(ChildTryWaitError::Interrupted) => SnapshotChildState::Running,
-            Err(ChildTryWaitError::LostAuthority | ChildTryWaitError::Operation) => return Err(()),
-        };
-        Ok(state)
+        let observed = try_wait_child(child.as_mut().ok_or(())?);
+        settle_group_snapshot_child_observation(observed, || {
+            discharge_reaped_child(&mut child, &mut reap_permit);
+        })
     });
     let Ok(bytes) = snapshot else {
         #[cfg(test)]
@@ -5573,17 +5571,97 @@ enum SnapshotChildState {
 }
 
 #[cfg(target_os = "macos")]
+fn settle_group_snapshot_child_observation(
+    observed: Result<Option<ExitStatus>, ChildTryWaitError>,
+    discharge: impl FnOnce(),
+) -> Result<SnapshotChildState, ()> {
+    match observed {
+        Ok(Some(status)) => {
+            discharge();
+            Ok(SnapshotChildState::Exited(status.success()))
+        }
+        Ok(None) | Err(ChildTryWaitError::Interrupted) => Ok(SnapshotChildState::Running),
+        Err(ChildTryWaitError::LostAuthority) => {
+            // Do not leave a known-stale child for the outer error cleanup's
+            // numeric kill. Other observation failures retain cleanup authority.
+            discharge();
+            Err(())
+        }
+        Err(ChildTryWaitError::Operation) => Err(()),
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn collect_group_snapshot_output(
-    reader: &mut impl std::io::Read,
+    reader: &mut (impl std::io::Read + AsFd),
+    deadline: Instant,
+    child_state: impl FnMut() -> Result<SnapshotChildState, ()>,
+) -> Result<Vec<u8>, ()> {
+    collect_group_snapshot_output_with(
+        reader,
+        deadline,
+        child_state,
+        Instant::now,
+        |reader, readiness, interval| {
+            if readiness {
+                wait_group_snapshot_readable(reader.as_fd(), interval, deadline)
+            } else {
+                sleep_through(interval.min(deadline.saturating_duration_since(Instant::now())));
+                Ok(false)
+            }
+        },
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn wait_group_snapshot_readable(
+    reader: BorrowedFd<'_>,
+    interval: Duration,
+    deadline: Instant,
+) -> Result<bool, ()> {
+    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+    let interval = interval.min(deadline.saturating_duration_since(Instant::now()));
+    if interval.is_zero() {
+        return Err(());
+    }
+    let timeout = Timespec::try_from(interval).map_err(|_| ())?;
+    let mut descriptors = [PollFd::new(&reader, PollFlags::IN)];
+    match poll(&mut descriptors, Some(&timeout)) {
+        Ok(0) => Ok(false),
+        Ok(_)
+            if descriptors[0]
+                .revents()
+                .intersects(PollFlags::IN | PollFlags::HUP) =>
+        {
+            Ok(true)
+        }
+        Err(rustix::io::Errno::INTR) => {
+            sleep_through(interval.min(deadline.saturating_duration_since(Instant::now())));
+            Ok(false)
+        }
+        Ok(_) | Err(_) => Err(()),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn collect_group_snapshot_output_with<R: std::io::Read>(
+    reader: &mut R,
     deadline: Instant,
     mut child_state: impl FnMut() -> Result<SnapshotChildState, ()>,
+    mut now: impl FnMut() -> Instant,
+    mut wait: impl FnMut(&mut R, bool, Duration) -> Result<bool, ()>,
 ) -> Result<Vec<u8>, ()> {
     let mut bytes = Vec::with_capacity(MAX_GROUP_SNAPSHOT_BYTES + 1);
     let mut buffer = [0_u8; 8 * 1024];
     let mut eof = false;
     let mut exited = None;
     let mut observation = ObservationBackoff::retry();
+    let mut readiness_hint = false;
     loop {
+        if now() >= deadline {
+            return Err(());
+        }
+        let mut wait_for_output = false;
         if !eof {
             match reader.read(&mut buffer) {
                 Ok(0) => eof = true,
@@ -5592,28 +5670,40 @@ fn collect_group_snapshot_output(
                         return Err(());
                     }
                     bytes.extend_from_slice(&buffer[..read]);
+                    readiness_hint = false;
                     continue;
                 }
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
-                    ) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    // A readiness hint followed by no progress gets one bounded
+                    // backoff instead of spinning on a stale/spurious event.
+                    wait_for_output = !readiness_hint;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(_) => return Err(()),
             }
+        }
+        if now() >= deadline {
+            return Err(());
         }
         if exited.is_none()
             && let SnapshotChildState::Exited(success) = child_state()?
         {
             exited = Some(success);
         }
+        if now() >= deadline {
+            return Err(());
+        }
         if eof && exited.is_some() {
             return exited.filter(|success| *success).map(|_| bytes).ok_or(());
         }
-        if Instant::now() >= deadline {
+        let interval = observation
+            .current
+            .min(deadline.saturating_duration_since(now()));
+        if interval.is_zero() {
             return Err(());
         }
-        observation.sleep_until_and_advance(deadline);
+        readiness_hint = wait(reader, wait_for_output, interval)?;
+        observation.advance();
     }
 }
 
@@ -9054,10 +9144,19 @@ mod process_regression_tests {
             let timeout = Duration::from_millis(20);
             let started = Instant::now();
             assert_eq!(
-                collect_group_snapshot_output(&mut reader, started + timeout, || {
-                    observations += 1;
-                    Ok(SnapshotChildState::Exited(true))
-                }),
+                collect_group_snapshot_output_with(
+                    &mut reader,
+                    started + timeout,
+                    || {
+                        observations += 1;
+                        Ok(SnapshotChildState::Exited(true))
+                    },
+                    Instant::now,
+                    |_, _, interval| {
+                        thread::sleep(interval);
+                        Ok(false)
+                    },
+                ),
                 Err(())
             );
             assert!(started.elapsed() >= timeout);
@@ -9069,6 +9168,287 @@ mod process_regression_tests {
             );
             assert_eq!(observations, 1, "exited child state is not repolled");
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn group_snapshot_child_observation_discharges_only_reap_or_known_authority_loss() {
+        for (observed, expected, should_discharge) in [
+            (Ok(None), Ok(SnapshotChildState::Running), false),
+            (
+                Err(ChildTryWaitError::Interrupted),
+                Ok(SnapshotChildState::Running),
+                false,
+            ),
+            (
+                Ok(Some(ExitStatus::from_raw(0))),
+                Ok(SnapshotChildState::Exited(true)),
+                true,
+            ),
+            (
+                Ok(Some(ExitStatus::from_raw(1 << 8))),
+                Ok(SnapshotChildState::Exited(false)),
+                true,
+            ),
+            (Err(ChildTryWaitError::LostAuthority), Err(()), true),
+            (Err(ChildTryWaitError::Operation), Err(()), false),
+        ] {
+            let mut retained = true;
+            let mut effects = Vec::new();
+            let result = settle_group_snapshot_child_observation(observed, || {
+                effects.push("discharge");
+                retained = false;
+            });
+            assert_eq!(result, expected);
+            assert_eq!(!retained, should_discharge);
+            if result.is_err() && retained {
+                effects.push("outer kill/reap cleanup");
+            }
+            if observed == Err(ChildTryWaitError::LostAuthority) {
+                assert_eq!(effects, ["discharge"], "no kill after known ECHILD");
+            } else if observed == Err(ChildTryWaitError::Operation) {
+                assert_eq!(effects, ["outer kill/reap cleanup"]);
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn group_snapshot_waits_for_readiness_then_backs_off_after_eof() {
+        struct Reader(usize);
+        impl io::Read for Reader {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                self.0 += 1;
+                match self.0 {
+                    1 => Err(io::ErrorKind::WouldBlock.into()),
+                    2 => {
+                        buffer[..2].copy_from_slice(b"7\n");
+                        Ok(2)
+                    }
+                    3 => Ok(0),
+                    _ => panic!("EOF must not be read again"),
+                }
+            }
+        }
+        let started = Instant::now();
+        let clock = std::cell::Cell::new(started);
+        let mut reader = Reader(0);
+        let mut observations = 0;
+        let mut waits = Vec::new();
+        let bytes = collect_group_snapshot_output_with(
+            &mut reader,
+            started + GROUP_SNAPSHOT_TIMEOUT,
+            || {
+                observations += 1;
+                Ok(if observations == 3 {
+                    SnapshotChildState::Exited(true)
+                } else {
+                    SnapshotChildState::Running
+                })
+            },
+            || clock.get(),
+            |_, readiness, interval| {
+                waits.push(readiness);
+                // Readiness can wake before the complete backoff interval.
+                clock.set(clock.get() + interval / 2);
+                Ok(readiness)
+            },
+        )
+        .unwrap();
+        assert_eq!(bytes, b"7\n");
+        assert_eq!(waits, [true, false]);
+        assert_eq!(reader.0, 3);
+        assert_eq!(observations, 3);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn group_snapshot_spurious_readiness_and_interruptions_do_not_spin() {
+        struct Reader(io::ErrorKind, usize);
+        impl io::Read for Reader {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                self.1 += 1;
+                Err(self.0.into())
+            }
+        }
+        for kind in [io::ErrorKind::WouldBlock, io::ErrorKind::Interrupted] {
+            let started = Instant::now();
+            let clock = std::cell::Cell::new(started);
+            let deadline = started + Duration::from_millis(50);
+            let mut reader = Reader(kind, 0);
+            let mut waits = Vec::new();
+            assert_eq!(
+                collect_group_snapshot_output_with(
+                    &mut reader,
+                    deadline,
+                    || Ok(SnapshotChildState::Exited(true)),
+                    || clock.get(),
+                    |_, readiness, interval| {
+                        waits.push(readiness);
+                        clock.set(clock.get() + interval);
+                        Ok(readiness)
+                    },
+                ),
+                Err(())
+            );
+            assert_eq!(clock.get(), deadline);
+            assert_eq!(reader.1, 4);
+            assert_eq!(
+                waits,
+                if kind == io::ErrorKind::WouldBlock {
+                    vec![true, false, true, false]
+                } else {
+                    vec![false; 4]
+                }
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn group_snapshot_expired_deadline_prevents_read_and_observation() {
+        let deadline = Instant::now();
+        for bytes in [b"".as_slice(), b"7\n".as_slice()] {
+            let mut reader = io::Cursor::new(bytes);
+            assert_eq!(
+                collect_group_snapshot_output_with(
+                    &mut reader,
+                    deadline,
+                    || panic!("expired collector must not observe the child"),
+                    || deadline,
+                    |_, _, _| panic!("expired collector must not wait"),
+                ),
+                Err(())
+            );
+            assert_eq!(reader.position(), 0);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn group_snapshot_expiry_during_read_prevents_later_observation() {
+        struct Reader<'a> {
+            bytes: &'a [u8],
+            clock: &'a std::cell::Cell<Instant>,
+            deadline: Instant,
+            reads: usize,
+        }
+        impl io::Read for Reader<'_> {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                self.reads += 1;
+                self.clock.set(self.deadline);
+                buffer[..self.bytes.len()].copy_from_slice(self.bytes);
+                Ok(self.bytes.len())
+            }
+        }
+        for bytes in [b"".as_slice(), b"7\n".as_slice()] {
+            let started = Instant::now();
+            let deadline = started + GROUP_SNAPSHOT_TIMEOUT;
+            let clock = std::cell::Cell::new(started);
+            let mut reader = Reader {
+                bytes,
+                clock: &clock,
+                deadline,
+                reads: 0,
+            };
+            assert_eq!(
+                collect_group_snapshot_output_with(
+                    &mut reader,
+                    deadline,
+                    || panic!("no child observation after the read consumes the deadline"),
+                    || clock.get(),
+                    |_, _, _| panic!("no wait after expiry"),
+                ),
+                Err(())
+            );
+            assert_eq!(reader.reads, 1);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn group_snapshot_expiry_during_reap_rejects_empty_and_nonempty_success() {
+        for bytes in [b"".as_slice(), b"7\n".as_slice()] {
+            let started = Instant::now();
+            let deadline = started + GROUP_SNAPSHOT_TIMEOUT;
+            let clock = std::cell::Cell::new(started);
+            let mut observations = 0;
+            let mut reader = io::Cursor::new(bytes);
+            assert_eq!(
+                collect_group_snapshot_output_with(
+                    &mut reader,
+                    deadline,
+                    || {
+                        observations += 1;
+                        clock.set(deadline);
+                        Ok(SnapshotChildState::Exited(true))
+                    },
+                    || clock.get(),
+                    |_, _, _| panic!("no wait after expiry"),
+                ),
+                Err(())
+            );
+            assert_eq!(observations, 1);
+            assert_eq!(reader.position(), u64::try_from(bytes.len()).unwrap());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn group_snapshot_wait_errors_and_output_cap_remain_fail_closed() {
+        struct PendingReader(usize);
+        impl io::Read for PendingReader {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                self.0 += 1;
+                Err(io::ErrorKind::WouldBlock.into())
+            }
+        }
+        let started = Instant::now();
+        let deadline = started + GROUP_SNAPSHOT_TIMEOUT;
+        let mut reader = PendingReader(0);
+        assert_eq!(
+            collect_group_snapshot_output_with(
+                &mut reader,
+                deadline,
+                || Ok(SnapshotChildState::Running),
+                || started,
+                |_, readiness, _| {
+                    assert!(readiness);
+                    Err(())
+                },
+            ),
+            Err(())
+        );
+        assert_eq!(reader.0, 1);
+        assert_eq!(
+            collect_group_snapshot_output_with(
+                &mut io::repeat(b'1'),
+                deadline,
+                || panic!("byte cap rejects before child observation"),
+                || started,
+                |_, _, _| panic!("available output never waits"),
+            ),
+            Err(())
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn group_snapshot_native_readiness_observes_pipe_data_and_eof() {
+        use io::Write;
+        let (mut reader, mut writer) = io::pipe().unwrap();
+        writer.write_all(b"7\n").unwrap();
+        let deadline = Instant::now() + GROUP_SNAPSHOT_TIMEOUT;
+        assert!(
+            wait_group_snapshot_readable(reader.as_fd(), RETRY_MAX_INTERVAL, deadline).unwrap()
+        );
+        let mut bytes = [0; 2];
+        io::Read::read_exact(&mut reader, &mut bytes).unwrap();
+        assert_eq!(&bytes, b"7\n");
+        drop(writer);
+        assert!(
+            wait_group_snapshot_readable(reader.as_fd(), RETRY_MAX_INTERVAL, deadline).unwrap()
+        );
     }
 
     #[cfg(target_os = "linux")]

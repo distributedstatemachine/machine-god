@@ -845,13 +845,19 @@ impl<B: TerminalSessionBackend, S> TerminalOwnerLoop<B, S> {
                             drop(job);
                             break;
                         }
-                        // Commands use the last validated registry time, preventing a
-                        // second unvalidated clock read from preceding native effects.
+                        // Completion evidence can arrive after the last pump. Admit
+                        // a fresh monotonic clock before any callback/native effect;
+                        // the pump's older timestamp cannot timestamp this job.
+                        let now_ms = clock();
+                        if let Err(failure) = registry.admit_owner_time(now_ms) {
+                            error = Some(TerminalOwnerError::Registry(failure));
+                            break;
+                        }
                         if !job.execute(
                             registry,
                             &mut waits,
                             &mut writes,
-                            registry.minimum_time_ms(),
+                            now_ms,
                             persistence.authority(),
                             state,
                         ) {

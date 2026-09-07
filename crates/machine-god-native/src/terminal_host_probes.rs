@@ -312,6 +312,8 @@ pub(crate) struct TerminalHostProbes {
     housekeeping: Option<BoxFuture<'static, ()>>,
     next_housekeeping_ms: i64,
     closed: bool,
+    #[cfg(test)]
+    diagnostics: Option<Arc<tests::ProbeDiagnostics>>,
 }
 impl TerminalHostProbes {
     pub(crate) fn new(executor: Arc<NativeTerminalProbeExecutor>, stop: CancellationToken) -> Self {
@@ -324,6 +326,8 @@ impl TerminalHostProbes {
             housekeeping: None,
             next_housekeeping_ms: 0,
             closed: false,
+            #[cfg(test)]
+            diagnostics: None,
         }
     }
 
@@ -538,6 +542,10 @@ impl TerminalHostProbes {
                     continue;
                 }
                 let grant = Arc::clone(&entry.grant);
+                #[cfg(test)]
+                if let Some(trace) = &self.diagnostics {
+                    trace.scheduled(&request, clock.now_ms);
+                }
                 if let Ok(authorized) =
                     AuthorizedTerminalProbe::new(&step.owner, request, Arc::clone(&grant), clock)
                 {
@@ -557,17 +565,29 @@ impl TerminalHostProbes {
             let future = self.executor.execute(queued.authorized, self.stop.clone());
             let requester = requester.clone();
             let stop = self.stop.clone();
+            #[cfg(test)]
+            let trace = self.diagnostics.clone();
             self.active.push(Box::pin(async move {
                 let evidence = future.await;
+                #[cfg(test)]
+                tests::ProbeDiagnostics::evidence(trace.as_deref(), &evidence);
                 if stop.is_cancelled() || queued.grant.is_revoked() {
+                    #[cfg(test)]
+                    tests::ProbeDiagnostics::discarded(trace.as_deref(), "evidence");
                     return;
                 }
-                let _ = requester
+                #[cfg(test)]
+                let publication_trace = trace.clone();
+                let publication = requester
                     .request_with_context(stop.clone(), move |context| {
                         if stop.is_cancelled() || queued.grant.is_revoked() {
+                            #[cfg(test)]
+                            tests::ProbeDiagnostics::discarded(publication_trace.as_deref(), "publication");
                             return;
                         }
-                        let _ = context.registry.mutate_with_profile(
+                        #[cfg(test)]
+                        let sequence = evidence.request_sequence;
+                        let result = context.registry.mutate_with_profile(
                             context.store,
                             context.budget,
                             queued.grant.owner(),
@@ -576,12 +596,24 @@ impl TerminalHostProbes {
                                 session.complete_probe_with(persistence, evidence, context.now_ms)
                             },
                         );
+                        #[cfg(test)]
+                        if let Some(trace) = &publication_trace {
+                            trace.publication(sequence, context.now_ms, &result);
+                        }
+                        let _ = result;
                     })
                     .await;
+                #[cfg(test)]
+                tests::ProbeDiagnostics::request_completed(trace.as_deref(), &publication);
+                let _ = publication;
             }));
         }
         self.poll_active();
         self.poll_housekeeping(clock.now_ms, requester, access);
+        #[cfg(test)]
+        if let Some(trace) = &self.diagnostics {
+            trace.counts((self.grants.len(), self.active.len(), self.queued.len()));
+        }
     }
 
     fn namespaces(&self) -> Vec<(BackgroundOutputOwner, TerminalSessionId)> {
@@ -752,10 +784,84 @@ mod tests {
     use std::os::unix::fs::{DirBuilderExt, symlink};
     use std::path::PathBuf;
     use std::sync::{
-        OnceLock,
+        Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
     };
     use std::time::Duration;
+
+    /// Test-local metadata only: no command/output payloads or owner requests.
+    #[derive(Default, Debug)]
+    pub(super) struct ProbeDiagnostics {
+        state: Mutex<((usize, usize, usize), VecDeque<String>)>,
+    }
+    impl ProbeDiagnostics {
+        pub(super) fn scheduled(
+            &self,
+            request: &crate::terminal_monitor::TerminalProbeRequest,
+            now: i64,
+        ) {
+            self.record(format!(
+                "scheduled sequence={} started={} deadline={} observed={now}",
+                request.request_sequence, request.started_at_ms, request.deadline_ms,
+            ));
+        }
+        pub(super) fn evidence(
+            trace: Option<&Self>,
+            evidence: &crate::terminal_monitor::TerminalProbeEvidence,
+        ) {
+            let Some(trace) = trace else {
+                return;
+            };
+            trace.record(format!(
+                "evidence sequence={} completed={} timed_out={} truncated={} bytes={} result={}",
+                evidence.request_sequence,
+                evidence.completed_at_ms,
+                evidence.timed_out,
+                evidence.truncated,
+                evidence.output_bytes,
+                match &evidence.result {
+                    Ok(crate::terminal_monitor::TerminalProbeObservation::Custom {
+                        exit_code,
+                        ..
+                    }) => format!("custom exit {exit_code}"),
+                    Ok(_) => "non-custom observation".into(),
+                    Err(error) => format!("{error:?}"),
+                },
+            ));
+        }
+        pub(super) fn discarded(trace: Option<&Self>, phase: &str) {
+            if let Some(trace) = trace {
+                trace.record(format!("{phase} discarded: stopped/revoked"));
+            }
+        }
+        pub(super) fn publication(&self, sequence: u64, now: i64, result: &impl std::fmt::Debug) {
+            self.record(format!(
+                "publication sequence={sequence} now={now} result={result:?}"
+            ));
+        }
+        pub(super) fn request_completed(trace: Option<&Self>, result: &impl std::fmt::Debug) {
+            if let Some(trace) = trace {
+                trace.record(format!("request completed: {result:?}"));
+            }
+        }
+        pub(super) fn record(&self, mut event: String) {
+            event.truncate(event.floor_char_boundary(512));
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if state.1.len() == 16 {
+                state.1.pop_front();
+            }
+            state.1.push_back(event);
+        }
+        pub(super) fn counts(&self, counts: (usize, usize, usize)) {
+            self.state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .0 = counts;
+        }
+    }
 
     fn owner() -> BackgroundOutputOwner {
         BackgroundOutputOwner::new(
@@ -922,6 +1028,9 @@ mod tests {
             let worker_stop = stop.clone();
             let done = Arc::new(AtomicBool::new(false));
             let worker_done = Arc::clone(&done);
+            let diagnostics = Arc::new(ProbeDiagnostics::default());
+            let worker_diagnostics = Arc::clone(&diagnostics);
+            let label = format!("shell={shell} profile={profile:?} cwd={cwd:?}");
             let requester = Arc::new(OnceLock::<TerminalRuntimeRequester<Backend, State>>::new());
             let worker_requester = Arc::clone(&requester);
             let runtime = TerminalRuntime::new(
@@ -992,6 +1101,7 @@ mod tests {
                         .unwrap();
                     drop(transaction);
                     let mut probes = TerminalHostProbes::new(executor, worker_stop);
+                    probes.diagnostics = Some(worker_diagnostics);
                     if let Some(prepared) = prepared {
                         probes
                             .install(&owner(), &session_id(), &mutation, prepared)
@@ -1030,6 +1140,8 @@ mod tests {
                 runtime: Some(runtime),
                 stop,
                 done,
+                diagnostics,
+                label,
             }
         }
     }
@@ -1044,8 +1156,14 @@ mod tests {
     }
     impl Drop for State {
         fn drop(&mut self) {
+            if let Some(trace) = &self.probes.diagnostics {
+                trace.record("state drop: shutdown begins".into());
+            }
             self.probes.shutdown();
             self.done.store(true, Ordering::Release);
+            if let Some(trace) = &self.probes.diagnostics {
+                trace.record("state drop: shutdown done".into());
+            }
         }
     }
     fn access(state: &mut State) -> &mut TerminalHostProbes {
@@ -1055,6 +1173,8 @@ mod tests {
         runtime: Option<TerminalRuntime<Backend, State>>,
         stop: CancellationToken,
         done: Arc<AtomicBool>,
+        diagnostics: Arc<ProbeDiagnostics>,
+        label: String,
     }
     impl Harness {
         fn runtime(&self) -> &TerminalRuntime<Backend, State> {
@@ -1073,19 +1193,54 @@ mod tests {
             ))
             .unwrap()
         }
-        fn until(mut condition: impl FnMut() -> bool) {
+        #[track_caller]
+        fn until(condition: impl FnMut() -> bool) {
+            Self::until_described("condition", condition, String::new);
+        }
+        #[track_caller]
+        fn until_described(
+            phase: &str,
+            mut condition: impl FnMut() -> bool,
+            details: impl FnOnce() -> String,
+        ) {
             let deadline = Instant::now() + Duration::from_secs(5);
             while !condition() {
-                assert!(Instant::now() < deadline);
+                assert!(
+                    Instant::now() < deadline,
+                    "probe fixture wait expired: phase={phase}; {}",
+                    details()
+                );
                 std::thread::sleep(Duration::from_millis(10));
             }
+        }
+        #[track_caller]
+        fn until_probe(&self, phase: &str, cwd: &Path, condition: impl FnMut() -> bool) {
+            Self::until_described(phase, condition, || {
+                use std::io::Read;
+                let flags = std::fs::File::open(cwd.join("shell-flags")).and_then(|file| {
+                    let mut bytes = Vec::new();
+                    file.take(64).read_to_end(&mut bytes).map(|_| bytes)
+                });
+                format!(
+                    "{} observed={} shell_flags={flags:?} stop={} done={} trace={:?}",
+                    self.label,
+                    cwd.join("observed").exists(),
+                    self.stop.is_cancelled(),
+                    self.done.load(Ordering::Acquire),
+                    self.diagnostics,
+                )
+            });
         }
     }
     impl Drop for Harness {
         fn drop(&mut self) {
             self.stop.cancel();
             drop(self.runtime.take());
-            Self::until(|| self.done.load(Ordering::Acquire));
+            Self::until_described(
+                "harness shutdown",
+                || self.done.load(Ordering::Acquire),
+                || format!("{} trace={:?}", self.label, self.diagnostics),
+            );
         }
     }
     struct Backend(bool);
@@ -1427,8 +1582,10 @@ mod tests {
                 let prepared = fixture.prepare_at(&monitor, cwd.clone());
                 let harness =
                     fixture.runtime_at(monitor, Some(prepared), cwd.clone(), shell, profile);
-                Harness::until(|| cwd.join("observed").exists());
-                Harness::until(|| harness.counts() == (0, 0, 0));
+                harness.until_probe("command observed", &cwd, || cwd.join("observed").exists());
+                harness.until_probe("grant/publication drain", &cwd, || {
+                    harness.counts() == (0, 0, 0)
+                });
                 assert_eq!(std::fs::read(cwd.join("shell-flags")).unwrap(), b"-lc");
                 assert!(!root.join("observed").exists());
             }

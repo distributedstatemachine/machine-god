@@ -996,6 +996,16 @@ impl<B: TerminalSessionBackend> TerminalRegistry<B> {
         }
         Ok(steps)
     }
+    /// Admit one fresh owner-job clock before its callback can perform effects.
+    /// Retain the admitted floor even when the job does not mutate a session.
+    pub(crate) fn admit_owner_time(&mut self, now_ms: i64) -> Result<()> {
+        if self.closing {
+            return Err(TerminalRegistryError::Closed);
+        }
+        self.check_time(now_ms)?;
+        self.now_ms = now_ms;
+        Ok(())
+    }
     fn check_time(&self, now_ms: i64) -> Result<()> {
         if now_ms < self.now_ms || self.entries.iter().any(|entry| now_ms < entry.now_ms()) {
             return Err(TerminalRegistryError::Clock);
@@ -4129,6 +4139,181 @@ mod tests {
             Err(TerminalOwnerError::Closed)
         );
         assert!(!secondary.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn owner_fresh_job_clock_accepts_probe_completed_after_last_pump() {
+        use crate::terminal_monitor::{
+            TerminalMonitorActivation, TerminalProbeEvidence, TerminalProbeObservation,
+        };
+        use crate::terminal_owner::TerminalOwnerLoop;
+        use machine_god_core::{
+            CancellationToken, TerminalMonitorCondition, TerminalMonitorDefinition,
+            TerminalMonitorLifetime, TerminalMonitorOperation, TerminalNotifySchedule,
+            TerminalSchedule,
+        };
+        let fixture = Fixture::new();
+        let mut registry = registry();
+        let who = owner("one");
+        let session_id = id("fresh-clock");
+        registry
+            .start(who.clone(), session_id.clone(), || {
+                fixture.live(&who, &session_id, 0)
+            })
+            .unwrap();
+        let session = registry.live_mut(&who, &session_id).unwrap();
+        session.shell_ready(0).unwrap();
+        session
+            .monitor(
+                &who,
+                TerminalMonitorOperation::Add {
+                    definition: TerminalMonitorDefinition {
+                        condition: TerminalMonitorCondition::TcpReady {
+                            host: "localhost".into(),
+                            port: 80,
+                        },
+                        check_schedule: Some(TerminalSchedule { interval_ms: 10 }),
+                        notify: TerminalNotifySchedule::OnMatch,
+                        lifetime: TerminalMonitorLifetime::UntilMatch,
+                    },
+                },
+                TerminalMonitorActivation::default(),
+                0,
+            )
+            .unwrap();
+        let evidence = Arc::new(Mutex::new(None::<TerminalProbeEvidence>));
+        let observed = Arc::clone(&evidence);
+        let (worker, handle) = TerminalOwnerLoop::new();
+        let stop = handle.requester();
+        let mut request = handle.request(CancellationToken::new(), move |registry, now, _| {
+            let evidence = evidence.lock().unwrap().take().unwrap();
+            assert_eq!(evidence.completed_at_ms, 11);
+            let session = registry.live_mut(&who, &session_id).unwrap();
+            let accepted = session.complete_probe(evidence, now);
+            let removed = session.live_monitor_generations(&who).unwrap().is_empty();
+            stop.shutdown();
+            (now, accepted, removed)
+        });
+        assert!(poll_owner(&mut request).is_pending());
+        let mut ticks = [10, 11].into_iter();
+        let exit = worker.run(
+            &mut registry,
+            || ticks.next().expect("one pump then one job"),
+            |mut steps| {
+                let probe = steps.remove(0).result.unwrap().probes.remove(0);
+                assert_eq!(probe.started_at_ms, 10);
+                *observed.lock().unwrap() = Some(TerminalProbeEvidence {
+                    session_id: probe.session_id,
+                    monitor_id: probe.monitor_id,
+                    generation: probe.generation,
+                    request_sequence: probe.request_sequence,
+                    completed_at_ms: 11,
+                    output_bytes: 0,
+                    truncated: false,
+                    timed_out: false,
+                    result: Ok(TerminalProbeObservation::Tcp { connected: true }),
+                });
+            },
+        );
+        assert_eq!(exit.error, None);
+        assert!(exit.shutdown.unwrap().is_empty());
+        assert_eq!(
+            futures_executor::block_on(request).unwrap(),
+            (11, Ok(true), true)
+        );
+    }
+
+    #[test]
+    fn owner_rejects_invalid_fresh_job_clock_before_dispatch() {
+        use crate::terminal_owner::{TerminalOwnerError, TerminalOwnerLoop};
+        use machine_god_core::CancellationToken;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        for fresh in [Some(9), Some(-1), None] {
+            let fixture = Fixture::new();
+            let mut registry = registry();
+            let who = owner("one");
+            let session_id = id("rejected-clock");
+            registry
+                .start(who.clone(), session_id.clone(), || {
+                    fixture.live(&who, &session_id, 0)
+                })
+                .unwrap();
+            let (worker, handle) = TerminalOwnerLoop::new();
+            let executed = Arc::new(AtomicBool::new(false));
+            let callback_executed = Arc::clone(&executed);
+            let mut request = handle.request(CancellationToken::new(), move |_, _, _| {
+                callback_executed.store(true, Ordering::Release);
+            });
+            assert!(poll_owner(&mut request).is_pending());
+            let mut first = true;
+            let exit = worker.run(
+                &mut registry,
+                || {
+                    if std::mem::take(&mut first) {
+                        10
+                    } else {
+                        fresh.expect("injected job clock panic")
+                    }
+                },
+                |_| {},
+            );
+            assert_eq!(
+                exit.error,
+                Some(if fresh.is_some() {
+                    TerminalOwnerError::Registry(TerminalRegistryError::Clock)
+                } else {
+                    TerminalOwnerError::Panicked
+                })
+            );
+            assert!(!executed.load(Ordering::Acquire));
+            assert_eq!(
+                futures_executor::block_on(request),
+                Err(TerminalOwnerError::Closed)
+            );
+            assert!(exit.shutdown.unwrap().is_empty());
+            assert_eq!(fixture.state.lock().unwrap().closes, 1);
+        }
+    }
+
+    #[test]
+    fn owner_time_admission_retains_global_and_resident_floors_atomically() {
+        let mut registry = registry();
+        assert_eq!(
+            registry.admit_owner_time(-1),
+            Err(TerminalRegistryError::Clock)
+        );
+        assert_eq!(registry.minimum_time_ms(), 0);
+        registry.admit_owner_time(10).unwrap();
+        assert_eq!(
+            registry.admit_owner_time(9),
+            Err(TerminalRegistryError::Clock)
+        );
+        assert_eq!(registry.minimum_time_ms(), 10);
+        let fixture = Fixture::new();
+        let who = owner("one");
+        let session_id = id("resident-clock");
+        registry
+            .start(who.clone(), session_id.clone(), || {
+                fixture.live(&who, &session_id, 10)
+            })
+            .unwrap();
+        registry
+            .live_mut(&who, &session_id)
+            .unwrap()
+            .shell_ready(20)
+            .unwrap();
+        assert_eq!(
+            registry.admit_owner_time(19),
+            Err(TerminalRegistryError::Clock)
+        );
+        assert_eq!(registry.now_ms, 10);
+        registry.admit_owner_time(20).unwrap();
+        registry.shutdown(20, TerminalClosePolicy::Force).unwrap();
+        assert_eq!(
+            registry.admit_owner_time(21),
+            Err(TerminalRegistryError::Closed)
+        );
+        assert_eq!(registry.minimum_time_ms(), 20);
     }
 
     #[test]

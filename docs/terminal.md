@@ -757,6 +757,13 @@ Profile-aware jobs receive the owning worker's exact store and budget, acquire
 their short mutation transaction inside dispatch, and release it before reply
 wakes. Borrowed profile authority cannot escape through a request result. Such
 jobs refuse an unmetered test loop before invoking the mutation callback.
+Each dispatched job receives a fresh owner-clock sample validated against the
+registry and every resident session before its callback can perform effects.
+The admitted sample advances the registry's time floor even for a read-only
+job. A probe completed after the previous pump is therefore not rejected merely
+because dispatch reused that pump's timestamp. Backward or panicking clocks
+still stop dispatch and retain the existing owned cleanup path; probe evidence
+timestamps and absolute deadlines are never clamped or extended.
 
 The native host's reusable reserved-worker spawn path shares the existing
 bounded worker collector. It rejects foreign/non-single reservations before

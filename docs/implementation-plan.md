@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `validate exact reaping-admission recovery and factory deadline fixtures, complete replacement pinned local and release-binary gates, then repeat three independent review tracks before exact remote gates`
+- Next gate: `validate fresh owner-clock admission and bounded readiness-driven inventory collection, complete replacement pinned local and release-binary gates, then repeat three independent review tracks before exact remote gates`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -166,6 +166,24 @@ eight factory tests and twenty PTY tests pass. The real stalled-probe regression
 crosses the unchanged observation bound and proves successful exact-child reap;
 it does not establish the subcase behind every earlier intermittent failure.
 Complete replacement gates remain required; no delivery is claimed.
+
+Candidate `2ad56777ca402c32f33a211c25026e2b1141eacd` passes the build,
+formatting, strict Clippy, doctest, Python, cross-compilation, dependency and
+release-smoke prerequisites. Its full workspace native run passes 1,362 tests
+with four expected ignores, but fails two macOS inventory deadlines and one
+custom-probe publication wait. A single instrumented probe run establishes
+that successful, timely evidence is rejected because dispatch reuses an older
+pump timestamp. The correction admits a fresh validated owner time before job
+effects, without changing evidence timestamps or probe deadlines. Inventory
+collection retains the fixed child boundary and limits, using pipe readiness
+to remove sleep-polling latency and checking expiry before accepting any
+snapshot. This does not promise success under arbitrary host load. Focused
+checks pass for nine collector cases, three deterministic clock regressions,
+the previously failing custom probe, and the owner, runtime, host-probe,
+startup, tmux, staged-start, factory and PTY groups. Known loss of collector
+wait authority also discharges its stale handle before cleanup. Strict workspace
+Clippy passes after extracting the bounded test diagnostics. Replacement local
+gates, independent reviews and exact remote delivery remain required.
 
 Earlier internal evidence remains historical, not delivery status:
 `a327580b754e25b8c1beaa5edf744b2b2252c620` passed the pinned workspace gate,
