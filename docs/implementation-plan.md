@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `finish the pinned local and release-binary gates for retained cleanup and probe admission corrections, then repeat three independent reviews and exact remote gates`
+- Next gate: `fix Linux created-directory mode restoration and the compound cleanup-timing fixture, then repeat pinned local, independent review and exact remote gates`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -226,6 +226,31 @@ the shell's PID write, producing an empty integer parse before cancellation is
 tested. The test-only correction waits for a complete framed PID within the
 unchanged readiness bound; it does not alter product timing or cleanup behavior.
 Replacement validation and three fresh reviews remain required before push.
+
+Candidate `c2d1243b2592c86a0ad2c433d6b0e2549cb627af` passes the complete
+replacement local gate, including 1,389 native unit tests and 647 release-helper
+terminal tests (four expected ignores in each), and three fresh independent
+source-review tracks with zero actionable findings. The feature branch is
+pushed. Exact CI `34089297053` rejects delivery: Linux quality and both Linux
+native jobs fail the same full-host constructor; macOS ARM fails an elapsed-time
+assertion around cancellation, cleanup and joining. The Linux failure reproduces
+as a non-root user in a local exact-1.94.1 container. Pinned rustix rejects
+`chmodat(SYMLINK_NOFOLLOW)` on Linux, so new terminal directories require a
+supported descriptor-bound restoration path that preserves hostile-umask and
+identity checks. The timing fixture must separate writer cancellation from
+native cleanup stages without changing product bounds. Benchmark evidence run
+`34089297104` and any other passing jobs do not satisfy the failed CI gate;
+`main` and the delivered count remain unchanged.
+
+The integrated Linux correction restores only the retained new directory via a
+validated procfs descriptor link, preserving mode-000 creation without changing
+umask or following the ordinary entry for chmod. Non-root Linux execution passes
+all 18 catalog tests, including hostile umask, substitution and untrusted-proc
+regressions, plus the previously failing CLI settlement fixture. The timing
+correction separates deterministic writer cancellation/expiry from native
+cleanup and retains both real-helper exact-reaping assertions. Its three
+focused tests pass on Linux and macOS. Complete replacement gates and fresh
+reviews remain pending; all completed agent worktrees are removed.
 
 Earlier internal evidence remains historical, not delivery status:
 `a327580b754e25b8c1beaa5edf744b2b2252c620` passed the pinned workspace gate,

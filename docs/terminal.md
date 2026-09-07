@@ -758,6 +758,16 @@ a session explicitly also reconciles its directory barriers; listing remains
 validation-only and does not sync every retained session. No path deletes or
 guesses repairs. Catalog reads never infer process authority.
 
+Only newly created directories have their private mode restored after the
+process umask is applied; existing entries are validated, never chmod-repaired.
+On Linux, restoration retains a no-follow `O_PATH` descriptor, including for a
+mode-000 directory, and changes its mode through a verified procfs descriptor
+link. The procfs type, mount identity, current-process link and exact target
+inode must agree before the effect. Missing or mismatched procfs or mount-ID
+support fails closed; there is no ordinary pathname chmod fallback, helper
+execution or process-wide umask mutation. The descriptor remains held through
+the effect and the final named-entry check and durability barriers still apply.
+
 The complete list projection merges resident facts with validated nonresident
 histories, in exact session-ID order, without consuming resident slots. Its
 256-row bound is independent of the sixteen live slots; an oversized union is

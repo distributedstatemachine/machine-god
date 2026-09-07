@@ -9248,17 +9248,21 @@ mod process_regression_tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
-    fn cancellation_after_one_byte_short_write_keeps_cancelled_precedence() {
+    fn cancellation_after_short_write_or_backpressure_prevents_another_attempt() {
         struct CancellingWriter {
             attempts: usize,
             cancellation: CancellationToken,
+            error: Option<std::io::ErrorKind>,
         }
 
         impl std::io::Write for CancellingWriter {
             fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
                 self.attempts += 1;
                 self.cancellation.cancel();
-                Ok(usize::from(!bytes.is_empty()))
+                self.error.map_or_else(
+                    || Ok(usize::from(!bytes.is_empty())),
+                    |kind| Err(kind.into()),
+                )
             }
 
             fn flush(&mut self) -> std::io::Result<()> {
@@ -9266,30 +9270,74 @@ mod process_regression_tests {
             }
         }
 
+        // Cancel at the exact first backpressure/short-write boundary, without
+        // racing a sleep or including native process cleanup in a latency claim.
+        for error in [
+            None,
+            Some(std::io::ErrorKind::WouldBlock),
+            Some(std::io::ErrorKind::Interrupted),
+        ] {
+            let cancellation = CancellationToken::new();
+            let mut output = CancellingWriter {
+                attempts: 0,
+                cancellation: cancellation.clone(),
+                error,
+            };
+            let mut writer = BoundedGateWriter {
+                output: &mut output,
+                cancellation_token: cancellation.clone(),
+                cancellation: CancellationParker::new(&cancellation),
+                deadline: Instant::now() + RELEASE_FRAME_TIMEOUT,
+                failure: None,
+                retry: ObservationBackoff::retry(),
+                attempts: 0,
+                attempt_limit: MAX_RELEASE_FRAME_WRITE_ATTEMPTS,
+            };
+
+            let error = std::io::Write::write_all(&mut writer, &[0_u8; 2])
+                .expect_err("cancellation wins before the second write attempt");
+            assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+            assert!(matches!(
+                writer.observed_failure(),
+                ReleaseWriteFailure::Cancelled
+            ));
+            // Cancellation also prevents the separately framed commit from
+            // reaching the helper, even if its pipe later becomes writable.
+            assert!(std::io::Write::write_all(&mut writer, &[RELEASE_COMMIT_BYTE]).is_err());
+            assert_eq!(writer.attempts, 1);
+            drop(writer);
+            assert_eq!(output.attempts, 1);
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn expired_release_writer_does_not_attempt_frame_or_commit() {
         let cancellation = CancellationToken::new();
-        let mut output = CancellingWriter {
-            attempts: 0,
-            cancellation: cancellation.clone(),
-        };
+        let mut output = Vec::new();
         let mut writer = BoundedGateWriter {
             output: &mut output,
             cancellation_token: cancellation.clone(),
             cancellation: CancellationParker::new(&cancellation),
-            deadline: Instant::now() + Duration::from_secs(1),
+            deadline: Instant::now(),
             failure: None,
             retry: ObservationBackoff::retry(),
             attempts: 0,
             attempt_limit: MAX_RELEASE_FRAME_WRITE_ATTEMPTS,
         };
 
-        let error = std::io::Write::write_all(&mut writer, &[0_u8; 2])
-            .expect_err("cancellation wins before the second write attempt");
-        let failure = writer.observed_failure();
+        let environment = ValidatedBackgroundEnvironment::new(Vec::new()).unwrap();
+        assert!(
+            write_release_frame(&mut writer, "x", &environment, false, ProcessInput::Null).is_err()
+        );
+        assert!(matches!(
+            writer.observed_failure(),
+            ReleaseWriteFailure::Release
+        ));
+        assert!(std::io::Write::write_all(&mut writer, &[RELEASE_COMMIT_BYTE]).is_err());
+        assert_eq!(writer.attempts, 0);
         drop(writer);
-
-        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
-        assert!(matches!(failure, ReleaseWriteFailure::Cancelled));
-        assert_eq!(output.attempts, 1);
+        assert!(output.is_empty());
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -10142,7 +10190,7 @@ mod process_regression_tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
-    fn ready_helper_not_reading_maximum_frame_is_bounded_and_reaped() {
+    fn ready_helper_not_reading_maximum_frame_cancels_or_expires_and_is_reaped() {
         let directory = TestDirectory::new("stalled-release-frame");
         let helper_pid = directory.0.join("helper.pid");
         let prepare = || {
@@ -10184,7 +10232,11 @@ mod process_regression_tests {
         let worker_cancellation = cancellation.clone();
         let worker = thread::spawn(move || prepared.release_cancellable(&worker_cancellation));
         thread::sleep(Duration::from_millis(50));
-        let started = Instant::now();
+        // This integration observes cancellation AND completed native cleanup.
+        // Cleanup has independent inventory, disappearance and reap deadlines;
+        // its completion is not the writer's cancellation-wakeup latency. The
+        // deterministic writer tests above prove cancellation/expiry prevent
+        // another write, while both real-helper cases retain exact reap proof.
         assert!(cancellation.cancel());
         assert_eq!(
             worker
@@ -10194,7 +10246,6 @@ mod process_regression_tests {
                 .kind(),
             BackgroundProcessErrorKind::Cancelled
         );
-        assert!(started.elapsed() < Duration::from_millis(250));
         assert_eq!(
             rustix::process::test_kill_process(
                 rustix::process::Pid::from_raw(
@@ -10208,12 +10259,10 @@ mod process_regression_tests {
         let prepared = prepare();
         let pid = prepared.pid();
 
-        let started = Instant::now();
         let error = prepared
             .release_cancellable(&CancellationToken::new())
             .expect_err("non-reading helper cannot consume the complete frame");
         assert_eq!(error.kind(), BackgroundProcessErrorKind::Release);
-        assert!(started.elapsed() < Duration::from_secs(1));
         assert_eq!(
             rustix::process::test_kill_process(
                 rustix::process::Pid::from_raw(

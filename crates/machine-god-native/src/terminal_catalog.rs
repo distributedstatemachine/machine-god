@@ -340,6 +340,9 @@ fn finish_created_directory(parent: impl AsFd, name: &str) -> Result<OwnedFd> {
     {
         return Err(TerminalCatalogError::Corrupt);
     }
+    #[cfg(target_os = "linux")]
+    restore_created_directory_mode(parent.as_fd(), name, &before, std::path::Path::new("/proc"))?;
+    #[cfg(target_os = "macos")]
     rustix::fs::chmodat(
         parent.as_fd(),
         name,
@@ -355,6 +358,92 @@ fn finish_created_directory(parent: impl AsFd, name: &str) -> Result<OwnedFd> {
     sync_child(&fd)?;
     sync_parent(parent)?;
     Ok(fd)
+}
+
+/// Linux's pinned chmodat rejects SYMLINK_NOFOLLOW. O_PATH binds even a
+/// mode-000 directory without requiring a process-wide umask change. Only a
+/// verified procfs magic link to this retained descriptor may restore its mode.
+#[cfg(target_os = "linux")]
+fn restore_created_directory_mode(
+    parent: impl AsFd,
+    name: &str,
+    expected: &rustix::fs::Stat,
+    proc_path: &std::path::Path,
+) -> Result<()> {
+    use rustix::fd::AsRawFd;
+
+    let target = rustix::fs::openat(
+        parent.as_fd(),
+        name,
+        OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(io_error)?;
+    let retained = rustix::fs::fstat(&target).map_err(io_error)?;
+    if !FileType::from_raw_mode(retained.st_mode).is_dir()
+        || retained.st_uid != rustix::process::geteuid().as_raw()
+        || retained.st_nlink == 0
+        || retained.st_dev != expected.st_dev
+        || retained.st_ino != expected.st_ino
+    {
+        return Err(TerminalCatalogError::Corrupt);
+    }
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let proc_root = rustix::fs::open(proc_path, flags, Mode::empty()).map_err(io_error)?;
+    if u64::try_from(rustix::fs::fstatfs(&proc_root).map_err(io_error)?.f_type).ok() != Some(0x9fa0)
+    {
+        return Err(TerminalCatalogError::Unavailable);
+    }
+    let mount = proc_mount_id(&proc_root, "", AtFlags::EMPTY_PATH)?;
+    // A proc mount for a different PID namespace must not resolve an arbitrary
+    // process with our numeric PID. Its kernel-generated self link must agree.
+    let pid = rustix::process::getpid().as_raw_nonzero().get().to_string();
+    let mut link = [0_u8; 32];
+    let length = rustix::fs::readlinkat_raw(&proc_root, "self", &mut link[..]).map_err(io_error)?;
+    if length == link.len()
+        || &link[..length] != pid.as_bytes()
+        || proc_mount_id(&proc_root, "self", AtFlags::SYMLINK_NOFOLLOW)? != mount
+    {
+        return Err(TerminalCatalogError::Unavailable);
+    }
+    let process =
+        rustix::fs::openat(&proc_root, pid.as_str(), flags, Mode::empty()).map_err(io_error)?;
+    let descriptors = rustix::fs::openat(&process, "fd", flags, Mode::empty()).map_err(io_error)?;
+    for directory in [&process, &descriptors] {
+        if proc_mount_id(directory, "", AtFlags::EMPTY_PATH)? != mount {
+            return Err(TerminalCatalogError::Unavailable);
+        }
+    }
+    let descriptor = target.as_raw_fd().to_string();
+    if proc_mount_id(&descriptors, descriptor.as_str(), AtFlags::SYMLINK_NOFOLLOW)? != mount {
+        return Err(TerminalCatalogError::Unavailable);
+    }
+    let resolved = rustix::fs::statat(&descriptors, descriptor.as_str(), AtFlags::empty())
+        .map_err(io_error)?;
+    if resolved.st_dev != retained.st_dev || resolved.st_ino != retained.st_ino {
+        return Err(TerminalCatalogError::Corrupt);
+    }
+    // No ordinary directory entry is followed here. The exact target descriptor
+    // stays owned until this effect completes; fd-number reuse is impossible.
+    rustix::fs::chmodat(
+        &descriptors,
+        descriptor.as_str(),
+        DIRECTORY_MODE,
+        AtFlags::empty(),
+    )
+    .map_err(io_error)?;
+    private(&target, true)?;
+    same_entry(parent, name, &target, true)
+}
+
+#[cfg(target_os = "linux")]
+fn proc_mount_id(directory: impl AsFd, path: &str, flags: AtFlags) -> Result<u64> {
+    use rustix::fs::StatxFlags;
+    let stat = rustix::fs::statx(directory, path, flags, StatxFlags::MNT_ID).map_err(io_error)?;
+    if stat.stx_mask & StatxFlags::MNT_ID.bits() == 0 {
+        return Err(TerminalCatalogError::Unavailable);
+    }
+    Ok(stat.stx_mnt_id)
 }
 
 fn acquire_lock(parent: impl AsFd) -> Result<OwnedFd> {
@@ -978,6 +1067,77 @@ mod tests {
             assert_eq!(cell.get().unwrap().child_calls, 2);
             cell.set(None);
         });
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn created_directory_mode_zero_is_restored_through_retained_proc_descriptor() {
+        let fixture = Fixture::new();
+        let directory = fixture.0.join("created");
+        fs::create_dir(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0)).unwrap();
+        let retained = finish_created_directory(fixture.fd(), "created").unwrap();
+        assert_eq!(private(&retained, true).unwrap().st_mode & 0o7777, 0o700);
+        // Existing entries never pass through restoration, even if owned.
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o500)).unwrap();
+        assert!(prepare_directory(fixture.fd(), "created").is_err());
+        assert_eq!(fs::metadata(&directory).unwrap().mode() & 0o7777, 0o500);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn created_directory_rejects_absent_or_untrusted_proc_without_chmod() {
+        let fixture = Fixture::new();
+        let directory = fixture.0.join("created");
+        fs::create_dir(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0)).unwrap();
+        let parent = fixture.fd();
+        let before = rustix::fs::statat(&parent, "created", AtFlags::SYMLINK_NOFOLLOW).unwrap();
+        let missing = fixture.0.join("missing-proc");
+        let linked = fixture.0.join("linked-proc");
+        symlink("/proc", &linked).unwrap();
+        for proc_path in [&missing, &fixture.0, &linked] {
+            assert!(
+                restore_created_directory_mode(&parent, "created", &before, proc_path).is_err()
+            );
+            assert_eq!(fs::metadata(&directory).unwrap().mode() & 0o7777, 0);
+        }
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn created_directory_rejects_substitution_before_mode_effect() {
+        let fixture = Fixture::new();
+        let directory = fixture.0.join("created");
+        fs::create_dir(&directory).unwrap();
+        let parent = fixture.fd();
+        let before = rustix::fs::statat(&parent, "created", AtFlags::SYMLINK_NOFOLLOW).unwrap();
+        fs::rename(&directory, fixture.0.join("original")).unwrap();
+        fs::create_dir(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o500)).unwrap();
+        assert!(
+            restore_created_directory_mode(
+                &parent,
+                "created",
+                &before,
+                std::path::Path::new("/proc")
+            )
+            .is_err()
+        );
+        assert_eq!(fs::metadata(&directory).unwrap().mode() & 0o7777, 0o500);
+        fs::rename(&directory, fixture.0.join("replacement")).unwrap();
+        symlink("replacement", &directory).unwrap();
+        assert!(
+            restore_created_directory_mode(
+                &parent,
+                "created",
+                &before,
+                std::path::Path::new("/proc")
+            )
+            .is_err()
+        );
+        assert_eq!(fs::metadata(&directory).unwrap().mode() & 0o7777, 0o500);
     }
 
     #[test]
