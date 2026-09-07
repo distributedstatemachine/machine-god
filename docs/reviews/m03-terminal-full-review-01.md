@@ -458,3 +458,31 @@ Benchmark succeeds with unexpired artifacts `10020326854` (pinned upstream) and
 This is not delivery evidence. The corrected candidate requires replacement
 local checks with matching Linux concurrency, three fresh reviews and exact
 remote gates before main can advance.
+
+## Concurrent deadline-fixture correction after `b1a7245`
+
+Candidate `b1a7245c0c4381050faf6595a1e653a2f62c77e0` passes formatting,
+strict Linux/macOS lint, doctests, FreeBSD/WASI compilation, dependency checks,
+release build, 260 Python checks/14 expected skips, drift and bounded docs.
+macOS passes the workspace (native 1,402/five helper ignores), eight release
+launches, CLI smoke and 658 production-helper tests/five helper ignores.
+After a package-scoped rebuild discards potentially cached diagnostic code,
+Linux's default-concurrent native run fails four deadline-ordering fixtures:
+1,468 pass, four fail and six helpers are ignored in 28.01 seconds. CLI does
+not run after that failure. No review or push seals this candidate.
+
+Correction `59d2052875913830274df030bb25582c7d0e092a` changes only tests in
+`terminal.rs`. Original 1–5 ms deadlines could expire during filesystem
+admission before mock execution existed. Arbitration fixtures now construct
+admitted execution explicitly with live/expired deadlines, preserving output
+byte counts, timeout and typed cleanup-error assertions without sleep-based
+ordering. A separate expired-admission regression confirms no executor starts.
+The independent timer test requires initial Pending, a real timer wake and
+executor drop, using a one-second test deadline without retries. Production
+deadline, admission and cleanup behavior are unchanged.
+
+The isolated worker passes exact Rust 1.94.1 strict native lint and the full
+default-concurrent Linux suite (1,473 pass/six helper ignores, 26.91 seconds),
+39 focused cases and 20 repetitions, formatting and diff checks. Containers
+are removed. macOS focused checks belong to the root's complete replacement
+gate; three fresh reviews and exact remote success are still required.

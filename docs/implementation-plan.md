@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `repeat complete pinned local checks with CI-matching Linux concurrency, three fresh independent reviews and exact remote gates for the shell-provisioning correction`
+- Next gate: `complete replacement pinned local checks, three fresh independent reviews and exact remote gates for shell provisioning and deterministic deadline fixtures`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -145,7 +145,13 @@ failure: 50 loaded Linux factory repetitions, five concurrent terminal suites,
 and 100 exact macOS repetitions pass. Those failures remain unexplained; no
 speculative cleanup change is made. Main is unchanged. Replacement gates use
 Linux's default CI test concurrency and serial macOS execution; exact remote
-success is still required. No delivery is claimed.
+success is still required. The replacement concurrent Linux run exposes four
+foreground deadline fixtures that assume filesystem admission completes within
+1–5 ms. Test-only correction separates expired admission from already-admitted
+execution, retains output/error assertions and positively observes a real timer
+wake and executor drop. All 1,473 Linux native tests pass concurrently, with
+strict lint and 20 focused repetitions. No production deadline changes; the
+complete replacement gate remains required. No delivery is claimed.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:

@@ -7417,32 +7417,123 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn deadline_test_arguments() -> super::TerminalCommandArguments {
+        super::TerminalCommandArguments {
+            action: super::TerminalAction::Exec,
+            command: "ignored".to_owned(),
+            cwd: ".".to_owned(),
+            stdin: super::ProcessInput::Null,
+            explicit_stdin: false,
+        }
+    }
+
+    #[cfg(unix)]
+    fn run_admitted_deadline_executor(
+        executor: Arc<dyn TerminalExecutor>,
+        remaining: Duration,
+    ) -> Result<machine_god_core::ToolOutput, machine_god_core::ToolError> {
+        futures_executor::block_on(admitted_deadline_execution(executor, remaining))
+    }
+
+    #[cfg(unix)]
+    fn admitted_deadline_execution(
+        executor: Arc<dyn TerminalExecutor>,
+        remaining: Duration,
+    ) -> impl Future<Output = Result<machine_god_core::ToolOutput, machine_god_core::ToolError>>
+    {
+        let root = std::env::current_dir().unwrap();
+        let tool =
+            TerminalTool::with_executor(&root, Vec::new(), executor, TerminalLimits::default())
+                .unwrap();
+        let cancellation = CancellationToken::new();
+        let activity = ExecutionActivity::acquire(&tool.active, 1).unwrap();
+        let started = Instant::now();
+        let mut request = tool
+            .execution_request(
+                deadline_test_arguments(),
+                started,
+                started + Duration::from_secs(60),
+                Arc::clone(&activity),
+                &cancellation,
+            )
+            .unwrap();
+        // These tests target arbitration after admission, not the time needed
+        // for filesystem validation on a loaded runner. Construct the executor
+        // unconditionally and make the deadline phase explicit. Production
+        // admission still rejects expired requests before creating an executor.
+        let deadline = Instant::now() + remaining;
+        request.deadline = deadline;
+        let timer = DeadlineTimer::new(deadline, Arc::clone(&activity)).unwrap();
+        let execution = tool.executor.execute(request, cancellation.clone());
+        async move {
+            let outcome =
+                await_executor(execution, &cancellation, deadline, started, timer, activity)
+                    .await?;
+            super::render_output(".", &outcome)
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn expired_admission_times_out_without_constructing_an_executor() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let root = std::env::current_dir().unwrap();
+        let tool = TerminalTool::with_executor(
+            &root,
+            Vec::new(),
+            Arc::new(PendingExecutor {
+                dropped: Arc::clone(&dropped),
+            }),
+            TerminalLimits::new(Duration::from_millis(1), 1).unwrap(),
+        )
+        .unwrap();
+        let output = futures_executor::block_on(
+            tool.execute_foreground(
+                deadline_test_arguments(),
+                Instant::now()
+                    .checked_sub(Duration::from_millis(1))
+                    .unwrap(),
+                CancellationToken::new(),
+            ),
+        )
+        .unwrap();
+        assert_eq!(output.content["status"], "timed_out");
+        assert!(output.is_error);
+        assert!(!dropped.load(Ordering::Acquire));
+        assert_eq!(tool.active.load(Ordering::Acquire), 0);
+    }
+
+    #[cfg(unix)]
     #[test]
     fn independent_deadline_stops_and_drops_a_pending_executor() {
         let dropped = Arc::new(AtomicBool::new(false));
         let executor = Arc::new(PendingExecutor {
             dropped: Arc::clone(&dropped),
         });
-        let root = std::env::current_dir().unwrap();
-        let tool = TerminalTool::with_executor(
-            &root,
-            Vec::new(),
+        // Leave room for scheduling between construction and the first poll;
+        // the deadline's value is not the behavior under test. The execution
+        // must actually suspend and be awakened by the independent timer.
+        let mut execution = Box::pin(admitted_deadline_execution(
             executor,
-            TerminalLimits::new(Duration::from_millis(5), 1).unwrap(),
-        )
-        .unwrap();
+            Duration::from_secs(1),
+        ));
+        let target = Arc::new(CountingNotifierTarget {
+            calls: AtomicUsize::new(0),
+            in_flight: Arc::new(AtomicUsize::new(0)),
+            maximum_in_flight: Arc::new(AtomicUsize::new(0)),
+        });
+        let waker = Waker::from(Arc::clone(&target));
+        let mut context = Context::from_waker(&waker);
         let started = Instant::now();
-        let output = futures_executor::block_on(tool.execute(
-            context(),
-            json!({
-                "action": "exec",
-                "command": "ignored",
-                "cwd": ".",
-                "profile": "clean"
-            }),
-            CancellationToken::new(),
-        ))
-        .unwrap();
+        assert!(execution.as_mut().poll(&mut context).is_pending());
+        assert!(!dropped.load(Ordering::Acquire));
+        while target.calls.load(Ordering::Acquire) == 0
+            && started.elapsed() < Duration::from_secs(2)
+        {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(target.calls.load(Ordering::Acquire) > 0);
+        let output = futures_executor::block_on(execution).unwrap();
         assert_eq!(output.content["status"], "timed_out");
         assert!(output.is_error);
         assert!(dropped.load(Ordering::Acquire));
@@ -7479,25 +7570,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn output_limit_ready_after_deadline_remains_authoritative() {
-        let root = std::env::current_dir().unwrap();
-        let tool = TerminalTool::with_executor(
-            &root,
-            Vec::new(),
-            Arc::new(DelayedOutputLimitExecutor),
-            TerminalLimits::new(Duration::from_millis(1), 1).unwrap(),
-        )
-        .unwrap();
-        let output = futures_executor::block_on(tool.execute(
-            context(),
-            json!({
-                "action": "exec",
-                "command": "ignored",
-                "cwd": ".",
-                "profile": "clean"
-            }),
-            CancellationToken::new(),
-        ))
-        .unwrap();
+        let output =
+            run_admitted_deadline_executor(Arc::new(ReadyOutputLimitExecutor), Duration::ZERO)
+                .unwrap();
 
         assert_eq!(output.content["status"], "output_limit");
         assert_eq!(
@@ -7509,25 +7584,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn output_limit_claimed_after_final_deadline_poll_closes_timeout() {
-        let root = std::env::current_dir().unwrap();
-        let tool = TerminalTool::with_executor(
-            &root,
-            Vec::new(),
-            Arc::new(FinalPollOutputLimitExecutor),
-            TerminalLimits::new(Duration::from_millis(1), 1).unwrap(),
-        )
-        .unwrap();
-        let output = futures_executor::block_on(tool.execute(
-            context(),
-            json!({
-                "action": "exec",
-                "command": "ignored",
-                "cwd": ".",
-                "profile": "clean"
-            }),
-            CancellationToken::new(),
-        ))
-        .unwrap();
+        let output =
+            run_admitted_deadline_executor(Arc::new(FinalPollOutputLimitExecutor), Duration::ZERO)
+                .unwrap();
 
         assert_eq!(output.content["status"], "output_limit");
         assert_eq!(
@@ -7539,25 +7598,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn non_output_executor_error_ready_after_deadline_yields_timeout() {
-        let root = std::env::current_dir().unwrap();
-        let tool = TerminalTool::with_executor(
-            &root,
-            Vec::new(),
-            Arc::new(DelayedErrorExecutor),
-            TerminalLimits::new(Duration::from_millis(1), 1).unwrap(),
-        )
-        .unwrap();
-        let output = futures_executor::block_on(tool.execute(
-            context(),
-            json!({
-                "action": "exec",
-                "command": "ignored",
-                "cwd": ".",
-                "profile": "clean"
-            }),
-            CancellationToken::new(),
-        ))
-        .unwrap();
+        let output =
+            run_admitted_deadline_executor(Arc::new(ReadyErrorExecutor), Duration::ZERO).unwrap();
 
         assert_eq!(output.content["status"], "timed_out");
         assert!(output.is_error);
@@ -7566,38 +7608,25 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn output_claim_preserves_typed_cleanup_error_on_both_sides_of_deadline() {
-        for (timeout, delay, kind, code) in [
+        for (remaining, kind, code) in [
             (
-                Duration::from_secs(1),
-                Duration::ZERO,
+                Duration::from_secs(60),
                 TerminalExecutorErrorKind::Wait,
                 "terminal_wait_failed",
             ),
             (
-                Duration::from_millis(1),
-                Duration::from_millis(5),
+                Duration::ZERO,
                 TerminalExecutorErrorKind::Pipe,
                 "terminal_pipe_failed",
             ),
         ] {
-            let root = std::env::current_dir().unwrap();
-            let tool = TerminalTool::with_executor(
-                &root,
-                Vec::new(),
-                Arc::new(OutputClaimThenErrorExecutor { delay, kind }),
-                TerminalLimits::new(timeout, 1).unwrap(),
-            )
-            .unwrap();
-            let error = futures_executor::block_on(tool.execute(
-                context(),
-                json!({
-                    "action": "exec",
-                    "command": "ignored",
-                    "cwd": ".",
-                    "profile": "clean"
+            let error = run_admitted_deadline_executor(
+                Arc::new(OutputClaimThenErrorExecutor {
+                    kind,
+                    expired: remaining.is_zero(),
                 }),
-                CancellationToken::new(),
-            ))
+                remaining,
+            )
             .unwrap_err();
 
             assert_eq!(error.kind, ToolErrorKind::Execution);
@@ -7606,12 +7635,12 @@ mod tests {
     }
 
     #[cfg(unix)]
-    struct DelayedErrorExecutor;
+    struct ReadyErrorExecutor;
 
     #[cfg(unix)]
     struct OutputClaimThenErrorExecutor {
-        delay: Duration,
         kind: TerminalExecutorErrorKind,
+        expired: bool,
     }
 
     #[cfg(unix)]
@@ -7621,38 +7650,38 @@ mod tests {
             request: TerminalExecutionRequest,
             _cancellation: CancellationToken,
         ) -> TerminalExecution {
-            let delay = self.delay;
             let kind = self.kind;
+            let expired = self.expired;
             Box::pin(async move {
+                assert_eq!(Instant::now() >= request.deadline(), expired);
                 assert!(request.activity.claim_output_limit());
-                std::thread::sleep(delay);
                 Err(TerminalExecutorError::new(kind))
             })
         }
     }
 
     #[cfg(unix)]
-    impl TerminalExecutor for DelayedErrorExecutor {
+    impl TerminalExecutor for ReadyErrorExecutor {
         fn execute(
             &self,
             request: TerminalExecutionRequest,
             _cancellation: CancellationToken,
         ) -> TerminalExecution {
-            Box::pin(DelayedErrorExecution { _request: request })
+            Box::pin(ReadyErrorExecution { request })
         }
     }
 
     #[cfg(unix)]
-    struct DelayedErrorExecution {
-        _request: TerminalExecutionRequest,
+    struct ReadyErrorExecution {
+        request: TerminalExecutionRequest,
     }
 
     #[cfg(unix)]
-    impl Future for DelayedErrorExecution {
+    impl Future for ReadyErrorExecution {
         type Output = Result<TerminalExecutionOutcome, TerminalExecutorError>;
 
         fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
-            std::thread::sleep(Duration::from_millis(5));
+            assert!(Instant::now() >= self.request.deadline());
             Poll::Ready(Err(TerminalExecutorError::new(
                 TerminalExecutorErrorKind::Spawn,
             )))
@@ -7660,7 +7689,7 @@ mod tests {
     }
 
     #[cfg(unix)]
-    struct DelayedOutputLimitExecutor;
+    struct ReadyOutputLimitExecutor;
 
     #[cfg(unix)]
     struct FinalPollOutputLimitExecutor;
@@ -7681,16 +7710,13 @@ mod tests {
                 .join()
                 .unwrap();
             });
-            Box::pin(FinalPollOutputLimitExecution {
-                _request: request,
-                polls: 0,
-            })
+            Box::pin(FinalPollOutputLimitExecution { request, polls: 0 })
         }
     }
 
     #[cfg(unix)]
     struct FinalPollOutputLimitExecution {
-        _request: TerminalExecutionRequest,
+        request: TerminalExecutionRequest,
         polls: u8,
     }
 
@@ -7702,7 +7728,7 @@ mod tests {
             self.polls += 1;
             match self.polls {
                 1 => {
-                    std::thread::sleep(Duration::from_millis(5));
+                    assert!(Instant::now() >= self.request.deadline());
                     Poll::Pending
                 }
                 2 => {
@@ -7721,27 +7747,27 @@ mod tests {
     }
 
     #[cfg(unix)]
-    impl TerminalExecutor for DelayedOutputLimitExecutor {
+    impl TerminalExecutor for ReadyOutputLimitExecutor {
         fn execute(
             &self,
             request: TerminalExecutionRequest,
             _cancellation: CancellationToken,
         ) -> TerminalExecution {
-            Box::pin(DelayedOutputLimitExecution { _request: request })
+            Box::pin(ReadyOutputLimitExecution { request })
         }
     }
 
     #[cfg(unix)]
-    struct DelayedOutputLimitExecution {
-        _request: TerminalExecutionRequest,
+    struct ReadyOutputLimitExecution {
+        request: TerminalExecutionRequest,
     }
 
     #[cfg(unix)]
-    impl Future for DelayedOutputLimitExecution {
+    impl Future for ReadyOutputLimitExecution {
         type Output = Result<TerminalExecutionOutcome, super::TerminalExecutorError>;
 
         fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
-            std::thread::sleep(Duration::from_millis(5));
+            assert!(Instant::now() >= self.request.deadline());
             Poll::Ready(TerminalExecutionOutcome::new(
                 TerminalExecutionStatus::OutputLimit,
                 TerminalCapturedOutput::new(Vec::new(), MAX_TERMINAL_PRODUCED_OUTPUT_BYTES + 1)
