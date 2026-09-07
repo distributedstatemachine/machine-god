@@ -360,7 +360,7 @@ fn finish_created_directory(parent: impl AsFd, name: &str) -> Result<OwnedFd> {
     Ok(fd)
 }
 
-/// Linux's pinned chmodat rejects SYMLINK_NOFOLLOW. O_PATH binds even a
+/// Linux's pinned `chmodat` rejects `SYMLINK_NOFOLLOW`. `O_PATH` binds even a
 /// mode-000 directory without requiring a process-wide umask change. Only a
 /// verified procfs magic link to this retained descriptor may restore its mode.
 #[cfg(target_os = "linux")]
@@ -1075,7 +1075,7 @@ mod tests {
         let fixture = Fixture::new();
         let directory = fixture.0.join("created");
         fs::create_dir(&directory).unwrap();
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0)).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o000)).unwrap();
         let retained = finish_created_directory(fixture.fd(), "created").unwrap();
         assert_eq!(private(&retained, true).unwrap().st_mode & 0o7777, 0o700);
         // Existing entries never pass through restoration, even if owned.
@@ -1090,7 +1090,7 @@ mod tests {
         let fixture = Fixture::new();
         let directory = fixture.0.join("created");
         fs::create_dir(&directory).unwrap();
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0)).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o000)).unwrap();
         let parent = fixture.fd();
         let before = rustix::fs::statat(&parent, "created", AtFlags::SYMLINK_NOFOLLOW).unwrap();
         let missing = fixture.0.join("missing-proc");
