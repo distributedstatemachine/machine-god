@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `repeat complete pinned local checks, three fresh independent reviews and exact remote gates for the integrated macOS inventory progress correction`
+- Next gate: `repeat complete pinned local checks, three fresh independent reviews and exact remote gates for the integrated startup-fixture ordering correction`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -122,8 +122,14 @@ on those transitions, preserving the original 250 ms deadline and requiring
 both EOF and successful child reaping. A deterministic late-progress regression
 fails before the fix and passes afterward; all ten collector tests and ten
 repetitions of the release-helper case pass. The historical timeout's exclusive
-cause is not proved. Complete replacement gates and fresh reviews remain
-required; no push or delivery is claimed.
+cause is not proved. Related Linux bootstrap-abort fixtures now share positive
+unreaped child-exit observation under their saved original deadline before the
+existing single force-close. This test-only ordering removes a proved marker-
+reaping race without changing production cleanup or no-execution assertions.
+All 20 startup tests and strict native lint pass on both platforms; three Linux
+fixture callers pass 50 repetitions each, and all 20 macOS startup tests pass
+with the production release helper. Complete replacement gates and fresh
+reviews remain required; no push or delivery is claimed.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:

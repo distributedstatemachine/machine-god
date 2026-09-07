@@ -346,3 +346,30 @@ repetitions, strict native macOS Clippy, formatting and diff checks pass under
 Rust 1.94.1. Only `background_process.rs` changes. This establishes avoidable
 collector latency, not exclusive attribution of the historical 259 ms failure;
 the complete replacement gate and fresh reviews remain required.
+
+## Local validation of `d70b8f6`
+
+Candidate `d70b8f69243948dc787d576b52e1864070840e5d` integrates the macOS
+progress correction. Formatting, strict Linux/macOS workspace lint, doctests,
+FreeBSD/WASI checks, dependency checks, 259 Python tests/14 expected skips and
+drift/documentation checks pass. Non-root Linux native execution passes 1,467
+tests/six helper ignores but fails
+`stale_owner_timestamp_cannot_acknowledge_after_actual_deadline` at
+`terminal_startup.rs:1667`: immediate force-close returns `Cleanup` while the
+fixture shell is still running after refused command acknowledgement. The
+Linux CLI sequence is not run, and macOS runtime gates are not started after
+this rejection. The shared bootstrap-abort path is being diagnosed before a
+replacement candidate; no review or remote push is claimed.
+
+The release build also passes (11 min 44 sec). Correction
+`74521a231955b460bd6c4c885c8577d5ff2c5ccb` is confined to startup tests.
+Failure-only Linux diagnostics twice reproduce the failure on attempt three:
+the marker disappears during cleanup, then the exact unreaped bash parent
+reports exit 125 within the saved original startup deadline. A shared Linux
+fixture helper observes that exit without reaping before the existing single
+force-close, covering both refused command-ACK fixtures and cancelled/dropped
+shell ACKs. No production deadline, close retry or no-execution/artifact
+assertion changes. Rust 1.94.1 startup suites pass 20 tests on each platform,
+three Linux callers pass 50 repetitions each, and the macOS suite passes all
+20 again with the fresh release helper. Strict native lint on both platforms,
+formatting and diff checks pass; full replacement gates remain required.

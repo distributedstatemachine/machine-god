@@ -1659,14 +1659,52 @@ mod tests {
             &mut output,
         );
         let before_persistence = Instant::now();
+        #[cfg(target_os = "linux")]
+        let original_deadline = control.deadline;
         control.deadline = Instant::now();
         assert_eq!(
             control.release_command(before_persistence, &CancellationToken::new()),
             Err(TerminalStartupError::Timeout)
         );
-        backend.close(true, &mut |_| {}).unwrap();
+        let pid =
+            rustix::process::Pid::from_raw(i32::try_from(backend.pid().get()).unwrap()).unwrap();
+        #[cfg(target_os = "linux")]
+        wait_for_bootstrap_abort(pid, original_deadline);
+        let closed = backend.close(true, &mut |_| {}).unwrap();
+        #[cfg(target_os = "linux")]
+        assert_eq!(closed.status, TerminalPtyStatus::Exited(125));
+        #[cfg(not(target_os = "linux"))]
+        let _ = closed;
+        assert_eq!(
+            rustix::process::test_kill_process(pid),
+            Err(rustix::io::Errno::SRCH)
+        );
         assert!(!cwd.0.join("executed").exists());
         assert_eq!(std::fs::read_dir(&artifacts.0).unwrap().count(), 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    fn wait_for_bootstrap_abort(pid: rustix::process::Pid, original_deadline: Instant) {
+        // Refusing a shell/command ACK closes the marker connection. Observe
+        // bash's resulting abort before collecting the fixture: immediate
+        // teardown races its marker reaping against the native identity
+        // sandwich. Keep the original deadline and exact child wait status
+        // untouched; this is not a close retry or a product timing change.
+        loop {
+            assert!(Instant::now() < original_deadline, "startup abort deadline");
+            if let Some(status) = rustix::process::waitid(
+                rustix::process::WaitId::Pid(pid),
+                rustix::process::WaitIdOptions::EXITED
+                    | rustix::process::WaitIdOptions::NOHANG
+                    | rustix::process::WaitIdOptions::NOWAIT,
+            )
+            .unwrap()
+            {
+                assert_eq!(status.exit_status(), Some(125));
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
     }
     fn event(
         backend: &mut TerminalStartupBackend,
@@ -1981,6 +2019,8 @@ mod tests {
             ));
             let pid = rustix::process::Pid::from_raw(i32::try_from(backend.pid().get()).unwrap())
                 .unwrap();
+            #[cfg(target_os = "linux")]
+            let original_deadline = control.deadline;
             let mut output = Vec::new();
             event(
                 &mut backend,
@@ -1998,6 +2038,8 @@ mod tests {
             }
             drop(control);
             assert!(backend.status().is_err());
+            #[cfg(target_os = "linux")]
+            wait_for_bootstrap_abort(pid, original_deadline);
             drop(backend);
             assert_eq!(
                 rustix::process::test_kill_process(pid),
@@ -2196,26 +2238,7 @@ mod tests {
         let pid =
             rustix::process::Pid::from_raw(i32::try_from(backend.pid().get()).unwrap()).unwrap();
         #[cfg(target_os = "linux")]
-        loop {
-            // The refused command ACK closes the marker connection. Observe
-            // bash's resulting abort before collecting the fixture: immediate
-            // close races its reaping of the marker against the native identity
-            // sandwich. Keep the original deadline and exact child wait status
-            // untouched; this is not a cleanup retry or a product timing change.
-            assert!(Instant::now() < control.deadline, "startup abort deadline");
-            if let Some(status) = rustix::process::waitid(
-                rustix::process::WaitId::Pid(pid),
-                rustix::process::WaitIdOptions::EXITED
-                    | rustix::process::WaitIdOptions::NOHANG
-                    | rustix::process::WaitIdOptions::NOWAIT,
-            )
-            .unwrap()
-            {
-                assert_eq!(status.exit_status(), Some(125));
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(2));
-        }
+        wait_for_bootstrap_abort(pid, control.deadline);
         let closed = backend.close(true, &mut |_| {}).unwrap();
         #[cfg(target_os = "linux")]
         assert_eq!(closed.status, TerminalPtyStatus::Exited(125));
