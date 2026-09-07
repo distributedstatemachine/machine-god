@@ -700,3 +700,52 @@ The bounded native/CLI dispatcher audit finds no other generic fake CLI missing
 the new mode. Temporary instrumentation/scripts are removed; its clean integrated
 worktree is removed. The complete replacement gate and fresh reviews remain
 required before any feature push or delivery.
+
+## Exact `932b2cf` gates and subsequent corrections
+
+Candidate `932b2cf324d1a402a68c4c87d52784f0cc7c4d89` passes the complete
+exact-1.94.1 local gate: formatting, both SDK ABI assertions, strict Linux/macOS
+workspace lint, doctests, FreeBSD/WASI, dependency policy/audit, 261 Python
+checks/14 skips, pinned drift and documentation policy. Its fresh release build
+and smoke pass, including eight release-helper launch cases. Default-concurrent
+Linux native passes 1,476/six helper ignores (27.44 seconds), CLI 141/four
+ignores (0.77 seconds). Serial macOS workspace native passes 1,408/five ignores
+(325.42 seconds), terminal component 643/two ignores (151.57 seconds), and the
+production-release-helper terminal sweep 659/five ignores (202.33 seconds).
+All composed-host, control-C close and dropped-PTY cleanup cases pass.
+
+Three fresh independent direct local reviews (`terminal_932_api`,
+`terminal_932_lifecycle`, `terminal_932_resources`) inspect that full feature
+against merge base `46e5b70f6c5ba76a4699f5bd8ba424a1fa3813be` and report zero
+actionable findings. These are source/test reviews, not Bugbot or independent
+runtime/performance measurements. Clean review worktrees are removed.
+
+Feature CI `34148085502` fails; Benchmark `34148085579` succeeds with both
+unexpired exact-SHA artifacts: `10028544765` (upstream), `10028457623`
+(bootstrap), expiring `2026-12-06T17:33:18Z`. Quality, dependency, documentation,
+FreeBSD/WASI, Linux x86_64 and ARM macOS jobs succeed. Main does not advance.
+
+Linux ARM job `101824362043` passes 1,475 cases with six helper ignores but
+fails `inline_reentrant_wake_completes_on_the_worker_without_self_joining` at
+its initial-Pending assertion (58.79 seconds). Source inspection shows the
+exit-zero helper may validly publish before the first poll registers a waker.
+Correction `040bae2cc854437a1bc1b6f9fc06ec4f4567890a` changes only the existing
+Linux test module: an existing before-spawn barrier orders waker registration,
+the callback proves named-worker execution, and a separate already-published
+case preserves valid immediate Ready. Both settle their worker permit tails.
+Controlled publication-before-poll rejects the old Pending expectation in
+0.01 seconds. All 16 system tests and 12 API tests pass; both scheduling cases
+pass 100 repetitions each. Strict exact-1.94.1 native lint passes on Linux and
+macOS; the active macOS unsupported-platform API test, formatting and diff
+checks pass. No product behavior or deadlines change; owned containers stop.
+
+Intel macOS job `101824362102` passes 1,406 cases with five helper ignores but
+fails two inventory collections (319.71 seconds):
+`explicit_owned_signal_kills_shell_and_final_drain_preserves_bytes` expires at
+253.202581 ms during close, and
+`real_tmux_shared_bootstrap_preserves_profiles_and_durable_command_gate`
+expires at 252.483291 ms during a zsh clean commandless startup write-load.
+The latter still has 3.876 seconds of its separate startup budget. Both failures
+precede PID decoding/identity scanning; logs do not distinguish helper startup,
+query, output or reaping delay. The inventory change is not accepted as a
+complete fix. Bounded phase diagnosis and all replacement gates remain required.

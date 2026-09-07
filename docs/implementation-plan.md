@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `complete replacement pinned local checks, three fresh independent reviews and exact remote gates after the composed-host test CLI inventory-dispatch correction`
+- Next gate: `resolve the remaining Intel macOS inventory-collection timeout, then complete replacement pinned local checks, three fresh independent reviews and exact remote gates`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -187,6 +187,15 @@ to the proved dispatcher omission.
 A separate local ARM startup-frame timeout remains unresolved and is not
 claimed fixed by the inventory change. Main remains unchanged; replacement
 gates are required. No delivery is claimed.
+
+The composed-host correction passes the complete local gate and three fresh
+reviews as candidate `932b2cf324d1a402a68c4c87d52784f0cc7c4d89`. Its remote
+Benchmark, quality, Linux x86_64 and ARM macOS jobs pass, but Intel macOS still
+exposes two inventory-collection timeouts. Linux ARM separately exposes an
+`open_file` test that assumes its first poll cannot already complete. A
+test-only barrier correction preserves both valid scheduling outcomes and
+passes focused tests and strict lint. Intel collection diagnosis continues;
+neither candidate acceptance nor delivery is claimed.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:

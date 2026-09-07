@@ -243,6 +243,12 @@ struct ReentrantWake {
 
 impl Wake for ReentrantWake {
     fn wake(self: Arc<Self>) {
+        assert_ne!(
+            thread::current().id(),
+            self.waiting_thread.id(),
+            "inline completion must run on the worker, not the initial polling thread"
+        );
+        assert_eq!(thread::current().name(), Some("machine-god-open-file"));
         let waker = Waker::from(Arc::clone(&self));
         let mut future = self
             .future
@@ -690,11 +696,64 @@ fn no_waker_published_outcome_joins_the_blocked_worker_before_returning() {
 }
 
 #[test]
-fn inline_reentrant_wake_completes_on_the_worker_without_self_joining() {
+fn already_published_outcome_is_ready_without_registering_a_waker() {
     let _lock = process_test_lock();
+    wait_for_active_launches(0);
     let temporary = TemporaryDirectory::new();
     let script = write_script(temporary.path(), "exit 0");
-    let launcher = launcher(script, Duration::from_secs(2));
+    let after_publish = Arc::new(BeforeSpawnHook::new());
+    let launcher = launcher_with_test_controls(
+        script,
+        Duration::from_secs(2),
+        LauncherTestControls {
+            after_publish: Some(Arc::clone(&after_publish)),
+            ..LauncherTestControls::default()
+        },
+    );
+    let cancellation = CancellationToken::new();
+    let mut future = super::SystemLaunchFuture::new(
+        request(temporary.path()),
+        cancellation.clone(),
+        Arc::clone(&launcher.config),
+    );
+    let super::SystemLaunchState::Initial(request) = &mut future.state else {
+        panic!("new launch has an initial request");
+    };
+    let worker = WorkerHandle::spawn(
+        request.take().expect("initial request exists"),
+        cancellation,
+        Arc::clone(&launcher.config),
+    )
+    .expect("worker starts below the fixed launch limit");
+    // Model the first poll being descheduled after spawn, before its first
+    // outcome check. Publication without a registered Waker is a valid race.
+    after_publish.reached.wait();
+    assert!(super::lock_worker_state(&worker.shared).waker.is_none());
+    future.state = super::SystemLaunchState::Waiting(worker);
+    after_publish.release.wait();
+    let mut future: OpenFileLaunch = Box::pin(future);
+    assert_eq!(
+        poll_once(&mut future, &waker()),
+        Poll::Ready(OpenFileLaunchOutcome::Accepted)
+    );
+    wait_for_active_launches(0);
+}
+
+#[test]
+fn inline_reentrant_wake_completes_on_the_worker_without_self_joining() {
+    let _lock = process_test_lock();
+    wait_for_active_launches(0);
+    let temporary = TemporaryDirectory::new();
+    let script = write_script(temporary.path(), "exit 0");
+    let before_spawn = Arc::new(BeforeSpawnHook::new());
+    let launcher = launcher_with_test_controls(
+        script,
+        Duration::from_secs(2),
+        LauncherTestControls {
+            before_spawn: Some(Arc::clone(&before_spawn)),
+            ..LauncherTestControls::default()
+        },
+    );
     let future = Arc::new(Mutex::new(Some(
         launcher.launch(request(temporary.path()), CancellationToken::new()),
     )));
@@ -716,6 +775,10 @@ fn inline_reentrant_wake_completes_on_the_worker_without_self_joining() {
         )
         .is_pending()
     );
+    // The first poll has now installed the reentrant Waker. Only then may the
+    // worker spawn/reap the helper and publish its outcome through that Waker.
+    before_spawn.reached.wait();
+    before_spawn.release.wait();
 
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
@@ -730,6 +793,7 @@ fn inline_reentrant_wake_completes_on_the_worker_without_self_joining() {
         assert!(Instant::now() < deadline, "inline wake timed out");
         thread::park_timeout(Duration::from_millis(10));
     }
+    wait_for_active_launches(0);
 }
 
 fn assert_blocked_wake_releases_request_and_holds_permit(
