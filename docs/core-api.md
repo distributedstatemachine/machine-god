@@ -539,6 +539,43 @@ higher revision. Such a result is a protocol error and leaves canonical state
 unchanged. A valid higher revision may otherwise replace messages and metadata;
 an equal revision continues to require equality of the entire record.
 
+### Explicit continuation
+
+`Session::continue_turn(options: InferenceOptions)` returns an owned,
+inert-before-poll future resolving to `Result<Turn, EngineError>`. It starts a
+new turn over existing history without appending another user message. First
+poll performs the same host-open check, inference-option validation, exclusive
+lease admission and uncertain-metadata reconciliation as prompting. Empty
+history fails with `EngineError::Protocol` and the fixed message
+`cannot continue a session with empty history` before any reservation save.
+This check also applies after each optimistic conflict reload.
+
+Continuation reserves a fresh durable turn ID by advancing the existing
+`next_turn_sequence` through the ordinary bounded compare-and-save path. The
+reservation preserves every message, argument, confirmed result, unknown-result
+placeholder, metadata entry and session/incarnation identity. It does not spend
+a user-message slot, but existing transcript, JSON and inference limits still
+apply, including to any subsequent assistant or tool-result append. Dropping an
+already-reserved turn leaves its ID consumed. A dropped reservation save may
+have committed; a later reservation uses ordinary conflict reload and never
+reuses an already-persisted allocator position.
+
+The returned turn enters the ordinary provider/tool loop with fresh counters,
+cancellation state and an empty ephemeral tool-registration catalog. Its first
+provider request receives the retained history and the explicitly supplied
+options. No historical call is hydrated or executed, and no unknown result is
+reclassified as success or proof that an effect did not happen. Only calls newly
+emitted by the provider can enter the normal preparation, fresh authorization,
+execution and durable result pipeline. Prior turn grant decisions and dynamic
+registrations are not reconstructed. All ordinary streaming, cancellation,
+observer and durable-completion rules apply unchanged.
+
+This primitive does not produce, select, validate or consume a saved paused
+checkpoint, nor does it decide whether a session should be continued. Those
+product and persistence decisions belong to the native host. In particular,
+continuation alone does not establish a CLI `/continue` availability contract or
+an exactly-once guarantee for uncertain external effects.
+
 ### Exclusive metadata editing
 
 `Session::update_metadata(expected_revision, metadata)` returns an owned,
@@ -573,11 +610,11 @@ Dropping an admitted edit drops its owned store future and releases the lease;
 it starts no detached persistence or cleanup task. Save construction, failure,
 non-increasing revision or future drop may leave durability uncertain. Core arms
 a reconciliation requirement before invoking save and clears it only after
-successful reconciliation. The next prompt or metadata edit must first load and
-validate durable state under its exclusive lease. A failed, stale, corrupt,
-identity-changing or missing persisted-record reload fails closed and keeps this
-requirement armed. Missing state is accepted only while the unchanged canonical
-record is still genuinely unsaved at revision zero. In particular, a later
+successful reconciliation. The next prompt, continuation or metadata edit must
+first load and validate durable state under its exclusive lease. A failed, stale,
+corrupt, identity-changing or missing persisted-record reload fails closed and
+keeps this requirement armed. Missing state is accepted only while the unchanged
+canonical record is still genuinely unsaved at revision zero. In particular, a later
 prompt cannot recreate a missing persisted record from pre-edit metadata after
 an uncertain save. If an interrupted save actually committed, a reload preserves
 its metadata and a patch carrying the old revision conflicts. Store diagnostics

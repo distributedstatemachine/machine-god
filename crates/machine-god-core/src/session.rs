@@ -576,6 +576,33 @@ impl Session {
         let prompt = JsonOwnerGuard::new(prompt.into());
         Box::pin(async move { session.start_prompt(prompt).await })
     }
+
+    /// Starts a new turn over existing history without appending user input.
+    ///
+    /// First poll reserves a fresh durable turn ID under the same lease and
+    /// limits as [`Self::prompt`]. Historical messages and tool results remain
+    /// unchanged. Only new provider calls can execute tools; this operation
+    /// never replays historical calls or restores turn-local registrations or
+    /// grants. The host owns paused-checkpoint eligibility and consumption.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::Protocol`] for empty history or invalid options,
+    /// [`EngineError::SessionBusy`] for an active turn or metadata edit, and the
+    /// ordinary prompt reservation errors for failed persistence.
+    #[must_use]
+    pub fn continue_turn(
+        &self,
+        options: InferenceOptions,
+    ) -> BoxFuture<'static, Result<Turn, EngineError>> {
+        let session = SessionOperation {
+            engine: Arc::clone(&self.engine),
+            state: Arc::clone(&self.state),
+            host: HostLease::new(self.host_resource.as_ref()),
+        };
+        let options = JsonOwnerGuard::new(options);
+        Box::pin(async move { session.start_turn(None, options).await })
+    }
 }
 
 struct SessionOperation {
@@ -676,13 +703,26 @@ impl SessionOperation {
     }
 
     async fn start_prompt(&self, prompt: JsonOwnerGuard<Prompt>) -> Result<Turn, EngineError> {
+        let prompt = prompt.into_inner();
+        self.start_turn(Some(prompt.text), JsonOwnerGuard::new(prompt.options))
+            .await
+    }
+
+    async fn start_turn(
+        &self,
+        prompt_text: Option<String>,
+        options: JsonOwnerGuard<InferenceOptions>,
+    ) -> Result<Turn, EngineError> {
         self.host.ensure_open()?;
-        if prompt.get().text.len() > self.engine.limits.max_prompt_bytes.get() {
+        if prompt_text
+            .as_ref()
+            .is_some_and(|text| text.len() > self.engine.limits.max_prompt_bytes.get())
+        {
             return Err(EngineError::Protocol(
                 "prompt exceeded the configured byte limit".to_owned(),
             ));
         }
-        validate_inference_options(&prompt.get().options, self.engine.limits)
+        validate_inference_options(options.get(), self.engine.limits)
             .map_err(|failure| EngineError::Protocol(failure.message))?;
         self.state
             .active_turn
@@ -694,8 +734,7 @@ impl SessionOperation {
 
         self.reconcile_uncertain_metadata().await?;
 
-        let prompt = prompt.into_inner();
-        let (turn_id, record) = self.reserve_turn_and_prompt(prompt.text).await?;
+        let (turn_id, record) = self.reserve_turn_and_prompt(prompt_text).await?;
         let session_id = record.id.clone();
         let session_incarnation_id = record.incarnation_id.clone();
         let cancellation = CancellationToken::new();
@@ -706,7 +745,7 @@ impl SessionOperation {
             session_id.clone(),
             turn_id.clone(),
             record,
-            prompt.options,
+            options.into_inner(),
             cancellation.clone(),
             gate.emitter(),
         ));
@@ -735,13 +774,18 @@ impl SessionOperation {
 
     async fn reserve_turn_and_prompt(
         &self,
-        prompt_text: String,
+        prompt_text: Option<String>,
     ) -> Result<(TurnId, SessionRecord), EngineError> {
         const MAX_CONFLICT_RETRIES: usize = 32;
 
         for _ in 0..MAX_CONFLICT_RETRIES {
             let (snapshot, persisted) = self.state.snapshot();
             validate_record_limits(&snapshot, self.engine.limits)?;
+            if prompt_text.is_none() && snapshot.messages.is_empty() {
+                return Err(EngineError::Protocol(
+                    "cannot continue a session with empty history".to_owned(),
+                ));
+            }
             let expected_revision = persisted.then_some(snapshot.revision);
             let mut candidate = (*snapshot).clone();
             let turn_sequence = candidate.next_turn_sequence;
@@ -750,9 +794,11 @@ impl SessionOperation {
             })?;
             let turn_id = TurnId::new(format!("turn-{turn_sequence}"))
                 .map_err(|error| EngineError::Protocol(error.to_string()))?;
-            candidate
-                .messages
-                .push(Message::text(Role::User, &prompt_text));
+            if let Some(prompt_text) = &prompt_text {
+                candidate
+                    .messages
+                    .push(Message::text(Role::User, prompt_text));
+            }
             let candidate = JsonOwnerGuard::new(candidate);
             validate_record_limits(candidate.get(), self.engine.limits)?;
             if !self.state.snapshot_is_current(&snapshot, persisted) {
