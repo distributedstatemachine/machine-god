@@ -6202,12 +6202,20 @@ fn collect_group_snapshot_output_with<R: std::io::Read>(
         let mut wait_for_output = false;
         if !eof {
             match reader.read(&mut buffer) {
-                Ok(0) => eof = true,
+                Ok(0) => {
+                    eof = true;
+                    // Output is complete, but exact child reaping may lag EOF.
+                    // Do not carry an old output-wait delay into that phase.
+                    observation = ObservationBackoff::retry();
+                }
                 Ok(read) => {
                     if bytes.len().saturating_add(read) > MAX_GROUP_SNAPSHOT_BYTES {
                         return Err(());
                     }
                     bytes.extend_from_slice(&buffer[..read]);
+                    // Only actual progress resets the no-progress backoff;
+                    // readiness hints and interrupted reads do not.
+                    observation = ObservationBackoff::retry();
                     readiness_hint = false;
                     continue;
                 }
@@ -10556,6 +10564,83 @@ mod process_regression_tests {
                     vec![false; 4]
                 }
             );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn group_snapshot_late_progress_resets_stale_output_backoff_before_reap() {
+        struct Reader<'a> {
+            clock: &'a std::cell::Cell<Instant>,
+            ready: Instant,
+            bytes: &'a [u8],
+            interrupt_after_output: bool,
+            output_read: bool,
+        }
+        impl io::Read for Reader<'_> {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                if self.clock.get() < self.ready {
+                    return Err(io::ErrorKind::WouldBlock.into());
+                }
+                if !self.output_read {
+                    self.output_read = true;
+                    buffer[..self.bytes.len()].copy_from_slice(self.bytes);
+                    return Ok(self.bytes.len());
+                }
+                if self.interrupt_after_output {
+                    self.interrupt_after_output = false;
+                    return Err(io::ErrorKind::Interrupted.into());
+                }
+                Ok(0)
+            }
+        }
+        for (bytes, interrupt_after_output) in [
+            (b"".as_slice(), false),
+            (b"7\n".as_slice(), false),
+            (b"7\n".as_slice(), true),
+        ] {
+            let started = Instant::now();
+            let clock = std::cell::Cell::new(started);
+            let ready = started + Duration::from_millis(222);
+            let exited = ready + Duration::from_millis(1);
+            let deadline = started + GROUP_SNAPSHOT_TIMEOUT;
+            let mut reader = Reader {
+                clock: &clock,
+                ready,
+                bytes,
+                interrupt_after_output,
+                output_read: false,
+            };
+            let mut post_progress_waits = Vec::new();
+            let result = collect_group_snapshot_output_with(
+                &mut reader,
+                deadline,
+                || {
+                    Ok(if clock.get() >= exited {
+                        SnapshotChildState::Exited(true)
+                    } else {
+                        SnapshotChildState::Running
+                    })
+                },
+                || clock.get(),
+                |_, readiness, interval| {
+                    let current = clock.get();
+                    if current < ready {
+                        // The real descriptor wakes early when output arrives.
+                        clock.set((current + interval).min(ready));
+                        Ok(readiness && clock.get() == ready)
+                    } else {
+                        assert!(!readiness);
+                        post_progress_waits.push(interval);
+                        clock.set(current + interval);
+                        Ok(false)
+                    }
+                },
+            );
+            assert_eq!(result, Ok(bytes.to_vec()));
+            assert_eq!(post_progress_waits, vec![RETRY_INITIAL_INTERVAL]);
+            assert_eq!(clock.get(), ready + RETRY_INITIAL_INTERVAL);
+            assert!(clock.get() < deadline);
         }
     }
 

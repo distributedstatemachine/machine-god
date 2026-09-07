@@ -320,3 +320,29 @@ publication and parent-sync assertions, product code and timeouts are unchanged.
 Rust 1.94.1 copy-file suites pass 25 tests on each platform, the Linux postcommit
 case passes 200 repetitions, and strict native lint passes on both platforms.
 These focused results do not replace the integrated candidate's complete gate.
+
+## Local validation of `0ecf940`
+
+Candidate `0ecf940b7bb1be5b547b64ebf427d672e2e9c7eb` passes pinned formatting,
+strict Linux/macOS workspace lint, doctests, FreeBSD/WASI checks, dependency
+checks, 259 Python tests/14 expected skips, drift/documentation checks and the
+release build. Non-root Linux passes 1,468 native tests/six helper ignores and
+141 CLI tests/four helper ignores. The full macOS workspace passes, including
+1,398 native tests/five helper ignores, eight release-launch tests and the fresh
+release CLI smoke. Its final release-helper matrix passes 654 cases/five helper
+ignores but fails `real_tmux_cwd_formats_are_literal_and_owned_drop_collects_live_jobs`
+at `terminal_tmux_startup.rs:1677`: commit returns `Process` after macOS inventory
+output collection exceeds its existing deadline (259.052 ms elapsed). This
+rejects the candidate before review or push; successful ordinary workspace
+execution does not replace the failed release-helper gate.
+
+Correction `701b2b9b83128e86405a33bcd2606c39ef461a4b` resets macOS collector
+backoff after actual bytes or the EOF transition only. The deterministic test
+proves old code rejects EOF at 222 ms and successful child exit at 223 ms because
+stale 32 ms backoff consumes the unchanged 250 ms deadline. All three progress
+cases pass after the fix; spurious readiness and interruptions without progress
+retain bounded backoff. All ten collector tests, ten exact release-helper
+repetitions, strict native macOS Clippy, formatting and diff checks pass under
+Rust 1.94.1. Only `background_process.rs` changes. This establishes avoidable
+collector latency, not exclusive attribution of the historical 259 ms failure;
+the complete replacement gate and fresh reviews remain required.

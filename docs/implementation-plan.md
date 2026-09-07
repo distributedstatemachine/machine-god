@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `repeat complete pinned local checks, three fresh independent reviews and exact remote gates for the cleanup-prefix correction and deterministic copy fixture`
+- Next gate: `repeat complete pinned local checks, three fresh independent reviews and exact remote gates for the integrated macOS inventory progress correction`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -115,8 +115,15 @@ run exposed an unrelated copy-file fixture whose same-length source mutation
 assumed a distinct filesystem timestamp tick. Both source-mutation fixtures now
 use an explicit mtime transition without changing product fingerprint or hash
 verification. All 25 copy-file tests and strict native lint pass on both
-platforms; the postcommit case passes 200 Linux repetitions. Complete replacement
-gates and fresh reviews remain required; no push or delivery is claimed.
+platforms; the postcommit case passes 200 Linux repetitions. A subsequent
+macOS release-helper timeout exposed avoidable collector latency: old backoff
+survived actual output progress and EOF. The collector now resets backoff only
+on those transitions, preserving the original 250 ms deadline and requiring
+both EOF and successful child reaping. A deterministic late-progress regression
+fails before the fix and passes afterward; all ten collector tests and ten
+repetitions of the release-helper case pass. The historical timeout's exclusive
+cause is not proved. Complete replacement gates and fresh reviews remain
+required; no push or delivery is claimed.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:

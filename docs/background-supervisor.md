@@ -378,8 +378,10 @@ uncaptured survivor makes the final proof fail closed. macOS retains its fixed
 `/bin/ps` adapter with a 64 KiB output bound and one 250 ms deadline shared by
 nonblocking pipe reads and child observation. Before pipe EOF, readiness waits
 wake collection when output arrives; after EOF, bounded backoff observes exact
-child reaping without spinning on pipe hangup. The deadline is checked before
-reads and before accepting success, including an empty snapshot. It has no
+child reaping without spinning on pipe hangup. Actual byte progress and the
+transition to EOF reset that backoff; spurious readiness and interrupted reads
+without progress do not. The original deadline is never extended and is checked
+before reads and before accepting success, including an empty snapshot. It has no
 snapshot-reader thread or reader join; timeout kills and then boundedly reaps
 or quarantines the exact child. Positive reaping or known loss of wait authority
 discharges the collector handle before outer cleanup; known `ECHILD` never
