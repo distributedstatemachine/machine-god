@@ -779,3 +779,37 @@ Diagnostic component `394cb57768aa214ff4fb3f4d10816255fe181ede` passes strict
 exact-1.94.1 native all-target/all-feature Clippy (1m23s), formatting and diff
 checks. Its worktree is clean and all runtime sessions/cache leases are released
 before integration. This evidence does not establish an Intel compatibility fix.
+
+## Production-helper matrix selection after `d49f481`
+
+Integrated diagnostic candidate `d49f48118d50462f6715912adf894144f8848602`
+passes all prerequisite gates, 261 Python checks/14 skips (341.632 seconds),
+fresh release build (8m26s), eight release-helper launch cases (28.04 seconds)
+and release CLI smoke. Default-concurrent Linux native passes 1,477/six helper
+ignores (26.87 seconds), CLI 141/four ignores (0.81 seconds).
+
+The serial default-helper macOS workspace native run passes 1,408 cases with
+five helper ignores but fails `durable_history_resize_matches_the_real_pty_and_survives_recovery`
+(328.69 seconds). The PTY helper does not send its readiness byte within its
+original two-second startup deadline: ready-read takes 1.982361583 seconds after
+about 18 ms of prior preparation, and captured output remains unavailable.
+No inventory-collection failure is reported. The run exits 101 and does not
+reach later component suites or the production-helper terminal sweep. A fresh
+isolated invocation passes with libtest (0.20 seconds) and release helper
+(0.15 seconds); this does not explain or erase the failed gate.
+
+The Apple matrix is changed to use the already-supported production-helper
+fixture selection for all selected native tests. It builds the locked release
+CLI for the exact matrix target, verifies the absolute executable and exports
+`MACHINE_GOD_TERMINAL_RELEASE_BINARY` before the unchanged serial test command.
+This tests the shipped dispatch and removes the measured libtest launch overhead
+from default helper selection. Explicit protocol/failure fixtures, all tests,
+deadlines, Linux commands/concurrency and package selectors remain intact.
+Apple jobs without native/full-workspace selection do not build the helper;
+documentation-only routing remains lightweight. The complete replacement gate
+and native Intel evidence remain required, with phase diagnostics retained.
+CI component `10d548dc151d0bce555a1920ef38efe19829dbb7` changes only the workflow
+and its focused regressions. All 17 classification tests pass, including both
+Apple target paths, selection boundaries and fail-closed build/executable
+checks; no worker Rust builds or shared-cache writes occur. Its integrated
+worktree is clean and removed.

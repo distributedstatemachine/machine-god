@@ -802,6 +802,98 @@ class CiChangeClassificationTests(unittest.TestCase):
         self.assertLess(matrix.index(name), matrix.index("Test target natively"))
         self.assertNotIn("tmux", job(self.ci, "documentation-policy"))
 
+    def test_production_helper_is_built_only_for_selected_apple_native_tests(self) -> None:
+        matrix = job(self.ci, "native-target-tests")
+        name = "Build production terminal helper for selected Apple native tests"
+        block = re.search(
+            rf"(?ms)^      - name: {re.escape(name)}\n(?P<body>.*?)"
+            r"(?=^      - name:|\Z)",
+            matrix,
+        )
+        self.assertIsNotNone(block)
+        assert block is not None
+        condition = (
+            "if: ${{ endsWith(matrix.target, '-apple-darwin') && "
+            "(needs.change-classification.outputs.native == 'true' || "
+            "needs.change-classification.outputs.full_workspace == 'true') }}"
+        )
+        self.assertIn(condition, block.group("body"))
+        build = step_script(matrix, name)
+        command = (
+            'cargo +"${RUST_TOOLCHAIN}" build --locked --release '
+            '--package machine-god-cli --bin machine-god '
+            '--target "${{ matrix.target }}" --target-dir "${GITHUB_WORKSPACE}/target"'
+        )
+        executable = 'test -x "${terminal_helper}"'
+        export = (
+            'echo "MACHINE_GOD_TERMINAL_RELEASE_BINARY=${terminal_helper}" '
+            '>> "${GITHUB_ENV}"'
+        )
+        self.assertIn("set -euo pipefail", build)
+        self.assertIn(command, build)
+        self.assertIn(
+            'terminal_helper="${GITHUB_WORKSPACE}/target/${{ matrix.target }}/release/machine-god"',
+            build,
+        )
+        self.assertLess(build.index(command), build.index(executable))
+        self.assertLess(build.index(executable), build.index(export))
+        self.assertLess(
+            matrix.index(name),
+            matrix.index("Test Apple target natively without shared process-table contention"),
+        )
+        self.assertEqual(self.ci.count("MACHINE_GOD_TERMINAL_RELEASE_BINARY="), 1)
+        for other_job in ("quality", "documentation-policy", "unsupported-native-tools"):
+            self.assertNotIn(name, job(self.ci, other_job))
+        linux = step_script(matrix, "Test target natively")
+        apple = step_script(
+            matrix, "Test Apple target natively without shared process-table contention"
+        )
+        self.assertNotIn("MACHINE_GOD_TERMINAL_RELEASE_BINARY", linux)
+        self.assertEqual(
+            apple.rstrip(),
+            linux.rstrip() + " -- --test-threads=1",
+        )
+        self.assertNotIn("--skip", apple)
+        self.assertNotIn("--ignored", apple)
+
+    def test_production_helper_export_requires_build_success_and_executable(self) -> None:
+        script = step_script(
+            self.ci, "Build production terminal helper for selected Apple native tests"
+        )
+        for target in ("aarch64-apple-darwin", "x86_64-apple-darwin"):
+            for build_exit, executable in ((0, True), (1, True), (0, False)):
+                with self.subTest(target=target, build_exit=build_exit, executable=executable):
+                    with tempfile.TemporaryDirectory() as temporary:
+                        root = Path(temporary)
+                        helper = root / "target" / target / "release" / "machine-god"
+                        helper.parent.mkdir(parents=True)
+                        helper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                        helper.chmod(0o700 if executable else 0o600)
+                        environment_file = root / "github-env"
+                        environment_file.touch()
+                        environment = {
+                            **os.environ,
+                            "RUST_TOOLCHAIN": "1.94.1",
+                            "GITHUB_WORKSPACE": str(root),
+                            "GITHUB_ENV": str(environment_file),
+                        }
+                        # Never invoke a compiler: exercise only shell ordering
+                        # and the actual executable/export checks from CI.
+                        result = subprocess.run(
+                            ["bash", "-c", f"cargo() {{ return {build_exit}; }}\n" +
+                             script.replace("${{ matrix.target }}", target)],
+                            env=environment,
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                        )
+                        succeeds = build_exit == 0 and executable
+                        self.assertEqual(result.returncode == 0, succeeds, result.stderr)
+                        self.assertEqual(
+                            environment_file.read_text(encoding="utf-8"),
+                            f"MACHINE_GOD_TERMINAL_RELEASE_BINARY={helper}\n" if succeeds else "",
+                        )
+
     def test_required_shells_are_provisioned_before_selected_native_quality_tests(self) -> None:
         quality = job(self.ci, "quality")
         name = "Install shells for selected native tests"

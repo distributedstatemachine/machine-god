@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `complete replacement pinned local checks and three fresh reviews, then obtain exact remote results with bounded phase diagnostics for the unresolved Intel macOS inventory timeout`
+- Next gate: `validate production-helper selection throughout Apple native tests, complete replacement pinned local checks and three fresh reviews, then require exact remote results with retained failure-phase diagnostics`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -201,6 +201,13 @@ failure counters now distinguish helper selection, reservation/spawn/setup,
 first output, EOF and child observation without altering the protocol or
 deadline. The next native Intel gate must establish the stalled phase if it
 fails again; diagnostics alone are not a compatibility fix.
+The next local run separately times out awaiting a PTY helper readiness byte;
+that case passes in isolation and does not report an inventory failure. Apple
+native checks now select the freshly built exact-target release helper through
+the existing fixture capability, preserving all tests and deadlines while
+testing the shipped host path. Explicit failure fixtures and Linux concurrency
+remain unchanged. Native Intel success is still required; harness overhead is
+measured but is not proved to be the exclusive cause of either timeout.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:
@@ -438,6 +445,10 @@ relevant FreeBSD/WASI compilation or active
 unsupported behavior, documentation policy, no-unsafe conformance checks, and a
 fresh locked release-binary smoke of user-visible behavior. Evidence is a
 regression/delivery claim unless a milestone explicitly promotes it.
+For macOS native/workspace runtime checks, build the release CLI first and set
+`MACHINE_GOD_TERMINAL_RELEASE_BINARY` to its absolute path, matching the Apple
+matrix's existing production-helper fixture selection. Keep explicitly
+constructed protocol and failure fixtures; do not relax deadlines or skip tests.
 
 ### Review and remote gate
 

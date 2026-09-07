@@ -50,6 +50,14 @@ group/other write permissions only from `/usr/share/zsh` and requires a
 noninteractive `compaudit` pass. This repairs hosted Ubuntu completion-tree
 permissions without suppressing global or user profiles or completion checks.
 Documentation-only jobs do not provision these dependencies or repair paths.
+When an Apple matrix job selects native tests (or the whole workspace), it
+first builds the locked release CLI for that exact matrix target, verifies the
+absolute executable path, and selects it through the existing terminal-helper
+fixture capability. The serial tests therefore exercise shipped private helper
+dispatch instead of using the large libtest executable as the default helper.
+Explicitly constructed protocol/failure fixtures remain unchanged. Apple jobs
+that select only core, testkit or terminal-sys do not build this helper; Linux
+test commands, package selection and documentation-only routing are unchanged.
 Root Cargo, lockfile, or toolchain inputs select the actual workspace;
 formatting configuration selects workspace and standalone-fixture formatting
 without package tests. The standalone
