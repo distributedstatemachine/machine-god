@@ -39,6 +39,11 @@ All workspace manifests select the native-manifest agreement tests, which
 verify the isolated binding exception and product lint inheritance.
 Changes confined to a crate's tests, examples, or benchmarks select that crate
 only.
+Selected native quality tests explicitly install bash and zsh on Linux; the
+native platform jobs install those shells alongside tmux and verify the fixed
+shell executable paths before testing. Shell-profile coverage therefore does
+not depend on incidental runner packages. Documentation-only jobs do not
+provision these dependencies.
 Root Cargo, lockfile, or toolchain inputs select the actual workspace;
 formatting configuration selects workspace and standalone-fixture formatting
 without package tests. The standalone

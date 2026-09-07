@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `repeat complete pinned local checks, three fresh independent reviews and exact remote gates for the integrated retained tmux cleanup correction`
+- Next gate: `repeat complete pinned local checks with CI-matching Linux concurrency, three fresh independent reviews and exact remote gates for the shell-provisioning correction`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -136,8 +136,16 @@ handles without discovery, retaining the original error and requiring complete
 quiescence on retry. Ordinary signaling suppresses duplicate fallback delivery.
 Focused Linux/macOS tests and strict lint pass; the native quota-pressure
 regression passes 20 repetitions without increasing quota or signaling unproved
-jobs. Complete replacement gates and three fresh reviews remain required;
-no push or delivery is claimed.
+jobs. Candidate `f29ddc7f79fcf32083acb6bd63f96f35f22ea487` passes the full
+local gate and three fresh reviews, and is pushed to the feature branch.
+Its Benchmark run passes with both exact-SHA artifacts, but remote CI exposes
+missing zsh provisioning and Linux/macOS cleanup failures. Explicit shell setup
+is corrected locally. Bounded diagnosis does not reproduce either cleanup
+failure: 50 loaded Linux factory repetitions, five concurrent terminal suites,
+and 100 exact macOS repetitions pass. Those failures remain unexplained; no
+speculative cleanup change is made. Main is unchanged. Replacement gates use
+Linux's default CI test concurrency and serial macOS execution; exact remote
+success is still required. No delivery is claimed.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:
@@ -369,7 +377,8 @@ cargo +1.94.1 test --doc --workspace
 
 Run affected tests first. The complete gate also includes repository Python
 tests, pinned-fx drift checks, dependency policy and vulnerability audit,
-supported Linux/macOS execution, relevant FreeBSD/WASI compilation or active
+supported Linux/macOS execution (including Linux's default CI test concurrency),
+relevant FreeBSD/WASI compilation or active
 unsupported behavior, documentation policy, no-unsafe conformance checks, and a
 fresh locked release-binary smoke of user-visible behavior. Evidence is a
 regression/delivery claim unless a milestone explicitly promotes it.

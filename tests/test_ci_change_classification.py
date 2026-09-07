@@ -789,7 +789,9 @@ class CiChangeClassificationTests(unittest.TestCase):
             "needs.change-classification.outputs.full_workspace == 'true' }}",
             matrix,
         )
-        self.assertIn("sudo apt-get install --yes tmux", install)
+        self.assertIn("sudo apt-get install --yes tmux bash zsh", install)
+        self.assertIn("test -x /bin/bash", install)
+        self.assertIn("test -x /bin/zsh", install)
         self.assertIn("HOMEBREW_NO_AUTO_UPDATE=1 brew install tmux", install)
         self.assertIn('tmux_binary="$(command -v tmux)"', install)
         self.assertIn('"${tmux_binary}" -V', install)
@@ -799,6 +801,21 @@ class CiChangeClassificationTests(unittest.TestCase):
         )
         self.assertLess(matrix.index(name), matrix.index("Test target natively"))
         self.assertNotIn("tmux", job(self.ci, "documentation-policy"))
+
+    def test_required_shells_are_provisioned_before_selected_native_quality_tests(self) -> None:
+        quality = job(self.ci, "quality")
+        name = "Install shells for selected native tests"
+        install = step_script(quality, name)
+        self.assertIn("sudo apt-get install --yes bash zsh", install)
+        self.assertIn("test -x /bin/bash", install)
+        self.assertIn("test -x /bin/zsh", install)
+        self.assertIn(
+            "if: ${{ needs.change-classification.outputs.native == 'true' || "
+            "needs.change-classification.outputs.full_workspace == 'true' }}",
+            quality[quality.index(f"      - name: {name}"):quality.index("      - name: Tests")],
+        )
+        self.assertLess(quality.index(name), quality.index("      - name: Tests"))
+        self.assertNotIn("Install shells", job(self.ci, "documentation-policy"))
 
     def test_terminal_inputs_have_explicit_filters_and_consumers(self) -> None:
         classifier = job(self.ci, "change-classification")

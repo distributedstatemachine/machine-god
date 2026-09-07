@@ -415,3 +415,46 @@ checks pass: Linux 53/two helper ignores and 20 native quota repetitions;
 macOS 48/one helper ignore; strict native lint on both, formatting and diff
 checks. Only the three assigned tmux modules change. Full replacement local
 and remote gates plus three fresh independent reviews remain required.
+
+## Review and remote validation of `f29ddc7`
+
+Candidate `f29ddc7f79fcf32083acb6bd63f96f35f22ea487` passes the complete
+pinned local gate: Linux native 1,472/six helper ignores and CLI 141/four helper
+ignores; full macOS workspace/native 1,402/five helper ignores, eight release
+launches, fresh CLI smoke and production-helper matrix 658/five helper ignores;
+strict lint, doctests, FreeBSD/WASI checks, dependencies, 259 Python tests/14
+expected skips, drift/documentation and release build. Three fresh direct local
+reviewers (`terminal_f29ddc7_api`, `terminal_f29ddc7_lifecycle`, and
+`terminal_f29ddc7_resources`) report zero findings against merge base
+`46e5b70f6c5ba76a4699f5bd8ba424a1fa3813be`. API additionally passes 35 cached
+confirmations (15 action, 12 Gateway, eight archive); peers rely on supplied
+runtime evidence, without performance claims. Review worktrees are removed.
+
+The feature push starts CI `34126012291` and Benchmark `34126012351`.
+Benchmark succeeds with unexpired artifacts `10020326854` (pinned upstream) and
+`10020213499` (bootstrap), both bound to this exact SHA and expiring
+`2026-12-06T13:11:42Z`. Failed CI jobs prevent main advancement:
+
+- Linux ARM native and Ubuntu quality tests each fail only the captured-shell
+  profile fixture; Linux x86_64 also fails native-launch cleanup after exit 23.
+- macOS ARM fails tmux fast-signal/reparented-job close at
+  `terminal_tmux_startup.rs:1812`; macOS x86_64 subsequently passes its complete
+  job. The CI aggregate finishes failed.
+- Missing zsh is reproduced with the identical native executable in fresh
+  non-root Linux: tmux-only provisioning fails at captured-exec line 1431 in
+  0.10 seconds; installing zsh makes the unchanged case pass in 0.12 seconds.
+  The workflow correction explicitly installs/verifies shells without skipping
+  profile coverage. All 14 focused CI-classification tests pass.
+- An unchanged full Linux run with CI-like default concurrency and a two-CPU
+  quota passes 1,472 cases. Fifty factory repetitions under simultaneous test
+  load and five concurrent terminal-suite iterations also pass. No matching
+  cleanup failure is reproduced; the diagnostic host is Linux arm64, not the
+  remote x86_64 host. Diagnostics are restored without a speculative fix.
+- The exact macOS CI-mode case passes 100 repetitions, both fast-signal and
+  reparented-job variants each time. No failure diagnostic fires; no cause is
+  established. Diagnostics and worktrees are removed, and cached diagnostic
+  executables must be rebuilt before new exact-source gate evidence.
+
+This is not delivery evidence. The corrected candidate requires replacement
+local checks with matching Linux concurrency, three fresh reviews and exact
+remote gates before main can advance.

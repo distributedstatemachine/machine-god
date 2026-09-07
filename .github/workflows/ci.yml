@@ -567,6 +567,14 @@ jobs:
             [[ "${CLI}" == "true" ]] && packages+=(--package machine-god-cli)
           fi
           cargo +"${RUST_TOOLCHAIN}" clippy --locked "${packages[@]}" --all-targets --all-features -- -D warnings
+      - name: Install shells for selected native tests
+        if: ${{ needs.change-classification.outputs.native == 'true' || needs.change-classification.outputs.full_workspace == 'true' }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes bash zsh
+          test -x /bin/bash
+          test -x /bin/zsh
       - name: Tests
         if: ${{ needs.change-classification.outputs.core == 'true' || needs.change-classification.outputs.testkit == 'true' || needs.change-classification.outputs.native == 'true' || needs.change-classification.outputs.terminal_sys == 'true' || needs.change-classification.outputs.cli == 'true' }}
         env: *affected-packages
@@ -1331,10 +1339,12 @@ jobs:
           set -euo pipefail
           if [[ "${RUNNER_OS}" == "Linux" ]]; then
             sudo apt-get update
-            sudo apt-get install --yes tmux
+            sudo apt-get install --yes tmux bash zsh
           elif ! command -v tmux >/dev/null 2>&1; then
             HOMEBREW_NO_AUTO_UPDATE=1 brew install tmux
           fi
+          test -x /bin/bash
+          test -x /bin/zsh
           tmux_binary="$(command -v tmux)"
           "${tmux_binary}" -V
           echo "MACHINE_GOD_TERMINAL_TMUX_BINARY=${tmux_binary}" >> "${GITHUB_ENV}"
