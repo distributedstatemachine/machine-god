@@ -62,6 +62,9 @@ impl TerminalCatalogState for HostState {
 fn probes(state: &mut HostState) -> &mut TerminalHostProbes {
     &mut state.probes
 }
+fn reconcile_probes(state: &mut HostState, registry: &TerminalRegistry<TerminalNativeBackend>) {
+    state.probes.reconcile_live(registry);
+}
 type Requester = TerminalRuntimeRequester<TerminalNativeBackend, HostState>;
 
 /// Attach only through `EngineBuilder::host_resource`, never to an engine tool.
@@ -458,6 +461,7 @@ impl NativeTerminalActionExecutor {
                         .map_err(|_| TerminalNativeLaunchError::Process)
                 },
                 activations,
+                reconcile_probes,
                 move |state, mutations| {
                     if mutations.len() != prepared.len() {
                         return Err(TerminalSessionError::InvalidState);
@@ -554,6 +558,7 @@ impl NativeTerminalActionExecutor {
         check(&cancellation, &self.stop)?;
         self.requester
             .request_with_context(cancellation, move |mut context| {
+                reconcile_probes(context.state, context.registry);
                 let activation = preparation.as_ref().map_or_else(
                     TerminalMonitorActivation::default,
                     PreparedTerminalMonitor::activation,
@@ -1197,6 +1202,9 @@ mod tests {
                 crate::background_process::inject_group_snapshot_spawn_failures_for_test(self.0, 0);
             }
         }
+        let _guard = crate::background_process::GROUP_SNAPSHOT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let fixture = Fixture::new();
         let TerminalActionResult::Start { session, .. } = fixture.action(json!({
             "action":"start", "profile":"clean",

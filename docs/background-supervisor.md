@@ -397,6 +397,13 @@ authorities and fails fast before spawning when none is available. A killed
 child that remains unreaped at the deadline transfers, with its authority, to
 one fixed-capacity background quarantine reaper; no cleanup caller blocks in an
 unbounded child wait, and unresolved ownership cannot grow without bound.
+On macOS, ordinary admissions use at most 63 of those 64 authorities; the final
+slot is reserved for inventory children so retained terminal cleanup cannot
+exhaust its own scan capacity. Linux retains the 64-authority ordinary limit.
+Unresolved PTY cleanup can transfer its existing authority and captured process
+identities to that same queue. Terminal proofs run outside the queue mutex and
+retain their originating host completion scope, including nested inventory
+cleanup. Ordinary child reaps keep their existing observation-only behavior.
 
 This process-local adapter requires exclusive child-reaping authority for the
 entire prepared/owned-handle lifetime: the host must leave `SIGCHLD` waitable

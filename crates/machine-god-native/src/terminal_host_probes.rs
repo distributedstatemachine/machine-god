@@ -10,7 +10,7 @@ use crate::terminal_probe_effects::{
     TerminalProbeClock, TerminalProbeCustomContext, TerminalProbeGrant, canonical_fingerprint,
     path_baseline,
 };
-use crate::terminal_registry::TerminalRegistryStep;
+use crate::terminal_registry::{TerminalRegistry, TerminalRegistryStep};
 use crate::terminal_runtime::TerminalRuntimeRequester;
 use crate::terminal_session::TerminalSessionBackend;
 use crate::terminal_shell::TerminalShell;
@@ -27,6 +27,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 use std::time::Instant;
+#[cfg(test)]
+use tests::ProbeDiagnostics;
 
 const MAX_GRANTS: usize = 16 * 64;
 const MAX_ACTIVE: usize = 16;
@@ -471,6 +473,33 @@ impl TerminalHostProbes {
         self.remove_revoked_queue();
     }
 
+    /// Owner-only metadata reconciliation immediately before new grant admission.
+    /// Inspect every retained namespace: stale grants elsewhere also consume the
+    /// global/namespace quotas. Paused templates keep their live generation.
+    pub(crate) fn reconcile_live<B: TerminalSessionBackend>(
+        &mut self,
+        registry: &TerminalRegistry<B>,
+    ) {
+        self.reconcile_live_with(|owner, session| {
+            registry.live_monitor_generations(owner, session).ok()
+        });
+    }
+
+    fn reconcile_live_with(
+        &mut self,
+        mut live: impl FnMut(
+            &BackgroundOutputOwner,
+            &TerminalSessionId,
+        ) -> Option<Vec<(TerminalMonitorId, u64)>>,
+    ) {
+        for (owner, session) in self.namespaces() {
+            match live(&owner, &session) {
+                Some(identities) => self.retain_session_monitors(&owner, &session, &identities),
+                None => self.retire_session(&owner, &session),
+            }
+        }
+    }
+
     /// Prune automatic expiration/until-match removal using a trusted live view,
     /// never persisted descriptions. Paused templates still count toward quota.
     pub(crate) fn retain_session_monitors(
@@ -577,12 +606,12 @@ impl TerminalHostProbes {
                     return;
                 }
                 #[cfg(test)]
-                let publication_trace = trace.clone();
+                let owner_log = trace.clone();
                 let publication = requester
                     .request_with_context(stop.clone(), move |context| {
                         if stop.is_cancelled() || queued.grant.is_revoked() {
                             #[cfg(test)]
-                            tests::ProbeDiagnostics::discarded(publication_trace.as_deref(), "publication");
+                            ProbeDiagnostics::discarded(owner_log.as_deref(), "publication");
                             return;
                         }
                         #[cfg(test)]
@@ -597,7 +626,7 @@ impl TerminalHostProbes {
                             },
                         );
                         #[cfg(test)]
-                        if let Some(trace) = &publication_trace {
+                        if let Some(trace) = &owner_log {
                             trace.publication(sequence, context.now_ms, &result);
                         }
                         let _ = result;
@@ -1435,6 +1464,234 @@ mod tests {
                     fixture.prepare(&definition)
                 )
                 .is_err()
+        );
+    }
+
+    fn inert_scheduler() -> TerminalHostProbes {
+        let captured = Arc::new(
+            TerminalCapturedExec::new(
+                "/never-executed-probe-helper".into(),
+                Vec::new(),
+                Duration::from_secs(2),
+                16,
+            )
+            .unwrap(),
+        );
+        TerminalHostProbes::new(
+            Arc::new(NativeTerminalProbeExecutor::new(captured, 16).unwrap()),
+            CancellationToken::new(),
+        )
+    }
+    fn prepared_tcp() -> PreparedTerminalMonitor {
+        PreparedTerminalMonitor {
+            authority: Some(TerminalProbeAuthority::Tcp {
+                host: "127.0.0.1".into(),
+                port: 80,
+                addresses: vec!["127.0.0.1:80".parse().unwrap()],
+            }),
+            activation: TerminalMonitorActivation::default(),
+        }
+    }
+    fn monitor_context(now_ms: i64) -> crate::terminal_monitor::TerminalMonitorContext {
+        crate::terminal_monitor::TerminalMonitorContext {
+            now_ms,
+            cursor: machine_god_core::TerminalCursor::new(1, 0).unwrap(),
+            lifecycle: TerminalLifecycle::Running,
+        }
+    }
+    fn tcp_definition() -> TerminalMonitorDefinition {
+        definition(Condition::TcpReady {
+            host: "127.0.0.1".into(),
+            port: 80,
+        })
+    }
+
+    fn fill_monitor_grants(
+        monitors: &mut crate::terminal_monitor::TerminalMonitorSet,
+        scheduler: &mut TerminalHostProbes,
+    ) -> Vec<TerminalMonitorMutation> {
+        let mut mutations = Vec::new();
+        for _ in 0..64 {
+            let mutation = monitors
+                .apply_with_activation(
+                    TerminalMonitorOperation::Add {
+                        definition: tcp_definition(),
+                    },
+                    TerminalMonitorActivation::default(),
+                    monitor_context(0),
+                )
+                .unwrap();
+            scheduler
+                .install(&owner(), &session_id(), &mutation, prepared_tcp())
+                .unwrap();
+            mutations.push(mutation);
+        }
+        mutations
+    }
+
+    #[test]
+    fn admission_reconciles_until_match_before_add_and_preserves_paused_grants() {
+        use crate::terminal_monitor::{
+            TerminalMonitorSet, TerminalProbeEvidence, TerminalProbeObservation,
+        };
+        let mut monitors = TerminalMonitorSet::new(session_id(), monitor_context(0)).unwrap();
+        let mut scheduler = inert_scheduler();
+        let mutations = fill_monitor_grants(&mut monitors, &mut scheduler);
+        let retired = Arc::clone(&scheduler.grants[0].grant);
+        let unrelated = Arc::clone(&scheduler.grants[2].grant);
+        let paused = monitors
+            .apply_with_activation(
+                TerminalMonitorOperation::Pause {
+                    monitor_id: mutations[1].monitor_id.clone(),
+                },
+                TerminalMonitorActivation::default(),
+                monitor_context(0),
+            )
+            .unwrap();
+        scheduler.pause(&owner(), &session_id(), &paused).unwrap();
+        let request = monitors.tick(monitor_context(20)).unwrap().remove(0);
+        assert!(
+            monitors
+                .complete_probe(
+                    TerminalProbeEvidence {
+                        session_id: request.session_id,
+                        monitor_id: request.monitor_id,
+                        generation: request.generation,
+                        request_sequence: request.request_sequence,
+                        completed_at_ms: 20,
+                        output_bytes: 0,
+                        truncated: false,
+                        timed_out: false,
+                        result: Ok(TerminalProbeObservation::Tcp { connected: true }),
+                    },
+                    monitor_context(20)
+                )
+                .unwrap()
+        );
+        assert_eq!(monitors.live_generations().len(), 63);
+        assert_eq!(scheduler.grants.len(), 64, "housekeeping has not run");
+        scheduler.reconcile_live_with(|who, session| {
+            assert_eq!((who, session), (&owner(), &session_id()));
+            Some(monitors.live_generations())
+        });
+        let added = monitors
+            .apply_with_activation(
+                TerminalMonitorOperation::Add {
+                    definition: tcp_definition(),
+                },
+                TerminalMonitorActivation::default(),
+                monitor_context(20),
+            )
+            .unwrap();
+        scheduler
+            .install(&owner(), &session_id(), &added, prepared_tcp())
+            .unwrap();
+        assert_eq!(scheduler.grants.len(), 64);
+        assert!(retired.is_revoked());
+        assert!(!unrelated.is_revoked());
+        let paused_entry = &scheduler.grants[scheduler
+            .index(&owner(), &session_id(), &paused.monitor_id)
+            .unwrap()];
+        assert!(paused_entry.paused && paused_entry.generation == paused.generation);
+        let resumed = monitors
+            .apply_with_activation(
+                TerminalMonitorOperation::Resume {
+                    monitor_id: paused.monitor_id,
+                },
+                TerminalMonitorActivation::default(),
+                monitor_context(20),
+            )
+            .unwrap();
+        scheduler.resume(&owner(), &session_id(), &resumed).unwrap();
+        assert!(
+            !scheduler.grants[scheduler
+                .index(&owner(), &session_id(), &resumed.monitor_id)
+                .unwrap()]
+            .grant
+            .is_revoked()
+        );
+        assert!(
+            scheduler
+                .install(&owner(), &session_id(), &mutation(1, false), prepared_tcp())
+                .is_err()
+        );
+        assert_eq!(scheduler.grants.len(), 64, "live quota is unchanged");
+        assert!(!unrelated.is_revoked());
+    }
+
+    #[test]
+    fn admission_reconciles_closed_namespace_before_global_quota_and_slot_reuse() {
+        let mut scheduler = inert_scheduler();
+        let sessions: Vec<_> = (0..16)
+            .map(|n| TerminalSessionId::new(format!("session-{n}")).unwrap())
+            .collect();
+        let identities: Vec<_> = (0..64)
+            .map(|n| (TerminalMonitorId::new(format!("monitor-{n}")).unwrap(), 1))
+            .collect();
+        for session in &sessions {
+            for (id, generation) in &identities {
+                let mutation = TerminalMonitorMutation {
+                    monitor_id: id.clone(),
+                    generation: *generation,
+                    removed: false,
+                };
+                scheduler
+                    .install(&owner(), session, &mutation, prepared_tcp())
+                    .unwrap();
+            }
+        }
+        let retired = Arc::clone(&scheduler.grants[0].grant);
+        let evicted = Arc::clone(&scheduler.grants[64].grant);
+        let unrelated = Arc::clone(&scheduler.grants[128].grant);
+        let replacement = TerminalSessionId::new("replacement").unwrap();
+        assert_eq!(scheduler.grants.len(), MAX_GRANTS);
+        assert!(
+            scheduler
+                .install(&owner(), &replacement, &mutation(1, false), prepared_tcp())
+                .is_err()
+        );
+        let mut inspected = 0;
+        scheduler.reconcile_live_with(|who, session| {
+            assert_eq!(who, &owner());
+            inspected += 1;
+            // A closed live session has no live monitors; an evicted namespace
+            // is absent. Both must revoke only its exact retained grants.
+            if session == &sessions[0] {
+                Some(Vec::new())
+            } else if session == &sessions[1] {
+                None
+            } else {
+                Some(identities.clone())
+            }
+        });
+        assert_eq!(inspected, 16);
+        assert!(retired.is_revoked() && evicted.is_revoked());
+        assert!(!unrelated.is_revoked());
+        assert_eq!(scheduler.grants.len(), 14 * 64);
+        scheduler
+            .install(&owner(), &replacement, &mutation(1, false), prepared_tcp())
+            .unwrap();
+        assert_eq!(scheduler.namespaces().len(), 15);
+        scheduler
+            .install(&owner(), &sessions[0], &mutation(2, false), prepared_tcp())
+            .unwrap();
+        assert_eq!(scheduler.namespaces().len(), 16);
+        assert!(
+            scheduler
+                .install(&owner(), &sessions[1], &mutation(2, false), prepared_tcp())
+                .is_err()
+        );
+        assert!(
+            scheduler
+                .grants
+                .iter()
+                .all(|entry| !entry.grant.is_revoked())
+        );
+        assert!(
+            scheduler
+                .grants
+                .iter()
+                .any(|entry| entry.grant.session_id() == &sessions[2])
         );
     }
 

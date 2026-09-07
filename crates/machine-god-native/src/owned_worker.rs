@@ -48,7 +48,40 @@ pub struct NativeOwnedWorkerCompletion {
 /// reference to the existing completion obligation.
 #[derive(Clone)]
 pub struct NativeOwnedWorkerCleanup {
-    _ticket: NativeOwnedWorkerTicket,
+    #[cfg_attr(
+        not(any(test, target_os = "linux", target_os = "macos")),
+        allow(
+            dead_code,
+            reason = "retains completion metadata without platform cleanup effects"
+        )
+    )]
+    ticket: NativeOwnedWorkerTicket,
+}
+impl NativeOwnedWorkerCleanup {
+    /// Attributes nested cleanup obligations to this original scope while a
+    /// shared cleanup worker services it. Restore the previous attribution on
+    /// return or unwind; unlike a dedicated worker, this thread serves other
+    /// scopes afterward. Cloned cleanup tokens retain the existing ticket only.
+    #[cfg(any(test, target_os = "linux", target_os = "macos"))]
+    pub fn run_on_cleanup_worker<T>(&self, operation: impl FnOnce() -> T) -> T {
+        struct RestoreTicket<'a> {
+            slot: &'a RefCell<Option<Weak<ScopeTicket>>>,
+            previous: Option<Weak<ScopeTicket>>,
+        }
+        impl Drop for RestoreTicket<'_> {
+            fn drop(&mut self) {
+                drop(self.slot.replace(self.previous.take()));
+            }
+        }
+
+        WORKER_TICKET.with(|slot| {
+            let _restore = RestoreTicket {
+                slot,
+                previous: slot.replace(Some(Arc::downgrade(&self.ticket.0))),
+            };
+            operation()
+        })
+    }
 }
 impl fmt::Debug for NativeOwnedWorkerCleanup {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -140,7 +173,7 @@ impl NativeOwnedWorkerScope {
     /// Keep this token with existing cleanup ownership, never with response data.
     #[must_use]
     pub fn retain_current_cleanup() -> Option<NativeOwnedWorkerCleanup> {
-        current_worker_ticket().map(|ticket| NativeOwnedWorkerCleanup { _ticket: ticket })
+        current_worker_ticket().map(|ticket| NativeOwnedWorkerCleanup { ticket })
     }
 
     /// Inert: no worker, collector, process or native reservation is created.
@@ -463,6 +496,133 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::mpsc::sync_channel;
     use std::time::Duration;
+
+    #[test]
+    fn cleanup_worker_restores_context_and_retains_nested_completion() {
+        assert!(current_worker_ticket().is_none());
+        let scope = NativeOwnedWorkerScope::new();
+        let cleanup = NativeOwnedWorkerCleanup {
+            ticket: scope.admit().unwrap(),
+        };
+        scope.close();
+        let (value, nested) = cleanup.run_on_cleanup_worker(|| {
+            let current = current_worker_ticket().unwrap();
+            assert!(Arc::ptr_eq(&current.0.state, &scope.state));
+            assert_eq!(
+                scope.completion().wait_on_worker(),
+                Err(NativeOwnedWorkerSpawnError)
+            );
+            (
+                42,
+                NativeOwnedWorkerScope::retain_current_cleanup().unwrap(),
+            )
+        });
+        assert_eq!(value, 42);
+        assert!(current_worker_ticket().is_none());
+        assert_eq!(scope.state.status.lock().unwrap().tickets, 1);
+        drop(cleanup);
+        assert!(!scope.completion().is_complete());
+        let last = nested.clone();
+        drop(nested);
+        assert!(!scope.completion().is_complete());
+        drop(last);
+        assert!(scope.completion().is_complete());
+    }
+
+    #[test]
+    fn cleanup_worker_nested_scopes_restore_the_previous_ticket() {
+        assert!(current_worker_ticket().is_none());
+        let outer = NativeOwnedWorkerScope::new();
+        let inner = NativeOwnedWorkerScope::new();
+        let outer_cleanup = NativeOwnedWorkerCleanup {
+            ticket: outer.admit().unwrap(),
+        };
+        let inner_cleanup = NativeOwnedWorkerCleanup {
+            ticket: inner.admit().unwrap(),
+        };
+        outer.close();
+        inner.close();
+        outer_cleanup.run_on_cleanup_worker(|| {
+            assert!(Arc::ptr_eq(
+                &current_worker_ticket().unwrap().0.state,
+                &outer.state
+            ));
+            inner_cleanup.run_on_cleanup_worker(|| {
+                assert!(Arc::ptr_eq(
+                    &current_worker_ticket().unwrap().0.state,
+                    &inner.state
+                ));
+            });
+            assert!(Arc::ptr_eq(
+                &current_worker_ticket().unwrap().0.state,
+                &outer.state
+            ));
+        });
+        assert!(current_worker_ticket().is_none());
+        drop(inner_cleanup);
+        assert!(inner.completion().is_complete());
+        assert!(!outer.completion().is_complete());
+        drop(outer_cleanup);
+        assert!(outer.completion().is_complete());
+    }
+
+    #[test]
+    fn cleanup_worker_unwind_restores_nested_and_outer_contexts() {
+        assert!(current_worker_ticket().is_none());
+        let outer = NativeOwnedWorkerScope::new();
+        let inner = NativeOwnedWorkerScope::new();
+        let outer_cleanup = NativeOwnedWorkerCleanup {
+            ticket: outer.admit().unwrap(),
+        };
+        let inner_cleanup = NativeOwnedWorkerCleanup {
+            ticket: inner.admit().unwrap(),
+        };
+        assert!(
+            contain(|| outer_cleanup.run_on_cleanup_worker(|| {
+                assert!(
+                    contain(|| inner_cleanup.run_on_cleanup_worker(|| {
+                        panic!("nested cleanup unwind");
+                    }))
+                    .is_err()
+                );
+                assert!(Arc::ptr_eq(
+                    &current_worker_ticket().unwrap().0.state,
+                    &outer.state
+                ));
+                panic!("outer cleanup unwind");
+            }))
+            .is_err()
+        );
+        assert!(current_worker_ticket().is_none());
+        outer.close();
+        inner.close();
+        assert!(!outer.completion().is_complete());
+        assert!(!inner.completion().is_complete());
+        drop((outer_cleanup, inner_cleanup));
+        assert!(outer.completion().is_complete());
+        assert!(inner.completion().is_complete());
+    }
+
+    #[test]
+    fn cleanup_worker_sequential_jobs_do_not_attribute_unrelated_cleanup() {
+        assert!(current_worker_ticket().is_none());
+        for _ in 0..2 {
+            let scope = NativeOwnedWorkerScope::new();
+            let cleanup = NativeOwnedWorkerCleanup {
+                ticket: scope.admit().unwrap(),
+            };
+            scope.close();
+            cleanup.run_on_cleanup_worker(|| {
+                assert!(Arc::ptr_eq(
+                    &current_worker_ticket().unwrap().0.state,
+                    &scope.state
+                ));
+            });
+            assert!(NativeOwnedWorkerScope::retain_current_cleanup().is_none());
+            drop(cleanup);
+            assert!(scope.completion().is_complete());
+        }
+    }
 
     #[test]
     fn scoped_dormant_close_rejects_unpolled_and_later_admissions() {

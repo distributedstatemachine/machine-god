@@ -681,7 +681,8 @@ impl TerminalPty {
                     // An exited session leader can still have a foreground
                     // job. The owned master, not a persisted PID, authorizes
                     // this delivery; the kernel resolves membership atomically.
-                    if self.signal_foreground(signal).is_err()
+                    if self.master.is_some()
+                        && self.signal_foreground(signal).is_err()
                         && before == TerminalPtyStatus::Running
                     {
                         phase_failed = true;
@@ -876,7 +877,7 @@ mod tests {
         {
             static SUBREAPER: std::sync::Once = std::sync::Once::new();
             SUBREAPER.call_once(|| {
-                rustix::process::set_child_subreaper(rustix::process::Pid::from_raw(1)).unwrap()
+                rustix::process::set_child_subreaper(rustix::process::Pid::from_raw(1)).unwrap();
             });
         }
         if let Some(program) = std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY") {
@@ -1646,6 +1647,195 @@ mod tests {
         assert_eq!(closed.status, TerminalPtyStatus::Signalled(9));
         assert!(tail.len() <= 512 * 1024);
         assert_eq!(pty.close(false).unwrap(), closed.status);
+    }
+
+    #[test]
+    fn late_inventory_failure_retains_unreaped_shell_and_closed_master_retry() {
+        let _guard = crate::background_process::GROUP_SNAPSHOT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let directory = Directory::new();
+        let mut pty = start(&directory, &["-c", "printf ready; exec /bin/sleep 30"]);
+        read_until(&mut pty, b"ready");
+        let mut process = pty.process.take().unwrap();
+        let pid = pty.pid;
+        let failed = process.terminal_close(true, |phase| {
+            if matches!(phase, TerminalClosePhase::Close) {
+                drop(pty.master.take());
+                pty.read_closed = true;
+                crate::background_process::inject_group_snapshot_spawn_failures_for_test(pid, 1);
+            }
+        });
+        let still_owned = process.terminal_poll();
+        pty.process = Some(process);
+        assert!(failed.is_err(), "late proof failure must remain observable");
+        assert!(
+            still_owned.is_ok(),
+            "failed proof must not discharge the shell"
+        );
+        let closed = pty
+            .close(true)
+            .expect("retry after transient inventory failure");
+        assert_eq!(closed, TerminalPtyStatus::Signalled(9));
+        assert!(pty.process.is_none());
+        assert_eq!(pty.close(true).unwrap(), closed);
+    }
+
+    #[test]
+    fn close_signal_denial_requires_positive_exit_and_retains_force_retry() {
+        let _guard = crate::background_process::GROUP_SNAPSHOT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for force in [false, true] {
+            let directory = Directory::new();
+            let mut pty = start(
+                &directory,
+                &["-c", "trap '' HUP; printf ready; exec /bin/sleep 30"],
+            );
+            read_until(&mut pty, b"ready");
+            let mut process = pty.process.take().unwrap();
+            crate::background_process::inject_group_signal_eperm_for_test(pty.pid, 1);
+            let first = process.terminal_close(force, |phase| {
+                if matches!(phase, TerminalClosePhase::Close) {
+                    drop(pty.master.take());
+                    pty.read_closed = true;
+                }
+            });
+            crate::background_process::inject_group_signal_eperm_for_test(pty.pid, 0);
+            let observed = process.terminal_poll();
+            pty.process = Some(process);
+            if force {
+                assert!(first.is_err(), "denied KILL is not positive exit evidence");
+                assert_eq!(observed.unwrap(), None, "running leader remains owned");
+            } else {
+                assert_eq!(first.unwrap(), BackgroundProcessExit::Signaled(9));
+            }
+            assert_eq!(pty.close(true).unwrap(), TerminalPtyStatus::Signalled(9));
+            assert!(pty.process.is_none());
+        }
+    }
+
+    #[test]
+    fn dropped_pty_retains_scope_until_quarantined_cleanup_converges() {
+        let _guard = crate::background_process::GROUP_SNAPSHOT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let scope = crate::NativeOwnedWorkerScope::new();
+        let pid = futures_executor::block_on(scope.run(|| {
+            let directory = Directory::new();
+            let mut pty = start(
+                &directory,
+                &["-c", "trap '' HUP TERM; printf ready; while :; do :; done"],
+            );
+            read_until(&mut pty, b"ready");
+            let pid = pty.pid;
+            crate::background_process::inject_group_snapshot_spawn_failures_for_test(pid, 1000);
+            drop(pty);
+            pid
+        }))
+        .unwrap();
+        scope.close();
+        let completion = scope.completion();
+        let pending = !completion.is_complete();
+        crate::background_process::inject_group_snapshot_spawn_failures_for_test(pid, 0);
+        assert!(
+            pending,
+            "queued terminal cleanup retains its originating scope"
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !completion.is_complete() {
+            assert!(
+                Instant::now() < deadline,
+                "terminal quarantine must converge after repair"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn cleanup_escape_child_entry() {
+        if std::env::var_os("MACHINE_GOD_TERMINAL_ESCAPE_FIXTURE").is_none() {
+            return;
+        }
+        std::fs::write("escape.ready", std::process::id().to_string()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !Path::new("escape.go").exists() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        rustix::process::setsid().unwrap();
+        std::fs::write("escape.done", b"escaped").unwrap();
+        // A bounded fallback prevents a failed fixture from living indefinitely.
+        while Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn close_retry_retains_descendant_that_escaped_after_capture() {
+        struct ExactCleanup(machine_god_terminal_sys::ProcessIdentity);
+        impl Drop for ExactCleanup {
+            fn drop(&mut self) {
+                let _ = self.0.signal(rustix::process::Signal::KILL);
+            }
+        }
+        let _guard = crate::background_process::GROUP_SNAPSHOT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let directory = Directory::new();
+        let executable = std::env::current_exe().unwrap();
+        let mut pty = start(
+            &directory,
+            &[
+                "-c",
+                "trap '' HUP TERM; MACHINE_GOD_TERMINAL_ESCAPE_FIXTURE=1 \"$1\" --exact terminal_pty::tests::cleanup_escape_child_entry --test-threads=1 --quiet & wait",
+                "machine-god-cleanup-test",
+                executable.to_str().unwrap(),
+            ],
+        );
+        let wait_file = |name: &str| {
+            let deadline = Instant::now() + Duration::from_secs(4);
+            while !directory.0.join(name).exists() {
+                assert!(Instant::now() < deadline, "missing fixture {name}");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        };
+        wait_file("escape.ready");
+        let descendant = ExactCleanup(
+            machine_god_terminal_sys::ProcessIdentity::capture(
+                NonZeroU32::new(
+                    std::fs::read_to_string(directory.0.join("escape.ready"))
+                        .unwrap()
+                        .parse()
+                        .unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        );
+        let pid = pty.pid;
+        let mut process = pty.process.take().unwrap();
+        let failed = process.terminal_close(false, |phase| match phase {
+            TerminalClosePhase::Graceful => {
+                // The first complete capture already owns this incarnation.
+                std::fs::write(directory.0.join("escape.go"), b"go").unwrap();
+                wait_file("escape.done");
+            }
+            TerminalClosePhase::Force => {
+                crate::background_process::inject_group_snapshot_spawn_failures_for_test(pid, 1);
+            }
+            TerminalClosePhase::Close => {}
+        });
+        pty.process = Some(process);
+        assert!(failed.is_err());
+        assert!(
+            descendant.0.exists().unwrap(),
+            "first error retains live cleanup"
+        );
+        pty.close(true).expect("retry retains escaped incarnation");
+        assert!(!descendant.0.exists().unwrap());
     }
 
     #[cfg(target_os = "linux")]

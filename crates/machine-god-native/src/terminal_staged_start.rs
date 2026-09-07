@@ -14,7 +14,7 @@ use crate::terminal_native_launch::{
 use crate::terminal_owner::{TerminalOwnerContext, TerminalOwnerError};
 use crate::terminal_profile::{TerminalProfileError, TerminalProfileMutationContext};
 use crate::terminal_registry::{
-    TerminalRegistryError, TerminalResidentLease, TerminalStartReservation,
+    TerminalRegistry, TerminalRegistryError, TerminalResidentLease, TerminalStartReservation,
 };
 use crate::terminal_resident_dispatch::TerminalResidentAuthority;
 use crate::terminal_runtime::{TerminalRuntimeError, TerminalRuntimeRequester};
@@ -159,6 +159,7 @@ impl<S: 'static> TerminalStagedStarter<S> {
             request,
             prepare_authority,
             activations,
+            |_, _| {},
             install_monitors,
             StartDeadline::Relative(timeout),
             cancellation,
@@ -182,6 +183,7 @@ impl<S: 'static> TerminalStagedStarter<S> {
         > + Send
         + 'static,
         activations: Vec<TerminalMonitorActivation>,
+        reconcile_monitors: fn(&mut S, &TerminalRegistry<TerminalNativeBackend>),
         install_monitors: impl FnOnce(
             &mut S,
             Vec<TerminalMonitorMutation>,
@@ -197,6 +199,7 @@ impl<S: 'static> TerminalStagedStarter<S> {
             request,
             prepare_authority,
             activations,
+            reconcile_monitors,
             install_monitors,
             StartDeadline::Absolute(deadline),
             cancellation,
@@ -218,6 +221,7 @@ impl<S: 'static> TerminalStagedStarter<S> {
         > + Send
         + 'static,
         activations: Vec<TerminalMonitorActivation>,
+        reconcile_monitors: fn(&mut S, &TerminalRegistry<TerminalNativeBackend>),
         install_monitors: impl FnOnce(
             &mut S,
             Vec<TerminalMonitorMutation>,
@@ -259,6 +263,7 @@ impl<S: 'static> TerminalStagedStarter<S> {
                     request,
                     activations,
                     install_monitors: Box::new(install_monitors),
+                    reconcile_monitors,
                     host_identity,
                     deadline,
                 };
@@ -317,12 +322,13 @@ type InstallMonitors<S> = Box<
         + Send,
 >;
 
-struct StartPublication<S> {
+struct StartPublication<B: TerminalSessionBackend, S> {
     authority: TerminalResidentAuthority,
     session_id: TerminalSessionId,
     request: TerminalStartRequest,
     activations: Vec<TerminalMonitorActivation>,
     install_monitors: InstallMonitors<S>,
+    reconcile_monitors: fn(&mut S, &TerminalRegistry<B>),
     host_identity: SessionIncarnationId,
     deadline: Instant,
 }
@@ -332,7 +338,7 @@ struct StartPublication<S> {
 /// tool future's poll/Drop path, including owner rejection before queueing.
 fn run_staged<B: TerminalSessionBackend + Send + 'static, S: 'static>(
     requester: &TerminalRuntimeRequester<B, S>,
-    publication: StartPublication<S>,
+    publication: StartPublication<B, S>,
     catalogs: fn(&mut S) -> &mut TerminalHostCatalogs,
     cancellation: CancellationToken,
     deadline: Instant,
@@ -444,7 +450,7 @@ impl<B: TerminalSessionBackend + Send + 'static, S: 'static> Drop for StartRollb
 fn publish_start<B: TerminalSessionBackend + Send + 'static, S>(
     context: &mut TerminalOwnerContext<'_, B, S>,
     reservation: &TerminalStartReservation,
-    publication: StartPublication<S>,
+    publication: StartPublication<B, S>,
     catalogs: fn(&mut S) -> &mut TerminalHostCatalogs,
     prepared: (B, TerminalStartupControl, TerminalNativeLaunchIdentity),
     cancellation: &CancellationToken,
@@ -508,6 +514,10 @@ fn publish_start<B: TerminalSessionBackend + Send + 'static, S>(
             TerminalNativeLaunchError::Timeout,
         ));
     }
+    // Only live metadata may prune retained grants. This runs in the same owner
+    // callback as installation, after asynchronous preparation and before the
+    // registry borrow used to construct the new session. No pump can intervene.
+    (publication.reconcile_monitors)(context.state, context.registry);
     let mut admission_error = None;
     context
         .registry
@@ -656,9 +666,13 @@ mod tests {
         )
         .unwrap()
     }
+    struct FixtureState {
+        catalogs: TerminalHostCatalogs,
+        reconciled: bool,
+    }
     struct Fixture {
-        runtime: Option<TerminalRuntime<TerminalNativeBackend, TerminalHostCatalogs>>,
-        starter: TerminalStagedStarter<TerminalHostCatalogs>,
+        runtime: Option<TerminalRuntime<TerminalNativeBackend, FixtureState>>,
+        starter: TerminalStagedStarter<FixtureState>,
         spawner: Arc<Spawner>,
         path: PathBuf,
         initialized: Arc<AtomicUsize>,
@@ -696,7 +710,10 @@ mod tests {
                         TerminalRegistry::new(workspace.clone()).unwrap(),
                         TerminalProfileStore::prepare(store_fd).unwrap(),
                         TerminalProfileBudget::new(TerminalProfileLimits::default()).unwrap(),
-                        TerminalHostCatalogs::new(workspace).unwrap(),
+                        FixtureState {
+                            catalogs: TerminalHostCatalogs::new(workspace).unwrap(),
+                            reconciled: false,
+                        },
                         move || i64::try_from(started.elapsed().as_millis()).unwrap(),
                         move |_, steps| {
                             for step in steps {
@@ -718,7 +735,7 @@ mod tests {
                 runtime.requester(),
                 Arc::new(config()),
                 SessionIncarnationId::new("native-host").unwrap(),
-                |catalogs| catalogs,
+                |state| &mut state.catalogs,
             );
             Self {
                 runtime: Some(runtime),
@@ -730,7 +747,7 @@ mod tests {
                 monitor_installations,
             }
         }
-        fn runtime(&self) -> &TerminalRuntime<TerminalNativeBackend, TerminalHostCatalogs> {
+        fn runtime(&self) -> &TerminalRuntime<TerminalNativeBackend, FixtureState> {
             self.runtime.as_ref().unwrap()
         }
         fn request(&self, command: Option<&str>) -> TerminalStartRequest {
@@ -983,6 +1000,7 @@ mod tests {
             fixture.request(None),
             || panic!("expired authority"),
             Vec::new(),
+            |_, _| {},
             |_, _| Ok(()),
             deadline,
             CancellationToken::new(),
@@ -1214,13 +1232,19 @@ mod tests {
             let path = fixture.path.clone();
             let installed = Arc::clone(&fixture.monitor_installations);
             let poll_thread = std::thread::current().id();
-            let result = futures_executor::block_on(fixture.starter.start(
+            let result = futures_executor::block_on(fixture.starter.start_until(
                 authority(),
                 id(),
                 request,
                 move || Ok(native_authority),
                 vec![TerminalMonitorActivation::default()],
-                move |_, mutations| {
+                |state, registry| {
+                    assert!(!state.reconciled);
+                    assert!(registry.inspect(&authority().owner, &id()).is_err());
+                    state.reconciled = true;
+                },
+                move |state, mutations| {
+                    assert!(state.reconciled, "reconcile before monitor installation");
                     assert_ne!(std::thread::current().id(), poll_thread);
                     assert!(!path.join("callback-command").exists());
                     assert_eq!(mutations.len(), 1);
@@ -1232,7 +1256,7 @@ mod tests {
                         Ok(())
                     }
                 },
-                Duration::from_secs(5),
+                Instant::now() + Duration::from_secs(5),
                 CancellationToken::new(),
             ));
             assert_eq!(fixture.monitor_installations.load(Ordering::Acquire), 1);

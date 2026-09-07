@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `validate fresh owner-clock admission and bounded readiness-driven inventory collection, complete replacement pinned local and release-binary gates, then repeat three independent review tracks before exact remote gates`
+- Next gate: `finish the pinned local and release-binary gates for retained cleanup and probe admission corrections, then repeat three independent reviews and exact remote gates`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -184,6 +184,37 @@ startup, tmux, staged-start, factory and PTY groups. Known loss of collector
 wait authority also discharges its stale handle before cleanup. Strict workspace
 Clippy passes after extracting the bounded test diagnostics. Replacement local
 gates, independent reviews and exact remote delivery remain required.
+
+Candidate `15112d88c5759b2e75b358a1b5c08f52873102a3` passes the complete
+pinned local gate, including 1,376 native workspace unit tests with four
+expected ignores and 639 release-helper terminal tests with four expected
+ignores. Three independent local review tracks reject delivery for two cleanup
+defects, stale probe-grant admission and a scheduling-sensitive collector test.
+A failed close can discard captured descendant identities; a late cleanup
+failure can reap the shell yet leave retries unable to converge. Probe grants
+can outlive retired monitor identities until housekeeping and incorrectly block
+replacement admission. Corrections must retain exact cleanup authority and
+post-reap progress, reconcile live grant identities before admission, and use
+the existing injected clock for backoff assertions. No timeout or quota
+increase, command replay, remote push or delivery is claimed.
+
+The integrated correction retains cleanup identities/pidfds across retries and
+fallback queue transfer, requires positive shell exit before final quiescence,
+and retains exact exit receipts before releasing authority. Linux final scans
+retain newly acquired pins even when a later scan step fails. macOS reserves
+one existing reap slot for inventory; shared cleanup restores the originating
+scope without leaking it into unrelated jobs. Live probe grants reconcile before
+monitor/start admission, including paused templates and reused namespaces.
+The focused gate passes 25 PTY tests, four scope-attribution tests, two probe
+quota regressions, one inventory-capacity regression and ten staged-start tests.
+The PTY gate includes late-proof failure/retry, post-capture SID escape, scoped
+fallback settlement and denied-signal escalation. A reproduced macOS TERM EPERM
+during natural exit is handled by bounded escalation and positive completion
+proof, not by treating denial as disappearance. Strict workspace Clippy passes.
+Linux library/test cross-compilation and supplemental no-default-feature lint
+pass (the latter excludes dormant-feature dead-code warnings); these are not
+native Linux execution evidence. Full replacement local, platform, review and
+remote gates remain pending; completed agent worktrees are removed.
 
 Earlier internal evidence remains historical, not delivery status:
 `a327580b754e25b8c1beaa5edf744b2b2252c620` passed the pinned workspace gate,

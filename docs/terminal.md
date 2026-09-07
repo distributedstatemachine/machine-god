@@ -168,6 +168,9 @@ cleanup. Completed unconsumed responses do not hold completion tickets, and
 unrelated worker scopes are excluded. A dormant host settles without starting
 its lazy registry. The CLI uses this boundary before process exit, including
 when turn execution returns an error or unwinds.
+Shared cleanup workers temporarily restore the originating completion scope
+while servicing its obligations, including nested cleanup children. They restore
+the previous attribution on return or unwind; unrelated hosts cannot inherit it.
 
 ## Native screen projection
 
@@ -532,6 +535,20 @@ A failed bounded close may already have quiesced input, closed the PTY master
 or signaled jobs. Its error and output-loss evidence remain observable. A later,
 separately authorized close of that exact session can finish retained cleanup;
 the failure does not authorize replaying a start, command or write.
+Captured descendant identities and Linux process handles belong to the retained
+process across close attempts, including descendants that subsequently leave
+the original session. A failed inventory or quiescence proof does not reap the
+shell: it remains the original session/group anchor. Signal-delivery failure may
+still be followed by escalation or concurrent natural exit; it is never used as
+proof of cleanup. Positive shell exit must precede the final quiescence proof,
+so a running shell cannot have cached quiescence or bypass signals on retry.
+Exact positive reaping records its exit receipt before releasing authority.
+Retries after master closure skip foreground ioctls that require that master.
+Dropping an unresolved terminal transfers its existing process, captured set,
+reap permit and completion obligation to the bounded shared cleanup queue.
+The queue services ordinary reaps and round-robin terminal retries outside its
+mutex; new arrivals cannot displace older retries. No new worker or duplicate
+reap permit is created by that transfer.
 
 The driver binds durable lifecycle, known termination, creation/last-output
 times, exact logical owner/incarnation and monitor snapshots to the committed
@@ -660,7 +677,12 @@ reacquiring paths. Update, removal, until-match completion, expiry, terminal los
 and shutdown retire old grants and reject late evidence. At most sixteen session
 namespaces and sixty-four monitors per session retain grants; descriptions queue
 within that same 1024-entry bound. At most sixteen probe/publication futures and
-one housekeeping future are polled per owner tick. Housekeeping reads only live
+one housekeeping future are polled per owner tick. Start publication and monitor
+mutation reconcile all retained namespaces against current live IDs/generations
+in the same owner callback before grant admission. Retired identities therefore
+cannot occupy quota until housekeeping or revoke unrelated active grants when
+a valid replacement is added; paused approval templates retain their slots.
+Housekeeping reads only live
 monitor IDs/generations, not saved facts or authority descriptions, and successful
 evidence publishes through the registry's exact profile transaction. The shared
 host stop and grant revocation reach owned native workers even without another

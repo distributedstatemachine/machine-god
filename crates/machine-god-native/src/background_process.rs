@@ -175,7 +175,7 @@ static OBSERVED_GROUP_SNAPSHOT: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 static GROUP_SNAPSHOT_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
-static GROUP_SNAPSHOT_TEST_LOCK: Mutex<()> = Mutex::new(());
+pub(crate) static GROUP_SNAPSHOT_TEST_LOCK: Mutex<()> = Mutex::new(());
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 static CANCEL_RELEASE_BEFORE_COMMIT_PID: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
@@ -1384,9 +1384,12 @@ impl Drop for ChildReapPermit {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-struct QuarantinedChild {
-    child: Child,
-    _permit: ChildReapPermit,
+enum QuarantinedChild {
+    Direct {
+        child: Child,
+        _permit: ChildReapPermit,
+    },
+    Terminal(Box<OwnedBackgroundProcess>),
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1419,6 +1422,7 @@ fn child_reaper() -> Result<&'static Arc<ChildReaper>, BackgroundProcessError> {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn run_child_reaper(reaper: &ChildReaper) {
+    let mut batch = Vec::with_capacity(MAX_CHILD_REAP_AUTHORITIES);
     loop {
         let mut children = reaper
             .children
@@ -1430,17 +1434,60 @@ fn run_child_reaper(reaper: &ChildReaper) {
                 .wait(children)
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
-        let mut index = 0;
-        while index < children.len() {
-            match try_wait_child(&mut children[index].child) {
-                Ok(Some(_)) | Err(ChildTryWaitError::LostAuthority) => {
-                    children.swap_remove(index);
+        // A terminal proof can itself reserve/quarantine an inventory child.
+        // Never hold this queue's mutex across that bounded native operation.
+        std::mem::swap(&mut batch, &mut *children);
+        drop(children);
+        // Reap ordinary children before potentially expensive terminal proofs.
+        batch.retain_mut(|entry| match entry {
+            QuarantinedChild::Direct { child, .. } => !matches!(
+                try_wait_child(child),
+                Ok(Some(_)) | Err(ChildTryWaitError::LostAuthority)
+            ),
+            QuarantinedChild::Terminal(_) => true,
+        });
+        for entry in &mut batch {
+            if let QuarantinedChild::Terminal(owned) = entry {
+                // The queue, not Drop, owns retries. An unwind must keep the
+                // same captured identities and permit in this entry.
+                let scope = owned
+                    .reap_permit
+                    .as_ref()
+                    .and_then(|permit| permit.shutdown.clone());
+                if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let mut operation = || owned.terminal_close(true, |_| {});
+                    match scope {
+                        Some(scope) => scope.run_on_cleanup_worker(operation),
+                        None => operation(),
+                    }
+                })) {
+                    // A hostile payload destructor must not discard the queue.
+                    std::mem::forget(payload);
                 }
-                Ok(None) | Err(ChildTryWaitError::Interrupted | ChildTryWaitError::Operation) => {
-                    index += 1;
-                }
+                // One terminal per pass keeps ordinary reaps progressing even
+                // when many terminal proofs are temporarily unavailable.
+                break;
             }
         }
+        batch.retain(|entry| match entry {
+            QuarantinedChild::Direct { .. } => true,
+            QuarantinedChild::Terminal(owned) => owned.terminal_exit.is_none(),
+        });
+        if let Some(index) = batch
+            .iter()
+            .position(|entry| matches!(entry, QuarantinedChild::Terminal(_)))
+        {
+            let entry = batch.remove(index);
+            batch.push(entry);
+        }
+        let mut children = reaper
+            .children
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // New arrivals join behind the rotated batch, so continuous arrivals
+        // cannot starve an older retained terminal obligation.
+        batch.append(&mut children);
+        std::mem::swap(&mut batch, &mut children);
         let _ = reaper
             .wake
             .wait_timeout(children, OBSERVATION_MAX_INTERVAL)
@@ -1450,16 +1497,31 @@ fn run_child_reaper(reaper: &ChildReaper) {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn reserve_child_reap_authority() -> Result<ChildReapPermit, BackgroundProcessError> {
+    reserve_child_reap_authority_for(false)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn reserve_child_reap_authority_for(
+    inventory: bool,
+) -> Result<ChildReapPermit, BackgroundProcessError> {
     let reaper = Arc::clone(child_reaper()?);
     ACTIVE_CHILD_REAP_AUTHORITIES
         .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
-            (active < MAX_CHILD_REAP_AUTHORITIES).then_some(active + 1)
+            next_child_reap_count(active, inventory)
         })
         .map_err(|_| spawn_error())?;
     Ok(ChildReapPermit {
         reaper,
         shutdown: crate::NativeOwnedWorkerScope::retain_current_cleanup(),
     })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn next_child_reap_count(active: usize, inventory: bool) -> Option<usize> {
+    // Keep one of the existing 64 slots available to the killable inventory
+    // child needed to discharge long-lived terminal cleanup obligations.
+    let limit = MAX_CHILD_REAP_AUTHORITIES - usize::from(cfg!(target_os = "macos") && !inventory);
+    (active < limit).then_some(active + 1)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1470,7 +1532,7 @@ fn quarantine_child(child: Child, permit: ChildReapPermit) {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     debug_assert!(children.len() < MAX_CHILD_REAP_AUTHORITIES);
-    children.push(QuarantinedChild {
+    children.push(QuarantinedChild::Direct {
         child,
         _permit: permit,
     });
@@ -2431,6 +2493,12 @@ impl Drop for PreparedBackgroundProcess {
 /// snapshot observes it is outside this ownership set.
 pub struct OwnedBackgroundProcess {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
+    terminal_cleanup: Option<TerminalCleanup>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    terminal_exit: Option<BackgroundProcessExit>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    terminal_quarantined: bool,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     input_controller: Option<BackgroundProcessInputController>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     child: Option<Child>,
@@ -2502,6 +2570,9 @@ impl TerminalChildGuard {
         #[cfg(target_os = "macos")]
         let controller = BackgroundProcessSignalController::hidden(group);
         Ok(OwnedBackgroundProcess {
+            terminal_cleanup: Some(TerminalCleanup::new()),
+            terminal_exit: None,
+            terminal_quarantined: false,
             child: self.child.take(),
             reap_permit: self.reap_permit.take(),
             group,
@@ -2530,11 +2601,317 @@ pub(crate) enum TerminalClosePhase {
     Close,
 }
 
+/// Cleanup evidence belongs to the process, not to one attempted close. The
+/// unreaped leader remains the original session/group anchor until the entire
+/// captured union and a final inventory prove quiescence.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct TerminalCleanup {
+    captured: CapturedMemberUnion,
+    #[cfg(target_os = "linux")]
+    target: Option<ProcessSignalTarget>,
+    #[cfg(target_os = "linux")]
+    pinned: PreparedSignalProcessTree,
+    phase: TerminalCleanupPhase,
+    last_only_leader: bool,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum TerminalCleanupPhase {
+    Uncaptured,
+    Captured,
+    Quiescent,
+    LostAuthority,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl TerminalCleanup {
+    fn new() -> Self {
+        let mut captured = CapturedMemberUnion::new();
+        captured.session_scope = true;
+        Self {
+            captured,
+            #[cfg(target_os = "linux")]
+            target: None,
+            #[cfg(target_os = "linux")]
+            pinned: PreparedSignalProcessTree {
+                descendants: Vec::new(),
+                pinned_processes: HashMap::new(),
+            },
+            phase: TerminalCleanupPhase::Uncaptured,
+            last_only_leader: false,
+        }
+    }
+
+    fn capture(
+        &mut self,
+        group: rustix::process::Pid,
+        authority: &Arc<GroupSnapshotAuthority>,
+    ) -> Result<(), BackgroundProcessError> {
+        #[cfg(target_os = "linux")]
+        {
+            // Exited pidfds no longer need signal authority. Their incarnation
+            // remains in the bounded union until the final disappearance proof.
+            self.pinned.pinned_processes.retain(|_, descriptor| {
+                let mut descriptors = [rustix::event::PollFd::new(
+                    descriptor,
+                    rustix::event::PollFlags::IN,
+                )];
+                !matches!(
+                    rustix::event::poll(
+                        &mut descriptors,
+                        Some(&rustix::event::Timespec::default())
+                    ),
+                    Ok(1)
+                ) || !descriptors[0]
+                    .revents()
+                    .intersects(rustix::event::PollFlags::IN | rustix::event::PollFlags::HUP)
+            });
+            self.pinned
+                .descendants
+                .retain(|member| self.pinned.pinned_processes.contains_key(&member.pid));
+            if self.target.is_none() {
+                self.target = Some(
+                    ProcessSignalTarget::capture(group, Arc::clone(authority))
+                        .map_err(|_| cleanup_error())?,
+                );
+            }
+            let next =
+                prepare_terminal_process_tree(self.target.as_ref().ok_or_else(invariant_error)?)
+                    .map_err(|_| cleanup_error())?;
+            self.last_only_leader = next.descendants.is_empty();
+            self.captured.retain(
+                next.descendants
+                    .iter()
+                    .map(|member| CapturedGroupMember {
+                        pid: member.pid,
+                        identity: Some(member.identity.primary),
+                    })
+                    .collect(),
+            )?;
+            // A PID cannot denote two live incarnations simultaneously. Keep
+            // prior escaped members; replace only the now-reused PID's pin.
+            for member in next.descendants {
+                if let Some(index) = self
+                    .pinned
+                    .descendants
+                    .iter()
+                    .position(|old| old.pid == member.pid)
+                {
+                    self.pinned.descendants[index] = member;
+                } else {
+                    self.pinned.descendants.push(member);
+                }
+            }
+            for (pid, descriptor) in next.pinned_processes {
+                if self
+                    .pinned
+                    .descendants
+                    .iter()
+                    .any(|member| member.pid == pid)
+                {
+                    self.pinned.pinned_processes.insert(pid, descriptor);
+                }
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = authority;
+            let members = macos_scope_members(group, true)?;
+            self.last_only_leader = only_group_leader_remains(&members, group);
+            self.captured.retain(members)?;
+        }
+        self.phase = TerminalCleanupPhase::Captured;
+        Ok(())
+    }
+
+    fn signal(
+        &self,
+        group: rustix::process::Pid,
+        signal: rustix::process::Signal,
+    ) -> Result<(), BackgroundProcessError> {
+        // The retained direct child, not a refreshed numeric process record,
+        // keeps the original group from reuse. Lost wait authority grants no
+        // further group effect.
+        observe_leader(group).map_err(|failure| match failure {
+            LeaderObservationFailure::LostAuthority => wait_error(),
+            LeaderObservationFailure::Operation(error) => error,
+        })?;
+        #[cfg(target_os = "linux")]
+        {
+            let descendants = signal_descendants_with(&self.pinned.descendants, |member| {
+                signal_pinned_linux_process(
+                    self.pinned
+                        .pinned_processes
+                        .get(&member.pid)
+                        .ok_or_else(signal_process_error)?
+                        .as_fd(),
+                    signal,
+                )
+            });
+            let group_result =
+                signal_group_or_confirm_exited_leader(group, signal, self.last_only_leader)
+                    .map_err(|failure| match failure {
+                        LeaderObservationFailure::LostAuthority => wait_error(),
+                        LeaderObservationFailure::Operation(error) => error,
+                    });
+            group_result?;
+            if descendants.incomplete {
+                Err(cleanup_error())
+            } else {
+                Ok(())
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            signal_macos_terminal_members(&self.captured, group, signal)?;
+            signal_group_or_confirm_exited_leader(group, signal, self.last_only_leader).map_err(
+                |failure| match failure {
+                    LeaderObservationFailure::LostAuthority => wait_error(),
+                    LeaderObservationFailure::Operation(error) => error,
+                },
+            )
+        }
+    }
+
+    fn attempt_signal(
+        &self,
+        group: rustix::process::Pid,
+        signal: rustix::process::Signal,
+    ) -> Result<(), BackgroundProcessError> {
+        match self.signal(group, signal) {
+            // Delivery failure is not exit evidence. Close may still reach its
+            // requested outcome via escalation or a concurrent natural exit;
+            // only the later positive exit and quiescence proofs permit reap.
+            Err(error) if error.kind() == BackgroundProcessErrorKind::Cleanup => Ok(()),
+            result => result,
+        }
+    }
+
+    fn require_quiescent(
+        &mut self,
+        group: rustix::process::Pid,
+        authority: &GroupSnapshotAuthority,
+    ) -> Result<(), BackgroundProcessError> {
+        #[cfg(target_os = "linux")]
+        {
+            let pinned = &mut self.pinned;
+            require_original_group_quiescent_with(
+                group,
+                authority,
+                &mut self.captured,
+                |captured| {
+                    let mut capture = LinuxTerminalPinCapture {
+                        group,
+                        pinned: &mut *pinned,
+                        captured,
+                        descriptors: LinuxSignalDescriptorBudget::production(),
+                        bytes: linux_proc_record_buffer(MAX_LINUX_PROC_STAT_BYTES),
+                    };
+                    linux_scope_members_with(
+                        authority,
+                        group,
+                        true,
+                        |pid, directory, parsed, budget| {
+                            capture.observe(pid, directory, parsed, budget)
+                        },
+                    )
+                },
+            )
+        }
+        #[cfg(target_os = "macos")]
+        require_original_group_quiescent(group, authority, &mut self.captured)
+    }
+}
+
+/// Carries each newly acquired signal pin directly into the retained cleanup
+/// owner. A later scan failure cannot roll back earlier positive acquisitions.
+#[cfg(target_os = "linux")]
+struct LinuxTerminalPinCapture<'a> {
+    group: rustix::process::Pid,
+    pinned: &'a mut PreparedSignalProcessTree,
+    captured: &'a mut CapturedMemberUnion,
+    descriptors: LinuxSignalDescriptorBudget,
+    bytes: Vec<u8>,
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxTerminalPinCapture<'_> {
+    fn observe(
+        &mut self,
+        pid: rustix::process::Pid,
+        directory: BorrowedFd<'_>,
+        parsed: &LinuxProcStat,
+        budget: &mut LinuxProcIoBudget,
+    ) -> Result<(), BackgroundProcessError> {
+        budget.preflight()?;
+        if pid == self.group {
+            return Ok(());
+        }
+        let member = CapturedGroupMember {
+            pid,
+            identity: Some(parsed.start_time),
+        };
+        if self
+            .pinned
+            .descendants
+            .iter()
+            .any(|old| old.pid == pid && old.identity.primary == parsed.start_time)
+            && self.pinned.pinned_processes.contains_key(&pid)
+        {
+            // The prior pidfd already pins this exact observed incarnation.
+            return self.captured.retain(vec![member]);
+        }
+        let descriptor = match budgeted_linux_signal_open(&self.descriptors, || {
+            rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty())
+        })
+        .map_err(|_| cleanup_error())?
+        {
+            Ok(descriptor) => descriptor,
+            Err(rustix::io::Errno::SRCH) => return Ok(()),
+            Err(_) => return Err(cleanup_error()),
+        };
+        let Some(current) = read_linux_signal_process_at(
+            directory,
+            pid,
+            &mut self.bytes,
+            budget,
+            &self.descriptors,
+        )
+        .map_err(|_| cleanup_error())?
+        else {
+            return Ok(());
+        };
+        if current.identity.primary != parsed.start_time {
+            return Ok(());
+        }
+        // Membership was positively observed before opening the pidfd. A SID
+        // change during the sandwich does not revoke that same incarnation's
+        // cleanup ownership; a replacement PID never passes the sandwich.
+        self.captured.retain(vec![member])?;
+        if let Some(index) = self
+            .pinned
+            .descendants
+            .iter()
+            .position(|old| old.pid == pid)
+        {
+            self.pinned.descendants[index] = current;
+        } else {
+            self.pinned.descendants.push(current);
+        }
+        self.pinned.pinned_processes.insert(pid, descriptor);
+        budget.require_live()
+    }
+}
+
 impl OwnedBackgroundProcess {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn terminal_poll(
         &mut self,
     ) -> Result<Option<BackgroundProcessExit>, BackgroundProcessError> {
+        if let Some(exit) = self.terminal_exit {
+            return Ok(Some(exit));
+        }
         if self.child.is_none() {
             return Err(invariant_error());
         }
@@ -2544,6 +2921,9 @@ impl OwnedBackgroundProcess {
                 close_input_controller(&mut self.input_controller);
                 close_signal_controller(&mut self.signal_controller);
                 drop(self.child.take());
+                if let Some(cleanup) = &mut self.terminal_cleanup {
+                    cleanup.phase = TerminalCleanupPhase::LostAuthority;
+                }
                 Err(wait_error())
             }
             Err(LeaderObservationFailure::Operation(error)) => Err(error),
@@ -2573,88 +2953,72 @@ impl OwnedBackgroundProcess {
                 .as_ref()
                 .ok_or_else(invariant_error)?,
         );
-        let mut captured = CapturedMemberUnion::new();
-        captured.session_scope = true;
-        #[cfg(target_os = "linux")]
-        let pinned = {
-            let target = ProcessSignalTarget::capture(self.group, Arc::clone(&authority))
-                .map_err(|_| cleanup_error())?;
-            let pinned = prepare_terminal_process_tree(&target).map_err(|_| cleanup_error())?;
-            captured.retain(
-                pinned
-                    .descendants
-                    .iter()
-                    .map(|member| CapturedGroupMember {
-                        pid: member.pid,
-                        identity: Some(member.identity.primary),
-                    })
-                    .collect(),
-            )?;
-            Some((target, pinned))
-        };
-        #[cfg(target_os = "macos")]
-        captured.retain(macos_scope_members(self.group, true)?)?;
-        if !force {
-            terminal_phase(TerminalClosePhase::Graceful);
-            #[cfg(target_os = "macos")]
-            signal_macos_terminal_members(&captured, self.group, rustix::process::Signal::TERM)?;
-            let _ = self.terminal_signal(BackgroundProcessSignal::Terminate);
-            let deadline = Instant::now() + Duration::from_millis(800);
-            while self.terminal_poll()?.is_none() && Instant::now() < deadline {
+        if let Some(exit) = self.terminal_exit {
+            return Ok(exit);
+        }
+        // Discharge known loss of wait authority before any new numeric scan.
+        self.terminal_poll()?;
+        let cleanup = self.terminal_cleanup.as_mut().ok_or_else(invariant_error)?;
+        if cleanup.phase == TerminalCleanupPhase::LostAuthority || self.child.is_none() {
+            return Err(wait_error());
+        }
+        if cleanup.phase != TerminalCleanupPhase::Quiescent {
+            if force && cleanup.phase == TerminalCleanupPhase::Captured {
+                // A retry must be able to act on already-retained pins even
+                // when a new full snapshot cannot acquire scratch resources.
+                cleanup.attempt_signal(self.group, rustix::process::Signal::KILL)?;
+            }
+            cleanup.capture(self.group, &authority)?;
+            if !force {
+                terminal_phase(TerminalClosePhase::Graceful);
+                cleanup.attempt_signal(self.group, rustix::process::Signal::TERM)?;
+                let deadline = Instant::now() + Duration::from_millis(800);
+                while self.terminal_poll()?.is_none() && Instant::now() < deadline {
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
+            terminal_phase(TerminalClosePhase::Force);
+            let cleanup = self.terminal_cleanup.as_mut().ok_or_else(invariant_error)?;
+            cleanup.capture(self.group, &authority)?;
+            cleanup.attempt_signal(self.group, rustix::process::Signal::KILL)?;
+            // The master closes before wait/reap, but no failed proof releases
+            // the original leader or captured descendants to PID reuse.
+            terminal_phase(TerminalClosePhase::Close);
+            let deadline = Instant::now() + CHILD_REAP_PROBE_TIMEOUT;
+            while self.terminal_poll()?.is_none() {
+                if Instant::now() >= deadline {
+                    return Err(cleanup_error());
+                }
                 thread::sleep(Duration::from_millis(5));
             }
+            // A running leader can create more descendants. Never cache its
+            // quiescence or skip signals on retry until positive exit is known.
+            let cleanup = self.terminal_cleanup.as_mut().ok_or_else(invariant_error)?;
+            cleanup.require_quiescent(self.group, &authority)?;
+            cleanup.phase = TerminalCleanupPhase::Quiescent;
         }
-        terminal_phase(TerminalClosePhase::Force);
-        #[cfg(target_os = "linux")]
-        if let Some((target, pinned)) = &pinned {
-            let final_tree = prepare_terminal_process_tree(target).map_err(|_| cleanup_error())?;
-            captured.retain(
-                final_tree
-                    .descendants
-                    .iter()
-                    .map(|member| CapturedGroupMember {
-                        pid: member.pid,
-                        identity: Some(member.identity.primary),
-                    })
-                    .collect(),
-            )?;
-            // These are the same retained descendant identities captured before
-            // TERM, even when their shell has exited and they were reparented.
-            deliver_signal_process_tree(target, rustix::process::Signal::KILL, pinned)
-                .map_err(|_| cleanup_error())?;
-            deliver_signal_process_tree(target, rustix::process::Signal::KILL, &final_tree)
-                .map_err(|_| cleanup_error())?;
-        }
-        #[cfg(target_os = "macos")]
-        {
-            captured.retain(macos_scope_members(self.group, true)?)?;
-            signal_macos_terminal_members(&captured, self.group, rustix::process::Signal::KILL)?;
-            let _ = self.terminal_signal(BackgroundProcessSignal::Kill);
-        }
-        // Closing the master must precede waiting for a shell that may itself
-        // be blocked in tty teardown. Foreground signals still require that
-        // same retained master and therefore run before this final phase.
-        terminal_phase(TerminalClosePhase::Close);
-        let deadline = Instant::now() + CHILD_REAP_PROBE_TIMEOUT;
-        let observed = loop {
-            let observed = self.terminal_poll()?;
-            if observed.is_some() || Instant::now() >= deadline {
-                break observed;
-            }
-            thread::sleep(Duration::from_millis(5));
-        };
         close_input_controller(&mut self.input_controller);
         close_signal_controller(&mut self.signal_controller);
-        cleanup_child_with_captured_expected(
-            &mut self.child,
-            &mut self.reap_permit,
-            self.group,
-            Duration::ZERO,
-            observed,
-            true,
-            (&authority, captured),
-        )?;
-        observed.ok_or_else(wait_error)
+        match poll_child_reap(&mut self.child, Instant::now() + CHILD_REAP_PROBE_TIMEOUT)? {
+            BoundedReap::Reaped(status) => {
+                let exit = exit_status(status);
+                // Commit exact positive reaping before releasing authority.
+                self.terminal_exit = Some(exit);
+                self.terminal_cleanup = None;
+                discharge_reaped_child(&mut self.child, &mut self.reap_permit);
+                Ok(exit)
+            }
+            BoundedReap::LostAuthority => {
+                drop(self.child.take());
+                self.terminal_cleanup
+                    .as_mut()
+                    .ok_or_else(invariant_error)?
+                    .phase = TerminalCleanupPhase::LostAuthority;
+                Err(wait_error())
+            }
+            BoundedReap::TimedOut => Err(cleanup_error()),
+            BoundedReap::ObservationFailed => Err(wait_error()),
+        }
     }
     /// Activates pipe authority at the authoritative retain-time boundary.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -2778,7 +3142,38 @@ impl fmt::Debug for OwnedBackgroundProcess {
 
 impl Drop for OwnedBackgroundProcess {
     fn drop(&mut self) {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if self.terminal_quarantined {
+            return;
+        }
         let _ = stop_owned(self);
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if self.terminal_cleanup.is_some() && self.reap_permit.is_some() {
+            // Transfer, never clone, the admitted process and completion charge.
+            // Queue entries suppress ordinary Drop retry/re-enqueue; the shared
+            // reaper retains failures and performs bounded round-robin retries.
+            let reaper = Arc::clone(&self.reap_permit.as_ref().expect("checked permit").reaper);
+            let owned = Box::new(Self {
+                terminal_cleanup: self.terminal_cleanup.take(),
+                terminal_exit: self.terminal_exit,
+                terminal_quarantined: true,
+                input_controller: self.input_controller.take(),
+                child: self.child.take(),
+                group: self.group,
+                snapshot_authority: self.snapshot_authority.take(),
+                reap_permit: self.reap_permit.take(),
+                output: self.output.take(),
+                signal_controller: self.signal_controller.take(),
+                pid: self.pid,
+            });
+            let mut children = reaper
+                .children
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            debug_assert!(children.len() < MAX_CHILD_REAP_AUTHORITIES);
+            children.push(QuarantinedChild::Terminal(owned));
+            reaper.wake.notify_one();
+        }
     }
 }
 
@@ -3676,6 +4071,9 @@ fn release_prepared(
     let reap_permit = prepared.reap_permit.take().ok_or_else(invariant_error)?;
     let output = prepared.output.take().ok_or_else(invariant_error)?;
     Ok(OwnedBackgroundProcess {
+        terminal_cleanup: None,
+        terminal_exit: None,
+        terminal_quarantined: false,
         input_controller: prepared.input_controller.take(),
         child: Some(child),
         group: prepared.group,
@@ -4190,6 +4588,9 @@ fn finish_background_output_bounded<R: std::io::Read>(
 fn stop_owned(owned: &mut OwnedBackgroundProcess) -> Result<(), BackgroundProcessError> {
     close_input_controller(&mut owned.input_controller);
     close_signal_controller(&mut owned.signal_controller);
+    if owned.terminal_cleanup.is_some() {
+        return owned.terminal_close(true, |_| {}).map(|_| ());
+    }
     if owned.child.is_none() {
         return Ok(());
     }
@@ -4567,7 +4968,8 @@ fn cleanup_child_with_captured_expected(
         // bounded group-disappearance proof runs.
         if (group_phase != CleanupSignalPhase::Quiescent
             || captured_members.iter().any(|member| member.pid != group))
-            && let Err(error) = require_original_group_quiescent(group, authority, captured_members)
+            && let Err(error) =
+                require_original_group_quiescent(group, authority, &mut captured_members)
         {
             failures.record(error);
         }
@@ -4752,10 +5154,10 @@ fn classify_group_signal(
 fn require_original_group_quiescent(
     group: rustix::process::Pid,
     authority: &GroupSnapshotAuthority,
-    mut captured: CapturedMemberUnion,
+    captured: &mut CapturedMemberUnion,
 ) -> Result<(), BackgroundProcessError> {
     let session_scope = captured.session_scope;
-    let scope_members = || {
+    require_original_group_quiescent_with(group, authority, captured, |_| {
         #[cfg(target_os = "linux")]
         if session_scope {
             return linux_scope_members(authority, group, true);
@@ -4765,7 +5167,18 @@ fn require_original_group_quiescent(
             return macos_scope_members(group, true);
         }
         group_members(authority, group)
-    };
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn require_original_group_quiescent_with(
+    group: rustix::process::Pid,
+    authority: &GroupSnapshotAuthority,
+    captured: &mut CapturedMemberUnion,
+    mut scope_members: impl FnMut(
+        &mut CapturedMemberUnion,
+    ) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError>,
+) -> Result<(), BackgroundProcessError> {
     // Capture the complete post-KILL membership once. The retained, unreaped
     // leader keeps the original numeric group identity from being reused while
     // descriptor-relative procfs (Linux) or `ps` (macOS) supplies the bounded
@@ -4774,7 +5187,7 @@ fn require_original_group_quiescent(
     let deadline = Instant::now() + GROUP_DISAPPEARANCE_GRACE;
     thread::sleep(GROUP_SNAPSHOT_INITIAL_INTERVAL);
     let mut observed_failure = false;
-    match scope_members() {
+    match scope_members(captured) {
         Ok(members) => {
             if captured.retain(members).is_err() {
                 observed_failure = true;
@@ -4784,7 +5197,7 @@ fn require_original_group_quiescent(
     }
     #[cfg(target_os = "macos")]
     let had_captured_descendants = captured.iter().any(|member| member.pid != group);
-    let mut captured = RetainedMemberWait::new(captured.into_members(), group);
+    let mut waiting = RetainedMemberWait::new(captured.members.clone(), group);
     let mut observation = ObservationBackoff::with_bounds(
         GROUP_SNAPSHOT_INITIAL_INTERVAL,
         GROUP_SNAPSHOT_MAX_INTERVAL,
@@ -4798,10 +5211,10 @@ fn require_original_group_quiescent(
             Ok(_) => {}
         }
         #[cfg(target_os = "macos")]
-        let captured_poll = captured.poll(|member| captured_group_member_exists(authority, member));
+        let captured_poll = waiting.poll(|member| captured_group_member_exists(authority, member));
         #[cfg(target_os = "linux")]
-        let captured_poll = captured
-            .poll(|member| captured_group_member_exists(authority, member, &mut stat_bytes));
+        let captured_poll =
+            waiting.poll(|member| captured_group_member_exists(authority, member, &mut stat_bytes));
         match captured_poll {
             Ok(true) => break true,
             Ok(false) => {}
@@ -4827,7 +5240,8 @@ fn require_original_group_quiescent(
             deadline.saturating_duration_since(Instant::now()),
         ));
     }
-    let members = scope_members()?;
+    let members = scope_members(captured)?;
+    captured.retain(members.clone())?;
     require_group_quiescence_evidence(observed_failure, captured_resolved, &members, group)
 }
 
@@ -4887,6 +5301,7 @@ impl CapturedMemberUnion {
         self.members.iter()
     }
 
+    #[cfg(test)]
     fn into_members(self) -> Vec<CapturedGroupMember> {
         self.members
     }
@@ -5373,7 +5788,8 @@ fn macos_scope_members(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    let mut reap_permit = Some(reserve_child_reap_authority().map_err(|_| cleanup_error())?);
+    let mut reap_permit =
+        Some(reserve_child_reap_authority_for(true).map_err(|_| cleanup_error())?);
     let mut child = Some(command.spawn().map_err(|_| cleanup_error())?);
     let mut output = child
         .as_mut()
@@ -5721,6 +6137,21 @@ fn linux_scope_members(
     group: rustix::process::Pid,
     session_scope: bool,
 ) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
+    linux_scope_members_with(authority, group, session_scope, |_, _, _, _| Ok(()))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_scope_members_with(
+    authority: &GroupSnapshotAuthority,
+    group: rustix::process::Pid,
+    session_scope: bool,
+    mut observe: impl FnMut(
+        rustix::process::Pid,
+        BorrowedFd<'_>,
+        &LinuxProcStat,
+        &mut LinuxProcIoBudget,
+    ) -> Result<(), BackgroundProcessError>,
+) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
     #[cfg(test)]
     record_group_snapshot_for_test(group);
 
@@ -5801,6 +6232,7 @@ fn linux_scope_members(
             if members.len() == MAX_CAPTURED_GROUP_MEMBERS {
                 return Err(cleanup_error());
             }
+            observe(pid, pid_fd.as_fd(), &parsed, &mut read_budget)?;
             members.push(CapturedGroupMember {
                 pid,
                 identity: Some(parsed.start_time),
@@ -6194,7 +6626,7 @@ fn group_snapshots_for_test() -> usize {
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
-fn inject_group_signal_eperm_for_test(group: NonZeroU32, count: usize) {
+pub(crate) fn inject_group_signal_eperm_for_test(group: NonZeroU32, count: usize) {
     inject_failures(
         &GROUP_SIGNAL_EPERM_GROUP,
         &GROUP_SIGNAL_EPERM_REMAINING,
@@ -6459,6 +6891,165 @@ mod linux_proc_tests {
             MAX_LINUX_PROC_SNAPSHOT_BYTES,
             MAX_LINUX_PROC_ENTRIES,
         )
+    }
+
+    fn terminal_pin_test_observation(
+        authority: &GroupSnapshotAuthority,
+        process: rustix::process::Pid,
+    ) -> (BudgetedLinuxSignalFd, LinuxProcStat) {
+        let mut scratch = SignalProcessScratch::new();
+        let directory = open_linux_signal_process_directory(authority, process, &scratch)
+            .unwrap()
+            .unwrap();
+        read_linux_signal_process_at(
+            directory.as_fd(),
+            process,
+            &mut scratch.stat_bytes,
+            &mut scratch.budget,
+            &scratch.descriptors,
+        )
+        .unwrap()
+        .unwrap();
+        let parsed = parse_linux_proc_stat(&scratch.stat_bytes, process).unwrap();
+        (directory, parsed)
+    }
+
+    #[test]
+    fn terminal_inventory_pin_keeps_same_incarnation_across_session_change_without_duplicates() {
+        let authority = GroupSnapshotAuthority::open().unwrap();
+        let process = rustix::process::getpid();
+        let (directory, mut observed) = terminal_pin_test_observation(&authority, process);
+        // Model the scope observation immediately before a SID/PGID change.
+        // Pin acquisition must compare incarnation, not reacquire membership.
+        observed.session = Some(pid(1));
+        observed.group = Some(pid(1));
+        let mut cleanup = TerminalCleanup::new();
+        let pool = LinuxSignalDescriptorPool::for_test(8);
+        let mut capture = LinuxTerminalPinCapture {
+            group: pid(1),
+            pinned: &mut cleanup.pinned,
+            captured: &mut cleanup.captured,
+            descriptors: LinuxSignalDescriptorBudget::new(pool.clone(), 8),
+            bytes: linux_proc_record_buffer(MAX_LINUX_PROC_STAT_BYTES),
+        };
+        capture
+            .observe(
+                process,
+                directory.as_fd(),
+                &observed,
+                &mut proc_read_budget(),
+            )
+            .unwrap();
+        let descriptor = capture.pinned.pinned_processes[&process]
+            .as_fd()
+            .as_raw_fd();
+        assert_eq!(pool.in_use.load(Ordering::Acquire), 1);
+        capture
+            .observe(
+                process,
+                directory.as_fd(),
+                &observed,
+                &mut proc_read_budget(),
+            )
+            .unwrap();
+        assert_eq!(
+            capture.pinned.pinned_processes[&process]
+                .as_fd()
+                .as_raw_fd(),
+            descriptor
+        );
+        assert_eq!(capture.pinned.descendants.len(), 1);
+        assert_eq!(capture.captured.iter().count(), 1);
+        assert_eq!(pool.in_use.load(Ordering::Acquire), 1);
+        // Never signal the current test process: this verifies acquisition only.
+    }
+
+    #[test]
+    fn terminal_inventory_pin_rejects_replacement_and_expired_observation() {
+        let authority = GroupSnapshotAuthority::open().unwrap();
+        let process = rustix::process::getpid();
+        let (directory, mut observed) = terminal_pin_test_observation(&authority, process);
+        observed.start_time = observed.start_time.wrapping_add(1);
+        let mut cleanup = TerminalCleanup::new();
+        let pool = LinuxSignalDescriptorPool::for_test(8);
+        let mut capture = LinuxTerminalPinCapture {
+            group: pid(1),
+            pinned: &mut cleanup.pinned,
+            captured: &mut cleanup.captured,
+            descriptors: LinuxSignalDescriptorBudget::new(pool.clone(), 8),
+            bytes: linux_proc_record_buffer(MAX_LINUX_PROC_STAT_BYTES),
+        };
+        capture
+            .observe(
+                process,
+                directory.as_fd(),
+                &observed,
+                &mut proc_read_budget(),
+            )
+            .unwrap();
+        assert!(capture.pinned.pinned_processes.is_empty());
+        assert!(capture.pinned.descendants.is_empty());
+        assert_eq!(capture.captured.iter().count(), 0);
+        assert_eq!(pool.in_use.load(Ordering::Acquire), 0);
+        let mut expired = proc_read_budget();
+        expired.deadline = Instant::now();
+        let attempts = expired.remaining_attempts;
+        assert!(
+            capture
+                .observe(process, directory.as_fd(), &observed, &mut expired)
+                .is_err()
+        );
+        assert_eq!(expired.remaining_attempts, attempts);
+        assert_eq!(pool.in_use.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn terminal_inventory_scan_failure_keeps_acquired_pidfd_for_cleanup() {
+        let authority = GroupSnapshotAuthority::open().unwrap();
+        let child = Command::new("/bin/sleep")
+            .arg("30")
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut fixture = SignalSnapshotFixture::new(child);
+        let process = fixture.root();
+        let mut cleanup = TerminalCleanup::new();
+        let mut capture = LinuxTerminalPinCapture {
+            // Treat the independently owned fixture as the member under test,
+            // not as the terminal's excluded leader.
+            group: rustix::process::getpid(),
+            pinned: &mut cleanup.pinned,
+            captured: &mut cleanup.captured,
+            descriptors: LinuxSignalDescriptorBudget::production(),
+            bytes: linux_proc_record_buffer(MAX_LINUX_PROC_STAT_BYTES),
+        };
+        let result = linux_scope_members_with(
+            &authority,
+            process,
+            false,
+            |pid, directory, parsed, budget| {
+                assert_eq!(pid, process);
+                capture.observe(pid, directory, parsed, budget)?;
+                // Deterministic failure after the positive row acquisition, before
+                // the caller receives a complete successful inventory.
+                Err(cleanup_error())
+            },
+        );
+        assert_eq!(
+            result.unwrap_err().kind(),
+            BackgroundProcessErrorKind::Cleanup
+        );
+        assert_eq!(capture.captured.iter().count(), 1);
+        let retained = capture
+            .pinned
+            .pinned_processes
+            .get(&process)
+            .expect("failed scan retained its acquired pin");
+        signal_pinned_linux_process(retained.as_fd(), rustix::process::Signal::KILL).unwrap();
+        fixture.cleanup().unwrap();
     }
 
     struct SignalSnapshotFixture {
@@ -8942,6 +9533,22 @@ mod process_regression_tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
+    fn inventory_reap_reservation_keeps_cleanup_headroom_within_existing_cap() {
+        let ordinary_limit = MAX_CHILD_REAP_AUTHORITIES - usize::from(cfg!(target_os = "macos"));
+        for active in 0..=MAX_CHILD_REAP_AUTHORITIES {
+            assert_eq!(
+                next_child_reap_count(active, false),
+                (active < ordinary_limit).then_some(active + 1)
+            );
+            assert_eq!(
+                next_child_reap_count(active, true),
+                (active < MAX_CHILD_REAP_AUTHORITIES).then_some(active + 1)
+            );
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
     fn scoped_worker_completion_follows_existing_child_quarantine() {
         let scope = crate::NativeOwnedWorkerScope::new();
         let input = futures_executor::block_on(scope.run(|| {
@@ -9010,7 +9617,10 @@ mod process_regression_tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .any(|entry| entry.child.id() == pid)
+                .any(|entry| match entry {
+                    QuarantinedChild::Direct { child, .. } => child.id() == pid,
+                    QuarantinedChild::Terminal(owned) => owned.pid.get() == pid,
+                })
             {
                 break;
             }
@@ -9135,37 +9745,50 @@ mod process_regression_tests {
             }
         }
 
-        for kind in [
-            std::io::ErrorKind::Interrupted,
-            std::io::ErrorKind::WouldBlock,
+        for (kind, oversleep) in [
+            (std::io::ErrorKind::Interrupted, false),
+            (std::io::ErrorKind::WouldBlock, false),
+            (std::io::ErrorKind::Interrupted, true),
+            (std::io::ErrorKind::WouldBlock, true),
         ] {
             let mut reader = RetryingReader { reads: 0, kind };
             let mut observations = 0_usize;
             let timeout = Duration::from_millis(20);
             let started = Instant::now();
+            let clock = std::cell::Cell::new(started);
+            let deadline = started + timeout;
+            let mut waits = Vec::new();
             assert_eq!(
                 collect_group_snapshot_output_with(
                     &mut reader,
-                    started + timeout,
+                    deadline,
                     || {
                         observations += 1;
                         Ok(SnapshotChildState::Exited(true))
                     },
-                    Instant::now,
+                    || clock.get(),
                     |_, _, interval| {
-                        thread::sleep(interval);
+                        waits.push(interval);
+                        clock.set(if oversleep {
+                            deadline + Duration::from_millis(1)
+                        } else {
+                            clock.get() + interval
+                        });
                         Ok(false)
                     },
                 ),
                 Err(())
             );
-            assert!(started.elapsed() >= timeout);
-            assert!(started.elapsed() < Duration::from_millis(250));
-            assert!(
-                (2..=8).contains(&reader.reads),
-                "{kind:?} snapshot made {} reads instead of backing off",
-                reader.reads
+            let expected_waits = if oversleep { vec![4] } else { vec![4, 8, 8] };
+            assert_eq!(
+                waits,
+                expected_waits
+                    .into_iter()
+                    .map(Duration::from_millis)
+                    .collect::<Vec<_>>()
             );
+            assert_eq!(reader.reads, waits.len());
+            assert!(clock.get() >= deadline);
             assert_eq!(observations, 1, "exited child state is not repolled");
         }
     }

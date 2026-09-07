@@ -1078,7 +1078,7 @@ mod tests {
         {
             static SUBREAPER: std::sync::Once = std::sync::Once::new();
             SUBREAPER.call_once(|| {
-                rustix::process::set_child_subreaper(rustix::process::Pid::from_raw(1)).unwrap()
+                rustix::process::set_child_subreaper(rustix::process::Pid::from_raw(1)).unwrap();
             });
         }
         if let Some(program) = std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY") {
