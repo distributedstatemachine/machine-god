@@ -521,3 +521,30 @@ native close reports Cleanup while Running, then the fixture unwraps Process.
 That run has 1,474 passes, one failure and six ignores in 26.37 seconds. The
 campaign is not green; bounded diagnosis and replacement gates remain required.
 Worker containers are removed and caches released.
+
+## Job-control ancestry correction after `a007600`
+
+Parser correction is integrated as `a0076004f22f947baba62b69099d771446a26bb8`
+with the durable lifecycle contract and historical evidence. The next isolated
+diagnosis reproduces the separate PTY close failure after 170 loaded fixture
+repetitions, only in the expired-startup variant. Initial capture succeeds;
+force-phase capture fails before KILL. Failure-only diagnostics prove bash moves
+a new sleep descendant from group 5798 to 5800 while PID 5800, parent 5798 and
+start identity 178978 remain identical. Whole-snapshot equality incorrectly
+treats this ordinary job-control transition as changed ancestry.
+
+Correction `b782556a902ea727bd52161d7d0a1f608e9a175c` changes only
+`background_process.rs`: retained-directory parent revalidation ignores only
+mutable PGID, retaining exact PID, process identity, parent PID and parent
+identity. Descendant delivery remains pidfd-bound; root-group admission and
+delivery checks are unchanged. No deadline, retries, output or no-execution
+assertions change. The retained-directory regression is red before and green
+after the correction, with negative controls for all four identity/ancestry
+fields; temporary diagnostics are removed.
+
+Exact Rust 1.94.1 Linux proc/ancestry tests pass 39/one helper ignore, strict
+Linux/macOS native lint and formatting pass, and five default-concurrent Linux
+suites pass 1,476/six helper ignores each (26.27–35.47 seconds). All 500 loaded
+PTY suffix repetitions pass in 35.53 seconds. macOS production-helper PTY tests
+pass 25/25 in 11.03 seconds. The complete replacement local gate, three fresh
+reviews and exact remote success remain required; no delivery is claimed.

@@ -5610,7 +5610,14 @@ fn require_linux_signal_parent_at(
     else {
         return Err(signal_process_error());
     };
-    if current != *expected {
+    // Job control may move a descendant to another process group without
+    // changing its incarnation or ancestry. Its PGID grants no authority:
+    // descendant delivery uses pidfds, while root group admission/delivery
+    // retain their separate original-group checks.
+    if !same_signal_process(expected, &current)
+        || current.parent != expected.parent
+        || current.parent_identity != expected.parent_identity
+    {
         return Err(signal_process_error());
     }
     Ok(())
@@ -7851,6 +7858,57 @@ mod linux_proc_tests {
             assert_eq!(scratch.stat_bytes.as_ptr(), allocation);
             assert_eq!(scratch.stat_bytes.capacity(), capacity);
             assert!(scratch.stat_bytes.len() <= MAX_LINUX_PROC_STAT_BYTES);
+        }
+    }
+
+    #[test]
+    fn signal_ancestry_revalidation_allows_only_process_group_changes() {
+        let authority = GroupSnapshotAuthority::open().unwrap();
+        let current_pid = rustix::process::getpid();
+        let mut scratch = SignalProcessScratch::new();
+        let directory = open_linux_signal_process_directory(&authority, current_pid, &scratch)
+            .unwrap()
+            .unwrap();
+        let current = read_signal_process(&authority, current_pid, &mut scratch)
+            .unwrap()
+            .unwrap();
+        // Replay the pre-setpgid observation against the retained directory.
+        // Bash can move the same child into a job-control group while its
+        // ancestry is being collected; PGID is not descendant authority.
+        let mut previous = current;
+        previous.group = Some(if current.group == Some(pid(1)) {
+            pid(2)
+        } else {
+            pid(1)
+        });
+        assert_ne!(previous.group, current.group);
+        require_linux_signal_parent_at(directory.as_fd(), &previous, &mut scratch)
+            .expect("an unchanged incarnation and parent survive a PGID transition");
+        for field in 0..4 {
+            let mut changed = previous;
+            match field {
+                0 => {
+                    changed.pid = if current_pid == pid(1) {
+                        pid(2)
+                    } else {
+                        pid(1)
+                    }
+                }
+                1 => {
+                    changed.parent = if current.parent.is_some() {
+                        None
+                    } else {
+                        Some(pid(1))
+                    }
+                }
+                2 => changed.parent_identity = Some(current.identity),
+                3 => changed.identity.secondary = 1,
+                _ => unreachable!(),
+            }
+            assert!(
+                require_linux_signal_parent_at(directory.as_fd(), &changed, &mut scratch).is_err(),
+                "ancestry field {field} must still be authenticated"
+            );
         }
     }
 

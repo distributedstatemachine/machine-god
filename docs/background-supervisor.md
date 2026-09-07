@@ -530,7 +530,11 @@ group syscall. Linux traversal uses the retained procfs descriptor and mount
 identity, caps inspected entries, metadata bytes, read attempts, and retained
 members, and opens each descendant's proc directory and pidfd while its
 verified parent is still pinned. Each proc directory is released after that
-node's children and identity are fully scanned; prepared delivery retains only
+node's children and identity are fully scanned. Ancestry revalidation permits a
+descendant's job-control process-group transition only while PID, process
+incarnation, parent PID and parent identity remain unchanged; that mutable PGID
+grants no descendant authority. Root admission and delivery retain their
+separate original-group checks. Prepared delivery retains only
 pidfds, so a same-clock-tick numeric PID replacement cannot inherit signal
 authority.
 Every signal traversal shares one 250 ms

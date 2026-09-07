@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `resolve the reproduced PTY close failure, then complete replacement pinned local checks, three fresh independent reviews and exact remote gates`
+- Next gate: `complete replacement pinned local checks, three fresh independent reviews and exact remote gates for the Linux teardown-record and job-control capture corrections`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -156,8 +156,13 @@ reproduce tmux cleanup failing on a valid kernel final-teardown proc-stat record
 The parser now accepts only the exact dead-task sentinel without granting scope
 authority; a captured-record regression fails before and passes after the fix.
 Seven full concurrent suites and 100 loaded tmux repetitions pass, but the next
-suite exposes a separate PTY startup-suffix close failure requiring diagnosis.
-The overall gate remains rejected. No delivery is claimed.
+suite exposes a separate PTY startup-suffix close failure. Diagnosis proves
+bash's legitimate descendant process-group transition was rejected despite
+unchanged PID, parent and start-time identity. Ancestry revalidation now ignores
+only that mutable group field, preserving incarnation/parent checks and separate
+root-group authority. The regression is red before and green after the fix;
+five full concurrent Linux suites and 500 loaded fixture repetitions pass.
+The complete replacement gate remains required. No delivery is claimed.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:
