@@ -139,6 +139,18 @@ session; it never replays start or write. An injected inventory failure verifies
 the initial error, retained history, successful later cleanup and one command
 execution. Full-feature review and remote delivery remain pending.
 
+Candidate `1f8afe77edb25677ef0065601babefee52c12fa9` passes pinned formatting,
+strict workspace Clippy, doctests, all 259 repository Python checks (14 expected
+skips), supported cross-compilation, dependency checks, release CLI smoke and
+634 release-helper terminal tests. Two full workspace attempts failed native
+helper preparation or a composed probe wait; the earlier tmux bootstrap case
+passed. Twenty bounded isolated PTY executions and one complete instrumented
+native-order run passed, without establishing the intermittent failure cause.
+The retained test-only preparation diagnostics identify stages and bound helper
+output capture; they change no startup deadlines, retries or product behavior.
+They are diagnostic evidence, not a claimed fix. The complete replacement local
+gate, independent reviews and exact remote delivery gates remain open.
+
 Earlier internal evidence remains historical, not delivery status:
 `a327580b754e25b8c1beaa5edf744b2b2252c620` passed the pinned workspace gate,
 421 terminal component checks and release-helper startup/PTY coverage;

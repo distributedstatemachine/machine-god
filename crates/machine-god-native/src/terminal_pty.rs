@@ -166,6 +166,48 @@ fn encode_pty_deadline(deadline: Instant) -> Result<String, TerminalPtyError> {
     Ok(encode_helper_deadline(deadline, MAX_STARTUP_TIMEOUT)?)
 }
 
+// Keep production results/effects unchanged; only test builds sample timings
+// and report the first failing preparation boundary.
+macro_rules! prepare_step {
+    ($deadline:expr, $stage:literal, $operation:expr) => {{
+        #[cfg(test)]
+        let started = Instant::now();
+        let result = $operation;
+        #[cfg(test)]
+        if let Err(error) = &result {
+            report_prepare_failure($stage, error, started, $deadline);
+        }
+        result
+    }};
+}
+
+#[cfg(test)]
+fn report_prepare_failure(
+    stage: &str,
+    error: &impl fmt::Debug,
+    started: Instant,
+    deadline: Instant,
+) {
+    eprintln!(
+        "PTY prepare failed: stage={stage} error={error:?} elapsed={:?} remaining_before={:?} expired={}",
+        started.elapsed(),
+        deadline.saturating_duration_since(started),
+        Instant::now() >= deadline,
+    );
+}
+
+#[cfg(test)]
+fn report_prepare_master(master: &impl AsFd) {
+    // The master is already nonblocking. Before COMMIT this can contain only
+    // helper/bootstrap diagnostics, not output from the authorized command.
+    // One read never waits, retries, or delays ownership cleanup.
+    let mut bytes = [0_u8; 1024];
+    match rustix::io::read(master, &mut bytes) {
+        Ok(count) => eprintln!("PTY helper preparation output: {:?}", &bytes[..count]),
+        Err(error) => eprintln!("PTY helper preparation output unavailable: {error:?}"),
+    }
+}
+
 pub(crate) struct PreparedTerminalPty {
     startup_source: Option<crate::terminal_helper::TerminalStartupInput>,
     deadline: Instant,
@@ -196,20 +238,36 @@ impl PreparedTerminalPty {
         deadline: Instant,
         cancellation: &CancellationToken,
     ) -> Result<Self, TerminalPtyError> {
-        check_deadline(deadline, cancellation)?;
-        let helper_deadline = encode_pty_deadline(deadline)?;
-        let permit = PtyPermit::acquire()?;
-        let frame = request.frame()?;
+        prepare_step!(
+            deadline,
+            "preflight",
+            check_deadline(deadline, cancellation)
+        )?;
+        let helper_deadline =
+            prepare_step!(deadline, "encode-deadline", encode_pty_deadline(deadline))?;
+        let permit = prepare_step!(deadline, "permit", PtyPermit::acquire())?;
+        let frame = prepare_step!(deadline, "encode-frame", request.frame())?;
         #[cfg(target_os = "macos")]
-        machine_god_terminal_sys::ProcessIdentity::verify_signal_support()
-            .map_err(process_error)?;
-        let (master, slave) = open_pty(request.dimensions)?;
+        prepare_step!(
+            deadline,
+            "signal-support",
+            machine_god_terminal_sys::ProcessIdentity::verify_signal_support()
+        )
+        .map_err(process_error)?;
+        let (master, slave) = prepare_step!(deadline, "open-pty", open_pty(request.dimensions))?;
         if request.startup_source.is_some() {
-            set_echo(&slave, false)?;
+            prepare_step!(deadline, "disable-echo", set_echo(&slave, false))?;
         }
-        let (mut gate, child_gate) = UnixStream::pair().map_err(process_error)?;
-        gate.set_nonblocking(true).map_err(process_error)?;
-        let mut guard = TerminalChildGuard::reserve(cancellation).map_err(process_error)?;
+        let (mut gate, child_gate) =
+            prepare_step!(deadline, "gate-pair", UnixStream::pair()).map_err(process_error)?;
+        prepare_step!(deadline, "gate-nonblocking", gate.set_nonblocking(true))
+            .map_err(process_error)?;
+        let mut guard = prepare_step!(
+            deadline,
+            "reaping-admission",
+            TerminalChildGuard::reserve(cancellation)
+        )
+        .map_err(process_error)?;
         let mut command = Command::new(helper.program());
         command
             .args(helper.arguments())
@@ -221,11 +279,26 @@ impl PreparedTerminalPty {
             .stdin(Stdio::from(OwnedFd::from(child_gate)))
             .stdout(Stdio::from(slave))
             .stderr(Stdio::from(request.cwd));
-        guard.spawn(&mut command).map_err(process_error)?;
-        write_gate(&mut gate, &frame, deadline, cancellation)?;
+        prepare_step!(deadline, "helper-spawn", guard.spawn(&mut command))
+            .map_err(process_error)?;
+        prepare_step!(
+            deadline,
+            "frame-write",
+            write_gate(&mut gate, &frame, deadline, cancellation)
+        )?;
         let mut ready = [0];
-        read_gate(&mut gate, &mut ready, deadline, cancellation)?;
+        prepare_step!(
+            deadline,
+            "ready-read",
+            read_gate(&mut gate, &mut ready, deadline, cancellation)
+        )
+        .inspect_err(|_| {
+            #[cfg(test)]
+            report_prepare_master(&master);
+        })?;
         if ready != [READY] {
+            #[cfg(test)]
+            eprintln!("PTY prepare failed: unexpected READY byte={ready:?}");
             return Err(error(TerminalPtyErrorKind::Process));
         }
         let startup_source = request
@@ -241,8 +314,13 @@ impl PreparedTerminalPty {
                 cancellation,
             )?;
         }
-        let process = guard.into_session().map_err(process_error)?;
-        check_deadline(deadline, cancellation)?;
+        let process = prepare_step!(deadline, "session-capture", guard.into_session())
+            .map_err(process_error)?;
+        prepare_step!(
+            deadline,
+            "final-deadline",
+            check_deadline(deadline, cancellation)
+        )?;
         Ok(Self {
             startup_source: startup_source.filter(|source| !source.complete()),
             deadline,
