@@ -104,6 +104,36 @@ impl PinnedProcess {
         Ok(self.exists()? && same)
     }
 
+    fn capture_session_member(
+        pid: rustix::process::Pid,
+        budget: &CaptureBudget,
+        anchor: &Self,
+        session: rustix::process::Pid,
+    ) -> Result<Option<Self>, BackgroundProcessError> {
+        let raw = NonZeroU32::new(pid.as_raw_nonzero().get().cast_unsigned())
+            .ok_or_else(cleanup_error)?;
+        let process = match Self::capture(raw, budget) {
+            Ok(process) => process,
+            Err(error) => {
+                // A disappearing snapshot row is ordinary; inaccessible or
+                // uncertain rows are not silently reported as absent.
+                if rustix::process::getsid(Some(pid)) == Err(rustix::io::Errno::SRCH) {
+                    return Ok(None);
+                }
+                return Err(error);
+            }
+        };
+        if !process.in_session(session)? {
+            return Ok(None);
+        }
+        // The exact anchor was live before this membership observation and
+        // must still be live before its new pin grants cleanup authority.
+        if !anchor.in_session(session)? {
+            return Err(cleanup_error());
+        }
+        Ok(Some(process))
+    }
+
     /// Only retained descendants use this operation; root/anchor exit receipts
     /// belong to their separate owners. An exited nonchild may still become
     /// our adopted child, including after leaving the original session.
@@ -289,8 +319,9 @@ impl AuthenticatedTerminalProcess {
     }
 
     /// Discover only under a continuously live exact same-session anchor. New
-    /// captures are staged until the anchor is revalidated, so a reused numeric
-    /// SID can never expand this ownership set.
+    /// captures revalidate the anchor before entering retained ownership. A
+    /// later failed observation cannot discard an already established pin, and
+    /// a reused numeric SID can never expand this ownership set.
     fn refresh(&mut self) -> Result<(), BackgroundProcessError> {
         if self.anchor_retiring {
             return Ok(());
@@ -340,22 +371,7 @@ impl AuthenticatedTerminalProcess {
         #[cfg(target_os = "macos")]
         let snapshot = macos_scope_members(self.root.pid, true)?;
         let empty_inventory = snapshot.iter().all(|member| member.pid == anchor.pid);
-        let mut known = HashSet::new();
-        let mut alive = Vec::with_capacity(self.members.len());
-        for member in &self.members {
-            if Instant::now() >= deadline {
-                return Err(cleanup_error());
-            }
-            #[cfg(target_os = "linux")]
-            let exists = true; // Live or unresolved exact reap obligation.
-            #[cfg(target_os = "macos")]
-            let exists = member.exists()?;
-            alive.push(exists);
-            if exists {
-                known.insert(member.pid);
-            }
-        }
-        let mut additions = Vec::new();
+        let mut known = retain_pending_members(&mut self.members, anchor, self.root.pid, deadline)?;
         for member in snapshot {
             if Instant::now() >= deadline {
                 return Err(cleanup_error());
@@ -363,38 +379,44 @@ impl AuthenticatedTerminalProcess {
             if member.pid == self.root.pid || member.pid == anchor.pid {
                 continue;
             }
-            // A retained dead identity must not hide a replacement with the
-            // same PID. Pruning below happens only after validating the anchor.
+            // Only live or unresolved retained identities enter this set; a
+            // positively settled dead identity cannot hide a reused PID.
             if known.contains(&member.pid) {
                 continue;
             }
-            if known.len() + additions.len() >= MAX_MEMBERS {
+            if known.len() >= MAX_MEMBERS {
                 return Err(cleanup_error());
             }
-            let pid = NonZeroU32::new(member.pid.as_raw_nonzero().get().cast_unsigned())
-                .ok_or_else(cleanup_error)?;
-            let process = match PinnedProcess::capture(pid, &self.budget) {
-                Ok(process) => process,
-                Err(error) => {
-                    // A disappearing snapshot row is ordinary; inaccessible
-                    // or uncertain rows are not silently reported as absent.
-                    if rustix::process::getsid(Some(member.pid)) == Err(rustix::io::Errno::SRCH) {
-                        continue;
-                    }
-                    return Err(error);
+            if let Some(process) = PinnedProcess::capture_session_member(
+                member.pid,
+                &self.budget,
+                anchor,
+                self.root.pid,
+            )? {
+                // Transfer established authority before any later fallible
+                // work, including deadlines, captures and anchor observations.
+                known.insert(process.pid);
+                self.members.push(process);
+                #[cfg(test)]
+                if tests::FAIL_AFTER_CAPTURE
+                    .compare_exchange(
+                        member.pid.as_raw_nonzero().get().cast_unsigned(),
+                        0,
+                        std::sync::atomic::Ordering::SeqCst,
+                        std::sync::atomic::Ordering::SeqCst,
+                    )
+                    .is_ok()
+                {
+                    return Err(cleanup_error());
                 }
-            };
-            if process.in_session(self.root.pid)? {
-                additions.push(process);
+                if Instant::now() >= deadline {
+                    return Err(cleanup_error());
+                }
             }
         }
         if !anchor.in_session(self.root.pid)? {
             return Err(cleanup_error());
         }
-        // Validate every fallible observation before discarding retained pins.
-        let mut alive = alive.into_iter();
-        self.members.retain(|_| alive.next().unwrap_or(true));
-        self.members.extend(additions);
         self.empty_inventory = empty_inventory;
         Ok(())
     }
@@ -491,6 +513,38 @@ impl AuthenticatedTerminalProcess {
         self.anchor_retiring = true;
         Ok(())
     }
+}
+
+fn retain_pending_members(
+    members: &mut Vec<PinnedProcess>,
+    anchor: &PinnedProcess,
+    session: rustix::process::Pid,
+    deadline: Instant,
+) -> Result<HashSet<rustix::process::Pid>, BackgroundProcessError> {
+    let mut known = HashSet::new();
+    let mut alive = Vec::with_capacity(members.len());
+    for member in &*members {
+        if Instant::now() >= deadline {
+            return Err(cleanup_error());
+        }
+        #[cfg(target_os = "linux")]
+        let exists = true; // Live or unresolved exact reap obligation.
+        #[cfg(target_os = "macos")]
+        let exists = member.exists()?;
+        alive.push(exists);
+        if exists {
+            known.insert(member.pid);
+        }
+    }
+    if !anchor.in_session(session)? {
+        return Err(cleanup_error());
+    }
+    // Settle the old prefix before extending ownership. Keeping positively
+    // dead macOS entries across repeated later failures would otherwise
+    // accumulate stale slots outside the existing member bound.
+    let mut alive = alive.into_iter();
+    members.retain(|_| alive.next().unwrap_or(true));
+    Ok(known)
 }
 
 /// A subreaper host can adopt an exited grandchild from the authenticated SID.
@@ -654,6 +708,104 @@ mod tests {
     use std::process::{Child, Command, Stdio};
 
     const NONCE: &[u8; 32] = b"0123456789abcdef0123456789abcdef";
+    pub(super) static FAIL_AFTER_CAPTURE: std::sync::atomic::AtomicU32 =
+        std::sync::atomic::AtomicU32::new(0);
+
+    #[test]
+    fn failed_refresh_retains_authenticated_live_member() {
+        let mut fixture = Fixture::start(false);
+        let mut authority = fixture.authenticate().unwrap();
+        authority.retain_self_as_anchor().unwrap();
+        let pid = fixture.release(b's');
+        FAIL_AFTER_CAPTURE.store(pid, std::sync::atomic::Ordering::SeqCst);
+        let failed = authority.jobs_absent().is_err();
+        let retained = authority
+            .members
+            .iter()
+            .any(|member| member.pid.as_raw_nonzero().get().cast_unsigned() == pid);
+        authority.signal(BackgroundProcessSignal::Kill).unwrap();
+        fixture.outcome();
+        eventually(|| authority.jobs_absent().unwrap());
+        authority.retire_anchor().unwrap();
+        fixture.child.wait().unwrap();
+        assert!(failed, "injected post-capture failure must fire");
+        assert!(retained, "failed observation must retain the acquired pin");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn failed_refresh_retains_observed_descendant_after_session_escape() {
+        const CHILD: &str = "MACHINE_GOD_TMUX_FAILED_REFRESH_REGRESSION";
+        if std::env::var_os(CHILD).is_none() {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "background_process::terminal_tmux_process::tests::failed_refresh_retains_observed_descendant_after_session_escape", "--nocapture", "--test-threads=1"])
+                .env(CHILD, "1").output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        rustix::process::set_child_subreaper(rustix::process::Pid::from_raw(1)).unwrap();
+        let mut fixture = Fixture::start(false);
+        let mut authority = fixture.authenticate().unwrap();
+        authority.retain_self_as_anchor().unwrap();
+        let listener = UnixListener::bind(fixture.directory.join("escape-gate")).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        fixture.release(b'q');
+        let mut connected = None;
+        eventually(|| match listener.accept() {
+            Ok((gate, _)) => {
+                connected = Some(gate);
+                true
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => false,
+            Err(error) => panic!("escape gate: {error}"),
+        });
+        let mut gate = connected.unwrap();
+        gate.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut bytes = [0; 4];
+        gate.read_exact(&mut bytes).unwrap();
+        let raw_pid = u32::from_be_bytes(bytes);
+        let pid = rustix::process::Pid::from_raw(i32::try_from(raw_pid).unwrap()).unwrap();
+        let observer =
+            rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty()).unwrap();
+        FAIL_AFTER_CAPTURE.store(raw_pid, std::sync::atomic::Ordering::SeqCst);
+        let failed = authority.jobs_absent().is_err();
+        let retained = authority.members.iter().any(|member| member.pid == pid);
+        gate.write_all(b"E").unwrap();
+        let mut escaped = [0];
+        gate.read_exact(&mut escaped).unwrap();
+        assert_eq!(escaped, [b'E']);
+        fixture.gate.write_all(b"R").unwrap();
+        fixture.outcome();
+        let premature_absence = authority.jobs_absent().unwrap();
+        let child_still_alive = rustix::process::getsid(Some(pid)) == Ok(pid);
+        // Clean the independent observer's exact fixture obligation before reporting.
+        rustix::process::pidfd_send_signal(&observer, rustix::process::Signal::KILL).unwrap();
+        eventually(|| adopted_exit_observed(&observer));
+        rustix::process::waitid(
+            rustix::process::WaitId::PidFd(observer.as_fd()),
+            rustix::process::WaitIdOptions::EXITED,
+        )
+        .unwrap();
+        authority.retire_anchor().unwrap();
+        fixture.child.wait().unwrap();
+        assert!(failed, "injected post-capture failure must fire");
+        assert!(
+            retained,
+            "later refresh failure must retain established child pins"
+        );
+        assert!(
+            child_still_alive,
+            "fixture must retain a live escaped child before cleanup"
+        );
+        assert!(
+            !premature_absence,
+            "successful cleanup must not forget an observed live escaped child"
+        );
+    }
 
     struct Fixture {
         child: Child,

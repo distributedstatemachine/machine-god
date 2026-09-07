@@ -9,7 +9,7 @@ use machine_god_core::{
     BoxFuture, CancellationToken, Capability, MAX_TERMINAL_ACTION_RESULTS,
     MAX_TERMINAL_ACTION_TEXT_BYTES, MAX_TERMINAL_HYPERLINK_BYTES, MAX_TERMINAL_HYPERLINKS,
     MAX_TERMINAL_SCREEN_CELLS, MAX_TERMINAL_SCREEN_TEXT_BYTES, PreparedToolCall,
-    TerminalActionRequest, TerminalActionResult, TerminalMonitorCondition,
+    TerminalActionRequest, TerminalActionResult, TerminalExecStatus, TerminalMonitorCondition,
     TerminalMonitorOperation, TerminalWriteLeaseIntent, Tool, ToolCall, ToolContext, ToolError,
     ToolErrorKind, ToolExecution, ToolInputLimits, ToolOutput, ToolOutputLimits, ToolSpec,
 };
@@ -478,9 +478,19 @@ impl Tool for TerminalActionTool {
             // contracts already enforce vector/text/resource limits.
             count_encoded(&result, MAX_TERMINAL_ACTION_RESULT_BYTES)
                 .map_err(|_| invalid_result())?;
-            Ok(ToolOutput::success(
-                serde_json::to_value(result).map_err(|_| invalid_result())?,
-            ))
+            // Capturing a command outcome succeeds as an operation even when
+            // the command failed. Preserve that distinction in the tool flag;
+            // observing an exited session through another action is not a
+            // failed command invocation.
+            let is_error = matches!(
+                &result,
+                TerminalActionResult::Exec { result }
+                    if !matches!(result.status, TerminalExecStatus::Exited { exit_code: 0 })
+            );
+            Ok(ToolOutput {
+                content: serde_json::to_value(result).map_err(|_| invalid_result())?,
+                is_error,
+            })
         })
     }
 
@@ -662,6 +672,7 @@ mod tests {
     #[derive(Default)]
     struct Publisher {
         calls: Mutex<Vec<ToolContext>>,
+        outputs: Mutex<Vec<ToolOutput>>,
         fail: AtomicBool,
     }
     impl TerminalActionResultPublisher for Publisher {
@@ -672,13 +683,15 @@ mod tests {
         ) -> BoxFuture<'_, Result<ToolExecution, ToolError>> {
             Box::pin(async move {
                 self.calls.lock().unwrap().push(context);
+                self.outputs.lock().unwrap().push(output.clone());
                 if self.fail.load(Ordering::Relaxed) {
                     return Err(invalid_result());
                 }
-                Ok(ToolExecution::with_persisted_output(
-                    output,
-                    ToolOutput::success(json!({"handle":"test-durable-reference"})),
-                ))
+                let persisted = ToolOutput {
+                    content: json!({"handle":"test-durable-reference"}),
+                    is_error: output.is_error,
+                };
+                Ok(ToolExecution::with_persisted_output(output, persisted))
             })
         }
     }
@@ -934,6 +947,7 @@ mod tests {
     #[derive(Default)]
     struct Executor {
         calls: Mutex<Vec<(ToolContext, TerminalActionRequest)>>,
+        result: Mutex<Option<TerminalActionResult>>,
         wrong_result: AtomicBool,
         wrong_session: AtomicBool,
         cancel_after_commit: AtomicBool,
@@ -960,7 +974,12 @@ mod tests {
                 .unwrap();
             self.calls.lock().unwrap().push((context, request.clone()));
             Box::pin(async move {
-                let mut result = response(&request);
+                let mut result = self
+                    .result
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .unwrap_or_else(|| response(&request));
                 if self.wrong_result.load(Ordering::SeqCst) {
                     result = TerminalActionResult::List { sessions: vec![] };
                 }
@@ -1031,7 +1050,13 @@ mod tests {
                 CancellationToken::new(),
             ))
             .unwrap();
-            assert!(!output.is_error);
+            assert_eq!(
+                output.is_error,
+                matches!(
+                    expected.invocation.draft,
+                    TerminalActionRequest::Exec { .. }
+                )
+            );
             assert_eq!(
                 output.content,
                 serde_json::to_value(response(&expected.invocation.draft)).unwrap()
@@ -1045,6 +1070,153 @@ mod tests {
             12
         );
     }
+    #[test]
+    fn captured_exec_outcomes_preserve_failure_flags_content_and_publication() {
+        for (status, is_error) in [
+            (TerminalExecStatus::Exited { exit_code: 0 }, false),
+            (TerminalExecStatus::Exited { exit_code: 7 }, true),
+            (TerminalExecStatus::Signaled { signal: 15 }, true),
+            (TerminalExecStatus::TimedOut {}, true),
+            (TerminalExecStatus::OutputLimit {}, true),
+        ] {
+            let result = TerminalActionResult::Exec {
+                result: TerminalExecResult {
+                    stdout: TerminalExecCapturedOutput {
+                        bytes: vec![0, 255, b'o'],
+                        total_bytes: if matches!(status, TerminalExecStatus::OutputLimit {}) {
+                            MAX_TERMINAL_ACTION_OUTPUT_BYTES as u64 + 1
+                        } else {
+                            3
+                        },
+                    },
+                    stderr: TerminalExecCapturedOutput {
+                        bytes: vec![b'e', 0, 254],
+                        total_bytes: 3,
+                    },
+                    duration: std::time::Duration::from_millis(123),
+                    status,
+                },
+            };
+            let expected = ToolOutput {
+                content: serde_json::to_value(&result).unwrap(),
+                is_error,
+            };
+            let (tool, executor) = tool();
+            *executor.result.lock().unwrap() = Some(result);
+            executor.cancel_after_commit.store(true, Ordering::Relaxed);
+            let prepared = tool
+                .prepare(call(json!({"action":"exec","command":"command"})))
+                .unwrap();
+            let cancellation = CancellationToken::new();
+            let output = futures_executor::block_on(tool.execute(
+                context(),
+                prepared.arguments().clone(),
+                cancellation.clone(),
+            ))
+            .unwrap();
+            assert!(cancellation.is_cancelled());
+            assert_eq!(output, expected);
+            let execution = futures_executor::block_on(tool.execute_for_turn(
+                context(),
+                prepared.arguments().clone(),
+                CancellationToken::new(),
+            ))
+            .unwrap();
+            assert_eq!(execution.tool_output(), &expected);
+            assert!(execution.persisted_output().is_none());
+
+            let publisher = Arc::new(Publisher::default());
+            let tool = tool.with_result_publisher(publisher.clone());
+            let execution = futures_executor::block_on(tool.execute_for_turn(
+                context(),
+                prepared.arguments().clone(),
+                CancellationToken::new(),
+            ))
+            .unwrap();
+            assert_eq!(execution.tool_output(), &expected);
+            assert_eq!(execution.persisted_output().unwrap().is_error, is_error);
+            assert_eq!(publisher.outputs.lock().unwrap().as_slice(), &[expected]);
+            assert_eq!(executor.calls.lock().unwrap().len(), 3);
+        }
+    }
+
+    #[test]
+    fn malformed_captured_exec_results_reject_before_publication() {
+        let (tool, executor) = tool();
+        let publisher = Arc::new(Publisher::default());
+        let tool = tool.with_result_publisher(publisher.clone());
+        let prepared = tool
+            .prepare(call(json!({"action":"exec","command":"command"})))
+            .unwrap();
+        for status in [
+            TerminalExecStatus::Exited { exit_code: 256 },
+            TerminalExecStatus::Signaled { signal: 0 },
+            TerminalExecStatus::OutputLimit {},
+        ] {
+            *executor.result.lock().unwrap() = Some(TerminalActionResult::Exec {
+                result: TerminalExecResult {
+                    status,
+                    stdout: TerminalExecCapturedOutput {
+                        bytes: vec![],
+                        total_bytes: 0,
+                    },
+                    stderr: TerminalExecCapturedOutput {
+                        bytes: vec![],
+                        total_bytes: 0,
+                    },
+                    duration: std::time::Duration::ZERO,
+                },
+            });
+            assert_eq!(
+                futures_executor::block_on(tool.execute_for_turn(
+                    context(),
+                    prepared.arguments().clone(),
+                    CancellationToken::new(),
+                ))
+                .unwrap_err()
+                .code,
+                "terminal_invalid_result"
+            );
+        }
+        assert!(publisher.calls.lock().unwrap().is_empty());
+        assert!(publisher.outputs.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn observing_an_unsuccessful_session_remains_a_successful_tool_action() {
+        let (tool, executor) = tool();
+        let mut session = facts();
+        session.lifecycle = TerminalLifecycle::Exited;
+        for (arguments, result) in [
+            (
+                json!({"action":"wait","session_id":"s","return_when":{"kind":"exit"},"wait_ceiling_ms":100}),
+                TerminalActionResult::Wait {
+                    session: session.clone(),
+                    outcome: TerminalReturnOutcome::Exited { exit_code: 7 },
+                },
+            ),
+            (
+                json!({"action":"read","session_id":"s","cursor_segment":1}),
+                TerminalActionResult::Read {
+                    session,
+                    output: vec![0, 255],
+                    raw_range: None,
+                },
+            ),
+        ] {
+            *executor.result.lock().unwrap() = Some(result.clone());
+            let prepared = tool.prepare(call(arguments)).unwrap();
+            let output = futures_executor::block_on(tool.execute(
+                context(),
+                prepared.arguments().clone(),
+                CancellationToken::new(),
+            ))
+            .unwrap();
+            assert!(!output.is_error);
+            assert_eq!(output.content, serde_json::to_value(result).unwrap());
+        }
+    }
+
     #[test]
     fn constructors_prepare_and_unpolled_execution_are_inert() {
         let (tool, executor) = tool();

@@ -36,6 +36,11 @@ native symlink/parent semantics without prematurely concatenating two bounded
 paths. Only that resolution releases an executable core request. Complete typed
 results are validated against the invocation and an encoder-derived ceiling
 before conversion to JSON; cancellation after commitment preserves receipts.
+Foreground `exec` marks a nonzero exit, signal, timeout or output-limit stop as
+a tool error while preserving its complete typed result and archived output.
+Successful observation actions remain successful even when the observed session
+has a nonzero exit; they do not reclassify that session's past command as a new
+tool failure.
 The optional `TerminalActionResultPublisher` takes ownership of complete JSON
 on `execute_for_turn` and returns its already-durable reference through the core
 complete-output extension. It is not invoked by an unpolled future or direct
@@ -515,7 +520,9 @@ On Linux, a subreaper host may inherit dead descendants from its owned tmux
 session. Cleanup reaps only exactly identified adopted zombies; it does not
 consume unrelated child exit statuses. Previously captured descendants remain
 cleanup obligations across session changes, including exited processes still
-waitable by another parent. Retained handles are settled before new discovery;
+waitable by another parent. Each authenticated descendant handle stays owned if a
+later inventory, capacity, deadline or anchor check fails; an incomplete scan
+cannot discard prior captures. Retained handles are settled before new discovery;
 a zombie reaped during discovery still makes that inventory nonempty. A fresh
 complete anchored snapshot and no remaining retained obligations are required
 before the supervisor can retire. Existing descriptor and scan bounds apply.

@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `repeat complete pinned local checks, three fresh independent review tracks and exact remote gates for the integrated Linux terminal correction`
+- Next gate: `fix the full-feature review findings, then repeat complete pinned local checks, three fresh independent review tracks and exact remote gates`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -278,6 +278,16 @@ Container execution uses a reaping init: omitting it caused a distinct
 orphan-descendant fixture failure, which passes with init enabled. These test
 arrangements do not weaken process identity checks or increase product bounds.
 The complete replacement local, independent review and remote gates stay open.
+
+Candidate `7496e22b54776ce8360eff09a5242219538d3f25` passes the complete
+pinned local gate, including 650 release-helper tests and non-root Linux native
+and CLI unit suites. Fresh review rejects it: tmux discards acquired descendant
+handles after a later inventory error, and foreground exec failures are marked
+as successful tool results. A deterministic Linux reproduction proves premature
+cleanup success with the escaped child still alive. Resource review reports no
+actionable findings. The integrated corrections retain each authenticated pin
+immediately and preserve failed-exec result flags. Focused Linux/macOS tmux and
+adapter checks pass; replacement gates remain required. No delivery is claimed.
 
 Earlier internal evidence remains historical, not delivery status:
 `a327580b754e25b8c1beaa5edf744b2b2252c620` passed the pinned workspace gate,
