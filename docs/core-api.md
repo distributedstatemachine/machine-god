@@ -539,6 +539,50 @@ higher revision. Such a result is a protocol error and leaves canonical state
 unchanged. A valid higher revision may otherwise replace messages and metadata;
 an equal revision continues to require equality of the entire record.
 
+### Exclusive metadata editing
+
+`Session::update_metadata(expected_revision, metadata)` returns an owned,
+inert-before-poll future resolving to `Result<SessionRevision, EngineError>`.
+It replaces the complete metadata map only; the saved candidate preserves every
+message, tool-call argument and result, session ID, incarnation, and next-turn
+sequence. Metadata schemas and their product meaning remain host-owned. Revision
+zero may initialize metadata on a new unsaved session without reserving a turn.
+
+First poll checks the host lease and acquires the same process-local exclusive
+lease as prompting. An active turn or another metadata edit produces
+`EngineError::SessionBusy`, including across cloned and independently loaded
+canonical handles. `Session::has_active_turn` and the corresponding reservation
+observation conservatively return true during an admitted metadata edit as well.
+No provider, permission handler, tool or event sink is called. A metadata future
+does not retain host authority and cannot start after the last real host handle
+has been dropped.
+
+The expected revision must equal the canonical revision. A stale revision or a
+concurrently changed canonical snapshot fails with a store conflict before save;
+the store receives the expected persisted revision for its own compare-and-save.
+The operation attempts at most one save and never retries a stale replacement
+map against newer state. The full candidate receives the ordinary aggregate
+JSON-node/depth, metadata-byte and transcript validation before recursive cloning
+or persistence. Unpolled, busy and rejected metadata values are drained
+iteratively. A successful strictly increasing save revision is reconciled before
+success is returned; concurrent newer canonical state is never rewound. An
+equal-revision divergent result or regressed turn allocator fails under the same
+reconciliation rules as prompting.
+
+Dropping an admitted edit drops its owned store future and releases the lease;
+it starts no detached persistence or cleanup task. Save construction, failure,
+non-increasing revision or future drop may leave durability uncertain. Core arms
+a reconciliation requirement before invoking save and clears it only after
+successful reconciliation. The next prompt or metadata edit must first load and
+validate durable state under its exclusive lease. A failed, stale, corrupt,
+identity-changing or missing persisted-record reload fails closed and keeps this
+requirement armed. Missing state is accepted only while the unchanged canonical
+record is still genuinely unsaved at revision zero. In particular, a later
+prompt cannot recreate a missing persisted record from pre-edit metadata after
+an uncertain save. If an interrupted save actually committed, a reload preserves
+its metadata and a patch carrying the old revision conflicts. Store diagnostics
+are redacted through the ordinary fixed `store_failed` boundary.
+
 Providers emit at most one terminal `ModelEvent::Stop`. A stream that ends
 without it becomes a structured `failed` event. Observer backpressure is honored:
 an event is yielded to the caller only after the configured event sink accepts

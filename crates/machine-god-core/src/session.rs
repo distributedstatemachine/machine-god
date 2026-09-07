@@ -172,6 +172,14 @@ impl DrainJsonValues for Prompt {
     }
 }
 
+impl DrainJsonValues for BTreeMap<String, Value> {
+    fn drain_json_values(&mut self) {
+        for value in std::mem::take(self).into_values() {
+            drop_json_value_iterative(value);
+        }
+    }
+}
+
 impl DrainJsonValues for SessionRecord {
     fn drain_json_values(&mut self) {
         for value in std::mem::take(&mut self.metadata).into_values() {
@@ -233,6 +241,9 @@ pub struct Session {
 pub(crate) struct SessionState {
     data: Mutex<SessionData>,
     active_turn: AtomicBool,
+    // Armed before metadata persistence can run. Failure or future drop leaves
+    // the next exclusive mutation responsible for an authoritative reload.
+    metadata_reconciliation_required: AtomicBool,
     _registry_membership: SessionRegistration,
 }
 
@@ -254,6 +265,7 @@ impl SessionState {
                 persisted,
             }),
             active_turn: AtomicBool::new(false),
+            metadata_reconciliation_required: AtomicBool::new(false),
             _registry_membership: SessionRegistration::new(registry, id, state.clone()),
         })
     }
@@ -508,6 +520,36 @@ impl Session {
         self.state.active_turn.load(Ordering::Acquire)
     }
 
+    /// Replaces only session metadata through one exclusive compare-and-save.
+    ///
+    /// The expected revision must match the current record; zero addresses a
+    /// genuinely unsaved session. No work or lease acquisition occurs before
+    /// first poll. A pending edit excludes prompts and other edits across all
+    /// canonical handles. Dropping it releases that lease and drops all store
+    /// work without detaching it; an uncertain save forces authoritative reload
+    /// before a later prompt or edit can write again.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::SessionBusy`] while another turn or edit holds
+    /// the lease, a store conflict for stale revisions, and protocol or store
+    /// errors for invalid metadata or failed persistence. Stale edits are never
+    /// automatically retried against a newer revision.
+    #[must_use]
+    pub fn update_metadata(
+        &self,
+        expected_revision: SessionRevision,
+        metadata: BTreeMap<String, Value>,
+    ) -> BoxFuture<'static, Result<SessionRevision, EngineError>> {
+        let session = SessionOperation {
+            engine: Arc::clone(&self.engine),
+            state: Arc::clone(&self.state),
+            host: HostLease::new(self.host_resource.as_ref()),
+        };
+        let metadata = JsonOwnerGuard::new(metadata);
+        Box::pin(async move { session.update_metadata(expected_revision, metadata).await })
+    }
+
     /// Atomically reserves a durable turn ID and user message, then creates a
     /// bounded multi-round provider/tool stream. A session permits at most one
     /// live turn.
@@ -543,6 +585,96 @@ struct SessionOperation {
 }
 
 impl SessionOperation {
+    async fn update_metadata(
+        &self,
+        expected_revision: SessionRevision,
+        metadata: JsonOwnerGuard<BTreeMap<String, Value>>,
+    ) -> Result<SessionRevision, EngineError> {
+        self.host.ensure_open()?;
+        self.state
+            .active_turn
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| EngineError::SessionBusy)?;
+        let _lease = TurnLease {
+            state: Arc::clone(&self.state),
+        };
+        self.reconcile_uncertain_metadata().await?;
+
+        let (snapshot, persisted) = self.state.snapshot();
+        if snapshot.revision != expected_revision {
+            return Err(metadata_revision_conflict());
+        }
+        validate_record_limits(&snapshot, self.engine.limits)?;
+        let mut candidate = (*snapshot).clone();
+        candidate.metadata = metadata.into_inner();
+        let candidate = JsonOwnerGuard::new(candidate);
+        validate_record_limits(candidate.get(), self.engine.limits)?;
+        // Loads can reconcile canonical state without holding the mutation
+        // lease. A changed snapshot rejects this exact patch rather than
+        // silently copying it onto that newer record.
+        if !self.state.snapshot_is_current(&snapshot, persisted) {
+            return Err(metadata_revision_conflict());
+        }
+        let mut candidate = candidate.into_inner();
+        self.state
+            .metadata_reconciliation_required
+            .store(true, Ordering::Release);
+        let revision = self
+            .engine
+            .session_store
+            .save(candidate.clone(), persisted.then_some(expected_revision))
+            .await
+            .map_err(redact_store_error)?;
+        if revision <= expected_revision {
+            return Err(EngineError::Protocol(
+                "session store returned a non-increasing revision".to_owned(),
+            ));
+        }
+        candidate.revision = revision;
+        self.state.reconcile_saved(Arc::new(candidate))?;
+        self.state
+            .metadata_reconciliation_required
+            .store(false, Ordering::Release);
+        Ok(revision)
+    }
+
+    /// Called only while the exclusive mutation lease is held. A dropped or
+    /// failed save may already have committed, so no write may assume that the
+    /// old in-memory metadata is authoritative. A missing persisted record is
+    /// not permission to recreate it after an uncertain edit.
+    async fn reconcile_uncertain_metadata(&self) -> Result<(), EngineError> {
+        if !self
+            .state
+            .metadata_reconciliation_required
+            .load(Ordering::Acquire)
+        {
+            return Ok(());
+        }
+        let (snapshot, persisted) = self.state.snapshot();
+        let loaded = self
+            .engine
+            .session_store
+            .load(snapshot.id.clone())
+            .await
+            .map_err(redact_store_error)?;
+        if let Some(record) = loaded {
+            let record = JsonOwnerGuard::new(record);
+            validate_record_limits(record.get(), self.engine.limits)?;
+            self.state.reconcile_loaded(record.into_inner())?;
+        } else if persisted
+            || snapshot.revision != SessionRevision(0)
+            || !self.state.snapshot_is_current(&snapshot, persisted)
+        {
+            return Err(EngineError::Protocol(
+                "session disappeared after an uncertain metadata save".to_owned(),
+            ));
+        }
+        self.state
+            .metadata_reconciliation_required
+            .store(false, Ordering::Release);
+        Ok(())
+    }
+
     async fn start_prompt(&self, prompt: JsonOwnerGuard<Prompt>) -> Result<Turn, EngineError> {
         self.host.ensure_open()?;
         if prompt.get().text.len() > self.engine.limits.max_prompt_bytes.get() {
@@ -559,6 +691,8 @@ impl SessionOperation {
         let lease = TurnLease {
             state: Arc::clone(&self.state),
         };
+
+        self.reconcile_uncertain_metadata().await?;
 
         let prompt = prompt.into_inner();
         let (turn_id, record) = self.reserve_turn_and_prompt(prompt.text).await?;
@@ -685,6 +819,16 @@ impl SessionOperation {
         )
         .into())
     }
+}
+
+fn metadata_revision_conflict() -> EngineError {
+    SessionStoreError::new(
+        SessionStoreErrorKind::Conflict,
+        "metadata_revision_conflict",
+        "session metadata revision changed",
+        true,
+    )
+    .into()
 }
 type DeliveryFuture = BoxFuture<'static, Result<(), crate::EventSinkError>>;
 type WorkflowFuture = BoxFuture<'static, WorkflowExit>;
