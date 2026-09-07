@@ -102,6 +102,8 @@ mod session_inspection;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod session_lifecycle;
 mod session_listing;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod session_metadata;
 mod session_store;
 mod skill;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -534,6 +536,12 @@ pub use session_lifecycle::{
 pub use session_listing::{
     NativeSessionList, NativeSessionListingError, NativeSessionListingErrorKind,
     list_native_sessions, list_process_sessions,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use session_metadata::{
+    MAX_NATIVE_SESSION_TITLE_BYTES, MAX_NATIVE_SESSION_WORKSPACE_BYTES,
+    NATIVE_SESSION_METADATA_KEY, NativeSessionMetadata, NativeSessionMetadataError,
+    NativeSessionOrigin,
 };
 pub use session_store::{
     FILE_SESSION_SCHEMA_VERSION, FileSessionStore, FileSessionStoreOpenError,

@@ -117,6 +117,41 @@ Those effects remain behind a later explicit call to the core session.
 
 ## Durable create
 
+### Native presentation metadata
+
+`NativeSessionMetadata` is the Linux/macOS host's bounded codec for the reserved
+`machine_god.native_session` metadata entry. Its schema version `1` records
+optional title, workspace association, creation/update milliseconds, language
+tag and explicit `cli`/`recovered`/`imported` provenance. It does not change
+the enclosing file-store schema or ordinary lifecycle creation below. These
+helpers stage values only: serialization is not a successful persistence result.
+
+The codec reads no clock, environment, current directory or filesystem. A host
+creating metadata supplies a verified canonical workspace and observed time.
+Workspace paths are normalized absolute Unix bytes, capped at 4,096 bytes and
+serialized as lowercase hex without lossy UTF-8 conversion. This association
+does not grant filesystem authority; the native host must independently retain
+and verify its actual workspace capability. Lexical validation cannot prove a
+path is canonical or still names an authorized root.
+
+Absent historical metadata stays unknown, including after a title update. No
+mtime, current directory, identifier, or unrelated metadata value supplies
+missing history. Creation and update timestamps are signed 64-bit milliseconds;
+an update cannot regress either known timestamp. Titles trim only edge
+SP/TAB/CR/LF and must then contain 1–240 UTF-8 bytes without C0 or DEL bytes.
+Language tags contain 1–64 ASCII alphanumeric/hyphen bytes with nonempty
+components. Validation failure leaves the staged metadata unchanged.
+
+The versioned object accepts only its seven declared fields; absent or null
+optional fields mean unknown. Unknown versions, extra fields, wrong types,
+untrimmed stored titles and invalid bounds fail rather than silently rewriting
+future state. Decoding borrows the selected entry, inspects only its shallow
+known scalar fields and allocates only bounded accepted strings/path bytes.
+Unrelated metadata is neither traversed nor modified. Debug/error output is
+fixed or structural and does not expose title, path or record contents.
+
+### Empty-record publication
+
 `create` starts from an exact empty `SessionRecord`:
 
 - the caller's `SessionId` is unchanged;

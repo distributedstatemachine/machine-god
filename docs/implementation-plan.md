@@ -25,9 +25,9 @@ input; it is not a machine-god product language or runtime dependency.
 - Delivered main: `229cf94a798fa561f3ff7401c07a549b79e50616`
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
-- Active branch: `agent/m59-terminal-delivery`
-- Active phase: `documentation seal for delivered complete terminal; combined M03 CLI/slash feature next`
-- Next gate: `lightweight feature and main documentation-seal gates, then complete the combined M03 CLI/slash boundary`
+- Active branch: `agent/m60-cli-shell`
+- Active phase: `implementing the full combined M03 top-level CLI and slash-command feature`
+- Next gate: `freeze pinned command scenarios and native ownership interfaces, then parallel implementation and full feature gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -75,13 +75,49 @@ Durable behavior belongs in [terminal](terminal.md),
 The pinned schema, session and monitor references are maintained there.
 ACP, teams and extension slash commands retain their later milestone ownership.
 
-### Next product work
+### Active product work
 
-After terminal delivery and its documentation seal, complete the combined M03
-CLI/slash-command boundary below as one feature. Keep core effect-free, native
+Terminal delivery and its exact lightweight documentation-seal gates are complete.
+Complete the combined M03 CLI/slash-command boundary below as one feature.
+The initial parallel inspection maps all six top-level command families, every
+command in the five pinned slash categories, and reusable Rust ownership seams.
+Existing partial forms do not define the target; resolve any cross-milestone
+dependency explicitly before freezing shared contracts. Keep core effect-free, native
 effects explicitly owned, and CLI presentation thin. Freeze shared contracts
 before parallel implementation in isolated worktrees with non-overlapping
 ownership. Do not resume documentation-tool development during product work.
+
+The combined feature pulls the following M04 prerequisites forward. They are
+part of the same feature and gates, not separately counted deliveries:
+
+- Native-owned `ask`/`auto`/`yolo`/`reset`, persistent allow/deny rules,
+  confirmation and identity-bound grants, revocation, safe restoration, queued
+  policy snapshots and actual enforcement. Late prompts cannot resurrect grants.
+- Real macOS `os` sandbox enforcement for foreground, background and PTY
+  execution with the active workspace roots; configured preferences remain
+  distinct from effective yolo behavior. Unsupported platforms remain explicit.
+- Authoritative session metadata, context selection without deleting history,
+  and produced/consumed continuation checkpoints that preserve confirmed tool
+  evidence and never automatically repeat uncertain effects. `/undo` tracks
+  committed file mutations, not conversation deletion; clear/new/reset create
+  fresh persisted session IDs with their distinct background-lifecycle behavior.
+- Native machine-god schema migration, including supported historical versions,
+  already-current and oversized-input outcomes, original-authoritative failure
+  semantics and recoverable interruption. Foreign `.fx` import remains later.
+- Corrupt-session recovery to a separate resumable copy without modifying the
+  source, and bounded doctor cleanup distinguishing active writers, untrusted
+  artifacts, report-only candidates, completed cleanup and indeterminate results.
+- Real interactive latest/exact/picker resume and command aliases, applicable
+  recording, durable title/workspace/origin/time/context preferences, and actual
+  additional-root tool authority. Absent historical metadata stays unknown;
+  neither current CWD, file mtime nor IDs fabricate historical associations.
+
+The safety of these operations includes their admission, revocation, persistence,
+cleanup and reset races now. Broader concurrency hardening, legacy import,
+encryption, record authentication, key management, secure erasure and non-Unix
+hardening remain M04 work. Required scenarios cannot close with unsupported
+stubs. Three independent scope inspections accepted this sequencing; they are
+not substitutes for the final exact-candidate product reviews.
 
 ### CI and documentation maintenance
 
@@ -148,7 +184,7 @@ handoff.
 | M01 | Repository, documentation, CI, workspace, pinned upstream benchmark harness, and non-product bootstrap evidence | COMPLETE |
 | M02 | Provider-neutral streaming engine and deterministic testkit | COMPLETE |
 | M03 | Providers, native tools, permissions, sessions, configuration, and CLI | IN PROGRESS |
-| M04 | Security, lifecycle, concurrency, and persistence hardening | NOT STARTED |
+| M04 | Security, lifecycle, concurrency, and persistence hardening | IN PROGRESS |
 | M05 | Skills, MCP, ACP, and subagent extensibility | IN PROGRESS |
 | M06 | SDK surfaces and advanced compatibility | NOT STARTED |
 | M07 | Optimization, packaging evidence, and final hardening | NOT STARTED |
@@ -264,7 +300,7 @@ requires an explicit reviewed plan change.
 
 | Owner | Explicitly assigned work |
 | --- | --- |
-| M04 | Permission modes and identity-safe grants beyond `ask`; session migration and explicit legacy import; encryption, record authentication, key management, secure erasure, persistence/lifecycle concurrency hardening, and hardened non-Unix workspace/store construction |
+| M04 | Required modes/grants, native migration/recovery and guarded cleanup are pulled into the active combined CLI feature above; remaining work includes explicit legacy import, encryption, record authentication, key management, secure erasure, broader persistence/lifecycle concurrency hardening, and hardened non-Unix workspace/store construction |
 | M05 | Skills, MCP, ACP, subagents, top-level `acp`/`background`/`teams`, extension/agent slash commands, and built-in memory/search/skill/subagent/MCP tools |
 | M06 | SDKs and advanced CLI/compatibility surfaces including `pr`, `issue`, account, setup, credit, usage, upgrade, media, product, and appearance categories |
 | M07 | Claim-eligible performance comparison, thresholds, optimization, packaging evidence, and final hardening |
