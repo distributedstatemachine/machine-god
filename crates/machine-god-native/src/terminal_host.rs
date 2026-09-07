@@ -816,6 +816,26 @@ mod tests {
         )
         .unwrap()
     }
+
+    fn write_cli_fixture_helper(root: &Path) -> PathBuf {
+        let script = root.join("helper");
+        let executable = std::env::current_exe().unwrap();
+        let quoted = executable.to_str().unwrap().replace('\'', "'\\''");
+        #[cfg(target_os = "macos")]
+        let inventory = format!(
+            "if [ \"$1\" = '{}' ]; then\nexec '{quoted}' --exact process_inventory_helper::tests::helper_entry --nocapture 2>&1 1>/dev/null\nfi\n",
+            crate::PROCESS_INVENTORY_HELPER_ARGUMENT,
+        );
+        #[cfg(not(target_os = "macos"))]
+        let inventory = "";
+        // Inventory is a raw pipe protocol: only the registered entrypoint's
+        // stderr reaches the collector, never libtest's stdout framing. Exec
+        // preserves direct-child ownership and the inherited original deadline.
+        std::fs::write(&script, format!("#!/bin/sh\n[ \"$#\" -eq 1 ] || exit 125\n{inventory}export MACHINE_GOD_TEST_HOST_HELPER=\"$1\"\nexec '{quoted}' --exact terminal_host::tests::helper_child --ignored --nocapture --quiet\n")).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        script
+    }
+
     impl Fixture {
         fn new() -> Self {
             let mut nonce = [0_u8; 8];
@@ -829,14 +849,8 @@ mod tests {
                 std::fs::create_dir(&path).unwrap();
                 std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
             }
-            let cli = std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY").map_or_else(|| {
-                let script = root.join("helper");
-                let executable = std::env::current_exe().unwrap();
-                let quoted = executable.to_str().unwrap().replace('\'', "'\\''");
-                std::fs::write(&script, format!("#!/bin/sh\nexport MACHINE_GOD_TEST_HOST_HELPER=\"$1\"\nexec '{quoted}' --exact terminal_host::tests::helper_child --ignored --nocapture --quiet\n")).unwrap();
-                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
-                script
-            }, PathBuf::from);
+            let cli = std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY")
+                .map_or_else(|| write_cli_fixture_helper(&root), PathBuf::from);
             let workspace = root.join("workspace");
             // Exercise the composed host beyond both sockaddr_un and one
             // canonical terminal input line, including shell-sensitive paths.
@@ -1005,6 +1019,55 @@ mod tests {
             _ => false,
         };
         std::process::exit(if status { 0 } else { 125 });
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn full_host_fixture_inventory_dispatch_is_exact_raw_and_deadline_bound() {
+        use crate::background_process::inventory_helper_reports_current_process_for_test;
+        use crate::process_inventory_helper::ProcessInventoryHelper;
+
+        let mut nonce = [0_u8; 8];
+        getrandom::fill(&mut nonce).unwrap();
+        let root = std::env::temp_dir()
+            .join(format!("mg-host-inventory-{:016x}", u64::from_le_bytes(nonce)));
+        std::fs::create_dir(&root).unwrap();
+        let helper = write_cli_fixture_helper(&root);
+        let flag = crate::PROCESS_INVENTORY_HELPER_ARGUMENT;
+        let collect = |mut arguments: Vec<std::ffi::OsString>| {
+            // A new script's first direct execution can spend the inventory
+            // budget before shell entry. Explicit interpretation exercises the
+            // same script without warming it or changing the collector bound.
+            arguments.insert(0, helper.as_os_str().to_owned());
+            inventory_helper_reports_current_process_for_test(
+                &ProcessInventoryHelper::new("/bin/sh".into(), arguments).unwrap(),
+            )
+        };
+        // This is the actual fixed CLI wrapper, before constructing a full
+        // host. The production collector requires canonical output, EOF and
+        // successful reap under its original 250 ms bound.
+        let valid = collect(vec![flag.into()]);
+        let missing = collect(vec![]);
+        let extra = collect(vec![flag.into(), "extra".into()]);
+        // Override only the transferred stamp at exec, proving the wrapper
+        // does not replace an already-expired deadline with a fresh budget.
+        let expired = inventory_helper_reports_current_process_for_test(
+            &ProcessInventoryHelper::new(
+                "/usr/bin/env".into(),
+                vec![
+                    "MACHINE_GOD_PROCESS_INVENTORY_DEADLINE=0:0".into(),
+                    "/bin/sh".into(),
+                    helper.into_os_string(),
+                    flag.into(),
+                ],
+            )
+            .unwrap(),
+        );
+        std::fs::remove_dir_all(root).unwrap();
+        assert_eq!(valid, Ok(true), "exact helper must emit only canonical PID lines");
+        assert!(missing.is_err(), "missing private flag must fail");
+        assert!(extra.is_err(), "extra private arguments must fail");
+        assert!(expired.is_err(), "expired transferred deadline must fail");
     }
 
     #[test]

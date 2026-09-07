@@ -5886,6 +5886,15 @@ fn macos_scope_members(
     macos_scope_members_with(inventory, group, session_scope, |_, _| Ok(()))
 }
 
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) fn inventory_helper_reports_current_process_for_test(
+    helper: &crate::process_inventory_helper::ProcessInventoryHelper,
+) -> Result<bool, BackgroundProcessError> {
+    let pid = rustix::process::getpid();
+    macos_scope_members(Some(helper), pid, true)
+        .map(|members| members.iter().any(|member| member.pid == pid))
+}
+
 /// Each successful incarnation/session sandwich can transfer directly into a
 /// cleanup owner. A later scan error still rejects the inventory as a whole.
 #[cfg(target_os = "macos")]

@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `complete replacement pinned local checks, three fresh independent reviews and exact remote gates for the macOS session-inventory helper and Ubuntu zsh correction`
+- Next gate: `complete replacement pinned local checks, three fresh independent reviews and exact remote gates after the composed-host test CLI inventory-dispatch correction`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -178,6 +178,12 @@ task/thread work. A fixed read-only query in a separately owned helper is
 integrated under ADR 0004, retaining collection bounds and identity checks.
 Focused serial macOS PTY/tmux/captured and collector tests pass 81 cases with
 three helper ignores, with strict native/CLI lint green on both platforms.
+The integrated candidate passes prerequisites, Linux runtime and eight fresh
+release launches, but full macOS tests expose a fake-CLI dispatcher missing the
+new inventory mode. Its test-only correction is integrated with a red/green
+dispatch regression and ten passing serial host/PTY confirmations. Replacement
+gates remain required; a later PTY close timeout is not exclusively attributed
+to the proved dispatcher omission.
 A separate local ARM startup-frame timeout remains unresolved and is not
 claimed fixed by the inventory change. Main remains unchanged; replacement
 gates are required. No delivery is claimed.

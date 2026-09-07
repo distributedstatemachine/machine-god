@@ -648,3 +648,55 @@ component harnesses each pass five selected tests (0.94 and 0.93 seconds).
 Formatting and diff checks pass; all worker processes stop and its clean,
 integrated worktree is removed. Fresh release execution, the complete local
 gate, three independent reviews and exact remote proof remain required.
+
+## Composed-host test dispatch after `d55a7cb`
+
+Integrated candidate `d55a7cbdbf1449cab8e4ca676ae9cfe647724c19` passes exact
+Rust 1.94.1 formatting, both SDK ABI checks, strict Linux/macOS workspace lint,
+doctests, FreeBSD/WASI, dependency policy/audit, 261 Python checks/14 skips
+(376.075 seconds), pinned drift and documentation policy. Its fresh release
+build completes in 9m06s; eight release-helper launch cases pass in 27.99 seconds
+and CLI smoke passes. Clean default-concurrent Linux native passes 1,476/six
+helper ignores in 27.16 seconds; CLI passes 141/four ignores in 0.77 seconds.
+
+The full serial macOS native run fails: 1,400 pass, seven fail and five helpers
+are ignored in 427.73 seconds. Six composed-host failures repeatedly reject
+inventory collection before expiration. Source inspection proves their fake CLI
+dispatches captured/PTY/marker modes but omits the new inventory mode. Merely
+adding a branch would also expose libtest framing on the PID protocol stream;
+the test-only correction must use the existing raw-output helper entrypoint.
+
+After those host failures retain cleanup retries, the control-C PTY fixture
+fails only at its final close: inventory expires at 250.923667 ms while Running,
+then 250.684083 ms while Exited(0), and 252.61275 ms during drop. This is not
+evidence that control-C delivery failed, nor proof that the host retries are its
+exclusive cause. The separate clean-process confirmation remains required.
+The run terminates normally with test exit 101; the later production-helper
+terminal sweep is not executed. This candidate has no fresh review or remote
+acceptance and is not pushed. Main remains unchanged.
+
+The correction adds an exact-single-argument inventory branch to the fake CLI,
+execing the existing raw-output entrypoint with libtest framing kept off the
+protocol pipe. A new pre-host regression exercises the actual bounded collector
+with that script. Direct first execution of a fresh printf-only script takes
+0.46 seconds locally, versus 0.00 seconds through an explicit `/bin/sh` on a
+separate fresh script. The regression therefore explicitly registers that
+interpreter, as existing shell-backed helper fixtures do; the full host's direct
+CLI path, production code and 250 ms limit remain unchanged.
+
+With the same explicit-shell registration, the regression fails before the
+dispatch fix in 0.08 seconds (valid mode rejected after 15.49 ms, not expired)
+and passes afterward in 0.09 seconds. It checks canonical PID output and rejects
+missing/extra arguments and an expired transferred deadline. The serial host
+group plus the exact control-C case pass 10/one existing helper ignore in 6.03
+seconds in a clean process, including all six earlier host failures. Cleanup
+assertions pass and no matching helper processes remain. This does not establish
+the exclusive cause of the earlier control-C close timeout.
+
+Correction `05399d9ecb6ed36db7e6d0937a2ce4044b5a0207` changes only the native
+test wrapper/regression and a macOS test-only adapter to the existing collector.
+Strict exact-1.94.1 native all-target/all-feature Clippy and formatting pass.
+The bounded native/CLI dispatcher audit finds no other generic fake CLI missing
+the new mode. Temporary instrumentation/scripts are removed; its clean integrated
+worktree is removed. The complete replacement gate and fresh reviews remain
+required before any feature push or delivery.
