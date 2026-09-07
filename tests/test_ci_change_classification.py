@@ -817,6 +817,29 @@ class CiChangeClassificationTests(unittest.TestCase):
         self.assertLess(quality.index(name), quality.index("      - name: Tests"))
         self.assertNotIn("Install shells", job(self.ci, "documentation-policy"))
 
+    def test_linux_shell_setup_repairs_completion_permissions_without_skipping_profiles(self) -> None:
+        for job_name, step_name in (
+            ("quality", "Install shells for selected native tests"),
+            ("native-target-tests", "Install tmux for native terminal integration tests"),
+        ):
+            with self.subTest(job=job_name):
+                install = step_script(job(self.ci, job_name), step_name)
+                repair = "sudo chmod -R go-w /usr/share/zsh"
+                audit = "/bin/zsh -f -c 'autoload -Uz compaudit; compaudit'"
+                self.assertIn(repair, install)
+                self.assertIn(audit, install)
+                self.assertLess(install.index("sudo apt-get install"), install.index(repair))
+                self.assertLess(install.index(repair), install.index(audit))
+                self.assertNotIn("skip_global_compinit", install)
+                self.assertNotIn("compinit -u", install)
+                self.assertNotIn("compinit -i", install)
+                if job_name == "native-target-tests":
+                    linux = install.split('if [[ "${RUNNER_OS}" == "Linux" ]]; then', 1)[1]
+                    linux, apple = linux.split("elif", 1)
+                    self.assertIn(repair, linux)
+                    self.assertIn(audit, linux)
+                    self.assertNotIn(repair, apple)
+
     def test_terminal_inputs_have_explicit_filters_and_consumers(self) -> None:
         classifier = job(self.ci, "change-classification")
 

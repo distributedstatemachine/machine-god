@@ -42,8 +42,11 @@ only.
 Selected native quality tests explicitly install bash and zsh on Linux; the
 native platform jobs install those shells alongside tmux and verify the fixed
 shell executable paths before testing. Shell-profile coverage therefore does
-not depend on incidental runner packages. Documentation-only jobs do not
-provision these dependencies.
+not depend on incidental runner packages. Linux provisioning also removes
+group/other write permissions only from `/usr/share/zsh` and requires a
+noninteractive `compaudit` pass. This repairs hosted Ubuntu completion-tree
+permissions without suppressing global or user profiles or completion checks.
+Documentation-only jobs do not provision these dependencies or repair paths.
 Root Cargo, lockfile, or toolchain inputs select the actual workspace;
 formatting configuration selects workspace and standalone-fixture formatting
 without package tests. The standalone

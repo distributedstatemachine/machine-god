@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `complete replacement pinned local checks, three fresh independent reviews and exact remote gates for the Linux teardown-record and job-control capture corrections`
+- Next gate: `complete replacement pinned local checks, three fresh independent reviews and exact remote gates for the Ubuntu zsh completion-permission correction`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -162,7 +162,16 @@ unchanged PID, parent and start-time identity. Ancestry revalidation now ignores
 only that mutable group field, preserving incarnation/parent checks and separate
 root-group authority. The regression is red before and green after the fix;
 five full concurrent Linux suites and 500 loaded fixture repetitions pass.
-The complete replacement gate remains required. No delivery is claimed.
+Candidate `d49db6d81395b517049f0b43726bed764417f2c4` then passes the complete
+local gate and three fresh reviews and is pushed. Benchmark evidence succeeds
+with both exact-SHA artifacts, but Linux remote jobs expose Ubuntu global zsh
+completion prompting on the runner's writable completion tree. The unchanged
+binary reproduces all four failures with those conditions and passes them after
+repairing only `/usr/share/zsh` permissions. CI now performs that bounded repair
+and a noninteractive completion audit in both Linux shell-provisioning paths;
+no product or profile behavior changes. The repaired representative environment
+passes all 1,476 native tests concurrently and all 15 CI regressions pass.
+Main remains unchanged; replacement gates are required. No delivery is claimed.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:

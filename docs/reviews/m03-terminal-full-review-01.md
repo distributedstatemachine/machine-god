@@ -548,3 +548,44 @@ suites pass 1,476/six helper ignores each (26.27–35.47 seconds). All 500 loade
 PTY suffix repetitions pass in 35.53 seconds. macOS production-helper PTY tests
 pass 25/25 in 11.03 seconds. The complete replacement local gate, three fresh
 reviews and exact remote success remain required; no delivery is claimed.
+
+## Review and Ubuntu runner correction after `d49db6d`
+
+Candidate `d49db6d81395b517049f0b43726bed764417f2c4` passes the complete
+exact-1.94.1 local gate: default-concurrent Linux native 1,476/six helper ignores
+and CLI 141/four helper ignores; macOS workspace/native 1,403/five helper ignores,
+eight release launches, fresh CLI smoke and 658 production-helper tests/five
+helper ignores; formatting, strict Linux/macOS workspace lint, doctests,
+FreeBSD/WASI, dependencies, 260 Python checks/14 skips, drift/docs and release.
+Three fresh direct local reviewers (`terminal_d49db6d_api`,
+`terminal_d49db6d_lifecycle`, `terminal_d49db6d_resources`) report zero findings
+against merge base `46e5b70f6c5ba76a4699f5bd8ba424a1fa3813be`. API also passes
+37 cached confirmations (17 action, 12 Gateway, eight archive); all tracks
+retain their stated runtime/performance limits. Review worktrees are removed.
+
+The feature push starts CI `34137286794` and Benchmark `34137286780`.
+Benchmark succeeds with unexpired exact-SHA artifacts `10024753482` (upstream)
+and `10024581934` (bootstrap), expiring `2026-12-06T15:14:39Z`. Quality and both
+Linux native jobs fail the same four zsh startup cases: 1,472 pass, four fail,
+six helpers are ignored (57.20–65.07 seconds). Logs show global `compinit`
+prompting for permission to continue, consuming the queued bootstrap prefix.
+macOS ARM completes successfully; macOS x86_64 is still running at integration.
+Main does not advance.
+
+The [exact hosted Ubuntu image setup](https://raw.githubusercontent.com/actions/runner-images/ubuntu24-arm64/20260831.111/images/ubuntu/scripts/build/configure-system.sh)
+makes `/usr/share` recursively writable; Ubuntu's global zsh configuration
+enables completion initialization unlike the local Debian policy. In an
+isolated container, unchanged d49 code passes the four matrices with Ubuntu
+completion enabled and normal permissions, fails all four after making the
+completion tree writable, then passes all four after the bounded repair.
+The whole default-concurrent native suite subsequently passes 1,476/six helper
+ignores in 26.35 seconds.
+
+Correction `8d8fa6281c52b9511eb79895fe3c9bb2465ac04f` adds permission repair
+only under `/usr/share/zsh` and a required noninteractive `compaudit` to both
+Linux shell-provisioning paths. No Rust, product startup, User/Clean profile,
+deadline or skip behavior changes. All 15 CI regression tests, YAML/bash syntax,
+formatting and diff checks pass; the new regression rejects missing repair.
+Diagnostic container/configuration is removed and shared binaries are unchanged.
+Complete replacement local checks, three fresh reviews and exact remote gates
+remain required.
