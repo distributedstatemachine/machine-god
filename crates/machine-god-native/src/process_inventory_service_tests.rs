@@ -185,6 +185,20 @@ fn malformed_query_fails_without_same_call_respawn_and_retains_owned_cleanup() {
 }
 
 #[test]
+fn trailing_reply_bytes_reject_complete_frame_without_respawn() {
+    let helper = controlled_helper("trailing");
+    let scope = NativeOwnedWorkerScope::new();
+    let lease = prepare_in(&scope, &helper);
+    assert_eq!(
+        query_in(&scope, &lease).unwrap_err().kind,
+        TerminalHelperErrorKind::Protocol
+    );
+    assert_eq!(helper.service_spawn_count_for_test(), 1);
+    drop(lease);
+    close_scope(&scope);
+}
+
+#[test]
 fn stalled_query_times_out_without_respawn_and_settles_its_scope() {
     let helper = controlled_helper("stalled");
     let scope = NativeOwnedWorkerScope::new();
@@ -261,7 +275,7 @@ const CONTROL_MODE: &str = "MACHINE_GOD_INVENTORY_TEST_MODE";
 fn controlled_helper(mode: &str) -> ProcessInventoryHelper {
     assert!(matches!(
         mode,
-        "malformed" | "delayed" | "stalled" | "startup_stalled"
+        "malformed" | "trailing" | "delayed" | "stalled" | "startup_stalled"
     ));
     let executable = std::env::current_exe().unwrap();
     let script = format!(
@@ -320,6 +334,15 @@ fn controlled_service(mode: &str) -> Result<(), TerminalHelperError> {
         if mode == "malformed" {
             header[0] ^= 1;
             output.write_all(&header).map_err(io_failure)?;
+        } else if mode == "trailing" {
+            // Publish the small complete frame and surplus byte together. The
+            // helper then remains alive waiting for the next request, so the
+            // rejection does not depend on an exit-observation race.
+            let mut frame = header.to_vec();
+            frame.extend_from_slice(payload.as_bytes());
+            frame.extend_from_slice(&wire::encode_completion(sequence));
+            frame.push(0x7f);
+            output.write_all(&frame).map_err(io_failure)?;
         } else {
             output.write_all(&header).map_err(io_failure)?;
             output.write_all(payload.as_bytes()).map_err(io_failure)?;
