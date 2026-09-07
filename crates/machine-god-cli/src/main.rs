@@ -1179,6 +1179,19 @@ fn main() -> ExitCode {
     #[cfg(target_os = "macos")]
     if is_exact_helper_arguments(
         env::args_os().skip(1),
+        machine_god_native::PROCESS_INVENTORY_SERVICE_ARGUMENT,
+    ) {
+        return ExitCode::from(
+            if machine_god_native::run_process_inventory_service().is_ok() {
+                0
+            } else {
+                125
+            },
+        );
+    }
+    #[cfg(target_os = "macos")]
+    if is_exact_helper_arguments(
+        env::args_os().skip(1),
         machine_god_native::PROCESS_INVENTORY_HELPER_ARGUMENT,
     ) {
         return ExitCode::from(
@@ -6026,6 +6039,8 @@ mod tests {
         for helper in [
             #[cfg(target_os = "macos")]
             machine_god_native::PROCESS_INVENTORY_HELPER_ARGUMENT,
+            #[cfg(target_os = "macos")]
+            machine_god_native::PROCESS_INVENTORY_SERVICE_ARGUMENT,
             machine_god_native::TERMINAL_CAPTURED_HELPER_ARGUMENT,
             machine_god_native::TERMINAL_PTY_HELPER_ARGUMENT,
             machine_god_native::TERMINAL_STARTUP_MARKER_ARGUMENT,

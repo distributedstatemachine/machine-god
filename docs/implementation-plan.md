@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `validate production-helper selection throughout Apple native tests, complete replacement pinned local checks and three fresh reviews, then require exact remote results with retained failure-phase diagnostics`
+- Next gate: `validate the integrated owned inventory service, then complete replacement local checks, three fresh reviews and exact remote gates`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -208,6 +208,15 @@ the existing fixture capability, preserving all tests and deadlines while
 testing the shipped host path. Explicit failure fixtures and Linux concurrency
 remain unchanged. Native Intel success is still required; harness overhead is
 measured but is not proved to be the exclusive cause of either timeout.
+The production-helper workspace comparison subsequently catches an actual
+inventory failure: process spawn consumes 189 ms of the original 250 ms budget
+and no PID output arrives before expiration. Production-helper selection alone
+is therefore insufficient. The integrated correction is an owned reusable query
+helper prepared within the original terminal startup budget, retaining bounded
+requests, independent kill/reap ownership and identity checks under ADR 0004.
+Protocol and lifecycle regressions cover framing, shared same-host leases,
+restart barriers, delayed readiness, cancellation and stalled replies. Focused
+runtime verification and all replacement acceptance gates remain required.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:

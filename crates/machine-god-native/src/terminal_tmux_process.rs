@@ -220,7 +220,7 @@ impl PinnedProcess {
 /// Exclusive live authority; deliberately neither serializable nor clonable.
 pub(crate) struct AuthenticatedTerminalProcess {
     #[cfg(target_os = "macos")]
-    inventory: Option<crate::process_inventory_helper::ProcessInventoryHelper>,
+    inventory: Option<crate::process_inventory_helper::PreparedProcessInventory>,
     budget: CaptureBudget,
     root: PinnedProcess,
     anchor: Option<PinnedProcess>,
@@ -236,9 +236,9 @@ impl AuthenticatedTerminalProcess {
     #[cfg(target_os = "macos")]
     pub(crate) fn with_inventory_helper(
         mut self,
-        helper: Option<&crate::process_inventory_helper::ProcessInventoryHelper>,
+        helper: Option<crate::process_inventory_helper::PreparedProcessInventory>,
     ) -> Self {
-        self.inventory = helper.cloned();
+        self.inventory = helper;
         self
     }
 
@@ -478,7 +478,12 @@ impl AuthenticatedTerminalProcess {
     pub(crate) fn is_absent(&mut self) -> Result<bool, BackgroundProcessError> {
         if self.supervisor {
             return if self.anchor_retiring {
-                Ok(!self.root.exists()?)
+                let absent = !self.root.exists()?;
+                #[cfg(target_os = "macos")]
+                if absent {
+                    self.inventory = None;
+                }
+                Ok(absent)
             } else {
                 self.refresh()?;
                 Ok(false)
@@ -500,7 +505,12 @@ impl AuthenticatedTerminalProcess {
             anchor.signal(rustix::process::Signal::KILL)?;
             self.anchor_retiring = true;
         }
-        Ok(!anchor.exists()?)
+        let absent = !anchor.exists()?;
+        #[cfg(target_os = "macos")]
+        if absent {
+            self.inventory = None;
+        }
+        Ok(absent)
     }
 
     /// Complete anchored inventory excluding the supervisor. Merely observing
@@ -547,7 +557,7 @@ impl AuthenticatedTerminalProcess {
 
 #[cfg(target_os = "macos")]
 fn capture_macos_scope_members(
-    inventory: Option<&crate::process_inventory_helper::ProcessInventoryHelper>,
+    inventory: Option<&crate::process_inventory_helper::PreparedProcessInventory>,
     members: &mut Vec<PinnedProcess>,
     anchor: &PinnedProcess,
     session: rustix::process::Pid,
@@ -710,7 +720,13 @@ impl Drop for AuthenticatedTerminalProcess {
     fn drop(&mut self) {
         // Best-effort crash/failed-launch fallback, never a successful cleanup
         // receipt. Normal owners retain this value until is_absent proves exit.
-        let _ = self.signal(BackgroundProcessSignal::Kill);
+        if self.anchor_retiring {
+            // Positive absence can already have released the service lease.
+            // Retirement never starts a new discovery query or helper child.
+            let _ = self.signal_retained(BackgroundProcessSignal::Kill);
+        } else {
+            let _ = self.signal(BackgroundProcessSignal::Kill);
+        }
         if self.supervisor {
             let _ = self.root.signal(rustix::process::Signal::KILL);
         }
@@ -950,8 +966,14 @@ mod tests {
                 &CancellationToken::new(),
             )?;
             #[cfg(target_os = "macos")]
-            let authority = authority
-                .with_inventory_helper(Some(&crate::process_inventory_helper::test_helper()));
+            let authority = authority.with_inventory_helper(Some(
+                crate::process_inventory_helper::test_service()
+                    .prepare(
+                        Instant::now() + Duration::from_secs(5),
+                        &CancellationToken::new(),
+                    )
+                    .unwrap(),
+            ));
             Ok(authority)
         }
 

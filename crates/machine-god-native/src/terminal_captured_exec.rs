@@ -96,6 +96,37 @@ impl std::fmt::Debug for TerminalCapturedExec {
 }
 
 impl TerminalCapturedExec {
+    /// Registers an inert reusable inventory service, prepared within each
+    /// execution's original startup budget before its user process starts.
+    ///
+    /// # Errors
+    /// Returns [`TerminalCapturedExecError::Invalid`] for an invalid specification.
+    #[cfg(target_os = "macos")]
+    pub fn with_process_inventory_service(
+        self,
+        program: PathBuf,
+        arguments: Vec<OsString>,
+    ) -> Result<Self, TerminalCapturedExecError> {
+        let inventory = crate::process_inventory_helper::ProcessInventoryHelper::new_service(
+            program, arguments,
+        )
+        .map_err(|_| TerminalCapturedExecError::Invalid)?;
+        Ok(self.with_inventory_registration(inventory))
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn with_inventory_registration(
+        mut self,
+        inventory: crate::process_inventory_helper::ProcessInventoryHelper,
+    ) -> Self {
+        self.helper = Arc::new(
+            self.helper
+                .as_ref()
+                .clone()
+                .with_inventory_helper(inventory),
+        );
+        self
+    }
     /// Supplies an explicit private PID-inventory helper for macOS session cleanup.
     /// Construction is inert. Without this capability, the existing ps collector
     /// remains available to legacy callers; a selected helper failure never falls back.
@@ -158,6 +189,15 @@ impl TerminalCapturedExec {
     /// Enroll future execution workers in the host's explicit shutdown scope.
     /// Scope metadata adds no host-lifetime vote and does not spawn work here.
     pub(crate) fn with_worker_scope(mut self, scope: NativeOwnedWorkerScope) -> Self {
+        #[cfg(target_os = "macos")]
+        if let Some(inventory) = self.helper.inventory_helper() {
+            self.helper = Arc::new(
+                self.helper
+                    .as_ref()
+                    .clone()
+                    .with_inventory_helper(inventory.rebind()),
+            );
+        }
         self.worker_scope = Some(scope);
         self
     }
@@ -451,7 +491,7 @@ fn run(
     let flags = rustix::fs::fcntl_getfl(&stdout).map_err(|_| TerminalCapturedExecError::Process)?;
     rustix::fs::fcntl_setfl(&stdout, flags | OFlags::NONBLOCK)
         .map_err(|_| TerminalCapturedExecError::Process)?;
-    let mut guard = TerminalChildGuard::reserve_for_helper(cancellation, helper)
+    let mut guard = TerminalChildGuard::reserve_for_helper(cancellation, helper, deadline)
         .map_err(|_| TerminalCapturedExecError::Process)?;
     let helper_deadline = match encode_helper_deadline(deadline, MAX_TERMINAL_EXEC_DURATION) {
         Ok(stamp) => stamp,

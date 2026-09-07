@@ -1367,6 +1367,8 @@ struct ChildReapPermit {
     // Metadata follows the existing permit into quarantine and is discharged
     // only when that exact child's reap obligation is released.
     shutdown: Option<crate::NativeOwnedWorkerCleanup>,
+    #[cfg(target_os = "macos")]
+    inventory_reaped: Option<Arc<AtomicBool>>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1434,10 +1436,16 @@ fn run_child_reaper(reaper: &ChildReaper) {
         drop(children);
         // Reap ordinary children before potentially expensive terminal proofs.
         batch.retain_mut(|entry| match entry {
-            QuarantinedChild::Direct { child, .. } => !matches!(
-                try_wait_child(child),
-                Ok(Some(_)) | Err(ChildTryWaitError::LostAuthority)
-            ),
+            QuarantinedChild::Direct { child, _permit } => {
+                let settled = matches!(
+                    try_wait_child(child),
+                    Ok(Some(_)) | Err(ChildTryWaitError::LostAuthority)
+                );
+                if settled {
+                    mark_inventory_reaped(_permit);
+                }
+                !settled
+            }
             QuarantinedChild::Terminal(_) => true,
         });
         for entry in &mut batch {
@@ -1507,6 +1515,8 @@ fn reserve_child_reap_authority_for(
     Ok(ChildReapPermit {
         reaper,
         shutdown: crate::NativeOwnedWorkerScope::retain_current_cleanup(),
+        #[cfg(target_os = "macos")]
+        inventory_reaped: None,
     })
 }
 
@@ -2521,12 +2531,14 @@ impl TerminalChildGuard {
     pub(crate) fn reserve_for_helper(
         cancellation: &CancellationToken,
         helper: &crate::terminal_helper::TerminalPtyHelper,
+        deadline: Instant,
     ) -> Result<Self, BackgroundProcessError> {
         let guard = Self::reserve(cancellation)?;
         #[cfg(target_os = "macos")]
-        let guard = guard.with_inventory_helper(helper.inventory_helper());
+        let guard =
+            guard.with_inventory_helper(helper.inventory_helper(), deadline, cancellation)?;
         #[cfg(not(target_os = "macos"))]
-        let _ = helper;
+        let _ = (helper, deadline);
         Ok(guard)
     }
 
@@ -2534,11 +2546,16 @@ impl TerminalChildGuard {
     pub(crate) fn with_inventory_helper(
         mut self,
         helper: Option<&crate::process_inventory_helper::ProcessInventoryHelper>,
-    ) -> Self {
+        deadline: Instant,
+        cancellation: &CancellationToken,
+    ) -> Result<Self, BackgroundProcessError> {
         self.authority = Arc::new(GroupSnapshotAuthority {
-            inventory: helper.cloned(),
+            inventory: helper
+                .map(|helper| helper.prepare(deadline, cancellation))
+                .transpose()
+                .map_err(|_| cleanup_error())?,
         });
-        self
+        Ok(self)
     }
 
     pub(crate) fn reserve(
@@ -3005,14 +3022,14 @@ impl OwnedBackgroundProcess {
         force: bool,
         mut terminal_phase: impl FnMut(TerminalClosePhase),
     ) -> Result<BackgroundProcessExit, BackgroundProcessError> {
+        if let Some(exit) = self.terminal_exit {
+            return Ok(exit);
+        }
         let authority = Arc::clone(
             self.snapshot_authority
                 .as_ref()
                 .ok_or_else(invariant_error)?,
         );
-        if let Some(exit) = self.terminal_exit {
-            return Ok(exit);
-        }
         // Discharge known loss of wait authority before any new numeric scan.
         self.terminal_poll()?;
         let cleanup = self.terminal_cleanup.as_mut().ok_or_else(invariant_error)?;
@@ -3063,6 +3080,7 @@ impl OwnedBackgroundProcess {
                 self.terminal_exit = Some(exit);
                 self.terminal_cleanup = None;
                 discharge_reaped_child(&mut self.child, &mut self.reap_permit);
+                self.snapshot_authority = None;
                 Ok(exit)
             }
             BoundedReap::LostAuthority => {
@@ -3519,7 +3537,7 @@ struct GroupSnapshotAuthority {
 #[cfg(target_os = "macos")]
 #[derive(Default)]
 struct GroupSnapshotAuthority {
-    inventory: Option<crate::process_inventory_helper::ProcessInventoryHelper>,
+    inventory: Option<crate::process_inventory_helper::PreparedProcessInventory>,
 }
 
 #[cfg(target_os = "linux")]
@@ -4796,8 +4814,82 @@ fn poll_child_reap_with(
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn discharge_reaped_child(child: &mut Option<Child>, reap_permit: &mut Option<ChildReapPermit>) {
+    if let Some(permit) = reap_permit.as_ref() {
+        mark_inventory_reaped(permit);
+    }
     drop(child.take());
     drop(reap_permit.take());
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn mark_inventory_reaped(_permit: &ChildReapPermit) {
+    #[cfg(target_os = "macos")]
+    if let Some(reaped) = &_permit.inventory_reaped {
+        reaped.store(true, Ordering::Release);
+    }
+}
+
+/// Exact service-child authority. The non-owning completion flag survives
+/// transfer to the existing quarantine queue and forbids premature replacement.
+#[cfg(target_os = "macos")]
+pub(crate) struct InventoryChild {
+    child: Option<Child>,
+    permit: Option<ChildReapPermit>,
+}
+
+#[cfg(target_os = "macos")]
+impl InventoryChild {
+    pub(crate) fn spawn(
+        command: &mut Command,
+        reaped: Arc<AtomicBool>,
+    ) -> Result<Self, BackgroundProcessError> {
+        let mut permit = reserve_child_reap_authority_for(true)
+            .inspect_err(|_| reaped.store(true, Ordering::Release))?;
+        permit.inventory_reaped = Some(Arc::clone(&reaped));
+        match command.spawn() {
+            Ok(child) => Ok(Self {
+                child: Some(child),
+                permit: Some(permit),
+            }),
+            Err(_) => {
+                reaped.store(true, Ordering::Release);
+                Err(spawn_error())
+            }
+        }
+    }
+
+    pub(crate) fn pipes(
+        &mut self,
+    ) -> Result<(std::process::ChildStdin, std::process::ChildStdout), BackgroundProcessError> {
+        let child = self.child.as_mut().ok_or_else(invariant_error)?;
+        Ok((
+            child.stdin.take().ok_or_else(invariant_error)?,
+            child.stdout.take().ok_or_else(invariant_error)?,
+        ))
+    }
+
+    pub(crate) fn exited(&mut self) -> Result<bool, BackgroundProcessError> {
+        let Some(child) = self.child.as_mut() else {
+            return Ok(true);
+        };
+        match try_wait_child(child) {
+            Ok(Some(_)) | Err(ChildTryWaitError::LostAuthority) => {
+                discharge_reaped_child(&mut self.child, &mut self.permit);
+                Ok(true)
+            }
+            Ok(None) | Err(ChildTryWaitError::Interrupted) => Ok(false),
+            Err(ChildTryWaitError::Operation) => Err(cleanup_error()),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for InventoryChild {
+    fn drop(&mut self) {
+        if self.child.is_some() {
+            terminate_and_reap_or_quarantine(&mut self.child, &mut self.permit);
+        }
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -5879,7 +5971,7 @@ fn group_members(
 
 #[cfg(target_os = "macos")]
 fn macos_scope_members(
-    inventory: Option<&crate::process_inventory_helper::ProcessInventoryHelper>,
+    inventory: Option<&crate::process_inventory_helper::PreparedProcessInventory>,
     group: rustix::process::Pid,
     session_scope: bool,
 ) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
@@ -5891,7 +5983,13 @@ pub(crate) fn inventory_helper_reports_current_process_for_test(
     helper: &crate::process_inventory_helper::ProcessInventoryHelper,
 ) -> Result<bool, BackgroundProcessError> {
     let pid = rustix::process::getpid();
-    macos_scope_members(Some(helper), pid, true)
+    let prepared = helper
+        .prepare(
+            Instant::now() + GROUP_SNAPSHOT_TIMEOUT,
+            &CancellationToken::new(),
+        )
+        .map_err(|_| cleanup_error())?;
+    macos_scope_members(Some(&prepared), pid, true)
         .map(|members| members.iter().any(|member| member.pid == pid))
 }
 
@@ -5903,7 +6001,7 @@ pub(crate) fn inventory_helper_reports_current_process_for_test(
     reason = "Ordered inventory keeps bounded child collection, exact identity proof and prefix publication under the original deadline."
 )]
 fn macos_scope_members_with(
-    inventory: Option<&crate::process_inventory_helper::ProcessInventoryHelper>,
+    inventory: Option<&crate::process_inventory_helper::PreparedProcessInventory>,
     group: rustix::process::Pid,
     session_scope: bool,
     mut observe: impl FnMut(
@@ -5926,67 +6024,85 @@ fn macos_scope_members_with(
     }
     let inventory = inventory.filter(|_| session_scope);
     let helper_deadline = inventory.map(|_| Instant::now() + GROUP_SNAPSHOT_TIMEOUT);
-    let mut command = match (inventory, helper_deadline) {
-        (Some(helper), Some(deadline)) => helper.command(deadline).map_err(|_| cleanup_error())?,
-        _ => Command::new("/bin/ps"),
-    };
-    // The explicitly selected helper already carries only its private
-    // arguments and original deadline. Failure never falls back to ps.
-    if inventory.is_none() {
-        command.env_clear();
-        if session_scope {
-            command.args(["-axo", "pid="]);
+    let (bytes, deadline) =
+        if let Some(crate::process_inventory_helper::PreparedProcessInventory::Service(lease)) =
+            inventory
+        {
+            let deadline = helper_deadline.ok_or_else(cleanup_error)?;
+            (
+                lease.query(deadline).map_err(|_| cleanup_error())?,
+                deadline,
+            )
         } else {
+            let mut command = match (inventory, helper_deadline) {
+                (
+                    Some(crate::process_inventory_helper::PreparedProcessInventory::OneShot(
+                        helper,
+                    )),
+                    Some(deadline),
+                ) => helper.command(deadline).map_err(|_| cleanup_error())?,
+                _ => Command::new("/bin/ps"),
+            };
+            // The explicitly selected helper already carries only its private
+            // arguments and original deadline. Failure never falls back to ps.
+            if inventory.is_none() {
+                command.env_clear();
+                if session_scope {
+                    command.args(["-axo", "pid="]);
+                } else {
+                    command
+                        .args(["-o", "pid=", "-g"])
+                        .arg(group.as_raw_nonzero().get().to_string());
+                }
+            }
             command
-                .args(["-o", "pid=", "-g"])
-                .arg(group.as_raw_nonzero().get().to_string());
-        }
-    }
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let mut reap_permit =
-        Some(reserve_child_reap_authority_for(true).map_err(|_| cleanup_error())?);
-    #[cfg(test)]
-    let reserved_at = started.elapsed();
-    let mut child = Some(command.spawn().map_err(|_| cleanup_error())?);
-    #[cfg(test)]
-    let spawned_at = started.elapsed();
-    let mut output = child
-        .as_mut()
-        .and_then(|child| child.stdout.take())
-        .ok_or_else(cleanup_error)?;
-    let Ok(flags) = rustix::fs::fcntl_getfl(&output) else {
-        terminate_and_reap_or_quarantine(&mut child, &mut reap_permit);
-        return Err(cleanup_error());
-    };
-    if rustix::fs::fcntl_setfl(&output, flags | OFlags::NONBLOCK).is_err() {
-        terminate_and_reap_or_quarantine(&mut child, &mut reap_permit);
-        return Err(cleanup_error());
-    }
-    let deadline = helper_deadline.unwrap_or_else(|| Instant::now() + GROUP_SNAPSHOT_TIMEOUT);
-    #[cfg(test)]
-    let collector_at = started.elapsed();
-    let snapshot = collect_group_snapshot_output(&mut output, deadline, || {
-        let observed = try_wait_child(child.as_mut().ok_or(())?);
-        settle_group_snapshot_child_observation(observed, || {
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null());
+            let mut reap_permit =
+                Some(reserve_child_reap_authority_for(true).map_err(|_| cleanup_error())?);
+            #[cfg(test)]
+            let reserved_at = started.elapsed();
+            let mut child = Some(command.spawn().map_err(|_| cleanup_error())?);
+            #[cfg(test)]
+            let spawned_at = started.elapsed();
+            let mut output = child
+                .as_mut()
+                .and_then(|child| child.stdout.take())
+                .ok_or_else(cleanup_error)?;
+            let Ok(flags) = rustix::fs::fcntl_getfl(&output) else {
+                terminate_and_reap_or_quarantine(&mut child, &mut reap_permit);
+                return Err(cleanup_error());
+            };
+            if rustix::fs::fcntl_setfl(&output, flags | OFlags::NONBLOCK).is_err() {
+                terminate_and_reap_or_quarantine(&mut child, &mut reap_permit);
+                return Err(cleanup_error());
+            }
+            let deadline =
+                helper_deadline.unwrap_or_else(|| Instant::now() + GROUP_SNAPSHOT_TIMEOUT);
+            #[cfg(test)]
+            let collector_at = started.elapsed();
+            let snapshot = collect_group_snapshot_output(&mut output, deadline, || {
+                let observed = try_wait_child(child.as_mut().ok_or(())?);
+                settle_group_snapshot_child_observation(observed, || {
+                    discharge_reaped_child(&mut child, &mut reap_permit);
+                })
+            });
+            let Ok(bytes) = snapshot else {
+                #[cfg(test)]
+                report_macos_inventory_collection_failure(
+                    session_scope,
+                    started,
+                    deadline,
+                    inventory.is_some(),
+                    [reserved_at, spawned_at, collector_at],
+                );
+                terminate_and_reap_or_quarantine(&mut child, &mut reap_permit);
+                return Err(cleanup_error());
+            };
             discharge_reaped_child(&mut child, &mut reap_permit);
-        })
-    });
-    let Ok(bytes) = snapshot else {
-        #[cfg(test)]
-        report_macos_inventory_collection_failure(
-            session_scope,
-            started,
-            deadline,
-            inventory.is_some(),
-            [reserved_at, spawned_at, collector_at],
-        );
-        terminate_and_reap_or_quarantine(&mut child, &mut reap_permit);
-        return Err(cleanup_error());
-    };
-    discharge_reaped_child(&mut child, &mut reap_permit);
+            (bytes, deadline)
+        };
     if bytes.len() > MAX_GROUP_SNAPSHOT_BYTES {
         return Err(cleanup_error());
     }
@@ -8856,9 +8972,11 @@ mod process_regression_tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_selected_inventory_helper_is_complete_and_never_falls_back() {
-        use crate::process_inventory_helper::{ProcessInventoryHelper, test_helper};
+        use crate::process_inventory_helper::{
+            PreparedProcessInventory, ProcessInventoryHelper, test_helper,
+        };
         let group = rustix::process::getpid();
-        let valid = test_helper();
+        let valid = PreparedProcessInventory::OneShot(test_helper());
         let members = macos_scope_members(Some(&valid), group, true).unwrap();
         assert!(members.iter().any(|member| member.pid == group));
 
@@ -8873,6 +8991,7 @@ mod process_regression_tests {
             let helper =
                 ProcessInventoryHelper::new("/bin/sh".into(), vec!["-c".into(), script.into()])
                     .unwrap();
+            let helper = PreparedProcessInventory::OneShot(helper);
             let mut authenticated = 0;
             let started = Instant::now();
             assert!(
@@ -8896,6 +9015,7 @@ mod process_regression_tests {
         let missing =
             ProcessInventoryHelper::new("/machine-god-missing-inventory-helper".into(), vec![])
                 .unwrap();
+        let missing = PreparedProcessInventory::OneShot(missing);
         assert!(macos_scope_members(Some(&missing), group, true).is_err());
         // A group-only request does not acquire or use the session capability.
         assert!(macos_scope_members(Some(&missing), rustix::process::getpgrp(), false).is_ok());
@@ -8907,7 +9027,12 @@ mod process_regression_tests {
         for final_scan in [false, true] {
             let mut guard = TerminalChildGuard::reserve(&CancellationToken::new())
                 .unwrap()
-                .with_inventory_helper(Some(&crate::process_inventory_helper::test_helper()));
+                .with_inventory_helper(
+                    Some(&crate::process_inventory_helper::test_service()),
+                    Instant::now() + Duration::from_secs(5),
+                    &CancellationToken::new(),
+                )
+                .unwrap();
             guard.spawn(Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "background_process::process_regression_tests::macos_terminal_capture_helper", "--ignored", "--nocapture"])
                 .env("MACHINE_GOD_MACOS_CAPTURE_HELPER", "1")
@@ -10532,8 +10657,17 @@ mod process_regression_tests {
     #[test]
     fn scoped_worker_completion_follows_existing_child_quarantine() {
         let scope = crate::NativeOwnedWorkerScope::new();
-        let input = futures_executor::block_on(scope.run(|| {
+        #[cfg(target_os = "macos")]
+        let reaped = Arc::new(AtomicBool::new(false));
+        #[cfg(target_os = "macos")]
+        let child_reaped = Arc::clone(&reaped);
+        let input = futures_executor::block_on(scope.run(move || {
             let permit = reserve_child_reap_authority().unwrap();
+            #[cfg(target_os = "macos")]
+            let permit = ChildReapPermit {
+                inventory_reaped: Some(child_reaped),
+                ..permit
+            };
             assert!(permit.shutdown.is_some());
             let mut child = Command::new("/bin/cat")
                 .env_clear()
@@ -10548,6 +10682,8 @@ mod process_regression_tests {
         }))
         .unwrap();
         scope.close();
+        #[cfg(target_os = "macos")]
+        assert!(!reaped.load(Ordering::Acquire));
         let completion = scope.completion();
         std::thread::scope(move |threads| {
             // This guard lives inside the scoped closure so a failed assertion
@@ -10566,6 +10702,8 @@ mod process_regression_tests {
                 .unwrap();
         });
         assert!(scope.completion().is_complete());
+        #[cfg(target_os = "macos")]
+        assert!(reaped.load(Ordering::Acquire));
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

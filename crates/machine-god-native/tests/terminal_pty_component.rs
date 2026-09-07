@@ -21,7 +21,12 @@ mod background_process;
 #[path = "../src/process_inventory_helper.rs"]
 mod process_inventory_helper;
 #[cfg(target_os = "macos")]
-use process_inventory_helper::PROCESS_INVENTORY_HELPER_ARGUMENT;
+#[path = "../src/process_inventory_protocol.rs"]
+mod process_inventory_protocol;
+#[cfg(target_os = "macos")]
+use machine_god_native::NativeOwnedWorkerScopeIdentity;
+#[cfg(target_os = "macos")]
+use process_inventory_protocol::PROCESS_INVENTORY_SERVICE_ARGUMENT;
 #[path = "../src/terminal_catalog.rs"]
 mod terminal_catalog;
 #[path = "../src/terminal_catalog_view.rs"]

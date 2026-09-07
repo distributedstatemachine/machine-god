@@ -14,20 +14,59 @@ use std::num::NonZeroU32;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
 use std::time::Instant;
+
+#[path = "process_inventory_client.rs"]
+mod client;
+pub(crate) use client::InventoryLease;
+#[cfg(test)]
+#[path = "process_inventory_service_tests.rs"]
+mod service_tests;
+#[cfg(test)]
+pub(crate) use client::RetirementHold;
 
 /// Exact private mode; it is not an ordinary CLI command.
 #[doc(hidden)]
 pub const PROCESS_INVENTORY_HELPER_ARGUMENT: &str = "--machine-god-process-inventory-helper";
 const DEADLINE_ENV: &str = "MACHINE_GOD_PROCESS_INVENTORY_DEADLINE";
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub(crate) struct ProcessInventoryHelper {
     program: PathBuf,
     arguments: Vec<OsString>,
+    service: Option<Arc<client::ServiceRegistration>>,
+}
+
+impl PartialEq for ProcessInventoryHelper {
+    fn eq(&self, other: &Self) -> bool {
+        self.program == other.program
+            && self.arguments == other.arguments
+            && self.service.is_some() == other.service.is_some()
+    }
+}
+impl Eq for ProcessInventoryHelper {}
+
+#[derive(Clone, Debug)]
+pub(crate) enum PreparedProcessInventory {
+    OneShot(ProcessInventoryHelper),
+    Service(InventoryLease),
 }
 
 impl ProcessInventoryHelper {
+    #[cfg(test)]
+    pub(crate) fn service_spawn_count_for_test(&self) -> usize {
+        self.service
+            .as_ref()
+            .unwrap()
+            .starts
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn hold_retirement_for_test(&self) -> RetirementHold {
+        self.service.as_ref().unwrap().hold_retirement_for_test()
+    }
     pub(crate) fn new(
         program: PathBuf,
         arguments: Vec<OsString>,
@@ -43,7 +82,42 @@ impl ProcessInventoryHelper {
         {
             return Err(failure(TerminalHelperErrorKind::InvalidRequest));
         }
-        Ok(Self { program, arguments })
+        Ok(Self {
+            program,
+            arguments,
+            service: None,
+        })
+    }
+
+    pub(crate) fn new_service(
+        program: PathBuf,
+        arguments: Vec<OsString>,
+    ) -> Result<Self, TerminalHelperError> {
+        let mut helper = Self::new(program, arguments)?;
+        helper.service = Some(Arc::new(client::ServiceRegistration::default()));
+        Ok(helper)
+    }
+
+    pub(crate) fn rebind(&self) -> Self {
+        let mut helper = self.clone();
+        if helper.service.is_some() {
+            helper.service = Some(Arc::new(client::ServiceRegistration::default()));
+        }
+        helper
+    }
+
+    pub(crate) fn prepare(
+        &self,
+        deadline: Instant,
+        cancellation: &CancellationToken,
+    ) -> Result<PreparedProcessInventory, TerminalHelperError> {
+        check_deadline(deadline, cancellation)?;
+        match &self.service {
+            Some(service) => service
+                .prepare(self, deadline, cancellation)
+                .map(PreparedProcessInventory::Service),
+            None => Ok(PreparedProcessInventory::OneShot(self.clone())),
+        }
     }
 
     pub(crate) fn command(&self, deadline: Instant) -> Result<Command, TerminalHelperError> {
@@ -96,7 +170,7 @@ fn run_with_output(output: &mut impl Write) -> Result<(), TerminalHelperError> {
     check_deadline(deadline, &cancellation)
 }
 
-fn encode_inventory(pids: &[NonZeroU32]) -> Result<Vec<u8>, TerminalHelperError> {
+pub(crate) fn encode_inventory(pids: &[NonZeroU32]) -> Result<Vec<u8>, TerminalHelperError> {
     if pids.is_empty() || pids.len() > crate::background_process::MAX_CAPTURED_GROUP_MEMBERS {
         return Err(failure(TerminalHelperErrorKind::Protocol));
     }
@@ -166,6 +240,23 @@ pub(crate) fn test_helper() -> ProcessInventoryHelper {
         program.to_str().unwrap().replace('\'', "'\\''")
     );
     ProcessInventoryHelper::new("/bin/sh".into(), vec!["-c".into(), script.into()]).unwrap()
+}
+
+#[cfg(test)]
+pub(crate) fn test_service() -> ProcessInventoryHelper {
+    if let Some(program) = std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY") {
+        return ProcessInventoryHelper::new_service(
+            program.into(),
+            vec![crate::PROCESS_INVENTORY_SERVICE_ARGUMENT.into()],
+        )
+        .unwrap();
+    }
+    let program = std::env::current_exe().unwrap();
+    let script = format!(
+        "exec '{}' --exact process_inventory_protocol::tests::service_entry --nocapture 2>&1 1>/dev/null",
+        program.to_str().unwrap().replace('\'', "'\\''")
+    );
+    ProcessInventoryHelper::new_service("/bin/sh".into(), vec!["-c".into(), script.into()]).unwrap()
 }
 
 #[cfg(test)]

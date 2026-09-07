@@ -145,9 +145,12 @@ normal configuration. Its bounded, close-on-exec error channel distinguishes a
 missing/non-executable shell from a command that legitimately exits with 125;
 launch failure is never guessed from an exit status or stderr content.
 The additive `with_process_inventory_helper` builder supplies an explicit
-inventory executable and bounded arguments for macOS session cleanup. Existing
-constructors remain available without that capability; the complete reference
-host supplies it from its explicitly selected CLI helper path.
+one-shot inventory executable and bounded arguments for macOS session cleanup;
+`with_process_inventory_service` explicitly selects the reusable framed mode.
+Existing constructors remain available without either capability. The complete
+reference host supplies service mode from its selected CLI helper path. Service
+preparation consumes the same existing execution deadline, before user-process
+startup; it does not occur in a constructor or unpolled future.
 The configured 1 ms–600 s timeout begins at first poll and includes worker
 admission, authorized directory/environment preparation, private helper startup
 and exec confirmation. Preparation and descriptor consumption run on the same
@@ -220,6 +223,14 @@ the bounded read-only private helper in
 [ADR 0004](decisions/0004-macos-process-inventory-helper.md), avoiding `ps`
 task/thread inspection. Legacy constructors without the capability retain their
 existing inventory path; a configured helper failure never falls back to `ps`.
+The complete host prepares a reusable helper within the original terminal
+startup budget, before starting the user shell/server. Routine queries avoid
+new process creation and require a complete sequence-bound success frame under
+the original query deadline. The helper remains separately killable; malformed,
+partial, stale or expired replies poison the channel and preserve owned cleanup.
+Native owners release their service leases at cleanup, while configuration and
+retained history cannot keep an idle helper alive. Legacy one-shot registrations
+still require EOF and positive reaping for each result.
 macOS session inventory rejects unrelated session IDs before querying process
 incarnations. A candidate still needs matching identity captures around a
 second session-membership check; the preliminary check grants no authority.

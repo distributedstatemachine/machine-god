@@ -45,6 +45,9 @@ mod background_store;
 mod background_supervisor;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod owned_worker;
+#[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub use owned_worker::NativeOwnedWorkerScopeIdentity;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use owned_worker::{
     NativeOwnedWorkerCleanup, NativeOwnedWorkerCompletion, NativeOwnedWorkerScope,
@@ -71,9 +74,16 @@ mod open_file;
 #[cfg(target_os = "macos")]
 mod process_inventory_helper;
 #[cfg(target_os = "macos")]
+mod process_inventory_protocol;
+#[cfg(target_os = "macos")]
 #[doc(hidden)]
 pub use process_inventory_helper::{
     PROCESS_INVENTORY_HELPER_ARGUMENT, run_process_inventory_helper,
+};
+#[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub use process_inventory_protocol::{
+    PROCESS_INVENTORY_SERVICE_ARGUMENT, run_process_inventory_service,
 };
 mod read_file;
 mod read_tool_result;

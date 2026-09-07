@@ -505,7 +505,7 @@ impl TerminalPtyHelper {
     pub(crate) fn with_test_inventory_helper(self) -> Self {
         #[cfg(target_os = "macos")]
         {
-            self.with_inventory_helper(crate::process_inventory_helper::test_helper())
+            self.with_inventory_helper(crate::process_inventory_helper::test_service())
         }
         #[cfg(not(target_os = "macos"))]
         {

@@ -813,3 +813,49 @@ and its focused regressions. All 17 classification tests pass, including both
 Apple target paths, selection boundaries and fail-closed build/executable
 checks; no worker Rust builds or shared-cache writes occur. Its integrated
 worktree is clean and removed.
+
+The production-helper workspace comparison of the unchanged diagnostic Rust
+code subsequently fails: 1,408 native tests pass, one fails and five helper
+entrypoints are ignored (314.12 seconds). In
+`real_failed_close_keeps_exact_artifact_cleanup_for_retry`, the configured
+release inventory helper's reservation takes 11.75 microseconds, spawn returns
+at 189.091875 ms and collection begins at 189.098084 ms. Collection spends
+63.768541 ms with no bytes or EOF; the last child observation is Running at
+32.9245 ms into collection. The original deadline expires at 252.877084 ms
+total. The failed close therefore retains its child, contradicting the fixture's
+expected later artifact-only failure state. This proves that recurring process
+startup can consume most of the real release helper's inventory budget; it is
+not proof of the earlier native Intel failure's exclusive cause. No gate is
+accepted. The next correction removes recurring startup through an explicitly
+owned, bounded reusable helper, with startup charged to the existing terminal
+startup budget and query/identity deadlines preserved. Framing and lifecycle
+changes require the full product gate; production-helper selection alone is
+not recorded as a compatibility fix.
+
+## Owned reusable inventory service integration
+
+Protocol component `c9f2fec14a5912fccd9a0dc908f8dc5d4c6ea90f` adds the explicit
+service flag, bounded big-endian framing, conservative absolute deadline
+transfer and an independently killable helper loop. Its twelve protocol tests
+and exact CLI dispatch test pass. Initial scoped lint uses a temporary
+command-line dead-code allowance pending client integration; that is not a
+strict integrated lint gate. The clean protocol worktree is removed after its
+patch is integrated as `78d3fd8`.
+
+Client component `e0c19ab` prepares the service before user-process startup,
+shares weak-cached registrations within a host, and retains strong leases only
+through native ownership. Exact child reap metadata blocks replacement through
+quarantine without retaining a host scope in configuration. PTY positive close
+releases its lease while preserving idempotence; tmux retirement cannot start
+another inventory helper. Captured, PTY and tmux host paths share one explicit
+registration. Legacy one-shot capabilities remain distinct and unchanged.
+
+Test components `a54bf1f` and `d57f3df` add same-scope reuse, foreign-scope
+rejection/rebind, last-lease settlement, pending-retirement barriers, malformed
+replies, sequence exhaustion, delayed readiness, stalled queries and post-spawn
+startup cancellation. Delayed readiness exceeds the query budget but is charged
+to the original startup deadline; subsequent queries assert a single spawn.
+No timeout is increased and no in-call retry is added. Native all-target/
+all-feature compilation passes before the final framing and reap-ticket test
+additions. Integrated focused runtime, strict lint, complete local checks,
+fresh independent reviews and exact remote acceptance remain required.

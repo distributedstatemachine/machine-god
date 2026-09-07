@@ -240,6 +240,8 @@ impl AuthenticatedTerminalTmuxPane {
 }
 
 pub(crate) struct PreparedTerminalTmuxLaunch {
+    #[cfg(target_os = "macos")]
+    inventory: Option<crate::process_inventory_helper::PreparedProcessInventory>,
     server: NativeTerminalTmuxServer,
     pane: AuthenticatedTerminalTmuxPane,
     capture: Option<UnixStream>,
@@ -282,6 +284,13 @@ impl PreparedTerminalTmuxLaunch {
         }
         let deadline = deadline.min(Instant::now() + request.timeout);
         check_deadline(deadline, cancellation).map_err(gate_error)?;
+        #[cfg(target_os = "macos")]
+        let inventory = request
+            .helper
+            .inventory_helper()
+            .map(|helper| helper.prepare(deadline, cancellation))
+            .transpose()
+            .map_err(gate_error)?;
         validate_cwd(&request.cwd, &request.cwd_path)?;
         let cwd_identity =
             startup_directory_identity(&rustix::fs::fstat(&request.cwd).map_err(process_error)?);
@@ -463,6 +472,8 @@ impl PreparedTerminalTmuxLaunch {
         )?;
         Ok(Self {
             server,
+            #[cfg(target_os = "macos")]
+            inventory,
             pane,
             capture: Some(capture),
             capture_completion: CaptureCompletion::new(completion),
@@ -553,7 +564,7 @@ impl PreparedTerminalTmuxLaunch {
         )
         .map_err(process_error)?;
         #[cfg(target_os = "macos")]
-        let authority = authority.with_inventory_helper(self.server.helper.inventory_helper());
+        let authority = authority.with_inventory_helper(self.inventory.take());
         let mut authority = authority;
         authority.retain_self_as_anchor().map_err(process_error)?;
         self.pane.challenged = true;

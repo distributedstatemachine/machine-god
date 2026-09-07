@@ -81,8 +81,11 @@ host nor change an existing tool catalog. Trusted CLI code can explicitly
 select its own helper-capable executable; library embeddings must not mistake
 their executable or test runner for that helper.
 On macOS this explicit capability also supplies the fixed private process-
-inventory mode used by terminal-session cleanup. It is retained with cleanup
-ownership and does not grant process authority by itself; see
+inventory service used by terminal-session cleanup. Its inert registration is
+shared across the host's transports; native startup owners prepare and lease
+the helper under their existing deadlines. Configuration cannot retain an idle
+helper or delay host completion, and unresolved cleanup remains owned. Inventory
+does not grant process authority by itself; see
 [ADR 0004](decisions/0004-macos-process-inventory-helper.md).
 
 The root, transport, and MCP composition paths are:

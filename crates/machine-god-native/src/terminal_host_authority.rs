@@ -148,11 +148,22 @@ impl TerminalHostAuthority {
                 TerminalShell::from_account_shell(Some(path), None, None).map_err(|_| invalid())?;
             hash_field(&mut selection, shell.program().as_os_str().as_bytes());
         }
-        let helper = |flag: &str| configured_helper(&inputs.cli_executable, flag);
+        #[cfg(target_os = "macos")]
+        let inventory = crate::process_inventory_helper::ProcessInventoryHelper::new_service(
+            inputs.cli_executable.clone(),
+            vec![crate::PROCESS_INVENTORY_SERVICE_ARGUMENT.into()],
+        )
+        .map_err(|_| invalid())?;
+        let helper = |flag: &str| {
+            let helper = configured_helper(&inputs.cli_executable, flag)?;
+            #[cfg(target_os = "macos")]
+            let helper = helper.with_inventory_helper(inventory.clone());
+            Ok::<_, ToolError>(helper)
+        };
         #[cfg(target_os = "macos")]
         hash_field(
             &mut selection,
-            crate::PROCESS_INVENTORY_HELPER_ARGUMENT.as_bytes(),
+            crate::PROCESS_INVENTORY_SERVICE_ARGUMENT.as_bytes(),
         );
         hash_field(&mut selection, inputs.cli_executable.as_os_str().as_bytes());
         for flag in [
@@ -469,14 +480,6 @@ fn check(deadline: Instant, cancellation: &CancellationToken) -> Result<(), Tool
 fn configured_helper(program: &Path, flag: &str) -> Result<TerminalPtyHelper, ToolError> {
     let helper =
         TerminalPtyHelper::new(program.to_owned(), vec![flag.into()]).map_err(|_| invalid())?;
-    #[cfg(target_os = "macos")]
-    let helper = helper.with_inventory_helper(
-        crate::process_inventory_helper::ProcessInventoryHelper::new(
-            program.to_owned(),
-            vec![crate::PROCESS_INVENTORY_HELPER_ARGUMENT.into()],
-        )
-        .map_err(|_| invalid())?,
-    );
     Ok(helper)
 }
 

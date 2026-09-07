@@ -11,6 +11,17 @@ mod background_process;
 )]
 #[path = "../src/process_inventory_helper.rs"]
 mod process_inventory_helper;
+#[cfg(target_os = "macos")]
+#[path = "../src/process_inventory_protocol.rs"]
+#[allow(
+    dead_code,
+    reason = "shared service entrypoint is exercised through explicit test registration"
+)]
+mod process_inventory_protocol;
+#[cfg(target_os = "macos")]
+use machine_god_native::NativeOwnedWorkerScopeIdentity;
+#[cfg(target_os = "macos")]
+use process_inventory_protocol::PROCESS_INVENTORY_SERVICE_ARGUMENT;
 #[allow(
     dead_code,
     reason = "shared private helper dependency for the directly included lifecycle implementation"

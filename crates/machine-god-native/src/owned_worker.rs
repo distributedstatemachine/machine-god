@@ -126,6 +126,29 @@ pub(crate) fn current_worker_ticket() -> Option<NativeOwnedWorkerTicket> {
         .map(NativeOwnedWorkerTicket)
 }
 
+/// Non-owning scope identity for one explicit inventory-service registration.
+/// Different worker tickets of the same host compare equal; retaining this
+/// value cannot prolong that host's completion obligation.
+#[cfg(target_os = "macos")]
+#[derive(Clone, Debug)]
+#[doc(hidden)]
+pub struct NativeOwnedWorkerScopeIdentity(Option<Weak<ScopeState>>);
+
+#[cfg(target_os = "macos")]
+impl NativeOwnedWorkerScopeIdentity {
+    pub fn current() -> Self {
+        Self(current_worker_ticket().map(|ticket| Arc::downgrade(&ticket.0.state)))
+    }
+
+    pub fn matches(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (Some(left), Some(right)) => Weak::ptr_eq(left, right),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+}
+
 impl NativeOwnedWorkerTicket {
     pub(crate) fn run<T>(&self, operation: impl FnOnce() -> T) -> T {
         // Each collector job owns a dedicated thread. Keep weak metadata through

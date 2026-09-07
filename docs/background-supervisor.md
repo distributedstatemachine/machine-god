@@ -383,8 +383,19 @@ retain the fixed `/bin/ps` adapter. Explicitly helper-equipped terminal session
 scans instead use the bounded read-only query in
 [ADR 0004](decisions/0004-macos-process-inventory-helper.md); legacy hosts without
 that capability retain `ps`, and a selected helper failure never falls back.
-Both paths retain a 64 KiB output bound and one 250 ms deadline shared by
-nonblocking pipe reads and child observation. Before pipe EOF, readiness waits
+The complete host explicitly prepares a reusable helper service under the
+original terminal startup deadline. Native owners hold service leases; inert
+configuration and retained history cannot retain an idle child. Queries require
+complete, bounded, sequence-matching success frames and preserve the 64 KiB
+payload bound and shared 250 ms query/identity-scan deadline. A failed query
+poisons and retires its helper without an in-call retry. Replacement cannot
+overtake unresolved prior helper reaping, including after the last lease drops;
+the restart barrier itself retains no child or host-completion scope. Last-lease
+cleanup remains owned and visible through bounded reap/quarantine, with no
+global helper pool or in-process blocking-query fallback.
+
+The legacy `ps` and explicit one-shot helper paths retain one 250 ms deadline
+shared by nonblocking pipe reads and child observation. Before pipe EOF, readiness waits
 wake collection when output arrives; after EOF, bounded backoff observes exact
 child reaping without spinning on pipe hangup. Actual byte progress and the
 transition to EOF reset that backoff; spurious readiness and interrupted reads

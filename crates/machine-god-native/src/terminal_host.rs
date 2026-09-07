@@ -112,18 +112,16 @@ impl PreparedHost {
             MAX_EFFECTS,
         )
         .map_err(|_| unavailable())?;
-        #[cfg(target_os = "macos")]
-        let captured = captured
-            .with_process_inventory_helper(
-                inputs.cli_executable.clone(),
-                vec![crate::PROCESS_INVENTORY_HELPER_ARGUMENT.into()],
-            )
-            .map_err(|_| unavailable())?;
-        let captured = Arc::new(captured.with_worker_scope(workers.clone()));
+        let captured = captured.with_worker_scope(workers.clone());
         let host = Arc::new(
             TerminalHostAuthority::new(inputs)?
                 .capture_on_worker(deadline, &CancellationToken::new())?,
         );
+        #[cfg(target_os = "macos")]
+        let captured = captured.with_inventory_registration(
+            host.launch_config().pty_helper.inventory_helper().ok_or_else(unavailable)?.clone(),
+        );
+        let captured = Arc::new(captured);
         let preparer = Arc::new(TerminalHostProbePreparer::new_on_worker(
             Arc::clone(&host),
             deadline,
@@ -823,8 +821,9 @@ mod tests {
         let quoted = executable.to_str().unwrap().replace('\'', "'\\''");
         #[cfg(target_os = "macos")]
         let inventory = format!(
-            "if [ \"$1\" = '{}' ]; then\nexec '{quoted}' --exact process_inventory_helper::tests::helper_entry --nocapture 2>&1 1>/dev/null\nfi\n",
+            "if [ \"$1\" = '{}' ]; then\nexec '{quoted}' --exact process_inventory_helper::tests::helper_entry --nocapture 2>&1 1>/dev/null\nfi\nif [ \"$1\" = '{}' ]; then\nexec '{quoted}' --exact process_inventory_protocol::tests::service_entry --nocapture 2>&1 1>/dev/null\nfi\n",
             crate::PROCESS_INVENTORY_HELPER_ARGUMENT,
+            crate::PROCESS_INVENTORY_SERVICE_ARGUMENT,
         );
         #[cfg(not(target_os = "macos"))]
         let inventory = "";
