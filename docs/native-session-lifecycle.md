@@ -150,6 +150,20 @@ known scalar fields and allocates only bounded accepted strings/path bytes.
 Unrelated metadata is neither traversed nor modified. Debug/error output is
 fixed or structural and does not expose title, path or record contents.
 
+`rename_native_session` connects title staging to the core session's exclusive
+metadata transaction. Its borrowed future does nothing before polling. On first
+poll it snapshots canonical state, validates the title and injected update time,
+preserves other metadata keys and submits a revision-checked metadata-only save.
+The returned revision means persistence succeeded; neither a display change nor
+a staged value is reported as a successful rename. A live turn returns `Busy`;
+a competing revision returns `Conflict` without blindly retrying the stale patch.
+Unknown or invalid native metadata is not overwritten to make a rename succeed.
+No provider, tool, policy prompt, clock or environment is invoked. A persistence
+error can follow publication, so callers must reconcile before reporting whether
+the title was saved or retrying. Error output is redacted. Full interactive
+process-only title fallback and command dispatch belong to the conversation host,
+not to this persistence operation.
+
 ### Empty-record publication
 
 `create` starts from an exact empty `SessionRecord`:

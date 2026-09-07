@@ -104,8 +104,11 @@ mod session_lifecycle;
 mod session_listing;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod session_metadata;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod session_metadata_commands;
 mod session_store;
 mod skill;
+mod slash_commands;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod state_environment;
 mod terminal;
@@ -543,6 +546,8 @@ pub use session_metadata::{
     NATIVE_SESSION_METADATA_KEY, NativeSessionMetadata, NativeSessionMetadataError,
     NativeSessionOrigin,
 };
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use session_metadata_commands::{NativeSessionMetadataMutationError, rename_native_session};
 pub use session_store::{
     FILE_SESSION_SCHEMA_VERSION, FileSessionStore, FileSessionStoreOpenError,
     FileSessionStoreOpenErrorKind, MAX_FILE_SESSION_BYTES, MAX_LIST_SESSION_DIRECTORY_ENTRIES,
@@ -554,6 +559,14 @@ pub use skill::{
     MAX_SKILL_RESOURCE_BYTES, MAX_SKILL_SERIALIZED_ARGUMENT_BYTES,
     MAX_SKILL_SERIALIZED_RESULT_BYTES, SKILL_TOOL_NAME, SkillTool, SkillToolOpenError,
     SkillToolOpenErrorKind,
+};
+pub use slash_commands::{
+    MAX_NATIVE_SLASH_INPUT_BYTES, MAX_NATIVE_SLASH_QUERY_BYTES, NativeSlashCategory,
+    NativeSlashCommand, NativeSlashCompletion, NativeSlashCompletions, NativeSlashHelp,
+    NativeSlashInputError, NativeSlashInvocation, NativeSlashRoute, NativeSlashSpec,
+    NativeSlashSubmission, NativeSlashSubmissionContext, native_slash_completion_prefix,
+    native_slash_completions, native_slash_help, native_slash_registry,
+    resolve_native_slash_submission, route_native_slash,
 };
 pub use terminal::{
     MAX_TERMINAL_BACKGROUND_READ_BYTES, MAX_TERMINAL_BACKGROUND_WRITE_BYTES,

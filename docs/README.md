@@ -72,6 +72,7 @@ contract together when exact numeric limits matter.
 
 ## CLI contracts
 
+- [Slash-command catalog and routing](slash-commands.md)
 - [ask](ask-cli.md)
 - [permissions](permissions-cli.md)
 - [models](models-cli.md)
