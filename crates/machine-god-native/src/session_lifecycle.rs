@@ -1052,6 +1052,47 @@ mod tests {
     }
 
     #[test]
+    fn session_metadata_rename_persists_through_file_store_and_fresh_engine_resume() {
+        let root = TempDirectory::new("metadata-rename");
+        let (source, _) = ScriptedSessionIdSource::ids(["metadata-durable"]);
+        let (lifecycle, store, provider) =
+            lifecycle_with_session_ids(&root, source, Arc::new(AtomicUsize::new(0)));
+        let session = futures_executor::block_on(lifecycle.create_generated()).unwrap();
+        let before = session.record();
+        assert!(before.metadata.is_empty());
+        let revision = futures_executor::block_on(crate::rename_native_session(
+            &session,
+            "  durable title\n",
+            500,
+        ))
+        .unwrap();
+        assert_eq!(revision, machine_god_core::SessionRevision(2));
+        let expected = session.record();
+        assert_eq!(expected.messages, before.messages);
+        assert_eq!(expected.next_turn_sequence, before.next_turn_sequence);
+        assert!(provider.requests().is_empty());
+        drop((session, lifecycle, store));
+
+        let fresh_engine = Engine::builder()
+            .provider(provider.clone())
+            .session_store(FileSessionStore::open(root.path()).unwrap())
+            .permission_handler(ScriptedPermissionHandler::new([]))
+            .build()
+            .unwrap();
+        let resumed = futures_executor::block_on(fresh_engine.load_session(before.id))
+            .unwrap()
+            .unwrap();
+        assert_eq!(resumed.record(), expected);
+        let metadata = crate::NativeSessionMetadata::from_metadata(&expected.metadata).unwrap();
+        assert_eq!(metadata.title(), Some("durable title"));
+        assert_eq!(metadata.updated_at_ms(), Some(500));
+        assert_eq!(metadata.created_at_ms(), None);
+        assert_eq!(metadata.workspace(), None);
+        assert_eq!(resumed.incarnation_id(), before.incarnation_id);
+        assert!(provider.requests().is_empty());
+    }
+
+    #[test]
     fn mismatched_store_is_rejected_before_source_or_filesystem_mutation() {
         let engine_root = TempDirectory::new("engine");
         let supplied_root = TempDirectory::new("supplied");
