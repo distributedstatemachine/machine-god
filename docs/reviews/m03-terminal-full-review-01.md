@@ -749,3 +749,33 @@ The latter still has 3.876 seconds of its separate startup budget. Both failures
 precede PID decoding/identity scanning; logs do not distinguish helper startup,
 query, output or reaping delay. The inventory change is not accepted as a
 complete fix. Bounded phase diagnosis and all replacement gates remain required.
+
+Bounded isolated sampling subsequently compares 30 launches per path under the
+unchanged 250 ms cutoff. On ARM, shell-to-libtest totals are 17.30/21.24/25.56 ms
+min/median/max, direct libtest 11.44/14.79/18.56 ms, and the fresh ARM release
+helper 6.68/8.80/12.08 ms. Spawn is at most 1.60 ms; first output dominates and
+EOF/reaping generally follow within 1.2 ms. Direct helper query/decoding/sorting
+takes 3.64–8.77 ms, with encoding adding about 0.37–1.11 ms.
+
+Another 90 launches from a Rosetta x86_64 diagnostic build also finish before
+the cutoff. Shell-to-x86-libtest totals are 58.18/67.32/85.18 ms; direct x86
+libtest is 29.20/33.85/53.30 ms. The ARM release child under a Rosetta parent is
+6.52/8.64/10.65 ms, not an x86 release comparison. Direct helper query/decoding/
+sorting is 4.44–11.19 ms and encoding about 0.78–1.47 ms. Neither experiment
+reproduces the native Intel failure or establishes its cause; no M07 claim is
+made. Temporary ignored sampling tests and helper telemetry are removed.
+
+Parent-only `cfg(test)` diagnostics extend the existing failure report with
+helper selection and reservation/spawn/collector-entry times. A fixed-size
+failure-only record captures first output, byte count, EOF, last child
+observation, wait counts and last phase. No executable arguments/PIDs, added
+files/subprocesses, helper protocol, injected-clock calls, deadlines, acceptance
+or cleanup ownership change. Ten existing collector tests and one deterministic
+counter test pass. Both exact Intel-failing cases pass with libtest helpers
+(PTY 0.16 seconds, tmux 16.68 seconds) and release helpers (0.12 and 10.70
+seconds). An initial wrong-module selector ran zero new tests; the corrected
+exact selector runs and passes one. Complete replacement gates remain required.
+Diagnostic component `394cb57768aa214ff4fb3f4d10816255fe181ede` passes strict
+exact-1.94.1 native all-target/all-feature Clippy (1m23s), formatting and diff
+checks. Its worktree is clean and all runtime sessions/cache leases are released
+before integration. This evidence does not establish an Intel compatibility fix.

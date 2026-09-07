@@ -5948,7 +5948,11 @@ fn macos_scope_members_with(
         .stderr(Stdio::null());
     let mut reap_permit =
         Some(reserve_child_reap_authority_for(true).map_err(|_| cleanup_error())?);
+    #[cfg(test)]
+    let reserved_at = started.elapsed();
     let mut child = Some(command.spawn().map_err(|_| cleanup_error())?);
+    #[cfg(test)]
+    let spawned_at = started.elapsed();
     let mut output = child
         .as_mut()
         .and_then(|child| child.stdout.take())
@@ -5962,6 +5966,8 @@ fn macos_scope_members_with(
         return Err(cleanup_error());
     }
     let deadline = helper_deadline.unwrap_or_else(|| Instant::now() + GROUP_SNAPSHOT_TIMEOUT);
+    #[cfg(test)]
+    let collector_at = started.elapsed();
     let snapshot = collect_group_snapshot_output(&mut output, deadline, || {
         let observed = try_wait_child(child.as_mut().ok_or(())?);
         settle_group_snapshot_child_observation(observed, || {
@@ -5970,7 +5976,13 @@ fn macos_scope_members_with(
     });
     let Ok(bytes) = snapshot else {
         #[cfg(test)]
-        report_macos_inventory_collection_failure(session_scope, started, deadline);
+        report_macos_inventory_collection_failure(
+            session_scope,
+            started,
+            deadline,
+            inventory.is_some(),
+            [reserved_at, spawned_at, collector_at],
+        );
         terminate_and_reap_or_quarantine(&mut child, &mut reap_permit);
         return Err(cleanup_error());
     };
@@ -6036,11 +6048,16 @@ fn report_macos_inventory_collection_failure(
     session_scope: bool,
     started: Instant,
     deadline: Instant,
+    helper_selected: bool,
+    phases: [Duration; 3],
 ) {
     eprintln!(
-        "macOS inventory collection failed: session={session_scope} elapsed={:?} expired={}",
+        "macOS inventory collection failed: session={session_scope} helper={helper_selected} elapsed={:?} expired={} reserved_at={:?} spawned_at={:?} collector_at={:?}",
         started.elapsed(),
-        Instant::now() >= deadline
+        Instant::now() >= deadline,
+        phases[0],
+        phases[1],
+        phases[2]
     );
 }
 
@@ -6239,6 +6256,13 @@ fn wait_group_snapshot_readable(
 }
 
 #[cfg(target_os = "macos")]
+#[cfg_attr(
+    test,
+    allow(
+        clippy::too_many_lines,
+        reason = "Test-only phase observations preserve the production collector's original clock calls and control flow."
+    )
+)]
 fn collect_group_snapshot_output_with<R: std::io::Read>(
     reader: &mut R,
     deadline: Instant,
@@ -6246,6 +6270,8 @@ fn collect_group_snapshot_output_with<R: std::io::Read>(
     mut now: impl FnMut() -> Instant,
     mut wait: impl FnMut(&mut R, bool, Duration) -> Result<bool, ()>,
 ) -> Result<Vec<u8>, ()> {
+    #[cfg(test)]
+    let mut diagnostics = GroupSnapshotDiagnostics::new(Instant::now());
     let mut bytes = Vec::with_capacity(MAX_GROUP_SNAPSHOT_BYTES + 1);
     let mut buffer = [0_u8; 8 * 1024];
     let mut eof = false;
@@ -6258,7 +6284,10 @@ fn collect_group_snapshot_output_with<R: std::io::Read>(
         }
         let mut wait_for_output = false;
         if !eof {
-            match reader.read(&mut buffer) {
+            let read = reader.read(&mut buffer);
+            #[cfg(test)]
+            diagnostics.read(Instant::now(), read.as_ref().ok().copied());
+            match read {
                 Ok(0) => {
                     eof = true;
                     // Output is complete, but exact child reaping may lag EOF.
@@ -6288,15 +6317,26 @@ fn collect_group_snapshot_output_with<R: std::io::Read>(
         if now() >= deadline {
             return Err(());
         }
-        if exited.is_none()
-            && let SnapshotChildState::Exited(success) = child_state()?
-        {
-            exited = Some(success);
+        if exited.is_none() {
+            #[cfg(test)]
+            {
+                diagnostics.phase = "observe-child";
+            }
+            let state = child_state()?;
+            #[cfg(test)]
+            diagnostics.observe_child(Instant::now(), state);
+            if let SnapshotChildState::Exited(success) = state {
+                exited = Some(success);
+            }
         }
         if now() >= deadline {
             return Err(());
         }
         if eof && exited.is_some() {
+            #[cfg(test)]
+            {
+                diagnostics.complete = exited == Some(true);
+            }
             return exited.filter(|success| *success).map(|_| bytes).ok_or(());
         }
         let interval = observation
@@ -6305,8 +6345,97 @@ fn collect_group_snapshot_output_with<R: std::io::Read>(
         if interval.is_zero() {
             return Err(());
         }
+        #[cfg(test)]
+        diagnostics.wait(eof, wait_for_output);
         readiness_hint = wait(reader, wait_for_output, interval)?;
         observation.advance();
+    }
+}
+
+/// Failure-only test diagnostics. This never calls the collector's injected
+/// clock, changes its outcome, or records executable arguments or process IDs.
+#[cfg(all(test, target_os = "macos"))]
+#[derive(Debug)]
+struct GroupSnapshotDiagnostics {
+    started: Instant,
+    first_byte_at: Option<Duration>,
+    eof_at: Option<Duration>,
+    bytes: usize,
+    last_child: Option<(Duration, SnapshotChildState)>,
+    output_waits: usize,
+    eof_waits: usize,
+    readiness_wait: bool,
+    phase: &'static str,
+    complete: bool,
+}
+
+#[cfg(all(test, target_os = "macos"))]
+impl GroupSnapshotDiagnostics {
+    fn new(started: Instant) -> Self {
+        Self {
+            started,
+            first_byte_at: None,
+            eof_at: None,
+            bytes: 0,
+            last_child: None,
+            output_waits: 0,
+            eof_waits: 0,
+            readiness_wait: false,
+            phase: "entry",
+            complete: false,
+        }
+    }
+
+    fn read(&mut self, now: Instant, read: Option<usize>) {
+        self.phase = "read-output";
+        match read {
+            Some(0) => {
+                self.eof_at
+                    .get_or_insert(now.saturating_duration_since(self.started));
+            }
+            Some(bytes) => {
+                self.first_byte_at
+                    .get_or_insert(now.saturating_duration_since(self.started));
+                self.bytes = self.bytes.saturating_add(bytes);
+            }
+            None => {}
+        }
+    }
+
+    fn observe_child(&mut self, now: Instant, state: SnapshotChildState) {
+        self.phase = "observe-child";
+        self.last_child = Some((now.saturating_duration_since(self.started), state));
+    }
+
+    fn wait(&mut self, eof: bool, readiness: bool) {
+        self.readiness_wait = readiness;
+        if eof {
+            self.phase = "wait-after-eof";
+            self.eof_waits = self.eof_waits.saturating_add(1);
+        } else {
+            self.phase = "wait-output";
+            self.output_waits = self.output_waits.saturating_add(1);
+        }
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+impl Drop for GroupSnapshotDiagnostics {
+    fn drop(&mut self) {
+        if !self.complete {
+            eprintln!(
+                "macOS inventory collector failed: elapsed={:?} first_byte_at={:?} bytes={} eof_at={:?} last_child={:?} output_waits={} eof_waits={} readiness_wait={} phase={}",
+                self.started.elapsed(),
+                self.first_byte_at,
+                self.bytes,
+                self.eof_at,
+                self.last_child,
+                self.output_waits,
+                self.eof_waits,
+                self.readiness_wait,
+                self.phase
+            );
+        }
     }
 }
 
@@ -10562,6 +10691,49 @@ mod process_regression_tests {
         TRY_WAIT_FAILURE_PID.store(0, Ordering::Release);
         TRY_WAIT_FAILURES.store(0, Ordering::Release);
         TRY_WAIT_ERRNO.store(0, Ordering::Release);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_collector_diagnostics_preserve_empty_and_partial_failure_phases() {
+        let started = Instant::now();
+        let mut diagnostics = GroupSnapshotDiagnostics::new(started);
+        assert_eq!(diagnostics.phase, "entry");
+        assert_eq!(diagnostics.first_byte_at, None);
+        assert_eq!(diagnostics.eof_at, None);
+        assert_eq!(diagnostics.last_child, None);
+        assert!(!diagnostics.complete);
+        diagnostics.read(started, None);
+        diagnostics.wait(false, true);
+        assert_eq!(diagnostics.phase, "wait-output");
+        assert_eq!(diagnostics.bytes, 0);
+        assert_eq!(diagnostics.output_waits, 1);
+        assert!(diagnostics.readiness_wait);
+        diagnostics.observe_child(started, SnapshotChildState::Running);
+        diagnostics.read(started + Duration::from_millis(10), Some(2));
+        diagnostics.read(started + Duration::from_millis(20), Some(3));
+        diagnostics.read(started + Duration::from_millis(21), None);
+        assert_eq!(diagnostics.first_byte_at, Some(Duration::from_millis(10)));
+        assert_eq!(diagnostics.bytes, 5);
+        diagnostics.read(started + Duration::from_millis(22), Some(0));
+        diagnostics.wait(true, false);
+        assert_eq!(diagnostics.phase, "wait-after-eof");
+        assert_eq!(diagnostics.eof_at, Some(Duration::from_millis(22)));
+        assert_eq!(diagnostics.eof_waits, 1);
+        assert!(!diagnostics.readiness_wait);
+        diagnostics.observe_child(
+            started + Duration::from_millis(24),
+            SnapshotChildState::Exited(false),
+        );
+        assert_eq!(
+            diagnostics.last_child,
+            Some((Duration::from_millis(24), SnapshotChildState::Exited(false)))
+        );
+        assert!(
+            !diagnostics.complete,
+            "unsuccessful reap still reports failure"
+        );
+        diagnostics.complete = true; // Suppress this synthetic diagnostic's Drop log.
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

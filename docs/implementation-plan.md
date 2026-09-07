@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `resolve the remaining Intel macOS inventory-collection timeout, then complete replacement pinned local checks, three fresh independent reviews and exact remote gates`
+- Next gate: `complete replacement pinned local checks and three fresh reviews, then obtain exact remote results with bounded phase diagnostics for the unresolved Intel macOS inventory timeout`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -196,6 +196,11 @@ exposes two inventory-collection timeouts. Linux ARM separately exposes an
 test-only barrier correction preserves both valid scheduling outcomes and
 passes focused tests and strict lint. Intel collection diagnosis continues;
 neither candidate acceptance nor delivery is claimed.
+Bounded ARM/Rosetta sampling does not reproduce the Intel timeout. Test-only
+failure counters now distinguish helper selection, reservation/spawn/setup,
+first output, EOF and child observation without altering the protocol or
+deadline. The next native Intel gate must establish the stalled phase if it
+fails again; diagnostics alone are not a compatibility fix.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:
