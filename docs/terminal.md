@@ -562,7 +562,13 @@ separately authorized close of that exact session can finish retained cleanup;
 the failure does not authorize replaying a start, command or write.
 Captured descendant identities and Linux process handles belong to the retained
 process across close attempts, including descendants that subsequently leave
-the original session. A failed inventory or quiescence proof does not reap the
+the original session. Each positively authenticated capture enters retained
+cleanup before later ancestry, session-inventory or union-merge work can fail;
+this includes successful macOS identity/session observations. An unproved PID
+lookup or incomplete ancestor chain grants no cleanup authority. Existing
+retained proofs remain exact-process cleanup authority; an incomplete inventory
+never proves quiescence or authorizes signaling an unproved process.
+A failed inventory or quiescence proof does not reap the
 shell: it remains the original session/group anchor. Signal-delivery failure may
 still be followed by escalation or concurrent natural exit; it is never used as
 proof of cleanup. Positive shell exit must precede the final quiescence proof,

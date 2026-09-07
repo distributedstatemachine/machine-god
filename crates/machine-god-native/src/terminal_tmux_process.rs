@@ -6,7 +6,7 @@
 //! shell exits, independently of the actual terminal job's completion status.
 
 #[cfg(target_os = "macos")]
-use super::macos_scope_members;
+use super::macos_scope_members_with;
 use super::{
     BackgroundProcessError, BackgroundProcessSignal, GROUP_SNAPSHOT_TIMEOUT, cancelled_error,
     cleanup_error, invariant_error, process_signal, spawn_error,
@@ -369,7 +369,8 @@ impl AuthenticatedTerminalProcess {
             )?
         };
         #[cfg(target_os = "macos")]
-        let snapshot = macos_scope_members(self.root.pid, true)?;
+        let snapshot =
+            capture_macos_scope_members(&mut self.members, anchor, self.root.pid, deadline)?;
         let empty_inventory = snapshot.iter().all(|member| member.pid == anchor.pid);
         let mut known = retain_pending_members(&mut self.members, anchor, self.root.pid, deadline)?;
         for member in snapshot {
@@ -396,19 +397,7 @@ impl AuthenticatedTerminalProcess {
                 // Transfer established authority before any later fallible
                 // work, including deadlines, captures and anchor observations.
                 known.insert(process.pid);
-                self.members.push(process);
-                #[cfg(test)]
-                if tests::FAIL_AFTER_CAPTURE
-                    .compare_exchange(
-                        member.pid.as_raw_nonzero().get().cast_unsigned(),
-                        0,
-                        std::sync::atomic::Ordering::SeqCst,
-                        std::sync::atomic::Ordering::SeqCst,
-                    )
-                    .is_ok()
-                {
-                    return Err(cleanup_error());
-                }
+                retain_captured_member(&mut self.members, process, deadline)?;
                 if Instant::now() >= deadline {
                     return Err(cleanup_error());
                 }
@@ -513,6 +502,67 @@ impl AuthenticatedTerminalProcess {
         self.anchor_retiring = true;
         Ok(())
     }
+}
+
+#[cfg(target_os = "macos")]
+fn capture_macos_scope_members(
+    members: &mut Vec<PinnedProcess>,
+    anchor: &PinnedProcess,
+    session: rustix::process::Pid,
+    deadline: Instant,
+) -> Result<Vec<super::CapturedGroupMember>, BackgroundProcessError> {
+    let mut known = retain_pending_members(members, anchor, session, deadline)?;
+    macos_scope_members_with(session, true, |member, identity| {
+        if member.pid == session || member.pid == anchor.pid || known.contains(&member.pid) {
+            return Ok(());
+        }
+        if known.len() >= MAX_MEMBERS || Instant::now() >= deadline {
+            return Err(cleanup_error());
+        }
+        // The scanner authenticated this unique ID on both sides of its SID
+        // observation. Later SID escape cannot revoke established ownership.
+        // Carry the scanner's authenticated opaque identity directly. A second
+        // fallible query here would itself reopen a prefix-loss boundary.
+        let handle = identity.ok_or_else(cleanup_error)?;
+        if !anchor.in_session(session)? {
+            return Err(cleanup_error());
+        }
+        known.insert(member.pid);
+        retain_captured_member(
+            members,
+            PinnedProcess {
+                pid: member.pid,
+                handle,
+            },
+            deadline,
+        )
+    })
+}
+
+fn retain_captured_member(
+    members: &mut Vec<PinnedProcess>,
+    process: PinnedProcess,
+    deadline: Instant,
+) -> Result<(), BackgroundProcessError> {
+    #[cfg(test)]
+    let pid = process.pid;
+    members.push(process);
+    if Instant::now() >= deadline {
+        return Err(cleanup_error());
+    }
+    #[cfg(test)]
+    if tests::FAIL_AFTER_CAPTURE
+        .compare_exchange(
+            pid.as_raw_nonzero().get().cast_unsigned(),
+            0,
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+        )
+        .is_ok()
+    {
+        return Err(cleanup_error());
+    }
+    Ok(())
 }
 
 fn retain_pending_members(

@@ -257,3 +257,43 @@ cleanup assertions. The corrected host case and unchanged macOS startup path
 each pass their exact pinned test; the uninstrumented Linux startup case passes
 30 consecutive runs and strict native Clippy. These focused checks are not a
 replacement full-gate or review seal.
+
+## Review of `8546972`
+
+Candidate `8546972df17de9a06b13870e1b8d362eba869bff` passed the complete
+pinned local gate: macOS native units 1,397/four expected ignores, full workspace
+and doctests, release helpers 654/four expected ignores, eight release-launch
+checks, fresh CLI smoke, non-root Linux native units 1,465/five expected ignores
+and CLI units 141/four expected ignores, strict Linux/macOS Clippy, dependency
+checks, 259 Python tests/14 expected skips, drift and FreeBSD/WASI checks.
+Three fresh independent local reviewers compared the entire feature against
+merge base `46e5b70f6c5ba76a4699f5bd8ba424a1fa3813be`:
+
+- `terminal_8546972_api`: no actionable finding; 43 cached contract/admission
+  regressions passed. Scope included decoder, core, Gateway, archives and CLI.
+- `terminal_8546972_resources`: no actionable finding in accounting,
+  retention/recovery, grid, scheduling and probe bounds. No benchmark claim.
+- `terminal_8546972_lifecycle`: one P1 at `background_process.rs:1082` and
+  `:2679`. Authenticated ancestry captures remain temporary across later
+  fallible SID scans and union merges. The exact Linux reproduction captured
+  two descendants, injected a later SID-snapshot failure, then let one child
+  escape/reparent. Retry returned `Ok(Signaled(9))` while an independent pidfd
+  proved the escaped child alive. Its guard killed/reaped the fixture afterward.
+  The bounded reproduction took 0.05 seconds on non-root Linux/Rust 1.94.1.
+  Related nested Linux capture stages and macOS identity/session snapshot
+  prefixes were source-confirmed variants; the macOS variant was not runtime
+  reproduced by this review. Existing Linux final-quiescence and tmux
+  post-snapshot retention paths already retain their captures.
+
+This rejected candidate was not pushed or delivered. Review used the local
+direct fallback, not a Bugbot service; no previous review seal was inherited.
+
+Correction `2e50a98b1e8c0da8313d70236d04d77119aee7ef` retains proved prefixes
+across Linux ancestry/SID/capacity failures and macOS PTY/tmux inventory errors.
+Ordinary callers keep their no-observer snapshot semantics. Permanent Linux
+tests cover escape/reparent/retry after three capture stages and rejection of
+unproved root/parent rows; macOS tests cover pre/final inventory-prefix failures.
+Exact native Clippy passes on both platforms. Focused Linux groups pass 106
+background/tmux, 22 PTY and 17 captured-exec cases; macOS passes 67, 25 and 17
+respectively, with expected private-helper ignores. These checks do not replace
+the integrated candidate's complete local, fresh review or remote gates.

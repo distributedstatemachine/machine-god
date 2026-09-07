@@ -1073,56 +1073,50 @@ fn prepare_signal_process_tree(
 #[cfg(target_os = "linux")]
 fn prepare_terminal_process_tree(
     target: &ProcessSignalTarget,
-) -> Result<PreparedSignalProcessTree, BackgroundProcessSignalError> {
+    cleanup: &mut TerminalCleanup,
+) -> Result<bool, BackgroundProcessSignalError> {
     let authority = target.authority.as_ref().ok_or_else(signal_process_error)?;
     let mut scratch = SignalProcessScratch::new();
-    let (snapshot, mut pinned_processes) =
-        signal_process_snapshot(authority, target.group, &mut scratch)?;
-    let mut descendants = derive_signal_descendants(&snapshot, target.group, target.root_identity)?;
-    let members =
-        linux_scope_members(authority, target.group, true).map_err(|_| signal_process_error())?;
-    for member in members {
-        if member.pid == target.group || pinned_processes.contains_key(&member.pid) {
-            continue;
-        }
-        let Some(directory) = open_linux_signal_process_directory(authority, member.pid, &scratch)?
-        else {
-            continue;
-        };
-        scratch
-            .budget
-            .preflight()
-            .map_err(|_| signal_process_error())?;
-        let process_handle = match budgeted_linux_signal_open(&scratch.descriptors, || {
-            rustix::process::pidfd_open(member.pid, rustix::process::PidfdFlags::empty())
-        })? {
-            Ok(process) => process,
-            Err(rustix::io::Errno::SRCH) => continue,
-            Err(_) => return Err(signal_process_error()),
-        };
-        let Some(process) = read_linux_signal_process_at(
-            directory.as_fd(),
-            member.pid,
-            &mut scratch.stat_bytes,
-            &mut scratch.budget,
-            &scratch.descriptors,
-        )?
-        else {
-            continue;
-        };
-        let stat = parse_linux_proc_stat(&scratch.stat_bytes, member.pid)
-            .map_err(|_| signal_process_error())?;
-        if stat.session != Some(target.group) || Some(stat.start_time) != member.identity {
-            continue;
-        }
-        descendants.push(process);
-        pinned_processes.insert(member.pid, process_handle);
-    }
+    let (snapshot, _) = signal_process_snapshot_with(
+        authority,
+        target.group,
+        &mut scratch,
+        Some(LinuxSignalSnapshotCapture {
+            root_identity: target.root_identity,
+            retain: &mut |process, descriptor| {
+                require_cleanup_leader(target.group).map_err(|_| signal_process_error())?;
+                retain_terminal_pin(
+                    &mut cleanup.pinned,
+                    &mut cleanup.captured,
+                    process,
+                    descriptor,
+                )
+                .map_err(|_| signal_process_error())?;
+                cleanup.phase = TerminalCleanupPhase::Captured;
+                Ok(())
+            },
+        }),
+    )?;
+    let descendants = derive_signal_descendants(&snapshot, target.group, target.root_identity)?;
+    let mut capture = LinuxTerminalPinCapture {
+        group: target.group,
+        pinned: &mut cleanup.pinned,
+        captured: &mut cleanup.captured,
+        descriptors: scratch.descriptors,
+        bytes: scratch.stat_bytes,
+    };
+    let members = linux_scope_members_with(
+        authority,
+        target.group,
+        true,
+        |pid, directory, parsed, budget| {
+            require_cleanup_leader(target.group)?;
+            capture.observe(pid, directory, parsed, budget)
+        },
+    )
+    .map_err(|_| signal_process_error())?;
     require_retained_signal_root(target)?;
-    Ok(PreparedSignalProcessTree {
-        descendants,
-        pinned_processes,
-    })
+    Ok(descendants.is_empty() && only_group_leader_remains(&members, target.group))
 }
 
 #[cfg(target_os = "linux")]
@@ -1178,8 +1172,8 @@ fn finish_signal_delivery(
 }
 
 #[cfg(target_os = "linux")]
-fn signal_descendants_with(
-    descendants: &[SignalProcessSnapshot],
+fn signal_descendants_with<'a>(
+    descendants: impl IntoIterator<Item = &'a SignalProcessSnapshot>,
     mut send: impl FnMut(&SignalProcessSnapshot) -> Result<(), BackgroundProcessSignalError>,
 ) -> DescendantSignalDelivery {
     let mut delivery = DescendantSignalDelivery::default();
@@ -2676,48 +2670,23 @@ impl TerminalCleanup {
                         .map_err(|_| cleanup_error())?,
                 );
             }
-            let next =
-                prepare_terminal_process_tree(self.target.as_ref().ok_or_else(invariant_error)?)
-                    .map_err(|_| cleanup_error())?;
-            self.last_only_leader = next.descendants.is_empty();
-            self.captured.retain(
-                next.descendants
-                    .iter()
-                    .map(|member| CapturedGroupMember {
-                        pid: member.pid,
-                        identity: Some(member.identity.primary),
-                    })
-                    .collect(),
-            )?;
-            // A PID cannot denote two live incarnations simultaneously. Keep
-            // prior escaped members; replace only the now-reused PID's pin.
-            for member in next.descendants {
-                if let Some(index) = self
-                    .pinned
-                    .descendants
-                    .iter()
-                    .position(|old| old.pid == member.pid)
-                {
-                    self.pinned.descendants[index] = member;
-                } else {
-                    self.pinned.descendants.push(member);
-                }
+            let target = self.target.as_ref().ok_or_else(invariant_error)?.clone();
+            let result = prepare_terminal_process_tree(&target, self);
+            if !self.pinned.pinned_processes.is_empty() {
+                // Even an incomplete capture may have established exact pins.
+                // Retry can signal those pins; only success updates inventory.
+                self.phase = TerminalCleanupPhase::Captured;
             }
-            for (pid, descriptor) in next.pinned_processes {
-                if self
-                    .pinned
-                    .descendants
-                    .iter()
-                    .any(|member| member.pid == pid)
-                {
-                    self.pinned.pinned_processes.insert(pid, descriptor);
-                }
-            }
+            self.last_only_leader = result.map_err(|_| cleanup_error())?;
         }
         #[cfg(target_os = "macos")]
         {
             let _ = authority;
-            let members = macos_scope_members(group, true)?;
+            let result = macos_terminal_scope_members(group, &mut self.captured);
+            if !self.captured.members.is_empty() {
+                self.phase = TerminalCleanupPhase::Captured;
+            }
+            let members = result?;
             self.last_only_leader = only_group_leader_remains(&members, group);
             self.captured.retain(members)?;
         }
@@ -2739,16 +2708,19 @@ impl TerminalCleanup {
         })?;
         #[cfg(target_os = "linux")]
         {
-            let descendants = signal_descendants_with(&self.pinned.descendants, |member| {
-                signal_pinned_linux_process(
-                    self.pinned
-                        .pinned_processes
-                        .get(&member.pid)
-                        .ok_or_else(signal_process_error)?
-                        .as_fd(),
-                    signal,
-                )
-            });
+            // Cleanup captures ancestry breadth-first into retained ownership;
+            // dispatch its children before parents, still before the group.
+            let descendants =
+                signal_descendants_with(self.pinned.descendants.iter().rev(), |member| {
+                    signal_pinned_linux_process(
+                        self.pinned
+                            .pinned_processes
+                            .get(&member.pid)
+                            .ok_or_else(signal_process_error)?
+                            .as_fd(),
+                        signal,
+                    )
+                });
             let group_result =
                 signal_group_or_confirm_exited_leader(group, signal, self.last_only_leader)
                     .map_err(|failure| match failure {
@@ -2820,7 +2792,80 @@ impl TerminalCleanup {
             )
         }
         #[cfg(target_os = "macos")]
-        require_original_group_quiescent(group, authority, &mut self.captured)
+        require_original_group_quiescent_with(group, authority, &mut self.captured, |captured| {
+            macos_terminal_scope_members(group, captured)
+        })
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn require_cleanup_leader(group: rustix::process::Pid) -> Result<(), BackgroundProcessError> {
+    observe_leader(group)
+        .map(|_| ())
+        .map_err(|failure| match failure {
+            LeaderObservationFailure::LostAuthority => wait_error(),
+            LeaderObservationFailure::Operation(error) => error,
+        })
+}
+
+#[cfg(target_os = "macos")]
+fn macos_terminal_scope_members(
+    group: rustix::process::Pid,
+    captured: &mut CapturedMemberUnion,
+) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
+    macos_scope_members_with(group, true, |member, _| {
+        require_cleanup_leader(group)?;
+        captured.retain(vec![member])
+    })
+}
+
+/// Commit one positively authenticated process before any subsequent fallible
+/// observation. Capacity refusal for this row cannot roll back an older prefix.
+#[cfg(target_os = "linux")]
+fn retain_terminal_pin(
+    pinned: &mut PreparedSignalProcessTree,
+    captured: &mut CapturedMemberUnion,
+    process: SignalProcessSnapshot,
+    descriptor: BudgetedLinuxSignalFd,
+) -> Result<(), BackgroundProcessError> {
+    captured.retain(vec![CapturedGroupMember {
+        pid: process.pid,
+        identity: Some(process.identity.primary),
+    }])?;
+    if let Some(index) = pinned
+        .descendants
+        .iter()
+        .position(|old| old.pid == process.pid)
+    {
+        pinned.descendants[index] = process;
+    } else {
+        pinned.descendants.push(process);
+    }
+    pinned.pinned_processes.insert(process.pid, descriptor);
+    #[cfg(test)]
+    fail_after_terminal_capture_for_test(process.pid)?;
+    Ok(())
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static TERMINAL_CAPTURE_FAILURE_PID: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+fn fail_after_terminal_capture_for_test(
+    pid: rustix::process::Pid,
+) -> Result<(), BackgroundProcessError> {
+    if TERMINAL_CAPTURE_FAILURE_PID
+        .compare_exchange(
+            pid.as_raw_nonzero().get().cast_unsigned(),
+            0,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        )
+        .is_ok()
+    {
+        Err(cleanup_error())
+    } else {
+        Ok(())
     }
 }
 
@@ -2888,18 +2933,7 @@ impl LinuxTerminalPinCapture<'_> {
         // Membership was positively observed before opening the pidfd. A SID
         // change during the sandwich does not revoke that same incarnation's
         // cleanup ownership; a replacement PID never passes the sandwich.
-        self.captured.retain(vec![member])?;
-        if let Some(index) = self
-            .pinned
-            .descendants
-            .iter()
-            .position(|old| old.pid == pid)
-        {
-            self.pinned.descendants[index] = current;
-        } else {
-            self.pinned.descendants.push(current);
-        }
-        self.pinned.pinned_processes.insert(pid, descriptor);
+        retain_terminal_pin(self.pinned, self.captured, current, descriptor)?;
         budget.require_live()
     }
 }
@@ -5444,11 +5478,38 @@ struct LinuxPendingSignalProcess {
     process: Option<BudgetedLinuxSignalFd>,
 }
 
+/// Cleanup alone retains authenticated prefixes. Ordinary signal callers keep
+/// their all-or-error temporary snapshot and perform no new observations.
+#[cfg(target_os = "linux")]
+struct LinuxSignalSnapshotCapture<'a> {
+    root_identity: ProcessIdentity,
+    retain: &'a mut dyn FnMut(
+        SignalProcessSnapshot,
+        BudgetedLinuxSignalFd,
+    ) -> Result<(), BackgroundProcessSignalError>,
+}
+
 #[cfg(target_os = "linux")]
 fn signal_process_snapshot(
     authority: &GroupSnapshotAuthority,
     root: rustix::process::Pid,
     scratch: &mut SignalProcessScratch,
+) -> Result<
+    (
+        Vec<SignalProcessSnapshot>,
+        HashMap<rustix::process::Pid, BudgetedLinuxSignalFd>,
+    ),
+    BackgroundProcessSignalError,
+> {
+    signal_process_snapshot_with(authority, root, scratch, None)
+}
+
+#[cfg(target_os = "linux")]
+fn signal_process_snapshot_with(
+    authority: &GroupSnapshotAuthority,
+    root: rustix::process::Pid,
+    scratch: &mut SignalProcessScratch,
+    mut capture: Option<LinuxSignalSnapshotCapture<'_>>,
 ) -> Result<
     (
         Vec<SignalProcessSnapshot>,
@@ -5468,6 +5529,11 @@ fn signal_process_snapshot(
         &scratch.descriptors,
     )?
     .ok_or_else(signal_not_found_error)?;
+    if let Some(capture) = &capture
+        && (root.identity != capture.root_identity || root.group != Some(root_pid))
+    {
+        return Err(signal_not_found_error());
+    }
     let mut snapshot = vec![root];
     let mut pending_processes = HashMap::from([(
         root_pid,
@@ -5496,6 +5562,7 @@ fn signal_process_snapshot(
             MAX_SIGNAL_TREE_PROCESSES.saturating_sub(snapshot.len()),
             &mut child_bytes,
             scratch,
+            &mut capture,
         )?;
         require_linux_signal_parent_at(parent_directory, &parent, scratch)?;
         // The retained proc directory is needed only until this exact node's
@@ -5581,6 +5648,7 @@ fn read_linux_signal_children(
     remaining_processes: usize,
     child_bytes: &mut Vec<u8>,
     scratch: &mut SignalProcessScratch,
+    capture: &mut Option<LinuxSignalSnapshotCapture<'_>>,
 ) -> Result<Vec<(SignalProcessSnapshot, LinuxPendingSignalProcess)>, BackgroundProcessSignalError> {
     scratch
         .budget
@@ -5643,8 +5711,10 @@ fn read_linux_signal_children(
             &mut discovered,
             authority,
             parent,
+            parent_directory,
             remaining_processes,
             scratch,
+            capture,
         )?;
         require_linux_signal_parent_at(parent_directory, &parent, scratch)?;
     }
@@ -5652,14 +5722,20 @@ fn read_linux_signal_children(
 }
 
 #[cfg(target_os = "linux")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "The child record, retained parent proof, shared budgets and optional cleanup transfer stay explicit at one acquisition boundary."
+)]
 fn append_linux_signal_children_record(
     children: BudgetedLinuxSignalFd,
     bytes: &mut Vec<u8>,
     discovered: &mut Vec<(SignalProcessSnapshot, LinuxPendingSignalProcess)>,
     authority: &GroupSnapshotAuthority,
     parent: SignalProcessSnapshot,
+    parent_directory: BorrowedFd<'_>,
     remaining_processes: usize,
     scratch: &mut SignalProcessScratch,
+    capture: &mut Option<LinuxSignalSnapshotCapture<'_>>,
 ) -> Result<(), BackgroundProcessSignalError> {
     let mut file = children.into_file();
     read_linux_proc_record(
@@ -5706,11 +5782,23 @@ fn append_linux_signal_children_record(
         if process.parent != Some(parent.pid) {
             return Err(signal_process_error());
         }
+        let process_handle = if let Some(capture) = capture {
+            // The exact child/proc-directory sandwich above and a second
+            // parent-incarnation observation prove this edge before retention.
+            // The root was bound before traversal; only proven parent edges
+            // enter the queue. Later sibling/task/ancestor errors cannot revoke
+            // this established prefix. No bare numeric PID grants authority.
+            require_linux_signal_parent_at(parent_directory, &parent, scratch)?;
+            (capture.retain)(process, process_handle)?;
+            None
+        } else {
+            Some(process_handle)
+        };
         discovered.push((
             process,
             LinuxPendingSignalProcess {
                 directory,
-                process: Some(process_handle),
+                process: process_handle,
             },
         ));
     }
@@ -5761,6 +5849,24 @@ fn group_members(
 fn macos_scope_members(
     group: rustix::process::Pid,
     session_scope: bool,
+) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
+    macos_scope_members_with(group, session_scope, |_, _| Ok(()))
+}
+
+/// Each successful incarnation/session sandwich can transfer directly into a
+/// cleanup owner. A later scan error still rejects the inventory as a whole.
+#[cfg(target_os = "macos")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "Ordered inventory keeps bounded child collection, exact identity proof and prefix publication under the original deadline."
+)]
+fn macos_scope_members_with(
+    group: rustix::process::Pid,
+    session_scope: bool,
+    mut observe: impl FnMut(
+        CapturedGroupMember,
+        Option<machine_god_terminal_sys::ProcessIdentity>,
+    ) -> Result<(), BackgroundProcessError>,
 ) -> Result<Vec<CapturedGroupMember>, BackgroundProcessError> {
     #[cfg(test)]
     let started = Instant::now();
@@ -5844,19 +5950,26 @@ fn macos_scope_members(
         if session_scope && pid != group {
             let raw = NonZeroU32::new(pid.as_raw_nonzero().get().cast_unsigned())
                 .ok_or_else(cleanup_error)?;
-            identity = macos_session_member_identity(
+            identity = macos_session_member_handle(
                 group,
                 || rustix::process::getsid(Some(pid)).map_err(std::io::Error::from),
                 || {
                     machine_god_terminal_sys::ProcessIdentity::capture(raw)
-                        .map(machine_god_terminal_sys::ProcessIdentity::unique_id)
+                        .map(|identity| (identity.unique_id(), identity))
                 },
             )?;
             if identity.is_none() {
                 continue;
             }
         }
-        members.push(CapturedGroupMember { pid, identity });
+        let member = CapturedGroupMember {
+            pid,
+            identity: identity.map(machine_god_terminal_sys::ProcessIdentity::unique_id),
+        };
+        observe(member, identity)?;
+        #[cfg(test)]
+        fail_after_terminal_capture_for_test(pid)?;
+        members.push(member);
     }
     Ok(members)
 }
@@ -5889,12 +6002,21 @@ fn report_macos_scan(
     );
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(test, target_os = "macos"))]
 fn macos_session_member_identity(
     group: rustix::process::Pid,
-    mut session: impl FnMut() -> std::io::Result<rustix::process::Pid>,
+    session: impl FnMut() -> std::io::Result<rustix::process::Pid>,
     mut identity: impl FnMut() -> std::io::Result<u64>,
 ) -> Result<Option<u64>, BackgroundProcessError> {
+    macos_session_member_handle(group, session, || identity().map(|id| (id, id)))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_session_member_handle<T>(
+    group: rustix::process::Pid,
+    mut session: impl FnMut() -> std::io::Result<rustix::process::Pid>,
+    mut identity: impl FnMut() -> std::io::Result<(u64, T)>,
+) -> Result<Option<T>, BackgroundProcessError> {
     // Reject unrelated rows before the more expensive incarnation query. This
     // is only a hint: a match grants no authority, and the identity sandwich
     // below still authenticates membership for the fixed PID. Retained pins
@@ -5914,10 +6036,10 @@ fn macos_session_member_identity(
     // Capture identity on both sides of the authoritative getsid: PID reuse
     // between the hint and this sandwich cannot authenticate an old process,
     // and reuse inside the sandwich fails closed. Exec preserves unique_id.
-    if before != after {
+    if before.0 != after.0 {
         return Err(cleanup_error());
     }
-    Ok(Some(after))
+    Ok(Some(after.1))
 }
 
 #[cfg(target_os = "macos")]
@@ -6874,11 +6996,381 @@ fn invariant_error() -> BackgroundProcessError {
 #[cfg(all(test, target_os = "linux"))]
 mod linux_proc_tests {
     use super::*;
+    use std::io::Write as _;
     use std::process::ChildStdout;
+
+    #[test]
+    #[ignore = "private bounded terminal capture fixture"]
+    fn terminal_capture_escape_helper() {
+        use std::os::unix::net::UnixStream;
+        let Some(directory) = std::env::var_os("MACHINE_GOD_TERMINAL_CAPTURE_DIRECTORY") else {
+            return;
+        };
+        let directory = std::path::PathBuf::from(directory);
+        let mode = std::env::var("MACHINE_GOD_TERMINAL_CAPTURE_MODE").unwrap();
+        if mode == "probe" {
+            terminal_capture_escape_probe();
+            return;
+        }
+        let helper = || {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "background_process::linux_proc_tests::terminal_capture_escape_helper",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            command
+        };
+        if mode == "escape" {
+            let mut gate = UnixStream::connect(directory.join("escape")).unwrap();
+            gate.set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            gate.write_all(&std::process::id().to_be_bytes()).unwrap();
+            let mut byte = [0];
+            gate.read_exact(&mut byte).unwrap();
+            assert_eq!(byte, [b'E']);
+            rustix::process::setsid().unwrap();
+            gate.write_all(b"E").unwrap();
+            let _ = gate.read_exact(&mut byte);
+            return;
+        }
+        if mode == "parent" {
+            let child = helper()
+                .env("MACHINE_GOD_TERMINAL_CAPTURE_MODE", "escape")
+                .spawn()
+                .unwrap();
+            let mut byte = [0];
+            std::io::stdin().read_exact(&mut byte).unwrap();
+            assert_eq!(byte, [b'R']);
+            drop(child);
+            return;
+        }
+        rustix::process::setsid().unwrap();
+        let mut parent = helper()
+            .env("MACHINE_GOD_TERMINAL_CAPTURE_MODE", "parent")
+            .spawn()
+            .unwrap();
+        let mut gate = UnixStream::connect(directory.join("root")).unwrap();
+        gate.set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        gate.write_all(b"R").unwrap();
+        let mut byte = [0];
+        gate.read_exact(&mut byte).unwrap();
+        assert_eq!(byte, [b'R']);
+        parent.stdin.take().unwrap().write_all(b"R").unwrap();
+        assert!(parent.wait().unwrap().success());
+        gate.write_all(b"R").unwrap();
+        let _ = gate.read_exact(&mut byte);
+    }
+
+    #[test]
+    fn terminal_failed_presignal_capture_retains_escaped_descendant() {
+        for stage in ["ancestry", "sid", "supplemental"] {
+            run_terminal_capture_probe(stage);
+        }
+    }
+
+    fn run_terminal_capture_probe(stage: &str) {
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "background_process::linux_proc_tests::terminal_capture_escape_helper",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("MACHINE_GOD_TERMINAL_CAPTURE_DIRECTORY", "probe")
+            .env("MACHINE_GOD_TERMINAL_CAPTURE_MODE", "probe")
+            .env("MACHINE_GOD_CAPTURE_FAILURE_STAGE", stage)
+            .process_group(0)
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut fixture = SignalSnapshotFixture::new(child);
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Some(status) = fixture.root.as_mut().unwrap().try_wait().unwrap() {
+                fixture.root.take();
+                assert!(status.success());
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "isolated capture probe timed out"
+            );
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "One bounded isolated fixture keeps failure injection, session escape, retry and exact fallback cleanup together."
+    )]
+    fn terminal_capture_escape_probe() {
+        use std::os::unix::net::{UnixListener, UnixStream};
+        struct Fixture {
+            directory: std::path::PathBuf,
+            escaped: Option<OwnedFd>,
+        }
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                if let Some(fd) = self.escaped.take() {
+                    let _ = rustix::process::pidfd_send_signal(&fd, rustix::process::Signal::KILL);
+                    let deadline = Instant::now() + Duration::from_secs(5);
+                    while Instant::now() < deadline {
+                        match rustix::process::waitid(
+                            rustix::process::WaitId::PidFd(fd.as_fd()),
+                            rustix::process::WaitIdOptions::EXITED
+                                | rustix::process::WaitIdOptions::NOHANG,
+                        ) {
+                            Ok(Some(_)) | Err(rustix::io::Errno::CHILD) => break,
+                            _ => thread::sleep(Duration::from_millis(2)),
+                        }
+                    }
+                }
+                let _ = std::fs::remove_file(self.directory.join("root"));
+                let _ = std::fs::remove_file(self.directory.join("escape"));
+                let _ = std::fs::remove_dir(&self.directory);
+            }
+        }
+        fn accept(listener: &UnixListener) -> UnixStream {
+            listener.set_nonblocking(true).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(10)))
+                            .unwrap();
+                        return stream;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline);
+                        thread::sleep(Duration::from_millis(2));
+                    }
+                    Err(error) => panic!("accept: {error}"),
+                }
+            }
+        }
+        rustix::process::set_child_subreaper(rustix::process::Pid::from_raw(1)).unwrap();
+        let mut fixture = Fixture {
+            directory: std::env::temp_dir()
+                .join(format!("mg-terminal-capture-{}", std::process::id())),
+            escaped: None,
+        };
+        std::fs::create_dir(&fixture.directory).unwrap();
+        let root_listener = UnixListener::bind(fixture.directory.join("root")).unwrap();
+        let escape_listener = UnixListener::bind(fixture.directory.join("escape")).unwrap();
+        let mut guard = TerminalChildGuard::reserve(&CancellationToken::new()).unwrap();
+        guard
+            .spawn(
+                Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "background_process::linux_proc_tests::terminal_capture_escape_helper",
+                        "--ignored",
+                        "--nocapture",
+                    ])
+                    .env("MACHINE_GOD_TERMINAL_CAPTURE_DIRECTORY", &fixture.directory)
+                    .env("MACHINE_GOD_TERMINAL_CAPTURE_MODE", "root")
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null()),
+            )
+            .unwrap();
+        let mut root_gate = accept(&root_listener);
+        root_gate.read_exact(&mut [0]).unwrap();
+        let mut escape_gate = accept(&escape_listener);
+        let mut bytes = [0; 4];
+        escape_gate.read_exact(&mut bytes).unwrap();
+        let escaped = pid(i32::try_from(u32::from_be_bytes(bytes)).unwrap());
+        fixture.escaped = Some(
+            rustix::process::pidfd_open(escaped, rustix::process::PidfdFlags::empty()).unwrap(),
+        );
+        let mut owned = guard.into_session().unwrap();
+        let stage = std::env::var("MACHINE_GOD_CAPTURE_FAILURE_STAGE").unwrap();
+        if stage == "supplemental" {
+            // Remove the ancestry edge while preserving the original SID.
+            // Discovery must now retain the supplemental session capture.
+            root_gate.write_all(b"R").unwrap();
+            root_gate.read_exact(&mut [0]).unwrap();
+        }
+        if stage == "sid" {
+            inject_group_snapshot_failures_for_test(owned.pid(), 1);
+        } else {
+            TERMINAL_CAPTURE_FAILURE_PID.store(
+                escaped.as_raw_nonzero().get().cast_unsigned(),
+                Ordering::SeqCst,
+            );
+        }
+        assert!(owned.terminal_close(true, |_| {}).is_err());
+        assert!(
+            owned
+                .terminal_cleanup
+                .as_ref()
+                .unwrap()
+                .pinned
+                .pinned_processes
+                .contains_key(&escaped)
+        );
+        escape_gate.write_all(b"E").unwrap();
+        escape_gate.read_exact(&mut [0]).unwrap();
+        if stage != "supplemental" {
+            root_gate.write_all(b"R").unwrap();
+            root_gate.read_exact(&mut [0]).unwrap();
+        }
+        assert_eq!(rustix::process::getsid(Some(escaped)).unwrap(), escaped);
+        let closed = owned.terminal_close(true, |_| {});
+        let mut poll = [rustix::event::PollFd::new(
+            fixture.escaped.as_ref().unwrap(),
+            rustix::event::PollFlags::IN,
+        )];
+        let alive =
+            rustix::event::poll(&mut poll, Some(&rustix::event::Timespec::default())).unwrap() == 0;
+        assert!(
+            closed.is_ok(),
+            "retained exact pins permit cleanup on retry: {closed:?}"
+        );
+        assert!(
+            !alive,
+            "successful retry must stop the captured escaped process"
+        );
+        assert!(
+            matches!(
+                rustix::process::waitid(
+                    rustix::process::WaitId::PidFd(fixture.escaped.as_ref().unwrap().as_fd()),
+                    rustix::process::WaitIdOptions::EXITED | rustix::process::WaitIdOptions::NOHANG,
+                ),
+                Err(rustix::io::Errno::CHILD)
+            ),
+            "cleanup must reap the exact adopted descendant"
+        );
+    }
 
     const UNRESTRICTED_PROC: &[u8] =
         b"36 25 0:32 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw,hidepid=0\n";
     const MAX_SIGNAL_SNAPSHOT_FIXTURE_PID_BYTES: usize = 10;
+
+    #[test]
+    fn terminal_capture_rejects_unproved_root_and_parent_before_retention() {
+        let authority = GroupSnapshotAuthority::open().unwrap();
+        let root = rustix::process::getpid();
+        let mut scratch = SignalProcessScratch::new();
+        let mut observed = read_signal_process(&authority, root, &mut scratch)
+            .unwrap()
+            .unwrap();
+        observed.identity.primary = observed.identity.primary.wrapping_add(1);
+        let mut retained = 0;
+        assert!(
+            signal_process_snapshot_with(
+                &authority,
+                root,
+                &mut scratch,
+                Some(LinuxSignalSnapshotCapture {
+                    root_identity: observed.identity,
+                    retain: &mut |_, _| {
+                        retained += 1;
+                        Ok(())
+                    },
+                })
+            )
+            .is_err()
+        );
+        assert_eq!(retained, 0);
+
+        let mut scratch = SignalProcessScratch::new();
+        let directory = open_linux_signal_process_directory(&authority, root, &scratch)
+            .unwrap()
+            .unwrap();
+        let parent = read_signal_process(&authority, root, &mut scratch)
+            .unwrap()
+            .unwrap();
+        // A forged children record names the root itself, not its actual child.
+        // Opening a genuine pidfd must not turn this invalid edge into authority.
+        let (read, mut write) = std::io::pipe().unwrap();
+        write
+            .write_all(root.as_raw_nonzero().get().to_string().as_bytes())
+            .unwrap();
+        drop(write);
+        let children = budgeted_linux_signal_open(&scratch.descriptors, || {
+            Ok::<_, rustix::io::Errno>(OwnedFd::from(read))
+        })
+        .unwrap()
+        .unwrap();
+        assert!(
+            append_linux_signal_children_record(
+                children,
+                &mut Vec::new(),
+                &mut Vec::new(),
+                &authority,
+                parent,
+                directory.as_fd(),
+                1,
+                &mut scratch,
+                &mut Some(LinuxSignalSnapshotCapture {
+                    root_identity: parent.identity,
+                    retain: &mut |_, _| {
+                        retained += 1;
+                        Ok(())
+                    },
+                })
+            )
+            .is_err()
+        );
+        assert_eq!(retained, 0);
+    }
+
+    #[test]
+    fn terminal_capture_capacity_failure_preserves_prior_pin_and_rejects_new_row() {
+        let authority = GroupSnapshotAuthority::open().unwrap();
+        let root = rustix::process::getpid();
+        let mut scratch = SignalProcessScratch::new();
+        let observed = read_signal_process(&authority, root, &mut scratch)
+            .unwrap()
+            .unwrap();
+        let pin = || {
+            budgeted_linux_signal_open(&scratch.descriptors, || {
+                rustix::process::pidfd_open(root, rustix::process::PidfdFlags::empty())
+            })
+            .unwrap()
+            .unwrap()
+        };
+        let mut cleanup = TerminalCleanup::new();
+        retain_terminal_pin(&mut cleanup.pinned, &mut cleanup.captured, observed, pin()).unwrap();
+        let original = cleanup.pinned.pinned_processes[&root].as_fd().as_raw_fd();
+        for identity in 0..MAX_CAPTURED_GROUP_MEMBERS {
+            if cleanup.captured.members.len() == MAX_CAPTURED_GROUP_MEMBERS {
+                break;
+            }
+            cleanup
+                .captured
+                .retain(vec![CapturedGroupMember {
+                    pid: root,
+                    identity: Some(identity as u64),
+                }])
+                .unwrap();
+        }
+        let mut rejected = observed;
+        rejected.identity.primary = u64::MAX;
+        assert!(
+            retain_terminal_pin(&mut cleanup.pinned, &mut cleanup.captured, rejected, pin())
+                .is_err()
+        );
+        assert_eq!(
+            cleanup.pinned.pinned_processes[&root].as_fd().as_raw_fd(),
+            original
+        );
+        assert_eq!(cleanup.pinned.descendants, vec![observed]);
+        assert!(!cleanup.captured.index.contains(&CapturedGroupMember {
+            pid: root,
+            identity: Some(u64::MAX)
+        }));
+        // Metadata-only capture owner; no signal or lifecycle cleanup is invoked.
+    }
 
     fn pid(raw: i32) -> rustix::process::Pid {
         rustix::process::Pid::from_raw(raw).expect("positive test pid")
@@ -8016,6 +8508,98 @@ mod process_regression_tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
+
+    #[cfg(target_os = "macos")]
+    fn macos_capture_read(fd: impl AsFd, bytes: &mut [u8], timeout: Duration) -> Result<(), ()> {
+        let flags = rustix::fs::fcntl_getfl(&fd).map_err(|_| ())?;
+        rustix::fs::fcntl_setfl(&fd, flags | OFlags::NONBLOCK).map_err(|_| ())?;
+        let deadline = Instant::now() + timeout;
+        let mut used = 0;
+        while used < bytes.len() {
+            if Instant::now() >= deadline {
+                return Err(());
+            }
+            match rustix::io::read(&fd, &mut bytes[used..]) {
+                Ok(0) => return Err(()),
+                Ok(count) => used += count,
+                Err(rustix::io::Errno::AGAIN | rustix::io::Errno::INTR) => {
+                    thread::sleep(Duration::from_millis(2));
+                }
+                Err(_) => return Err(()),
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "private bounded macOS session fixture"]
+    fn macos_terminal_capture_helper() {
+        use std::io::Write as _;
+        if std::env::var_os("MACHINE_GOD_MACOS_CAPTURE_HELPER").is_none() {
+            return;
+        }
+        rustix::process::setsid().unwrap();
+        let mut child = Command::new("/bin/sleep")
+            .arg("30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        std::io::stderr()
+            .write_all(&child.id().to_be_bytes())
+            .unwrap();
+        let _ = macos_capture_read(std::io::stdin(), &mut [0], Duration::from_secs(10));
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_terminal_capture_keeps_authenticated_prefix_on_pre_and_final_scan_failure() {
+        for final_scan in [false, true] {
+            let mut guard = TerminalChildGuard::reserve(&CancellationToken::new()).unwrap();
+            guard.spawn(Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "background_process::process_regression_tests::macos_terminal_capture_helper", "--ignored", "--nocapture"])
+                .env("MACHINE_GOD_MACOS_CAPTURE_HELPER", "1")
+                .stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped())).unwrap();
+            let child = guard.child.as_mut().unwrap();
+            let _gate = child.stdin.take().unwrap();
+            let output = child.stderr.take().unwrap();
+            // Private stderr receipt is separate from libtest's stdout preamble.
+            let mut bytes = [0; 4];
+            macos_capture_read(&output, &mut bytes, Duration::from_secs(5)).unwrap();
+            let pid =
+                rustix::process::Pid::from_raw(i32::try_from(u32::from_be_bytes(bytes)).unwrap())
+                    .unwrap();
+            let identity = machine_god_terminal_sys::ProcessIdentity::capture(
+                NonZeroU32::new(pid.as_raw_nonzero().get().cast_unsigned()).unwrap(),
+            )
+            .unwrap();
+            let mut owned = guard.into_session().unwrap();
+            let authority = Arc::clone(owned.snapshot_authority.as_ref().unwrap());
+            TERMINAL_CAPTURE_FAILURE_PID
+                .store(pid.as_raw_nonzero().get().cast_unsigned(), Ordering::SeqCst);
+            let cleanup = owned.terminal_cleanup.as_mut().unwrap();
+            let failed = if final_scan {
+                // Exercise the exact final-quiescence inventory callback in
+                // isolation: no later successful scan may hide prefix loss.
+                macos_terminal_scope_members(owned.group, &mut cleanup.captured).map(|_| ())
+            } else {
+                cleanup.capture(owned.group, &authority)
+            };
+            let retained = cleanup
+                .captured
+                .iter()
+                .any(|member| member.pid == pid && member.identity == Some(identity.unique_id()));
+            let closed = owned.terminal_close(true, |_| {});
+            assert!(failed.is_err());
+            assert!(retained, "later scan failure lost an authenticated prefix");
+            assert!(closed.is_ok(), "cleanup after retained prefix: {closed:?}");
+            assert!(!identity.exists().unwrap());
+        }
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `repeat complete pinned local checks, three fresh independent review tracks and exact remote gates for the integrated terminal result and startup-fixture corrections`
+- Next gate: `repeat complete pinned local checks, three fresh independent reviews and exact remote gates for the integrated authenticated cleanup-prefix correction`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -109,16 +109,17 @@ twelve deterministic ordering/signal cases; the output grace is unchanged.
 
 Internal candidate and review history is retained in the
 [full terminal review ledger](reviews/m03-terminal-full-review-01.md).
-Candidate `49e26c835a6785924196c61b34dda06439f8a579` integrates the reviewed
-cleanup-ownership and failed-exec corrections. Its pinned build, lint, doctest,
-Python, dependency, cross-platform compilation and release-smoke prerequisites
-pass. The full runtime gate rejects a stale host-fixture success assertion on
-both platforms and a Linux startup-timeout cleanup race reproduced in isolation.
-The timeout fixture races its own marker's abort and shell reaping against the
-first cleanup inventory. Its correction observes the expected unreaped shell
-exit under the original deadline before one close. Focused fixture checks pass
-on Linux/macOS; no replacement review or delivery is claimed. Product bounds stay
-unchanged.
+Candidate `8546972df17de9a06b13870e1b8d362eba869bff` passes the complete
+pinned local gate, including Linux native/CLI execution and 654 release-helper
+checks. Fresh API and resource reviews report no findings. Lifecycle review
+rejects temporary authenticated process captures that a later scan/merge error
+can discard before retained cleanup receives them. A deterministic Linux
+failure/escape/reparent/retry case proves cleanup can report success with the
+captured child alive; related macOS snapshot-prefix loss is source-confirmed.
+The integrated correction covers these cleanup capture stages without granting
+authority from an unproved row or increasing bounds. Focused Linux/macOS process,
+PTY and captured-exec suites and strict native Clippy pass. Replacement gates
+remain required; no push or delivery is claimed.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:
