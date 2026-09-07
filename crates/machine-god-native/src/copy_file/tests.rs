@@ -42,6 +42,28 @@ impl Drop for TempDirectory {
     }
 }
 
+fn rewrite_source_with_changed_fingerprint(source: &Path, bytes: &[u8]) {
+    let before = fs::metadata(source).unwrap();
+    assert_eq!(before.len(), bytes.len() as u64);
+    let before_modified = before.modified().unwrap();
+    fs::write(source, bytes).unwrap();
+    // Source revalidation checks metadata, unlike the staged/published hash
+    // checks. Same-length writes may share a filesystem timestamp tick, so
+    // explicitly supply the changed fingerprint this fixture exercises.
+    let modified = before_modified
+        .checked_add(std::time::Duration::from_secs(2))
+        .unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(source)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(modified))
+        .unwrap();
+    let after = fs::metadata(source).unwrap();
+    assert_eq!(after.len(), before.len());
+    assert_ne!(after.modified().unwrap(), before_modified);
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PublishScript {
     Native,
@@ -139,21 +161,10 @@ impl CopyFileEvidence for ScriptedEvidence {
             match self.checkpoint_mutation {
                 CheckpointMutation::None => {}
                 CheckpointMutation::SourceContent => {
-                    let source = self.workspace.join("source");
-                    let before = fs::metadata(&source).unwrap().modified().unwrap();
-                    fs::write(&source, b"changed!").unwrap();
-                    // Same-length writes may share a filesystem timestamp tick.
-                    // Supply the distinct fingerprint this fixture exercises.
-                    let modified = before
-                        .checked_add(std::time::Duration::from_secs(2))
-                        .unwrap();
-                    fs::OpenOptions::new()
-                        .write(true)
-                        .open(&source)
-                        .unwrap()
-                        .set_times(fs::FileTimes::new().set_modified(modified))
-                        .unwrap();
-                    assert_ne!(fs::metadata(&source).unwrap().modified().unwrap(), before);
+                    rewrite_source_with_changed_fingerprint(
+                        &self.workspace.join("source"),
+                        b"changed!",
+                    );
                 }
                 CheckpointMutation::StageContent => {
                     fs::write(staged, b"tampered").unwrap();
@@ -282,7 +293,10 @@ impl CopyFileEvidence for ScriptedEvidence {
                 fs::write(self.workspace.join("destination"), b"tampered").unwrap();
             }
             AfterPublishMutation::Source => {
-                fs::write(self.workspace.join("source"), b"mutated!").unwrap();
+                rewrite_source_with_changed_fingerprint(
+                    &self.workspace.join("source"),
+                    b"mutated!",
+                );
             }
         }
     }
@@ -746,7 +760,10 @@ fn postcommit_corruption_and_source_change_are_ambiguous_and_still_sync() {
         let (temporary, tool) = fixture("postcommit-change");
         let mut evidence = ScriptedEvidence::new(temporary.path());
         evidence.after_publish_mutation = mutation;
-        let error = execute_with(&tool, &CancellationToken::new(), &mut evidence).unwrap_err();
+        let error = match execute_with(&tool, &CancellationToken::new(), &mut evidence) {
+            Err(error) => error,
+            Ok(output) => panic!("{mutation:?} unexpectedly succeeded: {output:?}"),
+        };
         assert_error(error, "copy_file_commit_ambiguous", false);
         assert_eq!(evidence.publish_calls, 1);
         assert_eq!(evidence.parent_sync_calls, 1);

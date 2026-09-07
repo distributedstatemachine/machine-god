@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `33949136988` (`GREEN`)
 - Active branch: `agent/m59-terminal-input`
 - Active phase: `completing the full terminal feature; input/write is an internal component, not a separate delivery`
-- Next gate: `repeat complete pinned local checks, three fresh independent reviews and exact remote gates for the integrated authenticated cleanup-prefix correction`
+- Next gate: `repeat complete pinned local checks, three fresh independent reviews and exact remote gates for the cleanup-prefix correction and deterministic copy fixture`
 <!-- canonical-live-status:end -->
 
 The exact delivered-main CI and Benchmark runs are green, and the Benchmark
@@ -109,17 +109,14 @@ twelve deterministic ordering/signal cases; the output grace is unchanged.
 
 Internal candidate and review history is retained in the
 [full terminal review ledger](reviews/m03-terminal-full-review-01.md).
-Candidate `8546972df17de9a06b13870e1b8d362eba869bff` passes the complete
-pinned local gate, including Linux native/CLI execution and 654 release-helper
-checks. Fresh API and resource reviews report no findings. Lifecycle review
-rejects temporary authenticated process captures that a later scan/merge error
-can discard before retained cleanup receives them. A deterministic Linux
-failure/escape/reparent/retry case proves cleanup can report success with the
-captured child alive; related macOS snapshot-prefix loss is source-confirmed.
-The integrated correction covers these cleanup capture stages without granting
-authority from an unproved row or increasing bounds. Focused Linux/macOS process,
-PTY and captured-exec suites and strict native Clippy pass. Replacement gates
-remain required; no push or delivery is claimed.
+Authenticated cleanup-prefix retention is integrated across Linux ancestry/SID
+and macOS PTY/tmux scans, preserving authority proofs and bounds. A full Linux
+run exposed an unrelated copy-file fixture whose same-length source mutation
+assumed a distinct filesystem timestamp tick. Both source-mutation fixtures now
+use an explicit mtime transition without changing product fingerprint or hash
+verification. All 25 copy-file tests and strict native lint pass on both
+platforms; the postcommit case passes 200 Linux repetitions. Complete replacement
+gates and fresh reviews remain required; no push or delivery is claimed.
 
 Completion is measured against the pinned upstream terminal schema and native
 session contracts, not the existing numeric background-record subset:

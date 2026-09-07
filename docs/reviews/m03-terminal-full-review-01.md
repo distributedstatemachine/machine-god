@@ -297,3 +297,26 @@ Exact native Clippy passes on both platforms. Focused Linux groups pass 106
 background/tmux, 22 PTY and 17 captured-exec cases; macOS passes 67, 25 and 17
 respectively, with expected private-helper ignores. These checks do not replace
 the integrated candidate's complete local, fresh review or remote gates.
+
+## Local validation of `17a41fe`
+
+Candidate `17a41feef4d1894890ece0f766a499144e2e276a` integrates the cleanup
+prefix correction with its durable contract. Pinned formatting, strict
+Linux/macOS workspace Clippy, doctests, FreeBSD/WASI checks, dependency checks,
+259 Python tests/14 expected skips, drift/documentation checks and fresh release
+build pass. Full non-root Linux native execution passes 1,467 cases with six
+expected helper ignores, but fails `copy_file`'s postcommit corruption/source
+mutation fixture: its expected error is instead a successful eight-byte copy.
+All new cleanup regressions pass in that run. Pending Linux CLI and macOS
+runtime sequences do not constitute evidence; the candidate was rejected
+before review or remote push. The bounded diagnosis distinguishes the
+hash-verified destination case from metadata-fingerprint source revalidation.
+
+Correction `641cfeaeb25b1fbac44926de72d5188c1c1926bf` is test-only. Linux
+repetition 14 proved the source rewrite retained identical device, inode, mode,
+size, mtime and ctime. Both source-mutation fixtures now explicitly advance mtime
+while preserving their eight-byte payloads. Destination/stage hash fixtures,
+publication and parent-sync assertions, product code and timeouts are unchanged.
+Rust 1.94.1 copy-file suites pass 25 tests on each platform, the Linux postcommit
+case passes 200 repetitions, and strict native lint passes on both platforms.
+These focused results do not replace the integrated candidate's complete gate.
