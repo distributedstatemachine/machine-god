@@ -881,6 +881,14 @@ mod tests {
             arguments: Value,
             cancellation: CancellationToken,
         ) -> BoxFuture<'_, Result<TerminalActionResult, ToolError>> {
+            self.future_with_expected_error(arguments, cancellation, false)
+        }
+        fn future_with_expected_error(
+            &self,
+            arguments: Value,
+            cancellation: CancellationToken,
+            expected_error: bool,
+        ) -> BoxFuture<'_, Result<TerminalActionResult, ToolError>> {
             let call = ToolCall {
                 id: ToolCallId::new("call").unwrap(),
                 name: ToolName::new("terminal").unwrap(),
@@ -896,7 +904,7 @@ mod tests {
                     .execute(Self::context(), prepared.arguments().clone(), cancellation);
             Box::pin(async move {
                 let output = execution.await?;
-                assert!(!output.is_error);
+                assert_eq!(output.is_error, expected_error, "{action}: tool failure flag");
                 Ok(serde_json::from_value(output.content).unwrap())
             })
         }
@@ -1003,9 +1011,11 @@ mod tests {
             CancellationToken::new(),
         ));
         assert!(!fixture.root.join("workspace/forbidden").exists());
-        let TerminalActionResult::Exec { result } = fixture.action(
+        let TerminalActionResult::Exec { result } = futures_executor::block_on(fixture.future_with_expected_error(
             json!({"action":"exec","profile":"clean","command":"printf foreground; exit 7"}),
-        ) else {
+            CancellationToken::new(),
+            true,
+        )).unwrap() else {
             panic!("exec receipt");
         };
         assert_eq!(

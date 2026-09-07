@@ -2195,7 +2195,32 @@ mod tests {
         );
         let pid =
             rustix::process::Pid::from_raw(i32::try_from(backend.pid().get()).unwrap()).unwrap();
-        backend.close(true, &mut |_| {}).unwrap();
+        #[cfg(target_os = "linux")]
+        loop {
+            // The refused command ACK closes the marker connection. Observe
+            // bash's resulting abort before collecting the fixture: immediate
+            // close races its reaping of the marker against the native identity
+            // sandwich. Keep the original deadline and exact child wait status
+            // untouched; this is not a cleanup retry or a product timing change.
+            assert!(Instant::now() < control.deadline, "startup abort deadline");
+            if let Some(status) = rustix::process::waitid(
+                rustix::process::WaitId::Pid(pid),
+                rustix::process::WaitIdOptions::EXITED
+                    | rustix::process::WaitIdOptions::NOHANG
+                    | rustix::process::WaitIdOptions::NOWAIT,
+            )
+            .unwrap()
+            {
+                assert_eq!(status.exit_status(), Some(125));
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let closed = backend.close(true, &mut |_| {}).unwrap();
+        #[cfg(target_os = "linux")]
+        assert_eq!(closed.status, TerminalPtyStatus::Exited(125));
+        #[cfg(not(target_os = "linux"))]
+        let _ = closed;
         assert_eq!(
             rustix::process::test_kill_process(pid),
             Err(rustix::io::Errno::SRCH)

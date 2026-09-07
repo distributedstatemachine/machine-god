@@ -87,6 +87,7 @@ product behavior; they are not penetration tests.
 - [web_fetch](m03-web-fetch-review-01.md)
 - [web_search](m03-web-search-review-01.md)
 - [terminal](m03-terminal-review-01.md)
+- [Full terminal feature](m03-terminal-full-review-01.md)
 - [terminal `start`](m03-terminal-start-review-01.md)
 - [terminal `inspect`](m03-terminal-inspect-review-01.md)
 - [terminal `wait`](m03-terminal-wait-review-01.md)
