@@ -265,7 +265,7 @@ impl PreparedTerminalPty {
         let mut guard = prepare_step!(
             deadline,
             "reaping-admission",
-            TerminalChildGuard::reserve_for_helper(cancellation, helper, deadline)
+            TerminalChildGuard::reserve_for_helper(cancellation, helper, deadline, &[])
         )
         .map_err(process_error)?;
         let mut command = Command::new(helper.program());

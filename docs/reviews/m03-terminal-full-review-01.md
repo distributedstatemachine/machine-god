@@ -867,3 +867,21 @@ PTY/tmux reuse assertions, extract shared helper registration, and fix those
 lint failures plus a macOS test-only move from a drop-bearing reap permit.
 Formatting and diff checks pass; replacement compile/runtime evidence is still
 required. No failed check is treated as acceptance.
+
+Focused service and protocol groups subsequently pass twelve cases each on
+macOS; the service group includes eleven substantive regressions and its inert
+helper entrypoint (0.90 seconds). Strict Linux workspace lint and both native/
+CLI test builds pass, followed by both complete default-concurrent runtime
+suites (CLI: 141 passed, four ignores, 0.77 seconds). The saved native output
+was truncated, so no native duration is asserted. These are integration checks,
+not the complete frozen-candidate gate.
+
+Static lifecycle inspection then finds captured execution's host-stop and
+dropped-response signals were not forwarded into the new readiness wait.
+Component `8885686` threads those existing signals through startup checks,
+bounded lock acquisition and readiness without adding a thread or deadline.
+Its caller regression positively observes helper spawn, then requires scope
+settlement under a five-second test bound rather than the original thirty-
+second execution timeout, retaining executor/configuration and asserting that
+the user command never starts. Exact macOS native all-target/all-feature strict
+Clippy passes (1m22s); focused caller/PTY/tmux/host runtime is still pending.

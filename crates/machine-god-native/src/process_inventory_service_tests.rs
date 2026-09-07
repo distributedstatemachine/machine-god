@@ -214,7 +214,7 @@ fn stalled_query_times_out_without_respawn_and_settles_its_scope() {
 
 #[test]
 fn cancellation_after_spawn_while_startup_is_pending_reaps_the_helper() {
-    let helper = controlled_helper("startup_stalled");
+    let helper = stalled_service_for_test();
     let scope = NativeOwnedWorkerScope::new();
     let cancellation = CancellationToken::new();
     let pending = helper.clone();
@@ -272,7 +272,7 @@ fn delayed_service_start_uses_startup_budget_then_queries_without_another_spawn(
 
 const CONTROL_MODE: &str = "MACHINE_GOD_INVENTORY_TEST_MODE";
 
-fn controlled_helper(mode: &str) -> ProcessInventoryHelper {
+pub(super) fn controlled_helper(mode: &str) -> ProcessInventoryHelper {
     assert!(matches!(
         mode,
         "malformed" | "trailing" | "delayed" | "stalled" | "startup_stalled"

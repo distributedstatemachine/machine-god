@@ -88,10 +88,11 @@ impl ServiceRegistration {
         helper: &ProcessInventoryHelper,
         deadline: Instant,
         cancellation: &CancellationToken,
+        stop: &[&CancellationToken],
     ) -> Result<InventoryLease> {
-        check_deadline(deadline, cancellation)?;
+        check_startup(deadline, cancellation, stop)?;
         let scope = NativeOwnedWorkerScopeIdentity::current();
-        let mut slot = lock_until(&self.slot, deadline, cancellation)?;
+        let mut slot = lock_until(&self.slot, deadline, cancellation, stop)?;
         let service = if let Some(service) = slot.lease.upgrade() {
             if !service.scope.matches(&scope) {
                 return Err(failure(TerminalHelperErrorKind::InvalidRequest));
@@ -117,8 +118,10 @@ impl ServiceRegistration {
         drop(slot);
         let lease = InventoryLease(service);
         {
-            let mut state = lock_until(&lease.0.state, deadline, cancellation)?;
-            lease.0.ensure_ready(&mut state, deadline, cancellation)?;
+            let mut state = lock_until(&lease.0.state, deadline, cancellation, stop)?;
+            lease
+                .0
+                .ensure_ready(&mut state, deadline, cancellation, stop)?;
         }
         Ok(lease)
     }
@@ -130,8 +133,9 @@ impl Service {
         state: &mut ServiceState,
         deadline: Instant,
         cancellation: &CancellationToken,
+        stop: &[&CancellationToken],
     ) -> Result<()> {
-        check_deadline(deadline, cancellation)?;
+        check_startup(deadline, cancellation, stop)?;
         if let Some(ready) = state.ready.as_mut() {
             if ready
                 .child
@@ -143,7 +147,7 @@ impl Service {
             }
             return Ok(());
         }
-        let mut slot = lock_until(&self.registration.slot, deadline, cancellation)?;
+        let mut slot = lock_until(&self.registration.slot, deadline, cancellation, stop)?;
         if slot
             .reaped
             .as_ref()
@@ -169,9 +173,9 @@ impl Service {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        check_deadline(deadline, cancellation)
+        check_startup(deadline, cancellation, stop)
             .inspect_err(|_| reaped.store(true, Ordering::Release))?;
-        let mut child = InventoryChild::spawn(&mut command, reaped)
+        let mut child = InventoryChild::spawn(&mut command, &reaped)
             .map_err(|_| failure(TerminalHelperErrorKind::Process))?;
         #[cfg(test)]
         self.registration.starts.fetch_add(1, Ordering::AcqRel);
@@ -194,11 +198,16 @@ impl Service {
             child,
         };
         let mut handshake = [0; 8];
-        read_gate(&mut ready.output, &mut handshake, deadline, cancellation)?;
+        let mut startup_output = StartupOutput {
+            output: &mut ready.output,
+            stop,
+        };
+        read_gate(&mut startup_output, &mut handshake, deadline, cancellation)
+            .or_else(|error| check_startup(deadline, cancellation, stop).and(Err(error)))?;
         if handshake != wire::READY {
             return Err(failure(TerminalHelperErrorKind::Protocol));
         }
-        check_deadline(deadline, cancellation)?;
+        check_startup(deadline, cancellation, stop)?;
         if ready
             .child
             .exited()
@@ -232,13 +241,13 @@ impl InventoryLease {
         {
             return Err(failure(TerminalHelperErrorKind::InvalidRequest));
         }
-        let mut state = lock_until(&self.0.state, deadline, &cancellation)?;
+        let mut state = lock_until(&self.0.state, deadline, &cancellation, &[])?;
         // A previous failed request may restart here, under this request's own
         // original deadline, only after the previous exact child has reaped.
         // There is never a retry inside the request that detected the failure.
         let result = self
             .0
-            .ensure_ready(&mut state, deadline, &cancellation)
+            .ensure_ready(&mut state, deadline, &cancellation, &[])
             .and_then(|()| query_ready(&mut state, deadline, &cancellation));
         if result.is_err() {
             state.ready.take();
@@ -316,9 +325,10 @@ fn lock_until<'a, T>(
     mutex: &'a Mutex<T>,
     deadline: Instant,
     cancellation: &CancellationToken,
+    stop: &[&CancellationToken],
 ) -> Result<MutexGuard<'a, T>> {
     loop {
-        check_deadline(deadline, cancellation)?;
+        check_startup(deadline, cancellation, stop)?;
         match mutex.try_lock() {
             Ok(guard) => return Ok(guard),
             Err(std::sync::TryLockError::Poisoned(_)) => {
@@ -331,5 +341,30 @@ fn lock_until<'a, T>(
                 );
             }
         }
+    }
+}
+
+fn check_startup(
+    deadline: Instant,
+    cancellation: &CancellationToken,
+    stop: &[&CancellationToken],
+) -> Result<()> {
+    if stop.iter().any(|token| token.is_cancelled()) {
+        return Err(failure(TerminalHelperErrorKind::Cancelled));
+    }
+    check_deadline(deadline, cancellation)
+}
+
+struct StartupOutput<'a> {
+    output: &'a mut ChildStdout,
+    stop: &'a [&'a CancellationToken],
+}
+
+impl Read for StartupOutput<'_> {
+    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        if self.stop.iter().any(|token| token.is_cancelled()) {
+            return Err(std::io::ErrorKind::BrokenPipe.into());
+        }
+        self.output.read(bytes)
     }
 }

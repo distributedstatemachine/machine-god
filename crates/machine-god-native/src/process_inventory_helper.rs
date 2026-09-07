@@ -111,10 +111,22 @@ impl ProcessInventoryHelper {
         deadline: Instant,
         cancellation: &CancellationToken,
     ) -> Result<PreparedProcessInventory, TerminalHelperError> {
+        self.prepare_with_stop(deadline, cancellation, &[])
+    }
+
+    pub(crate) fn prepare_with_stop(
+        &self,
+        deadline: Instant,
+        cancellation: &CancellationToken,
+        stop: &[&CancellationToken],
+    ) -> Result<PreparedProcessInventory, TerminalHelperError> {
         check_deadline(deadline, cancellation)?;
+        if stop.iter().any(|token| token.is_cancelled()) {
+            return Err(failure(TerminalHelperErrorKind::Cancelled));
+        }
         match &self.service {
             Some(service) => service
-                .prepare(self, deadline, cancellation)
+                .prepare(self, deadline, cancellation, stop)
                 .map(PreparedProcessInventory::Service),
             None => Ok(PreparedProcessInventory::OneShot(self.clone())),
         }
@@ -257,6 +269,11 @@ pub(crate) fn test_service() -> ProcessInventoryHelper {
         program.to_str().unwrap().replace('\'', "'\\''")
     );
     ProcessInventoryHelper::new_service("/bin/sh".into(), vec!["-c".into(), script.into()]).unwrap()
+}
+
+#[cfg(test)]
+pub(crate) fn stalled_service_for_test() -> ProcessInventoryHelper {
+    service_tests::controlled_helper("startup_stalled")
 }
 
 #[cfg(test)]

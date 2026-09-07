@@ -150,7 +150,9 @@ one-shot inventory executable and bounded arguments for macOS session cleanup;
 Existing constructors remain available without either capability. The complete
 reference host supplies service mode from its selected CLI helper path. Service
 preparation consumes the same existing execution deadline, before user-process
-startup; it does not occur in a constructor or unpolled future.
+startup; it observes execution cancellation, host shutdown and dropped-response
+stop signals during preparation and readiness waits. It does not occur in a
+constructor or unpolled future.
 The configured 1 ms–600 s timeout begins at first poll and includes worker
 admission, authorized directory/environment preparation, private helper startup
 and exec confirmation. Preparation and descriptor consumption run on the same

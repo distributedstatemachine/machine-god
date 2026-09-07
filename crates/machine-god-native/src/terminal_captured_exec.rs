@@ -491,8 +491,15 @@ fn run(
     let flags = rustix::fs::fcntl_getfl(&stdout).map_err(|_| TerminalCapturedExecError::Process)?;
     rustix::fs::fcntl_setfl(&stdout, flags | OFlags::NONBLOCK)
         .map_err(|_| TerminalCapturedExecError::Process)?;
-    let mut guard = TerminalChildGuard::reserve_for_helper(cancellation, helper, deadline)
-        .map_err(|_| TerminalCapturedExecError::Process)?;
+    let mut guard =
+        match TerminalChildGuard::reserve_for_helper(cancellation, helper, deadline, stop) {
+            Ok(guard) => guard,
+            Err(_) if stopped(cancellation, stop) => {
+                return Err(TerminalCapturedExecError::Cancelled);
+            }
+            Err(_) if Instant::now() >= deadline => return Ok(empty_timeout(started)),
+            Err(_) => return Err(TerminalCapturedExecError::Process),
+        };
     let helper_deadline = match encode_helper_deadline(deadline, MAX_TERMINAL_EXEC_DURATION) {
         Ok(stamp) => stamp,
         Err(error) if error.kind == TerminalHelperErrorKind::Timeout => {
@@ -1260,6 +1267,62 @@ mod tests {
                 .service_spawn_count_for_test(),
             1
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn captured_stalled_inventory_startup_observes_host_stop_and_dropped_response() {
+        for drop_response in [false, true] {
+            let mut fixture = Fixture::new(Duration::from_secs(30));
+            let scope = NativeOwnedWorkerScope::new();
+            let inventory = crate::process_inventory_helper::stalled_service_for_test();
+            fixture.executor = TerminalCapturedExec::new(
+                fixture.executor.helper.program().to_owned(),
+                fixture.executor.helper.arguments().to_vec(),
+                Duration::from_secs(30),
+                2,
+            )
+            .unwrap()
+            .with_worker_scope(scope.clone())
+            .with_inventory_registration(inventory.clone());
+            let authority = fixture.authority("printf forbidden > forbidden");
+            let host_stop = CancellationToken::new();
+            let mut response = Some(fixture.executor.execute_prepared(
+                move |_, _, _| Ok(authority),
+                CancellationToken::new(),
+                host_stop.clone(),
+            ));
+            futures_executor::block_on(async {
+                assert!(futures_util::poll!(response.as_mut().unwrap()).is_pending());
+            });
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while inventory.service_spawn_count_for_test() == 0 && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            assert_eq!(inventory.service_spawn_count_for_test(), 1);
+            if drop_response {
+                drop(response.take());
+            } else {
+                host_stop.cancel();
+            }
+            scope.close();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !scope.completion().is_complete() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            assert!(
+                scope.completion().is_complete(),
+                "startup stop must not wait for the 30-second execution deadline"
+            );
+            if let Some(response) = response {
+                assert_eq!(
+                    futures_executor::block_on(response),
+                    Err(TerminalCapturedExecError::Cancelled)
+                );
+            }
+            assert_eq!(inventory.service_spawn_count_for_test(), 1);
+            assert!(!fixture.root.join("forbidden").exists());
+        }
     }
 
     #[test]

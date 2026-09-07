@@ -2535,13 +2535,14 @@ impl TerminalChildGuard {
         cancellation: &CancellationToken,
         helper: &crate::terminal_helper::TerminalPtyHelper,
         deadline: Instant,
+        stop: &[&CancellationToken],
     ) -> Result<Self, BackgroundProcessError> {
         let guard = Self::reserve(cancellation)?;
         #[cfg(target_os = "macos")]
         let guard =
-            guard.with_inventory_helper(helper.inventory_helper(), deadline, cancellation)?;
+            guard.with_inventory_helper(helper.inventory_helper(), deadline, cancellation, stop)?;
         #[cfg(not(target_os = "macos"))]
-        let _ = (helper, deadline);
+        let _ = (helper, deadline, stop);
         Ok(guard)
     }
 
@@ -2551,10 +2552,11 @@ impl TerminalChildGuard {
         helper: Option<&crate::process_inventory_helper::ProcessInventoryHelper>,
         deadline: Instant,
         cancellation: &CancellationToken,
+        stop: &[&CancellationToken],
     ) -> Result<Self, BackgroundProcessError> {
         self.authority = Arc::new(GroupSnapshotAuthority {
             inventory: helper
-                .map(|helper| helper.prepare(deadline, cancellation))
+                .map(|helper| helper.prepare_with_stop(deadline, cancellation, stop))
                 .transpose()
                 .map_err(|_| cleanup_error())?,
         });
@@ -4825,9 +4827,11 @@ fn discharge_reaped_child(child: &mut Option<Child>, reap_permit: &mut Option<Ch
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn mark_inventory_reaped(_permit: &ChildReapPermit) {
+fn mark_inventory_reaped(permit: &ChildReapPermit) {
+    #[cfg(not(target_os = "macos"))]
+    let _ = permit;
     #[cfg(target_os = "macos")]
-    if let Some(reaped) = &_permit.inventory_reaped {
+    if let Some(reaped) = &permit.inventory_reaped {
         reaped.store(true, Ordering::Release);
     }
 }
@@ -4844,21 +4848,19 @@ pub(crate) struct InventoryChild {
 impl InventoryChild {
     pub(crate) fn spawn(
         command: &mut Command,
-        reaped: Arc<AtomicBool>,
+        reaped: &Arc<AtomicBool>,
     ) -> Result<Self, BackgroundProcessError> {
         let mut permit = reserve_child_reap_authority_for(true)
             .inspect_err(|_| reaped.store(true, Ordering::Release))?;
-        permit.inventory_reaped = Some(Arc::clone(&reaped));
-        match command.spawn() {
-            Ok(child) => Ok(Self {
-                child: Some(child),
-                permit: Some(permit),
-            }),
-            Err(_) => {
-                reaped.store(true, Ordering::Release);
-                Err(spawn_error())
-            }
-        }
+        permit.inventory_reaped = Some(Arc::clone(reaped));
+        let child = command.spawn().map_err(|_| {
+            reaped.store(true, Ordering::Release);
+            spawn_error()
+        })?;
+        Ok(Self {
+            child: Some(child),
+            permit: Some(permit),
+        })
     }
 
     pub(crate) fn pipes(
@@ -9034,6 +9036,7 @@ mod process_regression_tests {
                     Some(&crate::process_inventory_helper::test_service()),
                     Instant::now() + Duration::from_secs(5),
                     &CancellationToken::new(),
+                    &[],
                 )
                 .unwrap();
             guard.spawn(Command::new(std::env::current_exe().unwrap())

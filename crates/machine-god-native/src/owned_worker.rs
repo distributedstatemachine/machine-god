@@ -136,10 +136,12 @@ pub struct NativeOwnedWorkerScopeIdentity(Option<Weak<ScopeState>>);
 
 #[cfg(target_os = "macos")]
 impl NativeOwnedWorkerScopeIdentity {
+    #[must_use]
     pub fn current() -> Self {
         Self(current_worker_ticket().map(|ticket| Arc::downgrade(&ticket.0.state)))
     }
 
+    #[must_use]
     pub fn matches(&self, other: &Self) -> bool {
         match (&self.0, &other.0) {
             (Some(left), Some(right)) => Weak::ptr_eq(left, right),
