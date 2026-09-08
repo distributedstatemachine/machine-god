@@ -12,9 +12,11 @@ use machine_god_core::{
     StopReason, ToolCall, ToolCallId, ToolName, ToolOutput, TurnEvent,
 };
 use machine_god_native::{
-    NATIVE_CONTEXT_PREFERENCES_KEY, NATIVE_CONVERSATION_CHECKPOINT_KEY,
-    NATIVE_SESSION_METADATA_KEY, NativeContextError, NativeContextPreferences, NativeConversation,
-    NativeConversationError, NativeConversationTurn, NativeSessionMetadata, NativeSessionOrigin,
+    AI_GATEWAY_INFERENCE_OPTIONS_KEY, NATIVE_CONTEXT_PREFERENCES_KEY,
+    NATIVE_CONVERSATION_CHECKPOINT_KEY, NATIVE_MODEL_PREFERENCES_KEY, NATIVE_SESSION_METADATA_KEY,
+    NativeContextError, NativeContextPreferences, NativeConversation, NativeConversationError,
+    NativeConversationTurn, NativeModelCapabilities, NativeModelPreferences, NativeModelSnapshot,
+    NativeReasoningEffort, NativeSessionMetadata, NativeSessionOrigin,
 };
 use machine_god_testkit::{
     InMemorySessionStore, ModelProviderStep, RecordedSessionStoreCall, ScriptedModelProvider,
@@ -123,6 +125,15 @@ fn text_of(message: &Message) -> String {
 
 fn assert_context_busy(conversation: &NativeConversation) {
     assert_eq!(
+        conversation.model_preferences().unwrap_err(),
+        NativeConversationError::Busy
+    );
+    assert_eq!(
+        block_on(conversation.set_model_preferences(NativeModelPreferences::default(), 300))
+            .unwrap_err(),
+        NativeConversationError::Busy
+    );
+    assert_eq!(
         conversation.context_preferences().unwrap_err(),
         NativeConversationError::Busy
     );
@@ -134,6 +145,376 @@ fn assert_context_busy(conversation: &NativeConversation) {
         block_on(conversation.set_max_history_turns(1, 300)).unwrap_err(),
         NativeConversationError::Busy
     );
+}
+
+fn model_preferences(model: &str) -> NativeModelPreferences {
+    NativeModelPreferences::new(model, NativeReasoningEffort::parse("high").unwrap(), true).unwrap()
+}
+
+fn model_snapshot(model: &str) -> NativeModelSnapshot {
+    NativeModelSnapshot::new(
+        &model_preferences(model),
+        &NativeModelCapabilities::default(),
+    )
+}
+
+#[test]
+fn model_preferences_save_is_inert_and_preserves_paused_history_and_context() {
+    let (_engine, conversation, store, provider) =
+        setup(history_record(2), [], SessionStoreScript::default());
+    assert_eq!(conversation.model_preferences().unwrap(), None);
+    drop(block_on(conversation.prompt("paused".into(), 150)).unwrap());
+    block_on(conversation.set_max_history_turns(1, 175)).unwrap();
+    let before = conversation.record();
+    let preferences = model_preferences("private/model");
+    let calls = store.calls().len();
+    let save = conversation.set_model_preferences(preferences.clone(), 200);
+    assert_eq!(store.calls().len(), calls);
+    assert!(!conversation.is_busy());
+    assert_eq!(conversation.model_preferences().unwrap(), None);
+    drop(save);
+    assert_eq!(store.calls().len(), calls);
+    let revision = block_on(conversation.set_model_preferences(preferences.clone(), 200)).unwrap();
+    assert_eq!(revision.0, before.revision.0 + 1);
+    let saved = store.record(&conversation.id()).unwrap();
+    assert_eq!(saved, conversation.record());
+    assert_eq!(saved.messages, before.messages);
+    assert_eq!(saved.next_turn_sequence, before.next_turn_sequence);
+    assert_eq!(saved.incarnation_id, before.incarnation_id);
+    assert_eq!(
+        saved.metadata[NATIVE_MODEL_PREFERENCES_KEY],
+        preferences.to_value()
+    );
+    for key in [
+        "unrelated",
+        NATIVE_CONVERSATION_CHECKPOINT_KEY,
+        NATIVE_CONTEXT_PREFERENCES_KEY,
+    ] {
+        assert_eq!(saved.metadata[key], before.metadata[key]);
+    }
+    assert_eq!(
+        saved.metadata[NATIVE_SESSION_METADATA_KEY]["updated_at_ms"],
+        200
+    );
+    assert_eq!(conversation.model_preferences().unwrap(), Some(preferences));
+    assert!(provider.requests().is_empty());
+}
+
+#[test]
+fn model_snapshot_and_checkpoint_are_one_publication_and_continue_uses_current_selection() {
+    let (_engine, conversation, store, provider) = setup(
+        initial_record(),
+        [finished("new model answer")],
+        SessionStoreScript::default(),
+    );
+    let calls = store.calls().len();
+    let start =
+        conversation.prompt_with_model("original input".into(), model_snapshot("private/old"), 200);
+    assert_eq!(store.calls().len(), calls);
+    let turn = block_on(start).unwrap();
+    assert_eq!(store.calls().len(), calls + 1);
+    assert!(provider.requests().is_empty());
+    let saved = store.record(&conversation.id()).unwrap();
+    assert_eq!(
+        saved.metadata[NATIVE_MODEL_PREFERENCES_KEY],
+        model_preferences("private/old").to_value()
+    );
+    assert!(
+        saved
+            .metadata
+            .contains_key(NATIVE_CONVERSATION_CHECKPOINT_KEY)
+    );
+    assert_eq!(
+        saved.messages,
+        [Message::text(Role::User, "original input")]
+    );
+    assert_context_busy(&conversation);
+    drop(turn);
+    let options = InferenceOptions {
+        max_output_tokens: Some(17),
+        ..InferenceOptions::default()
+    };
+    complete(
+        block_on(conversation.continue_turn_with_model(
+            options,
+            model_snapshot("private/current"),
+            300,
+        ))
+        .unwrap(),
+    );
+    assert_eq!(
+        conversation.model_preferences().unwrap(),
+        Some(model_preferences("private/current"))
+    );
+    let requests = provider.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].request.options.model.as_deref(),
+        Some("private/current")
+    );
+    assert_eq!(requests[0].request.options.max_output_tokens, Some(17));
+    assert_eq!(
+        requests[0].request.options.metadata[AI_GATEWAY_INFERENCE_OPTIONS_KEY],
+        json!({
+            "schema_version": 1, "reasoning_effort": "auto", "fast": false,
+        })
+    );
+    assert_eq!(
+        conversation.record().messages,
+        [
+            Message::text(Role::User, "original input"),
+            Message::text(Role::Assistant, "new model answer"),
+        ]
+    );
+}
+
+#[test]
+fn model_preference_save_failure_or_drop_does_not_claim_success() {
+    let original = initial_record();
+    let (_engine, conversation, store, provider) = setup(
+        original.clone(),
+        [],
+        SessionStoreScript {
+            saves: Some(vec![
+                SessionStoreStep::Error(store_error()),
+                SessionStoreStep::Pending,
+                SessionStoreStep::Pass,
+            ]),
+            ..SessionStoreScript::default()
+        },
+    );
+    assert_eq!(
+        block_on(conversation.set_model_preferences(model_preferences("private/model"), 200))
+            .unwrap_err(),
+        NativeConversationError::Persistence
+    );
+    assert_eq!(store.record(&conversation.id()).unwrap(), original);
+    assert_eq!(conversation.model_preferences().unwrap(), None);
+    let mut save = conversation.set_model_preferences(model_preferences("private/model"), 200);
+    let waker = noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    assert!(save.as_mut().poll(&mut cx).is_pending());
+    assert_context_busy(&conversation);
+    assert_eq!(
+        block_on(conversation.prompt("busy".into(), 200)).unwrap_err(),
+        NativeConversationError::Busy
+    );
+    drop(save);
+    assert!(!conversation.is_busy());
+    assert_eq!(store.record(&conversation.id()).unwrap(), original);
+    block_on(conversation.set_model_preferences(model_preferences("private/retry"), 200)).unwrap();
+    assert_eq!(
+        conversation.model_preferences().unwrap(),
+        Some(model_preferences("private/retry"))
+    );
+    assert!(provider.requests().is_empty());
+}
+
+#[test]
+fn model_snapshot_failed_admission_publishes_neither_preferences_nor_input() {
+    let original = initial_record();
+    let (_engine, conversation, store, provider) = setup(
+        original.clone(),
+        [],
+        SessionStoreScript {
+            saves: Some(vec![SessionStoreStep::Error(store_error())]),
+            ..SessionStoreScript::default()
+        },
+    );
+    assert_eq!(
+        block_on(conversation.prompt_with_model(
+            "not saved".into(),
+            model_snapshot("private/model"),
+            200
+        ))
+        .unwrap_err(),
+        NativeConversationError::Persistence
+    );
+    assert_eq!(store.record(&conversation.id()).unwrap(), original);
+    assert_eq!(conversation.model_preferences().unwrap(), None);
+    assert!(provider.requests().is_empty());
+}
+
+#[test]
+fn model_snapshot_stays_fixed_across_tool_rounds_while_future_selection_changes() {
+    use machine_god_core::ToolSpec;
+    use machine_god_testkit::{ScriptedPreparedTool, ToolPrepareStep, ToolStep};
+    let record = initial_record();
+    let store =
+        InMemorySessionStore::from_records(BTreeMap::from([(record.id.clone(), record.clone())]));
+    let tool = ScriptedPreparedTool::new(
+        ToolSpec {
+            name: ToolName::new("pure").unwrap(),
+            description: "test".to_owned(),
+            input_schema: json!({"type":"object"}),
+        },
+        [ToolPrepareStep::NoAuthority {
+            arguments: json!({}),
+        }],
+        [ToolStep::Output(ToolOutput::success(json!({"answer":42})))],
+    );
+    let provider = ScriptedModelProvider::new(
+        "test",
+        [
+            ModelProviderStep::events([
+                ModelEvent::ToolCall {
+                    call: ToolCall {
+                        id: ToolCallId::new("call").unwrap(),
+                        name: ToolName::new("pure").unwrap(),
+                        arguments: json!({}),
+                    },
+                },
+                ModelEvent::Stop {
+                    reason: StopReason::ToolCalls,
+                },
+            ]),
+            finished("first answer"),
+            finished("next answer"),
+        ],
+    );
+    let engine = Engine::builder()
+        .session_store(store)
+        .provider(provider.clone())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .tool(tool.clone())
+        .build()
+        .unwrap();
+    let session = block_on(engine.load_session(record.id)).unwrap().unwrap();
+    let conversation = NativeConversation::from_session(session).unwrap();
+    let mut preferences = model_preferences("private/original");
+    let capabilities =
+        NativeModelCapabilities::new(&[NativeReasoningEffort::parse("high").unwrap()], true)
+            .unwrap();
+    let mut turn = block_on(conversation.prompt_with_model(
+        "question".into(),
+        NativeModelSnapshot::new(&preferences, &capabilities),
+        200,
+    ))
+    .unwrap();
+    loop {
+        let event = block_on(turn.next()).expect("tool must complete").unwrap();
+        if matches!(event.payload, TurnEvent::ToolFinished { .. }) {
+            break;
+        }
+        assert!(!matches!(
+            event.payload,
+            TurnEvent::Completed { .. } | TurnEvent::Failed { .. }
+        ));
+    }
+    assert_eq!(tool.invocations().len(), 1);
+    preferences.set_model("private/next").unwrap();
+    preferences.set_effort(NativeReasoningEffort::default());
+    preferences.toggle_fast(&capabilities);
+    assert_context_busy(&conversation);
+    complete(turn);
+    complete(
+        block_on(conversation.prompt_with_model(
+            "next question".into(),
+            NativeModelSnapshot::new(&preferences, &capabilities),
+            300,
+        ))
+        .unwrap(),
+    );
+    let requests = provider.requests();
+    assert_eq!(requests.len(), 3);
+    for request in &requests[..2] {
+        assert_eq!(
+            request.request.options.model.as_deref(),
+            Some("private/original")
+        );
+        assert_eq!(
+            request.request.options.metadata[AI_GATEWAY_INFERENCE_OPTIONS_KEY],
+            json!({"schema_version":1,"reasoning_effort":"high","fast":true})
+        );
+    }
+    assert_eq!(
+        requests[2].request.options.model.as_deref(),
+        Some("private/next")
+    );
+    assert_eq!(
+        requests[2].request.options.metadata[AI_GATEWAY_INFERENCE_OPTIONS_KEY],
+        json!({"schema_version":1,"reasoning_effort":"auto","fast":false})
+    );
+}
+
+#[test]
+fn model_preferences_reject_time_regression_and_stale_cross_engine_writes() {
+    let (_engine, conversation, store, provider) =
+        setup(initial_record(), [], SessionStoreScript::default());
+    let calls = store.calls().len();
+    assert!(matches!(
+        block_on(conversation.set_model_preferences(model_preferences("private/invalid-time"), 99))
+            .unwrap_err(),
+        NativeConversationError::InvalidMetadata(_)
+    ));
+    assert_eq!(store.calls().len(), calls);
+    let other_engine = Engine::builder()
+        .session_store(store.clone())
+        .provider(ScriptedModelProvider::new("other", []))
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .build()
+        .unwrap();
+    let other = NativeConversation::from_session(
+        block_on(other_engine.load_session(conversation.id()))
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    block_on(other.set_model_preferences(model_preferences("private/winner"), 200)).unwrap();
+    let winner = store.record(&conversation.id()).unwrap();
+    assert_eq!(
+        block_on(conversation.set_model_preferences(model_preferences("private/stale"), 300))
+            .unwrap_err(),
+        NativeConversationError::Conflict
+    );
+    assert_eq!(store.record(&conversation.id()).unwrap(), winner);
+    assert!(provider.requests().is_empty());
+}
+
+#[test]
+fn malformed_saved_model_preferences_are_not_overwritten_by_admission_or_setter() {
+    for value in [
+        Value::Null,
+        json!({"schema_version":2,"model":"private/model","effort":"auto","fast_mode":false}),
+        json!({"schema_version":1,"model":"private/model","effort":"auto","fast_mode":"yes"}),
+    ] {
+        let (engine, conversation, store, provider) =
+            setup(initial_record(), [], SessionStoreScript::default());
+        let session = block_on(engine.load_session(conversation.id()))
+            .unwrap()
+            .unwrap();
+        let mut record = session.record();
+        record
+            .metadata
+            .insert(NATIVE_MODEL_PREFERENCES_KEY.to_owned(), value);
+        block_on(session.update_metadata(record.revision, record.metadata)).unwrap();
+        let original = store.record(&conversation.id()).unwrap();
+        let calls = store.calls().len();
+        for error in [
+            conversation.model_preferences().unwrap_err(),
+            block_on(
+                conversation.set_model_preferences(model_preferences("private/replacement"), 200),
+            )
+            .unwrap_err(),
+            block_on(conversation.prompt("plain".into(), 200)).unwrap_err(),
+            block_on(conversation.prompt_with_model(
+                "snapshot".into(),
+                model_snapshot("private/replacement"),
+                200,
+            ))
+            .unwrap_err(),
+            NativeConversation::from_session(session).unwrap_err(),
+        ] {
+            assert!(matches!(
+                error,
+                NativeConversationError::InvalidModelPreferences(_)
+            ));
+            assert!(!format!("{error:?}: {error}").contains("private"));
+        }
+        assert_eq!(store.calls().len(), calls);
+        assert_eq!(store.record(&conversation.id()).unwrap(), original);
+        assert!(provider.requests().is_empty());
+    }
 }
 
 #[test]
@@ -863,6 +1244,28 @@ fn conversation_unpolled_and_rejected_deep_inputs_drop_iteratively() {
                 200,
             ));
             drop(conversation.continue_turn(deep_options(), 200));
+            drop(conversation.prompt_with_model(
+                Prompt {
+                    text: "unpolled model".to_owned(),
+                    options: deep_options(),
+                },
+                model_snapshot("private/model"),
+                200,
+            ));
+            drop(conversation.continue_turn_with_model(
+                deep_options(),
+                model_snapshot("private/model"),
+                200,
+            ));
+            assert_eq!(
+                block_on(conversation.continue_turn_with_model(
+                    deep_options(),
+                    model_snapshot("private/model"),
+                    200
+                ))
+                .unwrap_err(),
+                NativeConversationError::NoCheckpoint
+            );
             assert_eq!(
                 block_on(conversation.continue_turn(deep_options(), 200)).unwrap_err(),
                 NativeConversationError::NoCheckpoint
@@ -965,14 +1368,27 @@ fn conversation_rename_obeys_admission_and_preserves_paused_checkpoint() {
     assert_eq!(record.messages, [Message::text(Role::User, "original")]);
 }
 
-#[test]
-fn conversation_real_store_create_drop_and_fresh_resume_continues_once() {
+fn file_lifecycle(
+    directory: &std::path::Path,
+    provider: ScriptedModelProvider,
+) -> machine_god_native::NativeSessionLifecycle {
     use machine_god_core::SessionStore;
     use machine_god_native::{FileSessionStore, NativeSessionLifecycle};
-    use std::sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    };
+    use std::sync::Arc;
+    let store = Arc::new(FileSessionStore::open(directory).unwrap());
+    let shared: Arc<dyn SessionStore> = store.clone();
+    let engine = Engine::builder()
+        .provider(provider)
+        .shared_session_store(shared)
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .build()
+        .unwrap();
+    NativeSessionLifecycle::new(engine, store).unwrap()
+}
+
+#[test]
+fn conversation_real_store_create_drop_and_fresh_resume_continues_once() {
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     struct Directory(std::path::PathBuf);
     impl Drop for Directory {
@@ -993,19 +1409,8 @@ fn conversation_real_store_create_drop_and_fresh_resume_continues_once() {
             Err(error) => panic!("create fixture: {error}"),
         }
     };
-    let build = |provider: ScriptedModelProvider| {
-        let store = Arc::new(FileSessionStore::open(&directory.0).unwrap());
-        let shared: Arc<dyn SessionStore> = store.clone();
-        let engine = Engine::builder()
-            .provider(provider)
-            .shared_session_store(shared)
-            .permission_handler(ScriptedPermissionHandler::new([]))
-            .build()
-            .unwrap();
-        NativeSessionLifecycle::new(engine, store).unwrap()
-    };
     let first_provider = ScriptedModelProvider::new("test", [finished("earlier answer")]);
-    let lifecycle = build(first_provider.clone());
+    let lifecycle = file_lifecycle(&directory.0, first_provider.clone());
     let metadata = NativeSessionMetadata::new(
         &directory.0.canonicalize().unwrap(),
         100,
@@ -1025,20 +1430,33 @@ fn conversation_real_store_create_drop_and_fresh_resume_continues_once() {
     drop(block_on(conversation.prompt("persisted original".into(), 200)).unwrap());
     assert!(block_on(conversation.compact(225)).unwrap());
     block_on(conversation.set_max_history_turns(1, 250)).unwrap();
+    let saved_model = model_preferences("private/saved");
+    block_on(conversation.set_model_preferences(saved_model.clone(), 275)).unwrap();
     let preferences = conversation.context_preferences().unwrap();
     assert_eq!(preferences.first_retained_message(), 2);
     assert_eq!(first_provider.requests().len(), 1);
     drop(conversation);
     drop(lifecycle);
     let provider = ScriptedModelProvider::new("test", [finished("resumed answer")]);
-    let lifecycle = build(provider.clone());
+    let lifecycle = file_lifecycle(&directory.0, provider.clone());
     let conversation = block_on(NativeConversation::resume(&lifecycle, id.clone())).unwrap();
     assert_eq!(
         conversation.paused_turn().unwrap().unwrap().turn_sequence,
         2
     );
     assert_eq!(conversation.context_preferences().unwrap(), preferences);
-    complete(block_on(conversation.continue_turn(InferenceOptions::default(), 300)).unwrap());
+    assert_eq!(
+        conversation.model_preferences().unwrap(),
+        Some(saved_model.clone())
+    );
+    complete(
+        block_on(conversation.continue_turn_with_model(
+            InferenceOptions::default(),
+            NativeModelSnapshot::new(&saved_model, &NativeModelCapabilities::default()),
+            300,
+        ))
+        .unwrap(),
+    );
     let record = block_on(lifecycle.replay(id)).unwrap();
     assert_eq!(record.next_turn_sequence, 4);
     assert_eq!(
@@ -1056,6 +1474,10 @@ fn conversation_real_store_create_drop_and_fresh_resume_continues_once() {
             .contains_key(NATIVE_CONVERSATION_CHECKPOINT_KEY)
     );
     assert_eq!(provider.requests().len(), 1);
+    assert_eq!(
+        provider.requests()[0].request.options.model.as_deref(),
+        Some("private/saved")
+    );
     assert_eq!(
         provider.requests()[0].request.messages,
         [Message::text(Role::User, "persisted original")]

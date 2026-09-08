@@ -17,10 +17,11 @@ use machine_god_core::{
 use serde_json::{Value, json};
 
 use crate::{
-    NATIVE_CONTEXT_PREFERENCES_KEY, NATIVE_SESSION_METADATA_KEY, NativeContextError,
-    NativeContextPreferences, NativeSessionLifecycle, NativeSessionLifecycleError,
-    NativeSessionMetadata, NativeSessionMetadataError, NativeSessionMetadataMutationError,
-    rename_native_session,
+    NATIVE_CONTEXT_PREFERENCES_KEY, NATIVE_MODEL_PREFERENCES_KEY, NATIVE_SESSION_METADATA_KEY,
+    NativeContextError, NativeContextPreferences, NativeModelPreferences,
+    NativeModelPreferencesError, NativeModelSnapshot, NativeSessionLifecycle,
+    NativeSessionLifecycleError, NativeSessionMetadata, NativeSessionMetadataError,
+    NativeSessionMetadataMutationError, rename_native_session,
 };
 
 /// Native-only metadata entry. Its contents are not permission grants.
@@ -34,6 +35,7 @@ pub enum NativeConversationError {
     NoCheckpoint,
     InvalidCheckpoint,
     InvalidContext(NativeContextError),
+    InvalidModelPreferences(NativeModelPreferencesError),
     InvalidMetadata(NativeSessionMetadataError),
     Lifecycle(NativeSessionLifecycleError),
     Conflict,
@@ -49,6 +51,7 @@ impl fmt::Display for NativeConversationError {
             Self::NoCheckpoint => f.write_str("conversation has no paused turn"),
             Self::InvalidCheckpoint => f.write_str("conversation checkpoint is invalid"),
             Self::InvalidContext(error) => error.fmt(f),
+            Self::InvalidModelPreferences(error) => error.fmt(f),
             Self::InvalidMetadata(error) => error.fmt(f),
             Self::Lifecycle(error) => error.fmt(f),
             Self::Conflict => f.write_str("conversation changed concurrently"),
@@ -153,7 +156,7 @@ impl NativeConversation {
     /// Adopts a validated live session without effects or inferred metadata.
     ///
     /// # Errors
-    /// Rejects an active session or malformed native metadata/checkpoint/context.
+    /// Rejects an active session or malformed native metadata or preferences.
     pub fn from_session(session: Session) -> Result<Self, NativeConversationError> {
         if session.has_active_turn() {
             return Err(NativeConversationError::Busy);
@@ -163,6 +166,8 @@ impl NativeConversation {
             .map_err(NativeConversationError::InvalidMetadata)?;
         Checkpoint::decode(&record)?;
         validated_context_preferences(&record)?;
+        NativeModelPreferences::from_metadata(&record.metadata)
+            .map_err(NativeConversationError::InvalidModelPreferences)?;
         Ok(Self {
             session,
             active: Arc::new(AtomicBool::new(false)),
@@ -244,6 +249,59 @@ impl NativeConversation {
                     }
                     _ => NativeConversationError::Engine,
                 })
+        })
+    }
+
+    /// Observes saved model preferences while idle. Missing historical settings
+    /// remain `None`; host defaults and process overrides are not inferred.
+    ///
+    /// # Errors
+    /// Returns `Busy` or rejects malformed saved model preferences.
+    pub fn model_preferences(
+        &self,
+    ) -> Result<Option<NativeModelPreferences>, NativeConversationError> {
+        let _lease = AdmissionLease::acquire(&self.active)?;
+        if self.session.has_active_turn() {
+            return Err(NativeConversationError::Busy);
+        }
+        NativeModelPreferences::from_metadata(&self.session.record().metadata)
+            .map_err(NativeConversationError::InvalidModelPreferences)
+    }
+
+    /// Persists requested model settings and an explicit timestamp while idle.
+    /// The borrowed future is inert before polling and preserves history,
+    /// checkpoints, context selection and unrelated metadata. This writes only
+    /// the session; runtime queues and user defaults are separate host targets.
+    #[must_use]
+    pub fn set_model_preferences(
+        &self,
+        preferences: NativeModelPreferences,
+        now_ms: i64,
+    ) -> BoxFuture<'_, Result<SessionRevision, NativeConversationError>> {
+        Box::pin(async move {
+            let _lease = AdmissionLease::acquire(&self.active)?;
+            if self.session.has_active_turn() {
+                return Err(NativeConversationError::Busy);
+            }
+            let mut record = self.session.record();
+            NativeModelPreferences::from_metadata(&record.metadata)
+                .map_err(NativeConversationError::InvalidModelPreferences)?;
+            let mut metadata = NativeSessionMetadata::from_metadata(&record.metadata)
+                .map_err(NativeConversationError::InvalidMetadata)?;
+            metadata
+                .touch(now_ms)
+                .map_err(NativeConversationError::InvalidMetadata)?;
+            record
+                .metadata
+                .insert(NATIVE_SESSION_METADATA_KEY.to_owned(), metadata.to_value());
+            record.metadata.insert(
+                NATIVE_MODEL_PREFERENCES_KEY.to_owned(),
+                preferences.to_value(),
+            );
+            self.session
+                .update_metadata(record.revision, record.metadata)
+                .await
+                .map_err(map_engine_error)
         })
     }
 
@@ -372,7 +430,22 @@ impl NativeConversation {
         now_ms: i64,
     ) -> BoxFuture<'_, Result<NativeConversationTurn, NativeConversationError>> {
         let input = PendingInput(Some(ConversationInput::Prompt(prompt)));
-        Box::pin(async move { self.start(input, now_ms).await })
+        Box::pin(async move { self.start(input, None, now_ms).await })
+    }
+
+    /// Atomically publishes the job's requested model preferences with its user
+    /// input and checkpoint, and pins the snapshot's effective controls for all
+    /// provider rounds. Other inference options are preserved. The future is
+    /// inert before polling, including when dropped with untrusted metadata.
+    #[must_use]
+    pub fn prompt_with_model(
+        &self,
+        prompt: Prompt,
+        model: NativeModelSnapshot,
+        now_ms: i64,
+    ) -> BoxFuture<'_, Result<NativeConversationTurn, NativeConversationError>> {
+        let input = PendingInput(Some(ConversationInput::Prompt(prompt)));
+        Box::pin(async move { self.start(input, Some(model), now_ms).await })
     }
 
     /// Explicitly continues a durable paused turn with a fresh core attempt
@@ -385,12 +458,27 @@ impl NativeConversation {
         now_ms: i64,
     ) -> BoxFuture<'_, Result<NativeConversationTurn, NativeConversationError>> {
         let input = PendingInput(Some(ConversationInput::Continue(options)));
-        Box::pin(async move { self.start(input, now_ms).await })
+        Box::pin(async move { self.start(input, None, now_ms).await })
+    }
+
+    /// Continues with the newly admitted job's explicit snapshot, not inferred
+    /// historical settings. Saves requested preferences with the new checkpoint
+    /// and uses effective controls without appending another user message.
+    #[must_use]
+    pub fn continue_turn_with_model(
+        &self,
+        options: InferenceOptions,
+        model: NativeModelSnapshot,
+        now_ms: i64,
+    ) -> BoxFuture<'_, Result<NativeConversationTurn, NativeConversationError>> {
+        let input = PendingInput(Some(ConversationInput::Continue(options)));
+        Box::pin(async move { self.start(input, Some(model), now_ms).await })
     }
 
     async fn start(
         &self,
         mut input: PendingInput,
+        model: Option<NativeModelSnapshot>,
         now_ms: i64,
     ) -> Result<NativeConversationTurn, NativeConversationError> {
         let lease = AdmissionLease::acquire(&self.active)?;
@@ -399,6 +487,8 @@ impl NativeConversation {
         }
         let mut record = self.session.record();
         let previous = Checkpoint::decode(&record)?;
+        NativeModelPreferences::from_metadata(&record.metadata)
+            .map_err(NativeConversationError::InvalidModelPreferences)?;
         let preferences = NativeContextPreferences::from_metadata(&record.metadata)
             .map_err(NativeConversationError::InvalidContext)?;
         // Disabled context is the original full-history path, including for
@@ -433,6 +523,17 @@ impl NativeConversation {
             NATIVE_CONVERSATION_CHECKPOINT_KEY.to_owned(),
             checkpoint.encode(),
         );
+        if let Some(model) = model {
+            record.metadata.insert(
+                NATIVE_MODEL_PREFERENCES_KEY.to_owned(),
+                model.preferences().to_value(),
+            );
+            let options = match input.0.as_mut().expect("input is consumed once") {
+                ConversationInput::Prompt(prompt) => &mut prompt.options,
+                ConversationInput::Continue(options) => options,
+            };
+            model.apply_to(options);
+        }
         let preparation = SessionTurnPreparation {
             expected_revision: record.revision,
             metadata: Some(record.metadata),

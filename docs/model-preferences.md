@@ -2,9 +2,11 @@
 
 `NativeModelPreferences` is a pure, bounded value and metadata codec. It does
 not load configuration, fetch catalogs, write user settings or session records,
-queue prompts, or change an active turn. Runtime owners must explicitly persist
-changes and freeze their per-turn snapshots; this module makes no durability or
-full slash-command completion claim.
+queue prompts, or change an active turn. `NativeModelSnapshot` captures its
+requested and effective values for an admitted job; the
+[native conversation owner](native-conversation.md) explicitly persists session
+preferences and installs these snapshots on prepared turns. Runtime queue,
+user-default persistence and full slash-command integration remain separate.
 
 The reserved `machine_god.model_preferences` metadata entry has exactly four
 required fields:
@@ -43,6 +45,27 @@ sets automatic effort when reasoning choices exist and enables fast when
 supported, preserving unsupported controls. Invalid model selection leaves all
 preferences unchanged. Explicit picker-choice orchestration belongs to the
 runtime owner, not this default-selection helper.
+
+## Immutable job snapshots
+
+`NativeModelSnapshot::new(preferences, capabilities)` owns a bounded copy of the
+requested settings and resolves effective Gateway controls once. It borrows no
+mutable catalog or runtime state. `preferences` exposes the requested value by
+shared reference; `apply_to` installs the captured model and effective controls
+on inference options. Token limits, temperature and unrelated metadata remain
+unchanged, and any replaced reserved JSON tree is destroyed iteratively.
+Unsupported effort/fast requests survive in the requested value for persistence,
+but replace stale effective controls with automatic effort and fast off.
+
+The queue owner must rewrite pending jobs when selection changes and capture a
+snapshot when taking a job. Already-taken jobs retain their snapshot across all
+provider rounds. An explicit paused continuation is a new job using current
+selection, not the interrupted turn's old model/effort. Recovery route, effective
+fast downgrade and attempt-budget facts are separate from model preferences;
+this snapshot does not implement that recovery policy. These distinctions follow
+pinned `src/core/agent/worker_runtime.zig:728`, `:1006`, `:1161`, `:1180`,
+`:1194`, `:4034`, `src/main.zig:1221`, `:1250`, and
+`src/core/agent/runtime/orchestrator.zig:2563`.
 
 These rules follow pinned revision
 `b1774fbf6c7602b503026f96f6e960e946c692ef`: effort definitions in

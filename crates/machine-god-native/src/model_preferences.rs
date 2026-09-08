@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use machine_god_core::validate_model_id;
+use machine_god_core::{InferenceOptions, validate_model_id};
 use serde_json::{Value, json};
 
 /// Reserved native record entry, independent of presentation and context metadata.
@@ -144,6 +144,46 @@ pub struct NativeModelPreferences {
     model: String,
     effort: NativeReasoningEffort,
     requested_fast: bool,
+}
+
+/// Immutable requested preferences and effective controls for one admitted job.
+/// Catalog or runtime preference changes cannot mutate an existing snapshot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeModelSnapshot {
+    preferences: NativeModelPreferences,
+    gateway: crate::AiGatewayInferenceOptions,
+}
+
+impl NativeModelSnapshot {
+    /// Resolves explicit capabilities once, preserving unsupported requests for
+    /// persistence while omitting them from effective Gateway controls.
+    #[must_use]
+    pub fn new(
+        preferences: &NativeModelPreferences,
+        capabilities: &NativeModelCapabilities,
+    ) -> Self {
+        let effective = preferences.effective(capabilities);
+        Self {
+            preferences: preferences.clone(),
+            gateway: crate::AiGatewayInferenceOptions::new(
+                effective.effort().cloned().unwrap_or_default(),
+                effective.fast(),
+            ),
+        }
+    }
+
+    #[must_use]
+    pub const fn preferences(&self) -> &NativeModelPreferences {
+        &self.preferences
+    }
+
+    /// Installs the captured model and Gateway controls without changing token,
+    /// temperature or unrelated metadata settings. Replaced reserved JSON is
+    /// destroyed iteratively, including deeply nested untrusted values.
+    pub fn apply_to(&self, options: &mut InferenceOptions) {
+        options.model = Some(self.preferences.model().to_owned());
+        self.gateway.apply_to(options);
+    }
 }
 
 impl Default for NativeModelPreferences {

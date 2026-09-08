@@ -1,15 +1,97 @@
 use std::collections::BTreeMap;
 
+use machine_god_core::InferenceOptions;
 use machine_god_native::{
-    AI_GATEWAY_DEFAULT_MODEL, MAX_NATIVE_REASONING_EFFORT_BYTES,
+    AI_GATEWAY_DEFAULT_MODEL, AI_GATEWAY_INFERENCE_OPTIONS_KEY, MAX_NATIVE_REASONING_EFFORT_BYTES,
     MAX_NATIVE_REASONING_EFFORT_OPTIONS, NATIVE_MODEL_PREFERENCES_KEY, NativeFastModeChange,
     NativeModelCapabilities, NativeModelPreferences, NativeModelPreferencesError,
-    NativeReasoningEffort,
+    NativeModelSnapshot, NativeReasoningEffort,
 };
 use serde_json::{Value, json};
 
 fn effort(name: &str) -> NativeReasoningEffort {
     NativeReasoningEffort::parse(name).unwrap()
+}
+
+#[test]
+fn model_snapshot_owns_requested_and_effective_values_without_changing_other_options() {
+    let mut prefs = NativeModelPreferences::new("private/original", effort("high"), true).unwrap();
+    let caps = NativeModelCapabilities::new(&[effort("high")], true).unwrap();
+    let snapshot = NativeModelSnapshot::new(&prefs, &caps);
+    let original = prefs.clone();
+    prefs.set_model("private/next").unwrap();
+    prefs.set_effort(effort("low"));
+    prefs.toggle_fast(&caps);
+    drop(caps);
+    let mut options = InferenceOptions {
+        model: Some("previous".to_owned()),
+        max_output_tokens: Some(17),
+        temperature: Some(0.25),
+        metadata: BTreeMap::from([("unrelated".to_owned(), json!(["retain"]))]),
+    };
+    snapshot.apply_to(&mut options);
+    assert_eq!(snapshot.preferences(), &original);
+    assert_eq!(options.model.as_deref(), Some("private/original"));
+    assert_eq!(options.max_output_tokens, Some(17));
+    assert_eq!(options.temperature, Some(0.25));
+    assert_eq!(options.metadata["unrelated"], json!(["retain"]));
+    assert_eq!(
+        options.metadata[AI_GATEWAY_INFERENCE_OPTIONS_KEY],
+        json!({
+            "schema_version": 1, "reasoning_effort": "high", "fast": true,
+        })
+    );
+    assert!(!format!("{snapshot:?}").contains("private"));
+    assert_eq!(snapshot, snapshot.clone());
+}
+
+#[test]
+fn unsupported_snapshot_controls_preserve_requests_but_replace_stale_effective_options() {
+    let prefs = NativeModelPreferences::new("private/model", effort("high"), true).unwrap();
+    let snapshot = NativeModelSnapshot::new(&prefs, &NativeModelCapabilities::default());
+    let mut options = InferenceOptions::default();
+    options.metadata.insert(
+        AI_GATEWAY_INFERENCE_OPTIONS_KEY.to_owned(),
+        json!({
+            "schema_version": 1, "reasoning_effort": "high", "fast": true,
+        }),
+    );
+    snapshot.apply_to(&mut options);
+    assert_eq!(snapshot.preferences(), &prefs);
+    assert_eq!(
+        options.metadata[AI_GATEWAY_INFERENCE_OPTIONS_KEY],
+        json!({
+            "schema_version": 1, "reasoning_effort": "auto", "fast": false,
+        })
+    );
+}
+
+#[test]
+fn model_snapshot_iteratively_drops_replaced_deep_reserved_metadata() {
+    std::thread::Builder::new()
+        .stack_size(128 * 1024)
+        .spawn(|| {
+            let mut deep = Value::Null;
+            for _ in 0..20_000 {
+                deep = Value::Array(vec![deep]);
+            }
+            let mut options = InferenceOptions::default();
+            options
+                .metadata
+                .insert(AI_GATEWAY_INFERENCE_OPTIONS_KEY.to_owned(), deep);
+            NativeModelSnapshot::new(
+                &NativeModelPreferences::default(),
+                &NativeModelCapabilities::default(),
+            )
+            .apply_to(&mut options);
+            assert_eq!(
+                options.metadata[AI_GATEWAY_INFERENCE_OPTIONS_KEY]["fast"],
+                false
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }
 
 #[test]

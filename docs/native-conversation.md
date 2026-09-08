@@ -11,8 +11,9 @@ contents to the trusted host for presentation.
 `NativeSessionMetadata`. The first durable record contains that metadata at
 revision 1; there is no empty-record/metadata-update gap. `resume` loads the
 current record through the same lifecycle. `from_session` adopts a live session
-after checking that it is inactive and that native metadata/checkpoint/context fields
-are valid. It performs no effects and invents no missing historical facts.
+after checking that it is inactive and that native metadata, checkpoint, context
+and model preference fields are valid. It performs no effects and invents no
+missing historical facts.
 These operations neither restore permission grants nor reconstruct volatile
 file-undo history. The host must scope those resources independently.
 
@@ -38,6 +39,39 @@ not silently retried against a newer record.
 exclusive title mutation. It preserves paused checkpoints and cannot enter the
 gap between core completion and native finalization. A returned revision proves
 title persistence, not a process-only display update.
+
+## Durable model preferences and job snapshots
+
+`model_preferences` observes saved requested settings under idle admission;
+missing historical settings remain `None`. `set_model_preferences(value, now_ms)`
+is borrowed and inert before polling. It holds admission through one exact-CAS
+metadata save, updates the native timestamp, and preserves checkpoints, context,
+canonical history, incarnation, allocator and unrelated metadata. It returns the
+saved revision, including when explicitly saving an unchanged value. Malformed
+saved preferences and time regression fail without overwriting prior state.
+
+`prompt_with_model(prompt, snapshot, now_ms)` and
+`continue_turn_with_model(options, snapshot, now_ms)` publish the snapshot's
+requested preferences in the same reservation as the checkpoint, fresh turn
+allocator and optional user input. There is no preferences/input publication
+gap. The immutable [model snapshot](model-preferences.md) installs its effective
+controls in core inference options, pinned across every provider/tool round.
+Continuation still requires a checkpoint and appends no duplicate prompt; its
+explicit snapshot represents the newly admitted job's current selection.
+
+The original `prompt` and `continue_turn` methods keep caller-supplied inference
+options and do not infer defaults or silently apply saved preferences. Both
+paths reject malformed saved preferences before admitting provider work.
+Resume validates and exposes saved preferences; applying process overrides is
+the runtime owner's responsibility, not an inferred history mutation.
+
+These APIs persist only the session. The surrounding runtime must accept and
+rewrite queued/future preferences while a job is active, then flush session
+preferences under idle admission; `Busy` is not a successful deferred save.
+User-default settings are a separate write target with an independent outcome.
+No API bypasses core's active lease by writing the underlying store directly.
+Failure, dropped-save uncertainty and cross-process conflicts use the same core
+reconciliation contract as other native metadata mutations.
 
 ## Durable context selection
 

@@ -1451,8 +1451,8 @@ fn body(request: &CapturedRequest) -> Value {
 fn composed_conversation_projects_context_and_forwards_effective_model_controls() {
     use machine_god_core::{InferenceOptions, Prompt};
     use machine_god_native::{
-        AiGatewayInferenceOptions, NativeConversation, NativeModelCapabilities,
-        NativeModelPreferences, NativeReasoningEffort, NativeSessionMetadata, NativeSessionOrigin,
+        NativeConversation, NativeModelCapabilities, NativeModelPreferences, NativeModelSnapshot,
+        NativeReasoningEffort, NativeSessionMetadata, NativeSessionOrigin,
     };
     let temporary = TemporaryDirectory::new("conversation-model-context");
     let (workspace, sessions) = roots(temporary.path());
@@ -1492,23 +1492,15 @@ fn composed_conversation_projects_context_and_forwards_effective_model_controls(
     let effort = NativeReasoningEffort::parse("future-tier").unwrap();
     let capabilities = NativeModelCapabilities::new(std::slice::from_ref(&effort), true).unwrap();
     let preferences = NativeModelPreferences::new("provider/模型 v2", effort, true).unwrap();
-    let effective = preferences.effective(&capabilities);
-    let mut options = InferenceOptions {
-        model: Some(effective.model().to_owned()),
-        ..InferenceOptions::default()
-    };
-    AiGatewayInferenceOptions::new(
-        effective.effort().cloned().unwrap_or_default(),
-        effective.fast(),
-    )
-    .apply_to(&mut options);
+    let snapshot = NativeModelSnapshot::new(&preferences, &capabilities);
     let events = futures_executor::block_on(async {
         conversation
-            .prompt(
+            .prompt_with_model(
                 Prompt {
                     text: "third question".to_owned(),
-                    options,
+                    options: InferenceOptions::default(),
                 },
+                snapshot,
                 300,
             )
             .await
@@ -1543,6 +1535,10 @@ fn composed_conversation_projects_context_and_forwards_effective_model_controls(
     );
     let record =
         futures_executor::block_on(host.session_lifecycle().replay(conversation.id())).unwrap();
+    assert_eq!(
+        NativeModelPreferences::from_metadata(&record.metadata).unwrap(),
+        Some(preferences)
+    );
     assert_eq!(record.messages.len(), 6);
     assert_eq!(
         record.messages[0],

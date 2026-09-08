@@ -129,9 +129,13 @@ composition shares bounded undo across all five file mutations. Model identifier
 share the pinned 1,024-byte UTF-8 contract, with escaped CLI presentation.
 Model components include bounded [preference values](model-preferences.md), explicitly advertised catalog
 capabilities, pinned reasoning/fast wire fields and exact-first fuzzy query
-resolution across the existing slash-input bound. These component commits are
-not deliveries. Remaining work includes durable model/default preference writes,
-cache and queued/active model snapshots (including vision/search), typed historical
+resolution across the existing slash-input bound. Native conversation admission
+atomically persists requested model settings with checkpoints and pins immutable
+effective controls across provider/tool rounds; idle preference writes preserve
+history and resume exposes saved settings without manufacturing defaults.
+These component commits are not deliveries. Remaining work includes durable
+user-default writes, runtime queue/deferred-session persistence, cache and model
+snapshot routing through vision/search, typed historical
 interruption/background/file facts, interactive command/session transitions,
 pinned recovery/retry policy, policy/sandbox/workspace enforcement, rich session
 commands and the complete feature gates.

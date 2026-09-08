@@ -345,7 +345,7 @@ pub use model_preferences::{
     MAX_NATIVE_REASONING_EFFORT_BYTES, MAX_NATIVE_REASONING_EFFORT_OPTIONS,
     NATIVE_MODEL_PREFERENCES_KEY, NativeEffectiveModelPreferences, NativeFastModeChange,
     NativeModelCapabilities, NativeModelPreferences, NativeModelPreferencesError,
-    NativeReasoningEffort,
+    NativeModelSnapshot, NativeReasoningEffort,
 };
 pub use model_selection::{
     MAX_NATIVE_MODEL_QUERY_BYTES, NativeModelSelectionError, resolve_model_query,
