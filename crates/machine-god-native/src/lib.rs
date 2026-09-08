@@ -419,7 +419,7 @@ pub use conversation_model_routes::{
 pub use conversation_runtime::{
     MAX_NATIVE_QUEUED_INPUT_BYTES, MAX_NATIVE_QUEUED_JOBS, MAX_NATIVE_QUEUED_OPTIONS_BYTES,
     MAX_NATIVE_QUEUED_PROMPT_BYTES, NativeConversationRuntime, NativeConversationRuntimeError,
-    NativeConversationRuntimeStatus, NativeConversationRuntimeTurn,
+    NativeConversationRuntimeStatus, NativeConversationRuntimeTurn, NativeModelPreferenceCommit,
     NativeModelPreferencePersistence, NativeQueuedJobId,
 };
 pub use copy_file::{

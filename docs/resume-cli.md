@@ -1,8 +1,8 @@
 # Explicit-session `resume` command
 
 `machine-god resume` continues one existing durable session with one bounded,
-noninteractive prompt. It exposes the native lifecycle's current-schema resume
-operation through the same streaming request path as [`ask`](ask-cli.md); it is
+noninteractive prompt. It exposes native conversation resume and runtime
+admission through the same streaming request path as [`ask`](ask-cli.md); it is
 not a session picker, interactive shell, replay, reset, migration, or recovery
 command.
 
@@ -42,10 +42,14 @@ mode in this slice.
 On Linux and macOS, a valid request starts the same owned signal guardian used
 by `ask`, then captures the process-native environment, loads the current
 strict configuration, captures the current workspace, prepares the selected
-workspace and state roots, and composes the production AI Gateway reference
-host. It resumes `<id>` through that host's retained
-`NativeSessionLifecycle`, then runs exactly one prompt turn on the returned
-engine-canonical session.
+workspace and state roots, validates one inference credential, and awaits a
+completed rich-model catalog observation before acquiring the complete terminal
+host. It reuses that same acquired credential for inference. The catalog's
+failed-observation fallback, setup-signal behavior, and bounded authority are
+the same as [`ask`](ask-cli.md#native-composition).
+It resumes `<id>` through `NativeConversation` over the host's retained
+`NativeSessionLifecycle`, then enqueues exactly one new prompt through
+`NativeConversationRuntime` on the engine-canonical session.
 
 Resume accepts only a valid current-schema record under the state root selected
 for this invocation. Missing, corrupt, future-schema, incompatible-incarnation,
@@ -55,11 +59,26 @@ selected from a directory listing, and this path does not allocate a new
 session identity.
 
 The stored transcript is provider-neutral. The continued turn deliberately
-uses the provider, model, transport, credentials, engine limits, permission
+uses the provider, transport, credentials, engine limits, permission
 adapter, tool catalog, current workspace, and other authority from the current
 invocation's configuration and composed host. It does not resurrect historical
 credentials, configuration, workspace authority, pending prompt UI, permission
 decisions, or external tool effects from the durable record.
+
+Saved session model/effort/fast preferences override the current configuration's
+ordinary defaults. If historical preferences are absent, configuration supplies
+the runtime's startup selection without claiming those values were historical.
+This grammar supplies no explicit process-model override. The completed catalog
+determines effective controls at admission; unsupported controls are omitted on
+the wire while requested preferences remain preserved in the session. Ordinary
+`resume` does not write user defaults.
+
+Historical workspace, origin, and creation time remain unknown when absent;
+the current directory, file mtime, session ID, and current clock do not
+invent those facts. Current invocation workspace authority is separate from
+historical workspace metadata. Native context preferences select provider views
+without deleting canonical history, and existing confirmed transcript evidence
+is not automatically replayed as external effects.
 
 As with `ask`, this noninteractive host denies every permission-gated native
 capability per request and gives `ask_user_question` its fixed unavailable
@@ -79,7 +98,9 @@ lifecycle events, the session ID, provider diagnostics, permission details,
 tool calls, and tool results are not printed. Successful terminal completion
 flushes acknowledged output.
 
-- A completed turn exits `0` after all preceding assistant bytes are written.
+- A completed turn exits `0` after native checkpoint finalization succeeds and
+  all preceding assistant bytes are written. Finalization failure is an
+  operational failure, not successful terminal completion.
 - Invalid grammar exits `2` with the global invalid-arguments diagnostic.
 - Configuration, root, credential, composition, session-load, provider,
   engine, terminal-event, and runtime failures exit `1` with the fixed redacted
@@ -95,7 +116,9 @@ Partial assistant bytes already acknowledged before a later failure are not
 retracted. No diagnostic may include the prompt, session ID, credential, path,
 provider data, tool data, configuration value, or operating-system detail.
 
-A turn persists through the core session contract. Once the resumed turn has
+A turn persists through the native conversation and core session contracts.
+Admission atomically reserves the checkpoint and requested model preferences
+with the new prompt against its prepared revision. Once the resumed turn has
 started, its user message may already be durably appended before a later
 provider, engine-output, standard-output, signal, or final presentation
 failure. Such a failure does not roll back the durable user turn or any
@@ -106,11 +129,11 @@ The command makes no cross-process serialization claim. Process-local engine
 state converges same-incarnation resumes only within one composed host, while
 the file store's advisory lock and compare-and-swap fence individual durable
 operations. Another cooperating process may load the same revision and begin
-work concurrently. Prompt reservation handles a conflict with at most 32
-reload-and-retry attempts: a loser may reconcile a same-incarnation user-message
-prefix committed by another process, append its own prompt, and send that
-combined prefix to its provider. A later assistant commit whose transcript has
-diverged fails closed instead of merging assistant results. The CLI neither
+work concurrently. Native prepared prompt reservation is pinned to the exact
+revision: a conflict fails closed rather than reloading another process's
+prefix, merging the new prompt, or automatically retrying admission. A later
+assistant commit whose transcript has diverged fails closed instead of merging
+assistant results. The CLI neither
 holds a process-wide session lease for the complete provider turn nor excludes
 processes that ignore the store protocol.
 
@@ -121,13 +144,13 @@ transcript, metadata, and structural JSON retain the bounds documented for
 [`ask`](ask-cli.md), the [core engine](core-api.md), and the
 [session lifecycle](native-session-lifecycle.md). The initial lifecycle resume
 loads at most one current-schema record within the file-store cap. Subsequent
-prompt reservation and assistant persistence use the core store contract;
-compare-and-swap validation may reread the bounded record, and reservation may
-perform the bounded conflict retries described above. The command may create
-the record's permanent lock sidecar. It adds no directory enumeration or
+prompt reservation, checkpoint finalization, and assistant persistence use the
+native/core store contracts; compare-and-swap validation may reread the bounded
+record, but prepared reservation does not retry conflicts. The command may
+create the record's permanent lock sidecar. It adds no directory enumeration or
 ID-generation retry. It reuses `ask`'s bounded scoped worker and owned signal
-guardian, so no thread or task remains detached. Semantic provider and conflict
-retries are bounded, but the inherited file store has no attempt or wall-clock
+guardian, so no thread or task remains detached. Provider work retains its
+existing bounds, but the inherited file store has no attempt or wall-clock
 ceiling for advisory-lock acquisition, filesystem latency, or retries after
 `EINTR`.
 

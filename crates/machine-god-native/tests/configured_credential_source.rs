@@ -146,8 +146,8 @@ fn assert_format_error(config_root: &Path, contents: &str) {
 }
 
 #[test]
-fn schema_v3_public_contract_and_built_in_projection_are_stable() {
-    assert_eq!(CONFIG_SCHEMA_VERSION, 3);
+fn schema_v4_public_contract_and_built_in_projection_are_stable() {
+    assert_eq!(CONFIG_SCHEMA_VERSION, 4);
     assert_eq!(
         NativeCredentialSourceKind::Environment.as_str(),
         "environment"
@@ -159,7 +159,7 @@ fn schema_v3_public_contract_and_built_in_projection_are_stable() {
     assert_loaded(
         &loaded,
         ConfigOrigin::BuiltInDefaults,
-        3,
+        4,
         AI_GATEWAY_DEFAULT_MODEL,
     );
     assert!(!absent_root.exists());
@@ -372,8 +372,8 @@ fn future_integer_version_is_unsupported_while_malformed_versions_are_invalid() 
     let temporary = TemporaryDirectory::new("future-version");
     let config_root = temporary.path().join("xdg");
     for contents in [
-        r#"{"schema_version":4}"#,
-        r#"{"schema_version":4,"credential_source":"future","secret":"HIDDEN"}"#,
+        r#"{"schema_version":5}"#,
+        r#"{"schema_version":5,"credential_source":"future","secret":"HIDDEN"}"#,
         r#"{"schema_version":18446744073709551616,"future":true}"#,
         r#"{"schema_version":-1,"future":true}"#,
     ] {
@@ -410,7 +410,7 @@ fn schema_v3_preserves_the_exact_file_bound_and_redacted_diagnostics() {
 
     let secret = "MODEL_SECRET_MARKER";
     let invalid = format!(
-        r#"{{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"{secret} with-space","credential_source":"environment"}}"#
+        r#"{{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":" {secret} with-space","credential_source":"environment"}}"#
     );
     let error = load_error(&config_root, invalid.as_bytes());
     assert_eq!(error.kind(), NativeConfigErrorKind::InvalidFormat);

@@ -145,11 +145,23 @@ of current selection at tool entry. Neither inherits effort/fast controls.
 Schema-v4 user defaults now preserve requested model/effort/fast controls with
 strict legacy reads and explicit descriptor-bound, conflict-checked publication
 to the same configuration file. Session and user targets remain independent.
-Remaining work includes combined persistence-outcome reporting, cache/CLI
-composition, typed historical
-interruption/background/file facts, interactive command/session transitions,
+The runtime's explicit combined save captures one generation, attempts both
+session and user-default targets independently, and reports separate outcomes
+without reverting selection or overwriting a concurrently changed config.
+One-shot ask/resume now compose the native runtime with a completed rich catalog,
+using one acquired credential for catalog and inference before terminal-host
+startup. Resume restores saved controls over changed defaults, while ordinary
+invocations leave user defaults untouched; native finalization gates completion.
+Remaining work includes interactive CLI persistence-outcome presentation,
+long-lived cache composition, typed historical interruption/background/file facts,
+interactive command/session transitions,
 pinned recovery/retry policy, policy/sandbox/workspace enforcement, rich session
 commands and the complete feature gates.
+
+The local broad regression gate remains open: default-concurrency macOS runs
+exposed background cleanup and PTY child-reap admission failures. Focused reruns
+pass, but do not replace a green complete workspace run; preserve the existing
+deadlines, concurrency, and fail-closed cleanup behavior during investigation.
 
 ### CI and documentation maintenance
 

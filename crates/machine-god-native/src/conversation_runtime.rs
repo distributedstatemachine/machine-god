@@ -19,9 +19,10 @@ use crate::tool_output_serializer::{
     CompactJsonScratch, CompactToolOutputLimits, measure_json_value_compact_with_scratch,
 };
 use crate::{
-    NativeConversation, NativeConversationError, NativeConversationModelRouteError,
-    NativeConversationModelRoutes, NativeConversationTurn, NativeModelCapabilities,
-    NativeModelCatalog, NativeModelPreferences, NativeModelPreferencesError, NativeModelSnapshot,
+    LoadedNativeConfig, NativeConversation, NativeConversationError,
+    NativeConversationModelRouteError, NativeConversationModelRoutes, NativeConversationTurn,
+    NativeModelCapabilities, NativeModelCatalog, NativeModelPreferences,
+    NativeModelPreferencesError, NativeModelSnapshot, NativeUserConfigError, NativeUserConfigStore,
 };
 
 /// Independent native queue bounds; core still applies its configured turn limits.
@@ -82,6 +83,7 @@ pub struct NativeConversationRuntimeStatus {
     pub queued_input_bytes: usize,
     pub active: bool,
     pub model_preferences_pending: bool,
+    pub model_preferences_generation: u64,
 }
 
 /// Session-target outcome only. User defaults require an independent write.
@@ -93,6 +95,20 @@ pub enum NativeModelPreferencePersistence {
         generation: u64,
         revision: SessionRevision,
     },
+}
+
+/// Independent outcomes for the same captured runtime preference generation.
+/// A successful target never implies that the other target was saved.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeModelPreferenceCommit {
+    pub generation: u64,
+    pub session: Result<NativeModelPreferencePersistence, NativeConversationRuntimeError>,
+    pub user_defaults: Result<LoadedNativeConfig, NativeUserConfigError>,
+}
+
+enum PreferenceSave {
+    Observed(NativeModelPreferencePersistence),
+    Write(RuntimeLease),
 }
 
 struct QueuedJob {
@@ -223,6 +239,7 @@ impl NativeConversationRuntime {
             queued_input_bytes: state.bytes,
             active: state.active,
             model_preferences_pending: state.saved_generation != Some(state.generation),
+            model_preferences_generation: state.generation,
         }
     }
 
@@ -459,34 +476,88 @@ impl NativeConversationRuntime {
     ) -> BoxFuture<'_, Result<NativeModelPreferencePersistence, NativeConversationRuntimeError>>
     {
         Box::pin(async move {
-            let (lease, preferences, generation) = {
-                let mut state = self.state.lock().expect("runtime state poisoned");
-                if state.saved_generation == Some(state.generation) {
-                    return Ok(NativeModelPreferencePersistence::Unchanged);
+            let (preferences, generation, save) = self.prepare_preference_save();
+            self.save_preferences(preferences, generation, save, now_ms)
+                .await
+        })
+    }
+
+    /// Attempts session and explicitly authorized user-default persistence for
+    /// one captured selection. Neither target's failure suppresses the other.
+    /// The user snapshot is read before awaiting the session save, so a pending
+    /// older session write cannot silently overwrite changed user configuration.
+    ///
+    /// This borrowed future is inert until polled. It does not change selection,
+    /// retry conflicts, or spawn work. Dropping a pending session save abandons
+    /// this operation without starting a detached user writer or claiming a receipt.
+    /// The user store's bounded synchronous I/O contract still applies.
+    ///
+    /// # Panics
+    /// Polling panics if an earlier panic poisoned the runtime state mutex.
+    #[must_use]
+    pub fn persist_model_preferences<'a>(
+        &'a self,
+        user_store: &'a NativeUserConfigStore,
+        now_ms: i64,
+    ) -> BoxFuture<'a, NativeModelPreferenceCommit> {
+        Box::pin(async move {
+            let (preferences, generation, save) = self.prepare_preference_save();
+            let user_snapshot = user_store.load();
+            let session = self
+                .save_preferences(preferences.clone(), generation, save, now_ms)
+                .await;
+            let user_defaults = match user_snapshot {
+                Ok(snapshot) => {
+                    user_store
+                        .set_model_preferences(&snapshot, &preferences)
+                        .await
                 }
-                if state.active {
-                    return Ok(NativeModelPreferencePersistence::Deferred);
-                }
-                state.active = true;
-                (
-                    RuntimeLease(Arc::clone(&self.state)),
-                    state.preferences.clone(),
-                    state.generation,
-                )
+                Err(error) => Err(error),
             };
-            let revision = self
-                .conversation
-                .set_model_preferences(preferences, now_ms)
-                .await?;
-            self.state
-                .lock()
-                .expect("runtime state poisoned")
-                .saved_generation = Some(generation);
-            drop(lease);
-            Ok(NativeModelPreferencePersistence::Saved {
+            NativeModelPreferenceCommit {
                 generation,
-                revision,
-            })
+                session,
+                user_defaults,
+            }
+        })
+    }
+
+    fn prepare_preference_save(&self) -> (NativeModelPreferences, u64, PreferenceSave) {
+        let mut state = self.state.lock().expect("runtime state poisoned");
+        let save = if state.saved_generation == Some(state.generation) {
+            PreferenceSave::Observed(NativeModelPreferencePersistence::Unchanged)
+        } else if state.active {
+            PreferenceSave::Observed(NativeModelPreferencePersistence::Deferred)
+        } else {
+            state.active = true;
+            PreferenceSave::Write(RuntimeLease(Arc::clone(&self.state)))
+        };
+        (state.preferences.clone(), state.generation, save)
+    }
+
+    async fn save_preferences(
+        &self,
+        preferences: NativeModelPreferences,
+        generation: u64,
+        save: PreferenceSave,
+        now_ms: i64,
+    ) -> Result<NativeModelPreferencePersistence, NativeConversationRuntimeError> {
+        let lease = match save {
+            PreferenceSave::Observed(outcome) => return Ok(outcome),
+            PreferenceSave::Write(lease) => lease,
+        };
+        let revision = self
+            .conversation
+            .set_model_preferences(preferences, now_ms)
+            .await?;
+        self.state
+            .lock()
+            .expect("runtime state poisoned")
+            .saved_generation = Some(generation);
+        drop(lease);
+        Ok(NativeModelPreferencePersistence::Saved {
+            generation,
+            revision,
         })
     }
 

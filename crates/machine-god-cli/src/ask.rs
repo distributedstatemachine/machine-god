@@ -210,13 +210,18 @@ mod production {
     use std::time::Duration;
 
     use futures_core::Stream;
-    use machine_god_core::{ModelEvent, Turn, TurnEvent};
+    use machine_god_core::{CancellationToken, ModelEvent, TurnEvent};
     use machine_god_native::{
-        AiGatewayCredentialEnvironment, NativeEnvironment, NativeReferenceHost,
-        NativeReferenceHostTerminalOptions, NativeRootSelection, PermissionPromptDecision,
+        AiGatewayCredentialEnvironment, AiGatewayModelCatalogAccessMode,
+        AiGatewayModelCatalogHttpTransport, AiGatewayModelCatalogProvider, FileUndoTracker,
+        NativeConversation, NativeConversationModelRoutes, NativeConversationRuntime,
+        NativeConversationRuntimeTurn, NativeEnvironment, NativeModelCatalog,
+        NativeModelCatalogCache, NativeModelCatalogCacheState, NativeReferenceHost,
+        NativeReferenceHostConversationOptions, NativeReferenceHostTerminalOptions,
+        NativeRootSelection, NativeSessionMetadata, NativeSessionOrigin, PermissionPromptDecision,
         PermissionPromptError, PermissionPrompter, PreparedNativeRoots, QuestionPromptError,
         QuestionPromptOutcome, QuestionPromptRequest, QuestionPrompter, TerminalShell,
-        TokioWebSearchDeadline, load_native_config,
+        TokioWebSearchDeadline, discover_ai_gateway_credential, load_native_config,
     };
 
     use super::{
@@ -698,7 +703,7 @@ mod production {
     }
 
     struct TurnEventStream<'a> {
-        turn: &'a mut Turn,
+        turn: &'a mut NativeConversationRuntimeTurn,
     }
 
     impl Stream for TurnEventStream<'_> {
@@ -907,23 +912,39 @@ mod production {
                         let prepared_roots =
                             PreparedNativeRoots::prepare(root_selection).map_err(|_| ())?;
                         let terminal_options = capture_terminal_options(prepared_roots.workspace_root())?;
+                        let workspace = prepared_roots.workspace_root().to_owned();
                         let (runtime, deadline) =
                             TokioWebSearchDeadline::build_runtime_pair().map_err(|_| ())?;
+                        // Validate inference access before any catalog request.
+                        // Catalog loading precedes terminal-host acquisition:
+                        // setup signals can exit without abandoning native workers.
+                        let credential = discover_ai_gateway_credential(
+                            AiGatewayCredentialEnvironment::from_process(),
+                        ).map_err(|_| ())?;
+                        let catalog_transport = AiGatewayModelCatalogHttpTransport::with_discovered_credential(&credential).map_err(|_| ())?;
+                        let cache = NativeModelCatalogCache::new(Arc::new(AiGatewayModelCatalogProvider::new(
+                            AiGatewayModelCatalogAccessMode::Authenticated, Arc::new(catalog_transport),
+                        )));
+                        let catalog = runtime.block_on(load_conversation_catalog(&cache))?;
+                        let model_routes = Arc::new(NativeConversationModelRoutes::new());
+                        let options = NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
+                            .with_terminal(terminal_options).with_model_routes(model_routes.clone());
                         let host =
-                            NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots_and_terminal(
+                            NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots_and_conversation_and_credential(
                                 loaded_config,
-                                AiGatewayCredentialEnvironment::from_process(),
+                                credential,
                                 prepared_roots,
                                 Arc::new(DenyPermissionPrompter),
                                 Arc::new(UnavailableQuestionPrompter),
                                 Arc::new(deadline),
-                                terminal_options,
+                                options,
                             )
                             .map_err(|_| ())?;
                         with_settled_terminal_turn(host, signals, &control, |host, signals| runtime.block_on(execute_turn(
                             host,
                             selection,
                             prompt,
+                            ConversationSetup { workspace, model_routes, catalog, now_ms: wall_clock_ms()? },
                             OutputBridge {
                                 work: work_sender,
                                 acknowledgements: acknowledgement_receiver,
@@ -1040,27 +1061,85 @@ mod production {
         host: &NativeReferenceHost,
         selection: SessionSelection,
         prompt: String,
+        setup: ConversationSetup,
         output: OutputBridge,
         signals: &mut AskSignals,
         control: &AskSignalControlSender,
     ) -> Result<TurnDriveResult, ()> {
         let lifecycle = host.session_lifecycle();
-        let session = match selection {
-            SessionSelection::CreateGenerated => lifecycle.create_generated().await,
-            SessionSelection::Resume(id) => lifecycle.resume(id).await,
+        let conversation = match selection {
+            SessionSelection::CreateGenerated => {
+                NativeConversation::create(
+                    lifecycle,
+                    NativeSessionMetadata::new(
+                        &setup.workspace,
+                        setup.now_ms,
+                        NativeSessionOrigin::Cli,
+                    )
+                    .map_err(|_| ())?,
+                )
+                .await
+            }
+            SessionSelection::Resume(id) => NativeConversation::resume(lifecycle, id).await,
         }
         .map_err(|_| ())?;
-        let turn = session.prompt(prompt).await.map_err(|_| ())?;
+        let conversation = NativeConversationRuntime::new_with_model_routes(
+            conversation,
+            host.loaded_config().config().model_preferences(),
+            None,
+            &setup.model_routes,
+        )
+        .map_err(|_| ())?;
+        if let Some(catalog) = setup.catalog {
+            conversation.set_model_catalog(catalog);
+        }
+        conversation.enqueue(prompt.into()).map_err(|_| ())?;
+        let turn = conversation
+            .start_next(setup.now_ms)
+            .await
+            .map_err(|_| ())?
+            .ok_or(())?;
         control.activate_turn()?;
         Ok(drive_turn(turn, signals, output).await)
     }
 
+    struct ConversationSetup {
+        workspace: std::path::PathBuf,
+        model_routes: Arc<NativeConversationModelRoutes>,
+        catalog: Option<Arc<NativeModelCatalog>>,
+        now_ms: i64,
+    }
+
+    fn wall_clock_ms() -> Result<i64, ()> {
+        let elapsed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| ())?;
+        i64::try_from(elapsed.as_millis()).map_err(|_| ())
+    }
+
+    async fn load_conversation_catalog(
+        cache: &NativeModelCatalogCache,
+    ) -> Result<Option<Arc<NativeModelCatalog>>, ()> {
+        // This cache is new for one noninteractive invocation; zero is its
+        // explicit monotonic origin, not a persisted wall-clock timestamp.
+        let snapshot = cache
+            .load(0, CancellationToken::new())
+            .await
+            .map_err(|_| ())?;
+        match snapshot.state {
+            NativeModelCatalogCacheState::Ready | NativeModelCatalogCacheState::Failed => {
+                Ok(snapshot.catalog)
+            }
+            NativeModelCatalogCacheState::Idle | NativeModelCatalogCacheState::Loading => Err(()),
+        }
+    }
+
     async fn drive_turn(
-        mut turn: Turn,
+        mut turn: NativeConversationRuntimeTurn,
         signals: &mut AskSignals,
         output: OutputBridge,
     ) -> TurnDriveResult {
-        let handle = turn.handle();
+        let handle = turn.handle().expect("a freshly admitted turn has a handle");
         let mut stream = TurnEventStream { turn: &mut turn };
         drive_turn_stream(
             &mut stream,
@@ -1226,6 +1305,7 @@ mod production {
         const BLOCKED_OUTPUT_READY_PATH: &str = "MACHINE_GOD_ASK_BLOCKED_OUTPUT_READY_PATH";
         const BLOCKED_OUTPUT_DRAINED_PATH: &str = "MACHINE_GOD_ASK_BLOCKED_OUTPUT_DRAINED_PATH";
         const SETUP_LOCK_CHILD_MODE: &str = "MACHINE_GOD_ASK_SETUP_LOCK_CHILD";
+        const CATALOG_WAIT_CHILD_MODE: &str = "MACHINE_GOD_ASK_CATALOG_WAIT_CHILD";
         const SETUP_LOCK_ROOT: &str = "MACHINE_GOD_ASK_SETUP_LOCK_ROOT";
         const SIGNAL_STAGE_READY_PATH: &str = "MACHINE_GOD_ASK_SIGNAL_STAGE_READY_PATH";
         const DIAGNOSTIC_CHILD_MODE: &str = "MACHINE_GOD_ASK_DIAGNOSTIC_CHILD";
@@ -1913,6 +1993,7 @@ mod production {
             responses: Mutex<VecDeque<Vec<u8>>>,
             request_bodies: Mutex<Vec<Vec<u8>>>,
             session_ids: Mutex<Vec<SessionId>>,
+            model_ids: Mutex<Vec<String>>,
         }
 
         impl OneShotTransport {
@@ -1929,6 +2010,7 @@ mod production {
                     responses: Mutex::new(responses.into_iter().map(Into::into).collect()),
                     request_bodies: Mutex::new(Vec::new()),
                     session_ids: Mutex::new(Vec::new()),
+                    model_ids: Mutex::new(Vec::new()),
                 }
             }
 
@@ -1954,6 +2036,14 @@ mod production {
                     .map(|header| SessionId::new(header.value()).expect("session ID is valid"))
                     .expect("gateway request should carry a session ID");
                 self.session_ids.lock().unwrap().push(session_id);
+                self.model_ids.lock().unwrap().push(
+                    headers
+                        .iter()
+                        .find(|header| header.name() == "ai-language-model-id")
+                        .unwrap()
+                        .value()
+                        .to_owned(),
+                );
                 self.request_bodies.lock().unwrap().push(body);
                 let response = self
                     .responses
@@ -1971,6 +2061,132 @@ mod production {
 
         struct NeverWebSearchDeadline;
 
+        struct CatalogTransport {
+            response: Option<Vec<u8>>,
+            ready: Option<PathBuf>,
+            calls: Arc<std::sync::atomic::AtomicUsize>,
+        }
+        impl machine_god_native::AiGatewayModelCatalogTransport for CatalogTransport {
+            fn wait_until(&self, _: Instant) -> BoxFuture<'_, ()> {
+                Box::pin(future::pending())
+            }
+            fn get(
+                &self,
+                _: machine_god_native::AiGatewayModelCatalogRequestAccess,
+                _: Instant,
+                _: CancellationToken,
+            ) -> BoxFuture<
+                '_,
+                Result<
+                    machine_god_native::AiGatewayModelCatalogTransportResponse,
+                    machine_god_native::AiGatewayModelCatalogTransportError,
+                >,
+            > {
+                Box::pin(async move {
+                    self.calls.fetch_add(1, Ordering::SeqCst);
+                    if let Some(path) = &self.ready {
+                        fs::write(path, b"catalog-started").unwrap();
+                    }
+                    match &self.response {
+                        Some(body) => Ok(
+                            machine_god_native::AiGatewayModelCatalogTransportResponse::new(
+                                200,
+                                body.clone(),
+                            ),
+                        ),
+                        None => future::pending().await,
+                    }
+                })
+            }
+        }
+
+        fn catalog_cache(
+            response: Option<Vec<u8>>,
+            ready: Option<PathBuf>,
+        ) -> (
+            super::NativeModelCatalogCache,
+            Arc<std::sync::atomic::AtomicUsize>,
+        ) {
+            let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let cache = super::NativeModelCatalogCache::new(Arc::new(
+                super::AiGatewayModelCatalogProvider::new(
+                    super::AiGatewayModelCatalogAccessMode::PublicOnly,
+                    Arc::new(CatalogTransport {
+                        response,
+                        ready,
+                        calls: calls.clone(),
+                    }),
+                ),
+            ));
+            (cache, calls)
+        }
+
+        fn rich_catalog() -> Arc<super::NativeModelCatalog> {
+            let body = serde_json::to_vec(&serde_json::json!({"data":[
+                {"id":"test/selected","type":"language","reasoning_options":[{"type":"effort","values":["high"]}],"fast_options":[{"type":"toggle"}]}
+            ]})).unwrap();
+            let (cache, _) = catalog_cache(Some(body), None);
+            load_test_catalog(&cache).unwrap()
+        }
+
+        fn load_test_catalog(
+            cache: &super::NativeModelCatalogCache,
+        ) -> Option<Arc<super::NativeModelCatalog>> {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(super::load_conversation_catalog(cache))
+                .unwrap()
+        }
+
+        #[test]
+        fn catalog_setup_waits_for_completed_observation_and_drop_is_owned() {
+            let (cache, calls) = catalog_cache(None, None);
+            let mut load = Box::pin(super::load_conversation_catalog(&cache));
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+            assert!(
+                load.as_mut()
+                    .poll(&mut Context::from_waker(std::task::Waker::noop()))
+                    .is_pending()
+            );
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                cache.snapshot().state,
+                super::NativeModelCatalogCacheState::Loading
+            );
+            drop(load);
+            assert_eq!(
+                cache.snapshot().state,
+                super::NativeModelCatalogCacheState::Idle
+            );
+            let (failed, _) = catalog_cache(Some(b"invalid JSON".to_vec()), None);
+            assert!(load_test_catalog(&failed).is_none());
+            assert_eq!(
+                failed.snapshot().state,
+                super::NativeModelCatalogCacheState::Failed
+            );
+            assert!(rich_catalog().details("test/selected").is_some());
+        }
+
+        #[test]
+        #[ignore = "subprocess helper invoked by setup_and_final_stage_signals_have_precedence"]
+        fn pending_catalog_signal_child() {
+            if std::env::var_os(CATALOG_WAIT_CHILD_MODE).is_none() {
+                return;
+            }
+            let ready = PathBuf::from(std::env::var_os(SIGNAL_STAGE_READY_PATH).unwrap());
+            let controller = AskSignalController::spawn().unwrap();
+            assert!(controller.registration_complete());
+            let (cache, _) = catalog_cache(None, Some(ready));
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let _ = runtime.block_on(super::load_conversation_catalog(&cache));
+            wait_for_child_guardian_exit(controller);
+        }
+
         impl WebSearchDeadline for NeverWebSearchDeadline {
             fn wait_until(
                 &self,
@@ -1985,6 +2201,28 @@ mod production {
             host: &NativeReferenceHost,
             selection: SessionSelection,
             prompt: &str,
+            workspace: &std::path::Path,
+        ) -> (AskCommandOutcome, RecordingOutput, Vec<&'static str>) {
+            run_composed_turn_with_setup(
+                runtime,
+                host,
+                selection,
+                prompt,
+                super::ConversationSetup {
+                    workspace: workspace.canonicalize().unwrap(),
+                    model_routes: Arc::new(machine_god_native::NativeConversationModelRoutes::new()),
+                    catalog: None,
+                    now_ms: 100,
+                },
+            )
+        }
+
+        fn run_composed_turn_with_setup(
+            runtime: &tokio::runtime::Runtime,
+            host: &NativeReferenceHost,
+            selection: SessionSelection,
+            prompt: &str,
+            setup: super::ConversationSetup,
         ) -> (AskCommandOutcome, RecordingOutput, Vec<&'static str>) {
             std::thread::scope(|scope| {
                 let (work_sender, work_receiver) = tokio::sync::mpsc::channel(1);
@@ -2026,6 +2264,7 @@ mod production {
                         host,
                         selection,
                         prompt.to_owned(),
+                        setup,
                         OutputBridge {
                             work: work_sender,
                             acknowledgements: acknowledgement_receiver,
@@ -2033,7 +2272,10 @@ mod production {
                         &mut signals,
                         &control,
                     ))
-                    .expect("composed turn should execute");
+                    .unwrap_or(TurnDriveResult {
+                        outcome: AskCommandOutcome::OperationalFailure,
+                        stalled_output_after_signal: false,
+                    });
                 // These legacy-host codec tests deliberately retain the host
                 // for transcript inspection; complete-host settlement has its
                 // own ordering regression below.
@@ -2088,6 +2330,7 @@ mod production {
                 &host,
                 SessionSelection::CreateGenerated,
                 "composed request",
+                &workspace_root,
             );
 
             assert_eq!(outcome, AskCommandOutcome::Completed);
@@ -2107,6 +2350,23 @@ mod production {
                 )
                 .expect("completed session should replay");
             assert_eq!(record.next_turn_sequence, 2);
+            let metadata = super::NativeSessionMetadata::from_metadata(&record.metadata).unwrap();
+            assert_eq!(
+                metadata.workspace(),
+                Some(workspace_root.canonicalize().unwrap().as_path())
+            );
+            assert_eq!(metadata.created_at_ms(), Some(100));
+            assert_eq!(metadata.origin(), Some(super::NativeSessionOrigin::Cli));
+            assert!(
+                record
+                    .metadata
+                    .contains_key(machine_god_native::NATIVE_MODEL_PREFERENCES_KEY)
+            );
+            assert!(
+                !record
+                    .metadata
+                    .contains_key(machine_god_native::NATIVE_CONVERSATION_CHECKPOINT_KEY)
+            );
             assert_eq!(
                 record.messages,
                 [
@@ -2114,6 +2374,268 @@ mod production {
                     Message::text(Role::Assistant, "composed answer"),
                 ]
             );
+        }
+
+        struct ModelConversationFixture {
+            temporary: ScopedTestDirectory,
+            workspace: PathBuf,
+            sessions: PathBuf,
+            runtime: tokio::runtime::Runtime,
+        }
+
+        impl ModelConversationFixture {
+            fn new() -> Self {
+                static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let temporary = ScopedTestDirectory::new(&format!(
+                    "composed-model-preferences-{}",
+                    NEXT.fetch_add(1, Ordering::Relaxed),
+                ));
+                let workspace = temporary.path().join("workspace");
+                let sessions = temporary.path().join("sessions");
+                for root in [&workspace, &sessions] {
+                    fs::create_dir(root).unwrap();
+                    fs::set_permissions(root, fs::Permissions::from_mode(0o700)).unwrap();
+                }
+                Self {
+                    temporary,
+                    workspace,
+                    sessions,
+                    runtime: tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap(),
+                }
+            }
+
+            fn host(
+                &self,
+                preferences: &machine_god_native::NativeModelPreferences,
+                transport: Arc<OneShotTransport>,
+            ) -> NativeReferenceHost {
+                let store = machine_god_native::NativeUserConfigStore::new(
+                    self.temporary.path().join("config"),
+                );
+                let snapshot = store.load().unwrap();
+                let config = self
+                    .runtime
+                    .block_on(store.set_model_preferences(&snapshot, preferences))
+                    .unwrap();
+                NativeReferenceHost::compose_with_ai_gateway_transport(
+                    config,
+                    transport,
+                    NetworkTarget {
+                        scheme: "https".to_owned(),
+                        host: "ai-gateway.vercel.sh".to_owned(),
+                        port: None,
+                    },
+                    &self.workspace,
+                    &self.sessions,
+                    Arc::new(DenyPermissionPrompter),
+                    Arc::new(UnavailableQuestionPrompter),
+                    Arc::new(NeverWebSearchDeadline),
+                )
+                .unwrap()
+            }
+
+            fn setup(
+                &self,
+                catalog: Option<Arc<super::NativeModelCatalog>>,
+            ) -> super::ConversationSetup {
+                super::ConversationSetup {
+                    workspace: self.workspace.canonicalize().unwrap(),
+                    model_routes: Arc::new(machine_god_native::NativeConversationModelRoutes::new()),
+                    catalog,
+                    now_ms: 200,
+                }
+            }
+
+            fn run(
+                &self,
+                host: &NativeReferenceHost,
+                selection: SessionSelection,
+                catalog: Option<Arc<super::NativeModelCatalog>>,
+            ) -> AskCommandOutcome {
+                run_composed_turn_with_setup(
+                    &self.runtime,
+                    host,
+                    selection,
+                    "request",
+                    self.setup(catalog),
+                )
+                .0
+            }
+        }
+
+        fn selected_preferences() -> machine_god_native::NativeModelPreferences {
+            machine_god_native::NativeModelPreferences::new(
+                "test/selected",
+                machine_god_native::NativeReasoningEffort::parse("high").unwrap(),
+                true,
+            )
+            .unwrap()
+        }
+
+        fn finished_transport() -> Arc<OneShotTransport> {
+            Arc::new(OneShotTransport::new(
+                "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n",
+            ))
+        }
+
+        #[test]
+        fn composed_resume_restores_saved_controls_over_changed_user_defaults() {
+            let fixture = ModelConversationFixture::new();
+            let first = finished_transport();
+            let selected = selected_preferences();
+            let host = fixture.host(&selected, first.clone());
+            assert_eq!(
+                fixture.run(
+                    &host,
+                    SessionSelection::CreateGenerated,
+                    Some(rich_catalog())
+                ),
+                AskCommandOutcome::Completed
+            );
+            let id = first.session_ids()[0].clone();
+            drop(host);
+            let second = finished_transport();
+            let defaults = machine_god_native::NativeModelPreferences::new(
+                "other/default",
+                machine_god_native::NativeReasoningEffort::default(),
+                false,
+            )
+            .unwrap();
+            let host = fixture.host(&defaults, second.clone());
+            let config_path = fixture.temporary.path().join("config/config.json");
+            let original_config = fs::read(&config_path).unwrap();
+            assert_eq!(
+                fixture.run(
+                    &host,
+                    SessionSelection::Resume(id.clone()),
+                    Some(rich_catalog())
+                ),
+                AskCommandOutcome::Completed
+            );
+            for transport in [&first, &second] {
+                assert_eq!(*transport.model_ids.lock().unwrap(), ["test/selected"]);
+                let body: serde_json::Value =
+                    serde_json::from_slice(&transport.request_bodies()[0]).unwrap();
+                assert_eq!(body["reasoning"], "high");
+                assert_eq!(body["providerOptions"]["gateway"]["speed"], "fast");
+            }
+            let record = fixture
+                .runtime
+                .block_on(host.session_lifecycle().replay(id))
+                .unwrap();
+            assert_eq!(
+                machine_god_native::NativeModelPreferences::from_metadata(&record.metadata)
+                    .unwrap(),
+                Some(selected)
+            );
+            assert_eq!(fs::read(config_path).unwrap(), original_config);
+        }
+
+        #[test]
+        fn composed_turn_preserves_requested_controls_without_advertised_support() {
+            let fixture = ModelConversationFixture::new();
+            let transport = finished_transport();
+            let selected = selected_preferences();
+            let host = fixture.host(&selected, transport.clone());
+            assert_eq!(
+                fixture.run(&host, SessionSelection::CreateGenerated, None),
+                AskCommandOutcome::Completed
+            );
+            let body: serde_json::Value =
+                serde_json::from_slice(&transport.request_bodies()[0]).unwrap();
+            assert!(body.get("reasoning").is_none());
+            assert!(body.get("providerOptions").is_none());
+            let record = fixture
+                .runtime
+                .block_on(
+                    host.session_lifecycle()
+                        .replay(transport.session_ids()[0].clone()),
+                )
+                .unwrap();
+            assert_eq!(
+                machine_god_native::NativeModelPreferences::from_metadata(&record.metadata)
+                    .unwrap(),
+                Some(selected)
+            );
+        }
+
+        #[test]
+        fn composed_resume_rejects_malformed_preferences_before_generation_or_rewrite() {
+            use machine_god_core::SessionStore;
+            let fixture = ModelConversationFixture::new();
+            let transport = finished_transport();
+            let host = fixture.host(&selected_preferences(), transport.clone());
+            let session = fixture
+                .runtime
+                .block_on(host.session_lifecycle().create_generated())
+                .unwrap();
+            let id = session.id().clone();
+            drop(session);
+            let mut record = fixture
+                .runtime
+                .block_on(host.session_lifecycle().replay(id.clone()))
+                .unwrap();
+            let revision = record.revision;
+            record.metadata.insert(
+                machine_god_native::NATIVE_MODEL_PREFERENCES_KEY.to_owned(),
+                serde_json::json!({"schema_version": 99}),
+            );
+            fixture
+                .runtime
+                .block_on(host.session_store().save(record, Some(revision)))
+                .unwrap();
+            let before = fixture
+                .runtime
+                .block_on(host.session_lifecycle().replay(id.clone()))
+                .unwrap();
+            assert_eq!(
+                fixture.run(
+                    &host,
+                    SessionSelection::Resume(id.clone()),
+                    Some(rich_catalog())
+                ),
+                AskCommandOutcome::OperationalFailure
+            );
+            assert!(transport.request_bodies().is_empty());
+            assert_eq!(
+                fixture
+                    .runtime
+                    .block_on(host.session_lifecycle().replay(id))
+                    .unwrap(),
+                before
+            );
+        }
+
+        #[test]
+        fn composed_resume_does_not_invent_historical_workspace_time_or_origin() {
+            let fixture = ModelConversationFixture::new();
+            let transport = finished_transport();
+            let host = fixture.host(&selected_preferences(), transport);
+            let session = fixture
+                .runtime
+                .block_on(host.session_lifecycle().create_generated())
+                .unwrap();
+            let id = session.id().clone();
+            drop(session);
+            assert_eq!(
+                fixture.run(
+                    &host,
+                    SessionSelection::Resume(id.clone()),
+                    Some(rich_catalog())
+                ),
+                AskCommandOutcome::Completed
+            );
+            let record = fixture
+                .runtime
+                .block_on(host.session_lifecycle().replay(id))
+                .unwrap();
+            let metadata = super::NativeSessionMetadata::from_metadata(&record.metadata).unwrap();
+            assert_eq!(metadata.workspace(), None);
+            assert_eq!(metadata.created_at_ms(), None);
+            assert_eq!(metadata.origin(), None);
         }
 
         #[test]
@@ -2361,6 +2883,7 @@ mod production {
                 &host,
                 SessionSelection::CreateGenerated,
                 "first request",
+                &workspace_root,
             );
             let listing = runtime
                 .block_on(host.session_lifecycle().list_sessions())
@@ -2375,6 +2898,7 @@ mod production {
                 &host,
                 SessionSelection::Resume(id.clone()),
                 "second request",
+                &workspace_root,
             );
 
             assert_eq!(first_outcome, AskCommandOutcome::Completed);
@@ -2771,6 +3295,20 @@ mod production {
         #[test]
         fn setup_and_final_stage_signals_have_precedence() {
             for (helper, mode_variable, mode, kill_signal, expected_exit) in [
+                (
+                    "ask::production::tests::pending_catalog_signal_child",
+                    CATALOG_WAIT_CHILD_MODE,
+                    "catalog-interrupt",
+                    "-INT",
+                    130,
+                ),
+                (
+                    "ask::production::tests::pending_catalog_signal_child",
+                    CATALOG_WAIT_CHILD_MODE,
+                    "catalog-terminate",
+                    "-TERM",
+                    143,
+                ),
                 (
                     "ask::production::tests::contended_session_lock_signal_child",
                     SETUP_LOCK_CHILD_MODE,

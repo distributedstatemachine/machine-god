@@ -156,11 +156,77 @@ fn assert_loaded_config(
     assert_eq!(config.provider(), NativeProviderKind::VercelAiGateway);
     assert_eq!(config.transport(), NativeTransportKind::AiGatewayHttp);
     assert_eq!(config.model(), model);
+    assert_eq!(config.effort().label(), "auto");
+    assert!(!config.fast_mode());
+}
+
+fn valid_v4_config() -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": 4, "permission_mode": "ask", "provider": "vercel_ai_gateway",
+        "transport": "ai_gateway_http", "model": "test/requested",
+        "credential_source": "environment", "effort": "future-tier", "fast_mode": true,
+    })
+}
+
+#[test]
+fn strict_schema_v4_loads_requested_controls_without_rewriting_file_bytes() {
+    let temporary = TemporaryDirectory::new();
+    let contents = serde_json::to_vec_pretty(&valid_v4_config()).unwrap();
+    let path = write_config(temporary.path(), &contents);
+    let loaded = load_native_config(&environment(Some(temporary.path()), None)).unwrap();
+    assert_eq!(loaded.origin(), ConfigOrigin::File);
+    assert_eq!(loaded.config().schema_version(), 4);
+    assert_eq!(loaded.config().model(), "test/requested");
+    assert_eq!(loaded.config().effort().label(), "future-tier");
+    assert!(loaded.config().fast_mode());
+    assert_eq!(fs::read(path).unwrap(), contents);
+}
+
+#[test]
+fn schema_v4_requires_each_field_and_rejects_duplicates_and_wrong_control_types() {
+    let temporary = TemporaryDirectory::new();
+    let expected = valid_v4_config();
+    for field in expected.as_object().unwrap().keys() {
+        let mut missing = expected.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        assert_contents_error(
+            temporary.path(),
+            &serde_json::to_vec(&missing).unwrap(),
+            NativeConfigErrorKind::InvalidFormat,
+        );
+        let duplicate = format!(
+            "{{{}:{},{}",
+            serde_json::to_string(field).unwrap(),
+            expected[field],
+            &expected.to_string()[1..]
+        );
+        assert_contents_error(
+            temporary.path(),
+            duplicate.as_bytes(),
+            NativeConfigErrorKind::InvalidFormat,
+        );
+    }
+    for (field, value) in [
+        ("effort", serde_json::json!(null)),
+        ("effort", serde_json::json!(true)),
+        ("effort", serde_json::json!("")),
+        ("fast_mode", serde_json::json!("true")),
+        ("fast_mode", serde_json::json!(1)),
+        ("extra", serde_json::json!(true)),
+    ] {
+        let mut invalid = expected.clone();
+        invalid[field] = value;
+        assert_contents_error(
+            temporary.path(),
+            &serde_json::to_vec(&invalid).unwrap(),
+            NativeConfigErrorKind::InvalidFormat,
+        );
+    }
 }
 
 #[test]
 fn public_schema_constants_and_composition_names_are_stable() {
-    assert_eq!(CONFIG_SCHEMA_VERSION, 3);
+    assert_eq!(CONFIG_SCHEMA_VERSION, 4);
     assert_eq!(AI_GATEWAY_DEFAULT_MODEL, "zai/glm-5.2");
     assert_eq!(AI_GATEWAY_MAX_MODEL_BYTES, 1024);
     assert_eq!(PermissionMode::Ask.as_str(), "ask");
@@ -175,7 +241,7 @@ fn public_schema_constants_and_composition_names_are_stable() {
 }
 
 #[test]
-fn missing_file_uses_schema_v3_built_in_defaults_without_creating_paths() {
+fn missing_file_uses_schema_v4_built_in_defaults_without_creating_paths() {
     let temporary = TemporaryDirectory::new();
     let config_root = temporary.path().join("absent-xdg-root");
     let loaded = load_native_config(&environment(Some(&config_root), None)).unwrap();
@@ -183,20 +249,20 @@ fn missing_file_uses_schema_v3_built_in_defaults_without_creating_paths() {
     assert_loaded_config(
         &loaded,
         ConfigOrigin::BuiltInDefaults,
-        3,
+        4,
         AI_GATEWAY_DEFAULT_MODEL,
     );
     assert!(!config_root.exists());
 }
 
 #[test]
-fn unavailable_home_uses_schema_v3_built_in_defaults() {
+fn unavailable_home_uses_schema_v4_built_in_defaults() {
     let loaded = load_native_config(&NativeEnvironment::new(None, None, None)).unwrap();
 
     assert_loaded_config(
         &loaded,
         ConfigOrigin::BuiltInDefaults,
-        3,
+        4,
         AI_GATEWAY_DEFAULT_MODEL,
     );
 }
@@ -604,7 +670,7 @@ fn configured_model_preserves_utf8_interior_spaces_and_c1_at_the_byte_boundary()
 fn unsupported_schema_version_has_a_distinct_error_kind() {
     let temporary = TemporaryDirectory::new();
     let config_root = temporary.path().join("xdg");
-    let contents = r#"{"schema_version":4,"permission_mode":"ask"}"#;
+    let contents = r#"{"schema_version":5,"permission_mode":"ask"}"#;
 
     assert_contents_error(
         &config_root,
@@ -618,7 +684,7 @@ fn future_schema_is_classified_before_version_specific_fields() {
     let temporary = TemporaryDirectory::new();
     let config_root = temporary.path().join("xdg");
     let cases = [
-        br#"{"schema_version":4,"permission_mode":"future","new_field":true}"#.as_slice(),
+        br#"{"schema_version":5,"permission_mode":"future","new_field":true}"#.as_slice(),
         br#"{"schema_version":18446744073709551616}"#.as_slice(),
         br#"{"schema_version":-1,"future_shape":[]}"#.as_slice(),
     ];
@@ -795,7 +861,7 @@ fn loading_missing_config_writes_nothing_to_an_existing_root() {
     assert_loaded_config(
         &loaded,
         ConfigOrigin::BuiltInDefaults,
-        3,
+        4,
         AI_GATEWAY_DEFAULT_MODEL,
     );
     assert_eq!(before, 0);

@@ -578,6 +578,328 @@ struct GatedStore {
     store: InMemorySessionStore,
     gate: Arc<Gate>,
 }
+
+mod preference_persistence {
+    use super::*;
+    use machine_god_native::{
+        NativeModelPreferenceCommit, NativeUserConfigError, NativeUserConfigStore,
+    };
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+    use std::sync::atomic::AtomicU64;
+
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    struct ConfigFixture(PathBuf);
+    impl ConfigFixture {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "mg-preference-commit-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&path).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+            Self(path)
+        }
+        fn root(&self) -> PathBuf {
+            self.0.join("machine-god")
+        }
+        fn store(&self) -> NativeUserConfigStore {
+            NativeUserConfigStore::new(self.root())
+        }
+        fn seed(&self, bytes: &[u8]) {
+            fs::create_dir(self.root()).unwrap();
+            fs::set_permissions(self.root(), fs::Permissions::from_mode(0o700)).unwrap();
+            fs::write(self.root().join("config.json"), bytes).unwrap();
+        }
+    }
+    impl Drop for ConfigFixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    fn gated_runtime() -> (NativeConversationRuntime, Arc<Gate>) {
+        let initial = record(None);
+        let store =
+            InMemorySessionStore::from_records(BTreeMap::from([(initial.id.clone(), initial)]));
+        let gate = Arc::new(Gate::default());
+        let runtime = runtime_with_store(
+            Arc::new(GatedStore {
+                store,
+                gate: gate.clone(),
+            }),
+            ScriptedModelProvider::new("test", []),
+            preferences("private/original"),
+            None,
+        );
+        (runtime, gate)
+    }
+
+    fn assert_saved(commit: &NativeModelPreferenceCommit, generation: u64) {
+        assert_eq!(commit.generation, generation);
+        assert!(
+            matches!(commit.session, Ok(NativeModelPreferencePersistence::Saved { generation: saved, .. }) if saved == generation)
+        );
+    }
+
+    #[test]
+    fn commit_is_inert_captures_on_first_poll_and_reports_both_targets() {
+        let fixture = ConfigFixture::new();
+        let user = fixture.store();
+        let (runtime, store, provider) = setup(None, [], SessionStoreScript::default());
+        let calls = store.calls().len();
+        drop(runtime.persist_model_preferences(&user, 100));
+        assert_eq!(store.calls().len(), calls);
+        assert!(!fixture.root().exists());
+        let commit = runtime.persist_model_preferences(&user, 100);
+        runtime
+            .set_model_preferences(preferences("private/accepted"))
+            .unwrap();
+        let commit = block_on(commit);
+        assert_saved(&commit, 1);
+        assert_eq!(
+            commit
+                .user_defaults
+                .as_ref()
+                .unwrap()
+                .config()
+                .model_preferences(),
+            runtime.model_preferences()
+        );
+        assert_eq!(
+            user.load().unwrap().loaded(),
+            commit.user_defaults.as_ref().unwrap()
+        );
+        assert!(!runtime.status().model_preferences_pending);
+        assert!(provider.requests().is_empty());
+        assert!(!format!("{commit:?}").contains("private/accepted"));
+        let calls = store.calls().len();
+        let again = block_on(runtime.persist_model_preferences(&user, 0));
+        assert_eq!(
+            again.session,
+            Ok(NativeModelPreferencePersistence::Unchanged)
+        );
+        assert!(again.user_defaults.is_ok());
+        assert_eq!(store.calls().len(), calls);
+    }
+
+    #[test]
+    fn session_failure_does_not_suppress_user_defaults_or_revert_selection() {
+        let fixture = ConfigFixture::new();
+        let user = fixture.store();
+        let (runtime, _, _) = setup(
+            None,
+            [],
+            SessionStoreScript {
+                saves: Some(vec![SessionStoreStep::Error(SessionStoreError::new(
+                    SessionStoreErrorKind::Unavailable,
+                    "failed",
+                    "private",
+                    true,
+                ))]),
+                ..SessionStoreScript::default()
+            },
+        );
+        let before = runtime.record();
+        runtime
+            .set_model_preferences(preferences("private/accepted"))
+            .unwrap();
+        let commit = block_on(runtime.persist_model_preferences(&user, 100));
+        assert_eq!(
+            commit.session,
+            Err(NativeConversationRuntimeError::Conversation(
+                NativeConversationError::Persistence
+            ))
+        );
+        assert!(commit.user_defaults.is_ok());
+        assert_eq!(
+            user.load().unwrap().loaded().config().model_preferences(),
+            runtime.model_preferences()
+        );
+        assert_eq!(runtime.record(), before);
+        assert!(runtime.status().model_preferences_pending);
+        assert!(!runtime.status().active);
+    }
+
+    #[test]
+    fn invalid_user_defaults_do_not_suppress_session_persistence() {
+        let fixture = ConfigFixture::new();
+        let bytes = br#"{"schema_version":99}"#;
+        fixture.seed(bytes);
+        let user = fixture.store();
+        let (runtime, _, _) = setup(None, [], SessionStoreScript::default());
+        let commit = block_on(runtime.persist_model_preferences(&user, 100));
+        assert_saved(&commit, 0);
+        assert!(matches!(
+            commit.user_defaults,
+            Err(NativeUserConfigError::InvalidConfig(_))
+        ));
+        assert_eq!(fs::read(fixture.root().join("config.json")).unwrap(), bytes);
+        assert!(!fixture.root().join(".config.lock").exists());
+        assert!(!runtime.status().model_preferences_pending);
+    }
+
+    #[test]
+    fn user_publication_failure_is_independent_of_successful_session_save() {
+        let fixture = ConfigFixture::new();
+        fixture.seed(br#"{"schema_version":1,"permission_mode":"ask"}"#);
+        fs::write(fixture.root().join(".config.tmp"), b"retained").unwrap();
+        let user = fixture.store();
+        let (runtime, _, _) = setup(None, [], SessionStoreScript::default());
+        let commit = block_on(runtime.persist_model_preferences(&user, 100));
+        assert_saved(&commit, 0);
+        assert_eq!(
+            commit.user_defaults,
+            Err(NativeUserConfigError::Persistence)
+        );
+        assert_eq!(
+            fs::read(fixture.root().join(".config.tmp")).unwrap(),
+            b"retained"
+        );
+        assert_eq!(user.load().unwrap().loaded().config().schema_version(), 1);
+        assert!(!runtime.status().model_preferences_pending);
+    }
+
+    #[test]
+    fn active_session_defers_only_session_target_and_preserves_active_job() {
+        let fixture = ConfigFixture::new();
+        let user = fixture.store();
+        let (runtime, _, _) = setup(None, [finished()], SessionStoreScript::default());
+        runtime.enqueue("active".into()).unwrap();
+        let turn = block_on(runtime.start_next(100)).unwrap().unwrap();
+        runtime
+            .set_model_preferences(preferences("private/next"))
+            .unwrap();
+        let commit = block_on(runtime.persist_model_preferences(&user, 100));
+        assert_eq!(commit.generation, 1);
+        assert_eq!(
+            commit.session,
+            Ok(NativeModelPreferencePersistence::Deferred)
+        );
+        assert_eq!(
+            commit.user_defaults.unwrap().config().model(),
+            "private/next"
+        );
+        assert_eq!(
+            turn.model_snapshot().preferences().model(),
+            "private/original"
+        );
+        assert!(runtime.status().active);
+        complete(turn);
+        let commit = block_on(runtime.persist_model_preferences(&user, 200));
+        assert_saved(&commit, 1);
+        assert!(!runtime.status().model_preferences_pending);
+    }
+
+    #[test]
+    fn both_targets_report_failures_without_rollback() {
+        let fixture = ConfigFixture::new();
+        fixture.seed(b"invalid JSON");
+        let user = fixture.store();
+        let (runtime, _, _) = setup(
+            None,
+            [],
+            SessionStoreScript {
+                saves: Some(vec![SessionStoreStep::Error(SessionStoreError::new(
+                    SessionStoreErrorKind::Unavailable,
+                    "failed",
+                    "private",
+                    true,
+                ))]),
+                ..SessionStoreScript::default()
+            },
+        );
+        let expected = preferences("private/accepted");
+        runtime.set_model_preferences(expected.clone()).unwrap();
+        let commit = block_on(runtime.persist_model_preferences(&user, 100));
+        assert!(commit.session.is_err());
+        assert!(commit.user_defaults.is_err());
+        assert_eq!(runtime.model_preferences(), expected);
+        assert!(runtime.status().model_preferences_pending);
+    }
+
+    #[test]
+    fn change_during_pending_session_save_keeps_both_receipts_on_captured_generation() {
+        let fixture = ConfigFixture::new();
+        let user = fixture.store();
+        let (runtime, gate) = gated_runtime();
+        let mut commit = runtime.persist_model_preferences(&user, 100);
+        assert!(
+            commit
+                .as_mut()
+                .poll(&mut Context::from_waker(&noop_waker()))
+                .is_pending()
+        );
+        runtime
+            .set_model_preferences(preferences("private/newer"))
+            .unwrap();
+        gate.release();
+        let commit = block_on(commit);
+        assert_saved(&commit, 0);
+        assert_eq!(
+            commit.user_defaults.unwrap().config().model(),
+            "private/original"
+        );
+        assert_eq!(
+            runtime.record().metadata[NATIVE_MODEL_PREFERENCES_KEY]["model"],
+            "private/original"
+        );
+        assert_eq!(runtime.model_preferences().model(), "private/newer");
+        assert_eq!(runtime.status().model_preferences_generation, 1);
+        assert!(runtime.status().model_preferences_pending);
+    }
+
+    #[test]
+    fn concurrent_user_change_during_session_save_causes_conflict_not_late_overwrite() {
+        let fixture = ConfigFixture::new();
+        let user = fixture.store();
+        let (runtime, gate) = gated_runtime();
+        let mut commit = runtime.persist_model_preferences(&user, 100);
+        assert!(
+            commit
+                .as_mut()
+                .poll(&mut Context::from_waker(&noop_waker()))
+                .is_pending()
+        );
+        let other = fixture.store();
+        block_on(
+            other.set_model_preferences(&other.load().unwrap(), &preferences("private/concurrent")),
+        )
+        .unwrap();
+        gate.release();
+        let commit = block_on(commit);
+        assert_saved(&commit, 0);
+        assert_eq!(commit.user_defaults, Err(NativeUserConfigError::Conflict));
+        assert_eq!(
+            user.load().unwrap().loaded().config().model(),
+            "private/concurrent"
+        );
+    }
+
+    #[test]
+    fn dropping_pending_session_save_never_detaches_a_user_writer() {
+        let fixture = ConfigFixture::new();
+        let user = fixture.store();
+        let (runtime, gate) = gated_runtime();
+        let before = runtime.record();
+        let mut commit = runtime.persist_model_preferences(&user, 100);
+        assert!(
+            commit
+                .as_mut()
+                .poll(&mut Context::from_waker(&noop_waker()))
+                .is_pending()
+        );
+        assert!(!fixture.root().exists());
+        drop(commit);
+        gate.release();
+        assert!(!fixture.root().exists());
+        assert_eq!(runtime.record(), before);
+        assert!(!runtime.status().active);
+        assert!(runtime.status().model_preferences_pending);
+    }
+}
 impl SessionStore for GatedStore {
     fn load(
         &self,

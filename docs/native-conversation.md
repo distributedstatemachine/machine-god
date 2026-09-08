@@ -121,6 +121,36 @@ generation; when no job follows, the host must explicitly flush after settling
 or dropping the active turn. This is not a user-default settings write and does
 not claim cross-process state following an ambiguous core persistence outcome.
 
+`persist_model_preferences(user_store, now_ms)` explicitly attempts both targets
+for one runtime generation. The borrowed future is inert until first poll,
+when it captures the current requested settings and session-save decision under
+one state lock. It reads a bounded user-config snapshot before awaiting any
+session save, then attempts publication against those exact bytes. A user-load
+failure does not suppress the session attempt; a session error, `Unchanged`, or
+`Deferred` does not suppress the independent user-default attempt. Each target
+retains its existing conflict and ambiguous-publication semantics. No retries,
+rollback of accepted selection, detached writer or implied all-or-nothing
+transaction is added.
+
+`NativeModelPreferenceCommit` reports the captured `generation`, separate
+`session` and `user_defaults` results, and the exact published user config on
+user success. Runtime status exposes `model_preferences_generation` so the host
+can distinguish an older completed save from the current selection. Generations
+are scoped to this runtime, not durable or cross-process revisions. A change
+accepted while a save is pending stays current and pending; both completed
+targets still name the earlier captured selection. A concurrently changed user
+file causes a conflict instead of being replaced using a late fresh snapshot.
+
+Dropping a pending combined operation releases session admission and its owned
+user snapshot without starting a later user write or returning a partial receipt;
+a session save may still be publication-uncertain under core's existing contract.
+An active turn defers only the session target. When it settles, the host must
+explicitly flush or admit the next job to persist pending session settings.
+User-file success is not evidence that session metadata changed, and session
+success is not evidence that defaults for future sessions changed. The user
+store's explicit directory authority and bounded synchronous I/O contract are
+defined in [configuration](configuration.md#schema-v4-and-durable-user-model-defaults).
+
 Native queue bounds are 64 pending entries, 256 KiB prompt text per entry,
 64 KiB serialized inference options per entry and 4 MiB aggregate pending text
 plus serialized options. The active job is separately bounded and owned. Queue
@@ -132,8 +162,9 @@ turn IDs. Exhaustion and limit errors do not silently evict pending work.
 
 The queue/current-selection and resume rules follow pinned
 `src/core/agent/worker_runtime.zig:728`, `:1006`, `:1161`, `:1180`, `:1194`,
-`:4034`, and `src/core/app/app_session_runtime.zig:4831`. The CLI input loop and
-independent user-default persistence outcomes must compose these ownership APIs.
+`:4034`, and `src/core/app/app_session_runtime.zig:4831`. Independent persistence
+attempts follow `app_session_runtime.zig::commitRuntimePreferences`. The CLI
+input loop must compose these native ownership APIs and render each outcome.
 
 ## Secondary-worker model routing
 
