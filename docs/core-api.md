@@ -336,10 +336,16 @@ result. The full native persistence and lifecycle contract is in the
 
 The available-model catalog adds provider-neutral
 catalog types without changing `Engine`, `ModelProvider`, generation model
-selection, or turn orchestration. `AvailableModel::new` accepts one 1–128-byte
-ID whose bytes are all visible ASCII `0x21..=0x7e`; failures expose only
-`InvalidModelIdReason::{Empty, TooLong, NotVisibleAscii}`. `AvailableModel::id`
-returns the validated ID.
+selection, or turn orchestration. `AvailableModel::new` and the allocation-free
+`validate_model_id` share a 1–1,024 UTF-8-byte bound (`MAX_MODEL_ID_BYTES`).
+Identifiers are opaque: non-ASCII characters and interior spaces are preserved,
+without normalization. ASCII C0/DEL bytes and edge space/tab/CR/LF are rejected,
+matching the pinned durable-model contract. Failures expose only
+`InvalidModelIdReason::{Empty, TooLong, ControlCharacter, EdgeWhitespace}`;
+the legacy `NotVisibleAscii` variant remains source-compatible but is no longer
+returned. `AvailableModel::id` returns the exact validated ID. Consumers must
+escape identifiers for terminal or other output contexts; accepted UTF-8 can
+include non-ASCII control characters.
 
 `ModelCatalog::new` stores a provider-supplied ordered `Vec<AvailableModel>` and
 `ModelCatalogAccess`; `models`, `access`, and `into_models` expose that result

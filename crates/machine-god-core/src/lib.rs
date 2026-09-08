@@ -40,8 +40,8 @@ pub use model::{
     ModelRequest, Role, StopReason, TokenUsage,
 };
 pub use model_catalog::{
-    AvailableModel, InvalidModelId, InvalidModelIdReason, ModelCatalog, ModelCatalogAccess,
-    ModelCatalogProvider, PublicCatalogReason,
+    AvailableModel, InvalidModelId, InvalidModelIdReason, MAX_MODEL_ID_BYTES, ModelCatalog,
+    ModelCatalogAccess, ModelCatalogProvider, PublicCatalogReason, validate_model_id,
 };
 pub use permission::{
     Capability, FilesystemAccess, NetworkTarget, PermissionDecision, PermissionGrantScope,

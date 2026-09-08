@@ -1,16 +1,23 @@
 use crate::{BoxFuture, CancellationToken, ProviderError};
 use core::fmt;
 
+/// Maximum UTF-8 bytes in a provider model identifier.
+pub const MAX_MODEL_ID_BYTES: usize = 1024;
+
 /// The reason a model identifier was rejected.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum InvalidModelIdReason {
     /// The identifier contained no bytes.
     Empty,
-    /// The identifier exceeded the 128-byte limit.
+    /// The identifier exceeded [`MAX_MODEL_ID_BYTES`].
     TooLong,
-    /// The identifier contained a byte outside visible ASCII.
+    /// Legacy rejection reason; no longer returned by model validation.
     NotVisibleAscii,
+    /// The identifier contained an ASCII control byte (C0 or DEL).
+    ControlCharacter,
+    /// The identifier began or ended with space, tab, CR, or LF.
+    EdgeWhitespace,
 }
 
 /// A model identifier failed validation.
@@ -33,14 +40,43 @@ impl fmt::Display for InvalidModelId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let reason = match self.reason {
             InvalidModelIdReason::Empty => "must not be empty",
-            InvalidModelIdReason::TooLong => "must be at most 128 bytes",
+            InvalidModelIdReason::TooLong => "must be at most 1024 bytes",
             InvalidModelIdReason::NotVisibleAscii => "must contain only visible ASCII bytes",
+            InvalidModelIdReason::ControlCharacter => "must not contain ASCII control bytes",
+            InvalidModelIdReason::EdgeWhitespace => "must not have edge whitespace",
         };
         write!(formatter, "invalid model ID: {reason}")
     }
 }
 
 impl std::error::Error for InvalidModelId {}
+
+/// Validates a borrowed model ID without allocating or normalizing it.
+///
+/// IDs are opaque UTF-8 strings: interior spaces and non-ASCII characters are
+/// permitted. Consumers must escape untrusted IDs for their output context.
+///
+/// # Errors
+///
+/// Rejects empty IDs, more than [`MAX_MODEL_ID_BYTES`] UTF-8 bytes, ASCII
+/// control bytes (C0 and DEL), and leading/trailing space, tab, CR, or LF.
+pub fn validate_model_id(id: &str) -> Result<(), InvalidModelId> {
+    let reason = if id.is_empty() {
+        Some(InvalidModelIdReason::Empty)
+    } else if id.len() > MAX_MODEL_ID_BYTES {
+        Some(InvalidModelIdReason::TooLong)
+    } else if id.starts_with([' ', '\t', '\r', '\n']) || id.ends_with([' ', '\t', '\r', '\n']) {
+        Some(InvalidModelIdReason::EdgeWhitespace)
+    } else if id.bytes().any(|byte| byte.is_ascii_control()) {
+        Some(InvalidModelIdReason::ControlCharacter)
+    } else {
+        None
+    };
+    match reason {
+        Some(reason) => Err(InvalidModelId { reason }),
+        None => Ok(()),
+    }
+}
 
 /// One validated model returned by a provider's catalog.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -53,25 +89,10 @@ impl AvailableModel {
     ///
     /// # Errors
     ///
-    /// Returns [`InvalidModelId`] when `id` is empty, longer than 128 bytes,
-    /// or contains a byte outside visible ASCII `0x21` through `0x7e`.
+    /// Returns [`InvalidModelId`] when [`validate_model_id`] rejects `id`.
     pub fn new(id: impl Into<String>) -> Result<Self, InvalidModelId> {
         let id = id.into();
-        if id.is_empty() {
-            return Err(InvalidModelId {
-                reason: InvalidModelIdReason::Empty,
-            });
-        }
-        if id.len() > 128 {
-            return Err(InvalidModelId {
-                reason: InvalidModelIdReason::TooLong,
-            });
-        }
-        if !id.bytes().all(|byte| (b'!'..=b'~').contains(&byte)) {
-            return Err(InvalidModelId {
-                reason: InvalidModelIdReason::NotVisibleAscii,
-            });
-        }
+        validate_model_id(&id)?;
         Ok(Self { id })
     }
 
