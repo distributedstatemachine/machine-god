@@ -100,3 +100,58 @@ bounded stdout chunk may await acknowledgement while cancellation, committed
 transitions and shutdown continue being polled. Obsolete text may be discarded
 during draining, but transition receipts and finalization errors must survive.
 This byte adapter does not itself implement that interactive owner or driver.
+
+## Explicit raw-terminal lifetime
+
+
+`NativeInteractiveTerminal::new(tty)` receives an explicitly owned descriptor and
+the caller's exclusive authority to change that terminal's termios. Construction
+and unpolled activation/restoration futures are inert. First activation polling
+admits one scoped native worker, rejects non-TTY input before mutation, snapshots
+original settings, installs raw mode and verifies it on the same retained file.
+No file status flag is changed. Owning or duplicating a file does not prove
+exclusive terminal-mode authority; no other alias may change settings during the
+guard's lifetime.
+
+The raw settings follow pinned `shell_runtime.zig`: clear `BRKINT`, `ICRNL`,
+`INPCK`, `ISTRIP`, `IXON`, `IXOFF`, `ECHO`, `ICANON`, `IEXTEN` and `ISIG`; select
+`CS8`; set `VMIN=1`, `VTIME=0`; preserve other settings, including output modes.
+Ctrl-D is then raw byte 4, not a canonical-reader EOF. Composer editing and
+active-turn decisions remain the UI's responsibility.
+
+The lifetime is single-use: restoration closes it permanently. An unpolled
+activation can be dropped without effects; dropping a started activation
+requests restoration even if raw-mode publication was not consumed. Explicit
+`restore()` returns `NotActivated` only when no mutation was attempted, or
+`Restored` after original settings are installed and verified. Failed or
+uncertain restoration stays an error on repeated calls. Drop requests best-effort
+owned cleanup but does not assert success. `completion()` observes actual worker
+joining, independently of receipt consumption; completion alone is not evidence
+that restoration succeeded.
+
+The UI must stop and join its input adapter before restoring/dropping this guard,
+then observe restoration and guard completion before final output. There is no
+automatic restoration tied to a shared host token. Like the pinned terminal,
+restoration uses flush semantics, discarding pending terminal input. Native
+terminal syscalls are not assigned fictional hard deadlines; the retained worker
+owns settlement even after the awaiting future is dropped. This component does
+not itself implement a cursor composer. The CLI composes its raw-input lifetime
+with the native input reader and observes both joins before final presentation.
+
+## Read-only presentation dimensions and display units
+
+`NativeInteractiveTerminalSizeReader::new(stdout_tty)` binds an explicit retained
+TTY without ambient lookup or effects. `read_columns()` is inert until polled;
+each admitted read verifies the character-device TTY and returns its actual
+nonzero column count. There is at most one native read, including a read whose
+future was dropped. Zero columns, invalid descriptors and unavailable reads
+are fixed errors, not guessed defaults. Closing/dropping the reader closes
+admission; its completion observes actual admitted-worker joining. This reader
+does not install resize handlers or change status flags or termios.
+
+`native_terminal_display_unit_at(text, byte_offset)` is a pure projection of the
+same pinned Unicode tables used by native screens. It rejects offsets outside
+UTF-8 boundaries and end-of-input, otherwise reports byte length and cell width.
+It is not a generic grapheme algorithm; following zero-width marks may be
+separate units. The CLI composer and viewport share this algorithm rather than
+maintaining independent Unicode tables.

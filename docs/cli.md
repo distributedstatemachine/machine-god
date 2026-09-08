@@ -34,6 +34,31 @@ Additional arguments do not activate a helper.
 Interactive stdin uses the [native input adapter](interactive-input.md), including
 the exact private input-helper dispatch before configuration or signal setup.
 Ordinary shared TTY/pipe input never authorizes changing the shell's status flags.
+The interactive host separately owns raw termios and restores the captured
+settings after stopping and joining input readers, before final signal exit or
+the native-free output tail. External signals retain shutdown ownership; raw
+Ctrl-C cancels first and requests exit on a second press within three seconds.
+Ctrl-D deletes forward in a draft, exits with an empty idle composer, and is
+ignored with an empty composer during active/queued work. Physical EOF never
+submits a draft and is an abnormal input closure.
+
+The UTF-8 composer retains at most 262,144 bytes and supports cursor movement,
+home/end, deletion and atomic bracketed paste. Paste line endings normalize to
+LF; invalid or oversized paste is drained through its closing marker without
+executing embedded control actions or changing the previous draft. Invalid
+ordinary UTF-8, NUL, or oversized input retains the valid draft and rejects through the next Enter;
+that Enter does not submit a truncated prefix. Submitted prompt identity comes
+from the first received byte, including buffered answers across modal pages.
+
+A bounded single-row viewport uses the native screen's pinned Unicode display
+units. It never truncates the underlying draft. Columns come from the retained
+output TTY, with owned reads after resize notifications; unavailable or zero
+dimensions fail explicitly. Draft rendering pauses during model streaming
+unless a human prompt is active, keeping model deltas contiguous. Terminal
+controls in draft text are escaped. Bracketed-paste mode is enabled through the
+acknowledged output lane and disabled in its final tail; output failure or a
+signal-forced stalled-output exit cannot promise that display cleanup reached
+the terminal. Termios restoration and native joins do not depend on that tail.
 
 ## Commands
 
@@ -264,7 +289,7 @@ catalog parity. This contract makes no comparative performance claim.
 
 ## Output ownership
 
-The reusable interactive input framer retains one logical line of at most
+The reusable canonical input framer (not the production raw composer) retains one logical line of at most
 262,144 bytes, separately from the native adapter's 4,096-byte raw chunk. It
 preserves split UTF-8, accepts LF/CRLF, validates UTF-8 and NUL at frame completion,
 and flushes a partial line at EOF once. A bare CR remains content. Oversize input

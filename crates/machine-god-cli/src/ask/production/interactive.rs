@@ -1,10 +1,15 @@
 //! Interactive presentation host. Native owns sessions, policy and persistence.
 
 mod commands;
+mod composer;
+mod composer_view;
 mod driver;
 mod framing;
 mod input_lines;
 mod presentation;
+mod resize;
+#[cfg(test)]
+mod terminal_lifetime_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -27,7 +32,8 @@ use machine_god_native::{
     NativeInteractiveControlOutcome, NativeInteractiveInitialSession, NativeInteractiveInput,
     NativeInteractiveInputHelper, NativeInteractiveInputSource, NativeInteractiveOutcome,
     NativeInteractivePromptBridge, NativeInteractivePromptInbox, NativeInteractivePromptLimits,
-    NativeInteractiveSession, NativeInteractiveSessionOptions, NativeResumeTarget,
+    NativeInteractiveSession, NativeInteractiveSessionOptions, NativeInteractiveTerminal,
+    NativeResumeTarget,
 };
 use presentation::Modal;
 use std::{
@@ -57,7 +63,8 @@ pub(super) fn execute(
                         NativeInteractivePromptLimits::default(),
                     )
                     .map_err(|_| ())?;
-                    let source = capture_input()?;
+                    let (source, terminal) = capture_input()?;
+                    let size_reader = capture_output_size()?;
                     let input = NativeInteractiveInput::new(
                         source,
                         machine_god_core::CancellationToken::new(),
@@ -77,10 +84,15 @@ pub(super) fn execute(
                     })?;
                     settle(
                         host,
-                        input_completion,
+                        InputSettlement {
+                            input_completion,
+                            terminal,
+                            runtime: &runtime,
+                            size_completion: Some(size_reader.completion()),
+                        },
                         signals,
                         &control,
-                        |host, signals| {
+                        |host, signals, terminal| {
                             runtime.block_on(async {
                                 let mut options = NativeInteractiveSessionOptions::new(
                                     workspace,
@@ -90,29 +102,17 @@ pub(super) fn execute(
                                 if let Some(catalog) = &catalog {
                                     options = options.with_catalog(catalog.clone());
                                 }
-                                let initial = match selection {
-                                    InteractiveSessionSelection::Fresh => {
-                                        NativeInteractiveInitialSession::Fresh
-                                    }
-                                    InteractiveSessionSelection::Latest => {
-                                        NativeInteractiveInitialSession::Resume(
-                                            NativeResumeTarget::Latest,
-                                        )
-                                    }
-                                    InteractiveSessionSelection::Exact(id) => {
-                                        NativeInteractiveInitialSession::Resume(
-                                            NativeResumeTarget::Exact(id),
-                                        )
-                                    }
-                                };
                                 let owner = NativeInteractiveSession::open(
                                     host,
                                     options,
-                                    initial,
+                                    initial_selection(selection),
                                     wall_clock_ms()?,
                                 )
                                 .await
                                 .map_err(|_| ())?;
+                                terminal.activate().await.map_err(|_| ())?;
+                                let mut resize = resize::Resize::new(size_reader)?;
+                                let columns = resize.initial_columns().await?;
                                 let mut driver = Driver::new(
                                     owner,
                                     input,
@@ -122,7 +122,8 @@ pub(super) fn execute(
                                         acknowledgements,
                                     },
                                 )?
-                                .with_resources(catalog, user_config);
+                                .with_resources(catalog, user_config)
+                                .with_raw_input(columns.get(), Some(resize));
                                 let result = poll_fn(|cx| driver.poll(cx, signals)).await;
                                 Ok(driver.into_presentation(result))
                             })
@@ -143,7 +144,19 @@ pub(super) fn execute(
     (outcome, controller)
 }
 
-fn capture_input() -> Result<NativeInteractiveInputSource, ()> {
+fn initial_selection(selection: InteractiveSessionSelection) -> NativeInteractiveInitialSession {
+    match selection {
+        InteractiveSessionSelection::Fresh => NativeInteractiveInitialSession::Fresh,
+        InteractiveSessionSelection::Latest => {
+            NativeInteractiveInitialSession::Resume(NativeResumeTarget::Latest)
+        }
+        InteractiveSessionSelection::Exact(id) => {
+            NativeInteractiveInitialSession::Resume(NativeResumeTarget::Exact(id))
+        }
+    }
+}
+
+fn capture_input() -> Result<(NativeInteractiveInputSource, NativeInteractiveTerminal), ()> {
     use std::os::fd::AsFd;
     let path = std::env::current_exe().map_err(|_| ())?;
     let executable = std::fs::File::open(&path).map_err(|_| ())?;
@@ -152,35 +165,77 @@ fn capture_input() -> Result<NativeInteractiveInputSource, ()> {
         .as_fd()
         .try_clone_to_owned()
         .map_err(|_| ())?;
-    Ok(NativeInteractiveInputSource::PreserveShared {
-        input: input.into(),
-        helper,
-    })
+    let input = std::fs::File::from(input);
+    let terminal = NativeInteractiveTerminal::new(input.try_clone().map_err(|_| ())?);
+    Ok((
+        NativeInteractiveInputSource::PreserveShared { input, helper },
+        terminal,
+    ))
+}
+
+fn capture_output_size() -> Result<machine_god_native::NativeInteractiveTerminalSizeReader, ()> {
+    use std::os::fd::AsFd;
+    let output = std::io::stdout()
+        .as_fd()
+        .try_clone_to_owned()
+        .map_err(|_| ())?;
+    Ok(machine_god_native::NativeInteractiveTerminalSizeReader::new(output.into()))
+}
+
+struct InputSettlement<'a> {
+    input_completion: machine_god_native::NativeOwnedWorkerCompletion,
+    terminal: NativeInteractiveTerminal,
+    runtime: &'a machine_god_native::TokioWebSearchRuntime,
+    size_completion: Option<machine_god_native::NativeOwnedWorkerCompletion>,
+}
+
+impl InputSettlement<'_> {
+    /// Readers release their termios reservation before restoration. Every join
+    /// is attempted even if an earlier receipt reports failure.
+    fn finish(mut self) -> Result<(), ()> {
+        let input_result = self.input_completion.wait_on_worker();
+        drop(self.input_completion);
+        let completion = self.terminal.completion();
+        let restoration = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.runtime.block_on(self.terminal.restore())
+        }));
+        drop(self.terminal);
+        let joined = completion.wait_on_worker();
+        let size_result = self
+            .size_completion
+            .map(|completion| completion.wait_on_worker())
+            .transpose();
+        input_result.map_err(|_| ())?;
+        joined.map_err(|_| ())?;
+        size_result.map_err(|_| ())?;
+        restoration.map_err(std::mem::forget)?.map_err(|_| ())?;
+        Ok(())
+    }
 }
 
 /// Retain signal observation outside the unwind boundary and settle the exact
 /// full host once, after all interactive owners have been dropped.
 fn settle(
     host: machine_god_native::NativeReferenceHost,
-    input_completion: machine_god_native::NativeOwnedWorkerCompletion,
+    mut input: InputSettlement<'_>,
     mut signals: AskSignals,
     control: &AskSignalControlSender,
     operation: impl FnOnce(
         Arc<machine_god_native::NativeReferenceHost>,
         &mut AskSignals,
+        &mut NativeInteractiveTerminal,
     ) -> Result<FinalPresentation, ()>,
     render: impl FnOnce(FinalPresentation, &mut AskSignals) -> Result<TurnDriveResult, ()>,
 ) -> Result<AskCommandOutcome, ()> {
     let completion = host.terminal_shutdown_completion().ok_or(())?;
     let host = Arc::new(host);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        operation(host.clone(), &mut signals)
+        operation(host.clone(), &mut signals, &mut input.terminal)
     }));
     drop(host);
     // Both joins run on the dedicated caller worker, outside async polling.
     // Attempt both even when one reports a failure.
-    let input_result = input_completion.wait_on_worker();
-    drop(input_completion);
+    let input_result = input.finish();
     let host_result = completion.wait_on_worker();
     control.enter_final()?;
     let result = result
@@ -189,7 +244,7 @@ fn settle(
         })
         .and_then(std::convert::identity)
         .and_then(|presentation| {
-            input_result.map_err(|_| ())?;
+            input_result?;
             host_result.map_err(|_| ())?;
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 render(presentation, &mut signals)
@@ -222,6 +277,7 @@ fn settle(
 }
 
 struct Render {
+    clear_row: bool,
     bytes: Vec<u8>,
     offset: usize,
     confirm: Option<InputBinding>,
@@ -266,6 +322,15 @@ struct Driver {
     final_flush_sent: bool,
     catalog: Option<Arc<machine_god_native::NativeModelCatalog>>,
     user_config: Option<Arc<machine_god_native::NativeUserConfigStore>>,
+    frontend: Option<Frontend>,
+}
+
+struct Frontend {
+    columns: u16,
+    dirty: bool,
+    visible: bool,
+    cancel_armed: Option<std::time::Instant>,
+    resize: Option<resize::Resize>,
 }
 
 impl Driver {
@@ -302,6 +367,7 @@ impl Driver {
             final_flush_sent: false,
             catalog: None,
             user_config: None,
+            frontend: None,
         })
     }
     fn with_resources(
@@ -313,11 +379,26 @@ impl Driver {
         self.user_config = user_config;
         self
     }
+    fn with_raw_input(mut self, columns: u16, resize: Option<resize::Resize>) -> Self {
+        self.input = InputLines::new_raw(self.input.input);
+        if let Some(notice) = &mut self.notice {
+            notice.splice(..0, b"\x1b[?2004h".iter().copied());
+        }
+        self.frontend = Some(Frontend {
+            columns,
+            dirty: true,
+            visible: false,
+            cancel_armed: None,
+            resize,
+        });
+        self
+    }
     fn shutdown(&mut self) {
         if self.shutting_down {
             return;
         }
         self.shutting_down = true;
+        self.input.reset_raw_draft();
         self.inbox.close();
         self.scope_active = false;
         self.modal.take();

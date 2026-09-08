@@ -47,6 +47,7 @@ impl Driver {
             }
         }
         self.poll_modal(cx);
+        self.poll_resize(cx);
         if !self.shutting_down && !self.input_ended {
             self.poll_input(cx, now_ms);
         }
@@ -99,7 +100,11 @@ impl Driver {
             output_failed: self.output_failed,
             signal: self.signal,
             grace: self.grace,
-            final_flush_sent: self.final_flush_sent,
+            final_flush_sent: self.final_flush_sent && self.frontend.is_none(),
+            terminal_cleanup: self
+                .frontend
+                .is_some()
+                .then_some(b"\r\x1b[2K\x1b[?2004l\n".as_slice()),
         }
         // The remaining owner, inbox and input fields drop here. FinalPresentation
         // has no lifetime vote in any native host or input worker scope.
@@ -188,6 +193,10 @@ impl Driver {
             },
             Modal::binding,
         );
+        if self.frontend.is_some() {
+            self.poll_raw_input(cx, binding, now_ms);
+            return;
+        }
         match self.input.poll_line(cx, binding) {
             Poll::Pending => {}
             Poll::Ready(None) => {
@@ -219,6 +228,82 @@ impl Driver {
                 });
             }
             Poll::Ready(Some(Ok((line, binding)))) => self.line(&line, &binding, now_ms),
+        }
+    }
+
+    fn poll_resize(&mut self, cx: &mut Context<'_>) {
+        if self.shutting_down {
+            return;
+        }
+        let Some(frontend) = &mut self.frontend else {
+            return;
+        };
+        let Some(resize) = &mut frontend.resize else {
+            return;
+        };
+        match resize.poll(cx) {
+            Poll::Ready(Ok(columns)) => {
+                frontend.columns = columns.get();
+                frontend.dirty = true;
+            }
+            Poll::Ready(Err(())) => {
+                self.native_failed = true;
+                self.shutdown();
+            }
+            Poll::Pending => {}
+        }
+    }
+
+    fn poll_raw_input(&mut self, cx: &mut Context<'_>, binding: InputBinding, now_ms: i64) {
+        use super::composer::{ComposerContext, ComposerEvent};
+        let status = self.owner.runtime().status();
+        let context = ComposerContext {
+            active_response: status.active || status.queued_jobs != 0,
+        };
+        let polled = self.input.poll_event(cx, binding, context);
+        if self.input.take_cancel_disarm() {
+            self.frontend.as_mut().expect("raw frontend").cancel_armed = None;
+        }
+        let event = match polled {
+            Poll::Pending => return,
+            Poll::Ready(None) => {
+                // Physical EOF/hangup is not the empty-idle Ctrl-D gesture.
+                self.input_ended = true;
+                self.native_failed = true;
+                self.shutdown();
+                return;
+            }
+            Poll::Ready(Some(Err(_))) => {
+                self.note(b"\n[input unavailable]\n");
+                self.input_ended = true;
+                self.native_failed = true;
+                self.shutdown();
+                return;
+            }
+            Poll::Ready(Some(Ok(event))) => event,
+        };
+        let frontend = self.frontend.as_mut().expect("raw frontend");
+        frontend.dirty = true;
+        if !matches!(event.0, ComposerEvent::CancelRequested) {
+            frontend.cancel_armed = None;
+        }
+        match event {
+            (ComposerEvent::Submit(line), binding) => self.line(&line, &binding, now_ms),
+            (ComposerEvent::ExitRequested, _) => self.shutdown(),
+            (ComposerEvent::CancelRequested, _) => {
+                let now = std::time::Instant::now();
+                if frontend.cancel_armed.is_some_and(|armed| {
+                    now.duration_since(armed) < std::time::Duration::from_secs(3)
+                }) {
+                    self.shutdown();
+                } else {
+                    frontend.cancel_armed = Some(now);
+                    self.owner.request_cancel();
+                    self.note(b"\n[press Ctrl-C again within 3 seconds to exit]\n");
+                }
+            }
+            (ComposerEvent::Changed, _) => {}
+            (ComposerEvent::InputError(_), _) => self.note(b"\n[input rejected; draft retained]\n"),
         }
     }
 
@@ -327,6 +412,44 @@ impl Driver {
     }
 
     fn prepare_render(&mut self) {
+        self.prepare_content_render();
+        let Some(frontend) = &mut self.frontend else {
+            return;
+        };
+        if let Some(render) = &mut self.render {
+            render.clear_row = std::mem::take(&mut frontend.visible);
+            frontend.dirty = true;
+            return;
+        }
+        // Keep streamed model text contiguous. Draft projection resumes when
+        // the stream settles, or while a human prompt owns input.
+        if !frontend.dirty
+            || self.shutting_down
+            || (self.owner.runtime().status().active && self.modal.is_none())
+        {
+            return;
+        }
+        let Some((text, cursor)) = self.input.raw_draft() else {
+            return;
+        };
+        if let Ok(bytes) = super::composer_view::render(text, cursor, frontend.columns) {
+            frontend.dirty = false;
+            frontend.visible = true;
+            self.render = Some(Render {
+                clear_row: false,
+                bytes,
+                offset: 0,
+                confirm: None,
+                receipt: None,
+                model_text: false,
+            });
+        } else {
+            self.native_failed = true;
+            self.shutdown();
+        }
+    }
+
+    fn prepare_content_render(&mut self) {
         let (bytes, confirm, receipt) = if let Some(outcome) = &self.outcome {
             (render_outcome(outcome), None, Some(ReceiptKind::Outcome))
         } else if let Some(outcome) = &self.control_outcome {
@@ -347,6 +470,7 @@ impl Driver {
                     event: ModelEvent::TextDelta { text },
                 } => {
                     self.render = Some(Render {
+                        clear_row: false,
                         bytes: text.into_bytes(),
                         model_text: true,
                         offset: 0,
@@ -362,6 +486,7 @@ impl Driver {
         };
         if let Ok(bytes) = bytes {
             self.render = Some(Render {
+                clear_row: false,
                 bytes,
                 model_text: false,
                 offset: 0,
@@ -372,6 +497,7 @@ impl Driver {
             self.native_failed = true;
             self.shutdown();
             self.render = Some(Render {
+                clear_row: false,
                 bytes: b"\n[presentation exceeded its bound; session stopping]\n".to_vec(),
                 model_text: false,
                 offset: 0,
@@ -410,6 +536,7 @@ pub(super) struct FinalPresentation {
     signal: Option<super::AskSignal>,
     grace: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
     final_flush_sent: bool,
+    terminal_cleanup: Option<&'static [u8]>,
 }
 
 impl FinalPresentation {
@@ -483,12 +610,17 @@ impl FinalPresentation {
                 Some((render_outcome(outcome), Some(ReceiptKind::Outcome)))
             } else if let Some(control) = self.controls.front() {
                 Some((render_control(control), Some(ReceiptKind::Control)))
+            } else if let Some(notice) = self.notice.take() {
+                Some((Ok(notice), None))
             } else {
-                self.notice.take().map(|bytes| (Ok(bytes), None))
+                self.terminal_cleanup
+                    .take()
+                    .map(|cleanup| (Ok(cleanup.to_vec()), None))
             };
             if let Some((bytes, receipt)) = next {
                 if let Ok(bytes) = bytes {
                     self.render = Some(Render {
+                        clear_row: false,
                         bytes,
                         model_text: false,
                         offset: 0,
@@ -534,6 +666,12 @@ fn next_render_work(render: &mut Option<Render>) -> Result<Option<(OutputWork, I
     let Some(current) = render else {
         return Ok(None);
     };
+    if std::mem::take(&mut current.clear_row) {
+        return Ok(Some((
+            OutputWork::Write(super::composer_view::clear_row().to_vec()),
+            InFlight::Bytes,
+        )));
+    }
     if current.offset < current.bytes.len() {
         let (bytes, consumed) = output_chunk(&current.bytes[current.offset..], current.model_text)?;
         current.offset += consumed;

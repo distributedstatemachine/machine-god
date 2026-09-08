@@ -10,6 +10,32 @@ use super::terminal_unicode_data::{
     RGI_TRIE_NODES, Range, VARIATION_BASES, WIDE_RANGES,
 };
 
+/// One unit of the pinned terminal display-width algorithm, not a generic
+/// grapheme cluster. Following zero-width marks may be separate units.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeTerminalDisplayUnit {
+    pub byte_len: usize,
+    pub cell_width: u8,
+}
+
+/// Observes UTF-8 text using the same Unicode tables as native terminal screens.
+/// Returns `None` at end of input or outside a UTF-8 character boundary.
+/// This pure function performs no terminal or other native effects.
+#[must_use]
+pub fn native_terminal_display_unit_at(
+    text: &str,
+    index: usize,
+) -> Option<NativeTerminalDisplayUnit> {
+    if index >= text.len() || !text.is_char_boundary(index) {
+        return None;
+    }
+    let unit = display_unit_at(text.as_bytes(), index);
+    Some(NativeTerminalDisplayUnit {
+        byte_len: unit.byte_len,
+        cell_width: unit.cell_width,
+    })
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct DecodedRune {
     pub(super) len: usize,
@@ -222,6 +248,28 @@ fn find_trie_child(node_index: u32, codepoint: u32) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_utf8_observer_rejects_invalid_offsets_and_reuses_pinned_units() {
+        let text = "a👩‍💻e\u{301}";
+        for index in 0..=text.len() + 1 {
+            let observed = native_terminal_display_unit_at(text, index);
+            if index >= text.len() || !text.is_char_boundary(index) {
+                assert_eq!(observed, None);
+            } else {
+                let expected = display_unit_at(text.as_bytes(), index);
+                assert_eq!(
+                    observed,
+                    Some(NativeTerminalDisplayUnit {
+                        byte_len: expected.byte_len,
+                        cell_width: expected.cell_width,
+                    })
+                );
+            }
+        }
+        assert_eq!(native_terminal_display_unit_at("", 0), None);
+        assert_eq!(native_terminal_display_unit_at(text, usize::MAX), None);
+    }
 
     #[test]
     fn exact_unicode_17_width_policy_and_sequence_spans() {

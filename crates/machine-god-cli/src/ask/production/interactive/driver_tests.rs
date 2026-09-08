@@ -13,7 +13,7 @@ use std::time::Duration;
 
 struct Harness {
     driver: Driver,
-    _input_writer: std::io::PipeWriter,
+    input_writer: std::io::PipeWriter,
     work: tokio::sync::mpsc::Receiver<OutputWork>,
     ack: tokio::sync::mpsc::Sender<OutputAcknowledgement>,
     signal: tokio::sync::mpsc::Sender<AskSignal>,
@@ -71,7 +71,7 @@ async fn harness(fixture: &support::Fixture) -> Harness {
             },
         )
         .unwrap(),
-        _input_writer: write,
+        input_writer: write,
         work,
         ack,
         signal,
@@ -434,6 +434,7 @@ fn bounded_output_chunks_and_idle_poll_do_not_spin() {
     let result = runtime.block_on(async {
         harness.driver.notice = None;
         harness.driver.render = Some(Render {
+            clear_row: false,
             bytes: vec![b'x'; 9000],
             model_text: false,
             offset: 0,
@@ -505,4 +506,138 @@ fn model_chunks_escape_controls_preserve_lines_and_never_truncate_large_deltas()
             "a🦀".repeat(20_000)
         )
     );
+}
+
+#[test]
+fn raw_empty_ctrl_d_and_physical_eof_have_distinct_owned_outcomes() {
+    use std::io::Write as _;
+    for physical_eof in [false, true] {
+        let runtime = executor();
+        let fixture = support::Fixture::new();
+        let mut harness = runtime.block_on(harness(&fixture));
+        harness.driver = harness.driver.with_raw_input(80, None);
+        if physical_eof {
+            let (_, replacement) = std::io::pipe().unwrap();
+            drop(std::mem::replace(&mut harness.input_writer, replacement));
+        } else {
+            harness.input_writer.write_all(&[4]).unwrap();
+        }
+        let result = runtime.block_on(async {
+            tokio::time::timeout(
+                Duration::from_secs(10),
+                poll_fn(|cx| {
+                    let result = harness.driver.poll(cx, &mut harness.signals);
+                    if harness.work.try_recv().is_ok() {
+                        harness
+                            .ack
+                            .try_send(OutputAcknowledgement::Succeeded)
+                            .unwrap();
+                        cx.waker().wake_by_ref();
+                    }
+                    result
+                }),
+            )
+            .await
+            .unwrap()
+        });
+        assert_eq!(
+            result.outcome,
+            if physical_eof {
+                AskCommandOutcome::OperationalFailure
+            } else {
+                AskCommandOutcome::Completed
+            }
+        );
+        assert!(harness.driver.owner.is_closed());
+        let mut tail = dispose(harness, fixture, result);
+        let (settled, output) = runtime.block_on(finish_raw_tail(&mut tail));
+        assert_eq!(settled.outcome, result.outcome);
+        assert!(output.windows(8).any(|bytes| bytes == b"\x1b[?2004l"));
+    }
+}
+
+#[test]
+fn raw_cursor_delete_and_double_ctrl_c_use_the_composed_driver() {
+    use std::io::Write as _;
+    let runtime = executor();
+    let fixture = support::Fixture::new();
+    let mut harness = runtime.block_on(harness(&fixture));
+    harness.driver = harness.driver.with_raw_input(8, None);
+    harness.input_writer.write_all(b"abc\x01\x04").unwrap();
+    let result = runtime.block_on(async {
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            poll_fn(|cx| {
+                harness.driver.poll_input(cx, 101);
+                if harness.driver.input.raw_draft() == Some(("bc", 0)) {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(!harness.driver.shutting_down);
+        harness.input_writer.write_all(&[3]).unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            poll_fn(|cx| {
+                harness.driver.poll_input(cx, 102);
+                if harness.driver.input.raw_draft() == Some(("", 0)) {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(!harness.driver.shutting_down);
+        harness.input_writer.write_all(&[3]).unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            poll_fn(|cx| {
+                let result = harness.driver.poll(cx, &mut harness.signals);
+                if harness.work.try_recv().is_ok() {
+                    harness
+                        .ack
+                        .try_send(OutputAcknowledgement::Succeeded)
+                        .unwrap();
+                    cx.waker().wake_by_ref();
+                }
+                result
+            }),
+        )
+        .await
+        .unwrap()
+    });
+    assert_eq!(result.outcome, AskCommandOutcome::Completed);
+    let mut tail = dispose(harness, fixture, result);
+    let (settled, _) = runtime.block_on(finish_raw_tail(&mut tail));
+    assert_eq!(settled.outcome, AskCommandOutcome::Completed);
+}
+
+async fn finish_raw_tail(harness: &mut TailHarness) -> (TurnDriveResult, Vec<u8>) {
+    let mut output = Vec::new();
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        poll_fn(|cx| {
+            let result = harness.presentation.poll(cx, &mut harness.signals);
+            if let Ok(work) = harness.work.try_recv() {
+                if let OutputWork::Write(bytes) = work {
+                    output.extend(bytes);
+                }
+                harness
+                    .ack
+                    .try_send(OutputAcknowledgement::Succeeded)
+                    .unwrap();
+                cx.waker().wake_by_ref();
+            }
+            result
+        }),
+    )
+    .await
+    .unwrap();
+    (result, output)
 }

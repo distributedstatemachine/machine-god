@@ -99,10 +99,23 @@ mod conversation_runtime;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod interactive_input;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+mod interactive_terminal;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod interactive_terminal_size;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use interactive_input::{
     INTERACTIVE_INPUT_HELPER_ARGUMENT, NATIVE_INTERACTIVE_INPUT_CHUNK_BYTES,
     NativeInteractiveInput, NativeInteractiveInputChunk, NativeInteractiveInputError,
     NativeInteractiveInputHelper, NativeInteractiveInputSource, run_interactive_input_helper,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use interactive_terminal::{
+    NativeInteractiveTerminal, NativeInteractiveTerminalError,
+    NativeInteractiveTerminalRestoreReceipt,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use interactive_terminal_size::{
+    NativeInteractiveTerminalSizeError, NativeInteractiveTerminalSizeReader,
 };
 mod interactive_prompts;
 pub use interactive_prompts::{
@@ -322,6 +335,7 @@ pub use terminal_host::{
     NativeTerminalResetOutcome, NativeTerminalResetReceipt, NativeTerminalTransitionError,
 };
 mod terminal_display_width;
+pub use terminal_display_width::{NativeTerminalDisplayUnit, native_terminal_display_unit_at};
 mod terminal_grid;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod terminal_helper;

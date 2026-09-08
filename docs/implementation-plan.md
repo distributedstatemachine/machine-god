@@ -260,16 +260,29 @@ not close the full feature or its final local, review and remote gates.
 The assembled CLI passes all 186 unit tests with five private-helper ignores,
 90 command integration tests and ten replay tests. Workspace all-target,
 all-feature warnings-denied Clippy, formatting and bounded documentation checks
-pass. A new exact-checkpoint release build and raw-terminal composition remain
-next; the earlier release-helper evidence is not a full interactive CLI gate.
+pass. Exact `26b3151` then passes a fresh locked release build, all 90 release
+CLI integration tests, and all four real-input-helper tests with all features
+and all four without default features, with no skips.
 
-Pinned input inspection requires both startup descriptors to be TTYs before
-configuration/session effects. Ctrl-D requires owned raw terminal settings and
-a cursor-aware composer: it exits only when empty/idle, deletes forward in a
-draft and does not exit while streaming. Actual EOF/hangup is a separate abnormal
-closure. Complete that frontend and historical resume replay; canonical line
-framing alone does not satisfy these scenarios. Pinned headless ask also accepts
-whole piped input through EOF; retain that remaining scenario in the full CLI gate.
+The raw frontend now composes explicit native termios ownership, pinned Unicode
+cursor editing, atomic paste, bounded row rendering and actual TTY column reads
+with resize observation. Ctrl-D exits only when empty/idle, deletes forward in
+a draft and does not exit during active work. Physical EOF is a separate abnormal
+closure and never submits a draft. Received input retains its original modal
+identity. Input readers join before restoration; native joins and the verified
+restoration receipt precede final signal exit and native-free output settlement.
+Focused integration passes 77 CLI tests, including three real-PTY cleanup tests,
+16 native raw/dimensions tests and four shared display-width tests. The first
+new exit regression incorrectly injected a signal through its tail helper;
+normal acknowledged-tail coverage now checks the intended distinct exit results.
+The assembled source passes all 231 CLI unit tests with five private-helper
+ignores, 90 command integration tests and ten replay tests. Replacement workspace
+all-target/all-feature warnings-denied Clippy, formatting and bounded docs checks
+pass. All six component trees are integrated and removed; commits remain
+recoverable. The new raw-frontend release build remains the next checkpoint check.
+These are internal component checks, not final feature gates. Complete historical
+resume replay and remaining CLI scenarios; pinned headless ask also accepts whole
+piped input through EOF. Full feature, review and remote evidence gates stay open.
 
 The integrated preparer passes all five real file mutations, actual reviewer
 Allow/Ask/error and cancellation, read-grant/reset, canonical terminal identity,
