@@ -702,6 +702,17 @@ primitives alone do not establish `/compact` or `/continue` product completion.
 
 ### Exclusive metadata editing
 
+`Session::check_metadata_revision(expected_revision)` provides an owned,
+inert-before-poll checked observation for host no-op operations. It acquires
+the same exclusive lease, reconciles uncertain publication, checks host
+liveness, validates the record and exact canonical revision, and rejects a
+changed snapshot. It never saves or reserves a turn; without reconciliation
+debt it performs no store I/O. A returned revision is not a new durable receipt
+or protection against later/cross-process changes. Pending reconciliation
+excludes other edits and prompts; dropping it releases admission without
+clearing unresolved reconciliation debt. Ordinary `update_metadata` remains
+a save even when the replacement map is identical.
+
 `Session::update_metadata(expected_revision, metadata)` returns an owned,
 inert-before-poll future resolving to `Result<SessionRevision, EngineError>`.
 It replaces the complete metadata map only; the saved candidate preserves every

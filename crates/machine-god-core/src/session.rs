@@ -305,6 +305,23 @@ impl SessionState {
         Self::validate_record_identity(&canonical, record)
     }
 
+    /// Guarded adoption must not reconcile into a canonical session while a
+    /// turn or metadata operation owns admission. Ordinary loads keep their
+    /// existing reconciliation behavior.
+    pub(crate) fn reconcile_loaded_idle(
+        self: &Arc<Self>,
+        record: SessionRecord,
+    ) -> Result<(), EngineError> {
+        let record = JsonOwnerGuard::new(record);
+        self.active_turn
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| EngineError::SessionBusy)?;
+        let _lease = TurnLease {
+            state: Arc::clone(self),
+        };
+        self.reconcile_loaded(record.into_inner())
+    }
+
     pub(crate) fn reconcile_loaded(&self, record: SessionRecord) -> Result<(), EngineError> {
         const MAX_RECONCILE_RETRIES: usize = 32;
 
@@ -609,6 +626,31 @@ impl Session {
         Box::pin(async move { session.update_metadata(expected_revision, metadata).await })
     }
 
+    /// Checks a canonical revision without saving or reserving a turn.
+    ///
+    /// First poll acquires the exclusive mutation lease and reconciles any
+    /// uncertain metadata publication before validating the expected revision.
+    /// With no reconciliation debt this performs no store I/O. Success is a
+    /// checked canonical observation, not a new durable receipt or a lease
+    /// against later or cross-process changes. Construction retains no host
+    /// authority and dropping pending reconciliation releases admission.
+    ///
+    /// # Errors
+    /// Returns busy, closed-host, stale-revision, record-validation or redacted
+    /// persistence errors under the same rules as metadata editing.
+    #[must_use]
+    pub fn check_metadata_revision(
+        &self,
+        expected_revision: SessionRevision,
+    ) -> BoxFuture<'static, Result<SessionRevision, EngineError>> {
+        let session = SessionOperation {
+            engine: Arc::clone(&self.engine),
+            state: Arc::clone(&self.state),
+            host: HostLease::new(self.host_resource.as_ref()),
+        };
+        Box::pin(async move { session.check_metadata_revision(expected_revision).await })
+    }
+
     /// Atomically reserves a durable turn ID and user message, then creates a
     /// bounded multi-round provider/tool stream. A session permits at most one
     /// live turn.
@@ -722,6 +764,31 @@ struct SessionOperation {
 }
 
 impl SessionOperation {
+    async fn check_metadata_revision(
+        &self,
+        expected_revision: SessionRevision,
+    ) -> Result<SessionRevision, EngineError> {
+        self.host.ensure_open()?;
+        self.state
+            .active_turn
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| EngineError::SessionBusy)?;
+        let _lease = TurnLease {
+            state: Arc::clone(&self.state),
+        };
+        self.reconcile_uncertain_metadata().await?;
+        self.host.ensure_open()?;
+        let (snapshot, persisted) = self.state.snapshot();
+        if snapshot.revision != expected_revision {
+            return Err(metadata_revision_conflict());
+        }
+        validate_record_limits(&snapshot, self.engine.limits)?;
+        if !self.state.snapshot_is_current(&snapshot, persisted) {
+            return Err(metadata_revision_conflict());
+        }
+        Ok(snapshot.revision)
+    }
+
     async fn update_metadata(
         &self,
         expected_revision: SessionRevision,

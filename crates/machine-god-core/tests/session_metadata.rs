@@ -217,6 +217,140 @@ fn loaded() -> (Engine, Session, Arc<Store>) {
 }
 
 #[test]
+fn checked_revision_is_inert_and_does_not_save_or_reserve_a_turn() {
+    let (_engine, session, store) = loaded();
+    let before = session.record();
+    let loads = store.load_calls.load(Ordering::SeqCst);
+    let future = session.check_metadata_revision(before.revision);
+    assert!(!session.has_active_turn());
+    drop(future);
+    assert_eq!(store.load_calls.load(Ordering::SeqCst), loads);
+    assert_eq!(
+        block_on(session.check_metadata_revision(before.revision)).unwrap(),
+        before.revision
+    );
+    assert_conflict(block_on(
+        session.check_metadata_revision(SessionRevision(6)),
+    ));
+    assert_eq!(store.load_calls.load(Ordering::SeqCst), loads);
+    assert_eq!(store.save_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(session.record(), before);
+    assert!(!session.has_active_turn());
+}
+
+#[test]
+fn checked_revision_reconciles_a_published_dropped_save_before_noop_success() {
+    let (_engine, session, store) = loaded();
+    store.behavior(SaveBehavior::CommitThenWait);
+    let mut save = session.update_metadata(SessionRevision(7), metadata("published"));
+    pending(&mut save);
+    assert!(matches!(
+        block_on(session.check_metadata_revision(SessionRevision(7))),
+        Err(EngineError::SessionBusy)
+    ));
+    drop(save);
+    assert_conflict(block_on(
+        session.check_metadata_revision(SessionRevision(7)),
+    ));
+    assert_eq!(session.record().metadata, metadata("published"));
+    assert_eq!(session.record().revision, SessionRevision(8));
+    assert_eq!(
+        block_on(session.check_metadata_revision(SessionRevision(8))).unwrap(),
+        SessionRevision(8)
+    );
+    assert_eq!(store.save_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(store.load_calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn dropping_pending_revision_check_releases_lease_but_retains_reconciliation_debt() {
+    let (_engine, session, store) = loaded();
+    store.behavior(SaveBehavior::Fail);
+    assert!(block_on(session.update_metadata(SessionRevision(7), metadata("failed"))).is_err());
+    store.wait_load.store(true, Ordering::Release);
+    let mut check = session.check_metadata_revision(SessionRevision(7));
+    pending(&mut check);
+    assert!(session.has_active_turn());
+    assert!(matches!(
+        block_on(session.update_metadata(SessionRevision(7), metadata("blocked"))),
+        Err(EngineError::SessionBusy)
+    ));
+    assert!(matches!(
+        block_on(session.prompt("blocked")),
+        Err(EngineError::SessionBusy)
+    ));
+    drop(check);
+    assert!(!session.has_active_turn());
+    store.wait_load.store(false, Ordering::Release);
+    assert_eq!(
+        block_on(session.check_metadata_revision(SessionRevision(7))).unwrap(),
+        SessionRevision(7)
+    );
+    assert_eq!(store.load_calls.load(Ordering::SeqCst), 3);
+    assert_eq!(store.save_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(session.record(), record());
+}
+
+#[test]
+fn checked_revision_rejects_missing_durable_state_without_recreating_it() {
+    let (_engine, session, store) = loaded();
+    store.behavior(SaveBehavior::Fail);
+    assert!(block_on(session.update_metadata(SessionRevision(7), metadata("failed"))).is_err());
+    *store.record.lock().unwrap() = None;
+    for _ in 0..2 {
+        assert!(matches!(
+            block_on(session.check_metadata_revision(SessionRevision(7))),
+            Err(EngineError::Protocol(_))
+        ));
+        assert!(!session.has_active_turn());
+    }
+    assert_eq!(store.load_calls.load(Ordering::SeqCst), 3);
+    assert_eq!(store.save_calls.load(Ordering::SeqCst), 1);
+    assert!(store.record().is_none());
+}
+
+#[test]
+fn checked_unsaved_revision_does_not_create_a_durable_record() {
+    let store = Arc::new(Store::default());
+    let engine = engine(Arc::clone(&store), EngineLimits::default());
+    let session = engine
+        .create_session(record().id, record().incarnation_id)
+        .unwrap();
+    assert_eq!(
+        block_on(session.check_metadata_revision(SessionRevision(0))).unwrap(),
+        SessionRevision(0)
+    );
+    assert_eq!(store.load_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(store.save_calls.load(Ordering::SeqCst), 0);
+    assert!(store.record().is_none());
+}
+
+#[test]
+fn failed_revision_reconciliation_is_redacted_and_keeps_refresh_required() {
+    let (_engine, session, store) = loaded();
+    store.behavior(SaveBehavior::CommitThenError);
+    assert!(block_on(session.update_metadata(SessionRevision(7), metadata("published"))).is_err());
+    store
+        .loads
+        .lock()
+        .unwrap()
+        .push_back(Err(failure(SessionStoreErrorKind::Unavailable)));
+    let error = block_on(session.check_metadata_revision(SessionRevision(8))).unwrap_err();
+    assert!(matches!(
+        &error,
+        EngineError::Store(error) if error.code == "store_failed" && error.message == "session store failed"
+    ));
+    assert!(!session.has_active_turn());
+    assert_eq!(session.record().revision, SessionRevision(7));
+    assert_eq!(
+        block_on(session.check_metadata_revision(SessionRevision(8))).unwrap(),
+        SessionRevision(8)
+    );
+    assert_eq!(store.load_calls.load(Ordering::SeqCst), 3);
+    assert_eq!(store.save_calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn canonical_tool_call_locator_is_read_only_exact_and_cursor_bounded() {
     let (_engine, session, store) = loaded();
     let before = session.record();
@@ -635,10 +769,13 @@ fn unpolled_metadata_future_does_not_keep_host_authority_alive() {
         .create_session(record().id, record().incarnation_id)
         .unwrap();
     let operation = session.update_metadata(SessionRevision(0), metadata("never"));
+    let check = session.check_metadata_revision(SessionRevision(0));
     drop(session);
     drop(engine);
     assert!(dropped.load(Ordering::Acquire));
     assert!(matches!(block_on(operation), Err(EngineError::HostClosed)));
+    assert!(matches!(block_on(check), Err(EngineError::HostClosed)));
+    assert_eq!(store.load_calls.load(Ordering::SeqCst), 0);
     assert_eq!(store.save_calls.load(Ordering::SeqCst), 0);
 }
 
