@@ -50,3 +50,43 @@ These rules follow pinned revision
 `src/core/config/model_capabilities.zig:192`, direct selection and fast behavior
 in `src/core/session/session_commands.zig:685` and `:760`, and picker defaults
 in `src/core/app/input_completion_runtime.zig:1138`.
+
+## Pure model-query resolution
+
+`resolve_model_query(query, catalog)` returns the selected catalog ID's exact
+bytes, or `None`. The caller owns cache/fetch ordering and raw-query fallback;
+this helper performs none of those effects. An empty query does not match.
+The query shares the native slash-input bound of 65,536 UTF-8 bytes, not the
+1,024-byte durable model-ID limit or the interactive picker's separate 256-byte
+buffer. Long queries and queries containing controls can still select a valid
+catalog ID through token matching. Validation as a durable ID belongs only to
+raw-query fallback; UI output must escape the original untrusted query.
+Before matching, the helper checks the existing 512-entry and 24 KiB aggregate
+ID bounds even for an early exact match or empty query. The only matching-time
+allocation is one bounded copy of the selected ID.
+
+ASCII-case-insensitive exact equality wins first, retaining the first catalog
+spelling. Otherwise the first highest positive fuzzy score wins ties:
+
+| Match | Score |
+| --- | --- |
+| Case-sensitive prefix or ASCII-case-insensitive slash-delimited suffix | 120 + min(query bytes, 50) |
+| Other ASCII-case-insensitive substring | 100 + min(query bytes, 50) |
+| Every token present, with at least two tokens | 80 + 5 × token count |
+| Byte subsequence | 40 + min(matched bytes, 20) |
+| Any token present | 20 |
+| No match | 0 |
+
+Only space, hyphen, slash and underscore split tokens; at most sixteen nonempty
+tokens are used. Non-ASCII bytes remain opaque: no Unicode case folding,
+normalization, character scoring or invented provider/model grammar occurs.
+The pinned pure resolver does not trim edge spaces, and neither does this
+helper. Its caller should pass the routed payload: the pinned slash router
+separately trims SP/TAB (`src/core/slash_commands/command_router.zig:100`).
+An unmatched query remains the caller's original string; callers must validate
+it as a model ID before accepting it as a persistent preference.
+
+Scoring and exact-first resolution follow pinned
+`src/core/session/session_commands.zig:1489` and `:1142`; caller-owned
+cache/fetch/raw-fallback ordering is at `:1010`. Token scanning uses a fixed
+sixteen-slot borrowed array, and matching does not infer model capabilities.
