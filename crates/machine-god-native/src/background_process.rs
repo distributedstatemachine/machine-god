@@ -2599,7 +2599,12 @@ impl TerminalChildGuard {
             inventory: helper
                 .map(|helper| helper.prepare_with_stop(deadline, cancellation, stop))
                 .transpose()
-                .map_err(|_| cleanup_error())?,
+                .map_err(|error| {
+                    #[cfg(test)]
+                    eprintln!("inventory preparation failed: error={error:?}");
+                    let _ = error;
+                    cleanup_error()
+                })?,
         });
         Ok(self)
     }
@@ -3470,12 +3475,25 @@ fn require_exclusive_child_reaping_with(
     let deadline = Instant::now() + CHILD_REAP_PROBE_TIMEOUT;
     let mut parker = CancellationParker::new(cancellation);
     let child_handle = child.as_mut().ok_or_else(invariant_error)?;
-    let outcome =
-        poll_exclusive_child_reaping(&mut parker, deadline, || try_wait_child(child_handle));
+    #[cfg(test)]
+    let mut observations = (0_usize, 0_usize);
+    let outcome = poll_exclusive_child_reaping(&mut parker, deadline, || {
+        let result = try_wait_child(child_handle);
+        #[cfg(test)]
+        match &result {
+            Ok(None) => observations.0 += 1,
+            Err(ChildTryWaitError::Interrupted) => observations.1 += 1,
+            _ => {}
+        }
+        result
+    });
     #[cfg(test)]
     if outcome != ExclusiveReapingOutcome::Waitable {
         eprintln!(
-            "child reap admission: stage=observe outcome={outcome:?} elapsed={:?}",
+            "child reap admission: stage=observe pid={} outcome={outcome:?} none={} interrupted={} elapsed={:?}",
+            child_handle.id(),
+            observations.0,
+            observations.1,
             started.elapsed()
         );
     }
@@ -4792,6 +4810,7 @@ fn exit_status(status: ExitStatus) -> BackgroundProcessExit {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg_attr(test, derive(Debug))]
 enum BoundedReap {
     Reaped(ExitStatus),
     LostAuthority,
@@ -4898,6 +4917,12 @@ impl InventoryChild {
             reaped.store(true, Ordering::Release);
             spawn_error()
         })?;
+        #[cfg(test)]
+        eprintln!(
+            "inventory service child: pid={} thread={}",
+            child.id(),
+            std::thread::current().name().unwrap_or("unnamed")
+        );
         Ok(Self {
             child: Some(child),
             permit: Some(permit),
@@ -4957,10 +4982,25 @@ fn terminate_and_reap_or_quarantine(
     child: &mut Option<Child>,
     reap_permit: &mut Option<ChildReapPermit>,
 ) -> bool {
+    #[cfg(test)]
+    let pid = child.as_ref().map(Child::id);
     if let Some(child) = child.as_mut() {
-        let _ = child.kill();
+        let result = child.kill();
+        #[cfg(test)]
+        if let Err(error) = &result {
+            eprintln!(
+                "child reap cleanup: pid={pid:?} kill_errno={:?}",
+                error.raw_os_error()
+            );
+        }
+        let _ = result;
     }
-    match poll_child_reap(child, Instant::now() + CHILD_REAP_PROBE_TIMEOUT) {
+    let outcome = poll_child_reap(child, Instant::now() + CHILD_REAP_PROBE_TIMEOUT);
+    #[cfg(test)]
+    if !matches!(&outcome, Ok(BoundedReap::Reaped(_))) {
+        eprintln!("child reap cleanup: pid={pid:?} outcome={outcome:?}");
+    }
+    match outcome {
         Ok(BoundedReap::Reaped(_)) => {
             discharge_reaped_child(child, reap_permit);
             true

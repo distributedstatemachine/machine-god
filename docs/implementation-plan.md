@@ -160,6 +160,13 @@ preserves explicit file/background observations by exact historical attempt, and
 feeds their bounded context-summary sections without inferring missing facts.
 File facts retain canonical per-call identities, destinations, result status and
 read staleness instead of collapsing distinct reads of the same path.
+Automatic file observations now connect the nine concrete native file tools to
+conversation finalization and CLI composition. Pending execution facts survive
+dropped streams and failed finalization in their owner, merge before continuation
+or context projection, and retire only after confirmed publication. Saved
+exact-action rule values now have bounded strict decoding, collision-safe keys,
+stable IDs and per-rule generation checks; this codec does not itself enforce
+permissions or confirm rules.
 Core permission policy now receives the actual borrowed prepared invocation and
 may retain a revocable admission guard across observer waits until execution.
 Legacy handlers keep their existing behavior; native mode/rule/reviewer composition
@@ -169,19 +176,29 @@ exact-action rules and configured patterns. Exact file approvals need owned
 preimage/target identity preparation and execution revalidation, not arguments-only
 matching or an undo lock held across a prompt.
 Remaining work includes interactive CLI persistence-outcome presentation,
-long-lived cache composition, automatic file/background history producers,
+long-lived cache composition, automatic background history producers,
 interactive command/session transitions,
 pinned recovery/retry policy, policy/sandbox/workspace enforcement, rich session
 commands and the complete feature gates.
 
-The current complete local workspace run passes on macOS with Rust 1.94.1,
+The preceding component's complete local workspace run passes on macOS with Rust 1.94.1,
 default test concurrency, enabled backtraces and the freshly built release helper.
 Local validation now uses a fresh target instead of the oversized shared artifact
 directory that stalled macOS bundle initialization and panic symbolication.
-The earlier intermittent background/PTY reaping failures did not recur; their
-cause is not established by the directory-scan samples. Deadlines, assertions,
-cleanup guarantees and platform coverage remain unchanged. This internal gate
-does not replace the complete exact-candidate feature gates below.
+The automatic-file component's replacement full gate is not yet green: child
+reaping probes intermittently failed, then a later run passed native units but
+hit catalog-lock contention during integration. Reaping diagnostics preserve the
+original deadlines; its cause remains unproven. A deterministic duplicated-lock
+regression reproduced the catalog ownership defect. The catalog now explicitly
+unlocks on owner drop and failed preparation, without a test retry workaround;
+all 16 catalog and 27 runtime tests pass, alongside Clippy, doctests, 105 repository
+Python tests and a fresh release CLI smoke. The replacement full run still fails
+four PTY cases: these pass initial reap admission but time out preparing the macOS
+inventory service, followed by cleanup timeout. Test-only startup diagnostics are
+being narrowed to that distinct path; an instrumented native-unit run passes but
+does not establish its cause or close the failed full gate. Assertions, cleanup guarantees and platform
+coverage remain unchanged. These internal checks do not replace the complete
+exact-candidate feature gates below.
 
 ### CI and documentation maintenance
 

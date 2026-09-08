@@ -32,6 +32,17 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Exact registered tool name.
 pub const READ_TOOL_RESULT_TOOL_NAME: &str = "read_tool_result";
+/// Shared exact Gateway projection decision; source size is compact `ToolOutput` bytes.
+pub(crate) fn should_project_tool_result(
+    reader_advertised: bool,
+    tool_name: &str,
+    serialized_bytes: usize,
+) -> bool {
+    reader_advertised
+        && tool_name != READ_TOOL_RESULT_TOOL_NAME
+        && serialized_bytes > crate::tool_result_projection::TOOL_RESULT_PROJECTION_THRESHOLD_BYTES
+        && serialized_bytes <= PROJECTION_MAX_SOURCE_BYTES
+}
 /// Largest inline transcript `ToolOutput` source that the reader can page.
 pub const READ_TOOL_RESULT_MAX_SOURCE_BYTES: usize = PROJECTION_MAX_SOURCE_BYTES;
 

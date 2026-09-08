@@ -16,6 +16,7 @@ use rustix::fd::OwnedFd;
 use crate::background_inspection::NativeBackgroundRecordInspector;
 use crate::background_process::ValidatedBackgroundEnvironment;
 use crate::background_supervisor::LazyProductionBackgroundStarter;
+use crate::file_history_tool::{NativeFileHistoryKind, NativeFileHistoryTool};
 use crate::terminal_host::{NativeTerminalHost, NativeTerminalHostResource};
 use crate::terminal_host_authority::{TerminalHostAccountShell, TerminalHostAuthorityInputs};
 use crate::workspace::{WorkspaceRoot, WorkspaceTools};
@@ -266,6 +267,7 @@ pub struct NativeReferenceHostConversationOptions {
     undo_tracker: Arc<FileUndoTracker>,
     terminal: Option<NativeReferenceHostTerminalOptions>,
     model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
+    observations: Option<Arc<crate::NativeConversationObservations>>,
 }
 
 impl NativeReferenceHostConversationOptions {
@@ -276,6 +278,7 @@ impl NativeReferenceHostConversationOptions {
             undo_tracker,
             terminal: None,
             model_routes: None,
+            observations: None,
         }
     }
 
@@ -294,6 +297,17 @@ impl NativeReferenceHostConversationOptions {
         self.model_routes = Some(routes);
         self
     }
+
+    /// Records native file observations for conversations attached to this registry.
+    /// Attach each conversation with its exact shared allocation before admission.
+    #[must_use]
+    pub fn with_observations(
+        mut self,
+        observations: Arc<crate::NativeConversationObservations>,
+    ) -> Self {
+        self.observations = Some(observations);
+        self
+    }
 }
 
 impl fmt::Debug for NativeReferenceHostConversationOptions {
@@ -309,6 +323,7 @@ struct PreparedCompositionOptions {
     undo_tracker: Option<Arc<FileUndoTracker>>,
     terminal: Option<NativeReferenceHostTerminalOptions>,
     model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
+    observations: Option<Arc<crate::NativeConversationObservations>>,
 }
 
 impl From<NativeReferenceHostConversationOptions> for PreparedCompositionOptions {
@@ -317,6 +332,7 @@ impl From<NativeReferenceHostConversationOptions> for PreparedCompositionOptions
             undo_tracker: Some(options.undo_tracker),
             terminal: options.terminal,
             model_routes: options.model_routes,
+            observations: options.observations,
         }
     }
 }
@@ -574,6 +590,7 @@ impl NativeReferenceHost {
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
         let model_routes = options.model_routes.clone();
+        let observations = options.observations.clone();
         let (workspace_tools, session_store, selection) =
             consume_prepared_composition(prepared_roots, options)?;
         let memory = open_memory_tool(&session_store)?;
@@ -599,6 +616,7 @@ impl NativeReferenceHost {
             Arc::new(EmptySubagentAuthority),
             selection,
             model_routes,
+            observations,
         )
     }
 
@@ -695,6 +713,7 @@ impl NativeReferenceHost {
             Arc::new(EmptySubagentAuthority),
             None,
             None,
+            None,
         )
     }
 
@@ -746,6 +765,7 @@ impl NativeReferenceHost {
             Arc::new(EmptySubagentAuthority),
             None,
             None,
+            None,
         )
     }
 
@@ -791,6 +811,7 @@ impl NativeReferenceHost {
             Arc::new(EmptyMcpToolCatalog),
             Arc::new(EmptyMcpFeatureAuthority),
             subagent_authority,
+            None,
             None,
             None,
         )
@@ -840,6 +861,7 @@ impl NativeReferenceHost {
             mcp_catalog,
             mcp_feature_authority,
             subagent_authority,
+            None,
             None,
             None,
         )
@@ -968,6 +990,7 @@ impl NativeReferenceHost {
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
         let model_routes = options.model_routes.clone();
+        let observations = options.observations.clone();
         let (workspace_tools, session_store, selection) =
             consume_prepared_composition(prepared_roots, options)?;
         let memory = open_memory_tool(&session_store)?;
@@ -987,6 +1010,7 @@ impl NativeReferenceHost {
             Arc::new(EmptySubagentAuthority),
             selection,
             model_routes,
+            observations,
         )
     }
 
@@ -1067,6 +1091,7 @@ impl NativeReferenceHost {
             Arc::new(EmptySubagentAuthority),
             None,
             None,
+            None,
         )
     }
 
@@ -1087,6 +1112,7 @@ impl NativeReferenceHost {
         subagent_authority: Arc<dyn SubagentAuthority>,
         terminal_selection: Option<TerminalCompositionSelection>,
         model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
+        observations: Option<Arc<crate::NativeConversationObservations>>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         let model = loaded_config.config().model().to_owned();
         let SharedNetworkTools {
@@ -1127,29 +1153,34 @@ impl NativeReferenceHost {
             Some(archive) => read_tool_result.with_archive(archive),
             None => read_tool_result,
         };
+        let file_history = FileHistoryTools(observations);
         let builder = Engine::builder()
             .limits(engine_limits)
             .provider(provider)
             .shared_session_store(engine_session_store)
             .permission_handler(permission_handler)
             .tool(ask_user_question)
-            .tool(workspace_tools.copy_file)
+            .shared_tool(file_history.wrap(workspace_tools.copy_file, NativeFileHistoryKind::Copy))
             .tool(workspace_tools.create_folder)
-            .tool(workspace_tools.delete_file)
-            .tool(workspace_tools.edit_file)
+            .shared_tool(
+                file_history.wrap(workspace_tools.delete_file, NativeFileHistoryKind::Delete),
+            )
+            .shared_tool(file_history.wrap(workspace_tools.edit_file, NativeFileHistoryKind::Edit))
             .tool(workspace_tools.file_info)
-            .tool(workspace_tools.glob_files)
-            .tool(workspace_tools.grep_files)
+            .shared_tool(file_history.wrap(workspace_tools.glob_files, NativeFileHistoryKind::Glob))
+            .shared_tool(file_history.wrap(workspace_tools.grep_files, NativeFileHistoryKind::Grep))
             .tool(workspace_tools.install_skill)
-            .tool(workspace_tools.list_files)
+            .shared_tool(file_history.wrap(workspace_tools.list_files, NativeFileHistoryKind::List))
             .tool(McpSearchToolsTool::shared_catalog(Arc::clone(&mcp_catalog)))
             .tool(McpSelectTool::shared_catalog(mcp_catalog))
             .tool(McpFeaturesTool::shared_authority(mcp_feature_authority))
             .tool(memory)
             .tool(workspace_tools.open_file)
-            .tool(workspace_tools.read_file)
+            .shared_tool(file_history.wrap(workspace_tools.read_file, NativeFileHistoryKind::Read))
             .tool(read_tool_result)
-            .tool(workspace_tools.rename_file)
+            .shared_tool(
+                file_history.wrap(workspace_tools.rename_file, NativeFileHistoryKind::Rename),
+            )
             .tool(workspace_tools.semantic_search)
             .tool(workspace_tools.skill)
             .tool(SubagentTool::shared_authority(subagent_authority))
@@ -1157,7 +1188,9 @@ impl NativeReferenceHost {
             .tool(vision)
             .tool(web_fetch)
             .tool(web_search)
-            .tool(workspace_tools.write_file);
+            .shared_tool(
+                file_history.wrap(workspace_tools.write_file, NativeFileHistoryKind::Write),
+            );
         let terminal_shutdown = host_resource
             .as_ref()
             .map(NativeTerminalHostResource::completion);
@@ -1181,6 +1214,20 @@ impl NativeReferenceHost {
             credential_source,
             terminal_shutdown,
         })
+    }
+}
+
+struct FileHistoryTools(Option<Arc<crate::NativeConversationObservations>>);
+impl FileHistoryTools {
+    fn wrap(&self, tool: impl Tool, kind: NativeFileHistoryKind) -> Arc<dyn Tool> {
+        match &self.0 {
+            Some(observations) => Arc::new(NativeFileHistoryTool::new(
+                tool,
+                kind,
+                Arc::clone(observations),
+            )),
+            None => Arc::new(tool),
+        }
     }
 }
 

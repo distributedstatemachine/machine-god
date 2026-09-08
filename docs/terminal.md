@@ -826,6 +826,10 @@ SHA-256 namespace from the canonical workspace and exact logical owner and
 incarnation. Each namespace retains at most 256 validated session directories,
 listed in exact-spelling lexical order. Private directories, a permanent
 nonblocking owner lock, no-follow opens and retained inode checks confine access.
+The catalog lock explicitly unlocks on owner drop, including failed preparation,
+so a forked child's inherited descriptor cannot prolong the finished ownership.
+Closing an older inherited descriptor cannot unlock a new catalog owner's
+independently acquired lock.
 New directory publication syncs the child and parent. Ambiguous post-creation
 failure poisons that catalog handle; preparation of validated existing
 directories and locks retries the child and parent durability barriers. Opening

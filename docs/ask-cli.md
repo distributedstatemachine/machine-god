@@ -42,7 +42,8 @@ then:
    catalog over a host-owned current-thread Tokio runtime with I/O and time
    enabled, awaiting a completed cache observation;
 5. consumes that same credential into the production reference host with
-   complete terminal, shared undo, and conversation-model routing authorities;
+   complete terminal, shared undo, conversation-model routing, and native file
+   observation allocations;
 6. creates one fresh durable native conversation using a bounded random-identity
    operation, with the verified selected workspace, explicit current Unix time
    in milliseconds, and `Cli` origin in its initial metadata; and
@@ -75,6 +76,12 @@ omit those wire controls without rewriting the requested preferences. Ordinary
 `ask` does not write user defaults. Provider context selection and continuation
 checkpoints belong to the [native conversation](native-conversation.md), not
 CLI-owned product state.
+
+The host's nine file-history adapters and each created or resumed conversation
+share one `NativeConversationObservations` allocation. Attachment happens before
+runtime admission and an attachment failure stops setup. Native code correlates
+observations and publishes durable history; the CLI neither copies observation
+state nor writes history metadata itself.
 
 Targets outside Linux and macOS fail through one fixed unsupported operational
 path without importing or attempting the complete reference-host composition.

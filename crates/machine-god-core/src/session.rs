@@ -517,6 +517,45 @@ impl Session {
         (*record).clone()
     }
 
+    /// Finds an exact canonical tool call at or after a message/block cursor.
+    ///
+    /// Searches one shared immutable record snapshot without cloning transcript
+    /// payloads or arguments. The returned indices are observations, not proof
+    /// of execution, persistence of a result, or authority to repeat a call.
+    /// Out-of-range cursors return `None`; subsequent records may differ.
+    #[must_use]
+    pub fn find_tool_call(
+        &self,
+        cursor: (usize, usize),
+        name: &ToolName,
+        id: &crate::ToolCallId,
+    ) -> Option<(usize, usize)> {
+        let (record, _) = self.state.snapshot();
+        let first = record.messages.get(cursor.0)?;
+        if cursor.1 > first.content.len() {
+            return None;
+        }
+        for (message_index, message) in record.messages.iter().enumerate().skip(cursor.0) {
+            if message.role != Role::Assistant {
+                continue;
+            }
+            let start = if message_index == cursor.0 {
+                cursor.1
+            } else {
+                0
+            };
+            for (block_index, block) in message.content.iter().enumerate().skip(start) {
+                if let ContentBlock::ToolCall { call } = block
+                    && call.name == *name
+                    && call.id == *id
+                {
+                    return Some((message_index, block_index));
+                }
+            }
+        }
+        None
+    }
+
     #[must_use]
     pub fn has_active_turn(&self) -> bool {
         self.state.active_turn.load(Ordering::Acquire)

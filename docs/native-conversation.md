@@ -114,8 +114,8 @@ these controls neither persist nor clear the dirty model-preference generation.
 `context_preferences` and `paused_turn` are idle observations of canonical state,
 not cross-process snapshots or permission to replay historical effects. All five
 operations reject active runtime work, including the native finalization gap.
-The same admission rule covers `history`, `record_history_file`, and
-`set_history_background`. Their durable observations preserve queued inputs and
+The same admission rule covers `history`, `record_history_file`,
+`flush_history_observations`, and `set_history_background`. Their durable observations preserve queued inputs and
 pending model selection; an observation save is not a model-preference flush.
 
 `enqueue_continuation` requires an idle, empty queue and a valid paused checkpoint.
@@ -306,12 +306,57 @@ and 2,048-byte URL bounds. Validation checks shallow shapes, aggregate native
 JSON-node and serialized store-byte bounds before cloning text. Mutation failures
 leave the previous value unchanged; debug and error output omit sensitive facts.
 
-Native turn outcomes are produced automatically. File and background facts
-require explicit host observations; they are not inferred from tool names,
-arbitrary output JSON, unknown-result placeholders, or unrelated metadata.
+Native turn outcomes are produced automatically. Background facts require
+explicit host observations. File producers are explicitly configured as below;
+facts are not inferred from arbitrary output JSON, unknown-result placeholders,
+or unrelated metadata.
 These facts also do not reconstruct file-undo authority or permission grants.
 The context consumer and its bounded display rules are described in
 [native context](conversation-context.md).
+
+### Automatic file observations
+
+The conversation and prepared reference host share one explicit
+`Arc<NativeConversationObservations>`. `with_observations` registers the exact
+session/incarnation in a table of at most 64 weak live routes. Missing or
+mismatched routes reject wrapped execution before constructing the underlying
+tool future. Legacy unconfigured hosts preserve their existing behavior.
+
+The configured native adapters cover `read_file`, `list_files`, `glob_files`,
+`grep_files`, `write_file`, `edit_file`, `delete_file`, `rename_file`, and
+`copy_file`. They use those concrete tools' normalized prepared path fields,
+not name-based inference about arbitrary tools. Before forwarding `ToolStarted`,
+the native stream binds its canonical source with core's cursor-based locator.
+Core's observer acknowledgement still precedes execution and permission guards
+remain authoritative. Denied or never-started calls create no execution facts.
+
+Each adapter reserves bounded storage and an `unknown` attempted fact before
+constructing or polling the underlying execution. Actual returned success or
+failure settles that fact; dropping an unfinished execution preserves unknown,
+not success. Result observations survive a hidden `ToolFinished` event, including
+observer failure or cancellation after execution. Successful reads claim full
+model coverage only when their whole output remains inline under the exact
+Gateway projection predicate, with no archived persistence override, and the
+exact paired successful result has reached canonical history. A failed result
+save preserves observed read success without claiming model visibility. Mutations
+use the history codec's chronological staleness rules, never undo receipts as
+proof of successful tool completion.
+
+Finalization merges the batch in the same save as the terminal history state.
+Dropping or failing that save retains pending facts in the conversation owner.
+An idle `flush_history_observations(now_ms)` explicitly saves them without
+starting provider/tool work; an empty batch returns `None` without a save.
+The next admission also merges pending facts before advancing a continuation's
+attempt identity or building compacted provider context. Explicit history saves
+merge pending facts first. Only successful publication acknowledges a batch;
+versioned acknowledgement cannot erase a later settlement, and reconciliation
+does not downgrade already-published status or staleness.
+
+Pending storage is bounded by the native record byte/node envelopes and fails
+before effects if exhausted. There are no detached writers or destructor saves.
+Pending observations are process-local until confirmed publication: losing the
+last owner or the process before that save can lose pending facts, without
+erasing the already-saved canonical transcript or implying safe effect replay.
 
 ## Checkpoint schema
 

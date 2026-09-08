@@ -263,6 +263,21 @@ impl NativeConversationRuntime {
         Ok(self.conversation.history()?)
     }
 
+    /// Saves pending tool observations without consuming queued input or model
+    /// changes. The borrowed future is inert until polled.
+    /// # Panics
+    /// Polling panics if an earlier panic poisoned runtime state.
+    #[must_use]
+    pub fn flush_history_observations(
+        &self,
+        now_ms: i64,
+    ) -> BoxFuture<'_, Result<Option<SessionRevision>, NativeConversationRuntimeError>> {
+        Box::pin(async move {
+            let _lease = self.acquire_idle(false)?;
+            Ok(self.conversation.flush_history_observations(now_ms).await?)
+        })
+    }
+
     /// Saves explicitly observed file history under runtime admission.
     /// The future is inert before polling; queued inputs and selection survive.
     /// # Panics

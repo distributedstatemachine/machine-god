@@ -175,10 +175,19 @@ impl Service {
             .stderr(Stdio::null());
         check_startup(deadline, cancellation, stop)
             .inspect_err(|_| reaped.store(true, Ordering::Release))?;
+        #[cfg(test)]
+        let spawn_started = Instant::now();
         let mut child = InventoryChild::spawn(&mut command, &reaped)
             .map_err(|_| failure(TerminalHelperErrorKind::Process))?;
         #[cfg(test)]
-        self.registration.starts.fetch_add(1, Ordering::AcqRel);
+        {
+            self.registration.starts.fetch_add(1, Ordering::AcqRel);
+            eprintln!(
+                "inventory startup: stage=spawn elapsed={:?} remaining={:?}",
+                spawn_started.elapsed(),
+                deadline.saturating_duration_since(Instant::now())
+            );
+        }
         drop(command);
         let (input, output) = child
             .pipes()
@@ -201,9 +210,22 @@ impl Service {
         let mut startup_output = StartupOutput {
             output: &mut ready.output,
             stop,
+            #[cfg(test)]
+            observations: (0, 0, 0),
         };
-        read_gate(&mut startup_output, &mut handshake, deadline, cancellation)
-            .or_else(|error| check_startup(deadline, cancellation, stop).and(Err(error)))?;
+        let gate = read_gate(&mut startup_output, &mut handshake, deadline, cancellation)
+            .or_else(|error| check_startup(deadline, cancellation, stop).and(Err(error)));
+        #[cfg(test)]
+        if let Err(error) = &gate {
+            eprintln!(
+                "inventory startup: stage=ready error={error:?} bytes={} would_block={} interrupted={} elapsed={:?}",
+                startup_output.observations.0,
+                startup_output.observations.1,
+                startup_output.observations.2,
+                spawn_started.elapsed()
+            );
+        }
+        gate?;
         if handshake != wire::READY {
             return Err(failure(TerminalHelperErrorKind::Protocol));
         }
@@ -358,6 +380,8 @@ fn check_startup(
 struct StartupOutput<'a> {
     output: &'a mut ChildStdout,
     stop: &'a [&'a CancellationToken],
+    #[cfg(test)]
+    observations: (usize, usize, usize),
 }
 
 impl Read for StartupOutput<'_> {
@@ -365,6 +389,18 @@ impl Read for StartupOutput<'_> {
         if self.stop.iter().any(|token| token.is_cancelled()) {
             return Err(std::io::ErrorKind::BrokenPipe.into());
         }
-        self.output.read(bytes)
+        let result = self.output.read(bytes);
+        #[cfg(test)]
+        match &result {
+            Ok(count) => self.observations.0 += count,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                self.observations.1 += 1;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                self.observations.2 += 1;
+            }
+            _ => {}
+        }
+        result
     }
 }

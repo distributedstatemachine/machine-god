@@ -132,3 +132,31 @@ interaction, scheduling, and any associated authority belong to the explicitly
 injected prompter. This adapter does not provide a concrete prompter, wire the
 CLI, change the configured `ask` mode, implement modes beyond `ask`, or persist
 grant decisions.
+
+## Saved exact-action rule values
+
+`NativeSessionPermissionRules` is the pure schema-1 value codec for
+`machine_god.session_permission_rules`. An absent entry is an empty set with
+`next_generation = 1`. Ordered rules contain a stable positive `id`, exact
+`key`, `display_identity`, `allow`/`deny` decision and per-rule `generation`.
+Keys combine the `command`, `file_mutation` or `structured_tool` namespace,
+recomputed SHA-256 digest and original canonical bytes. Equality checks all
+three fields, not just the digest. Identities are opaque data, not commands.
+
+At most 1,024 rules are admitted; canonical and display strings each have an
+independent nonempty 4,096-byte UTF-8 bound. Decoding checks exact shallow shapes,
+duplicate IDs/keys, generations and native record byte/node limits before
+cloning. Missing fields, unknown versions, forged digests and overflow fail with
+redacted errors; unrelated metadata is not recursively traversed.
+
+`apply_set` and `apply_revoke` return a validated new value without mutating the
+old one. New rules use the next generation as their ID; replacement retains the
+ID and advances that rule's generation. Every mutation, including revoke,
+advances the checked allocator. Expected generations are per rule, so editing
+one rule does not stale an unrelated proposal. Missing/existing rule mismatches
+and stale generations fail without eviction or partial mutation.
+
+These values follow pinned `src/core/permissions/session_permission_state.zig`.
+Decoding or constructing them performs no prompt, confirmation, persistence or
+execution. They remain separate from capability grants and the authorization
+handler; loading a saved `allow` value alone does not grant tool authority.

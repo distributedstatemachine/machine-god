@@ -216,6 +216,56 @@ fn loaded() -> (Engine, Session, Arc<Store>) {
     (engine, session, store)
 }
 
+#[test]
+fn canonical_tool_call_locator_is_read_only_exact_and_cursor_bounded() {
+    let (_engine, session, store) = loaded();
+    let before = session.record();
+    let name = ToolName::new("retained-tool").unwrap();
+    let id = ToolCallId::new("retained-call").unwrap();
+    assert_eq!(session.find_tool_call((0, 0), &name, &id), Some((1, 0)));
+    assert_eq!(session.find_tool_call((1, 0), &name, &id), Some((1, 0)));
+    assert_eq!(session.find_tool_call((1, 1), &name, &id), None);
+    assert_eq!(session.find_tool_call((0, usize::MAX), &name, &id), None);
+    assert_eq!(session.find_tool_call((usize::MAX, 0), &name, &id), None);
+    assert_eq!(
+        session.find_tool_call((0, 0), &ToolName::new("other").unwrap(), &id),
+        None
+    );
+    assert_eq!(
+        session.find_tool_call((0, 0), &name, &ToolCallId::new("other").unwrap()),
+        None
+    );
+    assert_eq!(session.record(), before);
+    assert_eq!(store.save_calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn canonical_tool_call_locator_distinguishes_reused_historical_ids() {
+    let mut initial = record();
+    let mut later_call = initial.messages[1].clone();
+    later_call.content.insert(
+        0,
+        ContentBlock::Text {
+            text: "before".to_owned(),
+        },
+    );
+    initial
+        .messages
+        .push(Message::text(Role::User, "next prompt"));
+    initial.messages.push(later_call);
+    initial.messages.push(initial.messages[2].clone());
+    let store = Arc::new(Store::default());
+    *store.record.lock().unwrap() = Some(initial.clone());
+    let engine = engine(store, EngineLimits::default());
+    let session = block_on(engine.load_session(initial.id)).unwrap().unwrap();
+    let name = ToolName::new("retained-tool").unwrap();
+    let id = ToolCallId::new("retained-call").unwrap();
+    assert_eq!(session.find_tool_call((0, 0), &name, &id), Some((1, 0)));
+    assert_eq!(session.find_tool_call((1, 1), &name, &id), Some((5, 1)));
+    assert_eq!(session.find_tool_call((5, 1), &name, &id), Some((5, 1)));
+    assert_eq!(session.find_tool_call((5, 2), &name, &id), None);
+}
+
 fn pending<T>(future: &mut BoxFuture<'_, T>) {
     let waker = noop_waker();
     assert!(

@@ -12,18 +12,21 @@ use futures_core::Stream;
 use machine_god_core::{
     BoxFuture, ContentBlock, EngineError, EngineEvent, InferenceOptions, Prompt, Role, Session,
     SessionId, SessionRecord, SessionRevision, SessionStoreErrorKind, SessionTurnPreparation,
-    StopReason, Turn, TurnEvent, TurnHandle,
+    StopReason, ToolContext, Turn, TurnEvent, TurnHandle,
 };
 use serde_json::{Value, json};
+
+use crate::conversation_observations::{ObservationBatch, ObservationSession};
 
 use crate::{
     NATIVE_CONTEXT_PREFERENCES_KEY, NATIVE_CONVERSATION_HISTORY_KEY, NATIVE_MODEL_PREFERENCES_KEY,
     NATIVE_SESSION_METADATA_KEY, NativeContextError, NativeContextPreferences,
-    NativeConversationHistory, NativeConversationHistoryError, NativeHistoryBackground,
-    NativeHistoryFileEvidence, NativeHistoryState, NativeModelPreferences,
-    NativeModelPreferencesError, NativeModelSnapshot, NativeSessionLifecycle,
-    NativeSessionLifecycleError, NativeSessionMetadata, NativeSessionMetadataError,
-    NativeSessionMetadataMutationError, rename_native_session,
+    NativeConversationHistory, NativeConversationHistoryError, NativeConversationObservations,
+    NativeHistoryBackground, NativeHistoryFileEvidence, NativeHistoryFileSource,
+    NativeHistoryFileStatus, NativeHistoryState, NativeModelPreferences,
+    NativeModelPreferencesError, NativeModelSnapshot, NativeObservationError,
+    NativeSessionLifecycle, NativeSessionLifecycleError, NativeSessionMetadata,
+    NativeSessionMetadataError, NativeSessionMetadataMutationError, rename_native_session,
 };
 
 /// Native-only metadata entry. Its contents are not permission grants.
@@ -37,6 +40,7 @@ pub enum NativeConversationError {
     NoCheckpoint,
     InvalidCheckpoint,
     InvalidHistory(NativeConversationHistoryError),
+    Observation(NativeObservationError),
     InvalidContext(NativeContextError),
     InvalidModelPreferences(NativeModelPreferencesError),
     InvalidMetadata(NativeSessionMetadataError),
@@ -54,6 +58,7 @@ impl fmt::Display for NativeConversationError {
             Self::NoCheckpoint => f.write_str("conversation has no paused turn"),
             Self::InvalidCheckpoint => f.write_str("conversation checkpoint is invalid"),
             Self::InvalidHistory(error) => error.fmt(f),
+            Self::Observation(error) => error.fmt(f),
             Self::InvalidContext(error) => error.fmt(f),
             Self::InvalidModelPreferences(error) => error.fmt(f),
             Self::InvalidMetadata(error) => error.fmt(f),
@@ -146,6 +151,7 @@ impl Checkpoint {
 pub struct NativeConversation {
     session: Session,
     active: Arc<AtomicBool>,
+    observations: Option<Arc<ObservationSession>>,
 }
 
 impl fmt::Debug for NativeConversation {
@@ -175,7 +181,27 @@ impl NativeConversation {
         Ok(Self {
             session,
             active: Arc::new(AtomicBool::new(false)),
+            observations: None,
         })
+    }
+
+    /// Connects explicitly configured native producers to this exact incarnation.
+    /// Construction registers bounded process-local state only; no I/O occurs.
+    /// # Errors
+    /// Rejects active work, duplicate registration, or exhausted routing capacity.
+    pub fn with_observations(
+        mut self,
+        observations: &Arc<NativeConversationObservations>,
+    ) -> Result<Self, NativeConversationError> {
+        if self.is_busy() || self.observations.is_some() {
+            return Err(NativeConversationError::Busy);
+        }
+        self.observations = Some(
+            observations
+                .register(self.id(), self.incarnation_id())
+                .map_err(NativeConversationError::Observation)?,
+        );
+        Ok(self)
     }
 
     /// Creates an empty conversation with metadata in its initial durable record.
@@ -440,6 +466,35 @@ impl NativeConversation {
         validated_history(&self.session.record())
     }
 
+    /// Persists pending tool observations after dropped or failed finalization.
+    /// No provider or tool is started. Pending facts are retired only after a
+    /// confirmed save; an unpolled future does nothing.
+    #[must_use]
+    pub fn flush_history_observations(
+        &self,
+        now_ms: i64,
+    ) -> BoxFuture<'_, Result<Option<SessionRevision>, NativeConversationError>> {
+        Box::pin(async move {
+            let _lease = AdmissionLease::acquire(&self.active)?;
+            if self.session.has_active_turn() {
+                return Err(NativeConversationError::Busy);
+            }
+            let Some(observations) = &self.observations else {
+                return Ok(None);
+            };
+            let batch = observations.snapshot();
+            if batch.entries().is_empty() {
+                return Ok(None);
+            }
+            let record = self.session.record();
+            let mut history = validated_history(&record)?;
+            merge_observations(&mut history, &batch, &record)?;
+            let revision = self.persist_history(record, history, now_ms).await?;
+            observations.acknowledge(&batch);
+            Ok(Some(revision))
+        })
+    }
+
     /// Records an explicitly observed file fact against an exact historical attempt.
     /// The borrowed future is inert before polling and grants no file authority.
     #[must_use]
@@ -484,29 +539,46 @@ impl NativeConversation {
             if self.session.has_active_turn() {
                 return Err(NativeConversationError::Busy);
             }
-            let mut record = self.session.record();
+            let record = self.session.record();
             let mut history = validated_history(&record)?;
+            let batch = self.observations.as_ref().map(ObservationSession::snapshot);
+            if let Some(batch) = &batch {
+                merge_observations(&mut history, batch, &record)?;
+            }
             update(&mut history).map_err(NativeConversationError::InvalidHistory)?;
-            let mut metadata = NativeSessionMetadata::from_metadata(&record.metadata)
-                .map_err(NativeConversationError::InvalidMetadata)?;
-            metadata
-                .touch(now_ms)
-                .map_err(NativeConversationError::InvalidMetadata)?;
-            record
-                .metadata
-                .insert(NATIVE_SESSION_METADATA_KEY.to_owned(), metadata.to_value());
-            record.metadata.insert(
-                NATIVE_CONVERSATION_HISTORY_KEY.to_owned(),
-                history.to_value(),
-            );
-            // New observations may name a canonical call. Validate their exact
-            // message/block references before publication, not only on resume.
-            validated_history(&record)?;
-            self.session
-                .update_metadata(record.revision, record.metadata)
-                .await
-                .map_err(map_engine_error)
+            let revision = self.persist_history(record, history, now_ms).await?;
+            if let (Some(owner), Some(batch)) = (&self.observations, &batch) {
+                owner.acknowledge(batch);
+            }
+            Ok(revision)
         })
+    }
+
+    async fn persist_history(
+        &self,
+        mut record: SessionRecord,
+        history: NativeConversationHistory,
+        now_ms: i64,
+    ) -> Result<SessionRevision, NativeConversationError> {
+        let mut metadata = NativeSessionMetadata::from_metadata(&record.metadata)
+            .map_err(NativeConversationError::InvalidMetadata)?;
+        metadata
+            .touch(now_ms)
+            .map_err(NativeConversationError::InvalidMetadata)?;
+        record
+            .metadata
+            .insert(NATIVE_SESSION_METADATA_KEY.to_owned(), metadata.to_value());
+        record.metadata.insert(
+            NATIVE_CONVERSATION_HISTORY_KEY.to_owned(),
+            history.to_value(),
+        );
+        // New observations may name a canonical call. Validate their exact
+        // message/block references before publication, not only on resume.
+        validated_history(&record)?;
+        self.session
+            .update_metadata(record.revision, record.metadata)
+            .await
+            .map_err(map_engine_error)
     }
 
     /// Reserves user input, its fresh turn identity and native checkpoint in one
@@ -577,42 +649,26 @@ impl NativeConversation {
         let mut record = self.session.record();
         let previous = Checkpoint::decode(&record)?;
         let mut history = validated_history(&record)?;
+        let batch = self.observations.as_ref().map(ObservationSession::snapshot);
+        if let Some(batch) = &batch {
+            // Reconcile the old attempt before continuation advances its identity
+            // and before constructing the provider-only context projection.
+            merge_observations(&mut history, batch, &record)?;
+            record.metadata.insert(
+                NATIVE_CONVERSATION_HISTORY_KEY.to_owned(),
+                history.to_value(),
+            );
+        }
+        let source_cursor = (record.messages.len(), 0);
         NativeModelPreferences::from_metadata(&record.metadata)
             .map_err(NativeConversationError::InvalidModelPreferences)?;
-        let preferences = NativeContextPreferences::from_metadata(&record.metadata)
-            .map_err(NativeConversationError::InvalidContext)?;
-        // Disabled context is the original full-history path, including for
-        // embedders whose admitted records exceed native projection bounds.
-        let context = if preferences == NativeContextPreferences::default() {
-            None
-        } else {
-            preferences
-                .projection(&record)
-                .map_err(NativeConversationError::InvalidContext)?
-        };
-        let checkpoint = Checkpoint {
-            turn_sequence: record.next_turn_sequence,
-            first_user_message: if matches!(&input.0, Some(ConversationInput::Prompt(_))) {
-                record.messages.len()
-            } else {
-                previous
-                    .ok_or(NativeConversationError::NoCheckpoint)?
-                    .first_user_message
-            },
-            paused: false,
-        };
-        // An old native checkpoint is explicit unfinished-work evidence, even
-        // when it predates typed facts. Do not manufacture a cancellation reason.
-        if let Some(previous) = previous
-            && history.group(previous.first_user_message).is_none()
-        {
-            history
-                .begin(previous.first_user_message, previous.turn_sequence)
-                .map_err(NativeConversationError::InvalidHistory)?;
-        }
-        history
-            .begin(checkpoint.first_user_message, checkpoint.turn_sequence)
-            .map_err(NativeConversationError::InvalidHistory)?;
+        let context = provider_context(&record)?;
+        let checkpoint = begin_history(
+            &record,
+            &mut history,
+            previous,
+            matches!(&input.0, Some(ConversationInput::Prompt(_))),
+        )?;
         let mut metadata = NativeSessionMetadata::from_metadata(&record.metadata)
             .map_err(NativeConversationError::InvalidMetadata)?;
         metadata
@@ -656,6 +712,18 @@ impl NativeConversation {
             }
         }
         .map_err(map_engine_error)?;
+        if let Some(owner) = &self.observations {
+            owner
+                .begin_attempt(
+                    turn.handle().id().clone(),
+                    checkpoint.first_user_message,
+                    checkpoint.turn_sequence,
+                )
+                .map_err(NativeConversationError::Observation)?;
+            if let Some(batch) = &batch {
+                owner.acknowledge(batch);
+            }
+        }
         Ok(NativeConversationTurn {
             handle: turn.handle(),
             core: Some(turn),
@@ -664,9 +732,145 @@ impl NativeConversation {
             lease: Some(lease),
             finalization: None,
             terminal: None,
+            observations: self.observations.clone(),
+            source_cursor,
+            observation_batch: None,
             done: false,
         })
     }
+}
+
+fn provider_context(
+    record: &SessionRecord,
+) -> Result<Option<machine_god_core::SessionContextProjection>, NativeConversationError> {
+    let preferences = NativeContextPreferences::from_metadata(&record.metadata)
+        .map_err(NativeConversationError::InvalidContext)?;
+    // Disabled context retains the original full-history path and its bounds.
+    if preferences == NativeContextPreferences::default() {
+        Ok(None)
+    } else {
+        preferences
+            .projection(record)
+            .map_err(NativeConversationError::InvalidContext)
+    }
+}
+
+fn begin_history(
+    record: &SessionRecord,
+    history: &mut NativeConversationHistory,
+    previous: Option<Checkpoint>,
+    new_prompt: bool,
+) -> Result<Checkpoint, NativeConversationError> {
+    let checkpoint = Checkpoint {
+        turn_sequence: record.next_turn_sequence,
+        first_user_message: if new_prompt {
+            record.messages.len()
+        } else {
+            previous
+                .ok_or(NativeConversationError::NoCheckpoint)?
+                .first_user_message
+        },
+        paused: false,
+    };
+    // Old native checkpoints establish unfinished work without inventing its cause.
+    if let Some(previous) = previous
+        && history.group(previous.first_user_message).is_none()
+    {
+        history
+            .begin(previous.first_user_message, previous.turn_sequence)
+            .map_err(NativeConversationError::InvalidHistory)?;
+    }
+    history
+        .begin(checkpoint.first_user_message, checkpoint.turn_sequence)
+        .map_err(NativeConversationError::InvalidHistory)?;
+    Ok(checkpoint)
+}
+
+fn merge_observations(
+    history: &mut NativeConversationHistory,
+    batch: &ObservationBatch,
+    record: &SessionRecord,
+) -> Result<(), NativeConversationError> {
+    for entry in batch.entries() {
+        let mut file = entry.file().clone();
+        if file.model_view_covers_full_file() && !has_saved_successful_output(record, file.source())
+        {
+            let source = file
+                .source()
+                .cloned()
+                .ok_or(NativeConversationError::Conflict)?;
+            let destination = file.new_path().map(str::to_owned);
+            let status = file.status();
+            file = file
+                .with_execution(source, status, destination.as_deref(), false)
+                .map_err(NativeConversationError::InvalidHistory)?;
+        }
+        let group = history
+            .group(entry.first_user_message())
+            .ok_or(NativeConversationError::Conflict)?;
+        // A store can publish and then return an error. Recognize previously
+        // published evidence without downgrading settled results or staleness.
+        let published = group.files().iter().any(|saved| {
+            saved.source().is_some()
+                && saved.source() == file.source()
+                && saved.path() == file.path()
+                && saved.action() == file.action()
+                && saved.new_path() == file.new_path()
+                && (saved.status() == file.status()
+                    || file.status() == NativeHistoryFileStatus::Unknown)
+                && (saved.stale() || !file.stale())
+                && (saved.model_view_covers_full_file() || !file.model_view_covers_full_file())
+        });
+        if published {
+            continue;
+        }
+        history
+            .upsert_file(entry.first_user_message(), entry.turn_sequence(), file)
+            .map_err(NativeConversationError::InvalidHistory)?;
+    }
+    Ok(())
+}
+
+// Core appends one result placeholder per call directly after the assistant
+// message, then replaces that exact slot after validating and saving output.
+// A completed native read alone does not prove the provider can see its bytes.
+fn has_saved_successful_output(
+    record: &SessionRecord,
+    source: Option<&NativeHistoryFileSource>,
+) -> bool {
+    let Some(source) = source else {
+        return false;
+    };
+    let Some(message) = record.messages.get(source.assistant_message()) else {
+        return false;
+    };
+    if message.role != Role::Assistant {
+        return false;
+    }
+    let Some(ContentBlock::ToolCall { call }) = message.content.get(source.content_block()) else {
+        return false;
+    };
+    if &call.id != source.call_id() || &call.name != source.tool_name() {
+        return false;
+    }
+    let ordinal = message.content[..source.content_block()]
+        .iter()
+        .filter(|block| matches!(block, ContentBlock::ToolCall { .. }))
+        .count();
+    let Some(index) = source
+        .assistant_message()
+        .checked_add(1)
+        .and_then(|index| index.checked_add(ordinal))
+    else {
+        return false;
+    };
+    let Some(message) = record.messages.get(index) else {
+        return false;
+    };
+    message.role == Role::Tool
+        && matches!(message.content.as_slice(),
+        [ContentBlock::ToolResult { call_id, output }]
+            if call_id == source.call_id() && !output.is_error)
 }
 
 pub(crate) fn validated_history(
@@ -770,6 +974,9 @@ pub struct NativeConversationTurn {
     lease: Option<AdmissionLease>,
     finalization: Option<BoxFuture<'static, Result<SessionRevision, EngineError>>>,
     terminal: Option<Result<EngineEvent, NativeConversationError>>,
+    observations: Option<Arc<ObservationSession>>,
+    source_cursor: (usize, usize),
+    observation_batch: Option<ObservationBatch>,
     done: bool,
 }
 
@@ -789,7 +996,11 @@ impl NativeConversationTurn {
 
     fn finish(&mut self) {
         self.core.take();
+        if let Some(owner) = &self.observations {
+            owner.finish_attempt(self.handle.id());
+        }
         self.finalization.take();
+        self.observation_batch.take();
         self.lease.take();
         self.done = true;
     }
@@ -799,6 +1010,9 @@ impl NativeConversationTurn {
         terminal: Result<EngineEvent, NativeConversationError>,
     ) -> Result<(), NativeConversationError> {
         self.core.take();
+        if let Some(owner) = &self.observations {
+            owner.finish_attempt(self.handle.id());
+        }
         let mut record = self.session.record();
         let checkpoint = Checkpoint::decode(&record)?.ok_or(NativeConversationError::Conflict)?;
         if checkpoint.turn_sequence != self.checkpoint.turn_sequence
@@ -807,6 +1021,10 @@ impl NativeConversationTurn {
             return Err(NativeConversationError::Conflict);
         }
         let mut history = validated_history(&record)?;
+        let batch = self.observations.as_ref().map(ObservationSession::snapshot);
+        if let Some(batch) = &batch {
+            merge_observations(&mut history, batch, &record)?;
+        }
         let state = match &terminal {
             Ok(EngineEvent {
                 payload:
@@ -848,11 +1066,42 @@ impl NativeConversationTurn {
                 .encode(),
             );
         }
+        validated_history(&record)?;
         self.finalization = Some(
             self.session
                 .update_metadata(record.revision, record.metadata),
         );
+        self.observation_batch = batch;
         self.terminal = Some(terminal);
+        Ok(())
+    }
+
+    fn bind_observation(&mut self, event: &EngineEvent) -> Result<(), NativeConversationError> {
+        let Some(owner) = &self.observations else {
+            return Ok(());
+        };
+        let TurnEvent::ToolStarted { call } = &event.payload else {
+            return Ok(());
+        };
+        let (message, block) = self
+            .session
+            .find_tool_call(self.source_cursor, &call.name, &call.id)
+            .ok_or(NativeConversationError::Conflict)?;
+        let source =
+            NativeHistoryFileSource::new(message, block, call.id.clone(), call.name.clone())
+                .map_err(NativeConversationError::InvalidHistory)?;
+        owner
+            .bind_call(
+                &ToolContext {
+                    session_id: event.session_id.clone(),
+                    session_incarnation_id: event.session_incarnation_id.clone(),
+                    turn_id: event.turn_id.clone(),
+                    call_id: call.id.clone(),
+                },
+                source,
+            )
+            .map_err(NativeConversationError::Observation)?;
+        self.source_cursor = (message, block + 1);
         Ok(())
     }
 }
@@ -870,6 +1119,12 @@ impl Stream for NativeConversationTurn {
                     Poll::Pending => return Poll::Pending,
                     Poll::Ready(result) => {
                         let terminal = self.terminal.take().expect("finalizer retains terminal");
+                        if result.is_ok()
+                            && let (Some(owner), Some(batch)) =
+                                (&self.observations, &self.observation_batch)
+                        {
+                            owner.acknowledge(batch);
+                        }
                         self.finish();
                         return Poll::Ready(Some(match result {
                             Ok(_) => terminal,
@@ -892,7 +1147,10 @@ impl Stream for NativeConversationTurn {
                         TurnEvent::Completed { .. } | TurnEvent::Failed { .. }
                     ) =>
                 {
-                    return Poll::Ready(Some(Ok(event)));
+                    match self.bind_observation(&event) {
+                        Ok(()) => return Poll::Ready(Some(Ok(event))),
+                        Err(error) => Err(error),
+                    }
                 }
                 Some(event) => event.map_err(map_engine_error),
                 None => Err(NativeConversationError::Engine),

@@ -709,6 +709,14 @@ No provider, permission handler, tool or event sink is called. A metadata future
 does not retain host authority and cannot start after the last real host handle
 has been dropped.
 
+`Session::find_tool_call((message, block), name, id)` observes an exact canonical
+assistant call at or after a cursor. It scans a shared immutable snapshot
+without cloning transcript text, archived payloads or arguments, and returns
+indices only. Cursors beyond the snapshot return `None`; a block cursor exactly
+at the end continues to later messages. Matching includes both name and ID, so
+hosts can distinguish reused historical IDs by advancing their cursor. The
+operation has no effects and is not evidence of execution or authority.
+
 The expected revision must equal the canonical revision. A stale revision or a
 concurrently changed canonical snapshot fails with a store conflict before save;
 the store receives the expected persisted revision for its own compare-and-save.

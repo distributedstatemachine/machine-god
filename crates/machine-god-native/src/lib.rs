@@ -75,6 +75,21 @@ pub use conversation_history::{
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conversation_model_routes;
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod conversation_observation_tests;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod conversation_observations;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod file_history_tool;
+mod permission_rules;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use conversation_observations::{NativeConversationObservations, NativeObservationError};
+pub use permission_rules::{
+    MAX_NATIVE_PERMISSION_IDENTITY_BYTES, MAX_NATIVE_PERMISSION_RULES,
+    NATIVE_SESSION_PERMISSION_RULES_KEY, NativePermissionRule, NativePermissionRuleDecision,
+    NativePermissionRuleError, NativePermissionRuleKey, NativePermissionRuleKind,
+    NativeSessionPermissionRules,
+};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conversation_runtime;
 mod copy_file;

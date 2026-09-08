@@ -9,7 +9,7 @@
 use std::fmt;
 
 use machine_god_core::{BackgroundOutputOwner, TerminalSessionId};
-use rustix::fd::{AsFd, OwnedFd};
+use rustix::fd::{AsFd, BorrowedFd, OwnedFd};
 use rustix::fs::{AtFlags, Dir, FileType, FlockOperation, Mode, OFlags};
 use sha2::{Digest, Sha256};
 
@@ -53,9 +53,27 @@ pub(crate) struct TerminalCatalog {
     namespace: OwnedFd,
     owner_root: OwnedFd,
     sessions: OwnedFd,
-    lock: OwnedFd,
+    lock: CatalogLock,
     owner_name: String,
     poisoned: bool,
+}
+
+/// Own the flock from acquisition, including fallible catalog preparation.
+struct CatalogLock(OwnedFd);
+
+impl AsFd for CatalogLock {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.0.as_fd()
+    }
+}
+
+impl Drop for CatalogLock {
+    fn drop(&mut self) {
+        // A concurrent fork can retain this description until exec closes it.
+        // End the logical owner's lock now, not when that unrelated reference
+        // eventually closes. Descriptor close remains the fallback on error.
+        let _ = rustix::fs::flock(&self.0, FlockOperation::Unlock);
+    }
 }
 
 /// An exact-spelling, inode-bound batch under one retained owner catalog.
@@ -446,7 +464,7 @@ fn proc_mount_id(directory: impl AsFd, path: &str, flags: AtFlags) -> Result<u64
     Ok(stat.stx_mnt_id)
 }
 
-fn acquire_lock(parent: impl AsFd) -> Result<OwnedFd> {
+fn acquire_lock(parent: impl AsFd) -> Result<CatalogLock> {
     let flags = OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK;
     let lock = match rustix::fs::openat(
         parent.as_fd(),
@@ -470,6 +488,7 @@ fn acquire_lock(parent: impl AsFd) -> Result<OwnedFd> {
         Err(rustix::io::Errno::WOULDBLOCK) => return Err(TerminalCatalogError::Busy),
         Err(error) => return Err(io_error(error)),
     }
+    let lock = CatalogLock(lock);
     // Reused locks can also originate in an interrupted preparation attempt.
     sync_child(&lock)?;
     sync_parent(parent)?;
@@ -596,22 +615,11 @@ mod tests {
             self.try_catalog().unwrap()
         }
         fn try_catalog(&self) -> Result<TerminalCatalog> {
-            // Parallel subprocess tests may briefly inherit a CLOEXEC lock
-            // between fork and exec. A deliberately live owner's Busy check
-            // below still calls prepare directly and must fail immediately.
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-            loop {
-                match TerminalCatalog::prepare(
-                    self.fd(),
-                    "/workspace".into(),
-                    owner("session", "incarnation"),
-                ) {
-                    Err(TerminalCatalogError::Busy) if std::time::Instant::now() < deadline => {
-                        std::thread::sleep(std::time::Duration::from_millis(5));
-                    }
-                    result => return result,
-                }
-            }
+            TerminalCatalog::prepare(
+                self.fd(),
+                "/workspace".into(),
+                owner("session", "incarnation"),
+            )
         }
         fn owner_root(&self) -> PathBuf {
             self.0
@@ -664,6 +672,68 @@ mod tests {
             TerminalProfileStoreError::Unavailable
         );
         assert!(!fixture.sessions().join("later").exists());
+    }
+
+    #[test]
+    fn owner_drop_releases_lock_despite_an_inherited_description() {
+        let fixture = Fixture::new();
+        let catalog = fixture.catalog();
+        // dup and fork retain the same open file description. Keep that extra
+        // reference alive deterministically, without racing a subprocess.
+        let inherited = rustix::io::fcntl_dupfd_cloexec(&catalog.lock, 3).unwrap();
+        let prepare = || {
+            TerminalCatalog::prepare(
+                fixture.fd(),
+                "/workspace".into(),
+                owner("session", "incarnation"),
+            )
+        };
+        assert_eq!(prepare().unwrap_err(), TerminalCatalogError::Busy);
+        drop(catalog);
+        let next = prepare().unwrap();
+        assert_eq!(prepare().unwrap_err(), TerminalCatalogError::Busy);
+        // Closing an older inherited description must not unlock a later
+        // owner's independent description.
+        drop(inherited);
+        assert_eq!(prepare().unwrap_err(), TerminalCatalogError::Busy);
+        next.validate().unwrap();
+        drop(next);
+        prepare().unwrap();
+    }
+
+    #[test]
+    fn failed_preparation_releases_an_acquired_lock_before_catalog_construction() {
+        let fixture = Fixture::new();
+        drop(fixture.catalog());
+        let root = rustix::fs::open(
+            fixture.owner_root(),
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .unwrap();
+        let mut inherited = None;
+        let mut prepare = || -> Result<()> {
+            let lock = acquire_lock(&root)?;
+            inherited = Some(rustix::io::fcntl_dupfd_cloexec(&lock, 3).map_err(io_error)?);
+            // Model a failed barrier after lock acquisition but before a
+            // TerminalCatalog exists. Its destructor cannot release this lock.
+            FAIL_PARENT_SYNC.with(|failure| failure.set(true));
+            sync_parent(&root)?;
+            Ok(())
+        };
+        assert_eq!(prepare(), Err(TerminalCatalogError::Unavailable));
+        let next = fixture.try_catalog().unwrap();
+        assert_eq!(
+            fixture.try_catalog().unwrap_err(),
+            TerminalCatalogError::Busy
+        );
+        drop(inherited);
+        assert_eq!(
+            fixture.try_catalog().unwrap_err(),
+            TerminalCatalogError::Busy
+        );
+        drop(next);
+        fixture.try_catalog().unwrap();
     }
 
     #[test]
@@ -1014,10 +1084,10 @@ mod tests {
             let fixture = Fixture::new();
             let catalog = fixture.catalog();
             let descriptor = match target {
-                0 => &catalog.namespace,
-                1 => &catalog.owner_root,
-                2 => &catalog.sessions,
-                _ => &catalog.lock,
+                0 => catalog.namespace.as_fd(),
+                1 => catalog.owner_root.as_fd(),
+                2 => catalog.sessions.as_fd(),
+                _ => catalog.lock.as_fd(),
             };
             watch_sync(descriptor, true, false);
             drop(catalog);

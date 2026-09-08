@@ -214,14 +214,15 @@ mod production {
     use machine_god_native::{
         AiGatewayCredentialEnvironment, AiGatewayModelCatalogAccessMode,
         AiGatewayModelCatalogHttpTransport, AiGatewayModelCatalogProvider, FileUndoTracker,
-        NativeConversation, NativeConversationModelRoutes, NativeConversationRuntime,
-        NativeConversationRuntimeTurn, NativeEnvironment, NativeModelCatalog,
-        NativeModelCatalogCache, NativeModelCatalogCacheState, NativeReferenceHost,
-        NativeReferenceHostConversationOptions, NativeReferenceHostTerminalOptions,
-        NativeRootSelection, NativeSessionMetadata, NativeSessionOrigin, PermissionPromptDecision,
-        PermissionPromptError, PermissionPrompter, PreparedNativeRoots, QuestionPromptError,
-        QuestionPromptOutcome, QuestionPromptRequest, QuestionPrompter, TerminalShell,
-        TokioWebSearchDeadline, discover_ai_gateway_credential, load_native_config,
+        NativeConversation, NativeConversationModelRoutes, NativeConversationObservations,
+        NativeConversationRuntime, NativeConversationRuntimeTurn, NativeEnvironment,
+        NativeModelCatalog, NativeModelCatalogCache, NativeModelCatalogCacheState,
+        NativeReferenceHost, NativeReferenceHostConversationOptions,
+        NativeReferenceHostTerminalOptions, NativeRootSelection, NativeSessionMetadata,
+        NativeSessionOrigin, PermissionPromptDecision, PermissionPromptError, PermissionPrompter,
+        PreparedNativeRoots, QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest,
+        QuestionPrompter, TerminalShell, TokioWebSearchDeadline, discover_ai_gateway_credential,
+        load_native_config,
     };
 
     use super::{
@@ -927,8 +928,10 @@ mod production {
                         )));
                         let catalog = runtime.block_on(load_conversation_catalog(&cache))?;
                         let model_routes = Arc::new(NativeConversationModelRoutes::new());
+                        let observations = Arc::new(NativeConversationObservations::new());
                         let options = NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
-                            .with_terminal(terminal_options).with_model_routes(model_routes.clone());
+                            .with_terminal(terminal_options).with_model_routes(model_routes.clone())
+                            .with_observations(Arc::clone(&observations));
                         let host =
                             NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots_and_conversation_and_credential(
                                 loaded_config,
@@ -944,7 +947,7 @@ mod production {
                             host,
                             selection,
                             prompt,
-                            ConversationSetup { workspace, model_routes, catalog, now_ms: wall_clock_ms()? },
+                            ConversationSetup { workspace, model_routes, observations, catalog, now_ms: wall_clock_ms()? },
                             OutputBridge {
                                 work: work_sender,
                                 acknowledgements: acknowledgement_receiver,
@@ -1082,6 +1085,8 @@ mod production {
             }
             SessionSelection::Resume(id) => NativeConversation::resume(lifecycle, id).await,
         }
+        .map_err(|_| ())?
+        .with_observations(&setup.observations)
         .map_err(|_| ())?;
         let conversation = NativeConversationRuntime::new_with_model_routes(
             conversation,
@@ -1106,6 +1111,7 @@ mod production {
     struct ConversationSetup {
         workspace: std::path::PathBuf,
         model_routes: Arc<NativeConversationModelRoutes>,
+        observations: Arc<NativeConversationObservations>,
         catalog: Option<Arc<NativeModelCatalog>>,
         now_ms: i64,
     }
@@ -2211,6 +2217,9 @@ mod production {
                 super::ConversationSetup {
                     workspace: workspace.canonicalize().unwrap(),
                     model_routes: Arc::new(machine_god_native::NativeConversationModelRoutes::new()),
+                    observations: Arc::new(
+                        machine_god_native::NativeConversationObservations::new(),
+                    ),
                     catalog: None,
                     now_ms: 100,
                 },
@@ -2444,6 +2453,9 @@ mod production {
                 super::ConversationSetup {
                     workspace: self.workspace.canonicalize().unwrap(),
                     model_routes: Arc::new(machine_god_native::NativeConversationModelRoutes::new()),
+                    observations: Arc::new(
+                        machine_god_native::NativeConversationObservations::new(),
+                    ),
                     catalog,
                     now_ms: 200,
                 }

@@ -5,10 +5,7 @@ use crate::tool_output_serializer::{
     CompactJsonScratch, CompactToolOutputError, CompactToolOutputLimits,
     measure_json_value_compact_with_scratch, serialize_tool_output_compact_with_scratch,
 };
-use crate::tool_result_projection::{
-    READ_TOOL_RESULT_MAX_SOURCE_BYTES, READ_TOOL_RESULT_TOOL_NAME,
-    TOOL_RESULT_PROJECTION_THRESHOLD_BYTES, project_tool_result,
-};
+use crate::tool_result_projection::{READ_TOOL_RESULT_TOOL_NAME, project_tool_result};
 use futures_core::Stream;
 use machine_god_core::{
     BoxFuture, CancellationToken, ContentBlock, InferenceOptions, MAX_SAFE_JSON_DEPTH, Message,
@@ -1061,11 +1058,11 @@ fn build_tool_result_value<'value>(
         .checked_sub(serialized_output.len())
         .expect("bounded serialization cannot exceed remaining budget");
     check_cancel(projection.cancellation)?;
-    let value = if tool_name.as_str() != READ_TOOL_RESULT_TOOL_NAME
-        && projection.reader_advertised
-        && serialized_output.len() > TOOL_RESULT_PROJECTION_THRESHOLD_BYTES
-        && serialized_output.len() <= READ_TOOL_RESULT_MAX_SOURCE_BYTES
-    {
+    let value = if crate::read_tool_result::should_project_tool_result(
+        projection.reader_advertised,
+        tool_name.as_str(),
+        serialized_output.len(),
+    ) {
         project_tool_result(
             projection.session_id,
             projection.session_incarnation_id,

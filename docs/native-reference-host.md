@@ -131,6 +131,16 @@ this option retain fixed configured search models. Vision remains independent;
 neither worker inherits main-turn effort or fast mode. See
 [native conversation](native-conversation.md#secondary-worker-model-routing).
 
+`with_observations(Arc<NativeConversationObservations>)` optionally shares the
+native file-history registry with `read_file`, `list_files`, `glob_files`,
+`grep_files`, `write_file`, `edit_file`, `delete_file`, `rename_file`, and
+`copy_file`. Attach each created or resumed `NativeConversation` to that same
+allocation with `with_observations` before admitting a turn. The adapters retain
+the tools' existing preparation, permission, cancellation, and execution
+contracts; native conversation finalization owns history publication. Composition
+does not collect observations or write session history itself. Constructors
+without this option retain their existing unwrapped tools.
+
 The prepared-root constructors
 `compose_ai_gateway_http_with_prepared_roots_and_conversation` and
 `compose_with_ai_gateway_transport_and_prepared_roots_and_conversation` append
