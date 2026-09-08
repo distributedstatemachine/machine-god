@@ -136,7 +136,10 @@ history and resume exposes saved settings without manufacturing defaults.
 The native runtime owns bounded pending inputs, current selection and deferred
 session preference writes, preserving taken jobs and restoring saved controls
 with explicit process-model override precedence. These component commits are
-not deliveries. Remaining work includes durable user-default writes, cache/CLI
+not deliveries. The owned rich-model cache preserves advertised capabilities,
+shares one in-flight fetch, retains prior catalogs on failed/empty refresh and
+applies pinned no-TTL/retry behavior with bounded cancellable waiters.
+Remaining work includes durable user-default writes, cache/CLI
 composition and model snapshot routing through vision/search, typed historical
 interruption/background/file facts, interactive command/session transitions,
 pinned recovery/retry policy, policy/sandbox/workspace enforcement, rich session

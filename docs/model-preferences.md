@@ -8,6 +8,8 @@ requested and effective values for an admitted job; the
 preferences and installs these snapshots on prepared turns. Its native runtime
 owns queued/current selection and deferred session writes. User-default
 persistence and full slash-command integration remain separate.
+The owned [model catalog cache](model-catalog-cache.md) retains fetched
+capabilities and access provenance, with cancellable loading and pinned retries.
 
 The reserved `machine_god.model_preferences` metadata entry has exactly four
 required fields:

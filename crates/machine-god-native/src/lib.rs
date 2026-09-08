@@ -43,6 +43,7 @@ mod background_process;
 mod background_store;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod background_supervisor;
+mod model_catalog_cache;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod owned_worker;
 #[cfg(target_os = "macos")]
@@ -342,6 +343,11 @@ pub use background_supervisor::{
     NATIVE_BACKGROUND_HARD_MAX_ACTIVE, NativeBackgroundLimits, NativeBackgroundReconciliation,
     NativeBackgroundSupervisor, NativeBackgroundSupervisorError,
     NativeBackgroundSupervisorErrorKind,
+};
+pub use model_catalog_cache::{
+    NATIVE_MODEL_CATALOG_MAX_WAITERS, NATIVE_MODEL_CATALOG_RETRY_MS, NativeModelCatalogCache,
+    NativeModelCatalogCacheError, NativeModelCatalogCacheFailure, NativeModelCatalogCacheSnapshot,
+    NativeModelCatalogCacheState,
 };
 pub use model_preferences::{
     MAX_NATIVE_REASONING_EFFORT_BYTES, MAX_NATIVE_REASONING_EFFORT_OPTIONS,
