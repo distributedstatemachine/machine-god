@@ -584,14 +584,14 @@ fn validate_selected_context(
     Ok(())
 }
 
-enum ConversationInput {
+pub(crate) enum ConversationInput {
     Prompt(Prompt),
     Continue(InferenceOptions),
 }
 
 // Own untrusted inference JSON safely even when a future is never polled or
 // admission rejects before core can install its own iterative-drop guard.
-struct PendingInput(Option<ConversationInput>);
+pub(crate) struct PendingInput(pub(crate) Option<ConversationInput>);
 impl Drop for PendingInput {
     fn drop(&mut self) {
         let metadata = match &mut self.0 {

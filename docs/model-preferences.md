@@ -5,8 +5,9 @@ not load configuration, fetch catalogs, write user settings or session records,
 queue prompts, or change an active turn. `NativeModelSnapshot` captures its
 requested and effective values for an admitted job; the
 [native conversation owner](native-conversation.md) explicitly persists session
-preferences and installs these snapshots on prepared turns. Runtime queue,
-user-default persistence and full slash-command integration remain separate.
+preferences and installs these snapshots on prepared turns. Its native runtime
+owns queued/current selection and deferred session writes. User-default
+persistence and full slash-command integration remain separate.
 
 The reserved `machine_god.model_preferences` metadata entry has exactly four
 required fields:

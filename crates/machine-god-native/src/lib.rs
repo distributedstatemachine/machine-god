@@ -58,6 +58,8 @@ mod config;
 mod conversation;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conversation_context;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod conversation_runtime;
 mod copy_file;
 mod create_folder;
 mod delete_file;
@@ -392,6 +394,13 @@ pub use conversation::{
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use conversation_context::{
     NATIVE_CONTEXT_PREFERENCES_KEY, NativeContextError, NativeContextPreferences,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use conversation_runtime::{
+    MAX_NATIVE_QUEUED_INPUT_BYTES, MAX_NATIVE_QUEUED_JOBS, MAX_NATIVE_QUEUED_OPTIONS_BYTES,
+    MAX_NATIVE_QUEUED_PROMPT_BYTES, NativeConversationRuntime, NativeConversationRuntimeError,
+    NativeConversationRuntimeStatus, NativeConversationRuntimeTurn,
+    NativeModelPreferencePersistence, NativeQueuedJobId,
 };
 pub use copy_file::{
     COPY_FILE_TOOL_NAME, CopyFileTool, CopyFileToolOpenError, CopyFileToolOpenErrorKind,

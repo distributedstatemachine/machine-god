@@ -65,13 +65,76 @@ paths reject malformed saved preferences before admitting provider work.
 Resume validates and exposes saved preferences; applying process overrides is
 the runtime owner's responsibility, not an inferred history mutation.
 
-These APIs persist only the session. The surrounding runtime must accept and
-rewrite queued/future preferences while a job is active, then flush session
+These APIs persist only the session. `NativeConversationRuntime` accepts
+queued/future preference changes while a job is active, then flushes session
 preferences under idle admission; `Busy` is not a successful deferred save.
 User-default settings are a separate write target with an independent outcome.
 No API bypasses core's active lease by writing the underlying store directly.
 Failure, dropped-save uncertainty and cross-process conflicts use the same core
 reconciliation contract as other native metadata mutations.
+
+## Native queue and selection runtime
+
+`NativeConversationRuntime` owns one conversation, a FIFO of pending inputs and
+the current requested model preferences. Construction reads validated canonical
+memory only. Saved preferences replace ordinary startup defaults; an explicitly
+provided process model override changes only the restored model, preserving
+saved effort and fast requests. Absent historical preferences stay absent until
+an explicit flush or job admission saves them. No worker is spawned.
+
+`enqueue(Prompt)` validates and owns input without calling a provider or writing
+the store. Pending inputs share the current runtime selection, so
+`set_model_preferences` updates all pending/future jobs in constant queue-length
+time. It returns an acceptance generation, not a persistence receipt. On first
+poll, `start_next(now_ms)` takes one FIFO entry and copies current preferences
+and explicitly supplied catalog capabilities into an immutable model snapshot.
+Later preference or catalog changes cannot alter that taken job. Unsupported or
+missing capabilities do not infer controls from a model ID. Hosts must supply a
+completed catalog observation, not a retained value from a still-loading cache.
+
+Admission uses `prompt_with_model` or `continue_turn_with_model`; requested
+preferences are saved atomically with the checkpoint and effective controls reach
+every primary provider round. Other per-input inference options survive.
+An unpolled start future leaves the queue unchanged. Once taken, failed/dropped
+admission is never automatically requeued: a save may have published. The runtime
+marks model persistence uncertain until a reservation or explicit flush succeeds.
+The returned `NativeConversationRuntimeTurn` retains runtime admission through
+native finalization and drops native/core work before releasing that lease.
+Dropping the runtime clears pending inputs but does not invalidate a separately
+owned active turn. `cancel_queued` and `clear_queued` affect pending input only.
+
+`enqueue_continuation` requires an idle, empty queue and a valid paused checkpoint.
+It rechecks the empty queue after checkpoint observation, and the taken job
+rechecks that checkpoint's sequence. A racing prompt or changed checkpoint
+cannot silently redirect the continuation. It captures current selection when
+taken, not settings from the interrupted attempt. Recovery route/fast-downgrade
+and attempt-budget policy remain separate from this queue's ownership.
+
+`flush_model_preferences(now_ms)` is inert before polling and performs at most
+one idle session save. `Unchanged` means the canonical in-memory generation was
+already saved; `Deferred` means dirty settings could not be saved while runtime
+work is active. `Saved` names the captured generation and exact session revision.
+A selection accepted during the save remains current and pending, even when the
+older save succeeds. Failure/drop never rolls back accepted runtime settings or
+claims successful persistence. A subsequent job admission saves its current
+generation; when no job follows, the host must explicitly flush after settling
+or dropping the active turn. This is not a user-default settings write and does
+not claim cross-process state following an ambiguous core persistence outcome.
+
+Native queue bounds are 64 pending entries, 256 KiB prompt text per entry,
+64 KiB serialized inference options per entry and 4 MiB aggregate pending text
+plus serialized options. The active job is separately bounded and owned. Queue
+validation reuses the existing iterative JSON measurer with the core safe depth
+bound; rejected nested JSON is destroyed iteratively, including continuation
+options. Core still applies its independent configured limits during admission.
+Queue IDs are process-local, monotonic, non-reused values, distinct from core
+turn IDs. Exhaustion and limit errors do not silently evict pending work.
+
+The queue/current-selection and resume rules follow pinned
+`src/core/agent/worker_runtime.zig:728`, `:1006`, `:1161`, `:1180`, `:1194`,
+`:4034`, and `src/core/app/app_session_runtime.zig:4831`. The CLI input loop,
+independent user-default writer and secondary vision/search routing must still
+compose these ownership APIs before the combined CLI feature closes.
 
 ## Durable context selection
 

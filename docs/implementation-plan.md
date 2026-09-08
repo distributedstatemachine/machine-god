@@ -133,9 +133,11 @@ resolution across the existing slash-input bound. Native conversation admission
 atomically persists requested model settings with checkpoints and pins immutable
 effective controls across provider/tool rounds; idle preference writes preserve
 history and resume exposes saved settings without manufacturing defaults.
-These component commits are not deliveries. Remaining work includes durable
-user-default writes, runtime queue/deferred-session persistence, cache and model
-snapshot routing through vision/search, typed historical
+The native runtime owns bounded pending inputs, current selection and deferred
+session preference writes, preserving taken jobs and restoring saved controls
+with explicit process-model override precedence. These component commits are
+not deliveries. Remaining work includes durable user-default writes, cache/CLI
+composition and model snapshot routing through vision/search, typed historical
 interruption/background/file facts, interactive command/session transitions,
 pinned recovery/retry policy, policy/sandbox/workspace enforcement, rich session
 commands and the complete feature gates.
