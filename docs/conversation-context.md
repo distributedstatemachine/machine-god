@@ -2,8 +2,8 @@
 
 `NativeContextPreferences` is a pure native value: parsing, configuration,
 compaction and projection perform no filesystem, process, clock, model, network,
-permission or persistence operation. The native conversation owner must publish
-its preference value through an exclusive metadata transaction and pass a
+permission or persistence operation. The native conversation owner publishes
+its preference value through an exclusive metadata transaction and passes a
 projection derived from the same record revision to core prepared-turn admission.
 The value itself never mutates `SessionRecord`, canonical messages or archives.
 

@@ -12,7 +12,8 @@ use machine_god_core::{
     StopReason, ToolCall, ToolCallId, ToolName, ToolOutput, TurnEvent,
 };
 use machine_god_native::{
-    NATIVE_CONVERSATION_CHECKPOINT_KEY, NATIVE_SESSION_METADATA_KEY, NativeConversation,
+    NATIVE_CONTEXT_PREFERENCES_KEY, NATIVE_CONVERSATION_CHECKPOINT_KEY,
+    NATIVE_SESSION_METADATA_KEY, NativeContextError, NativeContextPreferences, NativeConversation,
     NativeConversationError, NativeConversationTurn, NativeSessionMetadata, NativeSessionOrigin,
 };
 use machine_god_testkit::{
@@ -89,6 +90,390 @@ fn complete(turn: NativeConversationTurn) {
             ..
         }
     ));
+}
+
+fn history_record(groups: usize) -> SessionRecord {
+    let mut record = initial_record();
+    record
+        .messages
+        .push(Message::text(Role::System, "host system"));
+    for index in 0..groups {
+        record
+            .messages
+            .push(Message::text(Role::User, format!("question {index}")));
+        record
+            .messages
+            .push(Message::text(Role::Assistant, format!("answer {index}")));
+    }
+    record.next_turn_sequence = u64::try_from(groups).unwrap() + 1;
+    record
+}
+
+fn text_of(message: &Message) -> String {
+    message
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn assert_context_busy(conversation: &NativeConversation) {
+    assert_eq!(
+        conversation.context_preferences().unwrap_err(),
+        NativeConversationError::Busy
+    );
+    assert_eq!(
+        block_on(conversation.compact(300)).unwrap_err(),
+        NativeConversationError::Busy
+    );
+    assert_eq!(
+        block_on(conversation.set_max_history_turns(1, 300)).unwrap_err(),
+        NativeConversationError::Busy
+    );
+}
+
+#[test]
+fn manual_context_compaction_persists_selection_without_deleting_history() {
+    let original = history_record(3);
+    let (_engine, conversation, store, provider) = setup(
+        original.clone(),
+        [finished("new answer")],
+        SessionStoreScript::default(),
+    );
+    let before_calls = store.calls().len();
+    drop(conversation.compact(200));
+    drop(conversation.set_max_history_turns(2, 200));
+    assert_eq!(store.calls().len(), before_calls);
+    assert!(!conversation.is_busy());
+    assert_eq!(
+        conversation.context_preferences().unwrap(),
+        NativeContextPreferences::default()
+    );
+
+    assert!(block_on(conversation.compact(200)).unwrap());
+    let compacted = store.record(&conversation.id()).unwrap();
+    assert_eq!(compacted.messages, original.messages);
+    assert_eq!(compacted.next_turn_sequence, original.next_turn_sequence);
+    assert_eq!(compacted.revision, SessionRevision(2));
+    assert_eq!(
+        compacted.metadata["unrelated"],
+        original.metadata["unrelated"]
+    );
+    assert_eq!(
+        compacted.metadata[NATIVE_SESSION_METADATA_KEY]["updated_at_ms"],
+        200
+    );
+    assert_eq!(
+        conversation
+            .context_preferences()
+            .unwrap()
+            .first_retained_message(),
+        5
+    );
+    assert!(provider.requests().is_empty());
+    let calls = store.calls().len();
+    assert!(!block_on(conversation.compact(300)).unwrap());
+    assert_eq!(store.calls().len(), calls);
+    assert_eq!(store.record(&conversation.id()).unwrap(), compacted);
+
+    block_on(conversation.set_max_history_turns(2, 250)).unwrap();
+    assert_eq!(
+        conversation
+            .context_preferences()
+            .unwrap()
+            .first_retained_message(),
+        5
+    );
+
+    complete(block_on(conversation.prompt("new question".into(), 300)).unwrap());
+    let request = provider.requests().remove(0).request;
+    assert_eq!(request.messages[0], original.messages[0]);
+    assert_eq!(request.messages[1].role, Role::Assistant);
+    let summary = text_of(&request.messages[1]);
+    assert!(summary.contains("Conversation summary:"));
+    assert!(summary.contains("question 0"));
+    assert!(summary.contains("question 1"));
+    assert_eq!(request.messages[2..4], original.messages[5..]);
+    assert_eq!(
+        request.messages[4],
+        Message::text(Role::User, "new question")
+    );
+    let stored = store.record(&conversation.id()).unwrap();
+    assert_eq!(
+        stored.messages[..original.messages.len()],
+        original.messages
+    );
+    assert_eq!(stored.messages.len(), original.messages.len() + 2);
+    assert_eq!(
+        conversation
+            .context_preferences()
+            .unwrap()
+            .first_retained_message(),
+        5
+    );
+}
+
+#[test]
+fn compact_zero_or_one_group_is_an_effect_free_noop() {
+    for groups in [0, 1] {
+        let original = history_record(groups);
+        let (_engine, conversation, store, provider) =
+            setup(original.clone(), [], SessionStoreScript::default());
+        let calls = store.calls().len();
+        assert!(!block_on(conversation.compact(200)).unwrap());
+        assert_eq!(store.calls().len(), calls);
+        assert_eq!(store.record(&conversation.id()).unwrap(), original);
+        assert!(provider.requests().is_empty());
+    }
+}
+
+#[test]
+fn automatic_context_limits_apply_to_provider_requests_not_canonical_messages() {
+    for maximum in [0, 1, 2] {
+        let original = history_record(4);
+        let (_engine, conversation, store, provider) = setup(
+            original.clone(),
+            [finished("new answer")],
+            SessionStoreScript::default(),
+        );
+        assert_eq!(
+            block_on(conversation.set_max_history_turns(maximum, 200)).unwrap(),
+            SessionRevision(2)
+        );
+        complete(block_on(conversation.prompt("new question".into(), 300)).unwrap());
+        let request = provider.requests().remove(0).request;
+        assert_eq!(request.messages[0], original.messages[0]);
+        if maximum == 0 {
+            assert_eq!(
+                request.messages[..original.messages.len()],
+                original.messages
+            );
+        } else {
+            let retained = if maximum == 1 { 1 } else { 2 };
+            if maximum == 2 {
+                assert!(text_of(&request.messages[1]).contains("Earlier turns compacted: 3"));
+            }
+            assert_eq!(
+                request.messages[retained..retained + 2],
+                original.messages[7..]
+            );
+            assert_eq!(request.messages.len(), retained + 3);
+        }
+        let record = store.record(&conversation.id()).unwrap();
+        assert_eq!(
+            record.messages[..original.messages.len()],
+            original.messages
+        );
+        assert_eq!(
+            record.metadata[NATIVE_CONTEXT_PREFERENCES_KEY]["first_retained_message"],
+            0
+        );
+    }
+}
+
+#[test]
+fn compaction_retains_paused_user_and_all_confirmed_unknown_tool_rounds() {
+    let mut original = history_record(2);
+    let start = original.messages.len();
+    original
+        .messages
+        .push(Message::text(Role::User, "unfinished user request"));
+    for (index, is_error) in [(0, false), (1, true)] {
+        let call_id = ToolCallId::new(format!("historical-{index}")).unwrap();
+        original.messages.push(Message {
+            role: Role::Assistant,
+            content: vec![ContentBlock::ToolCall {
+                call: ToolCall {
+                    id: call_id.clone(),
+                    name: ToolName::new("not_registered").unwrap(),
+                    arguments: json!({}),
+                },
+            }],
+        });
+        original.messages.push(Message {
+            role: Role::Tool,
+            content: vec![ContentBlock::ToolResult {
+                call_id,
+                output: ToolOutput {
+                    content: if is_error {
+                        json!({"code":"tool_result_unknown"})
+                    } else {
+                        json!({"result":"confirmed receipt"})
+                    },
+                    is_error,
+                },
+            }],
+        });
+        original.messages.push(Message::text(
+            Role::Assistant,
+            format!("continued round {index}"),
+        ));
+    }
+    original.next_turn_sequence = 4;
+    let checkpoint =
+        json!({"schema_version":1,"turn_sequence":3,"first_user_message":start,"state":"paused"});
+    original.metadata.insert(
+        NATIVE_CONVERSATION_CHECKPOINT_KEY.to_owned(),
+        checkpoint.clone(),
+    );
+    let (_engine, conversation, store, provider) = setup(
+        original.clone(),
+        [finished("finished continuation")],
+        SessionStoreScript::default(),
+    );
+    assert!(block_on(conversation.compact(200)).unwrap());
+    assert_eq!(
+        store.record(&conversation.id()).unwrap().metadata[NATIVE_CONVERSATION_CHECKPOINT_KEY],
+        checkpoint
+    );
+    assert!(
+        conversation
+            .paused_turn()
+            .unwrap()
+            .unwrap()
+            .has_uncertain_tool_results
+    );
+    complete(block_on(conversation.continue_turn(InferenceOptions::default(), 300)).unwrap());
+    let request = provider.requests().remove(0).request;
+    assert_eq!(request.messages[2..], original.messages[start..]);
+    let stored = store.record(&conversation.id()).unwrap();
+    assert_eq!(
+        stored.messages[..original.messages.len()],
+        original.messages
+    );
+    assert_eq!(stored.next_turn_sequence, 5);
+    assert!(conversation.paused_turn().unwrap().is_none());
+}
+
+#[test]
+fn context_mutation_failure_and_pending_drop_preserve_prior_preferences() {
+    let original = history_record(2);
+    let (_engine, conversation, store, _) = setup(
+        original.clone(),
+        [],
+        SessionStoreScript {
+            saves: Some(vec![
+                SessionStoreStep::Error(store_error()),
+                SessionStoreStep::Pending,
+                SessionStoreStep::Pass,
+            ]),
+            ..SessionStoreScript::default()
+        },
+    );
+    assert_eq!(
+        block_on(conversation.compact(200)).unwrap_err(),
+        NativeConversationError::Persistence
+    );
+    assert_eq!(store.record(&conversation.id()).unwrap(), original);
+    assert_eq!(
+        conversation.context_preferences().unwrap(),
+        NativeContextPreferences::default()
+    );
+    let mut pending = conversation.set_max_history_turns(2, 200);
+    let waker = noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    assert!(pending.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(
+        conversation.context_preferences().unwrap_err(),
+        NativeConversationError::Busy
+    );
+    assert_eq!(
+        block_on(conversation.compact(200)).unwrap_err(),
+        NativeConversationError::Busy
+    );
+    assert_eq!(
+        block_on(conversation.prompt("busy".into(), 200)).unwrap_err(),
+        NativeConversationError::Busy
+    );
+    drop(pending);
+    assert!(!conversation.is_busy());
+    assert_eq!(store.record(&conversation.id()).unwrap(), original);
+    assert!(block_on(conversation.compact(200)).unwrap());
+}
+
+#[test]
+fn context_preferences_reject_invalid_inputs_without_persistence_or_provider_work() {
+    let (_engine, conversation, store, provider) =
+        setup(history_record(2), [], SessionStoreScript::default());
+    let original = conversation.record();
+    let calls = store.calls().len();
+    assert!(matches!(
+        block_on(conversation.compact(99)).unwrap_err(),
+        NativeConversationError::InvalidMetadata(_)
+    ));
+    assert!(matches!(
+        block_on(conversation.set_max_history_turns(2, 99)).unwrap_err(),
+        NativeConversationError::InvalidMetadata(_)
+    ));
+    assert_eq!(
+        block_on(conversation.set_max_history_turns(usize::MAX, 200)).unwrap_err(),
+        NativeConversationError::InvalidContext(NativeContextError::PreferenceLimit)
+    );
+    assert_eq!(store.calls().len(), calls);
+    assert_eq!(store.record(&conversation.id()).unwrap(), original);
+    assert!(provider.requests().is_empty());
+}
+
+#[test]
+fn malformed_or_stale_context_never_silently_falls_back_to_full_history() {
+    for context in [
+        json!(null),
+        json!({"schema_version":2,"first_retained_message":0,"max_history_turns":0}),
+        json!({"schema_version":1,"first_retained_message":2,"max_history_turns":0}),
+        json!({"schema_version":1,"first_retained_message":99,"max_history_turns":0}),
+    ] {
+        let (engine, conversation, store, provider) =
+            setup(history_record(2), [], SessionStoreScript::default());
+        let session = block_on(engine.load_session(conversation.id()))
+            .unwrap()
+            .unwrap();
+        let mut record = session.record();
+        record
+            .metadata
+            .insert(NATIVE_CONTEXT_PREFERENCES_KEY.to_owned(), context);
+        block_on(session.update_metadata(record.revision, record.metadata)).unwrap();
+        let stored = store.record(&conversation.id()).unwrap();
+        let calls = store.calls().len();
+        assert!(matches!(
+            conversation.context_preferences().unwrap_err(),
+            NativeConversationError::InvalidContext(_)
+        ));
+        assert!(matches!(
+            block_on(conversation.prompt("must not start".into(), 200)).unwrap_err(),
+            NativeConversationError::InvalidContext(_)
+        ));
+        assert!(matches!(
+            NativeConversation::from_session(session).unwrap_err(),
+            NativeConversationError::InvalidContext(_)
+        ));
+        assert_eq!(store.calls().len(), calls);
+        assert_eq!(store.record(&conversation.id()).unwrap(), stored);
+        assert!(provider.requests().is_empty());
+    }
+}
+
+#[test]
+fn disabled_context_does_not_narrow_existing_full_history_admission() {
+    let mut original = initial_record();
+    original.messages.push(Message::text(
+        Role::Assistant,
+        "legacy assistant-led history",
+    ));
+    let (_engine, conversation, _, provider) = setup(
+        original.clone(),
+        [finished("new answer")],
+        SessionStoreScript::default(),
+    );
+    block_on(conversation.set_max_history_turns(0, 200)).unwrap();
+    complete(block_on(conversation.prompt("new question".into(), 300)).unwrap());
+    assert_eq!(
+        provider.requests()[0].request.messages[0],
+        original.messages[0]
+    );
 }
 
 fn store_error() -> SessionStoreError {
@@ -243,6 +628,7 @@ fn conversation_missing_checkpoint_and_busy_admission_have_no_extra_effects() {
     assert_eq!(store.calls().len(), calls);
     let first = block_on(conversation.prompt("first".into(), 200)).unwrap();
     let calls = store.calls().len();
+    assert_context_busy(&conversation);
     assert_eq!(
         conversation.paused_turn().unwrap_err(),
         NativeConversationError::Busy
@@ -302,6 +688,7 @@ fn conversation_pending_finalization_retains_native_admission_until_settled_or_d
         }
     }
     assert!(conversation.is_busy());
+    assert_context_busy(&conversation);
     assert_eq!(
         block_on(conversation.prompt("too soon".into(), 300)).unwrap_err(),
         NativeConversationError::Busy
@@ -617,7 +1004,7 @@ fn conversation_real_store_create_drop_and_fresh_resume_continues_once() {
             .unwrap();
         NativeSessionLifecycle::new(engine, store).unwrap()
     };
-    let first_provider = ScriptedModelProvider::new("test", []);
+    let first_provider = ScriptedModelProvider::new("test", [finished("earlier answer")]);
     let lifecycle = build(first_provider.clone());
     let metadata = NativeSessionMetadata::new(
         &directory.0.canonicalize().unwrap(),
@@ -634,8 +1021,13 @@ fn conversation_real_store_create_drop_and_fresh_resume_continues_once() {
         conversation.record().metadata[NATIVE_SESSION_METADATA_KEY],
         metadata.to_value()
     );
+    complete(block_on(conversation.prompt("earlier question".into(), 150)).unwrap());
     drop(block_on(conversation.prompt("persisted original".into(), 200)).unwrap());
-    assert!(first_provider.requests().is_empty());
+    assert!(block_on(conversation.compact(225)).unwrap());
+    block_on(conversation.set_max_history_turns(1, 250)).unwrap();
+    let preferences = conversation.context_preferences().unwrap();
+    assert_eq!(preferences.first_retained_message(), 2);
+    assert_eq!(first_provider.requests().len(), 1);
     drop(conversation);
     drop(lifecycle);
     let provider = ScriptedModelProvider::new("test", [finished("resumed answer")]);
@@ -643,14 +1035,17 @@ fn conversation_real_store_create_drop_and_fresh_resume_continues_once() {
     let conversation = block_on(NativeConversation::resume(&lifecycle, id.clone())).unwrap();
     assert_eq!(
         conversation.paused_turn().unwrap().unwrap().turn_sequence,
-        1
+        2
     );
+    assert_eq!(conversation.context_preferences().unwrap(), preferences);
     complete(block_on(conversation.continue_turn(InferenceOptions::default(), 300)).unwrap());
     let record = block_on(lifecycle.replay(id)).unwrap();
-    assert_eq!(record.next_turn_sequence, 3);
+    assert_eq!(record.next_turn_sequence, 4);
     assert_eq!(
         record.messages,
         [
+            Message::text(Role::User, "earlier question"),
+            Message::text(Role::Assistant, "earlier answer"),
             Message::text(Role::User, "persisted original"),
             Message::text(Role::Assistant, "resumed answer")
         ]
@@ -661,4 +1056,8 @@ fn conversation_real_store_create_drop_and_fresh_resume_continues_once() {
             .contains_key(NATIVE_CONVERSATION_CHECKPOINT_KEY)
     );
     assert_eq!(provider.requests().len(), 1);
+    assert_eq!(
+        provider.requests()[0].request.messages,
+        [Message::text(Role::User, "persisted original")]
+    );
 }

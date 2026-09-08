@@ -244,7 +244,7 @@ fn rich_reasoning_uses_first_applicable_array_and_preserves_bounded_named_option
     let labels = capabilities
         .reasoning_efforts()
         .iter()
-        .map(|effort| effort.label())
+        .map(machine_god_native::NativeReasoningEffort::label)
         .collect::<Vec<_>>();
     assert_eq!(labels.len(), 16);
     assert_eq!(&labels[..3], ["future-Tier_1.2", "HIGH", "HIGH"]);
@@ -337,7 +337,7 @@ fn rich_and_id_only_projections_keep_identical_order_access_and_one_fetch_each()
         assert_eq!(
             rich.entries()
                 .iter()
-                .map(|entry| entry.model())
+                .map(machine_god_native::NativeModelCatalogEntry::model)
                 .collect::<Vec<_>>(),
             ids.models().iter().collect::<Vec<_>>()
         );

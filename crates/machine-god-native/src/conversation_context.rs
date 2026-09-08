@@ -129,6 +129,14 @@ impl NativeContextPreferences {
         Ok(())
     }
 
+    pub(crate) fn validate_selection(
+        &self,
+        record: &SessionRecord,
+    ) -> Result<(), NativeContextError> {
+        History::new(record)?.cursor(self.first_retained_message)?;
+        Ok(())
+    }
+
     /// Retains the final existing logical user group. Zero/one group is a no-op.
     /// # Errors
     /// Rejects malformed/over-bound records and stale or system-dropping cursors.

@@ -17,7 +17,8 @@ use machine_god_core::{
 use serde_json::{Value, json};
 
 use crate::{
-    NATIVE_SESSION_METADATA_KEY, NativeSessionLifecycle, NativeSessionLifecycleError,
+    NATIVE_CONTEXT_PREFERENCES_KEY, NATIVE_SESSION_METADATA_KEY, NativeContextError,
+    NativeContextPreferences, NativeSessionLifecycle, NativeSessionLifecycleError,
     NativeSessionMetadata, NativeSessionMetadataError, NativeSessionMetadataMutationError,
     rename_native_session,
 };
@@ -32,6 +33,7 @@ pub enum NativeConversationError {
     Busy,
     NoCheckpoint,
     InvalidCheckpoint,
+    InvalidContext(NativeContextError),
     InvalidMetadata(NativeSessionMetadataError),
     Lifecycle(NativeSessionLifecycleError),
     Conflict,
@@ -46,6 +48,7 @@ impl fmt::Display for NativeConversationError {
             Self::Busy => f.write_str("conversation is busy"),
             Self::NoCheckpoint => f.write_str("conversation has no paused turn"),
             Self::InvalidCheckpoint => f.write_str("conversation checkpoint is invalid"),
+            Self::InvalidContext(error) => error.fmt(f),
             Self::InvalidMetadata(error) => error.fmt(f),
             Self::Lifecycle(error) => error.fmt(f),
             Self::Conflict => f.write_str("conversation changed concurrently"),
@@ -150,7 +153,7 @@ impl NativeConversation {
     /// Adopts a validated live session without effects or inferred metadata.
     ///
     /// # Errors
-    /// Rejects an active session or malformed native metadata/checkpoint.
+    /// Rejects an active session or malformed native metadata/checkpoint/context.
     pub fn from_session(session: Session) -> Result<Self, NativeConversationError> {
         if session.has_active_turn() {
             return Err(NativeConversationError::Busy);
@@ -159,6 +162,7 @@ impl NativeConversation {
         NativeSessionMetadata::from_metadata(&record.metadata)
             .map_err(NativeConversationError::InvalidMetadata)?;
         Checkpoint::decode(&record)?;
+        validated_context_preferences(&record)?;
         Ok(Self {
             session,
             active: Arc::new(AtomicBool::new(false)),
@@ -243,6 +247,95 @@ impl NativeConversation {
         })
     }
 
+    /// Observes validated context preferences while native admission is idle.
+    /// Missing preferences retain full history and do not infer host defaults.
+    ///
+    /// # Errors
+    /// Returns `Busy` or rejects malformed preferences and invalid selections.
+    pub fn context_preferences(&self) -> Result<NativeContextPreferences, NativeConversationError> {
+        let _lease = AdmissionLease::acquire(&self.active)?;
+        if self.session.has_active_turn() {
+            return Err(NativeConversationError::Busy);
+        }
+        validated_context_preferences(&self.session.record())
+    }
+
+    /// Persists a manual selection retaining the entire final logical group,
+    /// including every assistant/tool round and no-input continuation in it.
+    /// Canonical messages and archives are never removed or rewritten.
+    /// The borrowed future is inert until polled; `false` is a no-write no-op.
+    #[must_use]
+    pub fn compact(&self, now_ms: i64) -> BoxFuture<'_, Result<bool, NativeConversationError>> {
+        Box::pin(async move {
+            let _lease = AdmissionLease::acquire(&self.active)?;
+            if self.session.has_active_turn() {
+                return Err(NativeConversationError::Busy);
+            }
+            let record = self.session.record();
+            let mut preferences = NativeContextPreferences::from_metadata(&record.metadata)
+                .map_err(NativeConversationError::InvalidContext)?;
+            if !preferences
+                .force_compact(&record)
+                .map_err(NativeConversationError::InvalidContext)?
+            {
+                return Ok(false);
+            }
+            self.persist_context_preferences(record, &preferences, now_ms)
+                .await?;
+            Ok(true)
+        })
+    }
+
+    /// Persists the automatic history-group limit, preserving the manual cut.
+    /// Zero disables automatic selection, not a previously saved manual cut.
+    /// This borrowed, inert future holds admission through the metadata save.
+    #[must_use]
+    pub fn set_max_history_turns(
+        &self,
+        maximum: usize,
+        now_ms: i64,
+    ) -> BoxFuture<'_, Result<SessionRevision, NativeConversationError>> {
+        Box::pin(async move {
+            let _lease = AdmissionLease::acquire(&self.active)?;
+            if self.session.has_active_turn() {
+                return Err(NativeConversationError::Busy);
+            }
+            let record = self.session.record();
+            let mut preferences = NativeContextPreferences::from_metadata(&record.metadata)
+                .map_err(NativeConversationError::InvalidContext)?;
+            preferences
+                .set_max_history_turns(maximum)
+                .map_err(NativeConversationError::InvalidContext)?;
+            validate_selected_context(&preferences, &record)?;
+            self.persist_context_preferences(record, &preferences, now_ms)
+                .await
+        })
+    }
+
+    async fn persist_context_preferences(
+        &self,
+        mut record: SessionRecord,
+        preferences: &NativeContextPreferences,
+        now_ms: i64,
+    ) -> Result<SessionRevision, NativeConversationError> {
+        let mut metadata = NativeSessionMetadata::from_metadata(&record.metadata)
+            .map_err(NativeConversationError::InvalidMetadata)?;
+        metadata
+            .touch(now_ms)
+            .map_err(NativeConversationError::InvalidMetadata)?;
+        record
+            .metadata
+            .insert(NATIVE_SESSION_METADATA_KEY.to_owned(), metadata.to_value());
+        record.metadata.insert(
+            NATIVE_CONTEXT_PREFERENCES_KEY.to_owned(),
+            preferences.to_value(),
+        );
+        self.session
+            .update_metadata(record.revision, record.metadata)
+            .await
+            .map_err(map_engine_error)
+    }
+
     /// Observes paused state only while no native turn/finalizer is active.
     /// A running checkpoint left after dropped work is interrupted, not replayed.
     ///
@@ -306,6 +399,17 @@ impl NativeConversation {
         }
         let mut record = self.session.record();
         let previous = Checkpoint::decode(&record)?;
+        let preferences = NativeContextPreferences::from_metadata(&record.metadata)
+            .map_err(NativeConversationError::InvalidContext)?;
+        // Disabled context is the original full-history path, including for
+        // embedders whose admitted records exceed native projection bounds.
+        let context = if preferences == NativeContextPreferences::default() {
+            None
+        } else {
+            preferences
+                .projection(&record)
+                .map_err(NativeConversationError::InvalidContext)?
+        };
         let checkpoint = Checkpoint {
             turn_sequence: record.next_turn_sequence,
             first_user_message: if matches!(&input.0, Some(ConversationInput::Prompt(_))) {
@@ -332,7 +436,7 @@ impl NativeConversation {
         let preparation = SessionTurnPreparation {
             expected_revision: record.revision,
             metadata: Some(record.metadata),
-            context: None,
+            context,
         };
         let turn = match input.0.take().expect("input is consumed once") {
             ConversationInput::Prompt(prompt) => {
@@ -356,6 +460,27 @@ impl NativeConversation {
             done: false,
         })
     }
+}
+
+fn validated_context_preferences(
+    record: &SessionRecord,
+) -> Result<NativeContextPreferences, NativeConversationError> {
+    let preferences = NativeContextPreferences::from_metadata(&record.metadata)
+        .map_err(NativeConversationError::InvalidContext)?;
+    validate_selected_context(&preferences, record)?;
+    Ok(preferences)
+}
+
+fn validate_selected_context(
+    preferences: &NativeContextPreferences,
+    record: &SessionRecord,
+) -> Result<(), NativeConversationError> {
+    if preferences != &NativeContextPreferences::default() {
+        preferences
+            .validate_selection(record)
+            .map_err(NativeConversationError::InvalidContext)?;
+    }
+    Ok(())
 }
 
 enum ConversationInput {

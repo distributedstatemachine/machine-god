@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
 - Active phase: `implementing the full combined M03 top-level CLI and slash-command feature`
-- Next gate: `complete native conversation ownership, checkpoint/context projection and all pinned CLI runtime scenarios before full feature gates`
+- Next gate: `complete durable model/runtime integration, typed history and all pinned CLI scenarios before full feature gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -122,15 +122,19 @@ not substitutes for the final exact-candidate product reviews.
 Internal implementation now includes exclusive core metadata transactions,
 atomic initial native metadata, durable title mutation, slash routing, explicit
 continuation, and revision-pinned prepared turns with provider-only context.
-The native conversation owner atomically reserves paused-turn checkpoints and
-settles their finalization; reference-host composition shares bounded undo across
-all five file mutations. Model-identifier validation now shares the pinned
-1,024-byte UTF-8 contract across catalog, configuration and Gateway; CLI rendering escapes accepted
-Unicode controls without changing the provider identifier. These component
-commits are not deliveries. Remaining work includes interactive command/session
-transitions, native context summaries
-and preferences, pinned recovery/retry policy, model selection, policy/sandbox/
-workspace enforcement, rich session commands and the complete feature gates.
+The native conversation owner atomically reserves paused-turn checkpoints,
+settles their finalization, persists manual/automatic context selection and pins
+advisory provider views without deleting canonical history. Reference-host
+composition shares bounded undo across all five file mutations. Model identifiers
+share the pinned 1,024-byte UTF-8 contract, with escaped CLI presentation.
+Model components include bounded [preference values](model-preferences.md), explicitly advertised catalog
+capabilities, pinned reasoning/fast wire fields and exact-first fuzzy query
+resolution across the existing slash-input bound. These component commits are
+not deliveries. Remaining work includes durable model/default preference writes,
+cache and queued/active model snapshots (including vision/search), typed historical
+interruption/background/file facts, interactive command/session transitions,
+pinned recovery/retry policy, policy/sandbox/workspace enforcement, rich session
+commands and the complete feature gates.
 
 ### CI and documentation maintenance
 

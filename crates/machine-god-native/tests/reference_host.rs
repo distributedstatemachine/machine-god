@@ -1447,6 +1447,109 @@ fn body(request: &CapturedRequest) -> Value {
     serde_json::from_slice(&request.body).unwrap()
 }
 
+#[test]
+fn composed_conversation_projects_context_and_forwards_effective_model_controls() {
+    use machine_god_core::{InferenceOptions, Prompt};
+    use machine_god_native::{
+        AiGatewayInferenceOptions, NativeConversation, NativeModelCapabilities,
+        NativeModelPreferences, NativeReasoningEffort, NativeSessionMetadata, NativeSessionOrigin,
+    };
+    let temporary = TemporaryDirectory::new("conversation-model-context");
+    let (workspace, sessions) = roots(temporary.path());
+    let response = b"data: {\"type\":\"text-delta\",\"id\":\"answer\",\"delta\":\"answer\"}\n\ndata: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n";
+    let transport = ScriptedTransport::new("model-controls", [response, response, response]);
+    let host = compose_with_transport(
+        built_in_config(),
+        transport.clone(),
+        &workspace,
+        &sessions,
+        AllowingPrompter::default(),
+    )
+    .unwrap();
+    let metadata = NativeSessionMetadata::new(
+        &workspace.canonicalize().unwrap(),
+        100,
+        NativeSessionOrigin::Cli,
+    )
+    .unwrap();
+    let conversation = futures_executor::block_on(NativeConversation::create(
+        host.session_lifecycle(),
+        metadata,
+    ))
+    .unwrap();
+    for (question, now) in [("first question", 110), ("second question", 120)] {
+        let events = futures_executor::block_on(async {
+            conversation
+                .prompt(question.into(), now)
+                .await
+                .unwrap()
+                .collect::<Vec<_>>()
+                .await
+        });
+        assert!(events.iter().all(Result::is_ok));
+    }
+    assert!(futures_executor::block_on(conversation.compact(200)).unwrap());
+    let effort = NativeReasoningEffort::parse("future-tier").unwrap();
+    let capabilities = NativeModelCapabilities::new(std::slice::from_ref(&effort), true).unwrap();
+    let preferences = NativeModelPreferences::new("provider/模型 v2", effort, true).unwrap();
+    let effective = preferences.effective(&capabilities);
+    let mut options = InferenceOptions {
+        model: Some(effective.model().to_owned()),
+        ..InferenceOptions::default()
+    };
+    AiGatewayInferenceOptions::new(
+        effective.effort().cloned().unwrap_or_default(),
+        effective.fast(),
+    )
+    .apply_to(&mut options);
+    let events = futures_executor::block_on(async {
+        conversation
+            .prompt(
+                Prompt {
+                    text: "third question".to_owned(),
+                    options,
+                },
+                300,
+            )
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await
+    });
+    assert!(events.iter().all(Result::is_ok));
+    assert!(matches!(
+        &events.last().unwrap().as_ref().unwrap().payload,
+        TurnEvent::Completed {
+            reason: StopReason::Completed,
+            ..
+        }
+    ));
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(
+        header(&requests[2], "ai-language-model-id"),
+        "provider/模型 v2"
+    );
+    assert!(body(&requests[0]).get("reasoning").is_none());
+    let last = body(&requests[2]);
+    assert_eq!(last["reasoning"], "future-tier");
+    assert_eq!(last["providerOptions"]["gateway"]["speed"], "fast");
+    assert_eq!(last["prompt"].as_array().unwrap().len(), 4);
+    assert_eq!(last["prompt"][0]["role"], "assistant");
+    assert!(
+        last["prompt"][0]
+            .to_string()
+            .contains("Conversation summary:")
+    );
+    let record =
+        futures_executor::block_on(host.session_lifecycle().replay(conversation.id())).unwrap();
+    assert_eq!(record.messages.len(), 6);
+    assert_eq!(
+        record.messages[0],
+        machine_god_core::Message::text(Role::User, "first question")
+    );
+}
+
 fn header<'a>(request: &'a CapturedRequest, name: &str) -> &'a str {
     request
         .headers

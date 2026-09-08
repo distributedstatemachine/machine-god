@@ -11,7 +11,7 @@ contents to the trusted host for presentation.
 `NativeSessionMetadata`. The first durable record contains that metadata at
 revision 1; there is no empty-record/metadata-update gap. `resume` loads the
 current record through the same lifecycle. `from_session` adopts a live session
-after checking that it is inactive and that native metadata/checkpoint fields
+after checking that it is inactive and that native metadata/checkpoint/context fields
 are valid. It performs no effects and invents no missing historical facts.
 These operations neither restore permission grants nor reconstruct volatile
 file-undo history. The host must scope those resources independently.
@@ -38,6 +38,45 @@ not silently retried against a newer record.
 exclusive title mutation. It preserves paused checkpoints and cannot enter the
 gap between core completion and native finalization. A returned revision proves
 title persistence, not a process-only display update.
+
+## Durable context selection
+
+`context_preferences` observes the reserved native context value under the same
+idle admission check. `compact(now_ms)` and
+`set_max_history_turns(maximum, now_ms)` are borrowed, inert-before-poll futures.
+They hold native admission through an exclusive, exact-revision metadata save,
+including the finalization gap of other native turns. They update the explicit
+native timestamp and preserve unrelated metadata, paused checkpoints, the turn
+allocator and every canonical message and archive receipt.
+
+Manual compaction saves only the cursor of the final logical user group. That
+group includes every following assistant/tool round and no-input continuation,
+even if unfinished. Zero/one group or an unchanged cursor returns `false`
+without a timestamp change or store write. Successful cursor publication returns
+`true`; persistence errors never masquerade as a process-only successful cut.
+Setting the automatic limit persists its explicit value and returns the saved
+revision, even when that value is unchanged. Zero disables automatic compaction
+but preserves an existing manual cursor.
+
+Prompt and continuation admission derive the provider projection from the same
+record revision as their checkpoint reservation. Core pins that selection across
+the new turn and still applies its ordinary resource bounds. Missing or explicitly
+zeroed preferences with no manual cut retain the original full-history path;
+they do not impose new native projection bounds or tool-group requirements on
+legacy core records. Nonzero selections use the bounded native context contract.
+Malformed preferences, unsupported schemas, stale cursors and invalid selected
+history fail before provider work or new checkpoint publication. Adoption and
+idle preference observations validate selections without building summary text.
+
+No summary is persisted as canonical history or granted instruction authority.
+Failed or dropped metadata futures obey core's existing uncertain-save
+reconciliation rules; observations and no-op outcomes remain canonical-memory
+observations, not proof of cross-process durable state after uncertainty. Resume
+restores the saved cursor and automatic limit; it does not reconstruct discarded
+process-local resources. The exact grouping, summary, byte limits and remaining
+typed-history integration are in [native context](conversation-context.md).
+
+## Checkpoint schema
 
 The native checkpoint entry is `machine_god.conversation_checkpoint`. Schema 1
 has exactly four scalar fields:

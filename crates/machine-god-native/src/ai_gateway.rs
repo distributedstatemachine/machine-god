@@ -432,7 +432,7 @@ impl ModelProvider for AiGatewayProvider {
                 &self.default_model,
                 self.limits,
                 &cancellation,
-                inference_options,
+                &inference_options,
             )?;
             if cancellation.is_cancelled() {
                 return Err(cancelled_error());
@@ -743,7 +743,7 @@ fn build_request(
     default_model: &str,
     limits: AiGatewayLimits,
     cancellation: &CancellationToken,
-    inference_options: AiGatewayInferenceOptions,
+    inference_options: &AiGatewayInferenceOptions,
 ) -> Result<AiGatewayTransportRequest, ProviderError> {
     if request.messages.is_empty()
         || request.messages.len() > limits.max_messages

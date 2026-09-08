@@ -56,6 +56,8 @@ pub use owned_worker::{
 mod config;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conversation;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod conversation_context;
 mod copy_file;
 mod create_folder;
 mod delete_file;
@@ -71,6 +73,8 @@ mod mcp_features;
 mod mcp_search_tools;
 mod mcp_select_tool;
 mod memory;
+mod model_preferences;
+mod model_selection;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod native_tool_result_archive;
 mod open_file;
@@ -230,9 +234,10 @@ mod workspace_inspection;
 mod write_file;
 
 pub use ai_gateway::{
-    AI_GATEWAY_DEFAULT_MODEL, AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION,
-    AI_GATEWAY_MAX_MODEL_BYTES, AI_GATEWAY_PROTOCOL_VERSION, AI_GATEWAY_PROVIDER_NAME,
-    AiGatewayByteStream, AiGatewayConfigError, AiGatewayConfigErrorKind, AiGatewayHeader,
+    AI_GATEWAY_DEFAULT_MODEL, AI_GATEWAY_INFERENCE_OPTIONS_KEY,
+    AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION, AI_GATEWAY_MAX_MODEL_BYTES,
+    AI_GATEWAY_PROTOCOL_VERSION, AI_GATEWAY_PROVIDER_NAME, AiGatewayByteStream,
+    AiGatewayConfigError, AiGatewayConfigErrorKind, AiGatewayHeader, AiGatewayInferenceOptions,
     AiGatewayLimits, AiGatewayProvider, AiGatewayToolInputLimits, AiGatewayTransport,
     AiGatewayTransportRequest,
 };
@@ -272,7 +277,7 @@ pub use ai_gateway_model_catalog::{
     AiGatewayModelCatalogAccessMode, AiGatewayModelCatalogProvider,
     AiGatewayModelCatalogRequestAccess, AiGatewayModelCatalogTransport,
     AiGatewayModelCatalogTransportError, AiGatewayModelCatalogTransportErrorKind,
-    AiGatewayModelCatalogTransportResponse,
+    AiGatewayModelCatalogTransportResponse, NativeModelCatalog, NativeModelCatalogEntry,
 };
 #[cfg(all(
     any(feature = "ai-gateway-http", feature = "ai-gateway-model-catalog-http"),
@@ -336,6 +341,15 @@ pub use background_supervisor::{
     NativeBackgroundSupervisor, NativeBackgroundSupervisorError,
     NativeBackgroundSupervisorErrorKind,
 };
+pub use model_preferences::{
+    MAX_NATIVE_REASONING_EFFORT_BYTES, MAX_NATIVE_REASONING_EFFORT_OPTIONS,
+    NATIVE_MODEL_PREFERENCES_KEY, NativeEffectiveModelPreferences, NativeFastModeChange,
+    NativeModelCapabilities, NativeModelPreferences, NativeModelPreferencesError,
+    NativeReasoningEffort,
+};
+pub use model_selection::{
+    MAX_NATIVE_MODEL_QUERY_BYTES, NativeModelSelectionError, resolve_model_query,
+};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[doc(hidden)]
 pub use terminal_helper::{
@@ -374,6 +388,10 @@ pub use config::{
 pub use conversation::{
     NATIVE_CONVERSATION_CHECKPOINT_KEY, NativeConversation, NativeConversationError,
     NativeConversationTurn, NativePausedTurn,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use conversation_context::{
+    NATIVE_CONTEXT_PREFERENCES_KEY, NativeContextError, NativeContextPreferences,
 };
 pub use copy_file::{
     COPY_FILE_TOOL_NAME, CopyFileTool, CopyFileToolOpenError, CopyFileToolOpenErrorKind,

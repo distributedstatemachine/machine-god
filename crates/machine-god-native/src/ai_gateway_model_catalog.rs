@@ -202,10 +202,12 @@ pub struct NativeModelCatalogEntry {
 }
 
 impl NativeModelCatalogEntry {
+    #[must_use]
     pub fn model(&self) -> &AvailableModel {
         &self.model
     }
 
+    #[must_use]
     pub fn capabilities(&self) -> &NativeModelCapabilities {
         &self.capabilities
     }
@@ -219,19 +221,23 @@ pub struct NativeModelCatalog {
 }
 
 impl NativeModelCatalog {
+    #[must_use]
     pub fn entries(&self) -> &[NativeModelCatalogEntry] {
         &self.entries
     }
 
+    #[must_use]
     pub fn access(&self) -> ModelCatalogAccess {
         self.access
     }
 
     /// Looks up an exact, case-sensitive ID without fetching or inferring controls.
+    #[must_use]
     pub fn details(&self, id: &str) -> Option<&NativeModelCatalogEntry> {
         self.entries.iter().find(|entry| entry.model.id() == id)
     }
 
+    #[must_use]
     pub fn into_entries(self) -> Vec<NativeModelCatalogEntry> {
         self.entries
     }
@@ -286,6 +292,7 @@ impl ModelCatalogProvider for AiGatewayModelCatalogProvider {
 impl AiGatewayModelCatalogProvider {
     /// Fetches explicit Gateway capabilities with the ID-only API's access,
     /// cancellation, deadline, validation, and ordering contract. Inert until polled.
+    #[must_use]
     pub fn list_model_details(
         &self,
         cancellation: CancellationToken,

@@ -118,14 +118,23 @@ fn edge_spaces_are_preserved_for_scoring_not_trimmed_into_an_exact_match() {
 fn matching_accepts_routed_long_and_control_queries_before_fallback_id_validation() {
     let models = catalog(&["model"]);
     let exact = format!("model {}", "x".repeat(MAX_NATIVE_MODEL_QUERY_BYTES - 6));
-    assert_eq!(resolve_model_query(&exact, &models).unwrap().as_deref(), Some("model"));
     assert_eq!(
-        resolve_model_query(&("é".repeat(MAX_NATIVE_MODEL_QUERY_BYTES / 2) + "x"), &models),
+        resolve_model_query(&exact, &models).unwrap().as_deref(),
+        Some("model")
+    );
+    assert_eq!(
+        resolve_model_query(
+            &("é".repeat(MAX_NATIVE_MODEL_QUERY_BYTES / 2) + "x"),
+            &models
+        ),
         Err(NativeModelSelectionError::QueryTooLong)
     );
     for byte in (0_u8..=31).chain([127]) {
         let query = format!("PRIVATE_QUERY{}end model", char::from(byte));
-        assert_eq!(resolve_model_query(&query, &models).unwrap().as_deref(), Some("model"));
+        assert_eq!(
+            resolve_model_query(&query, &models).unwrap().as_deref(),
+            Some("model")
+        );
         assert!(machine_god_core::validate_model_id(&query).is_err());
     }
 }
