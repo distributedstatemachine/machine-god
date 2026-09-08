@@ -97,6 +97,7 @@ The root, transport, and MCP composition paths are:
 | Existing explicit workspace and session paths | Injected `Arc<dyn AiGatewayTransport>` | Opens and retains both roots, skips credential discovery, and uses the supplied canonical `NetworkTarget` |
 | `PreparedNativeRoots` | Injected transport | Consumes retained roots, skips credential discovery, and uses the supplied canonical target |
 | `PreparedNativeRoots` and explicit terminal options | Production HTTP or injected transport | Adds the complete twelve-action terminal host, dedicated durable input/result archive, and host-handle-owned native lifetime |
+| `PreparedNativeRoots` and explicit conversation options | Production HTTP or injected transport | Shares the caller's exact file-undo tracker across all five file mutation tools; optional terminal selection uses the same complete-terminal path |
 | Existing explicit roots | Injected transport and `Arc<dyn McpToolCatalog>` | Uses the custom transport path and advertises search plus exact next-round selection over the injected admitted MCP metadata and attached executable source; feature access remains an inert empty authority |
 | Existing explicit roots | Injected transport, `Arc<dyn McpToolCatalog>`, and `Arc<dyn McpFeatureAuthority>` | Adds bounded exact server-qualified resource, prompt, and completion access through the separately injected read-only authority |
 | Existing explicit roots | Injected transport and `Arc<dyn SubagentAuthority>` | Adds bounded foreground one-off delegation while MCP authorities remain inert |
@@ -106,6 +107,45 @@ Every ordinary path injects an inert unavailable `SubagentAuthority`. A
 separate explicit subagent injection seam accepts the same root/transport
 composition plus one trusted authority allocation. Neither path probes or polls
 the authority during construction.
+
+`NativeReferenceHostConversationOptions::new(Arc<FileUndoTracker>)` is an
+explicit trusted-host authority choice, not a passive display preference. It
+grants the five file mutation tools bounded preimage **read** authority and
+retains their inverse-mutation authority in the caller's process-local tracker.
+An ordinary write, delete, or rename permission decision does not by itself
+grant those reads. Embeddings must separately choose this additional authority;
+configuration, ordinary constructors, and terminal-only options do not enable it.
+The constructor and its clones only retain the exact shared allocation: they
+capture no file state, clear no history, and perform no inverse operation.
+
+The prepared-root constructors
+`compose_ai_gateway_http_with_prepared_roots_and_conversation` and
+`compose_with_ai_gateway_transport_and_prepared_roots_and_conversation` append
+these options to the corresponding prepared-root inputs. Before engine
+construction they attach the **same** `Arc<FileUndoTracker>` to `write_file`,
+`edit_file`, `delete_file`, `rename_file`, and `copy_file`, using each tool's
+existing builder and retained workspace descriptor. They never reopen the
+selected workspace or state path to create undo authority. Preparation and
+ordinary forward permission handling remain unchanged; denied mutations and
+dropped unpolled tool futures do not acquire preimages or register inverses.
+
+`with_terminal(NativeReferenceHostTerminalOptions)` also selects the complete
+terminal path described below, including its blocking-worker requirements,
+startup/archive directory preparation, limits, and owned cleanup. Without it,
+conversation composition retains the legacy terminal and creates no terminal
+startup/archive children. All existing constructors keep their prior behavior
+and do not implicitly inject an undo tracker. MCP, subagent, provider, and
+permission selections are unchanged.
+
+The trusted host retains its own tracker handle for explicit inverse operations
+and must clear or replace it at the intended conversation-lifetime boundary.
+Dropping a reference host neither performs undo nor clears independently retained
+tracker history; that history can retain descriptors and bounded snapshots after
+the engine is gone. It is not persisted or reconstructed on session resume.
+The tracker limits, unavailable-preimage markers, uncertainty barriers,
+postimage checks, cancellation rules, and filesystem race caveats remain those
+in the [file-undo contract](file-undo.md). Reference-host composition does not
+strengthen those guarantees or turn the tracker into a transaction journal.
 
 `compose_ai_gateway_http_with_prepared_roots_and_terminal` and
 `compose_with_ai_gateway_transport_and_prepared_roots_and_terminal` append
@@ -320,6 +360,8 @@ documented bounded setup needed to own later authority:
   initialization on the first permitted `start` poll;
 - construct provider, web-search, terminal-wait, and private vision adapters
   over the shared transport and deadline authority;
+- on the explicit conversation path, retain five shares of the caller's exact
+  undo tracker without snapshots, inverse work, or implicit history reset;
 - construct `web_fetch`, including its bounded native resolver/entropy setup.
 
 Composition does not poll or snapshot the MCP catalog and does not call the MCP

@@ -1,0 +1,664 @@
+#![cfg(any(target_os = "linux", target_os = "macos"))]
+
+use std::collections::BTreeMap;
+use std::task::{Context, Poll};
+
+use futures_core::Stream;
+use futures_executor::block_on;
+use futures_util::{StreamExt, task::noop_waker};
+use machine_god_core::{
+    ContentBlock, Engine, InferenceOptions, Message, ModelEvent, Prompt, Role, SessionId,
+    SessionIncarnationId, SessionRecord, SessionRevision, SessionStoreError, SessionStoreErrorKind,
+    StopReason, ToolCall, ToolCallId, ToolName, ToolOutput, TurnEvent,
+};
+use machine_god_native::{
+    NATIVE_CONVERSATION_CHECKPOINT_KEY, NATIVE_SESSION_METADATA_KEY, NativeConversation,
+    NativeConversationError, NativeConversationTurn, NativeSessionMetadata, NativeSessionOrigin,
+};
+use machine_god_testkit::{
+    InMemorySessionStore, ModelProviderStep, RecordedSessionStoreCall, ScriptedModelProvider,
+    ScriptedPermissionHandler, SessionStoreScript, SessionStoreStep,
+};
+use serde_json::{Value, json};
+
+fn initial_record() -> SessionRecord {
+    let mut record = SessionRecord::empty(
+        SessionId::new("conversation").unwrap(),
+        SessionIncarnationId::new("conversation-life").unwrap(),
+    );
+    record.revision = SessionRevision(1);
+    record.metadata.insert(
+        NATIVE_SESSION_METADATA_KEY.to_owned(),
+        NativeSessionMetadata::new(
+            std::path::Path::new("/workspace"),
+            100,
+            NativeSessionOrigin::Cli,
+        )
+        .unwrap()
+        .to_value(),
+    );
+    record
+        .metadata
+        .insert("unrelated".to_owned(), json!({"preserve": true}));
+    record
+}
+
+fn finished(text: &str) -> ModelProviderStep {
+    ModelProviderStep::events([
+        ModelEvent::TextDelta {
+            text: text.to_owned(),
+        },
+        ModelEvent::Stop {
+            reason: StopReason::Completed,
+        },
+    ])
+}
+
+fn setup(
+    record: SessionRecord,
+    steps: impl IntoIterator<Item = ModelProviderStep>,
+    script: SessionStoreScript,
+) -> (
+    Engine,
+    NativeConversation,
+    InMemorySessionStore,
+    ScriptedModelProvider,
+) {
+    let id = record.id.clone();
+    let store =
+        InMemorySessionStore::configured(BTreeMap::from([(id.clone(), record)]), script, 100);
+    let provider = ScriptedModelProvider::new("conversation", steps);
+    let engine = Engine::builder()
+        .session_store(store.clone())
+        .provider(provider.clone())
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .build()
+        .unwrap();
+    let session = block_on(engine.load_session(id)).unwrap().unwrap();
+    let conversation = NativeConversation::from_session(session).unwrap();
+    (engine, conversation, store, provider)
+}
+
+fn complete(turn: NativeConversationTurn) {
+    let events = block_on(turn.collect::<Vec<_>>());
+    assert!(events.iter().all(Result::is_ok), "{events:?}");
+    assert!(matches!(
+        &events.last().unwrap().as_ref().unwrap().payload,
+        TurnEvent::Completed {
+            reason: StopReason::Completed,
+            ..
+        }
+    ));
+}
+
+fn store_error() -> SessionStoreError {
+    SessionStoreError::new(
+        SessionStoreErrorKind::Unavailable,
+        "fixture",
+        "private store diagnostics",
+        false,
+    )
+}
+
+#[test]
+fn conversation_admission_publishes_checkpoint_input_and_allocator_together() {
+    let (_engine, conversation, store, provider) = setup(
+        initial_record(),
+        [finished("answer")],
+        SessionStoreScript::default(),
+    );
+    let turn = block_on(conversation.prompt("question".into(), 200)).unwrap();
+    assert!(provider.requests().is_empty());
+    let record = store.record(&conversation.id()).unwrap();
+    assert_eq!(record.revision, SessionRevision(2));
+    assert_eq!(record.next_turn_sequence, 2);
+    assert_eq!(record.messages, [Message::text(Role::User, "question")]);
+    assert_eq!(
+        record.metadata[NATIVE_CONVERSATION_CHECKPOINT_KEY],
+        json!({
+            "schema_version": 1, "turn_sequence": 1, "first_user_message": 0, "state": "running",
+        })
+    );
+    assert_eq!(record.metadata["unrelated"], json!({"preserve": true}));
+    assert_eq!(
+        record.metadata[NATIVE_SESSION_METADATA_KEY]["updated_at_ms"],
+        200
+    );
+    assert_eq!(
+        store
+            .calls()
+            .iter()
+            .filter(|call| matches!(call, RecordedSessionStoreCall::Save { .. }))
+            .count(),
+        1
+    );
+    assert!(conversation.is_busy());
+    complete(turn);
+    assert!(!conversation.is_busy());
+    assert_eq!(conversation.paused_turn().unwrap(), None);
+    assert!(
+        !store
+            .record(&conversation.id())
+            .unwrap()
+            .metadata
+            .contains_key(NATIVE_CONVERSATION_CHECKPOINT_KEY)
+    );
+}
+
+#[test]
+fn conversation_multiple_turns_preserve_canonical_history() {
+    let (_engine, conversation, store, provider) = setup(
+        initial_record(),
+        [finished("first answer"), finished("second answer")],
+        SessionStoreScript::default(),
+    );
+    complete(block_on(conversation.prompt("first question".into(), 200)).unwrap());
+    complete(block_on(conversation.prompt("second question".into(), 300)).unwrap());
+    let record = store.record(&conversation.id()).unwrap();
+    assert_eq!(
+        record.messages,
+        [
+            Message::text(Role::User, "first question"),
+            Message::text(Role::Assistant, "first answer"),
+            Message::text(Role::User, "second question"),
+            Message::text(Role::Assistant, "second answer"),
+        ]
+    );
+    assert_eq!(record.next_turn_sequence, 3);
+    assert_eq!(
+        provider.requests()[1].request.messages,
+        record.messages[..3]
+    );
+}
+
+#[test]
+fn conversation_drop_preserves_checkpoint_and_continue_never_duplicates_user_input() {
+    let (_engine, conversation, store, provider) = setup(
+        initial_record(),
+        [finished("continued")],
+        SessionStoreScript::default(),
+    );
+    let first = block_on(conversation.prompt("original".into(), 200)).unwrap();
+    let id = first.handle().id().clone();
+    drop(first);
+    assert!(provider.requests().is_empty());
+    let paused = conversation.paused_turn().unwrap().unwrap();
+    assert_eq!(paused.turn_sequence, 1);
+    assert!(!paused.has_uncertain_tool_results);
+    let continuation =
+        block_on(conversation.continue_turn(InferenceOptions::default(), 300)).unwrap();
+    assert_ne!(continuation.handle().id(), &id);
+    let record = store.record(&conversation.id()).unwrap();
+    assert_eq!(record.next_turn_sequence, 3);
+    assert_eq!(record.messages, [Message::text(Role::User, "original")]);
+    assert_eq!(
+        record.metadata[NATIVE_CONVERSATION_CHECKPOINT_KEY]["turn_sequence"],
+        2
+    );
+    complete(continuation);
+    assert_eq!(provider.requests().len(), 1);
+    assert_eq!(
+        provider.requests()[0].request.messages,
+        [Message::text(Role::User, "original")]
+    );
+}
+
+#[test]
+fn conversation_cancel_produces_paused_state_before_forwarding_terminal_event() {
+    let (_engine, conversation, store, _provider) = setup(
+        initial_record(),
+        [ModelProviderStep::pending()],
+        SessionStoreScript::default(),
+    );
+    let mut turn = block_on(conversation.prompt("cancel me".into(), 200)).unwrap();
+    assert!(matches!(
+        block_on(turn.next()).unwrap().unwrap().payload,
+        TurnEvent::Started
+    ));
+    assert!(turn.handle().cancel());
+    let events = block_on(turn.collect::<Vec<_>>());
+    assert!(matches!(
+        events.last().unwrap().as_ref().unwrap().payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    ));
+    assert_eq!(
+        store.record(&conversation.id()).unwrap().metadata[NATIVE_CONVERSATION_CHECKPOINT_KEY]["state"],
+        "paused"
+    );
+    assert!(conversation.paused_turn().unwrap().is_some());
+}
+
+#[test]
+fn conversation_missing_checkpoint_and_busy_admission_have_no_extra_effects() {
+    let (_engine, conversation, store, provider) =
+        setup(initial_record(), [], SessionStoreScript::default());
+    let calls = store.calls().len();
+    assert_eq!(
+        block_on(conversation.continue_turn(InferenceOptions::default(), 200)).unwrap_err(),
+        NativeConversationError::NoCheckpoint
+    );
+    assert_eq!(store.calls().len(), calls);
+    let first = block_on(conversation.prompt("first".into(), 200)).unwrap();
+    let calls = store.calls().len();
+    assert_eq!(
+        conversation.paused_turn().unwrap_err(),
+        NativeConversationError::Busy
+    );
+    assert_eq!(
+        block_on(conversation.prompt("second".into(), 300)).unwrap_err(),
+        NativeConversationError::Busy
+    );
+    assert_eq!(store.calls().len(), calls);
+    assert!(provider.requests().is_empty());
+    drop(first);
+}
+
+#[test]
+fn conversation_failed_reservation_does_not_create_checkpoint_or_invoke_provider() {
+    let (_engine, conversation, store, provider) = setup(
+        initial_record(),
+        [],
+        SessionStoreScript {
+            saves: Some(vec![SessionStoreStep::Error(store_error())]),
+            ..SessionStoreScript::default()
+        },
+    );
+    assert_eq!(
+        block_on(conversation.prompt("question".into(), 200)).unwrap_err(),
+        NativeConversationError::Persistence
+    );
+    assert_eq!(store.record(&conversation.id()).unwrap(), initial_record());
+    assert!(!conversation.is_busy());
+    assert!(provider.requests().is_empty());
+}
+
+#[test]
+fn conversation_pending_finalization_retains_native_admission_until_settled_or_dropped() {
+    let (_engine, conversation, store, _) = setup(
+        initial_record(),
+        [finished("answer")],
+        SessionStoreScript {
+            saves: Some(vec![
+                SessionStoreStep::Pass,
+                SessionStoreStep::Pass,
+                SessionStoreStep::Pending,
+            ]),
+            ..SessionStoreScript::default()
+        },
+    );
+    let mut turn = Box::pin(block_on(conversation.prompt("question".into(), 200)).unwrap());
+    let waker = noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    loop {
+        match turn.as_mut().poll_next(&mut cx) {
+            Poll::Ready(Some(Ok(event))) => {
+                assert!(!matches!(event.payload, TurnEvent::Completed { .. }));
+            }
+            Poll::Pending => break,
+            other @ Poll::Ready(_) => panic!("unexpected {other:?}"),
+        }
+    }
+    assert!(conversation.is_busy());
+    assert_eq!(
+        block_on(conversation.prompt("too soon".into(), 300)).unwrap_err(),
+        NativeConversationError::Busy
+    );
+    assert_eq!(
+        store.record(&conversation.id()).unwrap().metadata[NATIVE_CONVERSATION_CHECKPOINT_KEY]["state"],
+        "running"
+    );
+    drop(turn);
+    assert!(!conversation.is_busy());
+    assert!(conversation.paused_turn().unwrap().is_some());
+}
+
+#[test]
+fn conversation_failed_finalization_is_not_reported_as_completed() {
+    let (_engine, conversation, store, _) = setup(
+        initial_record(),
+        [finished("answer")],
+        SessionStoreScript {
+            saves: Some(vec![
+                SessionStoreStep::Pass,
+                SessionStoreStep::Pass,
+                SessionStoreStep::Error(store_error()),
+            ]),
+            ..SessionStoreScript::default()
+        },
+    );
+    let turn = block_on(conversation.prompt("question".into(), 200)).unwrap();
+    let events = block_on(turn.collect::<Vec<_>>());
+    assert_eq!(
+        events.last().unwrap().as_ref().unwrap_err(),
+        &NativeConversationError::Persistence
+    );
+    assert!(!events.iter().any(|event| matches!(event,
+        Ok(event) if matches!(event.payload, TurnEvent::Completed { .. }))));
+    assert_eq!(
+        store
+            .record(&conversation.id())
+            .unwrap()
+            .messages
+            .last()
+            .unwrap(),
+        &Message::text(Role::Assistant, "answer")
+    );
+    assert!(conversation.paused_turn().unwrap().is_some());
+    assert!(!conversation.is_busy());
+}
+
+#[test]
+fn conversation_fresh_owner_preserves_confirmed_and_unknown_tool_history() {
+    let mut record = initial_record();
+    record.next_turn_sequence = 2;
+    record.messages = vec![
+        Message::text(Role::User, "original"),
+        Message {
+            role: Role::Assistant,
+            content: ["confirmed", "unknown"]
+                .into_iter()
+                .map(|id| ContentBlock::ToolCall {
+                    call: ToolCall {
+                        id: ToolCallId::new(id).unwrap(),
+                        name: ToolName::new("effect").unwrap(),
+                        arguments: json!({}),
+                    },
+                })
+                .collect(),
+        },
+    ];
+    for (id, content, is_error) in [
+        ("confirmed", json!({"result": "retained"}), false),
+        ("unknown", json!({"code": "tool_result_unknown"}), true),
+    ] {
+        record.messages.push(Message {
+            role: Role::Tool,
+            content: vec![ContentBlock::ToolResult {
+                call_id: ToolCallId::new(id).unwrap(),
+                output: ToolOutput { content, is_error },
+            }],
+        });
+    }
+    record.metadata.insert(
+        NATIVE_CONVERSATION_CHECKPOINT_KEY.to_owned(),
+        json!({
+            "schema_version": 1, "turn_sequence": 1, "first_user_message": 0, "state": "running",
+        }),
+    );
+    let prefix = record.messages.clone();
+    // There is no registered historical tool: a replay would fail this test.
+    let (_engine, conversation, store, provider) = setup(
+        record,
+        [finished("continued")],
+        SessionStoreScript::default(),
+    );
+    assert!(
+        conversation
+            .paused_turn()
+            .unwrap()
+            .unwrap()
+            .has_uncertain_tool_results
+    );
+    complete(block_on(conversation.continue_turn(InferenceOptions::default(), 200)).unwrap());
+    assert_eq!(provider.requests()[0].request.messages, prefix);
+    assert_eq!(
+        store.record(&conversation.id()).unwrap().messages[..prefix.len()],
+        prefix
+    );
+}
+
+#[test]
+fn conversation_rejects_malformed_future_and_stale_checkpoints_without_mutation() {
+    for checkpoint in [
+        json!(null),
+        json!({"schema_version": 2}),
+        json!({"schema_version": 1, "turn_sequence": 2, "first_user_message": 0, "state": "running"}),
+        json!({"schema_version": 1, "turn_sequence": 1, "first_user_message": 1, "state": "running"}),
+        json!({"schema_version": 1, "turn_sequence": 1, "first_user_message": 0, "state": "other"}),
+        json!({"schema_version": 1, "turn_sequence": 1, "first_user_message": 0, "state": "paused", "extra": 1}),
+    ] {
+        let mut record = initial_record();
+        record.next_turn_sequence = 2;
+        record
+            .messages
+            .push(Message::text(Role::User, "private input"));
+        record
+            .metadata
+            .insert(NATIVE_CONVERSATION_CHECKPOINT_KEY.to_owned(), checkpoint);
+        let store = InMemorySessionStore::from_records(BTreeMap::from([(
+            record.id.clone(),
+            record.clone(),
+        )]));
+        let engine = Engine::builder()
+            .session_store(store.clone())
+            .provider(ScriptedModelProvider::new("test", []))
+            .permission_handler(ScriptedPermissionHandler::new([]))
+            .build()
+            .unwrap();
+        let session = block_on(engine.load_session(record.id.clone()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            NativeConversation::from_session(session).unwrap_err(),
+            NativeConversationError::InvalidCheckpoint
+        );
+        assert_eq!(store.record(&record.id).unwrap(), record);
+    }
+}
+
+fn deep_options() -> InferenceOptions {
+    let mut value = Value::Null;
+    for _ in 0..10_000 {
+        value = Value::Array(vec![value]);
+    }
+    InferenceOptions {
+        metadata: BTreeMap::from([("deep".to_owned(), value)]),
+        ..InferenceOptions::default()
+    }
+}
+
+#[test]
+fn conversation_unpolled_and_rejected_deep_inputs_drop_iteratively() {
+    std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            let (_engine, conversation, store, provider) =
+                setup(initial_record(), [], SessionStoreScript::default());
+            let calls = store.calls().len();
+            drop(conversation.prompt(
+                Prompt {
+                    text: "unpolled".to_owned(),
+                    options: deep_options(),
+                },
+                200,
+            ));
+            drop(conversation.continue_turn(deep_options(), 200));
+            assert_eq!(
+                block_on(conversation.continue_turn(deep_options(), 200)).unwrap_err(),
+                NativeConversationError::NoCheckpoint
+            );
+            assert_eq!(store.calls().len(), calls);
+            assert!(provider.requests().is_empty());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn conversation_ordinary_non_cancel_stop_consumes_checkpoint() {
+    let (_engine, conversation, _, _) = setup(
+        initial_record(),
+        [ModelProviderStep::events([ModelEvent::Stop {
+            reason: StopReason::MaxOutputTokens,
+        }])],
+        SessionStoreScript::default(),
+    );
+    let turn = block_on(conversation.prompt("bounded answer".into(), 200)).unwrap();
+    let events = block_on(turn.collect::<Vec<_>>());
+    assert!(events.iter().all(Result::is_ok));
+    assert_eq!(conversation.paused_turn().unwrap(), None);
+}
+
+#[test]
+fn conversation_provider_failure_pauses_until_explicit_new_attempt() {
+    use machine_god_core::{ProviderError, ProviderErrorKind};
+    let (_engine, conversation, _, provider) = setup(
+        initial_record(),
+        [
+            ModelProviderStep::StartError(ProviderError::new(
+                ProviderErrorKind::Unavailable,
+                "unavailable",
+                "private provider details",
+                true,
+            )),
+            finished("retry answer"),
+        ],
+        SessionStoreScript::default(),
+    );
+    let turn = block_on(conversation.prompt("preserve me".into(), 200)).unwrap();
+    let events = block_on(turn.collect::<Vec<_>>());
+    assert!(matches!(
+        &events.last().unwrap().as_ref().unwrap().payload,
+        TurnEvent::Failed { .. }
+    ));
+    assert_eq!(provider.requests().len(), 1);
+    assert!(conversation.paused_turn().unwrap().is_some());
+    complete(block_on(conversation.continue_turn(InferenceOptions::default(), 300)).unwrap());
+    assert_eq!(provider.requests().len(), 2);
+    assert_eq!(
+        provider.requests()[1].request.messages,
+        [Message::text(Role::User, "preserve me")]
+    );
+    assert_eq!(conversation.paused_turn().unwrap(), None);
+}
+
+#[test]
+fn conversation_metadata_time_failure_and_debug_are_redacted() {
+    let (_engine, conversation, store, provider) =
+        setup(initial_record(), [], SessionStoreScript::default());
+    let calls = store.calls().len();
+    let error = block_on(conversation.prompt("private prompt".into(), 99)).unwrap_err();
+    assert!(matches!(error, NativeConversationError::InvalidMetadata(_)));
+    assert_eq!(store.calls().len(), calls);
+    assert!(provider.requests().is_empty());
+    let debug = format!("{conversation:?} {error:?} {error}");
+    for private in ["private prompt", "/workspace", "conversation-life"] {
+        assert!(!debug.contains(private));
+    }
+}
+
+#[test]
+fn conversation_rename_obeys_admission_and_preserves_paused_checkpoint() {
+    let (_engine, conversation, store, _) =
+        setup(initial_record(), [], SessionStoreScript::default());
+    let turn = block_on(conversation.prompt("original".into(), 200)).unwrap();
+    let calls = store.calls().len();
+    assert_eq!(
+        block_on(conversation.rename("busy title", 300)).unwrap_err(),
+        NativeConversationError::Busy
+    );
+    assert_eq!(store.calls().len(), calls);
+    drop(turn);
+    let checkpoint = conversation.record().metadata[NATIVE_CONVERSATION_CHECKPOINT_KEY].clone();
+    let revision = block_on(conversation.rename("  persisted title  ", 300)).unwrap();
+    let record = store.record(&conversation.id()).unwrap();
+    assert_eq!(record.revision, revision);
+    assert_eq!(
+        record.metadata[NATIVE_SESSION_METADATA_KEY]["title"],
+        "persisted title"
+    );
+    assert_eq!(
+        record.metadata[NATIVE_CONVERSATION_CHECKPOINT_KEY],
+        checkpoint
+    );
+    assert_eq!(record.messages, [Message::text(Role::User, "original")]);
+}
+
+#[test]
+fn conversation_real_store_create_drop_and_fresh_resume_continues_once() {
+    use machine_god_core::SessionStore;
+    use machine_god_native::{FileSessionStore, NativeSessionLifecycle};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    };
+
+    struct Directory(std::path::PathBuf);
+    impl Drop for Directory {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let directory = loop {
+        let path = std::env::temp_dir().join(format!(
+            "mg-conversation-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        match std::fs::create_dir(&path) {
+            Ok(()) => break Directory(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => panic!("create fixture: {error}"),
+        }
+    };
+    let build = |provider: ScriptedModelProvider| {
+        let store = Arc::new(FileSessionStore::open(&directory.0).unwrap());
+        let shared: Arc<dyn SessionStore> = store.clone();
+        let engine = Engine::builder()
+            .provider(provider)
+            .shared_session_store(shared)
+            .permission_handler(ScriptedPermissionHandler::new([]))
+            .build()
+            .unwrap();
+        NativeSessionLifecycle::new(engine, store).unwrap()
+    };
+    let first_provider = ScriptedModelProvider::new("test", []);
+    let lifecycle = build(first_provider.clone());
+    let metadata = NativeSessionMetadata::new(
+        &directory.0.canonicalize().unwrap(),
+        100,
+        NativeSessionOrigin::Cli,
+    )
+    .unwrap();
+    let create = NativeConversation::create(&lifecycle, metadata.clone());
+    assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 0);
+    let conversation = block_on(create).unwrap();
+    let id = conversation.id();
+    assert_eq!(conversation.record().revision, SessionRevision(1));
+    assert_eq!(
+        conversation.record().metadata[NATIVE_SESSION_METADATA_KEY],
+        metadata.to_value()
+    );
+    drop(block_on(conversation.prompt("persisted original".into(), 200)).unwrap());
+    assert!(first_provider.requests().is_empty());
+    drop(conversation);
+    drop(lifecycle);
+    let provider = ScriptedModelProvider::new("test", [finished("resumed answer")]);
+    let lifecycle = build(provider.clone());
+    let conversation = block_on(NativeConversation::resume(&lifecycle, id.clone())).unwrap();
+    assert_eq!(
+        conversation.paused_turn().unwrap().unwrap().turn_sequence,
+        1
+    );
+    complete(block_on(conversation.continue_turn(InferenceOptions::default(), 300)).unwrap());
+    let record = block_on(lifecycle.replay(id)).unwrap();
+    assert_eq!(record.next_turn_sequence, 3);
+    assert_eq!(
+        record.messages,
+        [
+            Message::text(Role::User, "persisted original"),
+            Message::text(Role::Assistant, "resumed answer")
+        ]
+    );
+    assert!(
+        !record
+            .metadata
+            .contains_key(NATIVE_CONVERSATION_CHECKPOINT_KEY)
+    );
+    assert_eq!(provider.requests().len(), 1);
+}

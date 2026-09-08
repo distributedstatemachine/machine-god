@@ -23,16 +23,17 @@ use crate::{
     AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayHttpTransport,
     AiGatewayLimits, AiGatewayProvider, AiGatewayToolInputLimits, AiGatewayTransport,
     AiGatewayVisionTransport, AiGatewayWebSearchTransport, AskPermissionHandler,
-    AskUserQuestionTool, FileSessionStore, LoadedNativeConfig, McpFeatureAuthority,
-    McpFeatureError, McpFeatureErrorKind, McpFeaturePayload, McpFeatureRequest, McpFeaturesTool,
-    McpSearchToolsTool, McpSelectTool, McpToolCatalog, McpToolCatalogError, McpToolCatalogSnapshot,
-    MemoryTool, NativeCredentialSourceKind, NativeProviderKind, NativeSessionLifecycle,
-    NativeToolResultArchiveAdapter, NativeTransportKind, PermissionMode, PermissionPrompter,
-    PreparedNativeRoots, QuestionPrompter, ReadToolResultTool, TerminalBackgroundCatalog,
-    TerminalBackgroundInspector, TerminalBackgroundOutputReader, TerminalBackgroundSignaler,
-    TerminalBackgroundStarter, TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError,
-    TerminalBackgroundWriter, TerminalTool, ToolResultArchive, VisionDeadline, VisionLimits,
-    VisionTool, VisionTransportError, VisionTransportErrorKind, WebFetchTool, WebSearchDeadline,
+    AskUserQuestionTool, FileSessionStore, FileUndoTracker, LoadedNativeConfig,
+    McpFeatureAuthority, McpFeatureError, McpFeatureErrorKind, McpFeaturePayload,
+    McpFeatureRequest, McpFeaturesTool, McpSearchToolsTool, McpSelectTool, McpToolCatalog,
+    McpToolCatalogError, McpToolCatalogSnapshot, MemoryTool, NativeCredentialSourceKind,
+    NativeProviderKind, NativeSessionLifecycle, NativeToolResultArchiveAdapter,
+    NativeTransportKind, PermissionMode, PermissionPrompter, PreparedNativeRoots, QuestionPrompter,
+    ReadToolResultTool, TerminalBackgroundCatalog, TerminalBackgroundInspector,
+    TerminalBackgroundOutputReader, TerminalBackgroundSignaler, TerminalBackgroundStarter,
+    TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError, TerminalBackgroundWriter,
+    TerminalTool, ToolResultArchive, VisionDeadline, VisionLimits, VisionTool,
+    VisionTransportError, VisionTransportErrorKind, WebFetchTool, WebSearchDeadline,
     WebSearchLimits, WebSearchTool, WebSearchTransportErrorKind, discover_ai_gateway_credential,
 };
 
@@ -252,6 +253,62 @@ struct TerminalCompositionSelection {
     state_path: PathBuf,
 }
 
+/// Explicit process-local conversation authority for reference-host composition.
+///
+/// Supplying the tracker authorizes bounded preimage reads and later inverse
+/// mutations under its retained descriptors for all five file mutation tools.
+/// An ordinary write/delete/rename approval alone does not grant these reads.
+/// The trusted host owns this additional authority choice and must clear or
+/// replace the process-local tracker at its conversation-lifetime boundary.
+/// Construction is inert and does not capture files, open roots, or start work.
+#[derive(Clone)]
+pub struct NativeReferenceHostConversationOptions {
+    undo_tracker: Arc<FileUndoTracker>,
+    terminal: Option<NativeReferenceHostTerminalOptions>,
+}
+
+impl NativeReferenceHostConversationOptions {
+    /// Retains the caller's exact shared tracker without reading or resetting it.
+    #[must_use]
+    pub fn new(undo_tracker: Arc<FileUndoTracker>) -> Self {
+        Self {
+            undo_tracker,
+            terminal: None,
+        }
+    }
+
+    /// Also selects the existing complete terminal authority for this host.
+    /// Without this explicit selection, composition keeps the legacy terminal.
+    #[must_use]
+    pub fn with_terminal(mut self, terminal: NativeReferenceHostTerminalOptions) -> Self {
+        self.terminal = Some(terminal);
+        self
+    }
+}
+
+impl fmt::Debug for NativeReferenceHostConversationOptions {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NativeReferenceHostConversationOptions")
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Default)]
+struct PreparedCompositionOptions {
+    undo_tracker: Option<Arc<FileUndoTracker>>,
+    terminal: Option<NativeReferenceHostTerminalOptions>,
+}
+
+impl From<NativeReferenceHostConversationOptions> for PreparedCompositionOptions {
+    fn from(options: NativeReferenceHostConversationOptions) -> Self {
+        Self {
+            undo_tracker: Some(options.undo_tracker),
+            terminal: options.terminal,
+        }
+    }
+}
+
 fn terminal_options_error() -> NativeReferenceHostBuildError {
     NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::TerminalConfig)
 }
@@ -353,30 +410,14 @@ impl NativeReferenceHost {
         question_prompter: Arc<dyn QuestionPrompter>,
         web_search_deadline: Arc<dyn WebSearchDeadline>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
-        validate_selections(&loaded_config)?;
-        let (workspace_tools, session_store) = consume_prepared_roots(prepared_roots)?;
-        let memory = open_memory_tool(&session_store)?;
-
-        let credential = discover_ai_gateway_credential(credential_environment).map_err(|_| {
-            NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Credential)
-        })?;
-        let credential_source = credential.source();
-        let transport =
-            AiGatewayHttpTransport::new(credential.into_bearer_token()).map_err(|_| {
-                NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::HttpTransport)
-            })?;
-
-        Self::finish_composition(
+        Self::compose_production_prepared(
             loaded_config,
-            Arc::new(transport),
-            production_ai_gateway_target(),
-            web_search_deadline,
-            workspace_tools,
-            session_store,
-            memory,
+            credential_environment,
+            prepared_roots,
             permission_prompter,
             question_prompter,
-            Some(credential_source),
+            web_search_deadline,
+            PreparedCompositionOptions::default(),
         )
     }
 
@@ -401,12 +442,65 @@ impl NativeReferenceHost {
         web_search_deadline: Arc<dyn WebSearchDeadline>,
         terminal_options: NativeReferenceHostTerminalOptions,
     ) -> Result<Self, NativeReferenceHostBuildError> {
+        Self::compose_production_prepared(
+            loaded_config,
+            credential_environment,
+            prepared_roots,
+            permission_prompter,
+            question_prompter,
+            web_search_deadline,
+            PreparedCompositionOptions {
+                terminal: Some(terminal_options),
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Composes production HTTP with explicitly authorized shared file undo.
+    ///
+    /// Consumes the retained prepared roots without reopening selected paths.
+    /// The exact options tracker is shared by write, edit, delete, rename, and
+    /// copy tools before engine construction. Existing constructors do not
+    /// implicitly enable undo or acquire preimage-read authority.
+    /// Optional terminal selection has the same blocking-worker, directory
+    /// preparation, and lifetime requirements as the terminal-only constructor.
+    /// No permission prompt, file snapshot, undo, or network request runs here.
+    ///
+    /// # Errors
+    /// Returns a redacted stage-only failure for unsupported selections,
+    /// credentials, unsafe roots, or component construction failure.
+    pub fn compose_ai_gateway_http_with_prepared_roots_and_conversation(
+        loaded_config: LoadedNativeConfig,
+        credential_environment: AiGatewayCredentialEnvironment,
+        prepared_roots: PreparedNativeRoots,
+        permission_prompter: Arc<dyn PermissionPrompter>,
+        question_prompter: Arc<dyn QuestionPrompter>,
+        web_search_deadline: Arc<dyn WebSearchDeadline>,
+        conversation_options: NativeReferenceHostConversationOptions,
+    ) -> Result<Self, NativeReferenceHostBuildError> {
+        Self::compose_production_prepared(
+            loaded_config,
+            credential_environment,
+            prepared_roots,
+            permission_prompter,
+            question_prompter,
+            web_search_deadline,
+            conversation_options.into(),
+        )
+    }
+
+    fn compose_production_prepared(
+        loaded_config: LoadedNativeConfig,
+        credential_environment: AiGatewayCredentialEnvironment,
+        prepared_roots: PreparedNativeRoots,
+        permission_prompter: Arc<dyn PermissionPrompter>,
+        question_prompter: Arc<dyn QuestionPrompter>,
+        web_search_deadline: Arc<dyn WebSearchDeadline>,
+        options: PreparedCompositionOptions,
+    ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
-        let selection = TerminalCompositionSelection {
-            options: terminal_options,
-            state_path: prepared_roots.state_root().to_owned(),
-        };
-        let (workspace_tools, session_store) = consume_prepared_roots(prepared_roots)?;
+        let (workspace_tools, session_store, selection) =
+            consume_prepared_composition(prepared_roots, options)?;
         let memory = open_memory_tool(&session_store)?;
         let credential = discover_ai_gateway_credential(credential_environment).map_err(|_| {
             NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Credential)
@@ -430,7 +524,7 @@ impl NativeReferenceHost {
             Arc::new(EmptyMcpToolCatalog),
             Arc::new(EmptyMcpFeatureAuthority),
             Arc::new(EmptySubagentAuthority),
-            Some(selection),
+            selection,
         )
     }
 
@@ -698,21 +792,15 @@ impl NativeReferenceHost {
         question_prompter: Arc<dyn QuestionPrompter>,
         web_search_deadline: Arc<dyn WebSearchDeadline>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
-        validate_selections(&loaded_config)?;
-        let (workspace_tools, session_store) = consume_prepared_roots(prepared_roots)?;
-        let memory = open_memory_tool(&session_store)?;
-
-        Self::finish_composition(
+        Self::compose_injected_prepared(
             loaded_config,
             transport,
             network_target,
-            web_search_deadline,
-            workspace_tools,
-            session_store,
-            memory,
+            prepared_roots,
             permission_prompter,
             question_prompter,
-            None,
+            web_search_deadline,
+            PreparedCompositionOptions::default(),
         )
     }
 
@@ -738,12 +826,71 @@ impl NativeReferenceHost {
         web_search_deadline: Arc<dyn WebSearchDeadline>,
         terminal_options: NativeReferenceHostTerminalOptions,
     ) -> Result<Self, NativeReferenceHostBuildError> {
+        Self::compose_injected_prepared(
+            loaded_config,
+            transport,
+            network_target,
+            prepared_roots,
+            permission_prompter,
+            question_prompter,
+            web_search_deadline,
+            PreparedCompositionOptions {
+                terminal: Some(terminal_options),
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Composes injected Gateway transport with explicitly authorized shared undo.
+    ///
+    /// This is the injected-transport counterpart of
+    /// [`Self::compose_ai_gateway_http_with_prepared_roots_and_conversation`].
+    /// It retains the same exact tracker and prepared-root authority, performs
+    /// no credential discovery, and requires the supplied canonical target to
+    /// identify the endpoint actually contacted by the injected transport.
+    /// Optional terminal selection retains its existing blocking-worker and
+    /// directory-preparation contract. No file snapshots or undo run here.
+    ///
+    /// # Errors
+    /// Returns a redacted stage-only failure for unsupported selections, unsafe
+    /// roots, or failure to construct the explicitly selected components.
+    #[allow(clippy::too_many_arguments)]
+    pub fn compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
+        loaded_config: LoadedNativeConfig,
+        transport: Arc<dyn AiGatewayTransport>,
+        network_target: NetworkTarget,
+        prepared_roots: PreparedNativeRoots,
+        permission_prompter: Arc<dyn PermissionPrompter>,
+        question_prompter: Arc<dyn QuestionPrompter>,
+        web_search_deadline: Arc<dyn WebSearchDeadline>,
+        conversation_options: NativeReferenceHostConversationOptions,
+    ) -> Result<Self, NativeReferenceHostBuildError> {
+        Self::compose_injected_prepared(
+            loaded_config,
+            transport,
+            network_target,
+            prepared_roots,
+            permission_prompter,
+            question_prompter,
+            web_search_deadline,
+            conversation_options.into(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn compose_injected_prepared(
+        loaded_config: LoadedNativeConfig,
+        transport: Arc<dyn AiGatewayTransport>,
+        network_target: NetworkTarget,
+        prepared_roots: PreparedNativeRoots,
+        permission_prompter: Arc<dyn PermissionPrompter>,
+        question_prompter: Arc<dyn QuestionPrompter>,
+        web_search_deadline: Arc<dyn WebSearchDeadline>,
+        options: PreparedCompositionOptions,
+    ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
-        let selection = TerminalCompositionSelection {
-            options: terminal_options,
-            state_path: prepared_roots.state_root().to_owned(),
-        };
-        let (workspace_tools, session_store) = consume_prepared_roots(prepared_roots)?;
+        let (workspace_tools, session_store, selection) =
+            consume_prepared_composition(prepared_roots, options)?;
         let memory = open_memory_tool(&session_store)?;
         Self::finish_composition_with_extensions(
             loaded_config,
@@ -759,7 +906,7 @@ impl NativeReferenceHost {
             Arc::new(EmptyMcpToolCatalog),
             Arc::new(EmptyMcpFeatureAuthority),
             Arc::new(EmptySubagentAuthority),
-            Some(selection),
+            selection,
         )
     }
 
@@ -1416,6 +1563,34 @@ fn consume_prepared_roots(
     prepared_roots.into_parts().map_err(|_| {
         NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::WorkspaceRoot)
     })
+}
+
+fn consume_prepared_composition(
+    prepared_roots: PreparedNativeRoots,
+    options: PreparedCompositionOptions,
+) -> Result<
+    (
+        WorkspaceTools,
+        FileSessionStore,
+        Option<TerminalCompositionSelection>,
+    ),
+    NativeReferenceHostBuildError,
+> {
+    let selection = options
+        .terminal
+        .map(|terminal| TerminalCompositionSelection {
+            options: terminal,
+            state_path: prepared_roots.state_root().to_owned(),
+        });
+    let (mut tools, store) = consume_prepared_roots(prepared_roots)?;
+    if let Some(tracker) = options.undo_tracker {
+        tools.write_file = tools.write_file.with_undo_tracker(Arc::clone(&tracker));
+        tools.edit_file = tools.edit_file.with_undo_tracker(Arc::clone(&tracker));
+        tools.delete_file = tools.delete_file.with_undo_tracker(Arc::clone(&tracker));
+        tools.rename_file = tools.rename_file.with_undo_tracker(Arc::clone(&tracker));
+        tools.copy_file = tools.copy_file.with_undo_tracker(tracker);
+    }
+    Ok((tools, store, selection))
 }
 
 #[cfg(test)]

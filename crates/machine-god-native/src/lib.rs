@@ -54,6 +54,8 @@ pub use owned_worker::{
     NativeOwnedWorkerSpawnError, NativeOwnedWorkerSpawner,
 };
 mod config;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod conversation;
 mod copy_file;
 mod create_folder;
 mod delete_file;
@@ -368,6 +370,11 @@ pub use config::{
     NativeConfigError, NativeConfigErrorKind, NativeCredentialSourceKind, NativeProviderKind,
     NativeTransportKind, load_native_config, load_process_config,
 };
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use conversation::{
+    NATIVE_CONVERSATION_CHECKPOINT_KEY, NativeConversation, NativeConversationError,
+    NativeConversationTurn, NativePausedTurn,
+};
 pub use copy_file::{
     COPY_FILE_TOOL_NAME, CopyFileTool, CopyFileToolOpenError, CopyFileToolOpenErrorKind,
     MAX_COPY_FILE_CHUNK_BYTES, MAX_COPY_FILE_IO_CALLS, MAX_COPY_FILE_PATH_BYTES,
@@ -499,7 +506,7 @@ pub use read_tool_result::{
 ))]
 pub use reference_host::{
     NativeReferenceHost, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
-    NativeReferenceHostTerminalOptions,
+    NativeReferenceHostConversationOptions, NativeReferenceHostTerminalOptions,
 };
 pub use rename_file::{
     MAX_RENAME_FILE_PATH_BYTES, MAX_RENAME_FILE_PATH_COMPONENTS,

@@ -30,19 +30,20 @@ use machine_god_native::{
     AI_GATEWAY_DEFAULT_MODEL, ASK_USER_QUESTION_TOOL_NAME, AiGatewayByteStream,
     AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayTransport,
     AiGatewayTransportRequest, COPY_FILE_TOOL_NAME, CREATE_FOLDER_TOOL_NAME, ConfigOrigin,
-    DELETE_FILE_TOOL_NAME, EDIT_FILE_TOOL_NAME, FILE_INFO_TOOL_NAME, GLOB_FILES_TOOL_NAME,
-    GREP_FILES_TOOL_NAME, INSTALL_SKILL_TOOL_NAME, LIST_FILES_TOOL_NAME, LoadedNativeConfig,
-    MCP_FEATURES_TOOL_NAME, MCP_SEARCH_TOOLS_TOOL_NAME, MCP_SELECT_TOOL_NAME, MEMORY_TOOL_NAME,
-    McpFeatureAuthority, McpFeatureError, McpFeaturePayload, McpFeatureRequest, McpToolCatalog,
-    McpToolCatalogError, McpToolCatalogSnapshot, McpToolMetadata, NativeEnvironment,
-    NativeReferenceHost, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
-    NativeReferenceHostTerminalOptions, NativeRootSelection, OPEN_FILE_TOOL_NAME,
-    PermissionPromptDecision, PermissionPromptError, PermissionPrompter, PreparedNativeRoots,
-    QuestionPromptAnswers, QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest,
-    QuestionPrompter, READ_FILE_TOOL_NAME, READ_TOOL_RESULT_TOOL_NAME, RENAME_FILE_TOOL_NAME,
-    SEMANTIC_SEARCH_TOOL_NAME, SKILL_TOOL_NAME, TERMINAL_TOOL_NAME, VISION_TOOL_NAME,
-    WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME, WRITE_FILE_TOOL_NAME, WebSearchDeadline,
-    WebSearchTransportError, load_native_config,
+    DELETE_FILE_TOOL_NAME, EDIT_FILE_TOOL_NAME, FILE_INFO_TOOL_NAME, FileUndoOutcome,
+    FileUndoTracker, GLOB_FILES_TOOL_NAME, GREP_FILES_TOOL_NAME, INSTALL_SKILL_TOOL_NAME,
+    LIST_FILES_TOOL_NAME, LoadedNativeConfig, MCP_FEATURES_TOOL_NAME, MCP_SEARCH_TOOLS_TOOL_NAME,
+    MCP_SELECT_TOOL_NAME, MEMORY_TOOL_NAME, McpFeatureAuthority, McpFeatureError,
+    McpFeaturePayload, McpFeatureRequest, McpToolCatalog, McpToolCatalogError,
+    McpToolCatalogSnapshot, McpToolMetadata, NativeEnvironment, NativeReferenceHost,
+    NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
+    NativeReferenceHostConversationOptions, NativeReferenceHostTerminalOptions,
+    NativeRootSelection, OPEN_FILE_TOOL_NAME, PermissionPromptDecision, PermissionPromptError,
+    PermissionPrompter, PreparedNativeRoots, QuestionPromptAnswers, QuestionPromptError,
+    QuestionPromptOutcome, QuestionPromptRequest, QuestionPrompter, READ_FILE_TOOL_NAME,
+    READ_TOOL_RESULT_TOOL_NAME, RENAME_FILE_TOOL_NAME, SEMANTIC_SEARCH_TOOL_NAME, SKILL_TOOL_NAME,
+    TERMINAL_TOOL_NAME, VISION_TOOL_NAME, WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME,
+    WRITE_FILE_TOOL_NAME, WebSearchDeadline, WebSearchTransportError, load_native_config,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -348,6 +349,449 @@ fn complete_terminal_options() -> NativeReferenceHostTerminalOptions {
         Vec::new(),
     )
     .unwrap()
+}
+
+fn undo_mutations() -> [(&'static str, Value); 5] {
+    [
+        ("write_file", json!({"path":"w.txt","content":"new write"})),
+        (
+            "edit_file",
+            json!({"path":"e.txt","old_string":"before","new_string":"after"}),
+        ),
+        ("delete_file", json!({"path":"d.txt"})),
+        (
+            "rename_file",
+            json!({"old_path":"r.txt","new_path":"renamed.txt"}),
+        ),
+        (
+            "copy_file",
+            json!({"source":"c.txt","destination":"copy.txt"}),
+        ),
+    ]
+}
+
+fn undo_round_responses() -> Vec<Vec<u8>> {
+    let mut responses = undo_mutations().into_iter().enumerate().map(|(index, (tool, input))| {
+        format!("data: {}\n\ndata: {{\"type\":\"finish\",\"finishReason\":{{\"unified\":\"tool-calls\"}}}}\n\n",
+            json!({"type":"tool-call","toolCallId":format!("undo-{index}"),"toolName":tool,"input":input}))
+            .into_bytes()
+    }).collect::<Vec<_>>();
+    responses.push(b"data: {\"type\":\"text-delta\",\"id\":\"answer\",\"delta\":\"file mutations complete\"}\n\ndata: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n".to_vec());
+    responses
+}
+
+fn seed_undo_files(workspace: &Path, prefix: &str) {
+    for (name, contents) in [
+        ("w.txt", "old write"),
+        ("e.txt", "before edit"),
+        ("d.txt", "deleted"),
+        ("r.txt", "renamed"),
+        ("c.txt", "copied"),
+    ] {
+        fs::write(workspace.join(name), format!("{prefix}{contents}")).unwrap();
+    }
+}
+
+fn assert_undo_files_original(workspace: &Path, prefix: &str) {
+    for (name, contents) in [
+        ("w.txt", "old write"),
+        ("e.txt", "before edit"),
+        ("d.txt", "deleted"),
+        ("r.txt", "renamed"),
+        ("c.txt", "copied"),
+    ] {
+        assert_eq!(
+            fs::read_to_string(workspace.join(name)).unwrap(),
+            format!("{prefix}{contents}")
+        );
+    }
+    assert!(!workspace.join("renamed.txt").exists());
+    assert!(!workspace.join("copy.txt").exists());
+    assert_eq!(fs::read_dir(workspace).unwrap().count(), 5);
+}
+
+fn assert_undo_files_mutated(workspace: &Path) {
+    assert_eq!(
+        fs::read_to_string(workspace.join("w.txt")).unwrap(),
+        "new write"
+    );
+    assert_eq!(
+        fs::read_to_string(workspace.join("e.txt")).unwrap(),
+        "after edit"
+    );
+    assert!(!workspace.join("d.txt").exists());
+    assert!(!workspace.join("r.txt").exists());
+    assert_eq!(
+        fs::read_to_string(workspace.join("renamed.txt")).unwrap(),
+        "renamed"
+    );
+    assert_eq!(
+        fs::read_to_string(workspace.join("copy.txt")).unwrap(),
+        "copied"
+    );
+    assert_eq!(
+        fs::read_to_string(workspace.join("c.txt")).unwrap(),
+        "copied"
+    );
+}
+
+fn undo_all_five(tracker: &FileUndoTracker, workspace: &Path) {
+    let cancel = CancellationToken::new();
+    for expected in [
+        FileUndoOutcome::Removed("copy.txt".into()),
+        FileUndoOutcome::Restored("r.txt".into()),
+        FileUndoOutcome::Restored("d.txt".into()),
+        FileUndoOutcome::Restored("e.txt".into()),
+        FileUndoOutcome::Restored("w.txt".into()),
+    ] {
+        assert_eq!(tracker.undo_last(&cancel).unwrap(), expected);
+    }
+    assert_eq!(tracker.undo_last(&cancel).unwrap(), FileUndoOutcome::Empty);
+    assert_undo_files_original(workspace, "");
+}
+
+fn assert_five_mutation_permissions(prompter: &AllowingPrompter) {
+    assert_eq!(
+        prompter
+            .requests()
+            .iter()
+            .map(|request| request.capability.clone())
+            .collect::<Vec<_>>(),
+        [
+            Capability::Filesystem {
+                access: FilesystemAccess::Write,
+                path: "w.txt".into()
+            },
+            Capability::Filesystem {
+                access: FilesystemAccess::Edit,
+                path: "e.txt".into()
+            },
+            Capability::Filesystem {
+                access: FilesystemAccess::Delete,
+                path: "d.txt".into()
+            },
+            Capability::FilesystemRename {
+                old_path: "r.txt".into(),
+                new_path: "renamed.txt".into()
+            },
+            Capability::FilesystemCopy {
+                source: "c.txt".into(),
+                destination: "copy.txt".into()
+            },
+        ]
+    );
+}
+
+#[test]
+fn conversation_composition_shares_exact_undo_across_all_five_mutations_with_optional_terminal() {
+    for terminal in [false, true] {
+        let temporary = TemporaryDirectory::new("conversation-all-five");
+        let (prepared, state) = complete_terminal_roots(temporary.path());
+        let workspace = temporary.path().join("workspace");
+        seed_undo_files(&workspace, "");
+        let tracker = Arc::new(FileUndoTracker::new());
+        let mut options = NativeReferenceHostConversationOptions::new(Arc::clone(&tracker));
+        if terminal {
+            options = options.with_terminal(complete_terminal_options());
+        }
+        let transport = ScriptedTransport::new("UNDO_SHARED_TRANSPORT", undo_round_responses());
+        let prompter = AllowingPrompter::default();
+        let host = NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
+            built_in_config(), Arc::new(transport.clone()), production_gateway_target(), prepared,
+            Arc::new(prompter.clone()), inert_question_prompter(), never_deadline(), options,
+        ).unwrap();
+        assert_eq!(
+            Arc::strong_count(&tracker),
+            6,
+            "one caller and five exact tool shares"
+        );
+        assert!(transport.requests().is_empty());
+        assert!(prompter.requests().is_empty());
+        assert_eq!(
+            tracker.undo_last(&CancellationToken::new()).unwrap(),
+            FileUndoOutcome::Empty
+        );
+        assert_eq!(state.join("terminal-startup").exists(), terminal);
+        assert_eq!(
+            state.join("tool-result-archive/archive-lock-v1").exists(),
+            terminal
+        );
+        let shutdown = host.terminal_shutdown_completion();
+        assert_eq!(shutdown.is_some(), terminal);
+        let (_, events) = collect_turn(&host, "conversation-mutations");
+        assert_completed(&events);
+        let outputs: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                TurnEvent::ToolFinished { output, .. } => Some(output),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(outputs.len(), 5);
+        assert!(outputs.iter().all(|output| !output.is_error), "{outputs:?}");
+        assert_eq!(transport.requests().len(), 6);
+        let request = body(&transport.requests()[0]);
+        if terminal {
+            let tools = request["tools"].as_array().unwrap();
+            assert_eq!(tools.len(), 26);
+            let terminal = tools
+                .iter()
+                .find(|tool| tool["name"] == "terminal")
+                .unwrap();
+            assert_eq!(
+                terminal["inputSchema"]["oneOf"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|form| form["properties"]["action"]["const"].as_str().unwrap())
+                    .collect::<Vec<_>>(),
+                [
+                    "exec", "start", "read", "screen", "write", "wait", "monitor", "inspect",
+                    "list", "resize", "signal", "close"
+                ]
+            );
+            assert_full_terminal_limits(host.engine());
+        } else {
+            assert_exact_native_tool_catalog(&request);
+        }
+        assert_five_mutation_permissions(&prompter);
+        assert_undo_files_mutated(&workspace);
+        // The tracker holds its own explicit inverse authority even after host drop.
+        drop(host);
+        if let Some(shutdown) = shutdown {
+            shutdown.wait_on_worker().unwrap();
+        }
+        assert_eq!(Arc::strong_count(&tracker), 1);
+        undo_all_five(&tracker, &workspace);
+    }
+}
+
+#[test]
+fn conversation_composition_denied_mutations_never_register_undo() {
+    let temporary = TemporaryDirectory::new("conversation-denied");
+    let (prepared, _) = complete_terminal_roots(temporary.path());
+    let workspace = temporary.path().join("workspace");
+    seed_undo_files(&workspace, "");
+    let tracker = Arc::new(FileUndoTracker::new());
+    let denied = DenyingTerminalPrompter::default();
+    let transport = ScriptedTransport::new("DENIED_UNDO", undo_round_responses());
+    let host =
+        NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
+            built_in_config(),
+            Arc::new(transport.clone()),
+            production_gateway_target(),
+            prepared,
+            Arc::new(denied.clone()),
+            inert_question_prompter(),
+            never_deadline(),
+            NativeReferenceHostConversationOptions::new(Arc::clone(&tracker)),
+        )
+        .unwrap();
+    let (_, events) = collect_turn(&host, "conversation-denied");
+    assert_completed(&events);
+    assert_five_mutation_permissions(&denied.0);
+    assert_eq!(transport.requests().len(), 6);
+    assert_undo_files_original(&workspace, "");
+    assert_eq!(
+        tracker.undo_last(&CancellationToken::new()).unwrap(),
+        FileUndoOutcome::Empty
+    );
+}
+
+#[test]
+fn conversation_options_are_explicit_existing_prepared_constructors_do_not_inject_them() {
+    for terminal in [false, true] {
+        let temporary = TemporaryDirectory::new("conversation-defaults");
+        let (prepared, _) = complete_terminal_roots(temporary.path());
+        let workspace = temporary.path().join("workspace");
+        seed_undo_files(&workspace, "");
+        let tracker = Arc::new(FileUndoTracker::new());
+        let unused_options = NativeReferenceHostConversationOptions::new(Arc::clone(&tracker));
+        let transport = ScriptedTransport::new("NO_IMPLICIT_UNDO", undo_round_responses());
+        let prompter = AllowingPrompter::default();
+        let host = if terminal {
+            NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_terminal(
+                built_in_config(),
+                Arc::new(transport),
+                production_gateway_target(),
+                prepared,
+                Arc::new(prompter),
+                inert_question_prompter(),
+                never_deadline(),
+                complete_terminal_options(),
+            )
+        } else {
+            NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots(
+                built_in_config(),
+                Arc::new(transport),
+                production_gateway_target(),
+                prepared,
+                Arc::new(prompter),
+                inert_question_prompter(),
+                never_deadline(),
+            )
+        }
+        .unwrap();
+        let (_, events) = collect_turn(&host, "no-implicit-undo");
+        assert_completed(&events);
+        assert_undo_files_mutated(&workspace);
+        assert_eq!(Arc::strong_count(&tracker), 2);
+        assert_eq!(
+            tracker.undo_last(&CancellationToken::new()).unwrap(),
+            FileUndoOutcome::Empty
+        );
+        drop(unused_options);
+        let shutdown = host.terminal_shutdown_completion();
+        drop(host);
+        if let Some(shutdown) = shutdown {
+            shutdown.wait_on_worker().unwrap();
+        }
+    }
+}
+
+#[test]
+fn conversation_composition_and_dropped_unpolled_work_capture_no_preimages() {
+    let temporary = TemporaryDirectory::new("conversation-unpolled");
+    let (prepared, state) = complete_terminal_roots(temporary.path());
+    let workspace = temporary.path().join("workspace");
+    seed_undo_files(&workspace, "");
+    let tracker = Arc::new(FileUndoTracker::new());
+    let options = NativeReferenceHostConversationOptions::new(Arc::clone(&tracker));
+    let transport = ScriptedTransport::new("UNPOLLED_UNDO", Vec::<Vec<u8>>::new());
+    let prompter = AllowingPrompter::default();
+    let host =
+        NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
+            built_in_config(),
+            Arc::new(transport.clone()),
+            production_gateway_target(),
+            prepared,
+            Arc::new(prompter.clone()),
+            inert_question_prompter(),
+            never_deadline(),
+            options,
+        )
+        .unwrap();
+    let session = host
+        .engine()
+        .create_session(
+            SessionId::new("unpolled-undo").unwrap(),
+            SessionIncarnationId::new("unpolled-undo-incarnation").unwrap(),
+        )
+        .unwrap();
+    drop(session.prompt("mutate files"));
+    for (name, arguments) in undo_mutations() {
+        let tool = host.engine().tool(&ToolName::new(name).unwrap()).unwrap();
+        let context = ToolContext {
+            session_id: session.id(),
+            session_incarnation_id: session.incarnation_id(),
+            turn_id: TurnId::new("unpolled-turn").unwrap(),
+            call_id: ToolCallId::new(name).unwrap(),
+        };
+        drop(tool.execute(context, arguments, CancellationToken::new()));
+    }
+    assert!(transport.requests().is_empty());
+    assert!(prompter.requests().is_empty());
+    assert_eq!(fs::read_dir(&state).unwrap().count(), 0);
+    assert_undo_files_original(&workspace, "");
+    assert_eq!(
+        tracker.undo_last(&CancellationToken::new()).unwrap(),
+        FileUndoOutcome::Empty
+    );
+}
+
+#[test]
+fn conversation_prepared_root_replacement_does_not_redirect_forward_or_inverse_authority() {
+    let temporary = TemporaryDirectory::new("conversation-replaced-roots");
+    let (prepared, state) = complete_terminal_roots(temporary.path());
+    let workspace = temporary.path().join("workspace");
+    seed_undo_files(&workspace, "");
+    let retained_workspace = temporary.path().join("retained-workspace");
+    let retained_state = state.with_file_name("retained-state");
+    fs::rename(&workspace, &retained_workspace).unwrap();
+    fs::rename(&state, &retained_state).unwrap();
+    fs::create_dir(&workspace).unwrap();
+    fs::create_dir(&state).unwrap();
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o700)).unwrap();
+    seed_undo_files(&workspace, "DECOY ");
+    let tracker = Arc::new(FileUndoTracker::new());
+    let transport = ScriptedTransport::new("RETAINED_UNDO", undo_round_responses());
+    let prompter = AllowingPrompter::default();
+    let host =
+        NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
+            built_in_config(),
+            Arc::new(transport),
+            production_gateway_target(),
+            prepared,
+            Arc::new(prompter.clone()),
+            inert_question_prompter(),
+            never_deadline(),
+            NativeReferenceHostConversationOptions::new(Arc::clone(&tracker)),
+        )
+        .unwrap();
+    let (_, events) = collect_turn(&host, "retained-undo-roots");
+    assert_completed(&events);
+    assert_five_mutation_permissions(&prompter);
+    assert_undo_files_mutated(&retained_workspace);
+    assert_undo_files_original(&workspace, "DECOY ");
+    undo_all_five(&tracker, &retained_workspace);
+    assert_undo_files_original(&workspace, "DECOY ");
+    assert_eq!(fs::read_dir(&state).unwrap().count(), 0);
+    assert!(fs::read_dir(&retained_state).unwrap().next().is_some());
+}
+
+#[test]
+fn conversation_production_composition_discovers_credentials_without_clearing_prior_undo() {
+    let temporary = TemporaryDirectory::new("conversation-production");
+    let (prepared, state) = complete_terminal_roots(temporary.path());
+    let tracker = Arc::new(FileUndoTracker::new());
+    let workspace = temporary.path().join("workspace");
+    fs::write(workspace.join("prior.txt"), b"preexisting undo authority").unwrap();
+    tracker
+        .copy_replace(
+            &fs::File::open(&workspace).unwrap(),
+            "prior.txt",
+            "prior-copy.txt",
+            &CancellationToken::new(),
+        )
+        .unwrap();
+    let prompter = AllowingPrompter::default();
+    let marker = "CONVERSATION_CREDENTIAL_SECRET";
+    let options = NativeReferenceHostConversationOptions::new(Arc::clone(&tracker));
+    let options_clone = options.clone().with_terminal(
+        NativeReferenceHostTerminalOptions::new(format!("/{marker}").into(), None, Vec::new())
+            .unwrap(),
+    );
+    assert_eq!(Arc::strong_count(&tracker), 3);
+    assert!(!format!("{options_clone:?}").contains(marker));
+    drop(options_clone);
+    let host = NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots_and_conversation(
+        built_in_config(),
+        AiGatewayCredentialEnvironment::new(None, Some(marker.into())),
+        prepared,
+        Arc::new(prompter.clone()),
+        inert_question_prompter(),
+        never_deadline(),
+        options,
+    )
+    .unwrap();
+    assert_eq!(
+        host.credential_source(),
+        Some(AiGatewayCredentialSource::AiGatewayApiKey)
+    );
+    assert_eq!(Arc::strong_count(&tracker), 6);
+    assert!(!format!("{host:?}").contains(marker));
+    assert!(prompter.requests().is_empty());
+    assert_eq!(fs::read_dir(&state).unwrap().count(), 0);
+    assert_eq!(
+        fs::read(workspace.join("prior-copy.txt")).unwrap(),
+        b"preexisting undo authority"
+    );
+    assert_eq!(
+        tracker.undo_last(&CancellationToken::new()).unwrap(),
+        FileUndoOutcome::Removed("prior-copy.txt".into())
+    );
+    drop(host);
+    assert_eq!(Arc::strong_count(&tracker), 1);
 }
 
 fn tool_round_responses(final_text: &str) -> [Vec<u8>; 5] {

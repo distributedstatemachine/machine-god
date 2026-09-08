@@ -120,11 +120,14 @@ stubs. Three independent scope inspections accepted this sequencing; they are
 not substitutes for the final exact-candidate product reviews.
 
 Internal implementation now includes exclusive core metadata transactions,
-the native metadata codec and durable title mutation, slash routing, explicit
-continuation turns, and shared bounded file-undo tracking for all five file tools.
-These component commits are not deliveries: interactive ownership, checkpoint
-production, context projection, models, policy/sandbox/workspace enforcement,
-rich session commands and the complete feature gates are still required.
+atomic initial native metadata, durable title mutation, slash routing, explicit
+continuation, and revision-pinned prepared turns with provider-only context.
+The native conversation owner atomically reserves paused-turn checkpoints and
+settles their finalization; reference-host composition shares bounded undo across
+all five file mutations. These component commits are not deliveries. Remaining
+work includes interactive command/session transitions, native context summaries
+and preferences, pinned recovery/retry policy, model selection, policy/sandbox/
+workspace enforcement, rich session commands and the complete feature gates.
 
 ### CI and documentation maintenance
 
