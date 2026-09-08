@@ -590,6 +590,18 @@ higher revision. Such a result is a protocol error and leaves canonical state
 unchanged. A valid higher revision may otherwise replace messages and metadata;
 an equal revision continues to require equality of the entire record.
 
+`Engine::load_session_at_revision(id, incarnation, revision)` and the matching
+`EngineRequester` method add checked adoption without changing ordinary loads.
+Their owned futures are inert before polling and do not retain host authority
+while awaiting the store. Missing records return `None`. Loaded identity, record
+bounds, expected incarnation and exact revision are checked before registration
+or reconciliation can alter a live canonical handle. Incarnation mismatch uses
+`SessionIncarnationConflict`; revision mismatch uses a fixed redacted store
+conflict. Matching adoption acquires idle admission and rejects `SessionBusy`
+without reconciling into an active turn or metadata operation. Rejected record
+JSON is drained iteratively. No save, provider, tool or permission call occurs;
+success is an exact loaded-record observation, not a cross-process lock.
+
 ### Explicit continuation
 
 `Session::continue_turn(options: InferenceOptions)` returns an owned,

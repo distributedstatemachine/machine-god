@@ -1,7 +1,7 @@
 use crate::{
     BoxFuture, BuildError, EngineError, EventSink, ModelProvider, NoopEventSink, PermissionHandler,
-    Session, SessionId, SessionIncarnationId, SessionRecord, SessionStore, Tool, ToolName,
-    ToolSpec,
+    Session, SessionId, SessionIncarnationId, SessionRecord, SessionRevision, SessionStore, Tool,
+    ToolName, ToolSpec,
 };
 use serde::ser::SerializeSeq;
 use serde::{Serialize, Serializer};
@@ -604,6 +604,26 @@ impl Engine {
         self.requester().load_session(id)
     }
 
+    /// Loads only the exact stored incarnation and revision requested.
+    ///
+    /// Like [`Self::load_session`], this future is inert before polling. The
+    /// loaded record is validated before registration or reconciliation; an
+    /// incarnation mismatch returns [`EngineError::SessionIncarnationConflict`]
+    /// and a revision mismatch returns a redacted store conflict. Missing
+    /// records return `None`. Canonical reconciliation holds exclusive admission
+    /// and returns [`EngineError::SessionBusy`] for an active turn or mutation.
+    /// Ordinary canonical-session and host-lifetime rules otherwise apply.
+    #[must_use]
+    pub fn load_session_at_revision(
+        &self,
+        id: SessionId,
+        expected_incarnation: SessionIncarnationId,
+        expected_revision: SessionRevision,
+    ) -> BoxFuture<'static, Result<Option<Session>, EngineError>> {
+        self.requester()
+            .load_session_at_revision(id, expected_incarnation, expected_revision)
+    }
+
     #[must_use]
     pub fn provider(&self) -> &dyn ModelProvider {
         self.inner.provider.as_ref()
@@ -702,6 +722,26 @@ impl EngineRequester {
         &self,
         id: SessionId,
     ) -> BoxFuture<'static, Result<Option<Session>, EngineError>> {
+        self.load_session_guarded(id, None)
+    }
+
+    /// The non-host-owning equivalent of [`Engine::load_session_at_revision`].
+    /// Checks the actual loaded record before it can enter the canonical registry.
+    #[must_use]
+    pub fn load_session_at_revision(
+        &self,
+        id: SessionId,
+        expected_incarnation: SessionIncarnationId,
+        expected_revision: SessionRevision,
+    ) -> BoxFuture<'static, Result<Option<Session>, EngineError>> {
+        self.load_session_guarded(id, Some((expected_incarnation, expected_revision)))
+    }
+
+    fn load_session_guarded(
+        &self,
+        id: SessionId,
+        expected: Option<(SessionIncarnationId, SessionRevision)>,
+    ) -> BoxFuture<'static, Result<Option<Session>, EngineError>> {
         let inner = Arc::clone(&self.inner);
         let host = self.host.clone();
         Box::pin(async move {
@@ -724,12 +764,30 @@ impl EngineRequester {
             if let Some(record) = &record {
                 crate::session::SessionState::validate_loaded(record.get())?;
                 crate::session::validate_record_limits(record.get(), inner.limits)?;
+                if let Some((incarnation, revision)) = &expected {
+                    if record.get().incarnation_id != *incarnation {
+                        return Err(EngineError::SessionIncarnationConflict);
+                    }
+                    if record.get().revision != *revision {
+                        return Err(crate::SessionStoreError::new(
+                            crate::SessionStoreErrorKind::Conflict,
+                            "store_failed",
+                            "session store failed",
+                            false,
+                        )
+                        .into());
+                    }
+                }
             }
             record
                 .map(|record| {
                     let record = record.into_inner();
                     let state = inner.session_state(record.clone(), true)?;
-                    state.reconcile_loaded(record)?;
+                    if expected.is_some() {
+                        state.reconcile_loaded_idle(record)?;
+                    } else {
+                        state.reconcile_loaded(record)?;
+                    }
                     Ok(Session::from_state(
                         Arc::clone(&inner),
                         state,
