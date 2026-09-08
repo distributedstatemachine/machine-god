@@ -167,12 +167,12 @@ Internal component commits are not deliveries. Their implementation inventory is
   revision before load; consuming adoption rechecks durable/live state. A
   prepared association publication is not rolled back by dropping adoption.
 
-Remaining work includes CLI composition of native interactive ownership and presentation,
-latest/exact/picker startup, long-lived cache and human-prompt composition,
-remaining commands, recovery/retry and actual policy/workspace authority.
-Clear/new/reset must allocate fresh IDs, not reuse the same-ID incarnation
-reset. Clear/new carry terminals forward; reset and live resume stop/forget.
-Started transitions and uncertain outcomes must remain owned through settlement.
+Remaining work includes picker startup/in-session selection, allowlist editing,
+undo/copy/workspace handlers, migration/recovery/doctor cleanup, and remaining
+policy/workspace scenarios. Bare/latest/exact startup, shared cache/human prompts
+and owned raw input are composed. Clear/new/reset allocate fresh IDs;
+clear/new carry terminals forward, while reset and live resume stop/forget.
+Started transitions and uncertain outcomes stay owned through settlement.
 The complete combined feature and all final gates remain open.
 
 The rich sessions checkpoint `734a11f` passes Rust 1.94.1 formatting,
@@ -279,10 +279,28 @@ The assembled source passes all 231 CLI unit tests with five private-helper
 ignores, 90 command integration tests and ten replay tests. Replacement workspace
 all-target/all-feature warnings-denied Clippy, formatting and bounded docs checks
 pass. All six component trees are integrated and removed; commits remain
-recoverable. The new raw-frontend release build remains the next checkpoint check.
-These are internal component checks, not final feature gates. Complete historical
-resume replay and remaining CLI scenarios; pinned headless ask also accepts whole
-piped input through EOF. Full feature, review and remote evidence gates stay open.
+recoverable. Exact `d218f47` then passes a fresh locked release build, all 90
+release CLI tests, all four production input-helper tests and all 77 assembled
+interactive tests using that helper. These are internal component checks, not
+final feature gates.
+
+The next integration streams canonical resumed text and recorded tool summaries
+without inference or repeated effects. Snapshot traversal and output are bounded;
+shutdown discards unsent history without delaying native cleanup. Headless `ask`
+now reads a whole pipe or retained regular file through EOF, validates one bounded
+prompt before setup, and preserves the first signal through exact input settlement.
+Shared descriptor flags remain unchanged; a distinct helper handshake admits
+regular files without widening interactive input. The sessions renderer's platform
+import is scoped to its actual consumers, fixing WASI warnings-denied checking.
+Combined checks pass 42 native input tests with three private-helper ignores,
+254 CLI unit tests with five private-helper ignores, 96 command tests and ten
+replay tests. Workspace warnings-denied Clippy, WASI CLI Clippy, formatting and
+bounded docs checks pass. The initial platform-import correction also required
+an explicit trait import in the sessions tests; the replacement CLI suite passes.
+All three worker trees are integrated and removed; commits remain recoverable.
+The combined fresh release build and production-helper checks are next.
+Typed historical cards and remaining CLI scenarios still need implementation;
+the complete feature, final reviews and exact remote evidence gates remain open.
 
 The integrated preparer passes all five real file mutations, actual reviewer
 Allow/Ask/error and cancellation, read-grant/reset, canonical terminal identity,

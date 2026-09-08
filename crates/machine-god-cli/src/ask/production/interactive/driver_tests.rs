@@ -434,6 +434,7 @@ fn bounded_output_chunks_and_idle_poll_do_not_spin() {
     let result = runtime.block_on(async {
         harness.driver.notice = None;
         harness.driver.render = Some(Render {
+            history: false,
             clear_row: false,
             bytes: vec![b'x'; 9000],
             model_text: false,
@@ -640,4 +641,145 @@ async fn finish_raw_tail(harness: &mut TailHarness) -> (TurnDriveResult, Vec<u8>
     .await
     .unwrap();
     (result, output)
+}
+
+async fn pump_until(harness: &mut Harness, condition: impl Fn(&Driver) -> bool) -> Vec<u8> {
+    let mut output = Vec::new();
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        poll_fn(|cx| {
+            assert!(harness.driver.poll(cx, &mut harness.signals).is_pending());
+            if let Ok(work) = harness.work.try_recv() {
+                if let OutputWork::Write(bytes) = work {
+                    assert!(bytes.len() <= 4096);
+                    output.extend(bytes);
+                }
+                harness
+                    .ack
+                    .try_send(OutputAcknowledgement::Succeeded)
+                    .unwrap();
+                cx.waker().wake_by_ref();
+            }
+            if condition(&harness.driver) {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        }),
+    )
+    .await
+    .unwrap();
+    output
+}
+
+fn presentation_idle(driver: &Driver) -> bool {
+    driver.outcome.is_none()
+        && driver.render.is_none()
+        && driver.in_flight.is_none()
+        && driver.history.is_none()
+        && !driver.owner.runtime().status().active
+}
+
+#[test]
+fn confirmed_resume_replays_canonical_text_without_repeating_recorded_file_effects() {
+    let runtime = executor();
+    let fixture = support::Fixture::new();
+    let mut harness = runtime.block_on(harness(&fixture));
+    let result = runtime.block_on(async {
+        fixture.transport.push(support::call(
+            "write_file",
+            &serde_json::json!({"path":"history.txt","content":"original"}),
+        ));
+        fixture.transport.push(support::answer());
+        let prompt = "historical request \u{1b}[2J";
+        harness.driver.owner.enqueue(prompt.into()).unwrap();
+        pump_until(&mut harness, |driver| {
+            presentation_idle(driver) && driver.owner.runtime().status().queued_jobs == 0
+        })
+        .await;
+        let saved = harness.driver.owner.runtime().record();
+        let requests = fixture.transport.requests().len();
+        assert_eq!(requests, 2);
+        std::fs::write(
+            fixture.workspace.join("history.txt"),
+            "changed after original turn",
+        )
+        .unwrap();
+
+        harness
+            .driver
+            .owner
+            .request_transition(native::NativeInteractiveTransition::New, 200)
+            .unwrap();
+        pump_until(&mut harness, |driver| {
+            presentation_idle(driver) && driver.owner.runtime().id() != saved.id
+        })
+        .await;
+        harness
+            .driver
+            .owner
+            .request_transition(
+                native::NativeInteractiveTransition::Resume(native::NativeResumeTarget::Exact(
+                    saved.id.clone(),
+                )),
+                300,
+            )
+            .unwrap();
+        let output = pump_until(&mut harness, |driver| {
+            presentation_idle(driver) && driver.owner.runtime().id() == saved.id
+        })
+        .await;
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("historical request"));
+        assert!(output.contains("complete"));
+        assert!(output.contains("write_file"));
+        assert!(!output.contains('\u{1b}'));
+        assert_eq!(fixture.transport.requests().len(), requests);
+        assert_eq!(
+            std::fs::read_to_string(fixture.workspace.join("history.txt")).unwrap(),
+            "changed after original turn"
+        );
+        assert_eq!(
+            harness.driver.owner.runtime().record().messages,
+            saved.messages
+        );
+        finish_signal(&mut harness).await
+    });
+    let mut tail = dispose(harness, fixture, result);
+    let _ = runtime.block_on(finish_tail(&mut tail));
+}
+
+#[test]
+fn blocked_historical_output_cannot_keep_its_snapshot_or_native_host_alive_on_shutdown() {
+    let runtime = executor();
+    let fixture = support::Fixture::new();
+    let mut harness = runtime.block_on(harness(&fixture));
+    harness.driver.history = Some(history_view::HistoryView::new(
+        harness.driver.owner.runtime().record(),
+    ));
+    harness.driver.notice = None;
+    harness.driver.render = Some(Render {
+        history: true,
+        clear_row: false,
+        bytes: vec![b'x'; 4096],
+        offset: 0,
+        confirm: None,
+        receipt: None,
+        model_text: false,
+    });
+    let result = runtime.block_on(async {
+        until(&mut harness, |driver| driver.in_flight.is_some()).await;
+        let result = finish_signal(&mut harness).await;
+        assert!(harness.driver.history.is_none());
+        assert!(
+            harness
+                .driver
+                .render
+                .as_ref()
+                .is_none_or(|render| !render.history)
+        );
+        result
+    });
+    let mut tail = dispose(harness, fixture, result);
+    let _ = runtime.block_on(finish_tail(&mut tail));
 }

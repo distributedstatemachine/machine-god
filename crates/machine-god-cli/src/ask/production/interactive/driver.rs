@@ -131,6 +131,11 @@ impl Driver {
             && let Some(outcome) = self.owner.take_outcome()
         {
             self.native_failed |= outcome_failed(&outcome);
+            if matches!(&outcome, NativeInteractiveOutcome::Transition(receipt) if !receipt.unchanged)
+                && !self.shutting_down
+            {
+                self.replace_history();
+            }
             match &outcome {
                 NativeInteractiveOutcome::Transition(_)
                 | NativeInteractiveOutcome::Rejected { .. }
@@ -352,7 +357,7 @@ impl Driver {
             }
         }
         if self.render.is_none() {
-            self.prepare_render();
+            self.prepare_render(cx);
         }
         match next_render_work(&mut self.render) {
             Ok(Some((work, in_flight))) => self.send(work, in_flight, cx),
@@ -411,8 +416,8 @@ impl Driver {
         }
     }
 
-    fn prepare_render(&mut self) {
-        self.prepare_content_render();
+    fn prepare_render(&mut self, cx: &mut Context<'_>) {
+        self.prepare_content_render(cx);
         let Some(frontend) = &mut self.frontend else {
             return;
         };
@@ -425,6 +430,7 @@ impl Driver {
         // the stream settles, or while a human prompt owns input.
         if !frontend.dirty
             || self.shutting_down
+            || self.history.is_some()
             || (self.owner.runtime().status().active && self.modal.is_none())
         {
             return;
@@ -436,6 +442,7 @@ impl Driver {
             frontend.dirty = false;
             frontend.visible = true;
             self.render = Some(Render {
+                history: false,
                 clear_row: false,
                 bytes,
                 offset: 0,
@@ -449,7 +456,7 @@ impl Driver {
         }
     }
 
-    fn prepare_content_render(&mut self) {
+    fn prepare_content_render(&mut self, cx: &mut Context<'_>) {
         let (bytes, confirm, receipt) = if let Some(outcome) = &self.outcome {
             (render_outcome(outcome), None, Some(ReceiptKind::Outcome))
         } else if let Some(outcome) = &self.control_outcome {
@@ -462,6 +469,9 @@ impl Driver {
             }
             (modal.render(), Some(modal.presentation_binding()), None)
         } else if !self.shutting_down {
+            if self.prepare_history_render(cx) {
+                return;
+            }
             let Some(event) = self.owner.take_presentation() else {
                 return;
             };
@@ -470,6 +480,7 @@ impl Driver {
                     event: ModelEvent::TextDelta { text },
                 } => {
                     self.render = Some(Render {
+                        history: false,
                         clear_row: false,
                         bytes: text.into_bytes(),
                         model_text: true,
@@ -486,6 +497,7 @@ impl Driver {
         };
         if let Ok(bytes) = bytes {
             self.render = Some(Render {
+                history: false,
                 clear_row: false,
                 bytes,
                 model_text: false,
@@ -497,6 +509,7 @@ impl Driver {
             self.native_failed = true;
             self.shutdown();
             self.render = Some(Render {
+                history: false,
                 clear_row: false,
                 bytes: b"\n[presentation exceeded its bound; session stopping]\n".to_vec(),
                 model_text: false,
@@ -504,6 +517,35 @@ impl Driver {
                 confirm: None,
                 receipt,
             });
+        }
+    }
+
+    fn prepare_history_render(&mut self, cx: &mut Context<'_>) -> bool {
+        use super::history_view::HistoryViewStep;
+        let Some(history) = &mut self.history else {
+            return false;
+        };
+        match history.next_chunk() {
+            HistoryViewStep::Chunk(bytes) => {
+                self.render = Some(Render {
+                    history: true,
+                    clear_row: false,
+                    bytes,
+                    offset: 0,
+                    confirm: None,
+                    receipt: None,
+                    model_text: false,
+                });
+                true
+            }
+            HistoryViewStep::Progress => {
+                cx.waker().wake_by_ref();
+                true
+            }
+            HistoryViewStep::Done => {
+                self.history.take();
+                false
+            }
         }
     }
 
@@ -620,6 +662,7 @@ impl FinalPresentation {
             if let Some((bytes, receipt)) = next {
                 if let Ok(bytes) = bytes {
                     self.render = Some(Render {
+                        history: false,
                         clear_row: false,
                         bytes,
                         model_text: false,

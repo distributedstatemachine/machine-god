@@ -9,7 +9,7 @@ interactive UI or command-line permission-mode override.
 The accepted form is:
 
 ```text
-machine-god ask [--] <prompt...>
+machine-god ask [--] [<prompt...>]
 ```
 
 One or more Unicode prompt arguments are joined with one ASCII space. A single
@@ -23,11 +23,39 @@ The complete joined prompt must:
 - contain no NUL byte; and
 - contain at most 256 KiB of UTF-8, matching the default core prompt bound.
 
-Join accounting is checked before allocation. Missing, empty, non-Unicode,
+Join accounting is checked before allocation. Explicit empty, non-Unicode,
 oversized, extra-invalid, or unsupported-option input is rejected by the
 global invalid-arguments contract with exit `2`. Parsing and prompt validation
 finish before configuration, current-directory, state, credential, runtime,
-session, or network effects. Standard input is never read.
+session, or network effects. An argv prompt never inspects or reads stdin,
+including an invalid argv prompt: it cannot fall back to another input source.
+
+With no prompt arguments (`ask` or `ask --`), non-TTY stdin supplies one complete
+prompt through EOF. Internal newlines and CRLF are preserved; only leading and
+trailing ASCII space, tab, CR and LF are removed. The entire untrimmed input
+must fit 256 KiB, be valid UTF-8 and contain no NUL. Empty/whitespace input or a
+TTY has a fixed missing-prompt diagnostic and exits `2`; invalid text and
+oversized input also have distinct fixed diagnostics and exit `2`. A read or
+input-authority failure exits `1` without exposing input or descriptor details.
+No partial prefix is submitted. Physical EOF ends acquisition; byte `0x04` is
+ordinary prompt data, not an interactive exit or an EOF substitute.
+
+This follows the pinned upstream whole-input/ASCII-trim behavior, while retaining
+machine-god's explicit 256 KiB prompt bound (upstream's stdin resource ceiling
+is 8 MiB). Regular-file redirection and pipes are supported. A retained explicit
+`/dev/null` identity is EOF, not authority to read arbitrary devices. The input
+adapter preserves shared stdin flags and owns any blocking-read helper through
+termination and reaping. It is separate from the raw interactive composer.
+
+Stdin acquisition precedes configuration, credentials, session and provider
+effects. The same signal guardian remains registered throughout acquisition
+and the later request: before the first input poll it enters cancellation
+forwarding, and the scoped reader polls a bounded whole-prompt future against
+signals. On completion, rejection, cancellation or unwind, input is dropped and
+its exact worker completion is joined outside the async runtime before any
+diagnostic or further setup. Only then can setup signal handling resume. A
+first signal forwarded immediately before that handoff retains precedence over
+later signals; it cannot be reset or lost by the phase change.
 
 ## Native composition
 
@@ -154,6 +182,8 @@ an apparently recoverable output failure.
   all preceding text bytes are written. A finalization failure cannot become a
   successful `Completed` event.
 - Invalid grammar exits `2` with the global invalid-arguments diagnostic.
+  Stdin content/missing-prompt errors also exit `2`, using their distinct fixed
+  input diagnostics after reader settlement; stdin read failures exit `1`.
 - Configuration, root, credential, composition, session, provider, engine,
   terminal-event, and runtime failures exit `1` with one fixed redacted
   `machine-god ask` diagnostic.
@@ -173,7 +203,8 @@ and turn run on one scoped worker and exchange one owned output item at a time
 over capacity-one work and acknowledgement channels. A separately owned
 current-thread signal runtime registers before valid-request effects and uses
 capacity-one signal and control channels. It switches from setup handling to
-turn forwarding only after a concrete cancellable turn exists, then stays live
+turn forwarding when owned cancellable stdin acquisition or a concrete
+cancellable turn exists, then stays live
 through diagnostics and final process exit. Output or setup backpressure
 therefore cannot stop signal observation or leave Tokio's installed Unix signal
 handler without an active receiver. If signal registration is only partially

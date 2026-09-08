@@ -22,8 +22,8 @@ mod status;
 use std::sync::Arc;
 
 use ask::{
-    AskCommandHost, InteractiveSessionSelection, ProductionAskCommandHost, parse_prompt_arguments,
-    run_ask, run_interactive, run_resume,
+    AskCommandHost, InteractiveSessionSelection, ProductionAskCommandHost, parse_ask_arguments,
+    parse_prompt_arguments, run_ask, run_interactive, run_piped_ask, run_resume,
 };
 use background::{
     BackgroundCommandHost, ProductionBackgroundCommandHost, is_background_command, run_background,
@@ -193,6 +193,7 @@ enum Command {
     Ask {
         prompt: String,
     },
+    AskStdin,
     Doctor {
         json: bool,
     },
@@ -1517,6 +1518,9 @@ fn run_with_hosts_and_status(
         Command::Ask { prompt } => {
             return run_ask(ask_host, prompt, stdout, stderr, OUTPUT_FAILURE);
         }
+        Command::AskStdin => {
+            return run_piped_ask(ask_host, stdout, stderr, OUTPUT_FAILURE);
+        }
         Command::Doctor { json } => {
             return run_doctor(doctor_host, json, stdout, stderr);
         }
@@ -1572,8 +1576,9 @@ fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Comm
         // any command-specific parsing or effects.
         "help" | "--help" | "-h" => return Ok(Command::Help),
         "--version" | "-V" => Command::Identity,
-        "ask" => Command::Ask {
-            prompt: parse_prompt_arguments(arguments.by_ref())?,
+        "ask" => match parse_ask_arguments(arguments.by_ref())? {
+            Some(prompt) => Command::Ask { prompt },
+            None => Command::AskStdin,
         },
         "doctor" => {
             let json = match arguments.next() {
@@ -1696,7 +1701,7 @@ fn help() -> String {
             "Usage:\n",
             "  machine-god\n",
             "  machine-god help\n",
-            "  machine-god ask [--] <prompt...>\n",
+            "  machine-god ask [--] [<prompt...>]\n",
             "  machine-god background [last | <unsigned-decimal-u64>] [--json]\n",
             "  machine-god doctor [--json]\n",
             "  machine-god models [--json]\n",
@@ -2405,6 +2410,11 @@ mod tests {
     }
 
     impl AskCommandHost for FakeAskHost {
+        fn execute_stdin(&self, _output: &mut dyn io::Write) -> AskCommandExecution {
+            self.calls.set(self.calls.get() + 1);
+            self.prompts.borrow_mut().push("<stdin>".into());
+            AskCommandExecution::without_finalizer(self.outcome)
+        }
         fn execute_interactive(
             &self,
             selection: InteractiveSessionSelection,
@@ -3808,6 +3818,9 @@ mod tests {
 
     #[test]
     fn ask_parser_accepts_only_the_documented_top_level_grammar() {
+        for arguments in [vec![OsString::from("ask")], vec!["ask".into(), "--".into()]] {
+            assert_eq!(parse_arguments(arguments), Ok(Command::AskStdin));
+        }
         assert_eq!(
             parse_arguments([
                 OsString::from("ask"),
@@ -3830,8 +3843,6 @@ mod tests {
         );
 
         for arguments in [
-            vec![OsString::from("ask")],
-            vec![OsString::from("ask"), OsString::from("--")],
             vec![OsString::from("ask"), OsString::from("--flag")],
             vec![OsString::from("ask"), OsString::from(" \t\r\n")],
             vec![
@@ -4036,7 +4047,7 @@ mod tests {
     #[test]
     fn help_lists_doctor_before_models_with_the_frozen_summary() {
         let output = help();
-        assert!(output.contains("  machine-god ask [--] <prompt...>\n"));
+        assert!(output.contains("  machine-god ask [--] [<prompt...>]\n"));
         assert!(output.contains("  ask          Run one noninteractive prompt\n"));
         let doctor_usage = output
             .find("  machine-god doctor [--json]\n")
@@ -4119,11 +4130,32 @@ mod tests {
     }
 
     #[test]
+    fn no_argument_ask_dispatches_only_the_owned_stdin_host_seam() {
+        for args in [vec!["ask"], vec!["ask", "--"]] {
+            let host = FakeAskHost::new(AskCommandOutcome::Completed, b"unused");
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            assert_eq!(
+                run_with_ask_host(
+                    args.into_iter().map(OsString::from),
+                    &mut stdout,
+                    &mut stderr,
+                    &host
+                ),
+                0
+            );
+            assert_eq!(host.calls.get(), 1);
+            assert_eq!(*host.prompts.borrow(), ["<stdin>"]);
+            assert!(host.selections.borrow().is_empty());
+            assert!(stdout.is_empty());
+            assert!(stderr.is_empty());
+        }
+    }
+
+    #[test]
     fn invalid_ask_arguments_precede_all_host_effects() {
         let host = FakeAskHost::new(AskCommandOutcome::Completed, b"never");
         for arguments in [
-            vec![OsString::from("ask")],
-            vec![OsString::from("ask"), OsString::from("--")],
             vec![OsString::from("ask"), OsString::from("--json")],
             vec![OsString::from("ask"), OsString::from(" \t\r\n")],
             vec![OsString::from("ask"), OsString::from("nul\0prompt")],

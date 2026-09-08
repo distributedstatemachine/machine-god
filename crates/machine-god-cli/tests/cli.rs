@@ -55,7 +55,7 @@ const HELP: &str = concat!(
     "Usage:\n",
     "  machine-god\n",
     "  machine-god help\n",
-    "  machine-god ask [--] <prompt...>\n",
+    "  machine-god ask [--] [<prompt...>]\n",
     "  machine-god background [last | <unsigned-decimal-u64>] [--json]\n",
     "  machine-god doctor [--json]\n",
     "  machine-god models [--json]\n",
@@ -1256,8 +1256,6 @@ fn malformed_arguments_have_one_diagnostic_and_exit_two() {
         &["--json", "models"][..],
         &["--json", "permissions"][..],
         &["--json", "doctor"][..],
-        &["ask"][..],
-        &["ask", "--"][..],
         &["ask", "--flag"][..],
         &["ask", " \t\r\n"][..],
         &["doctor", "--json=true"][..],
@@ -1345,12 +1343,7 @@ fn invalid_ask_grammar_precedes_configuration_state_credentials_and_stdin() {
     let config_root = temporary.path().join("missing-config");
     let state_root = temporary.path().join("missing-state");
 
-    for arguments in [
-        &["ask"][..],
-        &["ask", "--"][..],
-        &["ask", "--flag"][..],
-        &["ask", " \t\r\n"][..],
-    ] {
+    for arguments in [&["ask", "--flag"][..], &["ask", " \t\r\n"][..]] {
         let output = machine_god()
             .args(arguments)
             .env_remove("HOME")
@@ -1365,6 +1358,176 @@ fn invalid_ask_grammar_precedes_configuration_state_credentials_and_stdin() {
         assert_eq!(output.stderr, INVALID_ARGUMENTS.as_bytes());
         assert!(!config_root.exists());
         assert!(!state_root.exists());
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn piped_ask_command(temporary: &TestDirectory) -> Command {
+    let workspace = temporary.path().join("workspace");
+    fs::create_dir_all(&workspace).unwrap();
+    let mut command = machine_god();
+    command
+        .args(["ask"])
+        .current_dir(workspace)
+        .env_remove("HOME")
+        .env("XDG_CONFIG_HOME", temporary.path().join("config"))
+        .env("XDG_STATE_HOME", temporary.path().join("state"))
+        .env_remove("VERCEL_OIDC_TOKEN")
+        .env_remove("AI_GATEWAY_API_KEY")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn piped_ask_regular_files_validate_whole_input_before_configuration() {
+    for (bytes, diagnostic) in [
+        (vec![], "machine-god ask: a nonempty prompt is required\n"),
+        (
+            b" \t\r\n".to_vec(),
+            "machine-god ask: a nonempty prompt is required\n",
+        ),
+        (
+            b"prefix\0suffix".to_vec(),
+            "machine-god ask: stdin prompt must be UTF-8 without NUL\n",
+        ),
+        (
+            b"prefix\xff".to_vec(),
+            "machine-god ask: stdin prompt must be UTF-8 without NUL\n",
+        ),
+        (
+            vec![b' '; 256 * 1024 + 1],
+            "machine-god ask: stdin prompt exceeds 256 KiB\n",
+        ),
+    ] {
+        let temporary = TestDirectory::new("piped-ask-file-errors");
+        let path = temporary.path().join("input");
+        fs::write(&path, bytes).unwrap();
+        let output =
+            ScopedChild::spawn(piped_ask_command(&temporary).stdin(fs::File::open(path).unwrap()))
+                .wait_with_output(Duration::from_secs(15));
+        assert_eq!(output.status.code(), Some(2));
+        assert_eq!(output.stderr, diagnostic.as_bytes());
+        assert!(output.stdout.is_empty());
+        assert!(!temporary.path().join("config").exists());
+        assert!(!temporary.path().join("state").exists());
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn piped_ask_null_and_unsupported_directory_have_distinct_input_errors() {
+    let temporary = TestDirectory::new("piped-ask-input-kinds");
+    for (source, code, diagnostic) in [
+        (
+            Stdio::null(),
+            2,
+            "machine-god ask: a nonempty prompt is required\n",
+        ),
+        (
+            Stdio::from(fs::File::open(temporary.path()).unwrap()),
+            1,
+            "machine-god ask: failed to read prompt from stdin\n",
+        ),
+    ] {
+        let output = ScopedChild::spawn(piped_ask_command(&temporary).arg("--").stdin(source))
+            .wait_with_output(Duration::from_secs(15));
+        assert_eq!(output.status.code(), Some(code));
+        assert_eq!(output.stderr, diagnostic.as_bytes());
+        assert!(output.stdout.is_empty());
+        assert!(!temporary.path().join("state").exists());
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn piped_ask_waits_through_newlines_until_eof_before_native_setup() {
+    let temporary = TestDirectory::new("piped-ask-whole-stream");
+    fs::create_dir(temporary.path().join("state")).unwrap();
+    let mut child = ScopedChild::spawn(piped_ask_command(&temporary).stdin(Stdio::piped()));
+    std::io::Write::write_all(
+        child.child_mut().stdin.as_mut().unwrap(),
+        b" \nfirst line\n",
+    )
+    .unwrap();
+    child.assert_running_for(Duration::from_millis(150));
+    assert!(!temporary.path().join("state/machine-god").exists());
+    child.close_stdin_with(b"second line \n");
+    let output = child.wait_with_output(Duration::from_secs(15));
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.stderr, ASK_FAILURE.as_bytes());
+    assert!(output.stdout.is_empty());
+    assert!(temporary.path().join("state/machine-god").is_dir());
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn piped_ask_exact_bound_regular_file_reaches_normal_native_setup() {
+    let temporary = TestDirectory::new("piped-ask-exact-bound");
+    fs::create_dir(temporary.path().join("state")).unwrap();
+    let path = temporary.path().join("input");
+    fs::write(&path, vec![b'x'; 256 * 1024]).unwrap();
+    let output =
+        ScopedChild::spawn(piped_ask_command(&temporary).stdin(fs::File::open(path).unwrap()))
+            .wait_with_output(Duration::from_secs(15));
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.stderr, ASK_FAILURE.as_bytes());
+    assert!(temporary.path().join("state/machine-god").is_dir());
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn piped_ask_explicit_argv_never_waits_for_stdin_or_substitutes_its_bytes() {
+    let temporary = TestDirectory::new("piped-ask-argv-precedence");
+    fs::create_dir(temporary.path().join("state")).unwrap();
+    for (argument, expected_code, diagnostic) in [
+        ("explicit prompt", 1, ASK_FAILURE),
+        ("--bad-flag", 2, INVALID_ARGUMENTS),
+        ("", 2, INVALID_ARGUMENTS),
+    ] {
+        let mut child = ScopedChild::spawn(
+            piped_ask_command(&temporary)
+                .arg(argument)
+                .stdin(Stdio::piped()),
+        );
+        let retained_stdin = child.child_mut().stdin.take().unwrap();
+        let output = child.wait_with_output(Duration::from_secs(15));
+        assert_eq!(output.status.code(), Some(expected_code));
+        assert_eq!(output.stderr, diagnostic.as_bytes());
+        assert!(output.stdout.is_empty());
+        drop(retained_stdin);
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn piped_ask_pending_pipe_signals_exit_without_waiting_for_eof() {
+    for (signal, expected) in [("-INT", 130), ("-TERM", 143)] {
+        let temporary = TestDirectory::new("piped-ask-signal");
+        let (read, mut retained_stdin) = std::io::pipe().unwrap();
+        let observation = read.try_clone().unwrap();
+        std::io::Write::write_all(&mut retained_stdin, b"read ownership barrier").unwrap();
+        let mut child = ScopedChild::spawn(piped_ask_command(&temporary).stdin(read));
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while rustix::io::ioctl_fionread(&observation).unwrap() != 0 {
+            assert!(child.child_mut().try_wait().unwrap().is_none());
+            assert!(Instant::now() < deadline, "stdin consumption did not begin");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            Command::new("/bin/kill")
+                .args([signal, &child.child_mut().id().to_string()])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let output = child.wait_with_output(Duration::from_secs(15));
+        assert_eq!(output.status.code(), Some(expected));
+        assert!(output.stdout.is_empty());
+        assert!(output.stderr.is_empty());
+        assert!(!temporary.path().join("state").exists());
+        drop(retained_stdin);
     }
 }
 

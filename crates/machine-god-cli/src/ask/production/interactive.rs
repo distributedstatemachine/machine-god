@@ -5,6 +5,7 @@ mod composer;
 mod composer_view;
 mod driver;
 mod framing;
+mod history_view;
 mod input_lines;
 mod presentation;
 mod resize;
@@ -102,6 +103,8 @@ pub(super) fn execute(
                                 if let Some(catalog) = &catalog {
                                     options = options.with_catalog(catalog.clone());
                                 }
+                                let replay_history =
+                                    !matches!(selection, InteractiveSessionSelection::Fresh);
                                 let owner = NativeInteractiveSession::open(
                                     host,
                                     options,
@@ -123,6 +126,7 @@ pub(super) fn execute(
                                     },
                                 )?
                                 .with_resources(catalog, user_config)
+                                .with_history(replay_history)
                                 .with_raw_input(columns.get(), Some(resize));
                                 let result = poll_fn(|cx| driver.poll(cx, signals)).await;
                                 Ok(driver.into_presentation(result))
@@ -277,6 +281,7 @@ fn settle(
 }
 
 struct Render {
+    history: bool,
     clear_row: bool,
     bytes: Vec<u8>,
     offset: usize,
@@ -323,6 +328,7 @@ struct Driver {
     catalog: Option<Arc<machine_god_native::NativeModelCatalog>>,
     user_config: Option<Arc<machine_god_native::NativeUserConfigStore>>,
     frontend: Option<Frontend>,
+    history: Option<history_view::HistoryView>,
 }
 
 struct Frontend {
@@ -368,6 +374,7 @@ impl Driver {
             catalog: None,
             user_config: None,
             frontend: None,
+            history: None,
         })
     }
     fn with_resources(
@@ -393,11 +400,36 @@ impl Driver {
         });
         self
     }
+    fn with_history(mut self, replay: bool) -> Self {
+        if replay {
+            self.history = Some(history_view::HistoryView::new(
+                self.owner.runtime().record(),
+            ));
+        }
+        self
+    }
+
+    fn replace_history(&mut self) {
+        self.discard_history();
+        self.history = Some(history_view::HistoryView::new(
+            self.owner.runtime().record(),
+        ));
+    }
+
+    fn discard_history(&mut self) {
+        self.history.take();
+        // An acknowledged/in-flight chunk cannot be retracted. Never emit its
+        // unsent remainder after confirmed installation of another session.
+        if self.render.as_ref().is_some_and(|render| render.history) {
+            self.render.take();
+        }
+    }
     fn shutdown(&mut self) {
         if self.shutting_down {
             return;
         }
         self.shutting_down = true;
+        self.discard_history();
         self.input.reset_raw_draft();
         self.inbox.close();
         self.scope_active = false;

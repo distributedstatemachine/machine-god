@@ -47,12 +47,40 @@ input, and one credit permits one read of at most 4,096 bytes. Results have fixe
 bounded framing; malformed frames are fixed errors. This library contract does
 not by itself install the private dispatch in a CLI binary.
 
-Only readable FIFO/pipe descriptors and character devices proven to be TTYs are
-accepted. Other devices, regular files, directories, and sockets are rejected
-before reading or changing flags. There is no cancellation guarantee for
-arbitrary regular-file or network-filesystem reads because those inputs are not
-supported. Descriptor numbers, paths and input content are excluded from errors
-and debug output.
+The interactive variants accept only readable FIFO/pipe descriptors and character
+devices proven to be TTYs. For those variants, other devices, regular files,
+directories, and sockets are rejected before reading or changing flags. They do
+not support arbitrary regular-file or network-filesystem reads. Descriptor
+numbers, paths and input content are excluded from errors and debug output.
+
+## Explicit headless streams
+
+`PreserveSharedStream { input, helper, null_device }` is separate headless input
+authority. It accepts readable FIFO and regular-file descriptors without changing
+their shared status flags. Regular files always use the existing owned helper,
+even with `O_NONBLOCK`: that flag does not make filesystem reads cancellable.
+The retained file is inherited directly, without reopening a path or following
+a symlink; reads advance its shared offset. The caller reserves consumption and
+offset control across aliases. Already-nonblocking FIFOs retain the existing
+direct path; blocking FIFOs use the helper.
+
+The fixed private handshake explicitly distinguishes stream admission from the
+original FIFO-only helper mode. Both sides validate the selected mode before
+any read credit, and mismatched/old replies fail closed. Each credit still permits
+at most one 4,096-byte read; no additional prefetch, framing, or accumulated file
+content is introduced. Dropping or cancelling the adapter retains the exact
+helper through termination and actual reap, including deferred cleanup. A blocked
+filesystem syscall has no hard cancellation deadline; completion remains pending
+until the helper really exits, rather than leaving an uninterruptible read in
+the main process.
+
+`null_device: Some(file)` is explicit caller-supplied authority for a known-null
+device, not one discovered by the adapter. When both the input and proof are
+readable character devices with the same device identity, input is empty without any read
+or helper. With absent or mismatched proof, character devices—including TTYs—are
+rejected by stream mode; directories and sockets are always rejected. Ordinary
+interactive variants do not acquire this exception. Construction and unpolled
+input remain inert, and errors remain fixed and redacted.
 
 ## Admission, bounds and settlement
 

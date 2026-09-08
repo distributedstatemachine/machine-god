@@ -1,6 +1,6 @@
 //! Fixed private credit/result protocol; never reads input before a valid credit.
 
-use super::{Error, NativeInteractiveInputChunk, Outcome, Shared};
+use super::{Error, InputMode, NativeInteractiveInputChunk, Outcome, Shared};
 use crate::interactive_input::NATIVE_INTERACTIVE_INPUT_CHUNK_BYTES;
 use rustix::fd::AsFd;
 use rustix::fs::FileType;
@@ -9,16 +9,22 @@ use std::os::unix::net::UnixStream;
 
 const HELLO: &[u8; 8] = b"MGI1HEL!";
 const READY: &[u8; 8] = b"MGI1RDY!";
+const STREAM_HELLO: &[u8; 8] = b"MGI1STR!";
+const STREAM_READY: &[u8; 8] = b"MGI1SRD!";
 const CREDIT: u8 = 1;
 const DATA: u8 = 1;
 const EOF: u8 = 2;
 const FAILED: u8 = 3;
 
-pub(super) fn handshake(channel: &UnixStream, shared: &Shared) -> Outcome {
-    write_parent(channel, HELLO, shared)?;
+pub(super) fn handshake(channel: &UnixStream, shared: &Shared, mode: InputMode) -> Outcome {
+    let (hello, expected) = match mode {
+        InputMode::Interactive => (HELLO, READY),
+        InputMode::Stream => (STREAM_HELLO, STREAM_READY),
+    };
+    write_parent(channel, hello, shared)?;
     let mut ready = [0; 8];
     read_parent(channel, &mut ready, shared)?;
-    if &ready == READY {
+    if &ready == expected {
         Ok(())
     } else {
         Err(Error::Read)
@@ -79,26 +85,21 @@ fn write_parent(mut channel: &UnixStream, mut bytes: &[u8], shared: &Shared) -> 
 }
 
 /// Runs only through the exact private CLI helper dispatch. The invoking native
-/// owner supplies pipe stdin and a private duplex socket on stderr. No shell,
+/// owner supplies stream stdin and a private duplex socket on stderr. No shell,
 /// configuration, provider, or ordinary output initialization is performed.
 ///
 /// # Errors
 /// Rejects missing descriptor/protocol authority and native read/write errors.
-/// Blocking pipe reads occur only inside this exact owned, killable process.
+/// Blocking pipe/file reads occur only inside this exact owned, killable process.
 #[doc(hidden)]
 pub fn run_interactive_input_helper() -> Outcome {
     let input = std::io::stdin();
     let channel = std::io::stderr();
     if FileType::from_raw_mode(
-        rustix::fs::fstat(input.as_fd())
+        rustix::fs::fstat(channel.as_fd())
             .map_err(|_| Error::InvalidDescriptor)?
             .st_mode,
-    ) != FileType::Fifo
-        || FileType::from_raw_mode(
-            rustix::fs::fstat(channel.as_fd())
-                .map_err(|_| Error::InvalidDescriptor)?
-                .st_mode,
-        ) != FileType::Socket
+    ) != FileType::Socket
     {
         return Err(Error::InvalidDescriptor);
     }
@@ -130,10 +131,26 @@ fn write_exact(channel: &impl AsFd, mut bytes: &[u8]) -> Outcome {
 fn run_endpoint(input: impl AsFd, channel: impl AsFd) -> Outcome {
     let mut hello = [0; 8];
     read_exact(&channel, &mut hello)?;
-    if &hello != HELLO {
-        return Err(Error::Read);
+    let (mode, ready) = match &hello {
+        value if value == HELLO => (InputMode::Interactive, READY),
+        value if value == STREAM_HELLO => (InputMode::Stream, STREAM_READY),
+        _ => return Err(Error::Read),
+    };
+    let kind = FileType::from_raw_mode(
+        rustix::fs::fstat(&input)
+            .map_err(|_| Error::InvalidDescriptor)?
+            .st_mode,
+    );
+    if kind != FileType::Fifo
+        && !(matches!(mode, InputMode::Stream) && kind == FileType::RegularFile)
+    {
+        return Err(Error::InvalidDescriptor);
     }
-    write_exact(&channel, READY)?;
+    let flags = rustix::fs::fcntl_getfl(&input).map_err(|_| Error::InvalidDescriptor)?;
+    if flags.contains(rustix::fs::OFlags::WRONLY) {
+        return Err(Error::InvalidDescriptor);
+    }
+    write_exact(&channel, ready)?;
     loop {
         let mut credit = [0];
         read_exact(&channel, &mut credit)?;

@@ -66,7 +66,7 @@ the terminal. Termios restoration and native joins do not depend on that tail.
 | --- | --- | --- |
 | `help` | Show command help | This page |
 | No arguments | Start a fresh interactive session | This page |
-| `ask [--] <prompt...>` | Run one noninteractive request | [ask](ask-cli.md) |
+| `ask [--] [<prompt...>]` | Run one noninteractive request from argv or whole stdin | [ask](ask-cli.md) |
 | `background [last\|<id>] [--json]` | Inspect bounded persisted background history | [background](background-cli.md) |
 | `doctor [--json]` | Run bounded local health checks | [doctor](doctor-cli.md) |
 | `models [--json]` | List the bounded AI Gateway model catalog | [models](models-cli.md) |
@@ -118,15 +118,27 @@ exits `1` with a fixed diagnostic before configuration, credentials or sessions
 are acquired. The explicitly supplied native pipe adapter is not permission to
 treat piped bare input as an upstream-compatible interactive prompt.
 
-Input is LF/CRLF-framed, with a 256 KiB UTF-8 line bound. Invalid or oversized
-lines produce one fixed error and drain to the next line boundary. One input
-reader serves prompts and commands. Permission choices distinguish once, turn,
+The raw UTF-8 composer described above serves both prompts and commands through
+one input reader. Permission choices distinguish once, turn,
 session and deny; session permission is not saved-rule confirmation. Ordinary
 questions present ordered numbered options plus `other <answer>` and cancellation.
 Answers require the exact native prompt token and acknowledged question page.
-Already-received chunks and partial lines retain their original binding; they
+Already-received chunks and partial drafts retain their original binding; they
 cannot be retargeted to a replacement prompt or next question page. This does
 not claim timestamps or provenance for unread bytes still in the kernel.
+
+Initial resume displays a single canonical record snapshot; confirmed session
+installation replaces that projection with the destination's history. Unchanged
+or rejected transitions do not manufacture a new history. Projection neither
+starts inference nor re-executes tools, and never uses the compacted provider
+context as a substitute for canonical history. Historical user/assistant text is
+escaped and streamed in bounded chunks; raw system instructions and tool-result
+details are not printed as ordinary transcript text. Tool call/result summaries
+describe recorded identities and outcomes, not fresh execution receipts.
+History traversal yields after bounded work. Native progress, modal answers and
+shutdown remain independent of history output acknowledgements. Unsent obsolete
+history is discarded on confirmed replacement or shutdown, while already-written
+bytes cannot be retracted. Typed current lifecycle/save receipts remain retained.
 
 Native session ownership drives admitted turns, accepted saves, transitions and
 shutdown independently of stdout acknowledgements. Typed save and lifecycle

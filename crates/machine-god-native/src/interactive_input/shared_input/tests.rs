@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
+mod stream;
+
 pub(super) struct ChildObservations {
     pub(super) pid: AtomicU32,
     pub(super) deferred: Option<Arc<AtomicBool>>,

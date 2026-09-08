@@ -4,9 +4,7 @@ use machine_god_core::{BoxFuture, SessionId};
 use machine_god_native::NativeSessionCatalogCursor;
 use std::{
     ffi::OsString,
-    fmt,
-    fmt::Write as _,
-    io,
+    fmt, io,
     task::{Context, Poll, Waker},
 };
 
@@ -140,6 +138,7 @@ impl SessionsSnapshot {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn workspace_text(path: Option<&std::path::Path>) -> (Option<String>, Option<String>) {
+    use std::fmt::Write as _;
     use std::os::unix::ffi::OsStrExt as _;
     let Some(path) = path else {
         return (None, None);

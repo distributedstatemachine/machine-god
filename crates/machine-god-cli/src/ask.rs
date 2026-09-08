@@ -20,8 +20,35 @@ pub(crate) enum AskCommandOutcome {
     OperationalFailure,
     OutputFailure,
     TerminalRequired,
+    PromptInput(AskPromptInputError),
     Interrupted,
     Terminated,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    not(any(target_os = "linux", target_os = "macos")),
+    allow(
+        dead_code,
+        reason = "whole-stdin production input is supported on Linux/macOS"
+    )
+)]
+pub(crate) enum AskPromptInputError {
+    Missing,
+    TooLong,
+    Invalid,
+    Read,
+}
+
+impl AskPromptInputError {
+    const fn diagnostic(self) -> &'static str {
+        match self {
+            Self::Missing => "machine-god ask: a nonempty prompt is required\n",
+            Self::TooLong => "machine-god ask: stdin prompt exceeds 256 KiB\n",
+            Self::Invalid => "machine-god ask: stdin prompt must be UTF-8 without NUL\n",
+            Self::Read => "machine-god ask: failed to read prompt from stdin\n",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -41,7 +68,11 @@ impl AskCommandOutcome {
     const fn exit_code(self) -> u8 {
         match self {
             Self::Completed => 0,
-            Self::OperationalFailure | Self::OutputFailure | Self::TerminalRequired => 1,
+            Self::OperationalFailure
+            | Self::OutputFailure
+            | Self::TerminalRequired
+            | Self::PromptInput(AskPromptInputError::Read) => 1,
+            Self::PromptInput(_) => 2,
             Self::Interrupted => 130,
             Self::Terminated => 143,
         }
@@ -49,6 +80,10 @@ impl AskCommandOutcome {
 }
 
 pub(crate) trait AskCommandHost {
+    fn execute_stdin(&self, _output: &mut dyn io::Write) -> AskCommandExecution {
+        AskCommandExecution::without_finalizer(AskCommandOutcome::OperationalFailure)
+    }
+
     fn execute_interactive(
         &self,
         _selection: InteractiveSessionSelection,
@@ -112,6 +147,14 @@ pub(crate) struct ProductionAskCommandHost;
 pub(crate) fn parse_prompt_arguments(
     arguments: impl IntoIterator<Item = OsString>,
 ) -> Result<String, ()> {
+    parse_ask_arguments(arguments)?.ok_or(())
+}
+
+/// None requests stdin only when no prompt argument was supplied. An explicit
+/// empty/invalid argv prompt never falls back to ambient input.
+pub(crate) fn parse_ask_arguments(
+    arguments: impl IntoIterator<Item = OsString>,
+) -> Result<Option<String>, ()> {
     let mut parts = Vec::new();
     let mut joined_len = 0usize;
     let mut recognizing_options = true;
@@ -140,7 +183,10 @@ pub(crate) fn parse_prompt_arguments(
         parts.push(argument);
     }
 
-    if parts.is_empty() || !has_visible_byte {
+    if parts.is_empty() {
+        return Ok(None);
+    }
+    if !has_visible_byte {
         return Err(());
     }
 
@@ -152,7 +198,21 @@ pub(crate) fn parse_prompt_arguments(
         prompt.push_str(&part);
     }
     debug_assert_eq!(prompt.len(), joined_len);
-    Ok(prompt)
+    Ok(Some(prompt))
+}
+
+pub(crate) fn run_piped_ask(
+    host: &impl AskCommandHost,
+    stdout: &mut impl io::Write,
+    stderr: &mut impl io::Write,
+    output_failure: &'static str,
+) -> u8 {
+    finish_prompt_execution(
+        host.execute_stdin(stdout),
+        stderr,
+        ASK_OPERATIONAL_FAILURE,
+        output_failure,
+    )
 }
 
 pub(crate) fn run_ask(
@@ -202,6 +262,15 @@ fn run_prompt(
     output_failure: &'static str,
 ) -> u8 {
     let execution = host.execute(selection, prompt, stdout);
+    finish_prompt_execution(execution, stderr, operational_failure, output_failure)
+}
+
+fn finish_prompt_execution(
+    execution: AskCommandExecution,
+    stderr: &mut impl io::Write,
+    operational_failure: &'static str,
+    output_failure: &'static str,
+) -> u8 {
     let outcome = execution.outcome();
     let diagnostic = match outcome {
         AskCommandOutcome::OperationalFailure => Some(operational_failure),
@@ -209,6 +278,7 @@ fn run_prompt(
             Some("machine-god requires an interactive terminal (TTY).\n")
         }
         AskCommandOutcome::OutputFailure => Some(output_failure),
+        AskCommandOutcome::PromptInput(error) => Some(error.diagnostic()),
         AskCommandOutcome::Completed
         | AskCommandOutcome::Interrupted
         | AskCommandOutcome::Terminated => None,
@@ -233,6 +303,7 @@ pub(crate) fn run_interactive(
             Some("machine-god requires an interactive terminal (TTY).\n")
         }
         AskCommandOutcome::OutputFailure => Some(output_failure),
+        AskCommandOutcome::PromptInput(error) => Some(error.diagnostic()),
         AskCommandOutcome::Completed
         | AskCommandOutcome::Interrupted
         | AskCommandOutcome::Terminated => None,
@@ -246,6 +317,7 @@ pub(crate) fn run_interactive(
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod production {
     mod interactive;
+    mod piped_prompt;
     use std::future::{Future, poll_fn};
     use std::pin::Pin;
     use std::sync::{Arc, mpsc};
@@ -348,6 +420,7 @@ mod production {
     }
 
     enum AskSignalControl {
+        EnterSetup(mpsc::SyncSender<()>),
         ActivateTurn(mpsc::SyncSender<()>),
         EnterFinal(mpsc::SyncSender<()>),
         Finish(u8),
@@ -370,6 +443,10 @@ mod production {
 
         fn activate_turn(&self) -> Result<(), ()> {
             self.transition(AskSignalControl::ActivateTurn)
+        }
+
+        fn enter_setup(&self) -> Result<(), ()> {
+            self.transition(AskSignalControl::EnterSetup)
         }
 
         fn enter_final(&self) -> Result<(), ()> {
@@ -566,6 +643,18 @@ mod production {
     ) -> Poll<AskSignalGuardianResult> {
         let mut deferred_control_failure = None;
         match control.poll_recv(context) {
+            Poll::Ready(Some(AskSignalControl::EnterSetup(ready))) => {
+                // An already forwarded first signal remains authoritative.
+                // The joined-input caller must observe its queued receipt;
+                // switching now could let a later signal exit with a new code.
+                if !state.turn_signal_latched {
+                    state.phase = AskSignalPhase::Setup;
+                }
+                if ready.send(()).is_err() {
+                    deferred_control_failure = Some(AskSignalGuardianResult::ControlClosed);
+                }
+                context.waker().wake_by_ref();
+            }
             Poll::Ready(Some(AskSignalControl::ActivateTurn(ready))) => {
                 state.phase = AskSignalPhase::Turn;
                 state.turn_signal_latched = false;
@@ -910,6 +999,33 @@ mod production {
     }
 
     impl AskCommandHost for ProductionAskCommandHost {
+        fn execute_stdin(&self, output: &mut dyn std::io::Write) -> AskCommandExecution {
+            let Ok(mut controller) = AskSignalController::spawn() else {
+                return AskCommandExecution::without_finalizer(
+                    AskCommandOutcome::OperationalFailure,
+                );
+            };
+            let result = if controller.registration_complete() {
+                piped_prompt::read(&mut controller)
+            } else {
+                Err(AskCommandOutcome::OperationalFailure)
+            };
+            match result {
+                Ok(prompt) => {
+                    let (outcome, controller) = execute_production(
+                        SessionSelection::CreateGenerated,
+                        prompt,
+                        output,
+                        controller,
+                    );
+                    AskCommandExecution::with_finalizer(outcome, controller)
+                }
+                Err(outcome) => {
+                    let _ = controller.enter_final();
+                    AskCommandExecution::with_finalizer(outcome, controller)
+                }
+            }
+        }
         fn execute_interactive(
             &self,
             selection: super::InteractiveSessionSelection,
@@ -2029,6 +2145,50 @@ mod production {
         }
 
         #[test]
+        fn joined_input_setup_handoff_preserves_first_signal_or_exits_new_signal() {
+            for already_forwarded in [false, true] {
+                let (control_sender, mut control_receiver) = tokio::sync::mpsc::channel(1);
+                let (ready, acknowledged) = mpsc::sync_channel(1);
+                control_sender
+                    .try_send(AskSignalControl::EnterSetup(ready))
+                    .unwrap();
+                let (turn_sender, mut turn_receiver) = tokio::sync::mpsc::channel(1);
+                if already_forwarded {
+                    turn_sender.try_send(AskSignal::Interrupt).unwrap();
+                }
+                let mut state = AskSignalGuardianState {
+                    phase: super::AskSignalPhase::Turn,
+                    turn_signal_latched: already_forwarded,
+                    ..AskSignalGuardianState::default()
+                };
+                let mut listeners = QueuedGuardianSignals {
+                    interrupt: false,
+                    terminate: true,
+                };
+                let result = poll_signal_guardian(
+                    &mut Context::from_waker(std::task::Waker::noop()),
+                    &mut control_receiver,
+                    &turn_sender,
+                    &mut listeners,
+                    &mut state,
+                );
+                acknowledged.recv().unwrap();
+                if already_forwarded {
+                    assert!(result.is_pending());
+                    assert_eq!(turn_receiver.try_recv(), Ok(AskSignal::Interrupt));
+                    assert!(state.turn_signal_latched);
+                    assert!(matches!(state.phase, super::AskSignalPhase::Turn));
+                } else {
+                    assert!(matches!(
+                        result,
+                        Poll::Ready(AskSignalGuardianResult::Exit(143))
+                    ));
+                    assert!(turn_receiver.try_recv().is_err());
+                }
+            }
+        }
+
+        #[test]
         fn full_turn_signal_channel_coalesces_without_replacing_first_signal() {
             let (_control_sender, mut control_receiver) = tokio::sync::mpsc::channel(1);
             let (turn_sender, mut turn_receiver) = tokio::sync::mpsc::channel(1);
@@ -2410,6 +2570,9 @@ mod production {
                     let mut transitions = Vec::new();
                     while let Some(command) = control_receiver.blocking_recv() {
                         match command {
+                            AskSignalControl::EnterSetup(_) => {
+                                panic!("turn does not restart setup")
+                            }
                             AskSignalControl::ActivateTurn(ready) => {
                                 transitions.push("turn");
                                 ready.send(()).expect("turn transition should acknowledge");

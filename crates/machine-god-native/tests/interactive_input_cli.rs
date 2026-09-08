@@ -9,6 +9,7 @@ use machine_god_native::{
 use rustix::fs::{Mode, OFlags};
 use std::fs::File;
 use std::io::Write as _;
+use std::io::{Seek, SeekFrom};
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::task::{Context, Poll, Waker};
@@ -48,6 +49,80 @@ fn input(file: File, stop: CancellationToken) -> NativeInteractiveInput {
         },
         stop,
     )
+}
+
+fn stream_input(file: File, stop: CancellationToken) -> NativeInteractiveInput {
+    NativeInteractiveInput::new(
+        NativeInteractiveInputSource::PreserveSharedStream {
+            input: file,
+            helper: helper(),
+            null_device: Some(File::open("/dev/null").unwrap()),
+        },
+        stop,
+    )
+}
+
+#[test]
+fn production_stream_helper_reads_retained_regular_file_from_offset_then_eof() {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let (path, mut file) = loop {
+        let path = std::env::temp_dir().join(format!(
+            "machine-god-cli-stream-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        ));
+        match std::fs::OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(&path)
+        {
+            Ok(file) => break (path, file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => panic!("stream fixture unavailable: {error}"),
+        }
+    };
+    std::fs::remove_file(path).unwrap();
+    file.write_all(&[b'x'; 8200]).unwrap();
+    file.seek(SeekFrom::Start(3)).unwrap();
+    let mut alias = file.try_clone().unwrap();
+    let original = flags(&alias);
+    let mut input = stream_input(file, CancellationToken::new());
+    assert_eq!(alias.stream_position().unwrap(), 3);
+    for len in [4096, 4096, 5] {
+        assert_eq!(next(&mut input).unwrap().as_bytes(), vec![b'x'; len]);
+    }
+    assert!(next(&mut input).is_none());
+    joined(&input.completion());
+    assert_eq!(alias.stream_position().unwrap(), 8200);
+    assert_eq!(flags(&alias), original);
+}
+
+#[test]
+fn production_stream_pipe_cancels_owned_idle_helper_and_preserves_flags() {
+    let (file, mut writer) = pipe();
+    let alias = file.try_clone().unwrap();
+    let original = flags(&alias);
+    let mut input = stream_input(file, CancellationToken::new());
+    writer.write_all(b"stream").unwrap();
+    assert_eq!(next(&mut input).unwrap().as_bytes(), b"stream");
+    assert!(poll(&mut input).is_pending());
+    let completion = input.completion();
+    drop(input);
+    joined(&completion);
+    assert_eq!(flags(&alias), original);
+    drop(alias);
+    assert_eq!(
+        writer.write(b"x").unwrap_err().kind(),
+        std::io::ErrorKind::BrokenPipe
+    );
+}
+
+#[test]
+fn production_stream_explicit_null_authority_is_empty() {
+    let mut input = stream_input(File::open("/dev/null").unwrap(), CancellationToken::new());
+    assert!(next(&mut input).is_none());
+    joined(&input.completion());
 }
 
 fn pipe() -> (File, File) {

@@ -97,14 +97,23 @@ impl NativeInteractiveInputHelper {
 }
 
 pub(super) enum AcquiredInput {
+    Eof,
     Direct(File),
     Helper(PipeHelper),
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum InputMode {
+    Interactive,
+    Stream,
 }
 
 pub(super) fn acquire(
     input: File,
     helper: NativeInteractiveInputHelper,
     shared: &Shared,
+    mode: InputMode,
+    null_device: Option<File>,
 ) -> Result<AcquiredInput, Error> {
     if shared.cancelled() {
         return Err(Error::Cancelled);
@@ -115,7 +124,22 @@ pub(super) fn acquire(
         return Err(Error::InvalidDescriptor);
     }
     match FileType::from_raw_mode(original.st_mode) {
-        FileType::CharacterDevice => {
+        FileType::CharacterDevice if matches!(mode, InputMode::Stream) => {
+            let proof = null_device.ok_or(Error::InvalidDescriptor)?;
+            let proof_flags =
+                rustix::fs::fcntl_getfl(&proof).map_err(|_| Error::InvalidDescriptor)?;
+            if proof_flags.contains(OFlags::WRONLY) {
+                return Err(Error::InvalidDescriptor);
+            }
+            let proof = rustix::fs::fstat(proof).map_err(|_| Error::InvalidDescriptor)?;
+            if FileType::from_raw_mode(proof.st_mode) != FileType::CharacterDevice
+                || proof.st_rdev != original.st_rdev
+            {
+                return Err(Error::InvalidDescriptor);
+            }
+            Ok(AcquiredInput::Eof)
+        }
+        FileType::CharacterDevice if matches!(mode, InputMode::Interactive) => {
             let settings =
                 rustix::termios::tcgetattr(&input).map_err(|_| Error::InvalidDescriptor)?;
             // Reopening a PTY master clone node can allocate a different
@@ -132,7 +156,10 @@ pub(super) fn acquire(
             Ok(AcquiredInput::Direct(fresh))
         }
         FileType::Fifo if flags.contains(OFlags::NONBLOCK) => Ok(AcquiredInput::Direct(input)),
-        FileType::Fifo => PipeHelper::start(input, helper, shared).map(AcquiredInput::Helper),
+        FileType::Fifo => PipeHelper::start(input, helper, shared, mode).map(AcquiredInput::Helper),
+        FileType::RegularFile if matches!(mode, InputMode::Stream) => {
+            PipeHelper::start(input, helper, shared, mode).map(AcquiredInput::Helper)
+        }
         _ => Err(Error::InvalidDescriptor),
     }
 }
@@ -207,6 +234,7 @@ impl PipeHelper {
         input: File,
         helper: NativeInteractiveInputHelper,
         shared: &Shared,
+        mode: InputMode,
     ) -> Result<Self, Error> {
         let mut command = helper.command()?;
         if shared.cancelled() {
@@ -236,9 +264,11 @@ impl PipeHelper {
             channel: Some(parent),
             child,
         };
-        if let Err(error) =
-            wire::handshake(owned.channel.as_ref().ok_or(Error::Unavailable)?, shared)
-        {
+        if let Err(error) = wire::handshake(
+            owned.channel.as_ref().ok_or(Error::Unavailable)?,
+            shared,
+            mode,
+        ) {
             return Err(owned.settle(Err(error)).unwrap_err());
         }
         Ok(owned)

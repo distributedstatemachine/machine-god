@@ -1,6 +1,7 @@
 use super::*;
 use std::{
     cell::RefCell,
+    fmt::Write as _,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},

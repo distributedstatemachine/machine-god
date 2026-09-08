@@ -40,6 +40,16 @@ pub enum NativeInteractiveInputSource {
         input: File,
         helper: NativeInteractiveInputHelper,
     },
+    /// Headless FIFO or regular-file input with unchanged shared status flags.
+    /// Regular files always use the owned helper, even with `O_NONBLOCK`;
+    /// filesystem reads must not strand an in-process native worker.
+    PreserveSharedStream {
+        input: File,
+        helper: NativeInteractiveInputHelper,
+        /// Explicit caller-supplied known-null device authority. A matching
+        /// character-device input returns EOF without reading or spawning.
+        null_device: Option<File>,
+    },
 }
 
 impl fmt::Debug for NativeInteractiveInputSource {
@@ -49,6 +59,7 @@ impl fmt::Debug for NativeInteractiveInputSource {
             Self::PreserveNonblocking(_) => "PreserveNonblocking(..)",
             Self::AdoptNonblockingStatus(_) => "AdoptNonblockingStatus(..)",
             Self::PreserveShared { .. } => "PreserveShared(..)",
+            Self::PreserveSharedStream { .. } => "PreserveSharedStream(..)",
         })
     }
 }
@@ -185,8 +196,9 @@ impl Shared {
 ///
 /// The caller reserves input consumption and status-flag control for this
 /// adapter's lifetime: no alias may clear `O_NONBLOCK` or change termios. This semantic authority
-/// cannot be inferred from `File` ownership or duplication. Only readable pipes
-/// and verified TTYs are supported, not arbitrary filesystem or device reads.
+/// cannot be inferred from `File` ownership or duplication. Regular files require
+/// the explicit helper-backed `PreserveSharedStream` authority; ordinary input
+/// modes remain restricted to readable pipes and verified TTYs.
 pub struct NativeInteractiveInput {
     source: Option<NativeInteractiveInputSource>,
     shared: Arc<Shared>,
@@ -344,7 +356,8 @@ fn prepare(
 ) -> Result<PreparedDescriptor, NativeInteractiveInputError> {
     let (file, adopt) = match source {
         NativeInteractiveInputSource::Disabled
-        | NativeInteractiveInputSource::PreserveShared { .. } => {
+        | NativeInteractiveInputSource::PreserveShared { .. }
+        | NativeInteractiveInputSource::PreserveSharedStream { .. } => {
             return Err(NativeInteractiveInputError::InvalidDescriptor);
         }
         NativeInteractiveInputSource::PreserveNonblocking(file) => (file, false),
@@ -420,7 +433,33 @@ fn run_worker(source: NativeInteractiveInputSource, shared: &Shared, io: &impl I
     }
     let source = match source {
         NativeInteractiveInputSource::PreserveShared { input, helper } => {
-            match shared_input::acquire(input, helper, shared)? {
+            match shared_input::acquire(
+                input,
+                helper,
+                shared,
+                shared_input::InputMode::Interactive,
+                None,
+            )? {
+                shared_input::AcquiredInput::Eof => return Ok(()),
+                shared_input::AcquiredInput::Direct(file) => {
+                    NativeInteractiveInputSource::PreserveNonblocking(file)
+                }
+                shared_input::AcquiredInput::Helper(helper) => return helper.drive(shared),
+            }
+        }
+        NativeInteractiveInputSource::PreserveSharedStream {
+            input,
+            helper,
+            null_device,
+        } => {
+            match shared_input::acquire(
+                input,
+                helper,
+                shared,
+                shared_input::InputMode::Stream,
+                null_device,
+            )? {
+                shared_input::AcquiredInput::Eof => return Ok(()),
                 shared_input::AcquiredInput::Direct(file) => {
                     NativeInteractiveInputSource::PreserveNonblocking(file)
                 }
