@@ -2,7 +2,10 @@
 //!
 //! This is not a durable journal, a transcript rollback, or pathname CAS.
 use std::fmt;
-use std::sync::Mutex;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 
 use machine_god_core::CancellationToken;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -87,6 +90,185 @@ mod tests {
             CancellationToken::new(),
         ))
         .unwrap();
+    }
+
+    #[test]
+    fn file_undo_clear_reservation_fences_all_five_tools_and_abort_preserves_history() {
+        let temp = Temp::new();
+        let tracker = Arc::new(FileUndoTracker::new());
+        write(&temp, &tracker, "file", "before");
+        fs::write(temp.0.join("source"), "source").unwrap();
+        let reservation = tracker.reserve_clear().unwrap();
+        assert!(matches!(tracker.reserve_clear(), Err(FileUndoError::Busy)));
+        assert_eq!(tracker.clear(), Err(FileUndoError::Busy));
+        assert_eq!(
+            tracker.latest_unavailable_reason(),
+            Err(FileUndoError::Busy)
+        );
+        assert_eq!(
+            tracker.undo_last(&CancellationToken::new()),
+            Err(FileUndoError::Busy)
+        );
+        let calls: Vec<(Box<dyn Tool>, serde_json::Value)> = vec![
+            (
+                Box::new(
+                    crate::WriteFileTool::open(&temp.0)
+                        .unwrap()
+                        .with_undo_tracker(tracker.clone()),
+                ),
+                json!({"path":"file","content":"changed"}),
+            ),
+            (
+                Box::new(
+                    crate::EditFileTool::open(&temp.0)
+                        .unwrap()
+                        .with_undo_tracker(tracker.clone()),
+                ),
+                json!({"path":"file","old_string":"before","new_string":"changed"}),
+            ),
+            (
+                Box::new(
+                    crate::DeleteFileTool::open(&temp.0)
+                        .unwrap()
+                        .with_undo_tracker(tracker.clone()),
+                ),
+                json!({"path":"file"}),
+            ),
+            (
+                Box::new(
+                    crate::RenameFileTool::open(&temp.0)
+                        .unwrap()
+                        .with_undo_tracker(tracker.clone()),
+                ),
+                json!({"old_path":"file","new_path":"renamed"}),
+            ),
+            (
+                Box::new(
+                    crate::CopyFileTool::open(&temp.0)
+                        .unwrap()
+                        .with_undo_tracker(tracker.clone()),
+                ),
+                json!({"source":"source","destination":"copied"}),
+            ),
+        ];
+        for (tool, arguments) in calls {
+            let error =
+                ready(tool.execute(context(), arguments, CancellationToken::new())).unwrap_err();
+            assert_eq!(error.code, "file_undo_tracking_failed");
+        }
+        let root = File::open(&temp.0).unwrap();
+        assert_eq!(
+            tracker.copy_replace(&root, "source", "file", &CancellationToken::new()),
+            Err(FileUndoError::Busy)
+        );
+        assert_eq!(
+            tracker.rename_replace(&root, "source", "file", &CancellationToken::new()),
+            Err(FileUndoError::Busy)
+        );
+        assert_eq!(fs::read_to_string(temp.0.join("file")).unwrap(), "before");
+        assert_eq!(fs::read_to_string(temp.0.join("source")).unwrap(), "source");
+        assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 2);
+        drop(reservation);
+        assert_eq!(
+            tracker.undo_last(&CancellationToken::new()),
+            Ok(FileUndoOutcome::Removed("file".into()))
+        );
+        assert_eq!(fs::read_to_string(temp.0.join("source")).unwrap(), "source");
+    }
+
+    #[test]
+    fn file_undo_clear_reservation_preserves_unavailable_marker_until_commit() {
+        let temp = Temp::new();
+        let tracker = Arc::new(FileUndoTracker::new());
+        File::create(temp.0.join("file"))
+            .unwrap()
+            .set_len((MAX_FILE_UNDO_PREIMAGE_BYTES + 1) as u64)
+            .unwrap();
+        write(&temp, &tracker, "file", "after");
+        let expected = Some(FileUndoUnavailableReason::PreimageTooLarge);
+        assert_eq!(tracker.latest_unavailable_reason().unwrap(), expected);
+        let reservation = tracker.reserve_clear().unwrap();
+        drop(reservation);
+        assert_eq!(tracker.latest_unavailable_reason().unwrap(), expected);
+        tracker.reserve_clear().unwrap().commit();
+        assert_eq!(tracker.latest_unavailable_reason().unwrap(), None);
+        assert_eq!(
+            tracker.undo_last(&CancellationToken::new()),
+            Ok(FileUndoOutcome::Empty)
+        );
+        assert_eq!(fs::read_to_string(temp.0.join("file")).unwrap(), "after");
+    }
+
+    #[test]
+    fn file_undo_clear_reservation_is_send_and_commit_only_forgets_authority() {
+        fn assert_send<T: Send>() {}
+        assert_send::<FileUndoClearReservation>();
+        let temp = Temp::new();
+        let tracker = Arc::new(FileUndoTracker::new());
+        write(&temp, &tracker, "file", "retained");
+        fs::write(temp.0.join(".machine-god-undo-recovery"), "do not remove").unwrap();
+        let reservation = tracker.reserve_clear().unwrap();
+        std::thread::spawn(move || reservation.commit())
+            .join()
+            .unwrap();
+        assert_eq!(
+            tracker.undo_last(&CancellationToken::new()),
+            Ok(FileUndoOutcome::Empty)
+        );
+        assert_eq!(fs::read_to_string(temp.0.join("file")).unwrap(), "retained");
+        assert_eq!(
+            fs::read_to_string(temp.0.join(".machine-god-undo-recovery")).unwrap(),
+            "do not remove"
+        );
+        write(&temp, &tracker, "file", "new");
+        tracker.undo_last(&CancellationToken::new()).unwrap();
+        assert_eq!(fs::read_to_string(temp.0.join("file")).unwrap(), "retained");
+        let next = tracker.reserve_clear().unwrap();
+        drop(next);
+        tracker.clear().unwrap();
+    }
+
+    #[test]
+    fn file_undo_clear_reservation_abort_unwind_and_poison_remain_fail_closed() {
+        let temp = Temp::new();
+        for commit in [false, true] {
+            let tracker = Arc::new(FileUndoTracker::new());
+            write(&temp, &tracker, "file", "retained");
+            let reservation = tracker.reserve_clear().unwrap();
+            let poisoned = tracker.clone();
+            assert!(
+                std::thread::spawn(move || {
+                    let _state = poisoned.state.lock().unwrap();
+                    panic!("deliberate private-state poison");
+                })
+                .join()
+                .is_err()
+            );
+            if commit {
+                reservation.commit();
+            } else {
+                drop(reservation);
+            }
+            assert!(!tracker.clear_reserved.load(Ordering::Acquire));
+            assert_eq!(tracker.clear(), Err(FileUndoError::Busy));
+            assert!(matches!(tracker.reserve_clear(), Err(FileUndoError::Busy)));
+            assert_eq!(fs::read_to_string(temp.0.join("file")).unwrap(), "retained");
+        }
+        let tracker = Arc::new(FileUndoTracker::new());
+        write(&temp, &tracker, "unwind", "retained");
+        let reservation = tracker.reserve_clear().unwrap();
+        assert!(
+            std::thread::spawn(move || {
+                let _reservation = reservation;
+                panic!("abort handoff");
+            })
+            .join()
+            .is_err()
+        );
+        assert_eq!(
+            tracker.undo_last(&CancellationToken::new()),
+            Ok(FileUndoOutcome::Removed("unwind".into()))
+        );
     }
 
     #[test]
@@ -716,6 +898,7 @@ pub enum FileUndoOutcome {
 /// preimage reads and undo authority in addition to ordinary tool authority.
 #[derive(Default)]
 pub struct FileUndoTracker {
+    clear_reserved: AtomicBool,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     state: Mutex<native::State>,
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -728,7 +911,84 @@ impl fmt::Debug for FileUndoTracker {
     }
 }
 
+/// Exclusive owned admission for forgetting undo history. It holds no mutex
+/// guard and may cross an await or move to another thread. Dropping without
+/// committing releases admission without changing entries or barriers.
+#[must_use]
+pub struct FileUndoClearReservation {
+    tracker: Arc<FileUndoTracker>,
+    active: bool,
+}
+
+impl fmt::Debug for FileUndoClearReservation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("FileUndoClearReservation { .. }")
+    }
+}
+
+impl FileUndoClearReservation {
+    /// Infallibly forgets retained entries and barriers, without modifying files
+    /// or deleting recovery artifacts. Retained descriptors drop outside the
+    /// tracker mutex. Existing mutex poison remains fail-closed for later calls.
+    pub fn commit(mut self) {
+        let mut state = self
+            .tracker
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let previous = std::mem::take(&mut *state);
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            *state = ();
+        }
+        self.active = false;
+        self.tracker.clear_reserved.store(false, Ordering::Release);
+        drop(state);
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        drop(previous);
+    }
+}
+
+impl Drop for FileUndoClearReservation {
+    fn drop(&mut self) {
+        if self.active {
+            let _state = self
+                .tracker
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            self.tracker.clear_reserved.store(false, Ordering::Release);
+        }
+    }
+}
+
 impl FileUndoTracker {
+    /// Reserves exclusive clear admission without forgetting history or touching
+    /// files. The returned owned, nonclone reservation is `Send`.
+    ///
+    /// # Errors
+    /// Returns `Busy` for active tracker work, another reservation or poison.
+    pub fn reserve_clear(self: &Arc<Self>) -> Result<FileUndoClearReservation, FileUndoError> {
+        let _state = self.state.try_lock().map_err(|_| FileUndoError::Busy)?;
+        self.check_clear_reservation()?;
+        self.clear_reserved.store(true, Ordering::Release);
+        Ok(FileUndoClearReservation {
+            tracker: Arc::clone(self),
+            active: true,
+        })
+    }
+
+    // Native callers check this only while holding the tracker state mutex,
+    // making reservation and every tracked effect's admission mutually exclusive.
+    fn check_clear_reservation(&self) -> Result<(), FileUndoError> {
+        if self.clear_reserved.load(Ordering::Acquire) {
+            Err(FileUndoError::Busy)
+        } else {
+            Ok(())
+        }
+    }
+
     /// Copies a regular file over an absent or regular destination under explicit
     /// native authority, retaining the destination's preimage. Unlike the default
     /// copy tool this explicitly allows replacement. Both snapshots are bounded.
@@ -749,6 +1009,7 @@ impl FileUndoTracker {
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = (workspace, source, destination, cancellation);
+            self.check_clear_reservation()?;
             Err(FileUndoError::Rejected)
         }
     }
@@ -764,6 +1025,7 @@ impl FileUndoTracker {
     /// Returns `Busy` if another operation owns the tracker.
     pub fn clear(&self) -> Result<(), FileUndoError> {
         let mut state = self.state.try_lock().map_err(|_| FileUndoError::Busy)?;
+        self.check_clear_reservation()?;
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             *state = native::State::default();
@@ -784,6 +1046,7 @@ impl FileUndoTracker {
         &self,
     ) -> Result<Option<FileUndoUnavailableReason>, FileUndoError> {
         let state = self.state.try_lock().map_err(|_| FileUndoError::Busy)?;
+        self.check_clear_reservation()?;
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             if state.ambiguous {
@@ -815,6 +1078,7 @@ impl FileUndoTracker {
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = cancellation;
+            self.check_clear_reservation()?;
             Err(FileUndoError::Rejected)
         }
     }
@@ -840,6 +1104,7 @@ impl FileUndoTracker {
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = (workspace, old_path, new_path, cancellation);
+            self.check_clear_reservation()?;
             Err(FileUndoError::Rejected)
         }
     }
@@ -947,6 +1212,7 @@ mod native {
         ) -> Result<Transaction<'_>, FileUndoError> {
             check(cancellation)?;
             let mut state = self.state.try_lock().map_err(|_| FileUndoError::Busy)?;
+            self.check_clear_reservation()?;
             if state.ambiguous {
                 return Err(FileUndoError::Ambiguous);
             }
@@ -1700,6 +1966,7 @@ mod native {
     ) -> Result<FileUndoOutcome, FileUndoError> {
         check(cancellation)?;
         let mut state = tracker.state.try_lock().map_err(|_| FileUndoError::Busy)?;
+        tracker.check_clear_reservation()?;
         if state.ambiguous {
             return Err(FileUndoError::Ambiguous);
         }
@@ -2195,6 +2462,45 @@ mod native {
             assert_eq!(fs::read(temp.0.join("a")).unwrap(), b"new-owner");
             assert_eq!(fs::read(temp.0.join(name)).unwrap(), b"preimage");
             assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 2);
+        }
+
+        #[test]
+        fn file_undo_clear_reservation_preserves_barriers_and_rejects_active_transaction() {
+            let temp = Temp::new();
+            let tracker = std::sync::Arc::new(FileUndoTracker::new());
+            let root = fs::File::open(&temp.0).unwrap();
+            let mut transaction = tracker
+                .begin(
+                    root.as_fd(),
+                    Operation::Replace("file"),
+                    &CancellationToken::new(),
+                )
+                .unwrap();
+            assert!(matches!(tracker.reserve_clear(), Err(FileUndoError::Busy)));
+            transaction.uncertain();
+            drop(transaction);
+            let reservation = tracker.reserve_clear().unwrap();
+            assert!(tracker.state.lock().unwrap().ambiguous);
+            drop(reservation);
+            assert_eq!(
+                tracker.undo_last(&CancellationToken::new()),
+                Err(FileUndoError::Ambiguous)
+            );
+            let reservation = tracker.reserve_clear().unwrap();
+            assert!(matches!(
+                tracker.begin(
+                    root.as_fd(),
+                    Operation::Replace("file"),
+                    &CancellationToken::new()
+                ),
+                Err(FileUndoError::Busy)
+            ));
+            reservation.commit();
+            assert!(!tracker.state.lock().unwrap().ambiguous);
+            assert_eq!(
+                tracker.undo_last(&CancellationToken::new()),
+                Ok(FileUndoOutcome::Empty)
+            );
         }
 
         #[test]

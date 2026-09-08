@@ -167,6 +167,24 @@ pub(crate) struct LifecycleQuiescence {
 }
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 impl LifecycleQuiescence {
+    pub(crate) fn belongs_to(&self, gate: &Arc<LifecycleGate>) -> bool {
+        Arc::ptr_eq(&self.gate, gate)
+    }
+    /// A read witness, not a new admission permit. The owning guard keeps the
+    /// exact generation closed after this synchronous check succeeds.
+    pub(crate) fn check_idle(&self) -> Result<(), LifecycleError> {
+        let state = self.gate.state.lock().expect("lifecycle poisoned");
+        if self.retired
+            || state.phase != LifecyclePhase::Quiescing
+            || state.generation != self.generation
+        {
+            return Err(LifecycleError::Stale);
+        }
+        if state.permits != 0 {
+            return Err(LifecycleError::Busy);
+        }
+        Ok(())
+    }
     pub(crate) fn wait_idle(&mut self) -> BoxFuture<'_, Result<(), LifecycleError>> {
         Box::pin(IdleWait { owner: self })
     }

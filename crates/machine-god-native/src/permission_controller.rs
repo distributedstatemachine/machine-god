@@ -410,6 +410,23 @@ impl NativePermissionSession {
         Ok(lock(&self.state).policy.clone())
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos", test))]
+    pub(crate) fn snapshot_quiescent(
+        &self,
+        quiescence: &crate::conversation_lifecycle::LifecycleQuiescence,
+    ) -> Result<NativePermissionPolicySnapshot, PermissionError> {
+        let gate = self.lifecycle.get().ok_or_else(unavailable)?;
+        if !quiescence.belongs_to(gate) {
+            return Err(unavailable());
+        }
+        quiescence.check_idle().map_err(|_| unavailable())?;
+        let state = lock(&self.state);
+        if state.retired {
+            return Err(unavailable());
+        }
+        Ok(state.policy.clone())
+    }
+
     /// Changes future taken jobs only. This is not a sandbox backend switch.
     /// # Errors
     /// Rejects quiescing or retired lifecycle ownership.

@@ -291,7 +291,9 @@ lifecycle authority and current-policy candidate attachment. Combined checks
 pass 14 resume, 37 runtime, 18 controller, 11 preparer and 47 reference-host tests,
 plus 24 internal lifecycle/route tests. These are prerequisites for the native
 interactive owner, not a delivered session-switch feature.
-CLI regression tests and workspace Clippy are still running for this integration.
+Exact `f36444f` also passes 153 CLI unit, 89 command and ten frame tests,
+workspace Clippy, formatting and documentation checks. Its three released worker
+trees and integration worktree are removed; commits remain recoverable.
 The terminal component now supports bounded exact-principal handoff/reset,
 immutable journal ownership, generation/writer revocation, transferred history
 and retained-indeterminate cleanup. Its 74 focused worker tests and scoped Clippy
@@ -299,6 +301,12 @@ pass; the integration passes 104 terminal host/start/catalog/wait tests with one
 existing helper ignore. Pinned clear/new carry terminals forward;
 reset and live resume use stop/forget. The native owner must preserve that
 distinction and retain started operations through their actual receipts.
+Owned undo-clear reservation and guard-owned settled selection snapshots pass
+focused native and WASI worker checks. Their integration passes 30 undo, 38
+runtime and 47 reference-host tests, workspace Clippy, formatting and docs checks.
+The host exposes exact workspace/model/observation allocations and cheap runtime
+identity. Native interactive ownership, independent composed tests and bounded
+explicit-descriptor input remain active; the CLI driver is not yet composed.
 
 The integrated preparer passes all five real file mutations, actual reviewer
 Allow/Ask/error and cancellation, read-grant/reset, canonical terminal identity,

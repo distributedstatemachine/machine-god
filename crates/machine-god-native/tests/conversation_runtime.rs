@@ -950,6 +950,60 @@ impl SessionStore for GatedStore {
 }
 
 #[test]
+fn quiescent_selection_snapshot_waits_for_save_and_reads_actual_current_selection() {
+    let initial = record(None);
+    let store = InMemorySessionStore::from_records(BTreeMap::from([(initial.id.clone(), initial)]));
+    let gate = Arc::new(Gate::default());
+    let runtime = runtime_with_store(
+        Arc::new(GatedStore {
+            store,
+            gate: gate.clone(),
+        }),
+        ScriptedModelProvider::new("test", []),
+        preferences("private/original"),
+        None,
+    );
+    let mut flush = runtime.flush_model_preferences(100);
+    let waker = noop_waker();
+    assert!(
+        flush
+            .as_mut()
+            .poll(&mut Context::from_waker(&waker))
+            .is_pending()
+    );
+    let selected = preferences("private/changed");
+    runtime.set_model_preferences(selected.clone()).unwrap();
+    let catalog = catalog();
+    runtime.set_model_catalog(catalog.clone()).unwrap();
+    let mut guard = runtime.begin_quiescence().unwrap();
+    assert!(matches!(
+        guard.selection_snapshot(),
+        Err(NativeConversationRuntimeError::Busy)
+    ));
+    gate.release();
+    assert!(matches!(
+        block_on(flush).unwrap(),
+        NativeModelPreferencePersistence::Saved { .. }
+    ));
+    block_on(guard.wait_idle()).unwrap();
+    let snapshot = guard.selection_snapshot().unwrap();
+    assert_eq!(snapshot.model_preferences(), &selected);
+    assert!(Arc::ptr_eq(snapshot.model_catalog().unwrap(), &catalog));
+    assert!(snapshot.permission_policy().is_none());
+    assert_eq!(
+        format!("{snapshot:?}"),
+        "NativeQuiescentSelectionSnapshot { .. }"
+    );
+    assert!(runtime.status().model_preferences_pending);
+    guard.retire().unwrap();
+    assert!(matches!(
+        runtime.begin_quiescence(),
+        Err(NativeConversationRuntimeError::Retired)
+    ));
+    assert_eq!(snapshot.model_preferences(), &selected);
+}
+
+#[test]
 fn selection_during_pending_flush_is_not_misreported_as_the_saved_generation() {
     let initial = record(None);
     let store = InMemorySessionStore::from_records(BTreeMap::from([(initial.id.clone(), initial)]));
@@ -1628,9 +1682,14 @@ fn quiescence_waits_through_native_finalizer_and_drop_is_only_release() {
     let mut guard = runtime.begin_quiescence().unwrap();
     assert!(guard.wait_idle().as_mut().poll(&mut cx).is_pending());
     assert!(runtime.status().active);
+    assert!(matches!(
+        guard.selection_snapshot(),
+        Err(NativeConversationRuntimeError::Busy)
+    ));
     drop(turn);
     block_on(guard.wait_idle()).unwrap();
     // This checks release only: the pending finalizer did not report a save.
+    assert!(guard.selection_snapshot().is_ok());
     drop(guard);
     assert!(!runtime.status().active);
     assert_eq!(runtime.status().phase, NativeConversationRuntimePhase::Open);

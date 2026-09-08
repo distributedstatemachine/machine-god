@@ -29,6 +29,25 @@ impl Drop for ReentrantWake {
 }
 
 #[test]
+fn idle_read_witness_requires_exact_live_generation_and_no_permits() {
+    let gate = LifecycleGate::new();
+    let other = LifecycleGate::new();
+    let permit = gate.acquire().unwrap();
+    let guard = gate.begin_quiescence().unwrap();
+    assert!(guard.belongs_to(&gate));
+    assert!(!guard.belongs_to(&other));
+    assert_eq!(guard.check_idle(), Err(LifecycleError::Busy));
+    drop(permit);
+    assert_eq!(guard.check_idle(), Ok(()));
+    gate.state.lock().unwrap().generation += 1;
+    assert_eq!(guard.check_idle(), Err(LifecycleError::Stale));
+    gate.state.lock().unwrap().phase = LifecyclePhase::Retired;
+    assert_eq!(guard.check_idle(), Err(LifecycleError::Stale));
+    drop(guard);
+    assert_eq!(gate.phase(), LifecyclePhase::Retired);
+}
+
+#[test]
 fn exact_permits_bound_and_retirement_is_irreversible() {
     let gate = LifecycleGate::new();
     let other = LifecycleGate::new();

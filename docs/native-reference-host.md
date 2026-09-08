@@ -160,6 +160,15 @@ the native runtime subsequently captures taken-job policy. Saved rules are
 validated, not converted to restored grants. Direct engine sessions without the
 required routes cannot execute permission-governed calls.
 
+`host.model_routes()` and `host.observations()` return the exact optional shared
+registries injected into search and file tools. The host retains these
+allocations so later conversation composition cannot substitute a disconnected
+registry. Access does not register a session, inspect files or publish history;
+hosts without those explicit selections return `None`.
+`host.workspace_root()` is the canonical workspace association captured during
+composition. It does not reopen or revalidate that pathname after external
+renames or replacements; the tools' actual authority remains descriptor-owned.
+
 `configure_conversation_permissions_with_policy(conversation, policy)` uses the
 same exact routes with a trusted host's explicit current selection instead of
 reapplying configuration defaults. It rejects hosts without native permission

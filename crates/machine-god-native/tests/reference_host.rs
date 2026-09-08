@@ -509,6 +509,7 @@ fn conversation_composition_shares_exact_undo_across_all_five_mutations_with_opt
             "one caller, one host, and five exact tool shares"
         );
         assert!(Arc::ptr_eq(&tracker, &host.undo_tracker().unwrap()));
+        assert_eq!(host.workspace_root(), workspace.canonicalize().unwrap());
         assert!(transport.requests().is_empty());
         assert!(prompter.requests().is_empty());
         assert_eq!(
@@ -708,6 +709,7 @@ fn conversation_prepared_root_replacement_does_not_redirect_forward_or_inverse_a
     let temporary = TemporaryDirectory::new("conversation-replaced-roots");
     let (prepared, state) = complete_terminal_roots(temporary.path());
     let workspace = temporary.path().join("workspace");
+    let captured_workspace = workspace.canonicalize().unwrap();
     seed_undo_files(&workspace, "");
     let retained_workspace = temporary.path().join("retained-workspace");
     let retained_state = state.with_file_name("retained-state");
@@ -733,6 +735,7 @@ fn conversation_prepared_root_replacement_does_not_redirect_forward_or_inverse_a
         )
         .unwrap();
     let (_, events) = collect_turn(&host, "retained-undo-roots");
+    assert_eq!(host.workspace_root(), captured_workspace);
     assert_completed(&events);
     assert_five_mutation_permissions(&prompter);
     assert_undo_files_mutated(&retained_workspace);
@@ -820,17 +823,22 @@ fn acquired_catalog_credential_moves_into_host_with_exact_source_without_runtime
         let catalog =
             AiGatewayModelCatalogHttpTransport::with_discovered_credential(&credential).unwrap();
         let tracker = Arc::new(FileUndoTracker::new());
+        let routes = Arc::new(machine_god_native::NativeConversationModelRoutes::new());
+        let observations = Arc::new(machine_god_native::NativeConversationObservations::new());
         let prompter = AllowingPrompter::default();
         let config = built_in_config();
         let origin = config.origin();
         let schema = config.config().schema_version();
         let host = NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots_and_conversation_and_credential(
             config, credential, prepared, Arc::new(prompter.clone()), inert_question_prompter(),
-            never_deadline(), NativeReferenceHostConversationOptions::new(Arc::clone(&tracker)),
+            never_deadline(), NativeReferenceHostConversationOptions::new(Arc::clone(&tracker))
+                .with_model_routes(routes.clone()).with_observations(observations.clone()),
         ).unwrap();
         assert_eq!(host.credential_source(), Some(source));
         assert_eq!(host.loaded_config().origin(), origin);
         assert_eq!(host.loaded_config().config().schema_version(), schema);
+        assert!(Arc::ptr_eq(&routes, &host.model_routes().unwrap()));
+        assert!(Arc::ptr_eq(&observations, &host.observations().unwrap()));
         assert_eq!(Arc::strong_count(&tracker), 7);
         assert!(Arc::ptr_eq(&tracker, &host.undo_tracker().unwrap()));
         assert!(prompter.requests().is_empty());
@@ -3008,6 +3016,9 @@ fn v1_projection_composes_without_migrating_observable_loaded_schema() {
     assert_eq!(host.credential_source(), None);
     assert!(host.terminal_lifecycle_requester().is_none());
     assert!(host.undo_tracker().is_none());
+    assert!(host.model_routes().is_none());
+    assert!(host.observations().is_none());
+    assert_eq!(host.workspace_root(), workspace.canonicalize().unwrap());
     assert!(transport.requests().is_empty());
     assert!(prompter.requests().is_empty());
     assert!(directory_is_empty(&sessions));

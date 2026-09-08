@@ -116,6 +116,43 @@ impl Fixture {
 }
 
 #[test]
+fn quiescent_snapshot_observes_settled_admitted_selection_without_public_admission() {
+    let f = Fixture::new();
+    let admitted = f.owner.acquire_lifecycle().unwrap();
+    let guard = f.gate.begin_quiescence().unwrap();
+    assert!(f.owner.snapshot_quiescent(&guard).is_err());
+    // Simulate a synchronous selection setter paused after its successful
+    // admission and before its state lock, then resuming behind the fence.
+    {
+        let mut state = lock(&f.owner.state);
+        state.policy.mode = PermissionMode::Yolo;
+        state.policy.sandbox_mode = NativeSandboxMode::Os;
+    }
+    assert!(f.owner.snapshot_quiescent(&guard).is_err());
+    drop(admitted);
+    let snapshot = f.owner.snapshot_quiescent(&guard).unwrap();
+    assert_eq!(snapshot.mode(), PermissionMode::Yolo);
+    assert_eq!(snapshot.sandbox_mode(), NativeSandboxMode::Os);
+    assert_eq!(snapshot.effective_sandbox_mode(), NativeSandboxMode::None);
+    assert!(Arc::ptr_eq(
+        &snapshot.configured,
+        &lock(&f.owner.state).policy.configured,
+    ));
+    assert!(f.owner.snapshot().is_err());
+    assert!(f.owner.set_mode(PermissionMode::Ask).is_err());
+    let other = LifecycleGate::new();
+    let foreign = other.begin_quiescence().unwrap();
+    assert!(f.owner.snapshot_quiescent(&foreign).is_err());
+    assert_eq!(lock(&f.controller.routes).len(), 1);
+    f.owner.retire();
+    assert!(f.owner.snapshot_quiescent(&guard).is_err());
+    assert!(lock(&f.controller.routes).is_empty());
+    assert_eq!(snapshot.mode(), PermissionMode::Yolo);
+    drop(guard);
+    assert!(f.owner.snapshot().is_err());
+}
+
+#[test]
 fn gate_attachment_cannot_overtake_an_already_admitted_unbound_control() {
     let f = Fixture::new();
     let controller = NativePermissionController::new(Arc::new(NoEffects), Arc::new(NoEffects));

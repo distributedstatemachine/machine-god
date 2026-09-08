@@ -103,6 +103,23 @@ forgets authority/barriers but does not remove filesystem recovery artifacts.
 The host must not describe an ambiguous result as successful undo or retry it
 automatically.
 
+`Arc<FileUndoTracker>::reserve_clear()` reserves exclusive clear admission and
+returns an owned, nonclone `Send` `FileUndoClearReservation`. It performs no
+filesystem work and retains no mutex guard across awaits. Entries, unavailable
+markers and uncertainty barriers remain intact until `commit(self)`. Dropping
+the reservation, including unwinding an abandoned handoff, preserves history.
+While reserved, cooperating clear, latest-marker queries, mutation admission and
+undo return `Busy` (existing cancellation/argument checks may still reject first).
+An already active mutation/undo prevents reservation acquisition.
+
+`commit` is synchronous and infallible: it clears retained authority/barriers,
+releases admission, and drops old descriptors/preimages outside the tracker
+mutex. It never undoes a file or deletes recovery artifacts. Commit and abort
+briefly recover the mutex solely to finish reservation ownership; they do not
+clear mutex poison or make subsequent poisoned-tracker calls succeed. Thus a
+host can reserve before a fallible terminal handoff, abort without losing undo
+history, or commit after handoff without another fallible undo acquisition.
+
 Portable Linux/macOS rename/unlink is not inode compare-and-swap. The shared
 tracker serializes cooperating injected tools, not unrelated actors, editors,
 untracked tools, or other processes. A parent can move after the last rewalk;

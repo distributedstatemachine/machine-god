@@ -10,7 +10,7 @@ use std::task::{Context, Poll};
 use futures_core::Stream;
 use machine_god_core::{
     BoxFuture, CancellationToken, EngineEvent, InferenceOptions, MAX_SAFE_JSON_DEPTH, Prompt,
-    SessionId, SessionRecord, SessionRevision, TurnEvent, TurnHandle,
+    SessionId, SessionIncarnationId, SessionRecord, SessionRevision, TurnEvent, TurnHandle,
 };
 
 use crate::conversation::{ConversationInput, PendingInput};
@@ -26,8 +26,8 @@ use crate::{
     NativeConversationHistory, NativeConversationModelRouteError, NativeConversationModelRoutes,
     NativeConversationTurn, NativeHistoryBackground, NativeHistoryFileEvidence,
     NativeModelCapabilities, NativeModelCatalog, NativeModelPreferences,
-    NativeModelPreferencesError, NativeModelSnapshot, NativePausedTurn, NativeUserConfigError,
-    NativeUserConfigStore,
+    NativeModelPreferencesError, NativeModelSnapshot, NativePausedTurn,
+    NativePermissionPolicySnapshot, NativeUserConfigError, NativeUserConfigStore,
 };
 
 /// Independent native queue bounds; core still applies its configured turn limits.
@@ -269,6 +269,12 @@ impl NativeConversationRuntime {
     #[must_use]
     pub fn id(&self) -> SessionId {
         self.conversation.id()
+    }
+
+    /// Reads exact session identity without cloning the transcript.
+    #[must_use]
+    pub fn incarnation_id(&self) -> SessionIncarnationId {
+        self.conversation.incarnation_id()
     }
 
     #[must_use]
@@ -885,6 +891,31 @@ impl fmt::Debug for NativeRuntimeQuiescence {
     }
 }
 impl NativeRuntimeQuiescence {
+    /// Copies actual settled selections while this exact guard keeps admission
+    /// closed. Does not copy grants, saved rules, history or persistence receipts.
+    /// # Errors
+    /// Returns `Busy` until every admitted operation has released ownership,
+    /// or rejects stale/retired ownership and unavailable permission routing.
+    /// # Panics
+    /// Panics if an earlier panic poisoned runtime or permission state.
+    pub fn selection_snapshot(
+        &self,
+    ) -> Result<NativeQuiescentSelectionSnapshot, NativeConversationRuntimeError> {
+        self.inner.check_idle()?;
+        let permission_policy = self
+            .conversation
+            .permissions()
+            .map(|owner| owner.snapshot_quiescent(&self.inner))
+            .transpose()
+            .map_err(|_| NativeConversationError::Engine)?;
+        let state = self.state.lock().expect("runtime state poisoned");
+        Ok(NativeQuiescentSelectionSnapshot {
+            model_preferences: state.preferences.clone(),
+            model_catalog: state.catalog.clone(),
+            permission_policy,
+        })
+    }
+
     /// Waits for owned operations to finish or drop, including native finalizers
     /// and independent policy/user-default saves. Construction is inert and only
     /// one waiter can borrow this guard. Idle does not imply successful saving.
@@ -913,6 +944,32 @@ impl NativeRuntimeQuiescence {
         };
         drop(removed);
         Ok(())
+    }
+}
+
+/// Bounded settled selection values, not an admission or persistence receipt.
+pub struct NativeQuiescentSelectionSnapshot {
+    model_preferences: NativeModelPreferences,
+    model_catalog: Option<Arc<NativeModelCatalog>>,
+    permission_policy: Option<NativePermissionPolicySnapshot>,
+}
+impl fmt::Debug for NativeQuiescentSelectionSnapshot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("NativeQuiescentSelectionSnapshot { .. }")
+    }
+}
+impl NativeQuiescentSelectionSnapshot {
+    #[must_use]
+    pub fn model_preferences(&self) -> &NativeModelPreferences {
+        &self.model_preferences
+    }
+    #[must_use]
+    pub fn model_catalog(&self) -> Option<&Arc<NativeModelCatalog>> {
+        self.model_catalog.as_ref()
+    }
+    #[must_use]
+    pub fn permission_policy(&self) -> Option<&NativePermissionPolicySnapshot> {
+        self.permission_policy.as_ref()
     }
 }
 
@@ -1055,5 +1112,69 @@ impl Write for OptionsBytes {
     }
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+    use machine_god_core::{Engine, SessionIncarnationId};
+    use machine_god_testkit::{
+        InMemorySessionStore, ScriptedModelProvider, ScriptedPermissionHandler,
+    };
+
+    #[test]
+    fn snapshot_reads_selection_published_by_previously_admitted_setter_after_fence() {
+        let engine = Engine::builder()
+            .session_store(InMemorySessionStore::default())
+            .provider(ScriptedModelProvider::new("fixture", []))
+            .permission_handler(ScriptedPermissionHandler::new([]))
+            .build()
+            .unwrap();
+        let session = engine
+            .create_session(
+                SessionId::new("settled-selection").unwrap(),
+                SessionIncarnationId::new("exact-life").unwrap(),
+            )
+            .unwrap();
+        let runtime = NativeConversationRuntime::new(
+            NativeConversation::from_session(session).unwrap(),
+            NativeModelPreferences::new(
+                "private/before",
+                crate::NativeReasoningEffort::default(),
+                false,
+            )
+            .unwrap(),
+            None,
+        )
+        .unwrap();
+        let admitted = runtime.lifecycle.acquire().unwrap();
+        let guard = runtime.begin_quiescence().unwrap();
+        assert!(matches!(
+            guard.selection_snapshot(),
+            Err(NativeConversationRuntimeError::Busy)
+        ));
+        // Deterministic interleaving of the synchronous setter's admission and
+        // state publication: a successful old admission may finish behind fence.
+        let selected = NativeModelPreferences::new(
+            "private/after",
+            crate::NativeReasoningEffort::default(),
+            true,
+        )
+        .unwrap();
+        runtime.state.lock().unwrap().preferences = selected.clone();
+        assert!(matches!(
+            guard.selection_snapshot(),
+            Err(NativeConversationRuntimeError::Busy)
+        ));
+        drop(admitted);
+        assert_eq!(
+            guard.selection_snapshot().unwrap().model_preferences(),
+            &selected
+        );
+        assert!(matches!(
+            runtime.set_model_preferences(selected),
+            Err(NativeConversationRuntimeError::Quiescing)
+        ));
     }
 }

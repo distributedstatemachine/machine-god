@@ -377,6 +377,7 @@ fn validate_terminal_program(program: &Path) -> Result<(), NativeReferenceHostBu
 /// Fully composed native reference host for the built-in AI Gateway selection.
 pub struct NativeReferenceHost {
     engine: Engine,
+    workspace_root: PathBuf,
     session_store: Arc<FileSessionStore>,
     session_lifecycle: NativeSessionLifecycle,
     loaded_config: LoadedNativeConfig,
@@ -384,6 +385,8 @@ pub struct NativeReferenceHost {
     terminal_shutdown: Option<crate::NativeOwnedWorkerCompletion>,
     terminal_lifecycle: Option<crate::NativeTerminalLifecycleRequester>,
     undo_tracker: Option<Arc<FileUndoTracker>>,
+    model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
+    observations: Option<Arc<crate::NativeConversationObservations>>,
     permissions: Option<Arc<crate::NativePermissionController>>,
     permission_contexts: Option<Arc<crate::NativePermissionContexts>>,
 }
@@ -642,12 +645,14 @@ impl NativeReferenceHost {
             Arc::new(EmptyMcpFeatureAuthority),
             Arc::new(EmptySubagentAuthority),
             selection,
-            model_routes,
-            observations,
+            model_routes.clone(),
+            observations.clone(),
             permissions,
         )
         .map(|mut host| {
             host.undo_tracker = undo_tracker;
+            host.model_routes = model_routes;
+            host.observations = observations;
             host
         })
     }
@@ -1047,12 +1052,14 @@ impl NativeReferenceHost {
             Arc::new(EmptyMcpFeatureAuthority),
             Arc::new(EmptySubagentAuthority),
             selection,
-            model_routes,
-            observations,
+            model_routes.clone(),
+            observations.clone(),
             permissions,
         )
         .map(|mut host| {
             host.undo_tracker = undo_tracker;
+            host.model_routes = model_routes;
+            host.observations = observations;
             host
         })
     }
@@ -1061,6 +1068,14 @@ impl NativeReferenceHost {
     #[must_use]
     pub const fn engine(&self) -> &Engine {
         &self.engine
+    }
+
+    /// Returns the canonical workspace association captured during composition.
+    /// Tools retain descriptor authority; this label is not a fresh pathname or
+    /// filesystem-identity check after an external rename or replacement.
+    #[must_use]
+    pub fn workspace_root(&self) -> &Path {
+        &self.workspace_root
     }
 
     /// Attaches this host's exact native permission routes before admitting work.
@@ -1133,6 +1148,20 @@ impl NativeReferenceHost {
     #[must_use]
     pub fn undo_tracker(&self) -> Option<Arc<FileUndoTracker>> {
         self.undo_tracker.clone()
+    }
+
+    /// Returns the exact optional current-model registry injected into search.
+    /// No registry or conversation registration is created by this accessor.
+    #[must_use]
+    pub fn model_routes(&self) -> Option<Arc<crate::NativeConversationModelRoutes>> {
+        self.model_routes.clone()
+    }
+
+    /// Returns the exact optional observation registry injected into file tools.
+    /// This does not inspect files, attach a conversation, or publish history.
+    #[must_use]
+    pub fn observations(&self) -> Option<Arc<crate::NativeConversationObservations>> {
+        self.observations.clone()
     }
 
     /// Returns the concrete store shared exactly with the engine, result reader,
@@ -1240,6 +1269,7 @@ impl NativeReferenceHost {
         let mut catalog =
             ReferenceHostToolCatalog::new(observations, engine_limits, permission_setup.is_some());
         let authority = catalog.workspace(workspace_tools);
+        let workspace_root = authority.canonical_workspace.clone();
         let SharedNetworkTools {
             vision,
             web_search,
@@ -1312,6 +1342,7 @@ impl NativeReferenceHost {
         }
         Self::from_composed_builder(
             builder,
+            workspace_root,
             session_store,
             loaded_config,
             credential_source,
@@ -1321,8 +1352,10 @@ impl NativeReferenceHost {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn from_composed_builder(
         builder: machine_god_core::EngineBuilder,
+        workspace_root: PathBuf,
         session_store: Arc<FileSessionStore>,
         loaded_config: LoadedNativeConfig,
         credential_source: Option<AiGatewayCredentialSource>,
@@ -1350,6 +1383,7 @@ impl NativeReferenceHost {
 
         Ok(Self {
             engine,
+            workspace_root,
             session_store,
             session_lifecycle,
             loaded_config,
@@ -1357,6 +1391,8 @@ impl NativeReferenceHost {
             terminal_shutdown,
             terminal_lifecycle,
             undo_tracker: None,
+            model_routes: None,
+            observations: None,
             permissions,
             permission_contexts,
         })

@@ -123,6 +123,15 @@ outside state locks. No worker is detached and the guard does not poll another
 owner's turn. The caller must keep driving pending admission and the active turn.
 A reservation completing after the fence is cancelled before provider entry.
 
+The guard's synchronous `selection_snapshot()` rejects outstanding permits with
+`Busy`. Once drained, it copies actual current model preferences, shares the
+current catalog, and captures the current permission mode, sandbox preference
+and configured rules through the exact bound guard. It reads settled state, not
+a pre-fence cache; already-admitted saves and selection changes must settle
+first. Public policy controls remain closed. This bounded, redacted snapshot
+contains no grants, saved exact rules, history or persistence receipt, and does
+not revive routes. Stale or retired guard ownership cannot obtain a snapshot.
+
 Idle means ownership release, not a successful persistence receipt: dropping a
 turn can release a pending, publication-uncertain finalizer. An interactive
 transition must handle its native terminal/persistence outcome separately.

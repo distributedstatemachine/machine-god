@@ -527,7 +527,7 @@ pub use conversation_runtime::{
     MAX_NATIVE_QUEUED_PROMPT_BYTES, NativeConversationRuntime, NativeConversationRuntimeError,
     NativeConversationRuntimePhase, NativeConversationRuntimeStatus, NativeConversationRuntimeTurn,
     NativeModelPreferenceCommit, NativeModelPreferencePersistence, NativeQueuedJobId,
-    NativeRuntimeQuiescence,
+    NativeQuiescentSelectionSnapshot, NativeRuntimeQuiescence,
 };
 pub use copy_file::{
     COPY_FILE_TOOL_NAME, CopyFileTool, CopyFileToolOpenError, CopyFileToolOpenErrorKind,
@@ -564,9 +564,9 @@ pub use file_info::{
     MAX_FILE_INFO_PATH_BYTES,
 };
 pub use file_undo::{
-    FileUndoError, FileUndoOutcome, FileUndoTracker, FileUndoUnavailableReason,
-    MAX_FILE_UNDO_ENTRIES, MAX_FILE_UNDO_OBSERVATION_BYTES, MAX_FILE_UNDO_PREIMAGE_BYTES,
-    MAX_FILE_UNDO_RETAINED_BYTES,
+    FileUndoClearReservation, FileUndoError, FileUndoOutcome, FileUndoTracker,
+    FileUndoUnavailableReason, MAX_FILE_UNDO_ENTRIES, MAX_FILE_UNDO_OBSERVATION_BYTES,
+    MAX_FILE_UNDO_PREIMAGE_BYTES, MAX_FILE_UNDO_RETAINED_BYTES,
 };
 pub use glob_files::{
     GLOB_FILES_TOOL_NAME, GlobFilesTool, GlobFilesToolOpenError, GlobFilesToolOpenErrorKind,
