@@ -7,6 +7,10 @@ use machine_god_core::{
 use serde::Deserialize;
 use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde_json::value::RawValue;
+
+use crate::model_preferences::{
+    MAX_NATIVE_REASONING_EFFORT_OPTIONS, NativeModelCapabilities, NativeReasoningEffort,
+};
 use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
@@ -190,6 +194,49 @@ pub struct AiGatewayModelCatalogProvider {
     transport: Arc<dyn AiGatewayModelCatalogTransport>,
 }
 
+/// One validated Gateway model and its explicitly advertised native controls.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeModelCatalogEntry {
+    model: AvailableModel,
+    capabilities: NativeModelCapabilities,
+}
+
+impl NativeModelCatalogEntry {
+    pub fn model(&self) -> &AvailableModel {
+        &self.model
+    }
+
+    pub fn capabilities(&self) -> &NativeModelCapabilities {
+        &self.capabilities
+    }
+}
+
+/// Owned, bounded Gateway details in the same order as the ID-only catalog.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeModelCatalog {
+    entries: Vec<NativeModelCatalogEntry>,
+    access: ModelCatalogAccess,
+}
+
+impl NativeModelCatalog {
+    pub fn entries(&self) -> &[NativeModelCatalogEntry] {
+        &self.entries
+    }
+
+    pub fn access(&self) -> ModelCatalogAccess {
+        self.access
+    }
+
+    /// Looks up an exact, case-sensitive ID without fetching or inferring controls.
+    pub fn details(&self, id: &str) -> Option<&NativeModelCatalogEntry> {
+        self.entries.iter().find(|entry| entry.model.id() == id)
+    }
+
+    pub fn into_entries(self) -> Vec<NativeModelCatalogEntry> {
+        self.entries
+    }
+}
+
 impl AiGatewayModelCatalogProvider {
     /// Creates a provider over an explicitly injected transport.
     #[must_use]
@@ -223,6 +270,34 @@ impl ModelCatalogProvider for AiGatewayModelCatalogProvider {
         &self,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ModelCatalog, ProviderError>> {
+        self.list_projected(cancellation, |catalog| {
+            ModelCatalog::new(
+                catalog
+                    .entries
+                    .into_iter()
+                    .map(|entry| entry.model)
+                    .collect(),
+                catalog.access,
+            )
+        })
+    }
+}
+
+impl AiGatewayModelCatalogProvider {
+    /// Fetches explicit Gateway capabilities with the ID-only API's access,
+    /// cancellation, deadline, validation, and ordering contract. Inert until polled.
+    pub fn list_model_details(
+        &self,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<NativeModelCatalog, ProviderError>> {
+        self.list_projected(cancellation, |catalog| catalog)
+    }
+
+    fn list_projected<T: Send + 'static>(
+        &self,
+        cancellation: CancellationToken,
+        project: fn(NativeModelCatalog) -> T,
+    ) -> BoxFuture<'_, Result<T, ProviderError>> {
         Box::pin(async move {
             check_cancelled(&cancellation)?;
             let deadline = Instant::now()
@@ -281,10 +356,13 @@ impl ModelCatalogProvider for AiGatewayModelCatalogProvider {
             if status != 200 {
                 return Err(status_error(status));
             }
-            let models = parse_catalog(&body, &cancellation, deadline)?;
+            let entries = parse_catalog(&body, &cancellation, deadline)?;
             check_cancelled(&cancellation)?;
             check_deadline(deadline)?;
-            Ok(ModelCatalog::new(models, access))
+            let result = project(NativeModelCatalog { entries, access });
+            check_cancelled(&cancellation)?;
+            check_deadline(deadline)?;
+            Ok(result)
         })
     }
 }
@@ -380,6 +458,7 @@ struct Candidate {
     id: String,
     released: i64,
     has_tool_use: bool,
+    capabilities: NativeModelCapabilities,
 }
 
 #[derive(Clone, Copy)]
@@ -599,6 +678,10 @@ impl<'de> Visitor<'de> for EntryObjectVisitor<'_> {
         let mut model_type: Option<&RawValue> = None;
         let mut released: Option<&RawValue> = None;
         let mut tags: Option<&RawValue> = None;
+        let mut reasoning_options: Option<&RawValue> = None;
+        let mut fast_options: Option<&RawValue> = None;
+        let mut pricing: Option<&RawValue> = None;
+        let mut owned_by: Option<&RawValue> = None;
         while let Some(key) = entries.next_key::<String>()? {
             match key.as_str() {
                 "id" => {
@@ -637,12 +720,28 @@ impl<'de> Visitor<'de> for EntryObjectVisitor<'_> {
                     }
                     tags = Some(entries.next_value()?);
                 }
+                "reasoning_options" | "fast_options" | "pricing" | "owned_by" => {
+                    let slot = match key.as_str() {
+                        "reasoning_options" => &mut reasoning_options,
+                        "fast_options" => &mut fast_options,
+                        "pricing" => &mut pricing,
+                        _ => &mut owned_by,
+                    };
+                    if slot.is_some() {
+                        return Err(self.context.fail(
+                            ParseFailure::Malformed,
+                            "duplicate recognized catalog entry field",
+                        ));
+                    }
+                    *slot = Some(entries.next_value()?);
+                }
                 _ => {
                     let _: &RawValue = entries.next_value()?;
                 }
             }
         }
 
+        let capabilities = raw_capabilities(reasoning_options, fast_options, pricing, owned_by)?;
         let is_language = match raw_json_string(model_type)? {
             Some(value) => value.eq_ignore_ascii_case("language"),
             None => true,
@@ -661,8 +760,123 @@ impl<'de> Visitor<'de> for EntryObjectVisitor<'_> {
             id,
             released,
             has_tool_use,
+            capabilities,
         }))
     }
+}
+
+// Only selected fields are retained, as borrowed raw values. The complete body
+// has already passed the structural budgets; no recursive Value tree or numeric
+// conversion is needed for optional metadata.
+struct FieldsSeed<const N: usize> {
+    names: [&'static str; N],
+}
+
+impl<'de, const N: usize> DeserializeSeed<'de> for FieldsSeed<N> {
+    type Value = [Option<&'de RawValue>; N];
+
+    fn deserialize<D: serde::Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> Result<Self::Value, D::Error> {
+        deserializer.deserialize_map(self)
+    }
+}
+
+impl<'de, const N: usize> Visitor<'de> for FieldsSeed<N> {
+    type Value = [Option<&'de RawValue>; N];
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a catalog capability object")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut entries: A) -> Result<Self::Value, A::Error> {
+        let mut fields = [None; N];
+        while let Some(key) = entries.next_key::<String>()? {
+            let value = entries.next_value::<&RawValue>()?;
+            if let Some(index) = self.names.iter().position(|name| *name == key) {
+                if fields[index].is_some() {
+                    return Err(serde::de::Error::custom(
+                        "duplicate recognized catalog capability field",
+                    ));
+                }
+                fields[index] = Some(value);
+            }
+        }
+        Ok(fields)
+    }
+}
+
+fn raw_object_fields<'a, E: serde::de::Error, const N: usize>(
+    raw: Option<&'a RawValue>,
+    names: [&'static str; N],
+) -> Result<[Option<&'a RawValue>; N], E> {
+    let Some(raw) = raw.filter(|raw| first_non_whitespace(raw.get().as_bytes()) == Some(b'{'))
+    else {
+        return Ok([None; N]);
+    };
+    let mut deserializer = serde_json::Deserializer::from_str(raw.get());
+    FieldsSeed { names }
+        .deserialize(&mut deserializer)
+        .map_err(|_| E::custom("malformed catalog capability object"))
+}
+
+fn raw_array<E: serde::de::Error>(raw: Option<&RawValue>) -> Result<Vec<&RawValue>, E> {
+    let Some(raw) = raw.filter(|raw| first_non_whitespace(raw.get().as_bytes()) == Some(b'['))
+    else {
+        return Ok(Vec::new());
+    };
+    serde_json::from_str(raw.get()).map_err(|_| E::custom("malformed catalog capability array"))
+}
+
+fn is_raw_object(raw: Option<&RawValue>) -> bool {
+    raw.is_some_and(|raw| first_non_whitespace(raw.get().as_bytes()) == Some(b'{'))
+}
+
+fn raw_capabilities<E: serde::de::Error>(
+    reasoning_options: Option<&RawValue>,
+    fast_options: Option<&RawValue>,
+    pricing: Option<&RawValue>,
+    owned_by: Option<&RawValue>,
+) -> Result<NativeModelCapabilities, E> {
+    let mut efforts = Vec::new();
+    let mut selected_effort_array = false;
+    for option in raw_array(reasoning_options)? {
+        let [kind, values] = raw_object_fields(Some(option), ["type", "values"])?;
+        // Continue inspecting later options for duplicate recognized fields even
+        // after selecting the first applicable array or filling the option cap.
+        if !selected_effort_array
+            && raw_json_string::<E>(kind)?.as_deref() == Some("effort")
+            && values.is_some_and(|raw| first_non_whitespace(raw.get().as_bytes()) == Some(b'['))
+        {
+            selected_effort_array = true;
+            for value in raw_array::<E>(values)? {
+                if efforts.len() >= MAX_NATIVE_REASONING_EFFORT_OPTIONS {
+                    break;
+                }
+                if let Some(effort) = raw_json_string::<E>(Some(value))?
+                    .and_then(|name| NativeReasoningEffort::parse(&name).ok())
+                    .filter(|effort| effort.as_named().is_some())
+                {
+                    efforts.push(effort);
+                }
+            }
+        }
+    }
+    let mut fast_toggle = false;
+    for option in raw_array(fast_options)? {
+        let [kind] = raw_object_fields(Some(option), ["type"])?;
+        fast_toggle |= raw_json_string::<E>(kind)?.as_deref() == Some("toggle");
+    }
+    let [fast_price, tiers] = raw_object_fields(pricing, ["fast", "service_tiers"])?;
+    let [priority] = raw_object_fields(tiers, ["priority"])?;
+    let openai_owned =
+        raw_json_string::<E>(owned_by)?.is_some_and(|owner| owner.eq_ignore_ascii_case("openai"));
+    NativeModelCapabilities::new(
+        &efforts,
+        fast_toggle || is_raw_object(fast_price) || (openai_owned && is_raw_object(priority)),
+    )
+    .map_err(|_| E::custom("invalid catalog capabilities"))
 }
 
 fn raw_json_string<E: serde::de::Error>(raw: Option<&RawValue>) -> Result<Option<String>, E> {
@@ -902,7 +1116,7 @@ fn parse_catalog(
     body: &[u8],
     cancellation: &CancellationToken,
     deadline: Instant,
-) -> Result<Vec<AvailableModel>, ProviderError> {
+) -> Result<Vec<NativeModelCatalogEntry>, ProviderError> {
     if body.len() > AI_GATEWAY_MODEL_CATALOG_MAX_BODY_BYTES {
         return Err(resource_limit_error());
     }
@@ -933,7 +1147,10 @@ fn parse_catalog(
     for candidate in candidates {
         check_cancelled(cancellation)?;
         check_deadline(deadline)?;
-        models.push(AvailableModel::new(candidate.id).map_err(|_| malformed_response_error())?);
+        models.push(NativeModelCatalogEntry {
+            model: AvailableModel::new(candidate.id).map_err(|_| malformed_response_error())?,
+            capabilities: candidate.capabilities,
+        });
     }
     Ok(models)
 }

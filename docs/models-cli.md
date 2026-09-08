@@ -106,6 +106,50 @@ either `Authenticated` or `PublicOnly` with `NoCredential` or
 `AuthenticatedCredentialRejected`. Core does not independently cap the vector;
 the native implementation applies catalog bounds before constructing it.
 
+## Native capability details
+
+`AiGatewayModelCatalogProvider::list_model_details(CancellationToken)` returns
+an inert `BoxFuture<'_, Result<NativeModelCatalog, ProviderError>>`. This native
+API shares the ID-only operation's single fetch/optional authentication fallback,
+strict body parser, limits, access result, and stable full-catalog ordering.
+`list_models` projects IDs from that same rich parser without an additional HTTP
+request; projection and its final cancellation/deadline checks remain inside the
+original 30-second operation. Separate invocations still perform separate
+requests; this component has no cache.
+
+`NativeModelCatalog` owns its bounded entries and exposes `entries()`, `access()`,
+`into_entries()`, and `details(id)` for an exact case-sensitive, in-memory lookup.
+Each `NativeModelCatalogEntry` exposes its validated `AvailableModel` through
+`model()` and shared typed `NativeModelCapabilities` through `capabilities()`.
+Capabilities stay native; the provider-neutral catalog and top-level command
+output remain ID-only. These values grant no configuration or session-write
+authority and do not themselves select a model or enable a request control.
+
+Reasoning choices follow the pinned Gateway parser: inspect `reasoning_options`
+only when it is an array, select the first object with exact string
+`"type":"effort"` and array `values`, and retain its first 16 valid named efforts.
+Non-string, invalid, and automatic values are skipped. A selected empty or
+entirely invalid array prevents later arrays from supplying choices. Names are
+1–64 ASCII bytes using alphanumerics and `-_.`; the shared type normalizes
+ASCII-case-insensitive `auto`, `adaptive`, and `default` to automatic rather than
+advertised named choices. Other names, case, order, and duplicates are preserved.
+Extra values do not increase the retained option count, but the entire input
+still obeys the unchanged body, depth, and node bounds.
+
+Fast support is true only for an object in array `fast_options` with exact string
+`"type":"toggle"`, object-valued `pricing.fast`, or object-valued
+`pricing.service_tiers.priority` with an ASCII-case-insensitive `owned_by` equal
+to `openai`. An empty object is sufficient; booleans, strings, arrays, malformed
+optional fields, model-ID spellings, and `fast` or `reasoning` tags do not supply
+these controls. In particular an `openai/` ID does not establish `owned_by`.
+
+This component consumes the explicit control declarations described by pinned
+`gateway.zig` (`parseReasoningEfforts`, `supportsFastMode`) and
+`model_capabilities.zig` (`resolveCapabilities` and
+`resolveProviderOptionsForCapabilities`), at upstream commit
+`b1774fbf6c7602b503026f96f6e960e946c692ef`. It adds no local-model inference,
+picker, persistence, or inference-request writer.
+
 The CLI constructs the native HTTP transport with the optional validated
 credential and constructs the native provider with a matching access mode. The
 provider chooses exactly one of these internal access paths:
@@ -332,8 +376,14 @@ spaces, UTF-8 non-ASCII text and Unicode C1 characters are preserved unchanged,
 using core's shared `validate_model_id`; an unsafe ID is never
 silently skipped. Unknown fields and malformed optional metadata map only to
 the documented defaults. Repeating any recognized entry field (`id`, `type`,
-`released`, or `tags`) is terminal `MalformedResponse`. Nested ignored data
-still counts toward the global JSON budgets.
+`released`, `tags`, `reasoning_options`, `fast_options`, `pricing`, or `owned_by`)
+is terminal `MalformedResponse` for both native projections. The same strict
+rule applies to recognized nested fields: `type`/`values` in each reasoning
+option object, `type` in each fast option object, `fast`/`service_tiers` in
+pricing, and `priority` in service tiers. These fields are inspected even after
+an earlier option supplies sufficient controls or when the entry is otherwise
+skippable. Unknown fields remain ignored; nested ignored data still counts
+toward the global JSON budgets.
 
 Language classification follows the pinned catalog shape described above.
 Release metadata that is absent or not an integer fitting signed 64-bit maps to

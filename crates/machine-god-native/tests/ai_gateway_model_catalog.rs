@@ -17,6 +17,7 @@ use machine_god_native::{
     AiGatewayModelCatalogProvider, AiGatewayModelCatalogRequestAccess,
     AiGatewayModelCatalogTransport, AiGatewayModelCatalogTransportError,
     AiGatewayModelCatalogTransportErrorKind, AiGatewayModelCatalogTransportResponse,
+    NativeModelCatalog,
 };
 use serde_json::{Value, json};
 
@@ -204,6 +205,334 @@ fn public_catalog(body: Vec<u8>) -> Result<ModelCatalog, ProviderError> {
         ScriptedTransport::new([Action::Response(200, body)]),
         CancellationToken::new(),
     )
+}
+
+fn public_details(body: Vec<u8>) -> Result<NativeModelCatalog, ProviderError> {
+    let provider = AiGatewayModelCatalogProvider::new(
+        AiGatewayModelCatalogAccessMode::PublicOnly,
+        ScriptedTransport::new([Action::Response(200, body)]),
+    );
+    futures_executor::block_on(provider.list_model_details(CancellationToken::new()))
+}
+
+#[test]
+fn rich_reasoning_uses_first_applicable_array_and_preserves_bounded_named_options() {
+    let mut values = vec![
+        json!(null),
+        json!(17),
+        json!(""),
+        json!("auto"),
+        json!("default"),
+        json!("AdApTiVe"),
+        json!("bad space"),
+        json!("\u{00e9}"),
+        json!("x".repeat(65)),
+        json!("future-Tier_1.2"),
+        json!("HIGH"),
+        json!("HIGH"),
+        json!("x".repeat(64)),
+    ];
+    values.extend((0..20).map(|i| json!(format!("effort-{i}"))));
+    let catalog = public_details(body(&json!({"data":[{
+        "id":"provider/model",
+        "reasoning_options":[null, {}, {"type":"EFFORT","values":["wrong"]},
+            {"type":"effort","values":false}, {"type":"effort","values":values},
+            {"type":"effort","values":["later"]}]
+    }]})))
+    .unwrap();
+    let capabilities = catalog.details("provider/model").unwrap().capabilities();
+    let labels = capabilities
+        .reasoning_efforts()
+        .iter()
+        .map(|effort| effort.label())
+        .collect::<Vec<_>>();
+    assert_eq!(labels.len(), 16);
+    assert_eq!(&labels[..3], ["future-Tier_1.2", "HIGH", "HIGH"]);
+    assert_eq!(labels[3], "x".repeat(64));
+    assert_eq!(labels[15], "effort-11");
+    assert!(!capabilities.supports_fast());
+    assert!(catalog.details("Provider/model").is_none());
+
+    let empty_first = public_details(body(&json!({"data":[{
+        "id":"provider/model", "reasoning_options":[
+            {"type":"effort","values":["auto",false,"bad space"]},
+            {"type":"effort","values":["high"]}]
+    }]})))
+    .unwrap();
+    assert!(
+        empty_first.entries()[0]
+            .capabilities()
+            .reasoning_efforts()
+            .is_empty()
+    );
+}
+
+#[test]
+fn fast_requires_explicit_applicable_gateway_metadata_never_names_or_tags() {
+    for (fields, expected) in [
+        (json!({"fast_options":[null,{}, {"type":"toggle"}]}), true),
+        (json!({"pricing":{"fast":{}}}), true),
+        (
+            json!({"owned_by":"OpEnAi","pricing":{"service_tiers":{"priority":{}}}}),
+            true,
+        ),
+        (json!({"fast_options":{"type":"toggle"}}), false),
+        (
+            json!({"fast_options":[{"type":"TOGGLE"},"toggle",true]}),
+            false,
+        ),
+        (json!({"pricing":{"fast":true}}), false),
+        (json!({"pricing":{"service_tiers":{"priority":{}}}}), false),
+        (
+            json!({"owned_by":"anthropic","pricing":{"service_tiers":{"priority":{}}}}),
+            false,
+        ),
+        (
+            json!({"owned_by":"openai","pricing":{"service_tiers":{"priority":true}}}),
+            false,
+        ),
+        (
+            json!({"owned_by":" openai","pricing":{"service_tiers":{"priority":{}}}}),
+            false,
+        ),
+        (json!({"owned_by":false,"pricing":[{"fast":{}}]}), false),
+        (json!({"tags":["fast","reasoning"]}), false),
+    ] {
+        let mut entry = fields;
+        entry["id"] = json!("openai/gpt-5-fast-reasoning");
+        let catalog = public_details(body(&json!({"data":[entry]}))).unwrap();
+        let capabilities = catalog.entries()[0].capabilities();
+        assert_eq!(capabilities.supports_fast(), expected);
+        assert!(capabilities.reasoning_efforts().is_empty());
+    }
+}
+
+#[test]
+fn rich_and_id_only_projections_keep_identical_order_access_and_one_fetch_each() {
+    let fixture = body(&json!({"data":[
+        {"id":"openai/gpt-5","released":30,"reasoning_options":[{"type":"effort","values":["high"]}]},
+        {"id":"anthropic/claude-opus","released":20,"tags":["tool-use"],"pricing":{"fast":{}}},
+        {"id":"ignored/image","type":"image","fast_options":[{"type":"toggle"}]}
+    ]}));
+    for mode in [
+        AiGatewayModelCatalogAccessMode::Authenticated,
+        AiGatewayModelCatalogAccessMode::PublicOnly,
+    ] {
+        let transport = ScriptedTransport::new([
+            Action::Response(200, fixture.clone()),
+            Action::Response(200, fixture.clone()),
+        ]);
+        let provider = AiGatewayModelCatalogProvider::new(
+            mode,
+            Arc::clone(&transport) as Arc<dyn AiGatewayModelCatalogTransport>,
+        );
+        let rich =
+            futures_executor::block_on(provider.list_model_details(CancellationToken::new()))
+                .unwrap();
+        assert_eq!(transport.call_accesses().len(), 1);
+        let ids =
+            futures_executor::block_on(provider.list_models(CancellationToken::new())).unwrap();
+        assert_eq!(transport.call_accesses().len(), 2);
+        assert_eq!(rich.access(), ids.access());
+        assert_eq!(
+            rich.entries()
+                .iter()
+                .map(|entry| entry.model())
+                .collect::<Vec<_>>(),
+            ids.models().iter().collect::<Vec<_>>()
+        );
+        assert!(rich.entries()[0].capabilities().supports_fast());
+        assert_eq!(rich.into_entries().len(), 2);
+    }
+}
+
+#[test]
+fn rich_recognized_duplicates_are_terminal_even_after_sufficient_capabilities() {
+    for fields in [
+        r#""reasoning_options":[],"reasoning_options":null"#,
+        r#""fast_options":[],"fast_options":null"#,
+        r#""owned_by":"openai","owned_by":null"#,
+        r#""pricing":{},"pricing":null"#,
+        r#""reasoning_options":[{"type":"effort","type":"other","values":[]}]"#,
+        r#""reasoning_options":[{"type":"effort","values":[],"values":[]}]"#,
+        r#""reasoning_options":[{"type":"effort","values":["high"]},{"type":null,"type":null}]"#,
+        r#""fast_options":[{"type":"toggle"},{"type":null,"type":null}]"#,
+        r#""pricing":{"fast":{},"fast":{}}"#,
+        r#""pricing":{"service_tiers":{},"service_tiers":{}}"#,
+        r#""fast_options":[{"type":"toggle"}],"pricing":{"service_tiers":{"priority":{},"priority":{}}}"#,
+    ] {
+        let fixture = format!(r#"{{"data":[{{"id":"provider/model",{fields}}}]}}"#).into_bytes();
+        for result in [
+            public_details(fixture.clone()).map(|_| ()),
+            public_catalog(fixture).map(|_| ()),
+        ] {
+            assert_error(
+                &result.unwrap_err(),
+                ProviderErrorKind::Protocol,
+                "MalformedResponse",
+                false,
+            );
+        }
+    }
+}
+
+#[test]
+fn rich_optional_metadata_keeps_huge_numbers_and_global_structural_bounds() {
+    let fixture = br#"{"data":[{"id":"provider/model","reasoning_options":[1e400,{"type":1e400,"values":[]},{"type":"effort","values":[1e400,"high"]}],"fast_options":[{"type":1e400}],"pricing":{"fast":1e400},"owned_by":1e400}]}"#;
+    let catalog = public_details(fixture.to_vec()).unwrap();
+    assert_eq!(
+        catalog.entries()[0].capabilities().reasoning_efforts()[0].label(),
+        "high"
+    );
+    assert!(!catalog.entries()[0].capabilities().supports_fast());
+    let too_deep = format!(
+        r#"{{"data":[{{"id":"provider/model","pricing":{}0{}}}]}}"#,
+        "[".repeat(30),
+        "]".repeat(30)
+    );
+    assert_error(
+        &public_details(too_deep.into_bytes()).unwrap_err(),
+        ProviderErrorKind::Protocol,
+        "ResourceLimit",
+        false,
+    );
+    let too_many = format!(
+        r#"{{"data":[{{"id":"provider/model","reasoning_options":[{}]}}]}}"#,
+        vec!["0"; AI_GATEWAY_MODEL_CATALOG_MAX_JSON_NODES].join(",")
+    );
+    assert_error(
+        &public_details(too_many.into_bytes()).unwrap_err(),
+        ProviderErrorKind::Protocol,
+        "ResourceLimit",
+        false,
+    );
+}
+
+#[test]
+fn rich_fallback_is_once_under_shared_deadline_and_non_auth_failures_never_retry() {
+    for status in [401, 403] {
+        let transport = ScriptedTransport::new([
+            Action::Response(status, Vec::new()),
+            Action::Response(200, one_model_body("public/model")),
+        ]);
+        let provider = AiGatewayModelCatalogProvider::new(
+            AiGatewayModelCatalogAccessMode::Authenticated,
+            Arc::clone(&transport) as Arc<dyn AiGatewayModelCatalogTransport>,
+        );
+        let catalog =
+            futures_executor::block_on(provider.list_model_details(CancellationToken::new()))
+                .unwrap();
+        assert_eq!(
+            catalog.access(),
+            ModelCatalogAccess::PublicOnly {
+                reason: PublicCatalogReason::AuthenticatedCredentialRejected
+            }
+        );
+        let calls = transport.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(
+            calls[0].access,
+            AiGatewayModelCatalogRequestAccess::Authenticated
+        );
+        assert_eq!(calls[1].access, AiGatewayModelCatalogRequestAccess::Public);
+        assert_eq!(calls[0].deadline, calls[1].deadline);
+    }
+    for action in [
+        Action::Response(429, Vec::new()),
+        Action::Response(200, b"invalid".to_vec()),
+        Action::Error(AiGatewayModelCatalogTransportErrorKind::Transport),
+    ] {
+        let transport = ScriptedTransport::new([action]);
+        let provider = AiGatewayModelCatalogProvider::new(
+            AiGatewayModelCatalogAccessMode::Authenticated,
+            Arc::clone(&transport) as Arc<dyn AiGatewayModelCatalogTransport>,
+        );
+        assert!(
+            futures_executor::block_on(provider.list_model_details(CancellationToken::new()))
+                .is_err()
+        );
+        assert_eq!(transport.call_accesses().len(), 1);
+    }
+}
+
+#[test]
+fn rich_future_is_lazy_drop_owned_and_cancelled_before_result_or_fallback() {
+    let drops = Arc::new(AtomicUsize::new(0));
+    let transport = ScriptedTransport::new([Action::Pending(Arc::clone(&drops))]);
+    let provider = AiGatewayModelCatalogProvider::new(
+        AiGatewayModelCatalogAccessMode::PublicOnly,
+        Arc::clone(&transport) as Arc<dyn AiGatewayModelCatalogTransport>,
+    );
+    drop(provider.list_model_details(CancellationToken::new()));
+    assert!(transport.call_accesses().is_empty());
+    let mut future = provider.list_model_details(CancellationToken::new());
+    assert!(poll_once(future.as_mut()).is_pending());
+    drop(future);
+    assert_eq!(drops.load(Ordering::Acquire), 1);
+    for status in [200, 401] {
+        let transport = ScriptedTransport::new([Action::CancelAndRespond(
+            status,
+            one_model_body("provider/model"),
+        )]);
+        let provider = AiGatewayModelCatalogProvider::new(
+            AiGatewayModelCatalogAccessMode::Authenticated,
+            Arc::clone(&transport) as Arc<dyn AiGatewayModelCatalogTransport>,
+        );
+        assert_error(
+            &futures_executor::block_on(provider.list_model_details(CancellationToken::new()))
+                .unwrap_err(),
+            ProviderErrorKind::Cancelled,
+            "Cancelled",
+            false,
+        );
+        assert_eq!(transport.call_accesses().len(), 1);
+    }
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let transport = ScriptedTransport::new([]);
+    let provider = AiGatewayModelCatalogProvider::new(
+        AiGatewayModelCatalogAccessMode::PublicOnly,
+        Arc::clone(&transport) as Arc<dyn AiGatewayModelCatalogTransport>,
+    );
+    assert_error(
+        &futures_executor::block_on(provider.list_model_details(cancellation)).unwrap_err(),
+        ProviderErrorKind::Cancelled,
+        "Cancelled",
+        false,
+    );
+    assert!(transport.call_accesses().is_empty());
+}
+
+#[test]
+fn rich_deadline_wakes_pending_request_and_cancellation_retains_precedence() {
+    for cancel in [false, true] {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let transport = ScriptedTransport::new([Action::Pending(Arc::clone(&drops))]);
+        let provider = AiGatewayModelCatalogProvider::new(
+            AiGatewayModelCatalogAccessMode::PublicOnly,
+            Arc::clone(&transport) as Arc<dyn AiGatewayModelCatalogTransport>,
+        );
+        let cancellation = CancellationToken::new();
+        let mut future = provider.list_model_details(cancellation.clone());
+        assert!(poll_once(future.as_mut()).is_pending());
+        transport.expire_deadline();
+        if cancel {
+            cancellation.cancel();
+        }
+        let error = futures_executor::block_on(future).unwrap_err();
+        assert_error(
+            &error,
+            if cancel {
+                ProviderErrorKind::Cancelled
+            } else {
+                ProviderErrorKind::Protocol
+            },
+            if cancel { "Cancelled" } else { "ResourceLimit" },
+            false,
+        );
+        assert_eq!(transport.call_accesses().len(), 1);
+        assert_eq!(drops.load(Ordering::Acquire), 1);
+    }
 }
 
 fn assert_error(error: &ProviderError, kind: ProviderErrorKind, code: &str, retryable: bool) {
