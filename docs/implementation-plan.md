@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
 - Active phase: `implementing the full combined M03 top-level CLI and slash-command feature`
-- Next gate: `finish interactive commands, rich session commands and remaining policy/workspace scenarios before the full feature gates`
+- Next gate: `finish rich session pagination/reporting, interactive commands and remaining policy/workspace scenarios before the full feature gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -216,31 +216,38 @@ None and effective Yolo remain distinct and are exercised through the real host.
 Full terminal start/monitor/close preserve ordinary model continuation. The
 pinned legacy background-completion branch has no production producer; terminal
 records and late URL notices do not establish legacy launch-time attachments.
+The native rich catalog now projects authoritative metadata and bounded previews,
+filters workspace/search/time and ranks every reached record before retaining
+the newest bounded results. Exact lookup is independent of scan truncation;
+latest selection refuses incomplete scans or unknown eligible activity times.
+Legacy ID-only callers retain their existing behavior. CLI cursor pagination and
+explicit corrupt-record reporting remain required implementation work, not
+intentional compatibility exclusions.
 Remaining work includes interactive CLI persistence-outcome presentation,
 long-lived cache composition,
 interactive command/session transitions,
 pinned recovery/retry policy, policy/sandbox/workspace enforcement, rich session
 commands and the complete feature gates.
 
-Local validation uses a fresh target and the freshly built Rust 1.94.1 release
-helper with default test concurrency and backtraces. Prior catalog-lock ownership
-was fixed with explicit unlock on owner drop/failed preparation. Earlier macOS
-inventory/reaping failures did not recur in the latest workspace run; this alone
-does not establish their cause. That run passed 1,588 native unit tests and failed
-only the stale PTY frame equality, stopping before later integration tests. The
-replacement fixture distinguishes ordinary and sandbox envelopes and tests each
-independent encoder/decoder limit, without changing production bounds or deadlines.
-The complete replacement workspace gate remains open. Clippy, doctests, 105
-repository Python tests and the fresh release CLI smoke previously passed; these
-internal checks do not replace the exact-candidate feature gates below.
+The terminal continuation/frame checkpoint `d612bc9` passes full Rust 1.94.1
+formatting, warnings-denied workspace Clippy, workspace tests and doctests, using
+the fresh release helper with default test concurrency and backtraces. All 1,590
+native unit and 46 reference-host tests pass. The frame fixture now tests ordinary
+and sandbox envelopes and independent encoder/decoder limits without changing
+production bounds or deadlines. Earlier macOS inventory/reaping failures did not
+recur; this alone does not establish their cause. The integrated catalog passes 57
+focused catalog/listing/store tests and full workspace Clippy. Repository Python tests
+and the fresh release CLI smoke previously passed. Catalog integration and the
+remaining commands still require the complete exact-candidate feature gates;
+none of these internal checkpoints is a delivery.
 
 The integrated preparer passes all five real file mutations, actual reviewer
 Allow/Ask/error and cancellation, read-grant/reset, canonical terminal identity,
 and separate execution/review-bound regressions. All reference-host tests pass,
 including configured denial, Ask/Auto/Yolo, real automatic review and actual
 sandboxed terminal execution. The CLI's real create/resume turn path also passes
-configured-mode regressions. These focused checks do not close the replacement
-workspace gate or the unfinished combined feature; no new delivery is claimed.
+configured-mode regressions. These checks do not close the unfinished combined
+feature or replace its final reviews and remote evidence.
 
 ### CI and documentation maintenance
 

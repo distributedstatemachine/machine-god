@@ -170,23 +170,97 @@ The standalone lifecycle listing API is available on Linux and macOS without
 the optional HTTP feature. Observation through `NativeReferenceHost` inherits
 that wrapper's stricter `ai-gateway-http`, non-WebAssembly, Linux/macOS gate.
 
-## Deliberately absent semantics
+## ID-only consumers
 
-The current record schema does not contain authoritative workspace, title,
-preview, language, creation time, update time, or display-order fields, and the
-store has no authoritative session index. The listing API does not derive those
-values from filesystem modification times, message contents, metadata maps,
-live registry state, or directory order.
-
-Consequently the library API adds no rich summaries, workspace filter, newest
-or latest selection, ordering other than lexical ID order, cursor, pagination,
-session-ID generation, deletion, cleanup, or slash command. The strict
+The original ID-only listing does not interpret native metadata or add rich
+summaries, workspace filters, newest selection, cursor, pagination,
+session-ID generation, deletion, cleanup, or slash commands. The strict
 top-level `sessions [--json]` command consumes this result without adding any
 of those absent semantics. Its separate
 [`CLI contract`](sessions-cli.md) uses a no-create, engine-free native process
 facade and preserves the exact scan bounds and per-record lock-sidecar effect.
 It does not implement fx's richer `sessions` behavior and makes no compatibility
 or upstream-equivalence claim.
+
+## Rich native catalog
+
+`NativeSessionCatalog::new(Arc<FileSessionStore>)` retains an explicitly supplied
+store without I/O. Its `list(query)` and `exact(id)` futures are inert until
+polled, then perform synchronous native I/O and advisory locking in the polling
+context. These Linux/macOS APIs require no HTTP feature, engine, provider,
+configuration, clock, workspace access, or live-session registry.
+
+Each `NativeSessionCatalogEntry` owns the validated ID, incarnation, revision,
+message count, and authoritative `NativeSessionMetadata` snapshot described in
+[native session lifecycle](native-session-lifecycle.md). Missing historical
+native metadata stays unknown. The catalog does not infer title, workspace,
+origin, or timestamps from transcripts, filesystem modification times, current
+working directory, or ID spelling. Invalid reserved native metadata in any
+reached record fails the entire call with fixed `Corrupt`, even if the record
+would not match the query or fit the displayed results. Generic metadata is not
+promoted into authoritative native facts.
+
+The separately named `preview` is presentation data, not a title or metadata
+fact. It selects the first nonempty canonical user text block that is not a
+single-line slash command. It contains at most two nonempty trimmed lines and
+240 UTF-8 bytes, with `preview_truncated` reporting omitted text. Assistant,
+tool, and arbitrary JSON blocks do not supply a preview. Unknown title remains
+unknown even when a preview exists. Preview and metadata contents remain
+untrusted display data; terminal consumers must escape controls. Entry `Debug`
+omits IDs, metadata contents, and previews; getters deliberately expose them to
+the trusted caller.
+
+`NativeSessionCatalogQuery` accepts a presentation limit from 1 through 100
+(default 100), an optional exact normalized absolute Unix workspace spelling
+(at most 4096 bytes), an optional inclusive update-time lower bound, and search
+text bounded to 1024 raw UTF-8 bytes before copying. Unknown workspace or update
+time never matches an explicit corresponding predicate. Search trims outer
+space/tab/CR/LF and matches ASCII-case-insensitive substrings of known title,
+known workspace spelling, or bounded preview; it does not search IDs, generated
+unknown-value labels, omitted preview text, or the full transcript.
+
+The rich scanner shares the ID-only scanner's descriptor-relative no-follow
+access, acquired-root identity checks, canonical naming, permanent per-ID
+locks, strict record decoder, and corruption rules. It uses the same 1,024
+non-dot entry and 64 MiB accepted-record aggregate bounds, including the same
+single overflow witnesses. Each record still has its existing per-record and
+structural limits. Unlike ID-only listing, the presentation limit does not stop
+validation: all canonical candidates reached within those scan bounds are
+decoded once and projected before filtering and ranking. At most 100 selected
+metadata/preview snapshots are retained, plus one candidate projection and one
+transient bounded decoded record. Whole transcripts are not retained in the
+page, and there is no second deserialize pass or persistent index.
+
+Rows sort by known update time descending, unknown update times last, then ID
+descending for ties. `scan_complete` reports whether directory/aggregate bounds
+allowed the full observation; `results_truncated` separately reports that more
+matching rows were observed than the display limit. The page also exposes
+matched count, matching unknown-activity count, scanned record count, and
+accepted record bytes. `latest()` refuses `ScanIncomplete` or `UnknownActivity`
+when either prevents an authoritative ordering of eligible observed sessions,
+including unknown activity on a matching row omitted from the display. A
+complete scan with only result truncation can select its newest matching row.
+This remains a set of individually locked observations, not an atomic snapshot
+or a promise that concurrent writers cannot subsequently change the newest row.
+
+`exact(id)` loads only the requested canonical record through the retained
+store and returns its projection, independent of enumeration, ranking, or
+listing truncation. An absent ID returns `None` without creating a lock.
+`list_native_session_catalog` and `inspect_native_session_catalog_entry` accept
+an explicit `NativeEnvironment`; their process variants capture only the
+existing state-root environment selection on first poll. All four use the
+same no-create root facade as ID-only listing: a missing hierarchy returns an
+empty page or `None`, while unsafe roots and malformed environment selection
+are fixed errors. Successful reads of existing records may create missing
+private lock sidecars, but no operation creates a state hierarchy or repairs,
+migrates, rewrites, or deletes records.
+
+The ordering and bounded preview/search choices follow the pinned upstream
+`session_summary_codec.zig` newest comparator, `session_catalog.zig` query
+matching, and `session_display_metadata.zig` preview bounds. Native stored
+metadata remains the authority instead of adopting upstream title derivation
+or unknown-value display labels as facts. The catalog itself adds no CLI
+parsing, interactive picker, resume admission, or compatibility promotion.
 
 The `sessions-json` comparison remains non-equivalent, not measured, and
 claim-ineligible. This contract establishes no samples, thresholds, product-

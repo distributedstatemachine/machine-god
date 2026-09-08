@@ -172,6 +172,13 @@ pub(crate) struct FileSessionList {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) struct FileSessionScan {
+    pub(crate) complete: bool,
+    pub(crate) records: usize,
+    pub(crate) bytes: usize,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Debug)]
 pub(crate) struct FileSessionInspection {
     pub(crate) session_id: SessionId,
@@ -412,6 +419,48 @@ impl FileSessionStore {
         &self,
         after_directory_open: impl FnOnce(),
     ) -> Result<FileSessionList, SessionStoreError> {
+        let mut session_ids = Vec::new();
+        let scan =
+            self.visit_session_records(Some(MAX_LIST_SESSIONS), after_directory_open, |record| {
+                session_ids.push(record.id.clone());
+                Ok(())
+            })?;
+        session_ids.sort_unstable();
+        session_ids.dedup();
+        Ok(FileSessionList {
+            session_ids,
+            truncated: !scan.complete,
+        })
+    }
+
+    /// Visits every reached validated record within the existing directory and
+    /// aggregate byte bounds. Unlike ID listing, result ranking does not stop
+    /// record validation at its presentation limit. The callback cannot retain
+    /// borrowed records; each transient decoded record is released before the next.
+    pub(crate) fn scan_session_records(
+        &self,
+        visit: impl FnMut(&SessionRecord) -> Result<(), SessionStoreError>,
+    ) -> Result<FileSessionScan, SessionStoreError> {
+        self.visit_session_records(None, || {}, visit)
+    }
+
+    /// Exact projection does not depend on a directory scan or presentation cap.
+    pub(crate) fn project_session_record<T>(
+        &self,
+        id: &SessionId,
+        project: impl FnOnce(&SessionRecord) -> Result<T, SessionStoreError>,
+    ) -> Result<Option<T>, SessionStoreError> {
+        self.load_unix(id)?
+            .map(RecordOwner::new)
+            .as_ref()
+            .map(|record| project(record.get()))
+            .transpose()
+    }
+
+    fn session_candidates(
+        &self,
+        after_directory_open: impl FnOnce(),
+    ) -> Result<(Vec<String>, bool), SessionStoreError> {
         let directory = rustix::fs::openat(
             self.root.as_fd(),
             ".",
@@ -455,10 +504,20 @@ impl FileSessionStore {
         candidates.sort_unstable();
         candidates.dedup();
 
-        let mut session_ids = Vec::new();
+        Ok((candidates, truncated))
+    }
+
+    fn visit_session_records(
+        &self,
+        record_limit: Option<usize>,
+        after_directory_open: impl FnOnce(),
+        mut visit: impl FnMut(&SessionRecord) -> Result<(), SessionStoreError>,
+    ) -> Result<FileSessionScan, SessionStoreError> {
+        let (candidates, mut truncated) = self.session_candidates(after_directory_open)?;
+        let mut records = 0;
         let mut total_record_bytes = 0_usize;
         for data_name in candidates {
-            if session_ids.len() >= MAX_LIST_SESSIONS {
+            if record_limit.is_some_and(|limit| records >= limit) {
                 truncated = true;
                 break;
             }
@@ -493,14 +552,14 @@ impl FileSessionStore {
                 .checked_add(bytes_read)
                 .filter(|total| *total <= MAX_LIST_SESSION_TOTAL_RECORD_BYTES)
                 .expect("a successful bounded listing read fits the aggregate limit");
-            session_ids.push(record.get().id.clone());
+            visit(record.get())?;
+            records += 1;
         }
 
-        session_ids.sort_unstable();
-        session_ids.dedup();
-        Ok(FileSessionList {
-            session_ids,
-            truncated,
+        Ok(FileSessionScan {
+            complete: !truncated,
+            records,
+            bytes: total_record_bytes,
         })
     }
 
