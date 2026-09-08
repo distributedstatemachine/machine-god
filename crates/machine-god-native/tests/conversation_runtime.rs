@@ -1017,6 +1017,8 @@ fn continuation_requires_idle_empty_queue_and_captures_current_selection() {
         NativeConversationRuntimeError::Busy
     );
     drop(turn);
+    assert!(runtime.paused_turn().unwrap().is_some());
+    assert!(provider.requests().is_empty());
     runtime
         .enqueue_continuation(InferenceOptions::default())
         .unwrap();
@@ -1031,6 +1033,176 @@ fn continuation_requires_idle_empty_queue_and_captures_current_selection() {
         Some("private/continued")
     );
     assert_eq!(runtime.record().messages.len(), 2);
+    assert!(runtime.paused_turn().unwrap().is_none());
+}
+
+fn assert_controls_busy(runtime: &NativeConversationRuntime) {
+    assert_eq!(
+        runtime.context_preferences().unwrap_err(),
+        NativeConversationRuntimeError::Busy
+    );
+    assert_eq!(
+        runtime.paused_turn().unwrap_err(),
+        NativeConversationRuntimeError::Busy
+    );
+    assert_eq!(
+        block_on(runtime.rename("blocked", 500)).unwrap_err(),
+        NativeConversationRuntimeError::Busy
+    );
+    assert_eq!(
+        block_on(runtime.compact(500)).unwrap_err(),
+        NativeConversationRuntimeError::Busy
+    );
+    assert_eq!(
+        block_on(runtime.set_max_history_turns(2, 500)).unwrap_err(),
+        NativeConversationRuntimeError::Busy
+    );
+}
+
+#[test]
+fn runtime_controls_preserve_history_queue_and_dirty_selection() {
+    let (runtime, store, provider) = setup(
+        None,
+        [finished(), finished(), finished()],
+        SessionStoreScript::default(),
+    );
+    for now in [100, 200] {
+        runtime.enqueue(format!("question {now}").into()).unwrap();
+        let turn = block_on(runtime.start_next(now)).unwrap().unwrap();
+        let calls = store.calls().len();
+        assert_controls_busy(&runtime);
+        assert_eq!(store.calls().len(), calls);
+        complete(turn);
+    }
+    let original = runtime.record();
+    runtime.enqueue("queued question".into()).unwrap();
+    runtime
+        .set_model_preferences(preferences("private/next"))
+        .unwrap();
+    let before = runtime.status();
+    let calls = store.calls().len();
+    drop(runtime.rename("new title", 300));
+    drop(runtime.compact(300));
+    drop(runtime.set_max_history_turns(2, 300));
+    assert_eq!(store.calls().len(), calls);
+    assert_eq!(runtime.record(), original);
+    assert!(!runtime.status().active);
+    block_on(runtime.rename("new title", 300)).unwrap();
+    assert!(block_on(runtime.compact(400)).unwrap());
+    block_on(runtime.set_max_history_turns(2, 450)).unwrap();
+    let context = runtime.context_preferences().unwrap();
+    assert_eq!(context.first_retained_message(), 2);
+    assert_eq!(context.max_history_turns(), 2);
+    assert_eq!(runtime.record().messages, original.messages);
+    assert_eq!(
+        runtime.record().metadata[NATIVE_SESSION_METADATA_KEY]["title"],
+        "new title"
+    );
+    assert_eq!(runtime.status().queued_jobs, before.queued_jobs);
+    assert_eq!(
+        runtime.status().model_preferences_pending,
+        before.model_preferences_pending
+    );
+    assert!(runtime.status().model_preferences_pending);
+    assert_eq!(runtime.model_preferences().model(), "private/next");
+    let persisted = store.record(&runtime.id()).unwrap();
+    let calls = store.calls().len();
+    assert!(!block_on(runtime.compact(500)).unwrap());
+    assert_eq!(store.calls().len(), calls);
+    assert_eq!(store.record(&runtime.id()).unwrap(), persisted);
+    complete(block_on(runtime.start_next(600)).unwrap().unwrap());
+    assert_eq!(
+        runtime.record().messages[..original.messages.len()],
+        original.messages
+    );
+    let requests = provider.requests();
+    let request = &requests.last().unwrap().request;
+    assert_eq!(request.options.model.as_deref(), Some("private/next"));
+    assert_eq!(request.messages[1..3], original.messages[2..]);
+    assert_eq!(runtime.status().queued_jobs, 0);
+}
+
+#[test]
+fn dropped_runtime_control_releases_admission_without_publishing_or_losing_queue() {
+    let initial = record(Some(&preferences("private/original")));
+    let store =
+        InMemorySessionStore::from_records(BTreeMap::from([(initial.id.clone(), initial.clone())]));
+    let gate = Arc::new(Gate::default());
+    let provider = ScriptedModelProvider::new("test", []);
+    let runtime = runtime_with_store(
+        Arc::new(GatedStore {
+            store: store.clone(),
+            gate: gate.clone(),
+        }),
+        provider.clone(),
+        preferences("private/original"),
+        None,
+    );
+    let mut rename = runtime.rename("abandoned", 100);
+    assert!(
+        rename
+            .as_mut()
+            .poll(&mut Context::from_waker(&noop_waker()))
+            .is_pending()
+    );
+    assert_controls_busy(&runtime);
+    runtime.enqueue("kept".into()).unwrap();
+    runtime
+        .set_model_preferences(preferences("private/during-save"))
+        .unwrap();
+    assert_eq!(
+        block_on(runtime.start_next(200)).unwrap_err(),
+        NativeConversationRuntimeError::Busy
+    );
+    assert_eq!(
+        block_on(runtime.flush_model_preferences(200)).unwrap(),
+        NativeModelPreferencePersistence::Deferred
+    );
+    drop(rename);
+    assert!(!runtime.status().active);
+    assert_eq!(runtime.record(), initial);
+    assert_eq!(store.record(&runtime.id()).unwrap(), initial);
+    assert!(provider.requests().is_empty());
+    gate.release();
+    block_on(runtime.rename("committed", 300)).unwrap();
+    assert_eq!(
+        runtime.record().metadata[NATIVE_SESSION_METADATA_KEY]["title"],
+        "committed"
+    );
+    assert_eq!(runtime.status().queued_jobs, 1);
+    assert!(runtime.status().model_preferences_pending);
+    assert_eq!(runtime.model_preferences().model(), "private/during-save");
+}
+
+#[test]
+fn invalid_and_failed_runtime_controls_preserve_canonical_state() {
+    let (runtime, store, provider) = setup(
+        None,
+        [],
+        SessionStoreScript {
+            saves: Some(vec![SessionStoreStep::Error(SessionStoreError::new(
+                SessionStoreErrorKind::Unavailable,
+                "failed",
+                "save failed",
+                true,
+            ))]),
+            ..SessionStoreScript::default()
+        },
+    );
+    let original = runtime.record();
+    runtime.enqueue("kept".into()).unwrap();
+    let calls = store.calls().len();
+    assert!(block_on(runtime.rename("", 100)).is_err());
+    assert!(block_on(runtime.set_max_history_turns(usize::MAX, 100)).is_err());
+    assert!(!block_on(runtime.compact(100)).unwrap());
+    assert_eq!(store.calls().len(), calls);
+    assert!(block_on(runtime.rename("failed", 200)).is_err());
+    assert_eq!(runtime.record(), original);
+    assert_eq!(store.record(&runtime.id()).unwrap(), original);
+    assert!(!runtime.status().active);
+    assert_eq!(runtime.status().queued_jobs, 1);
+    assert!(runtime.status().model_preferences_pending);
+    assert!(provider.requests().is_empty());
 }
 
 #[test]
@@ -1070,6 +1242,7 @@ fn native_finalizer_keeps_runtime_busy_without_losing_pending_selection() {
     }
     assert!(finalizer_pending);
     assert!(runtime.status().active);
+    assert_controls_busy(&runtime);
     assert_eq!(
         block_on(runtime.flush_model_preferences(200)).unwrap(),
         NativeModelPreferencePersistence::Deferred

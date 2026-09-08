@@ -103,6 +103,18 @@ native finalization and drops native/core work before releasing that lease.
 Dropping the runtime clears pending inputs but does not invalidate a separately
 owned active turn. `cancel_queued` and `clear_queued` affect pending input only.
 
+Runtime `rename`, `compact`, and `set_max_history_turns` expose the conversation's
+existing durable operations through the same admission lease as queued jobs and
+preference saves. They are borrowed, inert-before-poll futures. A pending save
+excludes job admission and other durable controls through completion or drop;
+native exact-revision and uncertain-publication semantics remain unchanged.
+Queued inputs are retained and use the newly saved context when later admitted.
+Selection changes and queue edits remain available while publication is pending;
+these controls neither persist nor clear the dirty model-preference generation.
+`context_preferences` and `paused_turn` are idle observations of canonical state,
+not cross-process snapshots or permission to replay historical effects. All five
+operations reject active runtime work, including the native finalization gap.
+
 `enqueue_continuation` requires an idle, empty queue and a valid paused checkpoint.
 It rechecks the empty queue after checkpoint observation, and the taken job
 rechecks that checkpoint's sequence. A racing prompt or changed checkpoint

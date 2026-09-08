@@ -152,16 +152,23 @@ One-shot ask/resume now compose the native runtime with a completed rich catalog
 using one acquired credential for catalog and inference before terminal-host
 startup. Resume restores saved controls over changed defaults, while ordinary
 invocations leave user defaults untouched; native finalization gates completion.
+Runtime title, manual/automatic context controls and paused-turn observations now
+share job admission through native finalization, preserving queued input and
+pending model selections across publication, failure and dropped saves.
 Remaining work includes interactive CLI persistence-outcome presentation,
 long-lived cache composition, typed historical interruption/background/file facts,
 interactive command/session transitions,
 pinned recovery/retry policy, policy/sandbox/workspace enforcement, rich session
 commands and the complete feature gates.
 
-The local broad regression gate remains open: default-concurrency macOS runs
-exposed background cleanup and PTY child-reap admission failures. Focused reruns
-pass, but do not replace a green complete workspace run; preserve the existing
-deadlines, concurrency, and fail-closed cleanup behavior during investigation.
+The current complete local workspace run passes on macOS with Rust 1.94.1,
+default test concurrency, enabled backtraces and the freshly built release helper.
+Local validation now uses a fresh target instead of the oversized shared artifact
+directory that stalled macOS bundle initialization and panic symbolication.
+The earlier intermittent background/PTY reaping failures did not recur; their
+cause is not established by the directory-scan samples. Deadlines, assertions,
+cleanup guarantees and platform coverage remain unchanged. This internal gate
+does not replace the complete exact-candidate feature gates below.
 
 ### CI and documentation maintenance
 

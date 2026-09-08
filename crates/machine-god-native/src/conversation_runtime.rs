@@ -19,10 +19,11 @@ use crate::tool_output_serializer::{
     CompactJsonScratch, CompactToolOutputLimits, measure_json_value_compact_with_scratch,
 };
 use crate::{
-    LoadedNativeConfig, NativeConversation, NativeConversationError,
+    LoadedNativeConfig, NativeContextPreferences, NativeConversation, NativeConversationError,
     NativeConversationModelRouteError, NativeConversationModelRoutes, NativeConversationTurn,
     NativeModelCapabilities, NativeModelCatalog, NativeModelPreferences,
-    NativeModelPreferencesError, NativeModelSnapshot, NativeUserConfigError, NativeUserConfigStore,
+    NativeModelPreferencesError, NativeModelSnapshot, NativePausedTurn, NativeUserConfigError,
+    NativeUserConfigStore,
 };
 
 /// Independent native queue bounds; core still applies its configured turn limits.
@@ -227,6 +228,81 @@ impl NativeConversationRuntime {
     #[must_use]
     pub fn record(&self) -> SessionRecord {
         self.conversation.record()
+    }
+
+    /// Observes persisted context selection without starting queued work.
+    /// # Errors
+    /// Rejects active runtime work or invalid saved context.
+    /// # Panics
+    /// Panics if an earlier panic poisoned the runtime state mutex.
+    pub fn context_preferences(
+        &self,
+    ) -> Result<NativeContextPreferences, NativeConversationRuntimeError> {
+        let _lease = self.acquire_idle(false)?;
+        Ok(self.conversation.context_preferences()?)
+    }
+
+    /// Observes a paused checkpoint, not permission to replay historical effects.
+    /// # Errors
+    /// Rejects active runtime work or invalid saved checkpoint state.
+    /// # Panics
+    /// Panics if an earlier panic poisoned the runtime state mutex.
+    pub fn paused_turn(&self) -> Result<Option<NativePausedTurn>, NativeConversationRuntimeError> {
+        let _lease = self.acquire_idle(false)?;
+        Ok(self.conversation.paused_turn()?)
+    }
+
+    /// Persists a title through the same runtime admission as jobs and saves.
+    /// Pending jobs and requested model settings are preserved. No work starts
+    /// until this borrowed future is polled; dropping it releases admission.
+    /// # Panics
+    /// Polling panics if an earlier panic poisoned the runtime state mutex.
+    #[must_use]
+    pub fn rename<'a>(
+        &'a self,
+        title: &'a str,
+        now_ms: i64,
+    ) -> BoxFuture<'a, Result<SessionRevision, NativeConversationRuntimeError>> {
+        Box::pin(async move {
+            let _lease = self.acquire_idle(false)?;
+            Ok(self.conversation.rename(title, now_ms).await?)
+        })
+    }
+
+    /// Persists manual context selection, never deleting history or queued input.
+    /// This borrowed future is inert until polled. A pending publication owns
+    /// runtime admission; failure/drop retains native reconciliation semantics.
+    /// # Panics
+    /// Polling panics if an earlier panic poisoned the runtime state mutex.
+    #[must_use]
+    pub fn compact(
+        &self,
+        now_ms: i64,
+    ) -> BoxFuture<'_, Result<bool, NativeConversationRuntimeError>> {
+        Box::pin(async move {
+            let _lease = self.acquire_idle(false)?;
+            Ok(self.conversation.compact(now_ms).await?)
+        })
+    }
+
+    /// Persists the automatic context limit for future job admission. Zero
+    /// disables automatic compaction without clearing an existing manual cut.
+    /// This borrowed future performs no effects until polled.
+    /// # Panics
+    /// Polling panics if an earlier panic poisoned the runtime state mutex.
+    #[must_use]
+    pub fn set_max_history_turns(
+        &self,
+        maximum: usize,
+        now_ms: i64,
+    ) -> BoxFuture<'_, Result<SessionRevision, NativeConversationRuntimeError>> {
+        Box::pin(async move {
+            let _lease = self.acquire_idle(false)?;
+            Ok(self
+                .conversation
+                .set_max_history_turns(maximum, now_ms)
+                .await?)
+        })
     }
 
     /// # Panics
