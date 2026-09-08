@@ -209,6 +209,15 @@ catalog parity. This contract makes no comparative performance claim.
 
 ## Output ownership
 
+The reusable interactive input framer retains one logical line of at most
+262,144 bytes, separately from the native adapter's 4,096-byte raw chunk. It
+preserves split UTF-8, accepts LF/CRLF, validates UTF-8 and NUL at frame completion,
+and flushes a partial line at EOF once. A bare CR remains content. Oversize input
+reports once, discards through LF without growth, and resumes at the next line.
+Emitted strings retain only their logical byte capacity. Framing does not
+acquire stdin, route answers or change the command grammar described above;
+slash routing applies its separate bound only to slash submissions.
+
 Every command validates its complete grammar before acquiring its native
 authority. Commands assemble bounded atomic output when their contract
 requires a single report. Streaming commands retain cancellation ownership

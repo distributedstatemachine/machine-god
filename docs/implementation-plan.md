@@ -119,134 +119,61 @@ hardening remain M04 work. Required scenarios cannot close with unsupported
 stubs. Three independent scope inspections accepted this sequencing; they are
 not substitutes for the final exact-candidate product reviews.
 
-Internal implementation now includes exclusive core metadata transactions,
-atomic initial native metadata, durable title mutation, slash routing, explicit
-continuation, and revision-pinned prepared turns with provider-only context.
-The native conversation owner atomically reserves paused-turn checkpoints,
-settles their finalization, persists manual/automatic context selection and pins
-advisory provider views without deleting canonical history. Reference-host
-composition shares bounded undo across all five file mutations. Model identifiers
-share the pinned 1,024-byte UTF-8 contract, with escaped CLI presentation.
-Model components include bounded [preference values](model-preferences.md), explicitly advertised catalog
-capabilities, pinned reasoning/fast wire fields and exact-first fuzzy query
-resolution across the existing slash-input bound. Native conversation admission
-atomically persists requested model settings with checkpoints and pins immutable
-effective controls across provider/tool rounds; idle preference writes preserve
-history and resume exposes saved settings without manufacturing defaults.
-The native runtime owns bounded pending inputs, current selection and deferred
-session preference writes, preserving taken jobs and restoring saved controls
-with explicit process-model override precedence. These component commits are
-not deliveries. The owned rich-model cache preserves advertised capabilities,
-shares one in-flight fetch, retains prior catalogs on failed/empty refresh and
-applies pinned no-TTL/retry behavior with bounded cancellable waiters.
-Secondary workers now follow the pinned distinction: dedicated Gemini vision
-with unchanged semantic retries, and session-incarnation-bound search snapshots
-of current selection at tool entry. Neither inherits effort/fast controls.
-Schema-v4 user defaults now preserve requested model/effort/fast controls with
-strict legacy reads and explicit descriptor-bound, conflict-checked publication
-to the same configuration file. Session and user targets remain independent.
-The runtime's explicit combined save captures one generation, attempts both
-session and user-default targets independently, and reports separate outcomes
-without reverting selection or overwriting a concurrently changed config.
-One-shot ask/resume now compose the native runtime with a completed rich catalog,
-using one acquired credential for catalog and inference before terminal-host
-startup. Resume restores saved controls over changed defaults, while ordinary
-invocations leave user defaults untouched; native finalization gates completion.
-Runtime title, manual/automatic context controls and paused-turn observations now
-share job admission through native finalization, preserving queued input and
-pending model selections across publication, failure and dropped saves.
-Native history now records typed outcomes in admission/finalization transactions,
-preserves explicit file/background observations by exact historical attempt, and
-feeds their bounded context-summary sections without inferring missing facts.
-File facts retain canonical per-call identities, destinations, result status and
-read staleness instead of collapsing distinct reads of the same path.
-Automatic file observations now connect the nine concrete native file tools to
-conversation finalization and CLI composition. Pending execution facts survive
-dropped streams and failed finalization in their owner, merge before continuation
-or context projection, and retire only after confirmed publication. Saved
-exact-action rule values now have bounded strict decoding, collision-safe keys,
-stable IDs and per-rule generation checks; this codec does not itself enforce
-permissions or confirm rules.
-The core now exposes a turn-owned, single-entry metadata editor with bounded
-compare-and-swap, transcript-preserving reconciliation and explicit uncertain
-publication handling, including saves awaited inside permission authorization.
-Configured permission-pattern values now preserve ordered last-match semantics,
-tool aliases, prepared path/command projection and exact web-fetch domains under
-bounded encoded size and matching work. Saved exact rules remain a separate domain.
-Core permission policy now receives the actual borrowed prepared invocation and
-may retain a revocable admission guard across observer waits until execution.
-Legacy handlers keep their existing behavior. The native controller now owns
-exact-turn registrations, taken-job policy snapshots, reset-cleared grants,
-ordered policy precedence and revocable execution proofs. Confirmed saved-rule
-changes use core metadata CAS, retain per-rule proposal generations, and block
-authority across uncertain publication without reviving invalidated proofs.
-Conversation/runtime composition binds actual core turns and retires their
-authority before finalization. Schema-v5 configuration adds mode, sandbox
-preference and ordered rules while preserving strict legacy reads and bounded
-policy-preserving user-default writes. The owned file-approval adapter now retains
-exact descriptor/preimage evidence for all five mutations, claims one request
-generation and revalidates at the final effect. Old unpolled execution futures
-cannot consume newer approvals. The real fixed-model Gateway reviewer enforces
-bounded evidence, deadline, cancellation and pinned completion semantics.
-The controller's execution proof serves as the file adapter's live policy.
-Prepared-root host composition now shares the exact registered tool allocations,
-file approval registry, live invocation contexts and actual fixed-model reviewer.
-Ask/resume attach that controller to each created or restored native conversation.
-The noninteractive CLI honors configured policy and proven Auto/Yolo behavior;
-unresolved human requirements remain denied without manufacturing a prompt.
-The opt-in governed-tool wrapper preserves prepared cancellation and archive
-semantics while admitting otherwise policy-skipping calls through exact tool
-capabilities. Taken policy also retains sandbox preference separately from Yolo's
-effective selection. Built-in and legacy configuration now correctly project an
-absent sandbox setting to None, matching the pinned upstream; explicit Os survives
-loading and user-default publication.
-Unexecutable native preparations now return recoverable denial rather than aborting
-the conversation; composed file tests require actual completion after replanning.
-Exact live invocation context now retains the pending provider call and native
-root-input provenance without cloning the transcript or inferring human authority
-from message roles. Target preparation uses actual registered tools, descriptor
-observations and the terminal host's selected cwd/shell. Prepared question and grep
-arguments use their execution validators rather than being decoded as raw input.
-The macOS sandbox adapter wraps real foreground, background, PTY and tmux
-launches with retained executable/root checks. Production terminal routing captures
-the actual taken policy through a weak controller link; retained custom monitors
-keep their admitted snapshot after the originating turn retires. The CLI explicitly
-supplies the system executable. Missing Os authority never falls back; configured
-None and effective Yolo remain distinct and are exercised through the real host.
-Full terminal start/monitor/close preserve ordinary model continuation. The
-pinned legacy background-completion branch has no production producer; terminal
-records and late URL notices do not establish legacy launch-time attachments.
-The native rich catalog now projects authoritative metadata and bounded previews,
-filters workspace/search/time and ranks every reached record before retaining
-the newest bounded results. Exact lookup is independent of scan truncation;
-latest selection refuses incomplete scans or unknown eligible activity times.
-Legacy ID-only callers retain their existing behavior. The top-level sessions
-command now uses this rich catalog with canonical current-workspace scope,
-`--all`, `--limit`, cursor pagination and count-only corrupt-record reporting.
-Skipped decode bytes count against the scan budget. Incomplete scans never
-promise continuation or claim an empty store. Known cursor times use the pinned
-canonical format; native unknown times and colon-bearing IDs remain explicit.
-Rich output preserves unknown metadata, actual user-group counts, control-safe
-display and lossless non-UTF-8 workspace bytes without inventing path authority.
-Native metadata now records original workspace separately from current
-association, with strict legacy reads that never infer a missing origin.
-Exact-revision workspace rebinding atomically preserves that origin and appends
-bounded durable change history; unchanged associations reconcile uncertain
-publication without saving or advancing time. The CLI projects both paths
-losslessly and leaves persisted legacy records untouched.
-Native resume preparation now selects latest within the supplied workspace or
-an independent exact ID, validates the full native record, and guards canonical
-loading by incarnation and revision. Exact selection can persist rebinding;
-latest cannot. Consuming adoption rechecks the complete durable record and live
-revision before returning a conversation. These operations do not switch the
-interactive owner or imply rollback of an already published association change.
-Remaining work starts with native interactive session ownership: latest/exact/
-picker resume must validate and load before switching, and clear/new/reset must
-allocate fresh IDs with their distinct carry-forward or stop/forget background
-policies. The existing same-ID incarnation reset is not that transition.
-Interactive persistence-outcome presentation, long-lived cache composition,
-remaining commands, recovery/retry, policy/workspace authority and the complete
-feature gates remain open.
+Internal component commits are not deliveries. Their implementation inventory is:
+
+- Core/native conversation ownership: exclusive metadata transactions,
+  incarnation/revision-guarded load and CAS, atomic initial metadata and title,
+  transcript-preserving reconciliation, paused continuation reservation and
+  native finalization. Context selection projects provider-only views without
+  deleting canonical history or repeating uncertain effects.
+- Runtime/model ownership: bounded queued jobs, taken-job snapshots, deferred
+  session preferences and independent session/user-default save receipts.
+  Model identifiers retain the pinned 1,024-byte UTF-8 limit; rich catalogs
+  preserve advertised capabilities, exact-first fuzzy resolution and bounded
+  shared fetch/retry behavior. Initial resume restores saved controls with an
+  explicit process-model override. Fresh sessions use workspace defaults.
+- Secondary model routes: fixed Gemini vision and incarnation-bound search
+  snapshots preserve their distinct pinned behavior, without inheriting
+  reasoning/fast controls. The one-shot CLI shares one acquired credential
+  across catalog and inference before terminal-host acquisition.
+- History and undo: all five mutations share bounded file undo. Nine file
+  tools record exact per-call typed observations; pending facts survive dropped
+  streams and failed saves, merge before continuation/context projection and
+  retire only after confirmed publication. Historical read staleness,
+  destinations, background facts and missing metadata remain explicit.
+- Permissions: bounded strict saved-rule values, ordered configured patterns,
+  exact-turn policy snapshots, revocable execution proofs and reset-cleared
+  grants. Confirmed edits use core CAS with per-rule generations and preserve
+  uncertainty. Schema-v5 config retains mode, sandbox and ordered rules across
+  legacy reads and descriptor-bound, conflict-checked user-default publication.
+- Actual enforcement: prepared-root host composition shares registered tool
+  allocations, live invocation contexts, descriptor/preimage file approvals and
+  the fixed-model Gateway reviewer. Recoverable preparation denial permits
+  replanning. Ask/resume enforce configured Ask/Auto/Yolo and deny unresolved
+  noninteractive human requirements without fabricating confirmation.
+- macOS sandboxing: actual foreground/background/PTY/tmux launches retain
+  executable/root checks and taken policy. The CLI supplies the system
+  executable explicitly; missing Os authority never falls back. None and
+  effective Yolo remain distinct. Legacy background attachments are not
+  inferred from terminal records or late notices.
+- Sessions: bounded rich catalogs rank all reached records, preserve unknown
+  facts, paginate with honest incomplete-scan outcomes and require complete
+  eligibility for latest. Exact lookup is scan-independent. The CLI presents
+  canonical current-workspace scope, all/limit/cursor selection and lossless
+  non-UTF-8 path bytes without manufacturing authority.
+- Resume: original workspace is distinct from current association; exact
+  revision rebinding preserves origin and bounded history. Validated preparation
+  checks the full native record (including saved rules), incarnation and
+  revision before load; consuming adoption rechecks durable/live state. A
+  prepared association publication is not rolled back by dropping adoption.
+
+Remaining work includes CLI composition of native interactive ownership and presentation,
+latest/exact/picker startup, long-lived cache and human-prompt composition,
+remaining commands, recovery/retry and actual policy/workspace authority.
+Clear/new/reset must allocate fresh IDs, not reuse the same-ID incarnation
+reset. Clear/new carry terminals forward; reset and live resume stop/forget.
+Started transitions and uncertain outcomes must remain owned through settlement.
+The complete combined feature and all final gates remain open.
 
 The rich sessions checkpoint `734a11f` passes Rust 1.94.1 formatting,
 warnings-denied workspace Clippy, replacement workspace tests and doctests.
@@ -305,8 +232,18 @@ Owned undo-clear reservation and guard-owned settled selection snapshots pass
 focused native and WASI worker checks. Their integration passes 30 undo, 38
 runtime and 47 reference-host tests, workspace Clippy, formatting and docs checks.
 The host exposes exact workspace/model/observation allocations and cheap runtime
-identity. Native interactive ownership, independent composed tests and bounded
-explicit-descriptor input remain active; the CLI driver is not yet composed.
+identity. The integrated native interactive owner retains started preparation,
+terminal commits, fenced uncertainty, undo and shutdown receipts independently
+of presentation. Borrowed retirement keeps admission fenced on failure; empty
+output takes no longer self-wake idle polling. Combined checks pass 39 runtime,
+eight private and eight composed owner tests, plus 15 native byte-input tests.
+The bounded CLI framer passes 11 standalone tests and pinned Clippy. One-shot
+host acquisition now accepts explicit prompt adapters through a shared setup
+path. These are component checks, not final feature gates. Human-prompt bridging,
+flag-preserving ordinary stdin acquisition and the actual CLI driver remain open.
+The shared setup integration passes 153 CLI unit tests with five helper ignores,
+89 command tests and ten replay/frame tests. Workspace Clippy passes after a
+test-only naming correction; no persistence or timing contract was weakened.
 
 The integrated preparer passes all five real file mutations, actual reviewer
 Allow/Ask/error and cancellation, read-grant/reset, canonical terminal identity,

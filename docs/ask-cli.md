@@ -66,7 +66,10 @@ catalog observation permits inference without advertised capabilities; it does
 not discard requested model settings. Catalog transport/backend construction
 failure remains an operational setup failure. The catalog uses the existing
 bounded provider/cache contract, including its authenticated rejection fallback
-and shared request deadline, and prints no catalog output here.
+and shared request deadline, and prints no catalog output here. Shared host
+preparation retains the acquired cache alongside the conversation resources,
+so a long-lived CLI owner can reuse its authenticated provider without another
+credential lookup. One-shot ask does not initiate a later refresh.
 
 The native runtime begins with the configuration's requested model, effort, and
 fast-mode preferences. Admission persists those requested values in the session

@@ -206,7 +206,7 @@ fn retired_aliases_and_unpolled_rule_futures_cannot_reacquire_or_write() {
     let f = Fixture::new();
     let pending = f.owner.confirm_rule_change(f.proposal());
     assert_eq!(f.store.saves.load(Ordering::SeqCst), 0);
-    f.gate.begin_quiescence().unwrap().retire().unwrap();
+    f.gate.begin_quiescence().unwrap().try_retire().unwrap();
     f.owner.retire();
     assert!(f.owner.snapshot().is_err());
     assert!(f.owner.set_mode(PermissionMode::Yolo).is_err());
@@ -266,7 +266,7 @@ fn admitted_turn_binds_and_reconciles_during_quiescence_but_old_proof_never_revi
     drop(turn);
     drop(permit);
     block_on(quiescence.wait_idle()).unwrap();
-    quiescence.retire().unwrap();
+    quiescence.try_retire().unwrap();
     f.owner.retire();
     assert!(proof.revalidate().is_err());
     let replacement = f

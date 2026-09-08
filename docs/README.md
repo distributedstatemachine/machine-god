@@ -37,6 +37,7 @@ SHAs, workflow IDs, review counts, or slice-by-slice history.
 - [Session store](session-store.md)
 - [Native session lifecycle](native-session-lifecycle.md)
 - [Native conversation ownership](native-conversation.md)
+- [Native interactive byte input](interactive-input.md)
 - [Native session listing](native-session-listing.md)
 - [Native session inspection](native-session-inspection.md)
 - [Testkit](testkit.md)

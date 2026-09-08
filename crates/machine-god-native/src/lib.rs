@@ -96,6 +96,13 @@ pub use permission_rules::{
 mod conversation_lifecycle;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conversation_runtime;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod interactive_input;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use interactive_input::{
+    NATIVE_INTERACTIVE_INPUT_CHUNK_BYTES, NativeInteractiveInput, NativeInteractiveInputChunk,
+    NativeInteractiveInputError, NativeInteractiveInputSource,
+};
 mod copy_file;
 mod create_folder;
 mod delete_file;
@@ -172,6 +179,12 @@ pub use process_inventory_helper::{
 pub use process_inventory_protocol::{
     PROCESS_INVENTORY_SERVICE_ARGUMENT, run_process_inventory_service,
 };
+#[cfg(all(
+    feature = "ai-gateway-http",
+    not(target_family = "wasm"),
+    any(target_os = "linux", target_os = "macos")
+))]
+mod interactive_session;
 mod read_file;
 mod read_tool_result;
 #[cfg(all(
@@ -180,6 +193,17 @@ mod read_tool_result;
     any(target_os = "linux", target_os = "macos")
 ))]
 mod reference_host;
+#[cfg(all(
+    feature = "ai-gateway-http",
+    not(target_family = "wasm"),
+    any(target_os = "linux", target_os = "macos")
+))]
+pub use interactive_session::{
+    NativeInteractiveError, NativeInteractiveInitialSession, NativeInteractiveOutcome,
+    NativeInteractiveRequestId, NativeInteractiveRequestReceipt, NativeInteractiveSession,
+    NativeInteractiveSessionOptions, NativeInteractiveTransition,
+    NativeInteractiveTransitionReceipt,
+};
 mod rename_file;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod root_selection;

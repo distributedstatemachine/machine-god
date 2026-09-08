@@ -61,7 +61,7 @@ fn exact_permits_bound_and_retirement_is_irreversible() {
     assert!(matches!(gate.acquire(), Err(LifecycleError::Quiescing)));
     drop(permits);
     block_on(guard.wait_idle()).unwrap();
-    guard.retire().unwrap();
+    guard.try_retire().unwrap();
     assert_eq!(gate.phase(), LifecyclePhase::Retired);
     assert!(matches!(gate.acquire(), Err(LifecycleError::Retired)));
     assert!(matches!(
@@ -71,15 +71,17 @@ fn exact_permits_bound_and_retirement_is_irreversible() {
 }
 
 #[test]
-fn dropped_fence_and_failed_busy_retirement_reopen_without_stale_rollback() {
+fn failed_busy_retirement_keeps_fence_until_explicit_drop_without_stale_rollback() {
     let gate = LifecycleGate::new();
     let permit = gate.acquire().unwrap();
-    let guard = gate.begin_quiescence().unwrap();
+    let mut guard = gate.begin_quiescence().unwrap();
     assert!(matches!(
         gate.begin_quiescence(),
         Err(LifecycleError::Quiescing)
     ));
-    assert_eq!(guard.retire(), Err(LifecycleError::Busy));
+    assert_eq!(guard.try_retire(), Err(LifecycleError::Busy));
+    assert_eq!(gate.phase(), LifecyclePhase::Quiescing);
+    drop(guard);
     assert_eq!(gate.phase(), LifecyclePhase::Open);
     let old = gate.begin_quiescence().unwrap();
     // Simulate a stale ticket: only the matching owner may reopen a phase.

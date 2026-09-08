@@ -1580,7 +1580,12 @@ fn retired_runtime_aliases_cannot_mutate_and_routes_can_be_registered_again() {
         .unwrap();
     let mut guard = runtime.begin_quiescence().unwrap();
     block_on(guard.wait_idle()).unwrap();
-    guard.retire().unwrap();
+    guard.try_retire().unwrap();
+    assert_eq!(
+        guard.try_retire(),
+        Err(NativeConversationRuntimeError::StaleQuiescence)
+    );
+    drop(guard);
     assert_eq!(
         retained.status().phase,
         NativeConversationRuntimePhase::Retired
@@ -1631,6 +1636,15 @@ fn quiescence_cancels_pending_admission_before_any_provider_poll() {
     assert!(start.as_mut().poll(&mut cx).is_pending());
     let mut guard = runtime.begin_quiescence().unwrap();
     assert!(guard.wait_idle().as_mut().poll(&mut cx).is_pending());
+    assert_eq!(
+        guard.try_retire(),
+        Err(NativeConversationRuntimeError::Busy)
+    );
+    assert_eq!(runtime.status().queued_jobs, 1);
+    assert_eq!(
+        runtime.enqueue("still fenced".into()),
+        Err(NativeConversationRuntimeError::Quiescing)
+    );
     gate.release();
     let turn = block_on(start).unwrap().unwrap();
     assert!(turn.handle().unwrap().is_cancelled());
@@ -1646,8 +1660,27 @@ fn quiescence_cancels_pending_admission_before_any_provider_poll() {
     block_on(guard.wait_idle()).unwrap();
     assert!(provider.requests().is_empty());
     assert_eq!(runtime.status().queued_jobs, 1);
+    guard.try_retire().unwrap();
+    assert_eq!(runtime.status().queued_jobs, 0);
     drop(guard);
+    assert_eq!(
+        runtime.status().phase,
+        NativeConversationRuntimePhase::Retired
+    );
+}
+
+#[test]
+fn consuming_busy_retirement_still_reopens_without_discarding_queue() {
+    let (runtime, _, _) = setup(None, [finished()], SessionStoreScript::default());
+    runtime.enqueue("taken".into()).unwrap();
+    let kept = runtime.enqueue("kept".into()).unwrap();
+    let turn = block_on(runtime.start_next(100)).unwrap().unwrap();
+    let guard = runtime.begin_quiescence().unwrap();
+    assert_eq!(guard.retire(), Err(NativeConversationRuntimeError::Busy));
     assert_eq!(runtime.status().phase, NativeConversationRuntimePhase::Open);
+    assert_eq!(runtime.status().queued_jobs, 1);
+    assert!(runtime.cancel_queued(kept));
+    drop(turn);
 }
 
 #[test]

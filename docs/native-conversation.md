@@ -145,9 +145,55 @@ detaches the old native/model routes, and discards only never-taken queued input
 Old runtime and permission aliases cannot regain mutation or admission authority.
 Returning to the same session may register fresh routes while old aliases still
 exist; dropping an old registration cannot remove its replacement. A failed busy
-retirement releases its guard and preserves queued input. Retirement does not
+consuming retirement releases its guard and preserves queued input. The borrowed
+`try_retire(&mut self)` instead retains its fence on failure, allowing a transition
+owner to retain confirmed receipts and keep admission closed while handling an
+outstanding operation. Success is irreversible under either API; a retained
+retired guard cannot retire again or reopen admission when dropped. Retirement does not
 delete canonical history, flush uncertain observations, close a shared engine,
 or revoke independently supplied core session handles.
+
+### Interactive session ownership
+
+`NativeInteractiveSession::open` creates the initial runtime through the exact
+reference host. It requires that host's complete terminal, undo, model-route and
+observation allocations, and checks the explicit workspace against its retained
+canonical workspace label. Workspace defaults remain separate from saved session
+preferences. Startup-only model override does not become a fresh-session default.
+
+The owner retains admission, native turn, candidate preparation and terminal
+commit futures. `poll_progress(cx, now_ms)` supplies explicit time and never
+consumes a result: `take_presentation` and `take_outcome` are separate bounded
+lanes. One presentation event may pause ordinary streaming. Transition/shutdown
+draining discards obsolete intermediate presentation and continues native
+finalization without waiting for stdout; terminal errors and receipts remain
+retained control outcomes. A dropped outer poll wrapper does not drop started
+work. Work per poll is bounded to 32 progress steps.
+
+Clear/new/reset generate fresh persisted IDs. Clear/new carry terminal resources;
+reset and live resume stop/forget first, then hand off explicitly retained
+indeterminate resources. Resume selects latest or an exact validated ID and
+adopts the candidate before old terminal effects. Exact same-principal resume is
+a checked no-op preserving runtime identity, queue and undo. Fresh runtimes use
+explicit workspace model defaults; resume restores candidate preferences. The
+settled current permission selection and shared catalog carry without live grants.
+
+Requests coalesce until terminal work first polls. Already-started preparation
+still settles and reports superseded candidate publication; it is not rolled
+back. Later requests wait behind a started terminal commit's receipt. Quiescence
+cancels current work and drains its actual native finalizer. Selection,
+composition or undo-reservation failure preserves old queue/settings/undo;
+already requested cancellation is not undone. All fallible composition and undo
+reservation precede old terminal effects; undo clears only after confirmed
+terminal success and exact old-route retirement.
+
+Uncertain terminal results or failures after a reset receipt retain a fenced
+candidate, old guard, undo reservation and reset receipt. They never reopen old
+admission or automatically replay reset. Shutdown drives owned work, retires
+routes, and preserves unconsumed errors; `shutdown_error` distinguishes failed
+shutdown from `is_closed`. The caller then drops the owner and its actual host
+handles once, using the host's existing completion observer. Dropping the owner
+without shutdown is abandonment, not a cleanup or persistence receipt.
 
 ### Runtime controls and persistence
 

@@ -188,7 +188,7 @@ impl LifecycleQuiescence {
     pub(crate) fn wait_idle(&mut self) -> BoxFuture<'_, Result<(), LifecycleError>> {
         Box::pin(IdleWait { owner: self })
     }
-    pub(crate) fn retire(mut self) -> Result<(), LifecycleError> {
+    pub(crate) fn try_retire(&mut self) -> Result<(), LifecycleError> {
         let wake = {
             let mut state = self.gate.state.lock().expect("lifecycle poisoned");
             if state.phase != LifecyclePhase::Quiescing || state.generation != self.generation {

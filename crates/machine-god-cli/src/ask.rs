@@ -906,57 +906,38 @@ mod production {
                 std::thread::Builder::new()
                     .name("machine-god-ask-turn".to_owned())
                     .spawn_scoped(scope, move || {
-                        let environment = NativeEnvironment::from_process();
-                        let loaded_config = load_native_config(&environment).map_err(|_| ())?;
-                        let root_selection =
-                            NativeRootSelection::from_current_process(&environment)
-                                .map_err(|_| ())?;
-                        let prepared_roots =
-                            PreparedNativeRoots::prepare(root_selection).map_err(|_| ())?;
-                        let terminal_options = capture_terminal_options(prepared_roots.workspace_root())?;
-                        let workspace = prepared_roots.workspace_root().to_owned();
-                        let (runtime, deadline) =
-                            TokioWebSearchDeadline::build_runtime_pair().map_err(|_| ())?;
-                        // Validate inference access before any catalog request.
-                        // Catalog loading precedes terminal-host acquisition:
-                        // setup signals can exit without abandoning native workers.
-                        let credential = discover_ai_gateway_credential(
-                            AiGatewayCredentialEnvironment::from_process(),
-                        ).map_err(|_| ())?;
-                        let catalog_transport = AiGatewayModelCatalogHttpTransport::with_discovered_credential(&credential).map_err(|_| ())?;
-                        let cache = NativeModelCatalogCache::new(Arc::new(AiGatewayModelCatalogProvider::new(
-                            AiGatewayModelCatalogAccessMode::Authenticated, Arc::new(catalog_transport),
-                        )));
-                        let catalog = runtime.block_on(load_conversation_catalog(&cache))?;
-                        let model_routes = Arc::new(NativeConversationModelRoutes::new());
-                        let observations = Arc::new(NativeConversationObservations::new());
-                        let options = NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
-                            .with_terminal(terminal_options).with_model_routes(model_routes.clone())
-                            .with_observations(Arc::clone(&observations))
-                            .with_permissions(capture_permission_options());
-                        let host =
-                            NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots_and_conversation_and_credential(
-                                loaded_config,
-                                credential,
-                                prepared_roots,
-                                Arc::new(DenyPermissionPrompter),
-                                Arc::new(UnavailableQuestionPrompter),
-                                Arc::new(deadline),
-                                options,
-                            )
-                            .map_err(|_| ())?;
-                        with_settled_terminal_turn(host, signals, &control, |host, signals| runtime.block_on(execute_turn(
+                        let PreparedConversationHost {
                             host,
-                            selection,
-                            prompt,
-                            ConversationSetup { workspace, model_routes, observations, catalog, now_ms: wall_clock_ms()? },
-                            OutputBridge {
-                                work: work_sender,
-                                acknowledgements: acknowledgement_receiver,
-                            },
-                            signals,
-                            &control,
-                        )))
+                            runtime,
+                            workspace,
+                            model_routes,
+                            observations,
+                            catalog,
+                            catalog_cache: _catalog_cache,
+                        } = prepare_conversation_host(
+                            Arc::new(DenyPermissionPrompter),
+                            Arc::new(UnavailableQuestionPrompter),
+                        )?;
+                        with_settled_terminal_turn(host, signals, &control, |host, signals| {
+                            runtime.block_on(execute_turn(
+                                host,
+                                selection,
+                                prompt,
+                                ConversationSetup {
+                                    workspace,
+                                    model_routes,
+                                    observations,
+                                    catalog,
+                                    now_ms: wall_clock_ms()?,
+                                },
+                                OutputBridge {
+                                    work: work_sender,
+                                    acknowledgements: acknowledgement_receiver,
+                                },
+                                signals,
+                                &control,
+                            ))
+                        })
                     }),
             )?;
 
@@ -969,6 +950,76 @@ mod production {
             let _ = controller.enter_final();
             (AskCommandOutcome::OperationalFailure, controller)
         }
+    }
+
+    struct PreparedConversationHost {
+        host: NativeReferenceHost,
+        runtime: machine_god_native::TokioWebSearchRuntime,
+        workspace: std::path::PathBuf,
+        model_routes: Arc<NativeConversationModelRoutes>,
+        observations: Arc<NativeConversationObservations>,
+        catalog: Option<Arc<NativeModelCatalog>>,
+        catalog_cache: Arc<NativeModelCatalogCache>,
+    }
+
+    /// Shared CLI acquisition order for one-shot and long-lived conversation
+    /// owners. Prompt adapters are supplied by the caller; no input is acquired
+    /// here. No fallible setup follows acquisition of the full terminal host.
+    fn prepare_conversation_host(
+        permission_prompter: Arc<dyn PermissionPrompter>,
+        question_prompter: Arc<dyn QuestionPrompter>,
+    ) -> Result<PreparedConversationHost, ()> {
+        let environment = NativeEnvironment::from_process();
+        let loaded_config = load_native_config(&environment).map_err(|_| ())?;
+        let root_selection =
+            NativeRootSelection::from_current_process(&environment).map_err(|_| ())?;
+        let prepared_roots = PreparedNativeRoots::prepare(root_selection).map_err(|_| ())?;
+        let terminal_options = capture_terminal_options(prepared_roots.workspace_root())?;
+        let workspace = prepared_roots.workspace_root().to_owned();
+        let (runtime, deadline) = TokioWebSearchDeadline::build_runtime_pair().map_err(|_| ())?;
+        // Validate inference access before any catalog request.
+        // Catalog loading precedes terminal-host acquisition:
+        // setup signals can exit without abandoning native workers.
+        let credential =
+            discover_ai_gateway_credential(AiGatewayCredentialEnvironment::from_process())
+                .map_err(|_| ())?;
+        let catalog_transport =
+            AiGatewayModelCatalogHttpTransport::with_discovered_credential(&credential)
+                .map_err(|_| ())?;
+        let cache = Arc::new(NativeModelCatalogCache::new(Arc::new(
+            AiGatewayModelCatalogProvider::new(
+                AiGatewayModelCatalogAccessMode::Authenticated,
+                Arc::new(catalog_transport),
+            ),
+        )));
+        let catalog = runtime.block_on(load_conversation_catalog(&cache))?;
+        let model_routes = Arc::new(NativeConversationModelRoutes::new());
+        let observations = Arc::new(NativeConversationObservations::new());
+        let options = NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
+            .with_terminal(terminal_options)
+            .with_model_routes(model_routes.clone())
+            .with_observations(Arc::clone(&observations))
+            .with_permissions(capture_permission_options());
+        let host =
+            NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots_and_conversation_and_credential(
+                loaded_config,
+                credential,
+                prepared_roots,
+                permission_prompter,
+                question_prompter,
+                Arc::new(deadline),
+                options,
+            )
+            .map_err(|_| ())?;
+        Ok(PreparedConversationHost {
+            host,
+            runtime,
+            workspace,
+            model_routes,
+            observations,
+            catalog,
+            catalog_cache: cache,
+        })
     }
 
     /// Only the blocking CLI host thread may settle native workers. The

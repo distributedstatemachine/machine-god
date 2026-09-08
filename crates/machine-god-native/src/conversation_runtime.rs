@@ -931,8 +931,20 @@ impl NativeRuntimeQuiescence {
     /// releases this fence, reopening admission without discarding queued input.
     /// # Panics
     /// Panics if an earlier panic poisoned runtime or routing state.
-    pub fn retire(self) -> Result<(), NativeConversationRuntimeError> {
-        self.inner.retire()?;
+    pub fn retire(mut self) -> Result<(), NativeConversationRuntimeError> {
+        self.try_retire()
+    }
+
+    /// Attempts irreversible retirement without consuming this admission fence.
+    /// On success, detaches exact routes and discards never-taken queued input.
+    /// On failure, retains ownership so the caller can keep driving outstanding
+    /// work without reopening admission or losing transition receipts.
+    /// # Errors
+    /// Rejects outstanding owned work or stale/already-retired ownership.
+    /// # Panics
+    /// Panics if an earlier panic poisoned runtime or routing state.
+    pub fn try_retire(&mut self) -> Result<(), NativeConversationRuntimeError> {
+        self.inner.try_retire()?;
         self.conversation.retire_lifecycle_routes();
         if let Some(route) = &self.model_route {
             route.retire();
