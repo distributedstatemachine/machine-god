@@ -162,7 +162,7 @@ fn assert_loaded_config(
 fn public_schema_constants_and_composition_names_are_stable() {
     assert_eq!(CONFIG_SCHEMA_VERSION, 3);
     assert_eq!(AI_GATEWAY_DEFAULT_MODEL, "zai/glm-5.2");
-    assert_eq!(AI_GATEWAY_MAX_MODEL_BYTES, 128);
+    assert_eq!(AI_GATEWAY_MAX_MODEL_BYTES, 1024);
     assert_eq!(PermissionMode::Ask.as_str(), "ask");
     assert_eq!(
         NativeProviderKind::VercelAiGateway.as_str(),
@@ -561,15 +561,16 @@ fn model_accepts_every_visible_ascii_byte() {
 }
 
 #[test]
-fn model_rejects_empty_space_control_delete_and_non_ascii_values() {
+fn model_rejects_empty_edge_whitespace_ascii_control_and_delete_values() {
     let temporary = TemporaryDirectory::new();
     let config_root = temporary.path().join("xdg");
     let cases = [
         r#"""#,
-        r#""model with space""#,
+        r#"" model""#,
+        r#""model ""#,
         r#""control-\u001f""#,
         r#""delete-\u007f""#,
-        r#""non-ascii-é""#,
+        r#""model\t""#,
     ];
 
     for model in cases {
@@ -585,6 +586,17 @@ fn model_rejects_empty_space_control_delete_and_non_ascii_values() {
             contents.as_bytes(),
             NativeConfigErrorKind::InvalidFormat,
         );
+    }
+}
+
+#[test]
+fn configured_model_preserves_utf8_interior_spaces_and_c1_at_the_byte_boundary() {
+    let temporary = TemporaryDirectory::new();
+    let config_root = temporary.path().join("xdg");
+    for model in ["é".repeat(512), "\u{85}provider modèle\u{a0}".to_owned()] {
+        write_config(&config_root, valid_v2_config_json(&model).as_bytes());
+        let loaded = load_native_config(&environment(Some(&config_root), None)).unwrap();
+        assert_loaded_config(&loaded, ConfigOrigin::File, 2, &model);
     }
 }
 

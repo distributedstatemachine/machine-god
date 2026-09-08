@@ -600,10 +600,11 @@ fn standards_valid_out_of_range_numbers_default_or_ignore_without_losing_entries
 fn unsafe_ids_duplicate_fields_and_duplicate_ids_are_terminal_and_redacted() {
     for invalid in [
         String::new(),
-        "contains space".to_owned(),
+        " leading space".to_owned(),
+        "trailing space ".to_owned(),
         "contains\ncontrol".to_owned(),
-        "non-ascii-é".to_owned(),
-        "x".repeat(129),
+        "contains\u{7f}delete".to_owned(),
+        "x".repeat(1025),
     ] {
         let error = public_catalog(body(&json!({"data": [{"id": invalid}]}))).unwrap_err();
         assert_error(
@@ -629,6 +630,18 @@ fn unsafe_ids_duplicate_fields_and_duplicate_ids_are_terminal_and_redacted() {
             "MalformedResponse",
             false,
         );
+    }
+}
+
+#[test]
+fn catalog_preserves_utf8_interior_spaces_and_exact_1024_byte_model_ids() {
+    for id in [
+        "x".repeat(1024),
+        "é".repeat(512),
+        "\u{85}provider modèle\u{a0}".to_owned(),
+    ] {
+        let catalog = public_catalog(body(&json!({"data": [{"id": id}]}))).unwrap();
+        assert_eq!(catalog.models()[0].id().as_bytes(), id.as_bytes());
     }
 }
 

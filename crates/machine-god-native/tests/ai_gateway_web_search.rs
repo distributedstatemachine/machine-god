@@ -387,6 +387,31 @@ fn header<'a>(request: &'a CapturedRequest, name: &str) -> &'a str {
 }
 
 #[test]
+fn web_search_model_preserves_pinned_utf8_model_bytes() {
+    for model in ["é".repeat(512), "\u{85}provider modèle\u{a0}".to_owned()] {
+        let transport = ScriptedTransport::new(sse(&valid_events()));
+        let adapter =
+            AiGatewayWebSearchTransport::new(&model, Arc::new(transport.clone())).unwrap();
+        let tool = WebSearchTool::with_transport(
+            gateway_target(),
+            Arc::new(adapter),
+            Arc::new(NeverDeadline),
+        )
+        .unwrap();
+        futures_executor::block_on(tool.execute(
+            context(),
+            json!({"query": "hello"}),
+            CancellationToken::new(),
+        ))
+        .unwrap();
+        assert_eq!(
+            header(&transport.requests()[0], "ai-language-model-id").as_bytes(),
+            model.as_bytes()
+        );
+    }
+}
+
+#[test]
 fn dedicated_codec_sends_one_required_provider_search_and_accepts_one_exact_result() {
     let (transport, output) = execute(sse(&valid_events()));
 

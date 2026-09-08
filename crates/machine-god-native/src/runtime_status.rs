@@ -729,7 +729,7 @@ mod tests {
     #[test]
     fn invalid_model_workspace_and_revision_boundaries_are_enforced() {
         let error = inspect_native_runtime_status(NativeRuntimeStatusInput::new(
-            "bad model",
+            "bad\nmodel",
             PermissionMode::Ask,
             credentials(None, None),
             "/workspace",

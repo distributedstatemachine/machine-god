@@ -273,7 +273,7 @@ is allowed; observing one unit beyond it rejects the whole invocation.
 | JSON value nodes | 16,384, including root, keys' values, array entries, and nested values |
 | raw `data` array entries | 1,024 |
 | accepted language-model entries | 512 |
-| one accepted model ID | 1–128 bytes, all in ASCII `0x21`–`0x7e` |
+| one accepted model ID | 1–1024 UTF-8 bytes; no ASCII C0/DEL or edge SP/TAB/CR/LF |
 | aggregate accepted ID bytes | 24,576 bytes (24 KiB) |
 | serialized stdout value | 65,536 bytes (64 KiB), including final LF |
 
@@ -326,8 +326,10 @@ Each raw `data` value is inspected independently. Exactly three classes are
 skipped: a non-object value, an object with a missing or non-string `id`, and an
 object whose string `type` is not ASCII-case-insensitively `language`. An absent
 or non-string `type` is accepted as the pinned language default. Once a string
-ID reaches validation, an empty, longer-than-128-byte, non-ASCII, space, or
-control-containing ID is a terminal `MalformedResponse`; an unsafe ID is never
+ID reaches validation, an empty, longer-than-1024-byte, ASCII-C0/DEL-containing,
+or edge-SP/TAB/CR/LF-containing ID is a terminal `MalformedResponse`. Interior
+spaces, UTF-8 non-ASCII text and Unicode C1 characters are preserved unchanged,
+using core's shared `validate_model_id`; an unsafe ID is never
 silently skipped. Unknown fields and malformed optional metadata map only to
 the documented defaults. Repeating any recognized entry field (`id`, `type`,
 `released`, or `tags`) is terminal `MalformedResponse`. Nested ignored data
@@ -384,8 +386,14 @@ Human output for a nonempty catalog is exactly:
  - <id-2>
 ```
 
-There is one ID line per accepted entry in stable order. `N` is the decimal
-number of accepted IDs. An empty catalog writes exactly:
+There is one ID line per accepted entry in stable order. Human IDs use the
+same escaping as status and JSON output: quotes, backslashes, C1 characters,
+bidi controls, and line separators are escaped, while ordinary Unicode text
+is preserved. This display escaping does not alter the accepted model ID or
+its Gateway request bytes. The complete rendered output, including escape
+expansion and the final LF, retains the existing 64 KiB cap and is bounded
+before any stdout write. `N` is the decimal number of accepted IDs. An empty
+catalog writes exactly:
 
 ```text
 [models] no models returned by gateway

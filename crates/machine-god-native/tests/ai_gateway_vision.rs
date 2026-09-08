@@ -2384,7 +2384,7 @@ fn future_is_inert_before_poll_and_precancelled_request_never_reaches_transport(
 #[test]
 fn config_and_transport_debug_never_reflect_model_or_provider_data() {
     let invalid = AiGatewayVisionTransport::new(
-        "PRIVATE MODEL SENTINEL",
+        "PRIVATE MODEL SENTINEL\n",
         Arc::new(ScriptedTransport::new(Vec::new())),
     )
     .unwrap_err();
@@ -2397,4 +2397,20 @@ fn config_and_transport_debug_never_reflect_model_or_provider_data() {
     )
     .unwrap();
     assert!(!format!("{worker:?}").contains("private/model-sentinel"));
+}
+
+#[test]
+fn vision_model_preserves_pinned_utf8_model_bytes() {
+    for model in ["é".repeat(512), "\u{85}provider modèle\u{a0}".to_owned()] {
+        let transport = ScriptedTransport::one(sse_text(&valid_result().to_string()));
+        let worker = AiGatewayVisionTransport::new(&model, Arc::new(transport.clone())).unwrap();
+        futures_executor::block_on(
+            worker.analyze(request(vec![png(1, &[0])]), CancellationToken::new()),
+        )
+        .unwrap();
+        assert_eq!(
+            header(&transport.requests()[0], "ai-language-model-id").as_bytes(),
+            model.as_bytes()
+        );
+    }
 }

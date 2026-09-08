@@ -491,11 +491,18 @@ fn provider_identity_configuration_and_debug_are_fixed_and_redacted() {
     let invalid = AiGatewayProvider::new("", Arc::new(ScriptedTransport::new([]))).unwrap_err();
     assert_eq!(invalid.kind(), AiGatewayConfigErrorKind::InvalidModel);
     assert!(!format!("{invalid:?}").contains("secret"));
-    AiGatewayProvider::new("m".repeat(128), Arc::new(ScriptedTransport::new([]))).unwrap();
-    for invalid_model in [
-        "m".repeat(129),
+    for model in [
+        "m".repeat(1024),
+        "é".repeat(512),
         "provider bad".to_owned(),
-        "modèle".to_owned(),
+        "\u{85}modèle\u{a0}".to_owned(),
+    ] {
+        AiGatewayProvider::new(model, Arc::new(ScriptedTransport::new([]))).unwrap();
+    }
+    for invalid_model in [
+        "m".repeat(1025),
+        " provider".to_owned(),
+        "provider\u{7f}".to_owned(),
     ] {
         let error = AiGatewayProvider::new(invalid_model, Arc::new(ScriptedTransport::new([])))
             .unwrap_err();
@@ -516,18 +523,42 @@ fn provider_identity_configuration_and_debug_are_fixed_and_redacted() {
 }
 
 #[test]
-fn request_model_override_uses_the_same_visible_ascii_boundary() {
-    let transport = ScriptedTransport::new([bytes(finish("stop"))]);
-    let gateway = provider(&transport);
-    let mut valid = request(vec![Message::text(Role::User, "hello")]);
-    valid.options.model = Some("m".repeat(128));
-    let stream = start(&gateway, valid, CancellationToken::new()).unwrap();
-    futures_executor::block_on(stream.collect::<Vec<_>>());
-    assert_eq!(transport.requests().len(), 1);
+fn request_default_and_model_override_preserve_pinned_utf8_boundary() {
+    for model in [
+        "m".repeat(1024),
+        "é".repeat(512),
+        "\u{85}provider modèle\u{a0}".to_owned(),
+    ] {
+        for override_model in [false, true] {
+            let transport = ScriptedTransport::new([bytes(finish("stop"))]);
+            let gateway = AiGatewayProvider::new(
+                if override_model { "default" } else { &model },
+                Arc::new(transport.clone()),
+            )
+            .unwrap();
+            let mut valid = request(vec![Message::text(Role::User, "hello")]);
+            valid.options.model = override_model.then(|| model.clone());
+            let stream = start(&gateway, valid, CancellationToken::new()).unwrap();
+            futures_executor::block_on(stream.collect::<Vec<_>>());
+            assert_eq!(transport.requests().len(), 1);
+            assert_eq!(
+                transport.requests()[0]
+                    .headers
+                    .iter()
+                    .find(|(name, _)| name == "ai-language-model-id")
+                    .unwrap()
+                    .1
+                    .as_bytes(),
+                model.as_bytes()
+            );
+        }
+    }
 
     for invalid_model in [
-        "m".repeat(129),
-        "provider bad".to_owned(),
+        "m".repeat(1025),
+        " provider".to_owned(),
+        "provider ".to_owned(),
+        "provider\u{7f}".to_owned(),
         "bad\nmodel".to_owned(),
     ] {
         let transport = ScriptedTransport::new([]);

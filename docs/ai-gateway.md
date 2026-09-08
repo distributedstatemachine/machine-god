@@ -33,7 +33,7 @@ below.
 ## Public boundary
 
 `AiGatewayProvider` implements core's `ModelProvider`. `new` takes a default
-model of 1–128 visible ASCII bytes (`0x21` through `0x7e`) and an
+model of 1–1024 UTF-8 bytes under the shared core model-ID validator and an
 `Arc<dyn AiGatewayTransport>` with
 `AiGatewayLimits::default()`; `with_limits` also takes explicit limits. Its
 stable provider name is `AI_GATEWAY_PROVIDER_NAME` (`vercel_ai_gateway`). The
@@ -43,9 +43,14 @@ debug representations reveal structure only; they do not reveal model input,
 headers, bodies, response bytes, or transport-controlled errors.
 
 The configuration slice publishes `AI_GATEWAY_DEFAULT_MODEL`
-(`zai/glm-5.2`) and `AI_GATEWAY_MAX_MODEL_BYTES` (`128`). Configuration-file
+(`zai/glm-5.2`) and `AI_GATEWAY_MAX_MODEL_BYTES` (`1024`, an alias of core's
+`MAX_MODEL_ID_BYTES`). Configuration-file
 models, provider defaults, and request overrides use the same validator:
-1–128 bytes, each in visible ASCII `0x21` through `0x7e`. This sharing changes
+1–1024 UTF-8 bytes, no ASCII C0 (`0x00`–`0x1f`) or DEL (`0x7f`) bytes, and
+no leading or trailing SP/TAB/CR/LF. Interior spaces, non-ASCII characters,
+and Unicode C1 characters are accepted without normalization. This matches
+the pinned `src/core/config/settings_store.zig:881` and
+`src/core/session/session_codec.zig:1868` model validators. This sharing changes
 no codec selection rule; a request override still wins over a constructed
 provider's default.
 
@@ -91,8 +96,10 @@ identity and security policy.
 ## Request projection
 
 The selected model is `ModelRequest.options.model` when present and otherwise
-the provider's default. The override has the same 1–128 visible-ASCII-byte
-rule; spaces, controls, non-ASCII text, and longer values are invalid.
+the provider's default. The override has the same shared 1–1024-byte rule.
+The selected UTF-8 bytes are preserved in the `ai-language-model-id` header,
+including through the native HTTP transport; they are not trimmed, encoded,
+case-folded, or normalized.
 Temperature and inference metadata have no pinned wire projection and are
 ignored rather than making an otherwise valid request fail. Metadata JSON is
 still traversed under the same structural depth and node limits as other owned

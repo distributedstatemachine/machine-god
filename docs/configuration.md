@@ -66,11 +66,13 @@ six required fields:
 | `permission_mode` | JSON string `"ask"` |
 | `provider` | JSON string `"vercel_ai_gateway"` |
 | `transport` | JSON string `"ai_gateway_http"` |
-| `model` | JSON string of 1–128 visible ASCII bytes |
+| `model` | JSON string of 1–1024 UTF-8 bytes under the shared core model-ID validator |
 | `credential_source` | JSON string `"environment"` |
 
-The model byte range is `0x21` through `0x7e`, inclusive. Empty models, spaces,
-controls, non-ASCII text, and values longer than 128 bytes are invalid. The
+Empty models, ASCII C0 (`0x00`–`0x1f`) or DEL (`0x7f`) bytes, leading or trailing
+SP/TAB/CR/LF, and values longer than 1024 UTF-8 bytes are invalid. Interior
+spaces, non-ASCII text, and Unicode C1 characters are accepted unchanged.
+Validation is byte-based, not Unicode `is_control` or Unicode trimming. The
 built-in model is the exact string `"zai/glm-5.2"`; a valid file may select any
 model satisfying the same bounded validator used by `AiGatewayProvider` for
 its default model and request-level model override.
@@ -120,7 +122,9 @@ invalid format. Full-buffer UTF-8 validation still precedes schema dispatch.
 ## Public data boundary
 
 `CONFIG_SCHEMA_VERSION` is `3`. `AI_GATEWAY_DEFAULT_MODEL` is
-`"zai/glm-5.2"`, and `AI_GATEWAY_MAX_MODEL_BYTES` is `128`.
+`"zai/glm-5.2"`, and `AI_GATEWAY_MAX_MODEL_BYTES` aliases core's
+`MAX_MODEL_ID_BYTES` (`1024`). The shared `validate_model_id` contract matches
+the pinned settings and durable-session model validators.
 `NativeProviderKind::VercelAiGateway` has stable machine name
 `vercel_ai_gateway`; `NativeTransportKind::AiGatewayHttp` has stable machine
 name `ai_gateway_http`; and `NativeCredentialSourceKind::Environment` has stable

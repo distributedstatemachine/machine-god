@@ -378,7 +378,7 @@ fn read_request(stream: &mut TcpStream) -> io::Result<CapturedHttpRequest> {
         let (name, value) = line
             .split_once(':')
             .ok_or_else(|| io::Error::other("malformed HTTP request header"))?;
-        headers.push((name.to_owned(), value.trim().to_owned()));
+        headers.push((name.to_owned(), value.trim_matches([' ', '\t']).to_owned()));
     }
     let content_length = headers
         .iter()
@@ -622,6 +622,87 @@ fn loopback_http_accepts_only_canonical_numeric_loopback_origins() {
         let diagnostic = format!("{error:?} {error}");
         assert!(!diagnostic.contains(rejected));
     }
+}
+
+#[test]
+fn model_header_preserves_utf8_and_exact_1024_bytes_for_defaults_and_overrides() {
+    for model in [
+        "m".repeat(1024),
+        "é".repeat(512),
+        "\u{85}provider modèle\u{a0}".to_owned(),
+    ] {
+        for use_override in [false, true] {
+            let server = OneShotServer::start(vec![response(
+                200,
+                b"data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n",
+                &[("Content-Type", "text/event-stream")],
+            )]);
+            let provider = AiGatewayProvider::new(
+                if use_override { "default" } else { &model },
+                Arc::new(http_transport(
+                    server.endpoint(),
+                    AiGatewayHttpLimits::default(),
+                )),
+            )
+            .unwrap();
+            let mut input = model_request();
+            input.options.model = use_override.then(|| model.clone());
+            let events = block_on_http(async {
+                provider
+                    .stream(input, CancellationToken::new())
+                    .await
+                    .unwrap()
+                    .collect::<Vec<_>>()
+                    .await
+            });
+            assert_eq!(
+                events,
+                [Ok(ModelEvent::Stop {
+                    reason: StopReason::Completed
+                })]
+            );
+            let request = server.finish();
+            assert_eq!(
+                request.header_values("ai-language-model-id")[0].as_bytes(),
+                model.as_bytes()
+            );
+        }
+    }
+}
+
+#[test]
+fn invalid_model_overrides_are_redacted_before_http_dispatch() {
+    let server = CountingServer::start(response(200, b"", &[]));
+    let provider = AiGatewayProvider::new(
+        "default",
+        Arc::new(http_transport(
+            server.endpoint(),
+            AiGatewayHttpLimits::default(),
+        )),
+    )
+    .unwrap();
+    let mut invalid = vec![
+        "é".repeat(512) + "x",
+        " PRIVATE_MODEL".to_owned(),
+        "PRIVATE_MODEL ".to_owned(),
+    ];
+    invalid.extend(
+        (0_u8..=31)
+            .chain([127])
+            .map(|byte| format!("PRIVATE_MODEL{}end", char::from(byte))),
+    );
+    for model in invalid {
+        let mut request = model_request();
+        request.options.model = Some(model);
+        let Err(error) = block_on_http(provider.stream(request, CancellationToken::new())) else {
+            panic!("invalid model reached transport");
+        };
+        assert_eq!(error.code, "gateway_invalid_model");
+        let diagnostic = format!("{error:?} {error}");
+        assert!(!diagnostic.contains("PRIVATE_MODEL"));
+        assert!(!diagnostic.contains('é'));
+    }
+    assert_eq!(server.finish(), 0);
 }
 
 #[test]

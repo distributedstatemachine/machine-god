@@ -1036,8 +1036,12 @@ mod tests {
             AI_GATEWAY_DEFAULT_MODEL.to_owned(),
             "!".to_owned(),
             exactly_maximum,
+            "é".repeat(AI_GATEWAY_MAX_MODEL_BYTES / 2),
+            "\u{85}modèle\u{a0}".to_owned(),
             String::new(),
             oversized,
+            " leading space".to_owned(),
+            "trailing space ".to_owned(),
             "contains space".to_owned(),
             "contains\nnewline".to_owned(),
             "contains\u{7f}delete".to_owned(),
@@ -1046,13 +1050,16 @@ mod tests {
 
         for (index, model) in candidates.into_iter().enumerate() {
             let temporary = TestDirectory::new(&format!("model-{index}"));
-            temporary.write_config(&valid_v2_document(&model));
-            let result = load_native_config(&temporary.environment());
-            assert_eq!(result.is_ok(), valid_model(&model), "model index {index}");
-            match result {
-                Ok(loaded) => assert_eq!(loaded.config().model(), model),
-                Err(error) => {
-                    assert_eq!(error.kind(), NativeConfigErrorKind::InvalidFormat);
+            for document in [valid_v2_document(&model), valid_v3_document(&model)] {
+                temporary.write_config(&document);
+                let result = load_native_config(&temporary.environment());
+                assert_eq!(result.is_ok(), valid_model(&model), "model index {index}");
+                match result {
+                    Ok(loaded) => assert_eq!(loaded.config().model(), model),
+                    Err(error) => {
+                        assert_eq!(error.kind(), NativeConfigErrorKind::InvalidFormat);
+                        assert!(!format!("{error:?} {error}").contains(&model) || model.is_empty());
+                    }
                 }
             }
         }
