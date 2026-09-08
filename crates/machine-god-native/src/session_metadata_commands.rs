@@ -1,4 +1,13 @@
 use std::fmt;
+use std::path::Path;
+
+mod rebind_history;
+#[cfg(test)]
+mod rebind_tests;
+pub use rebind_history::{
+    MAX_NATIVE_WORKSPACE_REBINDINGS, NATIVE_WORKSPACE_REBINDINGS_KEY, NativeWorkspaceRebinding,
+    NativeWorkspaceRebindingHistory,
+};
 
 use machine_god_core::{BoxFuture, EngineError, Session, SessionRevision, SessionStoreErrorKind};
 
@@ -15,6 +24,8 @@ pub enum NativeSessionMetadataMutationError {
     HostClosed,
     Persistence,
     Engine,
+    InvalidHistory,
+    HistoryLimit,
 }
 
 impl fmt::Display for NativeSessionMetadataMutationError {
@@ -26,11 +37,76 @@ impl fmt::Display for NativeSessionMetadataMutationError {
             Self::HostClosed => formatter.write_str("session host is closed"),
             Self::Persistence => formatter.write_str("session metadata persistence failed"),
             Self::Engine => formatter.write_str("session metadata mutation failed"),
+            Self::InvalidHistory => {
+                formatter.write_str("session workspace rebinding history is invalid")
+            }
+            Self::HistoryLimit => {
+                formatter.write_str("session workspace rebinding history is full")
+            }
         }
     }
 }
 
 impl std::error::Error for NativeSessionMetadataMutationError {}
+
+/// Atomically records a workspace association change and its bounded history.
+///
+/// The explicit workspace is descriptive metadata, not tool/root authority.
+/// Construction is inert. First poll requires the expected canonical revision;
+/// core's exclusive metadata transaction checks it again after reconciling any
+/// uncertain save. An unchanged workspace uses the same checked lease without
+/// saving, advancing time/revision, or creating an event. Origin stays unknown
+/// for legacy records and otherwise remains the explicitly recorded original.
+///
+/// # Errors
+/// Rejects invalid metadata/history, full history, regressing update time,
+/// busy/changed state, exhausted revisions, or failed publication. Persistence
+/// failure or dropping pending work may follow publication; reconcile rather
+/// than blindly retrying. No provider, environment, filesystem root or clock is
+/// consulted by this adapter; persistence runs only through the core session.
+#[must_use]
+pub fn rebind_native_session_workspace<'a>(
+    session: &'a Session,
+    expected_revision: SessionRevision,
+    workspace: &'a Path,
+    now_ms: i64,
+) -> BoxFuture<'a, Result<SessionRevision, NativeSessionMetadataMutationError>> {
+    Box::pin(async move {
+        let record = session.record_snapshot();
+        if record.revision != expected_revision {
+            return Err(NativeSessionMetadataMutationError::Conflict);
+        }
+        let mut metadata = NativeSessionMetadata::from_metadata(&record.metadata)
+            .map_err(NativeSessionMetadataMutationError::InvalidMetadata)?;
+        let mut history = NativeWorkspaceRebindingHistory::from_metadata(&record.metadata)?;
+        history.validate_current(&metadata, record.revision)?;
+        let previous = metadata.workspace().map(Path::to_owned);
+        if !metadata
+            .rebind_workspace(workspace, now_ms)
+            .map_err(NativeSessionMetadataMutationError::InvalidMetadata)?
+        {
+            return session
+                .check_metadata_revision(expected_revision)
+                .await
+                .map_err(map_engine_error);
+        }
+        expected_revision
+            .0
+            .checked_add(1)
+            .ok_or(NativeSessionMetadataMutationError::Engine)?;
+        history.append(previous, workspace.to_owned(), now_ms, expected_revision)?;
+        let mut entries = record.metadata.clone();
+        entries.insert(NATIVE_SESSION_METADATA_KEY.to_owned(), metadata.to_value());
+        entries.insert(
+            NATIVE_WORKSPACE_REBINDINGS_KEY.to_owned(),
+            history.to_value(),
+        );
+        session
+            .update_metadata(expected_revision, entries)
+            .await
+            .map_err(map_engine_error)
+    })
+}
 
 /// Persists a validated title using the session's exclusive metadata transaction.
 ///
@@ -207,7 +283,7 @@ mod tests {
         let mut record = session.record();
         record.metadata.insert(
             NATIVE_SESSION_METADATA_KEY.to_owned(),
-            json!({"schema_version": 2}),
+            json!({"schema_version": 3}),
         );
         block_on(session.update_metadata(record.revision, record.metadata)).unwrap();
         let calls = store.calls().len();

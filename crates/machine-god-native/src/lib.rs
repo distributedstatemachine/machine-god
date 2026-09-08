@@ -195,6 +195,8 @@ mod session_listing;
 mod session_metadata;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod session_metadata_commands;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod session_resume;
 mod session_store;
 mod skill;
 mod slash_commands;
@@ -716,7 +718,16 @@ pub use session_metadata::{
     NativeSessionMetadataError, NativeSessionOrigin,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub use session_metadata_commands::{NativeSessionMetadataMutationError, rename_native_session};
+pub use session_metadata_commands::{
+    MAX_NATIVE_WORKSPACE_REBINDINGS, NATIVE_WORKSPACE_REBINDINGS_KEY,
+    NativeSessionMetadataMutationError, NativeWorkspaceRebinding, NativeWorkspaceRebindingHistory,
+    rebind_native_session_workspace, rename_native_session,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use session_resume::{
+    NativePreparedResume, NativeResumeTarget, NativeSessionResumeError,
+    NativeSessionResumeErrorKind, prepare_native_session_resume,
+};
 pub use session_store::{
     FILE_SESSION_SCHEMA_VERSION, FileSessionStore, FileSessionStoreOpenError,
     FileSessionStoreOpenErrorKind, MAX_FILE_SESSION_BYTES, MAX_LIST_SESSION_DIRECTORY_ENTRIES,

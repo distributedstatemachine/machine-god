@@ -124,16 +124,22 @@ Those effects remain behind a later explicit call to the core session.
 ### Native presentation metadata
 
 `NativeSessionMetadata` is the Linux/macOS host's bounded codec for the reserved
-`machine_god.native_session` metadata entry. Its schema version `1` records
-optional title, workspace association, creation/update milliseconds, language
-tag and explicit `cli`/`recovered`/`imported` provenance. It does not change
+`machine_god.native_session` metadata entry. Its schema version `2` records
+optional title, current and original workspace associations, creation/update
+milliseconds, language tag and explicit `cli`/`recovered`/`imported` provenance.
+The provenance enum and original workspace path are separate facts. It does not change
 the enclosing file-store schema or ordinary lifecycle creation below. These
 helpers stage values only: serialization is not a successful persistence result.
 
 The codec reads no clock, environment, current directory or filesystem. A host
 creating metadata supplies a verified canonical workspace and observed time.
 Workspace paths are normalized absolute Unix bytes, capped at 4,096 bytes and
-serialized as lowercase hex without lossy UTF-8 conversion. This association
+serialized as lowercase hex without lossy UTF-8 conversion. Newly constructed
+metadata records the supplied workspace as both current and original; subsequent
+rebinding preserves that original. Strict schema-v1 reads remain supported, with
+unknown original workspace even when a current association is known. Serialization
+emits schema v2 with `origin_workspace_hex`; no read or title mutation guesses
+the missing origin from a legacy current workspace. This association
 does not grant filesystem authority; the native host must independently retain
 and verify its actual workspace capability. Lexical validation cannot prove a
 path is canonical or still names an authorized root.
@@ -150,7 +156,8 @@ controls; a terminal renderer must escape them. Validation failure leaves the
 staged metadata unchanged. The reference is pinned
 `src/core/shared/types.zig:1381` at the revision in the implementation plan.
 
-The versioned object accepts only its seven declared fields; absent or null
+Schema v1 accepts only its seven declared fields; v2 adds only the eighth
+`origin_workspace_hex` field. Absent or null
 optional fields mean unknown. Unknown versions, extra fields, wrong types,
 untrimmed stored titles and invalid bounds fail rather than silently rewriting
 future state. Decoding borrows the selected entry, inspects only its shallow
@@ -171,6 +178,50 @@ error can follow publication, so callers must reconcile before reporting whether
 the title was saved or retrying. Error output is redacted. Full interactive
 process-only title fallback and command dispatch belong to the conversation host,
 not to this persistence operation.
+
+### Durable workspace rebinding
+
+`rebind_native_session_workspace(session, expected_revision, workspace, now_ms)`
+is a borrowed inert future for an explicit association change. The host supplies
+the verified canonical root and observed time; the adapter performs only lexical
+path validation and the core session's exclusive metadata transaction, without
+opening a root or consulting a provider, tool, environment, or clock. It does not
+grant root authority or change the process directory.
+
+First poll requires the exact canonical revision. A real change saves schema-v2
+current workspace and update time together with one typed previous/next event in
+`machine_god.workspace_rebindings`. Original workspace, provenance, creation time,
+title, language, transcript, turn allocator, checkpoint, preferences, and unrelated
+metadata remain unchanged. An unknown previous association is recorded as null;
+unknown original association stays unknown. The event records injected `at_ms`
+and `previous_revision`, not an invented historical timestamp or revision.
+
+History schema v1 has exactly `schema_version` and `entries`. Each event has
+exactly `previous_workspace_hex`, `next_workspace_hex`, `at_ms`, and
+`previous_revision`. Paths use the same bounded lossless hex codec. Decoding
+rejects wrong types, unknown/missing fields, invalid paths, no-change events,
+disconnected previous/next paths, regressing times and non-increasing revisions.
+Rebinding additionally checks the first event against known creation time and
+the last event against current workspace, update time, and revision. At most 64
+events are retained; the next change returns
+`HistoryLimit` without discarding an event. Existing core/store metadata byte,
+node and structural limits may reject a smaller history first.
+
+An unchanged workspace returns the unchanged revision, without a write, time
+update, schema upgrade, or event. It still uses `Session::check_metadata_revision`
+to acquire the exclusive lease, reconcile any uncertain publication, and check
+the expected canonical revision. This is a checked observation, not a lock
+against future cross-process writes. Busy and stale no-ops do not report success.
+
+Invalid history returns redacted `InvalidHistory`; other input, busy, conflict,
+host and persistence outcomes use `NativeSessionMetadataMutationError`. A pending
+change excludes turns and other edits. Dropping it releases the lease and drops
+owned store work, but cannot undo an already published save. Failed/dropped saves
+force core reconciliation before subsequent metadata work; callers must inspect
+the confirmed revision/history rather than blindly retrying an uncertain change.
+The pinned previous/current check and update behavior comes from
+`src/core/session/session_store.zig:3153` and the `workspace_rebound` reducer in
+`src/core/session/session_event.zig:924` at the implementation-plan revision.
 
 ### Empty-record publication
 

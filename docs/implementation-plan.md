@@ -228,6 +228,18 @@ promise continuation or claim an empty store. Known cursor times use the pinned
 canonical format; native unknown times and colon-bearing IDs remain explicit.
 Rich output preserves unknown metadata, actual user-group counts, control-safe
 display and lossless non-UTF-8 workspace bytes without inventing path authority.
+Native metadata now records original workspace separately from current
+association, with strict legacy reads that never infer a missing origin.
+Exact-revision workspace rebinding atomically preserves that origin and appends
+bounded durable change history; unchanged associations reconcile uncertain
+publication without saving or advancing time. The CLI projects both paths
+losslessly and leaves persisted legacy records untouched.
+Native resume preparation now selects latest within the supplied workspace or
+an independent exact ID, validates the full native record, and guards canonical
+loading by incarnation and revision. Exact selection can persist rebinding;
+latest cannot. Consuming adoption rechecks the complete durable record and live
+revision before returning a conversation. These operations do not switch the
+interactive owner or imply rollback of an already published association change.
 Remaining work starts with native interactive session ownership: latest/exact/
 picker resume must validate and load before switching, and clear/new/reset must
 allocate fresh IDs with their distinct carry-forward or stop/forget background
@@ -255,6 +267,13 @@ concurrency changes. This preserves the failure evidence; it does not establish
 its cause or claim a timing fix. These internal checkpoints are not deliveries
 and do not promote compatibility or performance evidence. Final reviews and
 exact remote evidence remain gates for the complete combined feature.
+
+The validated-resume/origin integration passes 132 focused native session tests,
+153 CLI unit tests with five existing helper ignores, all 89 CLI integration
+tests and ten CLI frame tests. Its core checked-revision and guarded-load
+prerequisites pass the complete core suite and doctests. The integration's
+fresh release and full workspace checks remain to be run; previous checkpoint
+results above are not evidence for these new source changes.
 
 The integrated preparer passes all five real file mutations, actual reviewer
 Allow/Ask/error and cancellation, read-grant/reset, canonical terminal identity,

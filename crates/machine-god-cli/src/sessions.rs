@@ -18,9 +18,9 @@ use machine_god_native::{
 };
 
 // Each UTF-8 byte expands by at most six bytes in our JSON/terminal encoder.
-// 100 rows: ID128 + title240 + preview240 + workspace4096 + language24;
+// 100 rows: ID128 + title240 + preview240 + two workspace4096 paths + language24;
 // 512 bytes per row cover fixed keys and numbers; 4096 cover page/cursor/warnings.
-const MAX_OUTPUT_BYTES: usize = 100 * (6 * (128 + 240 + 240 + 4096 + 24) + 8192 + 512) + 4096;
+const MAX_OUTPUT_BYTES: usize = 100 * (6 * (128 + 240 + 240 + 8192 + 24) + 16384 + 512) + 4096;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct SessionsOptions {
@@ -89,6 +89,8 @@ struct SessionRow {
     preview: Option<String>,
     workspace: Option<String>,
     workspace_hex: Option<String>,
+    origin_workspace: Option<String>,
+    origin_workspace_hex: Option<String>,
     created: Option<i64>,
     updated: Option<i64>,
     history_len: usize,
@@ -105,33 +107,23 @@ impl fmt::Debug for SessionsSnapshot {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl SessionsSnapshot {
     fn from_native(page: &NativeSessionCatalogPage) -> Self {
-        use std::os::unix::ffi::OsStrExt as _;
         Self {
             entries: page
                 .entries()
                 .iter()
                 .map(|entry| {
                     let metadata = entry.native_metadata();
+                    let (workspace, workspace_hex) = workspace_text(metadata.workspace());
+                    let (origin_workspace, origin_workspace_hex) =
+                        workspace_text(metadata.origin_workspace());
                     SessionRow {
                         id: entry.id().as_str().to_owned(),
                         title: metadata.title().map(str::to_owned),
                         preview: entry.preview().map(str::to_owned),
-                        workspace: metadata
-                            .workspace()
-                            .and_then(|path| path.to_str())
-                            .map(str::to_owned),
-                        workspace_hex: metadata
-                            .workspace()
-                            .filter(|path| path.to_str().is_none())
-                            .map(|path| {
-                                let mut hex =
-                                    String::with_capacity(path.as_os_str().as_bytes().len() * 2);
-                                for byte in path.as_os_str().as_bytes() {
-                                    write!(hex, "{byte:02x}")
-                                        .expect("String formatting cannot fail");
-                                }
-                                hex
-                            }),
+                        workspace,
+                        workspace_hex,
+                        origin_workspace,
+                        origin_workspace_hex,
                         created: metadata.created_at_ms(),
                         updated: metadata.updated_at_ms(),
                         history_len: entry.history_len(),
@@ -144,6 +136,22 @@ impl SessionsSnapshot {
             skipped_invalid: page.skipped_invalid(),
         }
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn workspace_text(path: Option<&std::path::Path>) -> (Option<String>, Option<String>) {
+    use std::os::unix::ffi::OsStrExt as _;
+    let Some(path) = path else {
+        return (None, None);
+    };
+    if let Some(text) = path.to_str() {
+        return (Some(text.to_owned()), None);
+    }
+    let mut hex = String::with_capacity(path.as_os_str().as_bytes().len() * 2);
+    for byte in path.as_os_str().as_bytes() {
+        write!(hex, "{byte:02x}").expect("String formatting cannot fail");
+    }
+    (None, Some(hex))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -309,18 +317,11 @@ fn validate(snapshot: &SessionsSnapshot, options: &SessionsOptions) -> Result<()
         if SessionId::validate(&row.id).is_err()
             || row.title.as_ref().is_some_and(|value| value.len() > 240)
             || row.preview.as_ref().is_some_and(|value| value.len() > 240)
-            || row
-                .workspace
-                .as_ref()
-                .is_some_and(|value| value.len() > 4096)
-            || row.workspace_hex.as_ref().is_some_and(|value| {
-                row.workspace.is_some()
-                    || value.len() > 8192
-                    || value.len() % 2 != 0
-                    || !value
-                        .bytes()
-                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-            })
+            || !valid_workspace_text(row.workspace.as_deref(), row.workspace_hex.as_deref())
+            || !valid_workspace_text(
+                row.origin_workspace.as_deref(),
+                row.origin_workspace_hex.as_deref(),
+            )
             || row.language.as_ref().is_some_and(|value| value.len() > 24)
             || previous.is_some_and(|prior| (prior.updated, &prior.id) <= (row.updated, &row.id))
         {
@@ -335,6 +336,17 @@ fn validate(snapshot: &SessionsSnapshot, options: &SessionsOptions) -> Result<()
         }
     }
     Ok(())
+}
+fn valid_workspace_text(text: Option<&str>, hex: Option<&str>) -> bool {
+    !text.is_some_and(|value| value.len() > 4096)
+        && !hex.is_some_and(|value| {
+            text.is_some()
+                || value.len() > 8192
+                || value.len() % 2 != 0
+                || !value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
 }
 fn title(row: &SessionRow) -> &str {
     row.title
@@ -383,7 +395,9 @@ fn write_json(output: &mut impl fmt::Write, snapshot: &SessionsSnapshot) -> fmt:
         optional_text(output, row.preview.as_deref())?;
         output.write_str(",\"workspace_root\":")?;
         optional_text(output, row.workspace.as_deref())?;
-        output.write_str(",\"origin_workspace_root\":null,\"created_at_ms\":")?;
+        output.write_str(",\"origin_workspace_root\":")?;
+        optional_text(output, row.origin_workspace.as_deref())?;
+        output.write_str(",\"created_at_ms\":")?;
         optional_time(output, row.created)?;
         output.write_str(",\"updated_at_ms\":")?;
         optional_time(output, row.updated)?;
@@ -395,6 +409,10 @@ fn write_json(output: &mut impl fmt::Write, snapshot: &SessionsSnapshot) -> fmt:
         optional_text(output, row.language.as_deref())?;
         if let Some(hex) = &row.workspace_hex {
             output.write_str(",\"workspace_root_hex\":")?;
+            super::write_json_string(output, hex)?;
+        }
+        if let Some(hex) = &row.origin_workspace_hex {
+            output.write_str(",\"origin_workspace_root_hex\":")?;
             super::write_json_string(output, hex)?;
         }
         output.write_char('}')?;

@@ -51,6 +51,83 @@ fn records(state: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     records
 }
 
+fn edit_fixture_metadata(state: &Path, id: &str, edit: impl FnOnce(&mut Value)) {
+    let store = FileSessionStore::open(&state.join("machine-god")).unwrap();
+    let mut record = ready(store.load(SessionId::new(id).unwrap()))
+        .unwrap()
+        .unwrap();
+    let revision = record.revision;
+    edit(
+        record
+            .metadata
+            .get_mut(NATIVE_SESSION_METADATA_KEY)
+            .unwrap(),
+    );
+    ready(store.save(record, Some(revision))).unwrap();
+}
+
+#[test]
+fn persisted_origin_and_current_workspace_are_projected_independently() {
+    use std::os::unix::ffi::OsStrExt;
+    let temporary = TestDirectory::new("rich-sessions-origin");
+    let current = temporary.path().canonicalize().unwrap();
+    let state = current.join("state");
+    save_rich_session(
+        &state,
+        "moved",
+        Path::new("/original-workspace"),
+        20,
+        "Moved",
+    );
+    let mut hex = String::new();
+    for byte in current.as_os_str().as_bytes() {
+        write!(hex, "{byte:02x}").unwrap();
+    }
+    edit_fixture_metadata(&state, "moved", |value| value["workspace_hex"] = hex.into());
+    let before = records(&state);
+    let output = command(&state, &current)
+        .args(["sessions", "--json"])
+        .output()
+        .unwrap();
+    let page = assert_sessions_rows(&output, &["moved"], 0);
+    assert_eq!(
+        page["sessions"][0]["workspace_root"],
+        current.to_str().unwrap()
+    );
+    assert_eq!(
+        page["sessions"][0]["origin_workspace_root"],
+        "/original-workspace"
+    );
+    assert_eq!(records(&state), before);
+}
+
+#[test]
+fn legacy_known_workspace_does_not_invent_an_origin_or_upgrade_the_record() {
+    let temporary = TestDirectory::new("rich-sessions-legacy-origin");
+    let current = temporary.path().canonicalize().unwrap();
+    let state = current.join("state");
+    save_rich_session(&state, "legacy", &current, 10, "Legacy");
+    edit_fixture_metadata(&state, "legacy", |value| {
+        value["schema_version"] = 1.into();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("origin_workspace_hex");
+    });
+    let before = records(&state);
+    let output = command(&state, &current)
+        .args(["sessions", "--json"])
+        .output()
+        .unwrap();
+    let page = assert_sessions_rows(&output, &["legacy"], 0);
+    assert_eq!(
+        page["sessions"][0]["workspace_root"],
+        current.to_str().unwrap()
+    );
+    assert!(page["sessions"][0]["origin_workspace_root"].is_null());
+    assert_eq!(records(&state), before);
+}
+
 #[test]
 fn default_workspace_rich_metadata_and_known_cursor_round_trip() {
     let temporary = TestDirectory::new("rich-sessions-workspace");
@@ -76,7 +153,7 @@ fn default_workspace_rich_metadata_and_known_cursor_round_trip() {
     let entry = &page["sessions"][0];
     assert_eq!(entry["title"], "Title c");
     assert_eq!(entry["workspace_root"], workspace.to_str().unwrap());
-    assert!(entry["origin_workspace_root"].is_null());
+    assert_eq!(entry["origin_workspace_root"], workspace.to_str().unwrap());
     assert_eq!(entry["created_at_ms"], 200);
     assert_eq!(entry["updated_at_ms"], 200);
     assert_eq!(entry["history_len"], 2);
@@ -274,6 +351,8 @@ fn non_unicode_workspace_metadata_is_reported_without_loss_or_path_access() {
         write!(hex, "{byte:02x}").unwrap();
     }
     assert_eq!(entry["workspace_root_hex"], hex);
+    assert!(entry["origin_workspace_root"].is_null());
+    assert_eq!(entry["origin_workspace_root_hex"], hex);
     assert!(
         !String::from_utf8(output.stdout)
             .unwrap()

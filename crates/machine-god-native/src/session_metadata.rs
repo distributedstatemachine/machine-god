@@ -17,9 +17,19 @@ pub const MAX_NATIVE_SESSION_LANGUAGE_BYTES: usize = 24;
 /// Maximum byte length of a stored Unix workspace path.
 pub const MAX_NATIVE_SESSION_WORKSPACE_BYTES: usize = 4096;
 
-const FIELDS: &[&str] = &[
+const V1_FIELDS: &[&str] = &[
     "schema_version",
     "workspace_hex",
+    "created_at_ms",
+    "updated_at_ms",
+    "title",
+    "language",
+    "origin",
+];
+const V2_FIELDS: &[&str] = &[
+    "schema_version",
+    "workspace_hex",
+    "origin_workspace_hex",
     "created_at_ms",
     "updated_at_ms",
     "title",
@@ -53,6 +63,7 @@ impl NativeSessionOrigin {
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct NativeSessionMetadata {
     workspace: Option<PathBuf>,
+    origin_workspace: Option<PathBuf>,
     created_at_ms: Option<i64>,
     updated_at_ms: Option<i64>,
     title: Option<String>,
@@ -65,6 +76,7 @@ impl fmt::Debug for NativeSessionMetadata {
         formatter
             .debug_struct("NativeSessionMetadata")
             .field("has_workspace", &self.workspace.is_some())
+            .field("has_origin_workspace", &self.origin_workspace.is_some())
             .field("has_title", &self.title.is_some())
             .field("has_language", &self.language.is_some())
             .finish_non_exhaustive()
@@ -114,6 +126,7 @@ impl NativeSessionMetadata {
         validate_workspace(canonical_workspace)?;
         Ok(Self {
             workspace: Some(canonical_workspace.to_owned()),
+            origin_workspace: Some(canonical_workspace.to_owned()),
             created_at_ms: Some(now_ms),
             updated_at_ms: Some(now_ms),
             origin: Some(origin),
@@ -143,13 +156,18 @@ impl NativeSessionMetadata {
             .get("schema_version")
             .and_then(Value::as_u64)
             .ok_or(NativeSessionMetadataError::Malformed)?;
-        if version != 1 {
-            return Err(NativeSessionMetadataError::UnsupportedVersion);
-        }
-        if object.len() > FIELDS.len() || object.keys().any(|key| !FIELDS.contains(&key.as_str())) {
+        let fields = match version {
+            1 => V1_FIELDS,
+            2 => V2_FIELDS,
+            _ => return Err(NativeSessionMetadataError::UnsupportedVersion),
+        };
+        if object.len() > fields.len() || object.keys().any(|key| !fields.contains(&key.as_str())) {
             return Err(NativeSessionMetadataError::Malformed);
         }
         let workspace = optional_string(object, "workspace_hex")?
+            .map(decode_workspace)
+            .transpose()?;
+        let origin_workspace = optional_string(object, "origin_workspace_hex")?
             .map(decode_workspace)
             .transpose()?;
         let created_at_ms = optional_time(object, "created_at_ms")?;
@@ -184,6 +202,7 @@ impl NativeSessionMetadata {
         };
         Ok(Self {
             workspace,
+            origin_workspace,
             created_at_ms,
             updated_at_ms,
             title,
@@ -196,8 +215,9 @@ impl NativeSessionMetadata {
     #[must_use]
     pub fn to_value(&self) -> Value {
         json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "workspace_hex": self.workspace.as_deref().map(encode_workspace),
+            "origin_workspace_hex": self.origin_workspace.as_deref().map(encode_workspace),
             "created_at_ms": self.created_at_ms,
             "updated_at_ms": self.updated_at_ms,
             "title": self.title,
@@ -209,6 +229,28 @@ impl NativeSessionMetadata {
     #[must_use]
     pub fn workspace(&self) -> Option<&Path> {
         self.workspace.as_deref()
+    }
+
+    /// The explicitly recorded original workspace, never inferred from a
+    /// legacy record's current association or from the caller's current root.
+    #[must_use]
+    pub fn origin_workspace(&self) -> Option<&Path> {
+        self.origin_workspace.as_deref()
+    }
+
+    pub(crate) fn rebind_workspace(
+        &mut self,
+        workspace: &Path,
+        now_ms: i64,
+    ) -> Result<bool, NativeSessionMetadataError> {
+        validate_workspace(workspace)?;
+        if self.workspace() == Some(workspace) {
+            return Ok(false);
+        }
+        self.validate_update_time(now_ms)?;
+        self.workspace = Some(workspace.to_owned());
+        self.updated_at_ms = Some(now_ms);
+        Ok(true)
     }
 
     #[must_use]
@@ -352,7 +394,7 @@ fn validate_workspace(path: &Path) -> Result<(), NativeSessionMetadataError> {
     }
 }
 
-fn encode_workspace(path: &Path) -> String {
+pub(crate) fn encode_workspace(path: &Path) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let bytes = path.as_os_str().as_bytes();
     let mut encoded = String::with_capacity(bytes.len() * 2);
@@ -363,7 +405,7 @@ fn encode_workspace(path: &Path) -> String {
     encoded
 }
 
-fn decode_workspace(encoded: &str) -> Result<PathBuf, NativeSessionMetadataError> {
+pub(crate) fn decode_workspace(encoded: &str) -> Result<PathBuf, NativeSessionMetadataError> {
     if encoded.len() > MAX_NATIVE_SESSION_WORKSPACE_BYTES * 2 || !encoded.len().is_multiple_of(2) {
         return Err(NativeSessionMetadataError::InvalidWorkspace);
     }
@@ -401,6 +443,7 @@ mod tests {
         assert_eq!(decoded.created_at_ms(), None);
         assert_eq!(decoded.workspace(), None);
         assert_eq!(decoded.origin(), None);
+        assert_eq!(decoded.origin_workspace(), None);
         assert_eq!(decoded.updated_at_ms(), Some(300));
         assert_eq!(unrelated.len(), 1);
     }
@@ -415,6 +458,7 @@ mod tests {
         let decoded = NativeSessionMetadata::from_value(&original.to_value()).unwrap();
         assert_eq!(decoded, original);
         assert_eq!(decoded.workspace(), Some(path.as_path()));
+        assert_eq!(decoded.origin_workspace(), Some(path.as_path()));
         assert_eq!(decoded.title(), Some("title"));
         assert_eq!(decoded.language(), Some("zh-Hant"));
         assert_eq!(decoded.created_at_ms(), Some(-20));
@@ -506,7 +550,7 @@ mod tests {
             assert!(NativeSessionMetadata::from_value(&invalid).is_err());
         }
         assert_eq!(
-            NativeSessionMetadata::from_value(&json!({"schema_version": 2})),
+            NativeSessionMetadata::from_value(&json!({"schema_version": 3})),
             Err(NativeSessionMetadataError::UnsupportedVersion)
         );
         assert_eq!(
@@ -569,5 +613,78 @@ mod tests {
             NativeSessionMetadataError::InvalidTitle.to_string(),
             "native session title is invalid"
         );
+    }
+
+    #[test]
+    fn origin_schema_upgrade_never_infers_a_legacy_origin() {
+        let mut value = NativeSessionMetadata::from_value(&json!({
+            "schema_version": 1, "workspace_hex": "2f61", "origin": "imported"
+        }))
+        .unwrap();
+        assert_eq!(value.workspace(), Some(Path::new("/a")));
+        assert_eq!(value.origin_workspace(), None);
+        value.rebind_workspace(Path::new("/b"), 10).unwrap();
+        value.rename("title", 11).unwrap();
+        let encoded = value.to_value();
+        assert_eq!(encoded["schema_version"], 2);
+        assert!(encoded["origin_workspace_hex"].is_null());
+        assert_eq!(value.origin(), Some(NativeSessionOrigin::Imported));
+        assert_eq!(NativeSessionMetadata::from_value(&encoded).unwrap(), value);
+        assert!(
+            NativeSessionMetadata::from_value(&json!({
+                "schema_version": 1, "origin_workspace_hex": "2f61"
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn origin_survives_repeated_changes_and_failed_updates() {
+        let mut value = metadata();
+        value.rebind_workspace(Path::new("/b"), 110).unwrap();
+        value.rebind_workspace(Path::new("/c"), 120).unwrap();
+        value.rename("kept", 130).unwrap();
+        value.set_language("en", 140).unwrap();
+        assert_eq!(value.origin_workspace(), Some(Path::new("/work")));
+        assert_eq!(value.workspace(), Some(Path::new("/c")));
+        let before = value.clone();
+        assert!(!value.rebind_workspace(Path::new("/c"), 0).unwrap());
+        assert_eq!(value, before);
+        assert!(
+            value
+                .rebind_workspace(Path::new("/different"), 139)
+                .is_err()
+        );
+        assert_eq!(value, before);
+        assert!(
+            value
+                .rebind_workspace(Path::new("/non/../canonical"), 150)
+                .is_err()
+        );
+        assert_eq!(value, before);
+    }
+
+    #[test]
+    fn schema_two_origin_is_strict_and_redacted() {
+        for bad in [
+            json!(42),
+            json!([]),
+            json!("2F"),
+            json!("relative"),
+            json!("2f00"),
+            json!("ab".repeat(4097)),
+        ] {
+            assert!(
+                NativeSessionMetadata::from_value(&json!({
+                    "schema_version": 2, "origin_workspace_hex": bad,
+                }))
+                .is_err()
+            );
+        }
+        let encoded = json!({"schema_version": 2, "origin_workspace_hex": "2f736563726574", "workspace_hex": null});
+        let value = NativeSessionMetadata::from_value(&encoded).unwrap();
+        assert_eq!(value.origin_workspace(), Some(Path::new("/secret")));
+        assert_eq!(value.workspace(), None);
+        assert!(!format!("{value:?}").contains("secret"));
     }
 }

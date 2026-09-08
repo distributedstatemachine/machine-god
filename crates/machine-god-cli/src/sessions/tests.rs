@@ -73,6 +73,8 @@ fn row(id: &str, updated: Option<i64>) -> SessionRow {
         preview: None,
         workspace: None,
         workspace_hex: None,
+        origin_workspace: None,
+        origin_workspace_hex: None,
         created: None,
         updated,
         history_len: 0,
@@ -338,6 +340,7 @@ fn maximum_escaped_rows_fit_and_cap_is_inclusive() {
             entry.title = Some("\u{1}".repeat(240));
             entry.preview = Some("\u{1}".repeat(240));
             entry.workspace = Some("\u{1}".repeat(4096));
+            entry.origin_workspace = Some("\u{1}".repeat(4096));
             entry.language = Some("\u{1}".repeat(24));
             entry.history_len = usize::MAX;
             entry
@@ -358,6 +361,7 @@ fn maximum_escaped_rows_fit_and_cap_is_inclusive() {
 fn non_utf8_workspace_has_exact_hex_not_lossy_replacement() {
     let mut entry = row("a", None);
     entry.workspace_hex = Some("2f776f726b2fff".into());
+    entry.origin_workspace_hex = Some("2f6f726967696e2ffe".into());
     let json: serde_json::Value =
         serde_json::from_str(&render_sessions(&snapshot(vec![entry]), &json_options()).unwrap())
             .unwrap();
@@ -366,6 +370,40 @@ fn non_utf8_workspace_has_exact_hex_not_lossy_replacement() {
         serde_json::Value::Null
     );
     assert_eq!(json["sessions"][0]["workspace_root_hex"], "2f776f726b2fff");
+    assert!(json["sessions"][0]["origin_workspace_root"].is_null());
+    assert_eq!(
+        json["sessions"][0]["origin_workspace_root_hex"],
+        "2f6f726967696e2ffe"
+    );
+}
+
+#[test]
+fn origin_is_independent_of_current_workspace_and_bounded_before_output() {
+    let mut entry = row("a", None);
+    entry.workspace = Some("/current".into());
+    entry.origin_workspace = Some("/original\u{202e}".into());
+    let output = render_sessions(&snapshot(vec![entry.clone()]), &json_options()).unwrap();
+    assert!(!output.contains('\u{202e}'));
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["sessions"][0]["workspace_root"], "/current");
+    assert_eq!(
+        json["sessions"][0]["origin_workspace_root"],
+        "/original\u{202e}"
+    );
+    entry.origin_workspace = None;
+    let output = render_sessions(&snapshot(vec![entry.clone()]), &json_options()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert!(json["sessions"][0]["origin_workspace_root"].is_null());
+    for invalid in ["g0".into(), "ffFf".into(), "0".into(), "ff".repeat(4097)] {
+        entry.origin_workspace_hex = Some(invalid);
+        assert!(render_sessions(&snapshot(vec![entry.clone()]), &json_options()).is_err());
+    }
+    entry.origin_workspace_hex = Some("2f".into());
+    entry.origin_workspace = Some("/known".into());
+    assert!(render_sessions(&snapshot(vec![entry.clone()]), &json_options()).is_err());
+    entry.origin_workspace_hex = None;
+    entry.origin_workspace = Some("x".repeat(4097));
+    assert!(render_sessions(&snapshot(vec![entry]), &json_options()).is_err());
 }
 
 #[test]

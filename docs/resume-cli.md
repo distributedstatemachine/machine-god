@@ -163,3 +163,74 @@ implements only the explicit-ID, one-prompt scenario above. Matching the
 observable ability to continue a selected session is scenario compatibility;
 it is not grammar, option, presentation, persistence-format, concurrency, or
 performance equivalence.
+
+## Native validated-resume library admission
+
+`prepare_native_session_resume(lifecycle, target, workspace, now_ms)` is a
+separate Linux/macOS library primitive for validated session selection. It does
+not change the command grammar above or deliver interactive picker, migration,
+or recovery behavior by itself. The borrowed future is inert before polling;
+workspace spelling and time are explicit caller inputs, not environment or clock
+lookups. Workspace input uses the native catalog's bounded normalized absolute
+Unix path contract and confers no filesystem or tool authority.
+
+`NativeResumeTarget::Latest` scans the exact file-store allocation retained by
+the supplied lifecycle, selects only records with the explicit workspace
+association, and ranks authoritative update time with descending-ID ties.
+It refuses incomplete scans, unknown eligible activity, and corruption rather
+than selecting a potentially older fallback. Missing eligible state is a fixed
+`NotFound`. Latest never changes workspace association. The catalog's directory,
+aggregate-byte, per-record and structural limits remain authoritative; there is
+no index, inferred mtime ordering, or historical association manufactured from
+the current process directory.
+
+`NativeResumeTarget::Exact(id)` uses independent by-ID catalog observation and
+does not depend on enumeration or display truncation. Both forms capture the
+selected incarnation and revision, replay and validate the complete native
+conversation metadata, then use the engine's exact-revision guarded load. A
+changed revision or incarnation fails before canonical reconciliation; the
+operation does not silently follow a replacement. Busy candidates, invalid
+checkpoint/context/history/model metadata and ordinary load failures do not
+trigger new-session creation, provider work, tool calls or automatic repair.
+
+Exact selection explicitly persists a requested workspace-association change
+through `rebind_native_session_workspace` before returning the candidate. Its
+exclusive exact-revision mutation preserves canonical transcript, allocator,
+incarnation, unrelated metadata and unknown historical origin/creation facts.
+An unchanged association uses the reconciled no-save path without advancing
+revision or timestamp. Association publication is descriptive metadata, not
+permission grants or additional-root authority. Rebinding failures are returned
+without retries; persistence failure or dropping a polled save can follow
+publication, so neither implies that the association stayed unchanged.
+
+The opaque `NativePreparedResume` owns one engine-canonical session, the retained
+store, and the selected identity/revision. Its getters expose that bounded
+identity to the trusted host; `Debug` and errors are redacted. Consuming
+`adopt()` is inert until polled, then checks live identity/busy state, rereads
+the exact durable record, compares its complete canonical snapshot, and performs
+the core's exclusive revision/uncertain-save check before validating and returning
+a `NativeConversation`. Changes after preparation fail rather than silently
+adopting a newer target. Dropping a prepared candidate or unpolled adoption starts
+no work and does not undo an already published explicit rebind.
+
+Adoption is a checked observation, not a cross-process session lease. Another
+writer can act after the final check; subsequent prompt and metadata admission
+retain their ordinary exact-CAS fences. The caller must install a successful
+candidate under its own idle runtime-ownership boundary and attach current host
+permission, context and observation routes. Preparation/adoption do not receive,
+replace, cancel, clear queues in, or shut down the caller's current runtime.
+Failures therefore return to that owner without an implicit runtime transition.
+When the selected ID is also the current session, its explicitly requested
+rebind can still be confirmed or publication-uncertain before a later failure;
+this is not a promise to roll back shared canonical metadata. The existing
+canonical-load reconciliation rules likewise remain in force for validated
+same-incarnation state. Runtime ownership, pending input and selected model are
+not replaced by either operation.
+These operations retain the existing synchronous store-I/O and lock-latency
+contract and spawn no task, thread, retry worker or background lifecycle action.
+
+The distinction between latest without rebind and exact with persisted rebind
+follows pinned `src/core/session/session_store.zig:1093–1150` and `:3093–3199`.
+Foreign import, native migration, recovery copies, interactive selection and
+their presentation remain separate requirements, not silent fallback paths in
+this primitive.

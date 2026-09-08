@@ -62,10 +62,14 @@ JSON uses the pinned rich row fields in this order:
 
 Unknown metadata is null. `history_len` counts actual canonical user messages,
 not all transcript messages. Preview is the bounded native excerpt, not trusted
-user authority or a generated title. Native origin is an enum, not an original
-workspace path, so `origin_workspace_root` is null. A non-UTF-8 workspace has
-`workspace_root:null` and an additional final `workspace_root_hex` field with
-its exact lowercase native-byte hex; no replacement-character path is invented.
+user authority or a generated title. `origin_workspace_root` is the separately
+recorded creation workspace, preserved across later workspace rebindings; it is
+not the native provenance enum. Absent historical origin remains null even when
+the current association is known. A non-UTF-8 workspace has its corresponding
+text field null and an additional final `workspace_root_hex` or
+`origin_workspace_root_hex` field with exact lowercase native-byte hex; no
+replacement-character path is invented. Current-workspace hex precedes origin
+hex when both are present.
 Workspace filtering still compares exact native bytes.
 
 Both formats escape terminal controls, C1 characters, bidi controls, and line
@@ -73,9 +77,9 @@ separators. JSON decoding preserves the original strings. Human strings also
 escape quotes and backslashes. Each representation ends with one LF.
 
 The complete success output is bounded and constructed before any write:
-3,711,296 bytes including LF. This allows 100 rows with maximum-length IDs
-(128 bytes), titles/previews (240 each), workspace paths (4096), language tags
-(24), up to six output bytes per input byte, optional 8192-byte workspace hex,
+6,988,096 bytes including LF. This allows 100 rows with maximum-length IDs
+(128 bytes), titles/previews (240 each), two workspace paths (4096 each), language
+tags (24), up to six output bytes per input byte, optional 8192-byte hex per path,
 fixed fields, numbers, and page diagnostics. Invalid host projections fail
 closed as `ResourceLimit`, without intentionally emitting partial success.
 
