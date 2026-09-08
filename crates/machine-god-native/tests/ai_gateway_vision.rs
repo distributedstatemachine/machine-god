@@ -333,6 +333,31 @@ fn header<'a>(request: &'a CapturedRequest, name: &str) -> &'a str {
 }
 
 #[test]
+fn dedicated_worker_keeps_fixed_gemini_and_default_controls_across_retry() {
+    let transport = ScriptedTransport::new(vec![
+        vec![sse_text("{}")],
+        vec![sse_text(&valid_result().to_string())],
+    ]);
+    let worker = AiGatewayVisionTransport::dedicated(Arc::new(transport.clone()));
+    futures_executor::block_on(
+        worker.analyze(request(vec![png(1, &[0])]), CancellationToken::new()),
+    )
+    .unwrap();
+    let captured = transport.requests();
+    assert_eq!(captured.len(), 2);
+    for request in &captured {
+        assert_eq!(
+            header(request, "ai-language-model-id"),
+            "google/gemini-2.5-flash"
+        );
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        assert!(body.get("reasoning").is_none());
+        assert!(body.get("providerOptions").is_none());
+    }
+    assert_eq!(captured[0], captured[1]);
+}
+
+#[test]
 fn exact_request_uses_configured_model_file_parts_and_strict_response_format() {
     let transport = ScriptedTransport::one(sse_text(&valid_result().to_string()));
     let response = execute(

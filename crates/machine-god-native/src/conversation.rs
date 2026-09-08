@@ -210,6 +210,11 @@ impl NativeConversation {
         self.session.id()
     }
 
+    #[must_use]
+    pub fn incarnation_id(&self) -> machine_god_core::SessionIncarnationId {
+        self.session.incarnation_id()
+    }
+
     /// Returns canonical history, never a compacted provider projection.
     #[must_use]
     pub fn record(&self) -> SessionRecord {

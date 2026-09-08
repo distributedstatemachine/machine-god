@@ -14,11 +14,13 @@ use machine_god_core::{
 };
 
 use crate::conversation::{ConversationInput, PendingInput};
+use crate::conversation_model_routes::{CurrentModel, ModelRouteRegistration};
 use crate::tool_output_serializer::{
     CompactJsonScratch, CompactToolOutputLimits, measure_json_value_compact_with_scratch,
 };
 use crate::{
-    NativeConversation, NativeConversationError, NativeConversationTurn, NativeModelCapabilities,
+    NativeConversation, NativeConversationError, NativeConversationModelRouteError,
+    NativeConversationModelRoutes, NativeConversationTurn, NativeModelCapabilities,
     NativeModelCatalog, NativeModelPreferences, NativeModelPreferencesError, NativeModelSnapshot,
 };
 
@@ -47,6 +49,7 @@ pub enum NativeConversationRuntimeError {
     InputLimit,
     IdentityExhausted,
     InvalidModelPreferences(NativeModelPreferencesError),
+    ModelRoute(NativeConversationModelRouteError),
     Conversation(NativeConversationError),
 }
 
@@ -58,6 +61,7 @@ impl fmt::Display for NativeConversationRuntimeError {
             Self::InputLimit => f.write_str("conversation queued input limit exceeded"),
             Self::IdentityExhausted => f.write_str("conversation runtime identity exhausted"),
             Self::InvalidModelPreferences(error) => error.fmt(f),
+            Self::ModelRoute(error) => error.fmt(f),
             Self::Conversation(error) => error.fmt(f),
         }
     }
@@ -109,11 +113,22 @@ struct RuntimeState {
     active: bool,
 }
 
+impl CurrentModel for Mutex<RuntimeState> {
+    fn current_model(&self) -> String {
+        self.lock()
+            .expect("runtime state poisoned")
+            .preferences
+            .model()
+            .to_owned()
+    }
+}
+
 /// One session's FIFO and requested model state, without a detached worker.
 /// Pending jobs share the current selection; a taken job owns a fixed snapshot.
 pub struct NativeConversationRuntime {
     conversation: NativeConversation,
     state: Arc<Mutex<RuntimeState>>,
+    model_route: Option<Arc<ModelRouteRegistration>>,
 }
 
 impl fmt::Debug for NativeConversationRuntime {
@@ -146,6 +161,7 @@ impl NativeConversationRuntime {
         let saved_generation = (saved.as_ref() == Some(&preferences)).then_some(0);
         Ok(Self {
             conversation,
+            model_route: None,
             state: Arc::new(Mutex::new(RuntimeState {
                 preferences,
                 generation: 0,
@@ -157,6 +173,34 @@ impl NativeConversationRuntime {
                 active: false,
             })),
         })
+    }
+
+    /// Constructs a runtime and registers its current selection for secondary
+    /// search workers. Main jobs still capture immutable admission snapshots.
+    ///
+    /// # Errors
+    /// Rejects invalid preferences, duplicate incarnations or route capacity.
+    ///
+    /// # Panics
+    /// Panics if an earlier panic poisoned the routing mutex.
+    pub fn new_with_model_routes(
+        conversation: NativeConversation,
+        startup: NativeModelPreferences,
+        process_model_override: Option<&str>,
+        routes: &Arc<NativeConversationModelRoutes>,
+    ) -> Result<Self, NativeConversationRuntimeError> {
+        let mut runtime = Self::new(conversation, startup, process_model_override)?;
+        let source: Arc<dyn CurrentModel> = runtime.state.clone();
+        runtime.model_route = Some(
+            routes
+                .register(
+                    runtime.conversation.id(),
+                    runtime.conversation.incarnation_id(),
+                    Arc::downgrade(&source),
+                )
+                .map_err(NativeConversationRuntimeError::ModelRoute)?,
+        );
+        Ok(runtime)
     }
 
     #[must_use]
@@ -380,6 +424,7 @@ impl NativeConversationRuntime {
                 .saved_generation = Some(generation);
             Ok(Some(NativeConversationRuntimeTurn {
                 core: Some(turn),
+                model_route: self.model_route.clone(),
                 lease: Some(lease),
                 id: job.id,
                 snapshot,
@@ -475,6 +520,7 @@ impl Drop for RuntimeLease {
 /// Drop releases core work before opening runtime admission; no worker detaches.
 pub struct NativeConversationRuntimeTurn {
     core: Option<NativeConversationTurn>,
+    model_route: Option<Arc<ModelRouteRegistration>>,
     lease: Option<RuntimeLease>,
     id: NativeQueuedJobId,
     snapshot: NativeModelSnapshot,
@@ -495,6 +541,7 @@ impl NativeConversationRuntimeTurn {
     }
     fn finish(&mut self) {
         self.core.take();
+        self.model_route.take();
         self.lease.take();
     }
 }

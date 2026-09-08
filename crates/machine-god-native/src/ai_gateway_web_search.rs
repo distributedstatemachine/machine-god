@@ -74,7 +74,8 @@ impl WebSearchTransport for AiGatewayWebSearchTransport {
                 .ok_or_else(|| transport_error(WebSearchTransportErrorKind::InvalidRequest))?;
             let body = build_worker_body(&request)?;
             check_cancelled(&cancellation)?;
-            let gateway_request = build_gateway_transport_request(&self.model, session, body);
+            let model = request.worker_model().unwrap_or(&self.model);
+            let gateway_request = build_gateway_transport_request(model, session, body);
             let mut stream = self
                 .inner
                 .stream(gateway_request, cancellation.clone())

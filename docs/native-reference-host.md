@@ -43,7 +43,9 @@ Composition rejects a loaded configuration unless it selects exactly:
 - credential source `environment`.
 
 The validated configured model is retained and used by the ordinary AI Gateway
-provider, the web-search transport adapter, and the private vision worker. The
+provider and the legacy fixed-model web-search transport adapter. Explicit
+conversation routing lets search capture the current session selection;
+vision instead always uses dedicated `google/gemini-2.5-flash`. The
 host retains the complete `LoadedNativeConfig`, including its observable
 schema origin/version.
 
@@ -117,6 +119,17 @@ grant those reads. Embeddings must separately choose this additional authority;
 configuration, ordinary constructors, and terminal-only options do not enable it.
 The constructor and its clones only retain the exact shared allocation: they
 capture no file state, clear no history, and perform no inverse operation.
+
+`with_model_routes(Arc<NativeConversationModelRoutes>)` optionally attaches
+the same explicit routing allocation to web search. The trusted host registers
+each runtime with `NativeConversationRuntime::new_with_model_routes` using
+that allocation. Search snapshots current selection for its exact session
+incarnation before capacity waiting; an unregistered context fails before
+transport instead of falling back to the configured model. Composition never
+reads the selection or registers sessions itself. Existing constructors without
+this option retain fixed configured search models. Vision remains independent;
+neither worker inherits main-turn effort or fast mode. See
+[native conversation](native-conversation.md#secondary-worker-model-routing).
 
 The prepared-root constructors
 `compose_ai_gateway_http_with_prepared_roots_and_conversation` and
@@ -244,9 +257,9 @@ terminal selection described above replaces those legacy components.
 The production AI Gateway target is `https://ai-gateway.vercel.sh` with the
 default HTTPS port. A custom transport must receive the canonical target it
 actually contacts; that value becomes both web-search permission identity and
-the remote half of each composite vision capability. The vision worker reuses
-the same configured model and `Arc<dyn AiGatewayTransport>` as the ordinary
-provider and web search. The custom path is a trusted authority override and
+the remote half of each composite vision capability. The dedicated vision
+worker shares the same `Arc<dyn AiGatewayTransport>` as the ordinary
+provider and web search, but not their model selection. The custom path is a trusted authority override and
 reports no discovered credential source.
 
 ## Tool catalog

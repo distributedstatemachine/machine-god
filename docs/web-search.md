@@ -65,6 +65,23 @@ receives the normalized query and optional DNS filter plus cancellation. The
 production `AiGatewayWebSearchTransport`, available with `ai-gateway-http` on
 non-WebAssembly targets, reuses the already selected and validated Gateway
 model, credential-bearing `Arc<dyn AiGatewayTransport>`, and endpoint target.
+On the explicit routed path, `WebSearchTool::with_model_routes` captures the
+current selected model for the actual session incarnation on first execution
+poll, after argument/cancellation checks and before waiting for capacity.
+`WebSearchRequest::worker_model` exposes that owned snapshot to trusted
+transports; it is not accepted from model-facing JSON. The Gateway adapter uses
+the snapshot when present and the validated constructor model otherwise.
+Unknown or retired routed incarnations fail before any transport effect;
+they never fall back to another session or the configured model.
+
+This matches pinned interactive search's live selection at tool entry
+(`src/core/app/app_agent_runtime.zig:286`, `:709`) and its owned request snapshot
+(`src/core/tooling/web_search_runtime.zig:215`). A selection made during an
+active main turn can affect a subsequent search, but not an already-started
+search or the main job's own immutable inference options. Neither effort nor
+fast mode is inherited: both `reasoning` and `providerOptions` stay absent,
+matching `src/core/gateway/gateway_json.zig:198`.
+
 One approved execution makes at most one transport request. It advertises and
 requires exactly this provider tool:
 

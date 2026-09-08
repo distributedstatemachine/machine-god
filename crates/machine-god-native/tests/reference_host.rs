@@ -1448,6 +1448,87 @@ fn body(request: &CapturedRequest) -> Value {
 }
 
 #[test]
+fn composed_search_uses_call_entry_selection_without_changing_active_primary_model() {
+    use machine_god_native::{
+        NativeConversation, NativeConversationModelRoutes, NativeConversationRuntime,
+        NativeModelPreferences, NativeReasoningEffort, NativeSessionMetadata,
+    };
+    let temporary = TemporaryDirectory::new("routed-search-model");
+    let (prepared, _) = complete_terminal_roots(temporary.path());
+    let routes = Arc::new(NativeConversationModelRoutes::new());
+    let options = NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
+        .with_model_routes(routes.clone());
+    let transport = CapacityOneTransport::new(web_search_round_responses());
+    let host =
+        NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
+            built_in_config(),
+            Arc::new(transport.clone()),
+            production_gateway_target(),
+            prepared,
+            Arc::new(AllowingPrompter::default()),
+            inert_question_prompter(),
+            never_deadline(),
+            options,
+        )
+        .unwrap();
+    assert!(transport.requests().is_empty());
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    executor.block_on(async {
+        let conversation =
+            NativeConversation::create(host.session_lifecycle(), NativeSessionMetadata::default())
+                .await
+                .unwrap();
+        let preferences = |model| {
+            NativeModelPreferences::new(model, NativeReasoningEffort::parse("high").unwrap(), true)
+                .unwrap()
+        };
+        let runtime = NativeConversationRuntime::new_with_model_routes(
+            conversation,
+            preferences("private/original"),
+            None,
+            &routes,
+        )
+        .unwrap();
+        runtime.enqueue("research this".into()).unwrap();
+        let turn = runtime.start_next(100).await.unwrap().unwrap();
+        runtime
+            .set_model_preferences(preferences("private/next"))
+            .unwrap();
+        let events = tokio::time::timeout(Duration::from_secs(1), turn.collect::<Vec<_>>())
+            .await
+            .unwrap();
+        let events: Vec<_> = events
+            .into_iter()
+            .map(|event| event.unwrap().payload)
+            .collect();
+        assert_completed(&events);
+    });
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 3);
+    for (index, model) in [
+        (0, "private/original"),
+        (1, "private/next"),
+        (2, "private/original"),
+    ] {
+        assert_eq!(
+            requests[index]
+                .headers
+                .iter()
+                .find(|(name, _)| name == "ai-language-model-id")
+                .unwrap()
+                .1,
+            model
+        );
+    }
+    let search = body(&requests[1]);
+    assert!(search.get("reasoning").is_none());
+    assert!(search.get("providerOptions").is_none());
+}
+
+#[test]
 fn composed_conversation_projects_context_and_forwards_effective_model_controls() {
     use machine_god_core::{InferenceOptions, Prompt};
     use machine_god_native::{
@@ -2702,6 +2783,28 @@ fn capacity_one_shared_transport_releases_outer_stream_before_nested_vision() {
     assert_exact_native_tool_catalog(&body(&requests[0]));
     let nested_request = body(&requests[1]);
     assert_eq!(nested_request["tools"], json!([]));
+    assert_eq!(
+        requests[1]
+            .headers
+            .iter()
+            .find(|(name, _)| name == "ai-language-model-id")
+            .unwrap()
+            .1,
+        "google/gemini-2.5-flash"
+    );
+    for index in [0, 2] {
+        assert_eq!(
+            requests[index]
+                .headers
+                .iter()
+                .find(|(name, _)| name == "ai-language-model-id")
+                .unwrap()
+                .1,
+            built_in_config().config().model()
+        );
+    }
+    assert!(nested_request.get("reasoning").is_none());
+    assert!(nested_request.get("providerOptions").is_none());
     assert_eq!(
         nested_request["prompt"][1]["content"][1]["data"],
         encoded_image

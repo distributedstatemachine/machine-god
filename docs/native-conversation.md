@@ -132,9 +132,34 @@ turn IDs. Exhaustion and limit errors do not silently evict pending work.
 
 The queue/current-selection and resume rules follow pinned
 `src/core/agent/worker_runtime.zig:728`, `:1006`, `:1161`, `:1180`, `:1194`,
-`:4034`, and `src/core/app/app_session_runtime.zig:4831`. The CLI input loop,
-independent user-default writer and secondary vision/search routing must still
-compose these ownership APIs before the combined CLI feature closes.
+`:4034`, and `src/core/app/app_session_runtime.zig:4831`. The CLI input loop and
+independent user-default persistence outcomes must compose these ownership APIs.
+
+## Secondary-worker model routing
+
+`NativeConversationModelRoutes` is an explicit, bounded table shared with the
+host's search tool. `NativeConversationRuntime::new_with_model_routes` registers
+the exact session ID and incarnation, backed by a weak reference to the same
+current-selection state used by the queue. A table admits at most 64 live
+registrations; duplicates and capacity exhaustion fail without replacing any
+existing route. Missing incarnations return no snapshot. Lookup copies only
+the bounded model ID and invokes no provider, catalog or persistence operation.
+Source observation and last-reference destruction occur outside the table lock.
+
+The runtime owns registration; a returned active turn also retains it through
+native finalization. Dropping the runtime clears queued inputs but preserves
+routing for its independently owned turn. Once the last registration owner
+settles or drops, the slot is removed and reusable. The table cannot keep a
+conversation or its engine alive. IDs are not permission grants: the tool still
+uses core's actual execution context after ordinary preparation and approval.
+
+Search captures current selection at tool-entry time, not the main job's older
+admission snapshot. This deliberate distinction follows the pinned interactive
+implementation, whose live selection can change during an active response.
+The captured search model stays fixed while waiting for capacity and streaming.
+Vision always uses its dedicated Gemini worker. Neither secondary worker inherits
+effort or fast controls; those continue to apply only to main provider rounds.
+The exact worker contracts are in [search](web-search.md) and [vision](vision.md).
 
 ## Durable context selection
 

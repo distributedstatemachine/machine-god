@@ -8,7 +8,7 @@ workspace-only path authority are intentional machine-god bounds.
 
 ## Boundary
 
-`vision` inspects authorized local raster images through the configured AI
+`vision` inspects authorized local raster images through a dedicated AI
 Gateway model and returns bounded, structured factual evidence. Image bytes
 remain transient native data: machine-god adds no source-path, raw-image, or
 base64 fields to provider-neutral content blocks, ordinary conversation
@@ -132,8 +132,18 @@ bounded by 64 MiB.
 
 ## Private Gateway worker
 
-The production `AiGatewayVisionTransport` reuses the configured model and the
-same injected `Arc<dyn AiGatewayTransport>` as the outer provider. It uses a
+Production composition uses `AiGatewayVisionTransport::dedicated`: fixed
+`google/gemini-2.5-flash`, automatic effort and fast disabled. Neither the
+selected conversational model nor its effort/fast settings change vision,
+including its semantic retry. The dedicated worker follows pinned
+`src/core/agent/runtime/image_provider.zig:13` and `:52` through the production
+`tool_runtime` / `vision_executor` call chain. Automatic effort and disabled
+fast omit `reasoning` and `providerOptions` from the worker body. The existing
+`new(model, transport)` constructor remains an explicit trusted embedding
+override, not the reference-host selection.
+
+The worker shares the injected `Arc<dyn AiGatewayTransport>` with the outer
+provider. It uses a
 dedicated, one-shot raw-v4 codec; it does not extend `ContentBlock`, `Prompt`,
 the general Gateway history encoder, or durable session schemas.
 
@@ -338,7 +348,7 @@ graph. Construction is network-inert.
 This slice does not add durable image attachments, prompt images, CLI
 `--image`, absolute or home-relative image paths, remote/data URLs, image
 history, image generation, local OCR, raster decoding/resizing, artifact
-persistence, progress events, live-provider tests, a dedicated provider model,
+persistence, progress events, live-provider tests,
 parallel batches, cache behavior, measured performance claims, or complete fx
 equivalence. Those additions require separately reviewed authority, storage,
 resource, and compatibility contracts.

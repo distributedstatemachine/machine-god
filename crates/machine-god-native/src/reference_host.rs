@@ -265,6 +265,7 @@ struct TerminalCompositionSelection {
 pub struct NativeReferenceHostConversationOptions {
     undo_tracker: Arc<FileUndoTracker>,
     terminal: Option<NativeReferenceHostTerminalOptions>,
+    model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
 }
 
 impl NativeReferenceHostConversationOptions {
@@ -274,6 +275,7 @@ impl NativeReferenceHostConversationOptions {
         Self {
             undo_tracker,
             terminal: None,
+            model_routes: None,
         }
     }
 
@@ -282,6 +284,14 @@ impl NativeReferenceHostConversationOptions {
     #[must_use]
     pub fn with_terminal(mut self, terminal: NativeReferenceHostTerminalOptions) -> Self {
         self.terminal = Some(terminal);
+        self
+    }
+
+    /// Selects incarnation-bound current-model snapshots for web search.
+    /// Register each conversation runtime with this same routing allocation.
+    #[must_use]
+    pub fn with_model_routes(mut self, routes: Arc<crate::NativeConversationModelRoutes>) -> Self {
+        self.model_routes = Some(routes);
         self
     }
 }
@@ -298,6 +308,7 @@ impl fmt::Debug for NativeReferenceHostConversationOptions {
 struct PreparedCompositionOptions {
     undo_tracker: Option<Arc<FileUndoTracker>>,
     terminal: Option<NativeReferenceHostTerminalOptions>,
+    model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
 }
 
 impl From<NativeReferenceHostConversationOptions> for PreparedCompositionOptions {
@@ -305,6 +316,7 @@ impl From<NativeReferenceHostConversationOptions> for PreparedCompositionOptions
         Self {
             undo_tracker: Some(options.undo_tracker),
             terminal: options.terminal,
+            model_routes: options.model_routes,
         }
     }
 }
@@ -499,6 +511,7 @@ impl NativeReferenceHost {
         options: PreparedCompositionOptions,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
+        let model_routes = options.model_routes.clone();
         let (workspace_tools, session_store, selection) =
             consume_prepared_composition(prepared_roots, options)?;
         let memory = open_memory_tool(&session_store)?;
@@ -525,6 +538,7 @@ impl NativeReferenceHost {
             Arc::new(EmptyMcpFeatureAuthority),
             Arc::new(EmptySubagentAuthority),
             selection,
+            model_routes,
         )
     }
 
@@ -620,6 +634,7 @@ impl NativeReferenceHost {
             Arc::new(EmptyMcpFeatureAuthority),
             Arc::new(EmptySubagentAuthority),
             None,
+            None,
         )
     }
 
@@ -670,6 +685,7 @@ impl NativeReferenceHost {
             mcp_feature_authority,
             Arc::new(EmptySubagentAuthority),
             None,
+            None,
         )
     }
 
@@ -715,6 +731,7 @@ impl NativeReferenceHost {
             Arc::new(EmptyMcpToolCatalog),
             Arc::new(EmptyMcpFeatureAuthority),
             subagent_authority,
+            None,
             None,
         )
     }
@@ -763,6 +780,7 @@ impl NativeReferenceHost {
             mcp_catalog,
             mcp_feature_authority,
             subagent_authority,
+            None,
             None,
         )
     }
@@ -889,6 +907,7 @@ impl NativeReferenceHost {
         options: PreparedCompositionOptions,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
+        let model_routes = options.model_routes.clone();
         let (workspace_tools, session_store, selection) =
             consume_prepared_composition(prepared_roots, options)?;
         let memory = open_memory_tool(&session_store)?;
@@ -907,6 +926,7 @@ impl NativeReferenceHost {
             Arc::new(EmptyMcpFeatureAuthority),
             Arc::new(EmptySubagentAuthority),
             selection,
+            model_routes,
         )
     }
 
@@ -986,6 +1006,7 @@ impl NativeReferenceHost {
             Arc::new(EmptyMcpFeatureAuthority),
             Arc::new(EmptySubagentAuthority),
             None,
+            None,
         )
     }
 
@@ -1005,6 +1026,7 @@ impl NativeReferenceHost {
         mcp_feature_authority: Arc<dyn McpFeatureAuthority>,
         subagent_authority: Arc<dyn SubagentAuthority>,
         terminal_selection: Option<TerminalCompositionSelection>,
+        model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         let model = loaded_config.config().model().to_owned();
         let SharedNetworkTools {
@@ -1017,6 +1039,7 @@ impl NativeReferenceHost {
             &transport,
             network_target,
             web_search_deadline,
+            model_routes,
         )?;
         let (provider, engine_limits) = if terminal_selection.is_some() {
             compose_full_terminal_provider(model, transport)?
@@ -1113,11 +1136,9 @@ fn compose_network_tools(
     transport: &Arc<dyn AiGatewayTransport>,
     network_target: NetworkTarget,
     deadline: Arc<dyn WebSearchDeadline>,
+    model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
 ) -> Result<SharedNetworkTools, NativeReferenceHostBuildError> {
-    let vision_transport = AiGatewayVisionTransport::new(model.to_owned(), Arc::clone(transport))
-        .map_err(|_| {
-        NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::VisionTransport)
-    })?;
+    let vision_transport = AiGatewayVisionTransport::dedicated(Arc::clone(transport));
     let (vision_deadline, terminal_wait_delay) = compose_deadline_adapters(&deadline);
     let vision = VisionTool::from_root_descriptor(
         vision_root,
@@ -1145,6 +1166,10 @@ fn compose_network_tools(
     .map_err(|_| {
         NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::WebSearchTransport)
     })?;
+    let web_search = match model_routes {
+        Some(routes) => web_search.with_model_routes(routes),
+        None => web_search,
+    };
     Ok(SharedNetworkTools {
         vision,
         web_search,

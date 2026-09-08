@@ -234,6 +234,7 @@ pub struct WebSearchRequest {
     allowed_domains: Vec<String>,
     blocked_domains: Vec<String>,
     session_id: Option<String>,
+    worker_model: Option<String>,
 }
 
 impl WebSearchRequest {
@@ -259,6 +260,13 @@ impl WebSearchRequest {
     #[must_use]
     pub fn session_id(&self) -> Option<&str> {
         self.session_id.as_deref()
+    }
+
+    /// Current selected model captured by the tool's explicit routing authority.
+    /// Not caller-supplied JSON; absent on the legacy fixed-model path.
+    #[must_use]
+    pub fn worker_model(&self) -> Option<&str> {
+        self.worker_model.as_deref()
     }
 
     #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
@@ -470,6 +478,8 @@ pub struct WebSearchTool {
     deadline: Arc<dyn WebSearchDeadline>,
     limits: WebSearchLimits,
     permits: Arc<Semaphore>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
 }
 
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
@@ -505,7 +515,18 @@ impl WebSearchTool {
             deadline,
             limits,
             permits: Arc::new(Semaphore::new(limits.max_active_requests)),
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            model_routes: None,
         })
+    }
+
+    /// Captures the exact session incarnation's current model at execution
+    /// entry, before capacity waiting. Missing routes fail before transport.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[must_use]
+    pub fn with_model_routes(mut self, routes: Arc<crate::NativeConversationModelRoutes>) -> Self {
+        self.model_routes = Some(routes);
+        self
     }
 }
 
@@ -601,6 +622,14 @@ impl Tool for WebSearchTool {
                 return Err(cancelled_tool_error());
             }
             cancellation_boundary(&cancellation, deadline).map_err(map_transport_error)?;
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if let Some(routes) = &self.model_routes {
+                request.worker_model = Some(routes.snapshot(&context).ok_or_else(|| {
+                    map_transport_error(transport_error(
+                        WebSearchTransportErrorKind::InvalidRequest,
+                    ))
+                })?);
+            }
             let _permit = await_bounded(
                 Arc::clone(&self.permits).acquire_owned(),
                 &cancellation,
@@ -667,6 +696,7 @@ fn canonical_request(arguments: Value) -> Result<(WebSearchRequest, Value), Tool
             allowed_domains,
             blocked_domains,
             session_id: None,
+            worker_model: None,
         },
         canonical,
     ))

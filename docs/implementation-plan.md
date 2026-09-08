@@ -139,8 +139,11 @@ with explicit process-model override precedence. These component commits are
 not deliveries. The owned rich-model cache preserves advertised capabilities,
 shares one in-flight fetch, retains prior catalogs on failed/empty refresh and
 applies pinned no-TTL/retry behavior with bounded cancellable waiters.
+Secondary workers now follow the pinned distinction: dedicated Gemini vision
+with unchanged semantic retries, and session-incarnation-bound search snapshots
+of current selection at tool entry. Neither inherits effort/fast controls.
 Remaining work includes durable user-default writes, cache/CLI
-composition and model snapshot routing through vision/search, typed historical
+composition, typed historical
 interruption/background/file facts, interactive command/session transitions,
 pinned recovery/retry policy, policy/sandbox/workspace enforcement, rich session
 commands and the complete feature gates.

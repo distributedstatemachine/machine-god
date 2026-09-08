@@ -40,6 +40,209 @@ fn preferences(model: &str) -> NativeModelPreferences {
     NativeModelPreferences::new(model, NativeReasoningEffort::parse("high").unwrap(), true).unwrap()
 }
 
+fn routed_runtime(
+    routes: &Arc<machine_god_native::NativeConversationModelRoutes>,
+    session: &str,
+    incarnation: &str,
+) -> Result<NativeConversationRuntime, NativeConversationRuntimeError> {
+    let mut record = record(None);
+    record.id = SessionId::new(session).unwrap();
+    record.incarnation_id = SessionIncarnationId::new(incarnation).unwrap();
+    let id = record.id.clone();
+    let store = InMemorySessionStore::configured(
+        BTreeMap::from([(id.clone(), record)]),
+        SessionStoreScript::default(),
+        256,
+    );
+    let engine = Engine::builder()
+        .session_store(store)
+        .provider(ScriptedModelProvider::new("test", [finished()]))
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .build()
+        .unwrap();
+    let session = block_on(engine.load_session(id)).unwrap().unwrap();
+    NativeConversationRuntime::new_with_model_routes(
+        NativeConversation::from_session(session).unwrap(),
+        preferences("private/original"),
+        None,
+        routes,
+    )
+}
+
+fn route_context(runtime: &NativeConversationRuntime) -> machine_god_core::ToolContext {
+    machine_god_core::ToolContext {
+        session_id: runtime.id(),
+        session_incarnation_id: runtime.record().incarnation_id,
+        turn_id: machine_god_core::TurnId::new("turn").unwrap(),
+        call_id: machine_god_core::ToolCallId::new("call").unwrap(),
+    }
+}
+
+#[test]
+fn model_routes_isolate_incarnations_and_preserve_live_selection_until_turn_settlement() {
+    use machine_god_native::{NativeConversationModelRouteError, NativeConversationModelRoutes};
+    let routes = Arc::new(NativeConversationModelRoutes::new());
+    let first = routed_runtime(&routes, "same-session", "first").unwrap();
+    let second = routed_runtime(&routes, "same-session", "second").unwrap();
+    let context = route_context(&first);
+    assert_eq!(
+        routes.snapshot(&context).as_deref(),
+        Some("private/original")
+    );
+    assert!(matches!(
+        routed_runtime(&routes, "same-session", "first"),
+        Err(NativeConversationRuntimeError::ModelRoute(
+            NativeConversationModelRouteError::Duplicate
+        ))
+    ));
+    first.enqueue("run".into()).unwrap();
+    let turn = block_on(first.start_next(100)).unwrap().unwrap();
+    first
+        .set_model_preferences(preferences("private/next"))
+        .unwrap();
+    assert_eq!(routes.snapshot(&context).as_deref(), Some("private/next"));
+    assert_eq!(
+        turn.model_snapshot().preferences().model(),
+        "private/original"
+    );
+    assert_eq!(
+        routes.snapshot(&route_context(&second)).as_deref(),
+        Some("private/original")
+    );
+    let mut wrong = context.clone();
+    wrong.session_id = SessionId::new("wrong-session").unwrap();
+    assert!(routes.snapshot(&wrong).is_none());
+    wrong = context.clone();
+    wrong.session_incarnation_id = SessionIncarnationId::new("wrong-incarnation").unwrap();
+    assert!(routes.snapshot(&wrong).is_none());
+    assert!(!format!("{routes:?}").contains("private"));
+    drop(first);
+    assert_eq!(routes.snapshot(&context).as_deref(), Some("private/next"));
+    complete(turn);
+    assert!(routes.snapshot(&context).is_none());
+    assert!(routed_runtime(&routes, "same-session", "first").is_ok());
+}
+
+#[test]
+fn model_route_capacity_is_bounded_and_reusable_after_drop() {
+    use machine_god_native::{
+        MAX_NATIVE_CONVERSATION_MODEL_ROUTES, NativeConversationModelRouteError,
+        NativeConversationModelRoutes,
+    };
+    let routes = Arc::new(NativeConversationModelRoutes::new());
+    let mut runtimes: Vec<_> = (0..MAX_NATIVE_CONVERSATION_MODEL_ROUTES)
+        .map(|index| routed_runtime(&routes, &format!("session-{index}"), "life").unwrap())
+        .collect();
+    assert!(matches!(
+        routed_runtime(&routes, "overflow", "life"),
+        Err(NativeConversationRuntimeError::ModelRoute(
+            NativeConversationModelRouteError::Capacity
+        ))
+    ));
+    let retired = route_context(runtimes.last().unwrap());
+    drop(runtimes.pop());
+    assert!(routes.snapshot(&retired).is_none());
+    assert!(routed_runtime(&routes, "replacement", "life").is_ok());
+    assert_eq!(
+        routes.snapshot(&route_context(&runtimes[0])).as_deref(),
+        Some("private/original")
+    );
+}
+
+#[cfg(feature = "ai-gateway-http")]
+#[test]
+fn search_captures_model_before_capacity_wait_and_rejects_unregistered_context() {
+    use machine_god_core::{NetworkTarget, Tool};
+    use machine_god_native::{
+        NativeConversationModelRoutes, WebSearchDeadline, WebSearchLimits, WebSearchRequest,
+        WebSearchResponse, WebSearchTool, WebSearchTransport, WebSearchTransportError,
+    };
+    use std::sync::Mutex;
+    struct Deadline;
+    impl WebSearchDeadline for Deadline {
+        fn wait_until(&self, _: Instant) -> BoxFuture<'_, Result<(), WebSearchTransportError>> {
+            Box::pin(std::future::pending())
+        }
+    }
+    #[derive(Default)]
+    struct Transport(Mutex<Vec<WebSearchRequest>>);
+    impl WebSearchTransport for Transport {
+        fn search(
+            &self,
+            request: WebSearchRequest,
+            _: CancellationToken,
+        ) -> BoxFuture<'_, Result<WebSearchResponse, WebSearchTransportError>> {
+            Box::pin(async move {
+                let first = {
+                    let mut requests = self.0.lock().unwrap();
+                    requests.push(request);
+                    requests.len() == 1
+                };
+                if first {
+                    std::future::pending::<()>().await;
+                }
+                WebSearchResponse::new(Vec::new(), false)
+            })
+        }
+    }
+    let routes = Arc::new(NativeConversationModelRoutes::new());
+    let runtime = routed_runtime(&routes, "search-session", "search-life").unwrap();
+    let transport = Arc::new(Transport::default());
+    let tool = WebSearchTool::with_bounded_transport(
+        NetworkTarget {
+            scheme: "https".into(),
+            host: "example.com".into(),
+            port: None,
+        },
+        transport.clone(),
+        Arc::new(Deadline),
+        WebSearchLimits::new(std::time::Duration::from_secs(30), 1).unwrap(),
+    )
+    .unwrap()
+    .with_model_routes(routes.clone());
+    let context = route_context(&runtime);
+    let args = json!({"query":"test query"});
+    let mut first = tool.execute(context.clone(), args.clone(), CancellationToken::new());
+    assert!(transport.0.lock().unwrap().is_empty());
+    let waker = noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    assert!(first.as_mut().poll(&mut cx).is_pending());
+    let mut second = tool.execute(context.clone(), args.clone(), CancellationToken::new());
+    assert!(second.as_mut().poll(&mut cx).is_pending());
+    runtime
+        .set_model_preferences(preferences("private/next"))
+        .unwrap();
+    assert_eq!(transport.0.lock().unwrap().len(), 1);
+    drop(first);
+    block_on(second).unwrap();
+    assert_eq!(
+        transport.0.lock().unwrap()[1].worker_model(),
+        Some("private/original")
+    );
+    block_on(tool.execute(context.clone(), args.clone(), CancellationToken::new())).unwrap();
+    assert_eq!(
+        transport.0.lock().unwrap()[2].worker_model(),
+        Some("private/next")
+    );
+    let mut wrong = context.clone();
+    wrong.session_incarnation_id = SessionIncarnationId::new("unregistered").unwrap();
+    assert!(block_on(tool.execute(wrong, args.clone(), CancellationToken::new())).is_err());
+    let cancelled = CancellationToken::new();
+    cancelled.cancel();
+    assert!(block_on(tool.execute(context.clone(), args.clone(), cancelled)).is_err());
+    assert!(
+        block_on(tool.execute(
+            context.clone(),
+            json!({"query":"test query","worker_model":"forged"}),
+            CancellationToken::new()
+        ))
+        .is_err()
+    );
+    drop(runtime);
+    assert!(block_on(tool.execute(context, args, CancellationToken::new())).is_err());
+    assert_eq!(transport.0.lock().unwrap().len(), 3);
+}
+
 fn record(saved: Option<&NativeModelPreferences>) -> SessionRecord {
     let mut record = SessionRecord::empty(
         SessionId::new("private:session").unwrap(),

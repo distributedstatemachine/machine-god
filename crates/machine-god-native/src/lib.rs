@@ -60,6 +60,8 @@ mod conversation;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conversation_context;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+mod conversation_model_routes;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conversation_runtime;
 mod copy_file;
 mod create_folder;
@@ -299,7 +301,8 @@ pub use ai_gateway_model_catalog_http::{
 };
 #[cfg(all(feature = "vision", not(target_family = "wasm")))]
 pub use ai_gateway_vision::{
-    AiGatewayVisionConfigError, AiGatewayVisionConfigErrorKind, AiGatewayVisionTransport,
+    AI_GATEWAY_VISION_MODEL, AiGatewayVisionConfigError, AiGatewayVisionConfigErrorKind,
+    AiGatewayVisionTransport,
 };
 #[cfg(all(feature = "ai-gateway-http", not(target_family = "wasm")))]
 pub use ai_gateway_web_search::AiGatewayWebSearchTransport;
@@ -400,6 +403,11 @@ pub use conversation::{
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use conversation_context::{
     NATIVE_CONTEXT_PREFERENCES_KEY, NativeContextError, NativeContextPreferences,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use conversation_model_routes::{
+    MAX_NATIVE_CONVERSATION_MODEL_ROUTES, NativeConversationModelRouteError,
+    NativeConversationModelRoutes,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use conversation_runtime::{
