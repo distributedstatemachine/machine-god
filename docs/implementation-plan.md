@@ -228,26 +228,33 @@ promise continuation or claim an empty store. Known cursor times use the pinned
 canonical format; native unknown times and colon-bearing IDs remain explicit.
 Rich output preserves unknown metadata, actual user-group counts, control-safe
 display and lossless non-UTF-8 workspace bytes without inventing path authority.
-Remaining work includes interactive CLI persistence-outcome presentation,
-long-lived cache composition,
-interactive command/session transitions,
-pinned recovery/retry policy, policy/sandbox/workspace enforcement, rich session
-commands and the complete feature gates.
+Remaining work starts with native interactive session ownership: latest/exact/
+picker resume must validate and load before switching, and clear/new/reset must
+allocate fresh IDs with their distinct carry-forward or stop/forget background
+policies. The existing same-ID incarnation reset is not that transition.
+Interactive persistence-outcome presentation, long-lived cache composition,
+remaining commands, recovery/retry, policy/workspace authority and the complete
+feature gates remain open.
 
-The terminal continuation/frame checkpoint `d612bc9` passes full Rust 1.94.1
-formatting, warnings-denied workspace Clippy, workspace tests and doctests, using
-the fresh release helper with default test concurrency and backtraces. All 1,590
-native unit and 46 reference-host tests pass. The frame fixture now tests ordinary
-and sandbox envelopes and independent encoder/decoder limits without changing
-production bounds or deadlines. Earlier macOS inventory/reaping failures did not
-recur; this alone does not establish their cause. Integrated paging/reporting
-passes 67 native catalog/cursor/listing/store tests, all 87 CLI integration tests
-and full workspace Clippy. The CLI worker's full unit suite passes 152 tests
-with five existing helper-entry ignores. The fresh release build, release CLI
-checks and replacement workspace gate are running for this combined checkpoint.
-Repository Python tests previously passed; the remaining commands still require
-the complete exact-candidate feature gates. These internal checkpoints are not
-deliveries and do not promote compatibility or performance evidence.
+The rich sessions checkpoint `734a11f` passes Rust 1.94.1 formatting,
+warnings-denied workspace Clippy, replacement workspace tests and doctests.
+Focused coverage includes 67 native catalog/cursor/listing/store tests, all 87
+CLI integration tests and 152 CLI unit tests with five existing helper ignores.
+The freshly built release CLI passes all 17 sessions integration tests and is
+the production terminal helper for the workspace run. All 1,590 native unit
+tests pass with seven existing helper ignores. Repository Python checks run
+263 tests successfully with 14 skips. Both integrated worker worktrees are
+removed; their commits remain recoverable.
+
+The first workspace attempt failed 11 PTY child-reaping admission checks and
+two tmux checks. Admission waited for fixed `/bin/sh -c 'exit 0'`, before the
+selected release helper or inventory started. No matching cross-test signal or
+fault-injection mechanism was found. All 26 focused PTY tests, both exact tmux
+tests and the replacement full workspace pass without source, deadline or test
+concurrency changes. This preserves the failure evidence; it does not establish
+its cause or claim a timing fix. These internal checkpoints are not deliveries
+and do not promote compatibility or performance evidence. Final reviews and
+exact remote evidence remain gates for the complete combined feature.
 
 The integrated preparer passes all five real file mutations, actual reviewer
 Allow/Ask/error and cancellation, read-grant/reset, canonical terminal identity,
