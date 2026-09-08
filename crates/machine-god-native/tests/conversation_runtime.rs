@@ -27,6 +27,7 @@ use machine_god_native::{
     MAX_NATIVE_QUEUED_OPTIONS_BYTES, MAX_NATIVE_QUEUED_PROMPT_BYTES, NATIVE_MODEL_PREFERENCES_KEY,
     NATIVE_SESSION_METADATA_KEY, NativeConversation, NativeConversationError,
     NativeConversationRuntime, NativeConversationRuntimeError, NativeConversationRuntimeTurn,
+    NativeHistoryBackground, NativeHistoryFileAction, NativeHistoryFileEvidence,
     NativeModelCatalog, NativeModelPreferencePersistence, NativeModelPreferences,
     NativeReasoningEffort, NativeSessionMetadata,
 };
@@ -1038,6 +1039,30 @@ fn continuation_requires_idle_empty_queue_and_captures_current_selection() {
 
 fn assert_controls_busy(runtime: &NativeConversationRuntime) {
     assert_eq!(
+        runtime.history().unwrap_err(),
+        NativeConversationRuntimeError::Busy
+    );
+    assert_eq!(
+        block_on(runtime.record_history_file(
+            0,
+            1,
+            NativeHistoryFileEvidence::new("file", NativeHistoryFileAction::Read, false).unwrap(),
+            500
+        ))
+        .unwrap_err(),
+        NativeConversationRuntimeError::Busy
+    );
+    assert_eq!(
+        block_on(runtime.set_history_background(
+            0,
+            1,
+            Some(NativeHistoryBackground::new("log", None, false).unwrap()),
+            500
+        ))
+        .unwrap_err(),
+        NativeConversationRuntimeError::Busy
+    );
+    assert_eq!(
         runtime.context_preferences().unwrap_err(),
         NativeConversationRuntimeError::Busy
     );
@@ -1057,6 +1082,56 @@ fn assert_controls_busy(runtime: &NativeConversationRuntime) {
         block_on(runtime.set_max_history_turns(2, 500)).unwrap_err(),
         NativeConversationRuntimeError::Busy
     );
+}
+
+#[test]
+fn runtime_history_save_holds_admission_and_preserves_queued_selection_on_drop() {
+    let (runtime, store, provider) = setup(
+        None,
+        [finished()],
+        SessionStoreScript {
+            saves: Some(vec![
+                SessionStoreStep::Pass,
+                SessionStoreStep::Pass,
+                SessionStoreStep::Pass,
+                SessionStoreStep::Pending,
+                SessionStoreStep::Pass,
+            ]),
+            ..SessionStoreScript::default()
+        },
+    );
+    runtime.enqueue("first".into()).unwrap();
+    complete(block_on(runtime.start_next(100)).unwrap().unwrap());
+    let before = runtime.record();
+    let file =
+        NativeHistoryFileEvidence::new("file.rs", NativeHistoryFileAction::Edit, false).unwrap();
+    let mut save = runtime.record_history_file(0, 1, file.clone(), 200);
+    assert!(
+        save.as_mut()
+            .poll(&mut Context::from_waker(&noop_waker()))
+            .is_pending()
+    );
+    let pending_calls = store.calls().len();
+    assert_controls_busy(&runtime);
+    assert_eq!(store.calls().len(), pending_calls);
+    runtime.enqueue("queued".into()).unwrap();
+    runtime
+        .set_model_preferences(preferences("private/new"))
+        .unwrap();
+    drop(save);
+    assert_eq!(runtime.record(), before);
+    assert_eq!(store.record(&runtime.id()).unwrap(), before);
+    assert_eq!(runtime.status().queued_jobs, 1);
+    assert!(runtime.status().model_preferences_pending);
+    block_on(runtime.record_history_file(0, 1, file.clone(), 300)).unwrap();
+    assert_eq!(
+        runtime.history().unwrap().group(0).unwrap().files(),
+        &[file]
+    );
+    assert_eq!(runtime.status().queued_jobs, 1);
+    assert!(runtime.status().model_preferences_pending);
+    assert_eq!(runtime.model_preferences().model(), "private/new");
+    assert_eq!(provider.requests().len(), 1);
 }
 
 #[test]

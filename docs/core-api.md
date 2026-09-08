@@ -136,6 +136,41 @@ process arguments, and network destinations before presenting a
 only bounded, nonblocking work. An allowed execution receives the exact
 arguments returned by preflight.
 
+For permission-required calls, core invokes
+`PermissionHandler::authorize_invocation(request, invocation)`. Its borrowed
+`PermissionInvocation` exposes the actual prepared arguments, registered tool
+name and call ID without cloning the complete arguments. These are neither the
+original unnormalized model arguments nor a persisted archive projection. The
+view adds no user, workspace, filesystem, or other ambient authority. Existing
+handlers remain source-compatible: the inert default delegates to `authorize`
+and wraps its decision in `PermissionAuthorization::new`, without an admission
+guard or stronger revocation guarantees. Core still caches no positive grants.
+
+An invocation-aware handler may attach an owned `PermissionExecutionAdmission`
+with `PermissionAuthorization::with_admission`. Core retains this opaque guard
+through both `PermissionResolved` and `ToolStarted` observer awaits. After
+cancellation checks, its consumed `admit` callback runs in the first execution
+poll, before construction and initial polling of the tool's execution future,
+with no intervening await. The callback must perform only bounded synchronous
+work; core holds no policy mutex and provides no implicit persistence or retry.
+Cancellation is checked again after the callback, so cancellation triggered by
+the callback itself still prevents tool construction. A host may use admission
+to linearize an exact live-policy check; changes after accepted admission cannot
+retroactively undo an already admitted effect.
+
+Admission rejection follows the redacted permission-failure path, retains the
+durable unknown-result placeholder, and produces no `ToolFinished` or execution.
+The preceding `ToolStarted` event records an attempted execution admission, not
+proof that an effect occurred. A denial never invokes its guard. Cancellation
+or turn drop while an observer is pending drops the retained guard without
+admitting execution. Invocation and authorization-wrapper debug output
+do not format callback state or decision text. Synchronous callback and destructor
+panics follow ordinary Rust unwinding and the existing owned-turn cleanup
+boundary; they are not converted into successful decisions or execution.
+Completion-wins tools retain their existing first-execution-poll cancellation
+semantics, while revoked admission still prevents their execution. Unguarded
+legacy and explicit no-authority invocations retain their existing behavior.
+
 Preparation has an explicit provider-neutral authorization disposition.
 [`PreparedToolCall::new`](crate::PreparedToolCall::new) and the default
 [`Tool::prepare`](crate::Tool::prepare) mark an invocation as permission-required
@@ -144,7 +179,8 @@ tool whose durable contract requires no policy-governed authority may instead us
 [`PreparedToolCall::without_authority`](crate::PreparedToolCall::without_authority)
 for that invocation. That explicit form skips `PermissionRequested`,
 `PermissionResolved`, permission-ID construction, and
-[`PermissionHandler::authorize`](crate::PermissionHandler::authorize);
+`PermissionHandler::authorize_invocation` (including its default `authorize`
+delegation);
 it does not skip prepared-argument validation, cancellation, `ToolStarted` and
 `ToolFinished`, bounded output validation, durable result replacement, or the
 next provider round. Core never derives the disposition from model-controlled

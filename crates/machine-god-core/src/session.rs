@@ -3,10 +3,11 @@ use crate::tool::ToolExecutionCancellation;
 use crate::{
     BoxFuture, CancellationToken, Capability, ContentBlock, EngineError, EngineEvent,
     InferenceOptions, Message, ModelEvent, ModelEventStream, ModelRequest, PermissionDecision,
-    PermissionRequest, PermissionRequestId, PermissionRisk, PreparedToolAuthorization,
-    PreparedToolCall, Role, SessionId, SessionIncarnationId, SessionStoreError,
-    SessionStoreErrorKind, SessionTurnPreparation, StopReason, TokenUsage, ToolCall, ToolContext,
-    ToolExecution, ToolName, ToolOutput, ToolSpec, TurnEvent, TurnId, TurnToolRegistration,
+    PermissionExecutionAdmission, PermissionInvocation, PermissionRequest, PermissionRequestId,
+    PermissionRisk, PreparedToolAuthorization, PreparedToolCall, Role, SessionId,
+    SessionIncarnationId, SessionStoreError, SessionStoreErrorKind, SessionTurnPreparation,
+    StopReason, TokenUsage, ToolCall, ToolContext, ToolExecution, ToolName, ToolOutput, ToolSpec,
+    TurnEvent, TurnId, TurnToolRegistration,
 };
 use futures_core::Stream;
 use serde::{Deserialize, Serialize};
@@ -1874,6 +1875,7 @@ async fn run_turn_inner(
                 Err(error) => (tool_error_output(&error), None, false, None),
                 Ok(prepared) => {
                     validate_prepared_tool_call(&prepared, limits, input_limits)?;
+                    let mut admission = None;
                     let denied = match prepared.authorization() {
                         PreparedToolAuthorization::NoAuthorityRequired => false,
                         PreparedToolAuthorization::PermissionRequired(capability) => {
@@ -1906,11 +1908,19 @@ async fn run_turn_inner(
                                     request: request.clone(),
                                 })
                                 .await;
-                            let authorization = engine.permission_handler.authorize(request);
-                            let decision = await_cancellable(authorization, &cancellation)
+                            let authorization = engine.permission_handler.authorize_invocation(
+                                request,
+                                PermissionInvocation {
+                                    tool_name: &call_name,
+                                    call_id: &call_id,
+                                    arguments: prepared.arguments(),
+                                },
+                            );
+                            let authorization = await_cancellable(authorization, &cancellation)
                                 .await?
                                 .map_err(|error| TurnFailure::permission(&error))?;
-                            let decision = match decision {
+                            admission = authorization.admission;
+                            let decision = match authorization.decision {
                                 PermissionDecision::Allow { scope } => {
                                     PermissionDecision::Allow { scope }
                                 }
@@ -1949,18 +1959,21 @@ async fn run_turn_inner(
                             .emit(TurnEvent::ToolStarted { call: call.clone() })
                             .await;
                         let execution_cancellation = prepared.execution_cancellation();
-                        let execution = tool.execute_for_turn(
-                            ToolContext {
-                                session_id: session_id.clone(),
-                                session_incarnation_id: session_incarnation_id.clone(),
-                                turn_id: turn_id.clone(),
-                                call_id: call_id.clone(),
-                            },
-                            prepared.into_arguments(),
-                            cancellation.clone(),
-                        );
+                        let execution = || {
+                            tool.execute_for_turn(
+                                ToolContext {
+                                    session_id: session_id.clone(),
+                                    session_incarnation_id: session_incarnation_id.clone(),
+                                    turn_id: turn_id.clone(),
+                                    call_id: call_id.clone(),
+                                },
+                                prepared.into_arguments(),
+                                cancellation.clone(),
+                            )
+                        };
                         let (result, cancellation_deferral) = await_tool_execution(
                             execution,
+                            admission,
                             &cancellation,
                             execution_cancellation,
                             &emitter,
@@ -2770,8 +2783,9 @@ async fn await_cancellable<T>(
     .await
 }
 
-async fn await_tool_execution(
-    mut future: BoxFuture<'_, Result<ToolExecution, crate::ToolError>>,
+async fn await_tool_execution<'a>(
+    factory: impl FnOnce() -> BoxFuture<'a, Result<ToolExecution, crate::ToolError>>,
+    mut admission: Option<Box<dyn PermissionExecutionAdmission>>,
     cancellation: &CancellationToken,
     mode: ToolExecutionCancellation,
     emitter: &TurnEmitter,
@@ -2782,20 +2796,46 @@ async fn await_tool_execution(
     ),
     WorkflowAbort,
 > {
+    // Legacy and no-authority calls retain their existing construction ordering.
+    // Guarded calls defer construction until the final admission poll below.
+    let mut factory = Some(factory);
+    let mut future = if admission.is_none() {
+        Some(factory.take().expect("execution factory present")())
+    } else {
+        None
+    };
+    let mut execution = std::pin::pin!(poll_fn(|context| {
+        if future.is_none() {
+            check_cancelled(cancellation)?;
+            admission
+                .take()
+                .expect("guarded execution admission")
+                .admit()
+                .map_err(|error| TurnFailure::permission(&error))?;
+            check_cancelled(cancellation)?;
+            future = Some(factory.take().expect("execution factory present")());
+        }
+        future
+            .as_mut()
+            .expect("execution future present")
+            .as_mut()
+            .poll(context)
+            .map(Ok)
+    }));
     match mode {
         ToolExecutionCancellation::Cancellable => {
             let result = poll_fn(|context| {
                 if cancellation.is_cancelled() {
                     return Poll::Ready(Err(WorkflowAbort::Cancelled));
                 }
-                let result = future.as_mut().poll(context);
+                let result = execution.as_mut().poll(context);
                 if cancellation.is_cancelled() {
-                    if let Poll::Ready(Ok(mut execution)) = result {
+                    if let Poll::Ready(Ok(Ok(mut execution))) = result {
                         execution.drain_owned_json();
                     }
                     Poll::Ready(Err(WorkflowAbort::Cancelled))
                 } else {
-                    result.map(Ok)
+                    result
                 }
             })
             .await?;
@@ -2812,7 +2852,7 @@ async fn await_tool_execution(
                     first_poll = false;
                     deferral = Some(emitter.defer_cancellation());
                 }
-                future.as_mut().poll(context).map(Ok)
+                execution.as_mut().poll(context)
             })
             .await?;
             Ok((result, deferral))

@@ -44,8 +44,9 @@ pub use model_catalog::{
     ModelCatalogAccess, ModelCatalogProvider, PublicCatalogReason, validate_model_id,
 };
 pub use permission::{
-    Capability, FilesystemAccess, NetworkTarget, PermissionDecision, PermissionGrantScope,
-    PermissionHandler, PermissionRequest, PermissionRisk, ProcessEnvironment, ProcessInput,
+    Capability, FilesystemAccess, NetworkTarget, PermissionAuthorization, PermissionDecision,
+    PermissionExecutionAdmission, PermissionGrantScope, PermissionHandler, PermissionInvocation,
+    PermissionRequest, PermissionRisk, ProcessEnvironment, ProcessInput,
 };
 pub use session::{
     Prompt, Session, SessionRecord, SessionReservation, SessionRevision, SessionStore, Turn,

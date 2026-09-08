@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
 - Active phase: `implementing the full combined M03 top-level CLI and slash-command feature`
-- Next gate: `complete durable model/runtime integration, typed history and all pinned CLI scenarios before full feature gates`
+- Next gate: `wire automatic history producers and native permission/runtime policy, then complete all pinned CLI scenarios before full feature gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -155,8 +155,21 @@ invocations leave user defaults untouched; native finalization gates completion.
 Runtime title, manual/automatic context controls and paused-turn observations now
 share job admission through native finalization, preserving queued input and
 pending model selections across publication, failure and dropped saves.
+Native history now records typed outcomes in admission/finalization transactions,
+preserves explicit file/background observations by exact historical attempt, and
+feeds their bounded context-summary sections without inferring missing facts.
+File facts retain canonical per-call identities, destinations, result status and
+read staleness instead of collapsing distinct reads of the same path.
+Core permission policy now receives the actual borrowed prepared invocation and
+may retain a revocable admission guard across observer waits until execution.
+Legacy handlers keep their existing behavior; native mode/rule/reviewer composition
+must use that new seam before the permission scenarios can close.
+That composition must keep reset-cleared capability grants separate from saved
+exact-action rules and configured patterns. Exact file approvals need owned
+preimage/target identity preparation and execution revalidation, not arguments-only
+matching or an undo lock held across a prompt.
 Remaining work includes interactive CLI persistence-outcome presentation,
-long-lived cache composition, typed historical interruption/background/file facts,
+long-lived cache composition, automatic file/background history producers,
 interactive command/session transitions,
 pinned recovery/retry policy, policy/sandbox/workspace enforcement, rich session
 commands and the complete feature gates.

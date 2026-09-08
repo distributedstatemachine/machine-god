@@ -11,6 +11,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::session_store::{MAX_FILE_SESSION_BYTES, MAX_STORED_JSON_DEPTH, MAX_STORED_JSON_NODES};
+use crate::{NativeConversationHistory, NativeHistoryState};
 
 /// Reserved, versioned context preferences; these values confer no authority.
 pub const NATIVE_CONTEXT_PREFERENCES_KEY: &str = "machine_god.context_preferences";
@@ -202,6 +203,7 @@ impl NativeContextPreferences {
 
 struct History<'a> {
     record: &'a SessionRecord,
+    facts: NativeConversationHistory,
     starts: Vec<usize>,
     leading_systems: usize,
 }
@@ -209,6 +211,8 @@ struct History<'a> {
 impl<'a> History<'a> {
     fn new(record: &'a SessionRecord) -> Result<Self, NativeContextError> {
         validate_record(record)?;
+        let facts = crate::conversation::validated_history(record)
+            .map_err(|_| NativeContextError::InvalidHistory)?;
         let mut starts = Vec::new();
         let mut pending = BTreeSet::new();
         let leading_systems = record
@@ -243,6 +247,7 @@ impl<'a> History<'a> {
         }
         Ok(Self {
             record,
+            facts,
             starts,
             leading_systems,
         })
@@ -305,8 +310,23 @@ impl<'a> History<'a> {
                 .find(|text| !text.is_empty())
         });
         append_text_lines(&mut lines, assistants, "- Assistant outcomes:", 3);
+        self.append_execution_evidence(&mut lines, from, to)?;
+        self.append_background_activity(&mut lines, from, to);
+        self.append_incomplete_turns(&mut lines, from, to);
+        if lines.len() <= 2 {
+            lines.push("- Earlier conversation context compacted.".to_owned());
+        }
+        Ok(compress_lines(&lines))
+    }
+
+    fn append_execution_evidence(
+        &self,
+        lines: &mut Vec<String>,
+        from: usize,
+        to: usize,
+    ) -> Result<(), NativeContextError> {
         let mut evidence = 0;
-        for index in from..to {
+        'execution: for index in from..to {
             let mut calls = BTreeMap::<_, &ToolCall>::new();
             for message in self.group(index) {
                 for block in &message.content {
@@ -324,20 +344,90 @@ impl<'a> History<'a> {
                             lines.push(evidence_line(self.record, call, output)?);
                             evidence += 1;
                             if evidence == 4 {
-                                return Ok(compress_lines(&lines));
+                                break 'execution;
                             }
                         }
                         _ => {}
                     }
                 }
             }
+            if let Some(group) = self.facts.group(self.starts[index]) {
+                for file in group.files() {
+                    if evidence == 0 {
+                        lines.push("- Tool execution evidence:".to_owned());
+                    }
+                    lines.push(format!(
+                        "  - file {}: {}{}",
+                        file.action().as_str(),
+                        summary_locator(file.path()),
+                        if file.stale() { ", stale" } else { "" }
+                    ));
+                    evidence += 1;
+                    if evidence == 4 {
+                        break 'execution;
+                    }
+                }
+            }
         }
-        // SessionRecord has no authoritative upstream background/interrupted or
-        // FileEvidence variants. Missing text is not evidence of those facts.
-        if lines.len() <= 2 {
-            lines.push("- Earlier conversation context compacted.".to_owned());
+        Ok(())
+    }
+
+    fn append_background_activity(&self, lines: &mut Vec<String>, from: usize, to: usize) {
+        let mut background_count = 0;
+        for index in from..to {
+            if let Some(background) = self
+                .facts
+                .group(self.starts[index])
+                .and_then(|group| group.background())
+            {
+                if background_count == 0 {
+                    lines.push("- Background activity:".to_owned());
+                }
+                let detail = background.url().map_or_else(
+                    || {
+                        if background.expect_url() {
+                            ", local server started (URL pending)".to_owned()
+                        } else {
+                            String::new()
+                        }
+                    },
+                    |url| format!(", url={}", summary_locator(url)),
+                );
+                lines.push(format!(
+                    "  - log={}{}",
+                    summary_locator(background.log_path()),
+                    detail
+                ));
+                background_count += 1;
+                if background_count == 3 {
+                    break;
+                }
+            }
         }
-        Ok(compress_lines(&lines))
+    }
+
+    fn append_incomplete_turns(&self, lines: &mut Vec<String>, from: usize, to: usize) {
+        let mut interrupted_count = 0;
+        for index in from..to {
+            let Some(group) = self.facts.group(self.starts[index]) else {
+                continue;
+            };
+            let notice = match group.state() {
+                NativeHistoryState::Completed => continue,
+                NativeHistoryState::Cancelled => "cancelled",
+                NativeHistoryState::Failed => "failed",
+                NativeHistoryState::Interrupted => "interrupted (terminal reason not recorded)",
+                NativeHistoryState::Running => "unfinished (terminal outcome not recorded)",
+            };
+            if interrupted_count == 0 {
+                lines.push("- Incomplete turns:".to_owned());
+            }
+            lines.push(format!("  - {notice}"));
+            interrupted_count += 1;
+            if interrupted_count == 3 {
+                break;
+            }
+        }
     }
 }
 
@@ -361,6 +451,18 @@ fn append_text_lines(
 
 fn trim(text: &str) -> &str {
     text.trim_matches([' ', '\t', '\r', '\n'])
+}
+
+fn summary_locator(text: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    for character in text.chars() {
+        if character.is_control() || character == '\\' {
+            output.extend(character.escape_default());
+        } else {
+            output.push(character);
+        }
+    }
+    output
 }
 
 fn compact_message(message: &Message, maximum: usize) -> String {

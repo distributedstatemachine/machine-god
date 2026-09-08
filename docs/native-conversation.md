@@ -114,6 +114,9 @@ these controls neither persist nor clear the dirty model-preference generation.
 `context_preferences` and `paused_turn` are idle observations of canonical state,
 not cross-process snapshots or permission to replay historical effects. All five
 operations reject active runtime work, including the native finalization gap.
+The same admission rule covers `history`, `record_history_file`, and
+`set_history_background`. Their durable observations preserve queued inputs and
+pending model selection; an observation save is not a model-preference flush.
 
 `enqueue_continuation` requires an idle, empty queue and a valid paused checkpoint.
 It rechecks the empty queue after checkpoint observation, and the taken job
@@ -240,6 +243,75 @@ observations, not proof of cross-process durable state after uncertainty. Resume
 restores the saved cursor and automatic limit; it does not reconstruct discarded
 process-local resources. The exact grouping, summary, byte limits and remaining
 typed-history integration are in [native context](conversation-context.md).
+
+## Typed historical facts
+
+`NativeConversationHistory` reads the reserved
+`machine_god.conversation_history` entry. An absent entry means unknown facts,
+not a transcript-derived success or failure. Schema 1 contains exactly
+`schema_version` and `groups`. Each sparse, ordered group contains exactly
+`first_user_message`, `turn_sequence`, `state`, `files`, and nullable `background`.
+Indices reference real canonical user messages; positive attempt sequences are
+already reserved and strictly increase between groups. Native adoption also
+validates consistency with the active checkpoint. A `running` fact cannot
+silently survive without its matching running checkpoint.
+
+Native admission saves `running` with the input, allocator and checkpoint in the
+same prepared transaction. Finalization saves `completed`, `cancelled`, or
+`failed` with the corresponding checkpoint transition before forwarding the
+terminal outcome. Dropping a turn starts no finalizer and invents no terminal
+reason: its published `running` fact remains. Starting a subsequent user group
+marks that known unfinished predecessor `interrupted`. Explicit continuation
+keeps the same user boundary and attachments while replacing the current attempt
+sequence and outcome; it does not create a duplicate user history item. A legacy
+native checkpoint can establish unfinished work, but absent earlier facts are
+not reconstructed from assistant text or tool results.
+
+`record_history_file(first_user_message, turn_sequence, evidence, now_ms)` and
+`set_history_background(first_user_message, turn_sequence, observation, now_ms)`
+are explicit trusted-host observation saves, not tool or process operations.
+They require an exact known historical attempt, including when an asynchronous
+observation targets an earlier group. Continuation changes that identity, so a
+late observation for the previous attempt fails instead of attaching itself to
+new work. The borrowed futures are inert, hold admission through the exact-CAS
+save, preserve canonical messages and unrelated metadata, and keep existing
+uncertain-publication semantics on failure/drop.
+
+File observations contain exactly `path`, `action`, `stale`, nullable `source`,
+nullable `new_path`, `status`, and `model_view_covers_full_file`. The action
+vocabulary is `read`, `write`, `edit`, `delete`, `rename`, `copy`, `search`, `list`,
+or `unknown`. A source names a canonical assistant-message and content-block index
+plus the exact validated call ID and tool name. Indexed validation checks the
+actual call in the same user group before publication and on adoption, without
+cloning its arguments. Reused call IDs in different rounds remain distinct.
+Known call sources follow canonical order; updates retain their position and
+duplicate or out-of-order new source identities fail without mutation.
+
+An explicitly unknown observation has no source, no destination, unknown status
+and no full-file claim; only those observations use a path/action upsert key.
+Per-call observations retain distinct reads even when paths and actions repeat.
+Their status is explicit `unknown`, `success`, or `failure`; only a successful
+read can claim a full-file model view. Successful writes, edits, deletes and
+renames mark earlier reads of the source path stale. Copies affect earlier reads
+of their destination, not their source; renames also affect the destination.
+Failed or unknown mutations do not establish new staleness, and later reads do
+not inherit a predecessor's stale flag. These are historical observations, not
+new file inspection or confirmation of an uncertain effect.
+
+Background observations contain exactly `log_path`, nullable `url`, and
+`expect_url`; `None` explicitly clears the observation. Paths and URLs are
+descriptive text, never authority or proof of present file/process state.
+Strings reject empty/NUL-bearing values and retain the existing 4,096-byte path
+and 2,048-byte URL bounds. Validation checks shallow shapes, aggregate native
+JSON-node and serialized store-byte bounds before cloning text. Mutation failures
+leave the previous value unchanged; debug and error output omit sensitive facts.
+
+Native turn outcomes are produced automatically. File and background facts
+require explicit host observations; they are not inferred from tool names,
+arbitrary output JSON, unknown-result placeholders, or unrelated metadata.
+These facts also do not reconstruct file-undo authority or permission grants.
+The context consumer and its bounded display rules are described in
+[native context](conversation-context.md).
 
 ## Checkpoint schema
 

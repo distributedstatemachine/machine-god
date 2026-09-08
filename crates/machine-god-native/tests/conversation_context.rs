@@ -5,8 +5,10 @@ use machine_god_core::{
     ToolCall, ToolCallId, ToolName, ToolOutput,
 };
 use machine_god_native::{
-    MAX_FILE_SESSION_BYTES, NATIVE_CONTEXT_PREFERENCES_KEY, NativeContextError,
-    NativeContextPreferences,
+    MAX_FILE_SESSION_BYTES, NATIVE_CONTEXT_PREFERENCES_KEY, NATIVE_CONVERSATION_HISTORY_KEY,
+    NativeContextError, NativeContextPreferences, NativeConversationHistory,
+    NativeHistoryBackground, NativeHistoryFileAction, NativeHistoryFileEvidence,
+    NativeHistoryFileSource, NativeHistoryFileStatus, NativeHistoryState,
 };
 use serde_json::{Value, json};
 
@@ -66,6 +68,195 @@ fn result(id: &str, output: ToolOutput) -> Message {
             output,
         }],
     }
+}
+
+#[test]
+fn repeated_call_facts_consume_summary_quota_without_collapsing_saved_observations() {
+    let mut record = record(&[]);
+    record
+        .messages
+        .push(Message::text(Role::User, "read twice"));
+    let mut history = NativeConversationHistory::default();
+    history.begin(0, 1).unwrap();
+    for index in [1, 3] {
+        record.messages.extend([
+            call_message(call("reused", "read_file")),
+            result("reused", ToolOutput::success(json!("same contents"))),
+        ]);
+        let fact = NativeHistoryFileEvidence::new("file.rs", NativeHistoryFileAction::Read, false)
+            .unwrap()
+            .with_execution(
+                NativeHistoryFileSource::new(
+                    index,
+                    0,
+                    ToolCallId::new("reused").unwrap(),
+                    ToolName::new("read_file").unwrap(),
+                )
+                .unwrap(),
+                NativeHistoryFileStatus::Success,
+                None,
+                true,
+            )
+            .unwrap();
+        history.upsert_file(0, 1, fact).unwrap();
+    }
+    history
+        .upsert_file(
+            0,
+            1,
+            NativeHistoryFileEvidence::new("over-quota.rs", NativeHistoryFileAction::Read, false)
+                .unwrap(),
+        )
+        .unwrap();
+    history.finish(0, 1, NativeHistoryState::Completed).unwrap();
+    record.messages.extend([
+        Message::text(Role::User, "keep"),
+        Message::text(Role::Assistant, "kept"),
+    ]);
+    record.metadata.insert(
+        NATIVE_CONVERSATION_HISTORY_KEY.to_owned(),
+        history.to_value(),
+    );
+    let original = record.clone();
+    let text = summary(&preferences(5, 0), &record);
+    assert_eq!(text.matches("- file read: file.rs").count(), 1);
+    assert!(text.contains("2 additional line(s) omitted"), "{text}");
+    assert!(!text.contains("over-quota.rs"));
+    assert_eq!(
+        NativeConversationHistory::from_record(&record)
+            .unwrap()
+            .group(0)
+            .unwrap()
+            .files()
+            .len(),
+        3
+    );
+    assert_eq!(record, original);
+    record
+        .metadata
+        .get_mut(NATIVE_CONVERSATION_HISTORY_KEY)
+        .unwrap()["groups"][0]["files"][0]["source"]["content_block"] = json!(1);
+    assert!(matches!(
+        preferences(5, 0).projection(&record),
+        Err(NativeContextError::InvalidHistory)
+    ));
+}
+
+#[test]
+fn typed_facts_supply_ordered_file_background_and_interruption_summary_sections() {
+    let mut record = record(&[
+        ("first", "one"),
+        ("second", "two"),
+        ("third", "three"),
+        ("keep", "four"),
+    ]);
+    let mut history = NativeConversationHistory::default();
+    for (first, sequence, state) in [
+        (0, 1, NativeHistoryState::Cancelled),
+        (2, 2, NativeHistoryState::Failed),
+        (4, 3, NativeHistoryState::Interrupted),
+    ] {
+        history.begin(first, sequence).unwrap();
+        history.finish(first, sequence, state).unwrap();
+    }
+    for path in ["z.rs", "a.rs"] {
+        history
+            .upsert_file(
+                0,
+                1,
+                NativeHistoryFileEvidence::new(path, NativeHistoryFileAction::Edit, true).unwrap(),
+            )
+            .unwrap();
+    }
+    history
+        .set_background(
+            0,
+            1,
+            Some(NativeHistoryBackground::new("run.log", None, true).unwrap()),
+        )
+        .unwrap();
+    record.metadata.insert(
+        NATIVE_CONVERSATION_HISTORY_KEY.to_owned(),
+        history.to_value(),
+    );
+    let original = record.clone();
+    let text = summary(&preferences(6, 0), &record);
+    assert!(
+        text.contains(
+            "- Tool execution evidence:\n- file edit: z.rs, stale\n- file edit: a.rs, stale"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("- Background activity:\n- log=run.log, local server started (URL pending)"),
+        "{text}"
+    );
+    assert!(text.contains("- Incomplete turns:\n- cancelled\n- failed\n- interrupted (terminal reason not recorded)"), "{text}");
+    assert_eq!(record, original);
+}
+
+#[test]
+fn full_tool_evidence_quota_does_not_suppress_typed_background_or_interruption() {
+    let mut record = record(&[("first", "one"), ("keep", "two")]);
+    let mut round = Vec::new();
+    for id in ["a", "b", "c", "d"] {
+        round.push(call_message(call(id, "tool")));
+        round.push(result(id, ToolOutput::success(json!(null))));
+    }
+    record.messages.splice(2..2, round);
+    let mut history = NativeConversationHistory::default();
+    history.begin(0, 1).unwrap();
+    history.finish(0, 1, NativeHistoryState::Failed).unwrap();
+    history
+        .set_background(
+            0,
+            1,
+            Some(
+                NativeHistoryBackground::new("out.log", Some("http://localhost:8080"), true)
+                    .unwrap(),
+            ),
+        )
+        .unwrap();
+    record.metadata.insert(
+        NATIVE_CONVERSATION_HISTORY_KEY.to_owned(),
+        history.to_value(),
+    );
+    let text = summary(&preferences(10, 0), &record);
+    assert_eq!(text.matches("stored bytes").count(), 1); // Four quota candidates deduplicate at final compression.
+    assert!(text.contains("- Background activity:"), "{text}");
+    assert!(text.contains("- Incomplete turns:\n- failed"), "{text}");
+}
+
+#[test]
+fn typed_locator_controls_cannot_create_unbounded_summary_lines() {
+    let mut record = record(&[("first", "one"), ("keep", "two")]);
+    let mut history = NativeConversationHistory::default();
+    history.begin(0, 1).unwrap();
+    history.finish(0, 1, NativeHistoryState::Completed).unwrap();
+    history
+        .upsert_file(
+            0,
+            1,
+            NativeHistoryFileEvidence::new("a\n\rb\\c", NativeHistoryFileAction::Read, false)
+                .unwrap(),
+        )
+        .unwrap();
+    history
+        .set_background(
+            0,
+            1,
+            Some(NativeHistoryBackground::new("log\nname", None, false).unwrap()),
+        )
+        .unwrap();
+    record.metadata.insert(
+        NATIVE_CONVERSATION_HISTORY_KEY.to_owned(),
+        history.to_value(),
+    );
+    let text = summary(&preferences(2, 0), &record);
+    assert!(text.contains("a\\n\\rb\\\\c"), "{text}");
+    assert!(text.contains("log\\nname"), "{text}");
+    assert!(text.lines().count() <= 24);
+    assert!(text.len() <= 1200);
 }
 
 #[test]

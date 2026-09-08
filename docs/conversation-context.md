@@ -65,8 +65,8 @@ The source is pinned `vercel-labs/fx` commit
 `snapshotOwnedContextHistory` at 2002, `appendCompactedPrefix` at 2027,
 `compactHistory` at 2976, summary helpers at 3134–3238,
 `formatToolResultEvidenceLine` at 3328, and compression/text helpers at
-3396–3540. These are source mappings, not a claim that every typed upstream
-history variant is already represented by the current native record.
+3396–3540. Native typed facts carry additional explicitly recorded outcomes and
+observations; missing upstream-specific facts remain unknown.
 
 The exact heading is `Conversation summary:` followed by the count of groups
 removed in that summarization pass. Existing-prefix text is introduced by
@@ -119,15 +119,35 @@ non-result tool messages, and messages before any user group (except leading
 systems) fail closed. Caller-owned rejected records remain unchanged; their owner
 is responsible for safe eventual destruction of values it constructed.
 
-## Required typed-fact integration
+## Typed native facts
 
-The current `SessionRecord` has no authoritative per-group upstream
-`background_command` or `interrupted` variant and no `FileEvidence.stale` field.
-This module deliberately does not synthesize background activity, interruption,
-file staleness, permission feedback or root-user authority from missing assistant
-text, tool names, unknown result markers or unrelated metadata. Native-owned
-durable typed facts and their summary mapping remain required integration work
-for the full feature; this component does not close those compatibility scenarios.
+The reserved [native history](native-conversation.md#typed-historical-facts)
+entry adds explicit group outcomes and optional file/background observations
+without replacing canonical messages. Invalid facts or contradictions with the
+native checkpoint reject projection instead of being silently omitted.
+
+Tool execution evidence visits each removed group's correlated tool results,
+then its insertion-ordered file observations, sharing the first-four quota.
+File lines use `file <action>: <path>` with `, stale` only when explicitly saved.
+Per-call facts preserve repeated reads and their independently established
+staleness; the same call ID in a later round is not the same observation. Summary
+deduplication may omit repeated display lines but never collapses stored facts.
+Filling that quota does not suppress the later background or incomplete sections.
+The first three background observations render `log=<path>` with `url=<url>`,
+the pinned local-server URL-pending notice, or no extra detail as recorded.
+The first three explicitly incomplete groups render `cancelled` or `failed`
+for those known outcomes. Abandoned checkpoints without a known terminal reason
+use `interrupted (terminal reason not recorded)`; a still-unfinalized reservation
+uses `unfinished (terminal outcome not recorded)`, never an invented cancellation.
+
+Locator control characters and backslashes are escaped before line compression
+so one stored filename cannot create extra physical lines. Ordinary paths and
+URLs retain the pinned format. All new sections share the existing 1,200-byte,
+24-line output budget and final deduplication; omitted candidates do not erase
+stored evidence. Summaries are advisory assistant context, not filesystem,
+background-process, permission-feedback or root-user authority. File/background
+observations must be supplied explicitly by the native host; this consumer never
+guesses them from a tool name, output JSON or missing assistant text.
 
 See [native conversation ownership](native-conversation.md) for owner admission
 and checkpoint lifecycle, and [core API](core-api.md) for revision-pinned prepared

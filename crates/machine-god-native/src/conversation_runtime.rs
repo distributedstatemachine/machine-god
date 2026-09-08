@@ -20,7 +20,8 @@ use crate::tool_output_serializer::{
 };
 use crate::{
     LoadedNativeConfig, NativeContextPreferences, NativeConversation, NativeConversationError,
-    NativeConversationModelRouteError, NativeConversationModelRoutes, NativeConversationTurn,
+    NativeConversationHistory, NativeConversationModelRouteError, NativeConversationModelRoutes,
+    NativeConversationTurn, NativeHistoryBackground, NativeHistoryFileEvidence,
     NativeModelCapabilities, NativeModelCatalog, NativeModelPreferences,
     NativeModelPreferencesError, NativeModelSnapshot, NativePausedTurn, NativeUserConfigError,
     NativeUserConfigStore,
@@ -250,6 +251,58 @@ impl NativeConversationRuntime {
     pub fn paused_turn(&self) -> Result<Option<NativePausedTurn>, NativeConversationRuntimeError> {
         let _lease = self.acquire_idle(false)?;
         Ok(self.conversation.paused_turn()?)
+    }
+
+    /// Observes native typed history without starting queued work.
+    /// # Errors
+    /// Rejects active work and malformed historical facts.
+    /// # Panics
+    /// Panics if an earlier panic poisoned runtime state.
+    pub fn history(&self) -> Result<NativeConversationHistory, NativeConversationRuntimeError> {
+        let _lease = self.acquire_idle(false)?;
+        Ok(self.conversation.history()?)
+    }
+
+    /// Saves explicitly observed file history under runtime admission.
+    /// The future is inert before polling; queued inputs and selection survive.
+    /// # Panics
+    /// Polling panics if an earlier panic poisoned runtime state.
+    #[must_use]
+    pub fn record_history_file(
+        &self,
+        first_user_message: usize,
+        turn_sequence: u64,
+        evidence: NativeHistoryFileEvidence,
+        now_ms: i64,
+    ) -> BoxFuture<'_, Result<SessionRevision, NativeConversationRuntimeError>> {
+        Box::pin(async move {
+            let _lease = self.acquire_idle(false)?;
+            Ok(self
+                .conversation
+                .record_history_file(first_user_message, turn_sequence, evidence, now_ms)
+                .await?)
+        })
+    }
+
+    /// Saves descriptive background observations against an exact history attempt.
+    /// This neither starts a process nor grants authority over a historical ID.
+    /// # Panics
+    /// Polling panics if an earlier panic poisoned runtime state.
+    #[must_use]
+    pub fn set_history_background(
+        &self,
+        first_user_message: usize,
+        turn_sequence: u64,
+        background: Option<NativeHistoryBackground>,
+        now_ms: i64,
+    ) -> BoxFuture<'_, Result<SessionRevision, NativeConversationRuntimeError>> {
+        Box::pin(async move {
+            let _lease = self.acquire_idle(false)?;
+            Ok(self
+                .conversation
+                .set_history_background(first_user_message, turn_sequence, background, now_ms)
+                .await?)
+        })
     }
 
     /// Persists a title through the same runtime admission as jobs and saves.

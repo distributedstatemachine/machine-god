@@ -66,6 +66,14 @@ mod conversation;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conversation_context;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+mod conversation_history;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use conversation_history::{
+    NATIVE_CONVERSATION_HISTORY_KEY, NativeConversationHistory, NativeConversationHistoryError,
+    NativeHistoryBackground, NativeHistoryFileAction, NativeHistoryFileEvidence,
+    NativeHistoryFileSource, NativeHistoryFileStatus, NativeHistoryGroup, NativeHistoryState,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conversation_model_routes;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conversation_runtime;

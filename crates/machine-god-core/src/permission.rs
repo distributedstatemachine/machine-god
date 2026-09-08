@@ -4,6 +4,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::fmt;
 
 /// Filesystem operation being considered by a permission handler.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -138,12 +139,89 @@ pub enum PermissionDecision {
     Deny { reason: String },
 }
 
+/// Borrowed identity and actual prepared arguments of one tool invocation.
+/// This view adds no user, workspace, or ambient authority. Arguments are not
+/// the original provider input or a persisted archive projection.
+#[derive(Clone, Copy)]
+pub struct PermissionInvocation<'a> {
+    pub tool_name: &'a ToolName,
+    pub call_id: &'a ToolCallId,
+    pub arguments: &'a Value,
+}
+
+impl fmt::Debug for PermissionInvocation<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PermissionInvocation")
+            .finish_non_exhaustive()
+    }
+}
+
+/// Optional final host-policy check immediately before initial tool execution.
+/// Implementations must do only bounded synchronous work. Admission is consumed
+/// once; drop without admission must release its owned state without effects.
+/// An accepted admission cannot undo effects if policy changes afterward.
+pub trait PermissionExecutionAdmission: Send + Sync + 'static {
+    /// Consumes this admission, rejecting stale or revoked host authority.
+    ///
+    /// # Errors
+    /// Returns a permission failure when execution must not start.
+    fn admit(self: Box<Self>) -> Result<(), PermissionError>;
+}
+
+/// A normal policy decision and an optional owned execution-admission check.
+/// The guard is never serialized, cloned, or invoked by debugging. A denied
+/// decision discards its guard without admitting execution.
+pub struct PermissionAuthorization {
+    pub decision: PermissionDecision,
+    pub admission: Option<Box<dyn PermissionExecutionAdmission>>,
+}
+
+impl PermissionAuthorization {
+    /// Wraps an existing decision without changing its execution guarantees.
+    #[must_use]
+    pub const fn new(decision: PermissionDecision) -> Self {
+        Self {
+            decision,
+            admission: None,
+        }
+    }
+
+    /// Retains an explicitly supplied, one-shot execution-admission check.
+    #[must_use]
+    pub fn with_admission(mut self, admission: impl PermissionExecutionAdmission) -> Self {
+        self.admission = Some(Box::new(admission));
+        self
+    }
+}
+
+impl fmt::Debug for PermissionAuthorization {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PermissionAuthorization")
+            .finish_non_exhaustive()
+    }
+}
+
 /// Object-safe host policy boundary for every privileged capability.
 pub trait PermissionHandler: Send + Sync + 'static {
     fn authorize(
         &self,
         request: PermissionRequest,
     ) -> BoxFuture<'_, Result<PermissionDecision, PermissionError>>;
+
+    /// Authorizes the actual prepared invocation without cloning its arguments.
+    /// The default is inert until polled and delegates to the existing handler;
+    /// it provides no new revocation or execution-admission guarantee.
+    fn authorize_invocation<'a>(
+        &'a self,
+        request: PermissionRequest,
+        _invocation: PermissionInvocation<'a>,
+    ) -> BoxFuture<'a, Result<PermissionAuthorization, PermissionError>> {
+        Box::pin(async move {
+            self.authorize(request)
+                .await
+                .map(PermissionAuthorization::new)
+        })
+    }
 }
 
 #[cfg(test)]

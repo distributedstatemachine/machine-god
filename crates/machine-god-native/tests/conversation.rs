@@ -13,10 +13,13 @@ use machine_god_core::{
 };
 use machine_god_native::{
     AI_GATEWAY_INFERENCE_OPTIONS_KEY, NATIVE_CONTEXT_PREFERENCES_KEY,
-    NATIVE_CONVERSATION_CHECKPOINT_KEY, NATIVE_MODEL_PREFERENCES_KEY, NATIVE_SESSION_METADATA_KEY,
-    NativeContextError, NativeContextPreferences, NativeConversation, NativeConversationError,
-    NativeConversationTurn, NativeModelCapabilities, NativeModelPreferences, NativeModelSnapshot,
-    NativeReasoningEffort, NativeSessionMetadata, NativeSessionOrigin,
+    NATIVE_CONVERSATION_CHECKPOINT_KEY, NATIVE_CONVERSATION_HISTORY_KEY,
+    NATIVE_MODEL_PREFERENCES_KEY, NATIVE_SESSION_METADATA_KEY, NativeContextError,
+    NativeContextPreferences, NativeConversation, NativeConversationError,
+    NativeConversationHistory, NativeConversationTurn, NativeHistoryBackground,
+    NativeHistoryFileAction, NativeHistoryFileEvidence, NativeHistoryFileSource,
+    NativeHistoryFileStatus, NativeHistoryState, NativeModelCapabilities, NativeModelPreferences,
+    NativeModelSnapshot, NativeReasoningEffort, NativeSessionMetadata, NativeSessionOrigin,
 };
 use machine_god_testkit::{
     InMemorySessionStore, ModelProviderStep, RecordedSessionStoreCall, ScriptedModelProvider,
@@ -125,6 +128,10 @@ fn text_of(message: &Message) -> String {
 
 fn assert_context_busy(conversation: &NativeConversation) {
     assert_eq!(
+        conversation.history().unwrap_err(),
+        NativeConversationError::Busy
+    );
+    assert_eq!(
         conversation.model_preferences().unwrap_err(),
         NativeConversationError::Busy
     );
@@ -144,6 +151,295 @@ fn assert_context_busy(conversation: &NativeConversation) {
     assert_eq!(
         block_on(conversation.set_max_history_turns(1, 300)).unwrap_err(),
         NativeConversationError::Busy
+    );
+}
+
+#[test]
+fn native_history_is_reserved_with_input_and_finalized_without_inferred_drop_reason() {
+    let (_, conversation, store, provider) = setup(
+        initial_record(),
+        [finished("answer")],
+        SessionStoreScript::default(),
+    );
+    assert!(conversation.history().unwrap().groups().is_empty());
+    let before = store.calls().len();
+    let pending = conversation.prompt("first".into(), 200);
+    assert_eq!(store.calls().len(), before);
+    let turn = block_on(pending).unwrap();
+    assert_eq!(store.calls().len(), before + 1);
+    let saved = store.record(&conversation.id()).unwrap();
+    let history = NativeConversationHistory::from_record(&saved).unwrap();
+    assert_eq!(
+        history.group(0).unwrap().state(),
+        NativeHistoryState::Running
+    );
+    assert_eq!(history.group(0).unwrap().turn_sequence(), 1);
+    assert!(provider.requests().is_empty());
+    drop(turn);
+    assert_eq!(conversation.history().unwrap(), history);
+    assert_eq!(store.record(&conversation.id()).unwrap(), saved);
+
+    let turn = block_on(conversation.prompt("second".into(), 300)).unwrap();
+    let reserved = NativeConversationHistory::from_record(&conversation.record()).unwrap();
+    assert_eq!(
+        reserved.group(0).unwrap().state(),
+        NativeHistoryState::Interrupted
+    );
+    assert_eq!(
+        reserved.group(1).unwrap().state(),
+        NativeHistoryState::Running
+    );
+    complete(turn);
+    let history = conversation.history().unwrap();
+    assert_eq!(
+        history.group(0).unwrap().state(),
+        NativeHistoryState::Interrupted
+    );
+    assert_eq!(
+        history.group(1).unwrap().state(),
+        NativeHistoryState::Completed
+    );
+    assert_eq!(provider.requests().len(), 1);
+}
+
+#[test]
+fn cancelled_failed_and_continued_history_use_actual_native_outcomes() {
+    let (_, conversation, _, provider) = setup(
+        initial_record(),
+        [finished("continued")],
+        SessionStoreScript::default(),
+    );
+    let turn = block_on(conversation.prompt("cancel me".into(), 200)).unwrap();
+    let _ = turn.handle().cancel();
+    let events = block_on(turn.collect::<Vec<_>>());
+    assert!(events.iter().all(Result::is_ok));
+    assert_eq!(
+        conversation.history().unwrap().group(0).unwrap().state(),
+        NativeHistoryState::Cancelled
+    );
+    assert!(provider.requests().is_empty());
+    complete(block_on(conversation.continue_turn(InferenceOptions::default(), 300)).unwrap());
+    let history = conversation.history().unwrap();
+    assert_eq!(history.groups().len(), 1);
+    assert_eq!(
+        history.group(0).unwrap().state(),
+        NativeHistoryState::Completed
+    );
+    assert_eq!(history.group(0).unwrap().turn_sequence(), 2);
+    assert_eq!(
+        conversation
+            .record()
+            .messages
+            .iter()
+            .filter(|message| message.role == Role::User)
+            .count(),
+        1
+    );
+
+    let (_, failed, _, _) = setup(initial_record(), [], SessionStoreScript::default());
+    let events = block_on(
+        block_on(failed.prompt("no provider result".into(), 200))
+            .unwrap()
+            .collect::<Vec<_>>(),
+    );
+    assert!(events.iter().any(
+        |event| matches!(event, Ok(event) if matches!(event.payload, TurnEvent::Failed { .. }))
+    ));
+    assert_eq!(
+        failed.history().unwrap().group(0).unwrap().state(),
+        NativeHistoryState::Failed
+    );
+}
+
+#[test]
+fn failed_history_finalization_does_not_publish_a_completed_fact() {
+    let (_, conversation, store, _) = setup(
+        initial_record(),
+        [finished("saved answer")],
+        SessionStoreScript {
+            saves: Some(vec![
+                SessionStoreStep::Pass,
+                SessionStoreStep::Pass,
+                SessionStoreStep::Error(store_error()),
+            ]),
+            ..SessionStoreScript::default()
+        },
+    );
+    let events = block_on(
+        block_on(conversation.prompt("question".into(), 200))
+            .unwrap()
+            .collect::<Vec<_>>(),
+    );
+    assert_eq!(
+        events.last().unwrap().as_ref().unwrap_err(),
+        &NativeConversationError::Persistence
+    );
+    let saved = store.record(&conversation.id()).unwrap();
+    assert_eq!(saved.messages.len(), 2);
+    assert_eq!(
+        NativeConversationHistory::from_record(&saved)
+            .unwrap()
+            .group(0)
+            .unwrap()
+            .state(),
+        NativeHistoryState::Running
+    );
+    assert_eq!(
+        saved.metadata[NATIVE_CONVERSATION_CHECKPOINT_KEY]["state"],
+        "running"
+    );
+}
+
+#[test]
+fn explicit_history_observations_are_exact_attempt_saves_not_effects() {
+    let (_, conversation, store, provider) = setup(
+        initial_record(),
+        [finished("one"), finished("two")],
+        SessionStoreScript::default(),
+    );
+    complete(block_on(conversation.prompt("first".into(), 200)).unwrap());
+    complete(block_on(conversation.prompt("second".into(), 300)).unwrap());
+    let before = conversation.record();
+    let file =
+        NativeHistoryFileEvidence::new("src/file.rs", NativeHistoryFileAction::Edit, true).unwrap();
+    let background =
+        NativeHistoryBackground::new("logs/run.log", Some("http://localhost:1234"), true).unwrap();
+    let calls = store.calls().len();
+    drop(conversation.record_history_file(0, 1, file.clone(), 400));
+    drop(conversation.set_history_background(0, 1, Some(background.clone()), 400));
+    assert_eq!(store.calls().len(), calls);
+    block_on(conversation.record_history_file(0, 1, file.clone(), 400)).unwrap();
+    block_on(conversation.set_history_background(0, 1, Some(background.clone()), 500)).unwrap();
+    let saved = conversation.record();
+    assert_eq!(saved.messages, before.messages);
+    assert_eq!(saved.incarnation_id, before.incarnation_id);
+    assert_eq!(saved.next_turn_sequence, before.next_turn_sequence);
+    assert_eq!(saved.metadata["unrelated"], before.metadata["unrelated"]);
+    let history = conversation.history().unwrap();
+    assert_eq!(
+        history.group(0).unwrap().files(),
+        std::slice::from_ref(&file)
+    );
+    assert_eq!(history.group(0).unwrap().background(), Some(&background));
+    assert_eq!(provider.requests().len(), 2);
+    let calls = store.calls().len();
+    assert!(block_on(conversation.record_history_file(0, 2, file, 600)).is_err());
+    assert_eq!(store.calls().len(), calls);
+    assert_eq!(conversation.record(), saved);
+}
+
+#[test]
+fn per_call_file_observations_survive_native_saves_and_reject_dangling_sources() {
+    let mut record = initial_record();
+    record
+        .messages
+        .push(Message::text(Role::User, "read, edit, read again"));
+    for name in ["read_file", "write_file", "read_file"] {
+        record.messages.extend([
+            Message {
+                role: Role::Assistant,
+                content: vec![ContentBlock::ToolCall {
+                    call: ToolCall {
+                        id: ToolCallId::new("reused").unwrap(),
+                        name: ToolName::new(name).unwrap(),
+                        arguments: json!({"path":"file.rs"}),
+                    },
+                }],
+            },
+            Message {
+                role: Role::Tool,
+                content: vec![ContentBlock::ToolResult {
+                    call_id: ToolCallId::new("reused").unwrap(),
+                    output: ToolOutput::success(json!("observed")),
+                }],
+            },
+        ]);
+    }
+    record.next_turn_sequence = 2;
+    let mut facts = NativeConversationHistory::default();
+    facts.begin(0, 1).unwrap();
+    facts.finish(0, 1, NativeHistoryState::Completed).unwrap();
+    record
+        .metadata
+        .insert(NATIVE_CONVERSATION_HISTORY_KEY.to_owned(), facts.to_value());
+    let (_, conversation, store, provider) = setup(record, [], SessionStoreScript::default());
+    let original = conversation.record();
+    for (index, name, action) in [
+        (1, "read_file", NativeHistoryFileAction::Read),
+        (3, "write_file", NativeHistoryFileAction::Write),
+        (5, "read_file", NativeHistoryFileAction::Read),
+    ] {
+        let evidence = file_call_observation(index, name, action);
+        block_on(conversation.record_history_file(0, 1, evidence, 200)).unwrap();
+    }
+    let history = conversation.history().unwrap();
+    let files = history.group(0).unwrap().files();
+    assert_eq!(files.len(), 3);
+    assert!(files[0].stale());
+    assert!(!files[2].stale());
+    assert_eq!(files[0].source().unwrap().assistant_message(), 1);
+    assert_eq!(files[2].source().unwrap().assistant_message(), 5);
+    let saved = conversation.record();
+    assert_eq!(saved.messages, original.messages);
+    assert_eq!(store.record(&conversation.id()).unwrap(), saved);
+    let calls = store.calls().len();
+    for (index, name) in [(99, "read_file"), (2, "read_file"), (1, "wrong_tool")] {
+        let invalid = file_call_observation(index, name, NativeHistoryFileAction::Read);
+        assert!(matches!(
+            block_on(conversation.record_history_file(0, 1, invalid, 300)),
+            Err(NativeConversationError::InvalidHistory(_))
+        ));
+        assert_eq!(store.calls().len(), calls);
+        assert_eq!(conversation.record(), saved);
+    }
+    assert!(provider.requests().is_empty());
+}
+
+fn file_call_observation(
+    assistant_message: usize,
+    name: &str,
+    action: NativeHistoryFileAction,
+) -> NativeHistoryFileEvidence {
+    NativeHistoryFileEvidence::new("file.rs", action, false)
+        .unwrap()
+        .with_execution(
+            NativeHistoryFileSource::new(
+                assistant_message,
+                0,
+                ToolCallId::new("reused").unwrap(),
+                ToolName::new(name).unwrap(),
+            )
+            .unwrap(),
+            NativeHistoryFileStatus::Success,
+            None,
+            action == NativeHistoryFileAction::Read,
+        )
+        .unwrap()
+}
+
+#[test]
+fn contradictory_history_checkpoint_state_is_rejected_on_adoption() {
+    let mut original = history_record(1);
+    let mut history = NativeConversationHistory::default();
+    history.begin(1, 1).unwrap();
+    original.metadata.insert(
+        NATIVE_CONVERSATION_HISTORY_KEY.to_owned(),
+        history.to_value(),
+    );
+    let store = InMemorySessionStore::from_records(BTreeMap::from([(
+        original.id.clone(),
+        original.clone(),
+    )]));
+    let engine = Engine::builder()
+        .session_store(store)
+        .provider(ScriptedModelProvider::new("test", []))
+        .permission_handler(ScriptedPermissionHandler::new([]))
+        .build()
+        .unwrap();
+    let session = block_on(engine.load_session(original.id)).unwrap().unwrap();
+    assert_eq!(
+        NativeConversation::from_session(session).unwrap_err(),
+        NativeConversationError::InvalidCheckpoint
     );
 }
 
