@@ -51,7 +51,7 @@ cumulative interrupted results to retry and returns the existing fixed
 and an over-reported read fails as `Unreadable`.
 
 A missing file or unavailable configuration location uses the safe built-in
-configuration. Valid strict schema-v1, schema-v2, and schema-v3 files report the
+configuration. Valid strict schema-v1, schema-v2, schema-v3 and schema-v4 files report the
 same currently supported `ask` mode without rewriting any byte. An invalid
 selected environment, wrong file type, unreadable or oversized file, malformed
 configuration, or unsupported schema version fails closed with exit code 1,
@@ -119,7 +119,7 @@ Independent tests must cover:
 
 - exact grammar, updated global help/usage, non-Unicode arguments, exit codes,
   standard streams, JSON key order, and final LF;
-- missing and unavailable configuration defaults plus valid v1/v2/v3 files;
+- missing and unavailable configuration defaults plus valid v1/v2/v3/v4 files;
 - invalid environment, symlink/wrong-kind, unreadable, oversized, malformed,
   and unsupported-version failures with fixed redaction;
 - byte-identical configuration files and absence of newly created config/state

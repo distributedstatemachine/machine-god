@@ -3,8 +3,9 @@
 The adapter discovers one Vercel AI Gateway bearer credential from an
 explicitly owned environment snapshot. It is separate from core, the CLI, and
 native configuration. Bearer-token bytes are fields in no schema. Configuration
-schema v3 adds only the closed non-secret acquisition
-kind `credential_source: "environment"`; exact v1/v2 files project that kind
+schema v3 introduced the closed non-secret acquisition
+kind `credential_source: "environment"`, retained unchanged by current v4;
+exact v1/v2 files project that kind
 only in memory. The only ambient lookup remains the explicitly named process-
 snapshot constructor or process convenience function.
 
@@ -155,8 +156,8 @@ variables, add a setup command, select a generation model, or itself make a
 network request. The local CLI catalog composition explicitly calls the new
 process catalog convenience function after config validation; that host use
 does not give this adapter transport authority. The
-[`native configuration schema-v3 contract`](configuration.md) adds a
-declarative non-secret acquisition-kind field; it adds no bearer value,
+[`native configuration contract`](configuration.md) retains the schema-v3
+declarative non-secret acquisition-kind field in schema v4; it adds no bearer value,
 arbitrary environment name, or ambient lookup and does not invoke this adapter.
 The [`native reference host`](native-reference-host.md) implements a
 production library constructor that consumes an explicitly injected snapshot

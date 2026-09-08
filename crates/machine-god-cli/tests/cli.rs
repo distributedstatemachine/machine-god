@@ -1476,7 +1476,7 @@ fn doctor_missing_inputs_are_exact_counted_and_do_not_create_roots() {
 
 #[test]
 fn doctor_reads_each_strict_schema_without_rewrite_and_reports_oidc_precedence() {
-    let schemas: [(&str, &[u8]); 3] = [
+    let schemas: [(&str, &[u8]); 4] = [
         ("v1", br#"{"schema_version":1,"permission_mode":"ask"}"#),
         (
             "v2",
@@ -1485,6 +1485,10 @@ fn doctor_reads_each_strict_schema_without_rewrite_and_reports_oidc_precedence()
         (
             "v3",
             br#"{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"CLI_DOCTOR_V3_SECRET","credential_source":"environment"}"#,
+        ),
+        (
+            "v4",
+            br#"{"schema_version":4,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"CLI_DOCTOR_V4_SECRET","credential_source":"environment","effort":"high","fast_mode":true}"#,
         ),
     ];
     let (human, json) = expected_doctor_output(
@@ -1522,6 +1526,7 @@ fn doctor_reads_each_strict_schema_without_rewrite_and_reports_oidc_precedence()
                 "doctor-api-key_NEVER_REAL",
                 "CLI_DOCTOR_V2_SECRET",
                 "CLI_DOCTOR_V3_SECRET",
+                "CLI_DOCTOR_V4_SECRET",
             ],
         );
         assert_eq!(fs::read(&path).unwrap(), contents);
@@ -1757,8 +1762,8 @@ fn models_invalid_credential_fails_before_network_without_creating_roots() {
 }
 
 #[test]
-fn models_reads_v1_v2_and_v3_without_rewrite_or_state_access() {
-    let schemas: [(&str, &[u8]); 3] = [
+fn models_reads_all_supported_schemas_without_rewrite_or_state_access() {
+    let schemas: [(&str, &[u8]); 4] = [
         (
             "v1",
             br#"{"schema_version":1,"permission_mode":"ask"}"#,
@@ -1770,6 +1775,10 @@ fn models_reads_v1_v2_and_v3_without_rewrite_or_state_access() {
         (
             "v3",
             br#"{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"CLI_MODELS_V3_MARKER","credential_source":"environment"}"#,
+        ),
+        (
+            "v4",
+            br#"{"schema_version":4,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"CLI_MODELS_V4_MARKER","credential_source":"environment","effort":"high","fast_mode":true}"#,
         ),
     ];
 
@@ -2935,8 +2944,8 @@ fn invalid_permissions_arguments_precede_invalid_configuration() {
 }
 
 #[test]
-fn permissions_reads_v1_v2_and_v3_without_rewrite_or_state_access() {
-    let schemas: [(&str, &[u8]); 3] = [
+fn permissions_reads_all_supported_schemas_without_rewrite_or_state_access() {
+    let schemas: [(&str, &[u8]); 4] = [
         (
             "v1",
             br#"{"schema_version":1,"permission_mode":"ask"}"#,
@@ -2948,6 +2957,10 @@ fn permissions_reads_v1_v2_and_v3_without_rewrite_or_state_access() {
         (
             "v3",
             br#"{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"CLI_V3_MODEL_MARKER","credential_source":"environment"}"#,
+        ),
+        (
+            "v4",
+            br#"{"schema_version":4,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"CLI_V4_MODEL_MARKER","credential_source":"environment","effort":"high","fast_mode":true}"#,
         ),
     ];
 
@@ -3007,7 +3020,7 @@ fn invalid_permission_configs_are_fixed_redacted_failures_without_writes() {
         ),
         (
             "unsupported",
-            br#"{"schema_version":4,"future_secret":"CLI_UNSUPPORTED_SECRET"}"#.to_vec(),
+            br#"{"schema_version":5,"future_secret":"CLI_UNSUPPORTED_SECRET"}"#.to_vec(),
         ),
         ("oversized", oversized),
     ];

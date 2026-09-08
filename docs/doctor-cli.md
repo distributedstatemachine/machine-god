@@ -76,7 +76,7 @@ authority.
 | `platform` | Target is Linux or macOS. | `ok` | `native host platform is supported` |
 | `platform` | Any other target. | `fail` | `native host platform is unsupported` |
 
-Configuration preserves the existing strict v1/v2/v3 loader, 64 KiB retained-
+Configuration preserves the strict v1/v2/v3/v4 loader, 64 KiB retained-
 input cap plus overflow witness, safe built-in defaults, supported-Unix no-
 follow opening, and fixed redacted `NativeConfigError` display strings. It
 does not reveal the loaded schema, permission mode, provider, transport, model,
@@ -165,7 +165,7 @@ Independent evidence must cover:
   exit codes, streams, JSON key order, escaping, and final LF;
 - exactly four ordered checks, every fixed detail/status mapping, count/check
   consistency, report-failure exit 0, and both exact exit-1 diagnostics;
-- valid v1/v2/v3, missing/default, invalid environment/type/read/size/format/
+- valid v1/v2/v3/v4, missing/default, invalid environment/type/read/size/format/
   version configuration cases without path or content reflection;
 - both credential sources, precedence, empty/missing, non-Unicode, malformed,
   oversized, and unavailable-build cases without secret reflection;

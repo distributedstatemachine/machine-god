@@ -142,7 +142,10 @@ applies pinned no-TTL/retry behavior with bounded cancellable waiters.
 Secondary workers now follow the pinned distinction: dedicated Gemini vision
 with unchanged semantic retries, and session-incarnation-bound search snapshots
 of current selection at tool entry. Neither inherits effort/fast controls.
-Remaining work includes durable user-default writes, cache/CLI
+Schema-v4 user defaults now preserve requested model/effort/fast controls with
+strict legacy reads and explicit descriptor-bound, conflict-checked publication
+to the same configuration file. Session and user targets remain independent.
+Remaining work includes combined persistence-outcome reporting, cache/CLI
 composition, typed historical
 interruption/background/file facts, interactive command/session transitions,
 pinned recovery/retry policy, policy/sandbox/workspace enforcement, rich session

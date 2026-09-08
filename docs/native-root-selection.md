@@ -289,9 +289,11 @@ only consume the result.
 
 ## Relationship to status, configuration, and CLI
 
-Configuration remains strict schema v3 with the exact same built-in and file
-bytes. Root selection is not a configuration field and neither the loader nor
-core gains environment, filesystem, or creation authority.
+Configuration uses strict schema v4 with read-only legacy v1/v2/v3 support.
+Root selection is not a configuration field and neither the loader nor core
+gains creation authority. The separately granted user-default writer described
+in [configuration](configuration.md) owns only its explicit configuration
+directory; it neither selects nor prepares these workspace/state roots.
 
 The retained legacy `NativeStatus` metadata API can still observe the resolved
 state path. It does not call `NativeRootSelection`, prepare roots, open

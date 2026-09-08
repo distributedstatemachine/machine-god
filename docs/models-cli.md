@@ -55,7 +55,8 @@ terminal failure stops it earlier:
 7. write the selected success or failure representation.
 
 Configuration is read-only. A missing file or unavailable configuration
-location uses the existing safe built-in schema-v3 configuration. A selected
+location uses the safe built-in schema-v4 configuration. Strict legacy v1/v2/v3
+files remain accepted without migration. A selected
 invalid configuration fails before credential or transport access. Config is
 not reloaded for the anonymous fallback.
 

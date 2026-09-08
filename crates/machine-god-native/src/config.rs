@@ -13,9 +13,10 @@ use serde_json::value::RawValue;
 
 use super::ai_gateway::{AI_GATEWAY_DEFAULT_MODEL, valid_model};
 use super::{NativeEnvironment, PermissionMode, ResolvedPath, resolve_config_file};
+use super::{NativeModelPreferences, NativeReasoningEffort};
 
 /// Current configuration schema version used by this native host.
-pub const CONFIG_SCHEMA_VERSION: u32 = 3;
+pub const CONFIG_SCHEMA_VERSION: u32 = 4;
 
 /// Maximum number of bytes retained while loading a native configuration.
 pub const MAX_CONFIG_BYTES: usize = 64 * 1024;
@@ -82,9 +83,54 @@ pub struct NativeConfig {
     transport: NativeTransportKind,
     model: String,
     credential_source: NativeCredentialSourceKind,
+    effort: NativeReasoningEffort,
+    fast_mode: bool,
 }
 
 impl NativeConfig {
+    /// Returns the requested reasoning effort (legacy files project automatic).
+    #[must_use]
+    pub const fn effort(&self) -> &NativeReasoningEffort {
+        &self.effort
+    }
+
+    /// Returns requested fast mode, independently of current model capabilities.
+    #[must_use]
+    pub const fn fast_mode(&self) -> bool {
+        self.fast_mode
+    }
+
+    /// Returns the complete validated default model selection.
+    ///
+    /// # Panics
+    /// Panics only if an internal constructor violates the validated model invariant.
+    #[must_use]
+    pub fn model_preferences(&self) -> NativeModelPreferences {
+        NativeModelPreferences::new(&self.model, self.effort.clone(), self.fast_mode)
+            .expect("configuration model preferences are validated")
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn with_model_preferences(&self, preferences: &NativeModelPreferences) -> Self {
+        let mut config = self.clone();
+        config.schema_version = CONFIG_SCHEMA_VERSION;
+        preferences.model().clone_into(&mut config.model);
+        config.effort = preferences.effort().clone();
+        config.fast_mode = preferences.requested_fast();
+        config
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn serialize_current(&self) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": CONFIG_SCHEMA_VERSION,
+            "permission_mode": self.permission_mode.as_str(),
+            "provider": self.provider.as_str(), "transport": self.transport.as_str(),
+            "model": self.model, "credential_source": self.credential_source.as_str(),
+            "effort": self.effort.label(), "fast_mode": self.fast_mode
+        }))
+        .expect("bounded configuration serialization")
+    }
     /// Returns the schema version observed in the loaded configuration.
     #[must_use]
     pub const fn schema_version(&self) -> u32 {
@@ -131,6 +177,8 @@ impl Default for NativeConfig {
             transport: NativeTransportKind::AiGatewayHttp,
             model: AI_GATEWAY_DEFAULT_MODEL.to_owned(),
             credential_source: NativeCredentialSourceKind::Environment,
+            effort: NativeReasoningEffort::default(),
+            fast_mode: false,
         }
     }
 }
@@ -145,6 +193,8 @@ impl fmt::Debug for NativeConfig {
             .field("transport", &self.transport)
             .field("model", &"<redacted>")
             .field("credential_source", &self.credential_source)
+            .field("effort", &"<redacted>")
+            .field("fast_mode", &self.fast_mode)
             .finish()
     }
 }
@@ -178,14 +228,14 @@ impl LoadedNativeConfig {
         self.origin
     }
 
-    fn built_in_defaults() -> Self {
+    pub(crate) fn built_in_defaults() -> Self {
         Self {
             config: NativeConfig::default(),
             origin: ConfigOrigin::BuiltInDefaults,
         }
     }
 
-    fn from_file(config: NativeConfig) -> Self {
+    pub(crate) fn from_file(config: NativeConfig) -> Self {
         Self {
             config,
             origin: ConfigOrigin::File,
@@ -335,16 +385,24 @@ fn load_config_path(path: &Path) -> Result<LoadedNativeConfig, NativeConfigError
     }
 
     let bytes = read_bounded(&mut file)?;
-    std::str::from_utf8(&bytes)
+    parse_config_bytes(&bytes).map(LoadedNativeConfig::from_file)
+}
+
+pub(crate) fn parse_config_bytes(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
+    if bytes.len() > MAX_CONFIG_BYTES {
+        return Err(NativeConfigError::new(NativeConfigErrorKind::TooLarge));
+    }
+    std::str::from_utf8(bytes)
         .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))?;
-    let schema_version = validate_schema_version(&bytes)?;
+    let schema_version = validate_schema_version(bytes)?;
     let config = match schema_version {
-        1 => parse_v1_config(&bytes)?,
-        2 => parse_v2_config(&bytes)?,
-        3 => parse_v3_config(&bytes)?,
+        1 => parse_v1_config(bytes)?,
+        2 => parse_v2_config(bytes)?,
+        3 => parse_v3_config(bytes)?,
+        4 => parse_v4_config(bytes)?,
         _ => unreachable!("validated schema version is supported"),
     };
-    Ok(LoadedNativeConfig::from_file(config))
+    Ok(config)
 }
 
 fn validate_schema_version(bytes: &[u8]) -> Result<u32, NativeConfigError> {
@@ -357,6 +415,7 @@ fn validate_schema_version(bytes: &[u8]) -> Result<u32, NativeConfigError> {
                 1 => return Ok(1),
                 2 => return Ok(2),
                 3 => return Ok(3),
+                4 => return Ok(4),
                 _ => {}
             }
         }
@@ -381,6 +440,8 @@ fn parse_v1_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
         transport: NativeTransportKind::AiGatewayHttp,
         model: AI_GATEWAY_DEFAULT_MODEL.to_owned(),
         credential_source: NativeCredentialSourceKind::Environment,
+        effort: NativeReasoningEffort::default(),
+        fast_mode: false,
     })
 }
 
@@ -402,13 +463,15 @@ fn parse_v2_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
         transport: NativeTransportKind::AiGatewayHttp,
         model: wire.model,
         credential_source: NativeCredentialSourceKind::Environment,
+        effort: NativeReasoningEffort::default(),
+        fast_mode: false,
     })
 }
 
 fn parse_v3_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
     let wire: WireNativeConfigV3 = serde_json::from_slice(bytes)
         .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))?;
-    debug_assert_eq!(wire.schema_version, CONFIG_SCHEMA_VERSION);
+    debug_assert_eq!(wire.schema_version, 3);
     if wire.permission_mode != "ask"
         || wire.provider != "vercel_ai_gateway"
         || wire.transport != "ai_gateway_http"
@@ -424,6 +487,33 @@ fn parse_v3_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
         transport: NativeTransportKind::AiGatewayHttp,
         model: wire.model,
         credential_source: NativeCredentialSourceKind::Environment,
+        effort: NativeReasoningEffort::default(),
+        fast_mode: false,
+    })
+}
+
+fn parse_v4_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
+    let wire: WireNativeConfigV4 = serde_json::from_slice(bytes)
+        .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))?;
+    if wire.permission_mode != "ask"
+        || wire.provider != "vercel_ai_gateway"
+        || wire.transport != "ai_gateway_http"
+        || !valid_model(&wire.model)
+        || wire.credential_source != "environment"
+    {
+        return Err(NativeConfigError::new(NativeConfigErrorKind::InvalidFormat));
+    }
+    let effort = NativeReasoningEffort::parse(&wire.effort)
+        .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::InvalidFormat))?;
+    Ok(NativeConfig {
+        schema_version: wire.schema_version,
+        model: wire.model,
+        permission_mode: PermissionMode::Ask,
+        provider: NativeProviderKind::VercelAiGateway,
+        transport: NativeTransportKind::AiGatewayHttp,
+        credential_source: NativeCredentialSourceKind::Environment,
+        effort,
+        fast_mode: wire.fast_mode,
     })
 }
 
@@ -449,7 +539,7 @@ fn open_config_file(path: &Path) -> Result<Option<File>, NativeConfigError> {
     }
 }
 
-fn read_bounded(file: &mut File) -> Result<Vec<u8>, NativeConfigError> {
+pub(crate) fn read_bounded(file: &mut File) -> Result<Vec<u8>, NativeConfigError> {
     read_bounded_from(file)
 }
 
@@ -511,6 +601,19 @@ struct WireNativeConfigV3 {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireNativeConfigV4 {
+    schema_version: u32,
+    permission_mode: String,
+    provider: String,
+    transport: String,
+    model: String,
+    credential_source: String,
+    effort: String,
+    fast_mode: bool,
+}
+
+#[derive(Deserialize)]
 struct WireSchemaEnvelope<'a> {
     #[serde(borrow)]
     schema_version: &'a RawValue,
@@ -518,6 +621,44 @@ struct WireSchemaEnvelope<'a> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn strict_v4_requires_all_fields_and_rejects_duplicates_and_wrong_controls() {
+        let valid = br#"{"schema_version":4,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"model","credential_source":"environment","effort":"high","fast_mode":true}"#;
+        let parsed = super::parse_config_bytes(valid).unwrap();
+        assert_eq!(parsed.schema_version(), 4);
+        assert_eq!(parsed.effort().label(), "high");
+        assert!(parsed.fast_mode());
+        let value: serde_json::Value = serde_json::from_slice(valid).unwrap();
+        for field in [
+            "schema_version",
+            "permission_mode",
+            "provider",
+            "transport",
+            "model",
+            "credential_source",
+            "effort",
+            "fast_mode",
+        ] {
+            let mut missing = value.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(super::parse_config_bytes(&serde_json::to_vec(&missing).unwrap()).is_err());
+        }
+        for (field, replacement) in [
+            ("effort", serde_json::json!(false)),
+            ("fast_mode", serde_json::json!("true")),
+            ("extra", serde_json::json!(true)),
+        ] {
+            let mut invalid = value.clone();
+            invalid[field] = replacement;
+            assert!(super::parse_config_bytes(&serde_json::to_vec(&invalid).unwrap()).is_err());
+        }
+        let duplicate = String::from_utf8(valid.to_vec()).unwrap().replace(
+            "\"effort\":\"high\"",
+            "\"effort\":\"high\",\"effort\":\"low\"",
+        );
+        assert!(super::parse_config_bytes(duplicate.as_bytes()).is_err());
+    }
+
     use super::{
         CONFIG_SCHEMA_VERSION, ConfigOrigin, MAX_CONFIG_BYTES,
         MAX_CONFIG_INTERRUPTED_READ_ATTEMPTS, NativeConfig, NativeConfigErrorKind,
@@ -877,9 +1018,9 @@ mod tests {
         );
 
         let loaded = load_native_config(&temporary.environment()).unwrap();
-        assert_eq!(CONFIG_SCHEMA_VERSION, 3);
+        assert_eq!(CONFIG_SCHEMA_VERSION, 4);
         assert_eq!(loaded.origin(), ConfigOrigin::File);
-        assert_config(loaded.config(), CONFIG_SCHEMA_VERSION, "custom/model");
+        assert_config(loaded.config(), 3, "custom/model");
     }
 
     #[test]
@@ -964,7 +1105,7 @@ mod tests {
     #[test]
     fn unsupported_schema_version_has_its_own_kind() {
         let temporary = TestDirectory::new("unsupported-version");
-        temporary.write_config(br#"{"schema_version":4,"permission_mode":"ask"}"#);
+        temporary.write_config(br#"{"schema_version":5,"permission_mode":"ask"}"#);
 
         let error = load_native_config(&temporary.environment()).unwrap_err();
         assert_eq!(
@@ -976,7 +1117,7 @@ mod tests {
     #[test]
     fn future_and_arbitrary_size_integer_versions_are_classified_before_v1_fields() {
         for (index, document) in [
-            br#"{"schema_version":4,"permission_mode":"future","new_field":true}"#.as_slice(),
+            br#"{"schema_version":5,"permission_mode":"future","new_field":true}"#.as_slice(),
             br#"{"schema_version":18446744073709551616}"#.as_slice(),
             br#"{"schema_version":-1,"future_shape":[]}"#.as_slice(),
         ]

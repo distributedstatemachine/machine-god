@@ -56,6 +56,12 @@ pub use owned_worker::{
 };
 mod config;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+mod user_config_store;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use user_config_store::{
+    NativeUserConfigError, NativeUserConfigSnapshot, NativeUserConfigStore,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conversation;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conversation_context;

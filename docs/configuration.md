@@ -13,14 +13,15 @@ once after complete argument validation. It validates the closed provider,
 transport, and credential-source selections before native credential or
 network access, never reloads configuration for public fallback, never changes
 the configured generation model, and never writes or migrates the file. That
-catalog path accepts the built-in or missing-file safe schema-v3 defaults and
-strict v1/v2/v3 files, but rejects any config-load failure before credential
+catalog path accepts the built-in or missing-file safe schema-v4 defaults and
+strict v1/v2/v3/v4 files, but rejects any config-load failure before credential
 discovery. It does not add an endpoint, team, token, cache, or catalog field to
-schema v3.
+schema v4.
 
 The configuration contract advances the built-in and current file
-schema to v3 while retaining strict read compatibility for the exact legacy v1
-and v2 objects.
+schema to v4 while retaining strict read compatibility for the exact legacy v1,
+v2 and v3 objects. Loading is still read-only; explicit user-default publication
+is a separately granted native effect described below.
 
 ## Location and defaults
 
@@ -44,11 +45,11 @@ whether it is valid, relative, or non-Unicode, so that path neither reads nor
 falls back to `HOME`.
 
 An unavailable location, including a missing or empty needed `HOME`, produces
-the explicit built-in schema-v3 configuration. A resolved file that is missing
+the explicit built-in schema-v4 configuration. A resolved file that is missing
 also produces this configuration:
 
 ```json
-{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"zai/glm-5.2","credential_source":"environment"}
+{"schema_version":4,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"zai/glm-5.2","credential_source":"environment","effort":"auto","fast_mode":false}
 ```
 
 Invalid selected environment input is not treated as absence and fails closed.
@@ -56,6 +57,9 @@ Likewise, an inaccessible resolved path is an error rather than a reason to
 silently use defaults.
 
 ## Strict schema v3
+
+Schema v3 remains an accepted legacy format; it projects `effort: auto` and
+`fast_mode: false` without changing its source schema label or file bytes.
 
 A present schema-v3 configuration is one JSON object containing exactly these
 six required fields:
@@ -115,13 +119,13 @@ projection. Their observable `schema_version()` values remain `1` and `2`
 respectively; neither is relabelled as v3. Loading never rewrites, expands, or
 migrates either file.
 
-Every integer schema version other than `1`, `2`, or `3` is unsupported. A
+Every integer schema version other than `1`, `2`, `3`, or `4` is unsupported. A
 missing, duplicate, non-integer, or otherwise malformed schema-version field is
 invalid format. Full-buffer UTF-8 validation still precedes schema dispatch.
 
 ## Public data boundary
 
-`CONFIG_SCHEMA_VERSION` is `3`. `AI_GATEWAY_DEFAULT_MODEL` is
+`CONFIG_SCHEMA_VERSION` is `4`. `AI_GATEWAY_DEFAULT_MODEL` is
 `"zai/glm-5.2"`, and `AI_GATEWAY_MAX_MODEL_BYTES` aliases core's
 `MAX_MODEL_ID_BYTES` (`1024`). The shared `validate_model_id` contract matches
 the pinned settings and durable-session model validators.
@@ -133,7 +137,8 @@ do not imply that an optional implementation is compiled or usable in the
 current build.
 
 `NativeConfig` exposes read-only `schema_version`, `permission_mode`,
-`provider`, `transport`, `model`, and `credential_source` getters. The schema
+`provider`, `transport`, `model`, `credential_source`, `effort`, `fast_mode`, and
+complete typed `model_preferences` getters. The schema
 version remains the version actually loaded, including `1` or `2` for a legacy
 file. Provider, transport, and credential source return closed native enums;
 model returns the validated string.
@@ -159,7 +164,7 @@ owns its non-cloneable secret snapshot and does not put secret values into
 
 The raw file limit remains 64 KiB (65,536 bytes). A file of exactly that length
 can be considered for parsing; any additional byte makes it oversized. Bytes
-must be valid UTF-8 and then valid strict v1, v2, or v3 JSON. The loader retains
+must be valid UTF-8 and then valid strict v1, v2, v3, or v4 JSON. The loader retains
 at most 64 KiB plus one byte while deciding whether input fits, so neither a
 stale size observation nor concurrent file growth turns loading into an
 unbounded retained buffer. The read loop retries the first 15 cumulative
@@ -228,10 +233,67 @@ discovery and reports `None` as before.
 The [`native root-selection contract`](native-root-selection.md) derives a state
 root from the same injected snapshot but does not change configuration or use
 the loader. Its preparation authority remains independent of this read-only
-surface; schema-v3 built-in and file bytes are unchanged.
+surface; loading never rewrites built-in or file-backed configuration.
 
-Configuration mutation, a migration or rewrite command, a terminal permission
+An independent migration or rewrite command, a terminal permission
 prompter and modes beyond `ask`, runtime composition, session lifecycle, the
 remaining native tools, remaining CLI and session expansion, release-binary
 end-to-end host evidence, and compatibility or performance claims remain
 outside this configuration contract.
+
+## Schema v4 and durable user model defaults
+
+Schema v4 has exactly the six v3 fields plus required `effort` (string) and
+`fast_mode` (boolean). Model validation is unchanged. Effort uses the shared
+[`NativeReasoningEffort`](model-preferences.md) contract: `auto`, `adaptive`,
+and `default` are case-insensitive automatic aliases; named efforts preserve
+case and contain 1–64 ASCII letters, digits, hyphens, underscores or periods.
+Fast mode is the requested preference, not a claim that the selected model
+supports it. Legacy v1/v2/v3 inputs project automatic effort and disabled fast
+mode in memory while retaining their exact loaded schema versions. Strict
+unknown-field, duplicate-field and shape rejection remains unchanged.
+
+On Linux and macOS, `NativeUserConfigStore::new` receives an explicit absolute
+configuration-directory path and is inert. `load` is read-only: it retains an
+existing parent descriptor and any existing final-directory descriptor, reads
+at most 64 KiB plus one byte from a regular final no-follow `config.json`, and
+returns a redacted `NativeUserConfigSnapshot`. Missing final directories/files
+return explicit built-in defaults; unavailable parents and invalid files are
+errors. No environment inference or recursive parent creation occurs.
+
+The directory must be owned by the effective user and private (no group/other
+mode bits); macOS also rejects granting extended ACLs. Existing configuration
+files must be singly linked, owned regular files without group/other write
+permission. Ancestor components are not recursively frozen: operations retain
+the granted parent descriptor, so replacement of its pathname never redirects
+an already loaded snapshot to a different directory.
+
+`set_model_preferences(snapshot, preferences)` is inert until polled and
+performs one bounded synchronous transaction without detached tasks. It binds
+the token to its originating store instance, checks the final-directory
+identity, and may create only the missing final directory with mode 0700 under
+the retained parent. It takes a private, no-follow `.config.lock` via
+nonblocking exclusive flock; contention returns `Busy`. The lock persists and
+is never unlinked. Under this lock it rereads and validates the exact current
+bytes; stale or foreign snapshots return `Conflict` without overwriting them.
+
+Only the requested model/effort/fast fields change. Existing validated provider,
+transport, permission and credential-source selections are retained, and the
+explicit publication upgrades supported legacy formats to schema v4 in the
+same `config.json`. Malformed or future configurations are never overwritten.
+Publication exclusively creates `.config.tmp` with mode 0600, writes and fsyncs
+it, rechecks entry identities and current bytes, renames it atomically, and
+fsyncs the retained directory. Existing temp artifacts are never adopted or
+deleted. A failed pre-rename publication leaves the original configuration
+authoritative; an error after replacement is `CommitAmbiguous`, requiring a
+fresh observation rather than automatic retry. Only owned unpublished temps
+are cleaned up after ordinary write failures. Cooperative writers serialize
+through the persistent lock; arbitrary same-user actors replacing entries
+outside this protocol are not granted a general transactional guarantee.
+
+This user-default target is independent of session preference persistence.
+Callers must report the two outcomes separately, matching pinned
+`src/core/app/app_session_runtime.zig::commitRuntimePreferences` and
+`src/core/session/session_commands.zig` settings-result reporting. A user-file
+failure does not imply runtime selection or session persistence failed, and a
+session failure must not suppress an explicitly requested user-default attempt.
