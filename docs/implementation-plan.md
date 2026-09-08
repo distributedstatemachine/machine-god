@@ -272,8 +272,10 @@ The validated-resume/origin integration passes 132 focused native session tests,
 153 CLI unit tests with five existing helper ignores, all 89 CLI integration
 tests and ten CLI frame tests. Its core checked-revision and guarded-load
 prerequisites pass the complete core suite and doctests. The integration's
-fresh release and full workspace checks remain to be run; previous checkpoint
-results above are not evidence for these new source changes.
+first workspace Clippy run rejected one CLI boolean expression; after the
+equivalent simplification, all 17 sessions renderer tests and warnings-denied
+workspace Clippy pass. Fresh release and full workspace tests remain to be run;
+previous checkpoint results above are not evidence for these new source changes.
 
 The integrated preparer passes all five real file mutations, actual reviewer
 Allow/Ask/error and cancellation, read-grant/reset, canonical terminal identity,

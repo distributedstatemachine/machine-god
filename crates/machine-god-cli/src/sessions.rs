@@ -338,7 +338,7 @@ fn validate(snapshot: &SessionsSnapshot, options: &SessionsOptions) -> Result<()
     Ok(())
 }
 fn valid_workspace_text(text: Option<&str>, hex: Option<&str>) -> bool {
-    !text.is_some_and(|value| value.len() > 4096)
+    text.is_none_or(|value| value.len() <= 4096)
         && !hex.is_some_and(|value| {
             text.is_some()
                 || value.len() > 8192
