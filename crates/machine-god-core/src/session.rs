@@ -24,6 +24,10 @@ use std::task::{Context, Poll};
 
 use crate::engine::{EngineInner, HostLease, HostResource, SessionRegistration, SessionRegistry};
 
+mod turn_metadata;
+use turn_metadata::TurnMetadataScope;
+pub use turn_metadata::{TurnMetadataEditor, TurnMetadataSnapshot};
+
 /// Optimistic-concurrency revision assigned by a [`SessionStore`]. Zero is the
 /// unsaved in-memory sentinel and is invalid in records returned by a store.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -844,6 +848,14 @@ impl SessionOperation {
         let session_id = record.id.clone();
         let session_incarnation_id = record.incarnation_id.clone();
         let cancellation = CancellationToken::new();
+        let metadata_scope = TurnMetadataScope::new(
+            Arc::clone(&self.engine),
+            Arc::clone(&self.state),
+            self.host.clone(),
+            &record,
+            turn_id.clone(),
+            cancellation.clone(),
+        );
         let gate = EmissionGate::default();
         let workflow = Box::pin(run_turn(
             Arc::clone(&self.engine),
@@ -876,6 +888,7 @@ impl SessionOperation {
             locally_synthesized_cancellation: false,
             cancellation_waiter: None,
             lease: Some(lease),
+            metadata_scope,
         })
     }
 
@@ -3344,6 +3357,7 @@ pub struct Turn {
     locally_synthesized_cancellation: bool,
     cancellation_waiter: Option<u64>,
     lease: Option<TurnLease>,
+    metadata_scope: Arc<TurnMetadataScope>,
 }
 
 impl fmt::Debug for Turn {
@@ -3370,10 +3384,12 @@ impl Turn {
     }
 
     fn finish(&mut self) {
+        self.metadata_scope.close_admission();
         self.cancellation.deregister(&mut self.cancellation_waiter);
         self.state = TurnState::Done;
         self.gate.clear();
         self.lease.take();
+        self.metadata_scope.wake_closed();
     }
 
     fn fail_before_terminal(&mut self) {

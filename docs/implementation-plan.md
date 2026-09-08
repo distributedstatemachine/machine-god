@@ -167,6 +167,13 @@ or context projection, and retire only after confirmed publication. Saved
 exact-action rule values now have bounded strict decoding, collision-safe keys,
 stable IDs and per-rule generation checks; this codec does not itself enforce
 permissions or confirm rules.
+The core now exposes a turn-owned, single-entry metadata editor with bounded
+compare-and-swap, transcript-preserving reconciliation and explicit uncertain
+publication handling, including saves awaited inside permission authorization.
+Configured permission-pattern values now preserve ordered last-match semantics,
+tool aliases, prepared path/command projection and exact web-fetch domains under
+bounded encoded size and matching work. These prerequisites are not yet wired
+into native permission enforcement; saved exact rules remain a separate domain.
 Core permission policy now receives the actual borrowed prepared invocation and
 may retain a revocable admission guard across observer waits until execution.
 Legacy handlers keep their existing behavior; native mode/rule/reviewer composition
@@ -196,9 +203,12 @@ Python tests and a fresh release CLI smoke. The replacement full run still fails
 four PTY cases: these pass initial reap admission but time out preparing the macOS
 inventory service, followed by cleanup timeout. Test-only startup diagnostics are
 being narrowed to that distinct path; an instrumented native-unit run passes but
-does not establish its cause or close the failed full gate. Assertions, cleanup guarantees and platform
-coverage remain unchanged. These internal checks do not replace the complete
-exact-candidate feature gates below.
+does not establish its cause or close the failed full gate. Assertions, cleanup
+guarantees and platform coverage remain unchanged. The integrated editor and
+configured-pattern components pass 51 focused tests, the inventory handshake
+passes its 12 focused service tests, and full warnings-denied Clippy passes.
+The complete replacement workspace gate remains open. These internal
+checks do not replace the exact-candidate feature gates below.
 
 ### CI and documentation maintenance
 

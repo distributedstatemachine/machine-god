@@ -108,6 +108,50 @@ The adapter discards the prompt error value and constructs a core
 classification claim. `AskPermissionHandler` debugging is exactly
 `AskPermissionHandler { .. }`; it does not format the injected prompter.
 
+## Configured permission patterns
+
+`NativeConfiguredPermissionRules` is a pure, explicitly supplied ordered list
+of `NativeConfiguredPermissionRule` values. It is separate from saved exact-action
+rules and ephemeral capability grants: constructing or evaluating it grants no
+authority and does not load config, persist policy, or change `AskPermissionHandler`.
+`decide(&NativePreparedPermissionTarget)` returns the last matching
+`Allow`, `Ask`, or `Deny`, or `None` when unresolved. The caller separately owns
+multi-target aggregation, modes, grants and actual execution enforcement.
+
+Rule constructors trim only space, tab, CR and LF from permission/pattern keys;
+empty permissions are invalid and empty patterns remain meaningful. The complete
+serialized ordered array, including each `permission`, `pattern`, and `action`
+field, JSON escaping, commas and brackets, cannot exceed the existing 64-KiB
+`MAX_CONFIG_BYTES`. Configured rules do not use the saved-rule 1,024-entry cap.
+
+Matching follows pinned fx `permissions.zig` (`permissionNameForTool`,
+`patternForRuleMatch`, and `evaluateRulesetForTool`) at
+`b1774fbf6c7602b503026f96f6e960e946c692ef`. Categories match the pinned aliases
+or actual tool name. `*` matches any bytes, including slashes; `?` matches one
+byte, not a Unicode scalar. There are no character classes, escaping or regexes.
+A literal `directory/**` also matches that directory itself. The evaluator is
+nonrecursive and shares a 4,194,304-step budget across one target evaluation;
+exhaustion returns `Limit`, never an earlier partial allow.
+
+Prepared targets borrow the tool name, workspace, target string and explicit
+`NativePermissionTargetKind`. Core tool-name validation, NUL checks, a 4-KiB
+workspace bound, and a 73,856-byte framed-command target bound apply. The caller
+must supply the already-prepared canonical path/command identity: construction
+does not resolve paths, inspect files, infer target kinds or establish authority.
+Path presentation is workspace-relative for the pinned path kinds and copy/rename;
+other kinds retain their own presentation. Bash matching strips the prepared cwd
+and `@fx-terminal-env:` length-framed shell identity; sandbox matching strips only
+the environment identity. This projection is only for configured matching:
+the original borrowed identity remains unchanged for exact grants and rules.
+
+`web_fetch` is deliberately special: only the exact category and exact canonical
+`domain:host` target/pattern match. Wildcard categories, wildcard domains, URLs,
+ports, uppercase hosts and trailing-dot spellings cannot authorize it. Invalid
+configured domain patterns stay inert and are counted by
+`web_fetch_warning_count`; they do not become generic wildcard rules. No DNS or
+URL normalization occurs. Constructors and diagnostics retain no ambient authority,
+and debug/error formatting omits rule and target content.
+
 ## Polling, cancellation, and authority
 
 Calling `PermissionHandler::authorize` only creates an inert future. An

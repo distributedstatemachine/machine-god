@@ -743,6 +743,51 @@ an uncertain save. If an interrupted save actually committed, a reload preserves
 its metadata and a patch carrying the old revision conflicts. Store diagnostics
 are redacted through the ordinary fixed `store_failed` boundary.
 
+### Exact-turn single-entry metadata editing
+
+`Turn::metadata_editor(key)` grants an owned `TurnMetadataEditor` for one key
+during that exact turn. Its owned, inert `read_entry()` future returns an opaque
+`TurnMetadataSnapshot`; `entry()` borrows the expected value, or `None` for an
+absent entry. `compare_exchange(snapshot, replacement)` replaces just that key
+(`None` removes it), returning the confirmed `SessionRevision`. Snapshots are
+bound to the editor that minted them and its clones, not other editors for the
+same key. Debug output omits keys, values, and transcript content.
+
+The capability is available while provider, permission, tool, or observer work
+is active. An inline permission handler can await its store future directly:
+there is no mailbox requiring the blocked outer turn to make progress. Only one
+editor read or write may be polled in flight across all keys for the same turn;
+competing operations receive `SessionBusy`. Generic `Session::update_metadata`
+retains its exclusive idle-session contract.
+
+Writes use the latest canonical record, preserving all transcript and unrelated
+metadata fields. The target value must still equal its snapshot. Store conflicts
+reload and retry at most 32 times without rebasing a changed target entry. Core's
+subsequent transcript/result CAS publications likewise use the latest canonical
+metadata, so a confirmed edit is not reverted by the turn's older local record.
+Depth, aggregate JSON-node, metadata-byte, and existing transcript limits are
+checked before cloning candidate JSON. Rejected and unpolled owned values and
+invalid loaded records are drained iteratively.
+
+Editors retain neither the exclusive turn lease nor host-resource ownership.
+Cancellation, turn completion/drop, host closure, a changed session incarnation,
+or a different durable turn allocator position rejects further work. Pending
+operations register their own cancellation/closure wakers. No save is detached,
+and dropping an editor future drops its owned store future. A save already
+started can nevertheless publish before failure, drop, or closure; there is no
+rollback guarantee. An observed successful save wins same-poll cancellation.
+Callers must still check their own policy/confirmation epoch before enabling a
+grant from its receipt.
+
+Before invoking save, core conservatively arms metadata-reconciliation debt.
+Unconfirmed exits re-arm it after dropping the store future. Active-turn editors
+never clear that shared debt, including after a confirmed save: a later idle
+operation must authoritatively reconcile it through the existing exclusive
+path. Reads also reload through core, and further active edits reconcile debt
+before constructing a candidate. Missing, corrupt, identity-changing, or
+allocator-changing records fail closed. This API provides persistence, not
+permission prompts, policy decisions, or native handler enforcement.
+
 Providers emit at most one terminal `ModelEvent::Stop`. A stream that ends
 without it becomes a structured `failed` event. Observer backpressure is honored:
 an event is yielded to the caller only after the configured event sink accepts

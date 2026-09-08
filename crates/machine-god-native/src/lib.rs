@@ -112,6 +112,7 @@ mod model_selection;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod native_tool_result_archive;
 mod open_file;
+mod permission_patterns;
 #[cfg(target_os = "macos")]
 mod process_inventory_helper;
 #[cfg(target_os = "macos")]
@@ -389,6 +390,12 @@ pub use model_preferences::{
 };
 pub use model_selection::{
     MAX_NATIVE_MODEL_QUERY_BYTES, NativeModelSelectionError, resolve_model_query,
+};
+pub use permission_patterns::{
+    MAX_CONFIGURED_PERMISSION_MATCH_STEPS, MAX_CONFIGURED_PERMISSION_TARGET_BYTES,
+    NativeConfiguredPermissionDecision, NativeConfiguredPermissionError,
+    NativeConfiguredPermissionRule, NativeConfiguredPermissionRules, NativePermissionTargetKind,
+    NativePreparedPermissionTarget,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[doc(hidden)]

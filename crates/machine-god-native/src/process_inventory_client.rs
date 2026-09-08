@@ -206,29 +206,7 @@ impl Service {
             output,
             child,
         };
-        let mut handshake = [0; 8];
-        let mut startup_output = StartupOutput {
-            output: &mut ready.output,
-            stop,
-            #[cfg(test)]
-            observations: (0, 0, 0),
-        };
-        let gate = read_gate(&mut startup_output, &mut handshake, deadline, cancellation)
-            .or_else(|error| check_startup(deadline, cancellation, stop).and(Err(error)));
-        #[cfg(test)]
-        if let Err(error) = &gate {
-            eprintln!(
-                "inventory startup: stage=ready error={error:?} bytes={} would_block={} interrupted={} elapsed={:?}",
-                startup_output.observations.0,
-                startup_output.observations.1,
-                startup_output.observations.2,
-                spawn_started.elapsed()
-            );
-        }
-        gate?;
-        if handshake != wire::READY {
-            return Err(failure(TerminalHelperErrorKind::Protocol));
-        }
+        read_startup_ready(&mut ready.output, deadline, cancellation, stop)?;
         check_startup(deadline, cancellation, stop)?;
         if ready
             .child
@@ -241,6 +219,40 @@ impl Service {
         state.next_sequence = 1;
         Ok(())
     }
+}
+
+fn read_startup_ready(
+    output: &mut ChildStdout,
+    deadline: Instant,
+    cancellation: &CancellationToken,
+    stop: &[&CancellationToken],
+) -> Result<()> {
+    #[cfg(test)]
+    let read_started = Instant::now();
+    let mut handshake = [0; 8];
+    let mut startup_output = StartupOutput {
+        output,
+        stop,
+        #[cfg(test)]
+        observations: (0, 0, 0),
+    };
+    let gate = read_gate(&mut startup_output, &mut handshake, deadline, cancellation)
+        .or_else(|error| check_startup(deadline, cancellation, stop).and(Err(error)));
+    #[cfg(test)]
+    if let Err(error) = &gate {
+        eprintln!(
+            "inventory startup: stage=ready error={error:?} bytes={} would_block={} interrupted={} read_elapsed={:?}",
+            startup_output.observations.0,
+            startup_output.observations.1,
+            startup_output.observations.2,
+            read_started.elapsed()
+        );
+    }
+    gate?;
+    if handshake != wire::READY {
+        return Err(failure(TerminalHelperErrorKind::Protocol));
+    }
+    Ok(())
 }
 
 impl InventoryLease {
