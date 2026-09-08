@@ -240,10 +240,36 @@ eight private and eight composed owner tests, plus 15 native byte-input tests.
 The bounded CLI framer passes 11 standalone tests and pinned Clippy. One-shot
 host acquisition now accepts explicit prompt adapters through a shared setup
 path. These are component checks, not final feature gates. Human-prompt bridging,
-flag-preserving ordinary stdin acquisition and the actual CLI driver remain open.
+the actual CLI driver and complete command surface were still open at that checkpoint.
 The shared setup integration passes 153 CLI unit tests with five helper ignores,
 89 command tests and ten replay/frame tests. Workspace Clippy passes after a
 test-only naming correction; no persistence or timing contract was weakened.
+
+The following integration adds the contextual human-prompt bridge, flag-preserving
+shared stdin and owned native controls. Combined native checks pass 17 bridge,
+32 input (three private helper ignores) and 22 owner/control tests. Cancellation
+waits for an accepted rule save before cancelling the real turn; queued input
+and session identity survive. A freshly built release CLI implements the private
+input helper and passes all four real-helper integration tests with all features
+and all four without default features, with no skips. The two original prompt/input
+trees, control tree and production-helper test tree are removed after integration;
+commits remain recoverable. Bare/latest/exact interactive CLI composition and its
+native-free final-output phase pass 33 focused assembled CLI tests. The driver
+and command trees are also integrated and removed; these component results do
+not close the full feature or its final local, review and remote gates.
+The assembled CLI passes all 186 unit tests with five private-helper ignores,
+90 command integration tests and ten replay tests. Workspace all-target,
+all-feature warnings-denied Clippy, formatting and bounded documentation checks
+pass. A new exact-checkpoint release build and raw-terminal composition remain
+next; the earlier release-helper evidence is not a full interactive CLI gate.
+
+Pinned input inspection requires both startup descriptors to be TTYs before
+configuration/session effects. Ctrl-D requires owned raw terminal settings and
+a cursor-aware composer: it exits only when empty/idle, deletes forward in a
+draft and does not exit while streaming. Actual EOF/hangup is a separate abnormal
+closure. Complete that frontend and historical resume replay; canonical line
+framing alone does not satisfy these scenarios. Pinned headless ask also accepts
+whole piped input through EOF; retain that remaining scenario in the full CLI gate.
 
 The integrated preparer passes all five real file mutations, actual reviewer
 Allow/Ask/error and cancellation, read-grant/reset, canonical terminal identity,

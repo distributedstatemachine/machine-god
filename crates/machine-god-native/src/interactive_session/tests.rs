@@ -13,6 +13,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 mod support;
 use support::Fixture;
 
+#[path = "controls/tests.rs"]
+mod controls;
+
 #[derive(Default)]
 struct Gate {
     ready: AtomicBool,

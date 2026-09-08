@@ -11,7 +11,7 @@ Current delivery state and gate evidence are maintained only in the
 
 ## Global behavior
 
-- With no arguments, `machine-god` prints its identity line.
+- With no arguments, `machine-god` opens a fresh interactive session on Linux/macOS.
 - A first argument of `help`, `--help`, or `-h` prints the same help text and
   preempts every following argument and effect.
 - `--version` and `-V` print the identity line.
@@ -31,11 +31,16 @@ normal command parsing and help. PTY/startup-marker protocol failures exit
 `125` without rendering protocol data; a successful startup marker exits `0`.
 Additional arguments do not activate a helper.
 
+Interactive stdin uses the [native input adapter](interactive-input.md), including
+the exact private input-helper dispatch before configuration or signal setup.
+Ordinary shared TTY/pipe input never authorizes changing the shell's status flags.
+
 ## Commands
 
 | Command | Purpose | Contract |
 | --- | --- | --- |
 | `help` | Show command help | This page |
+| No arguments | Start a fresh interactive session | This page |
 | `ask [--] <prompt...>` | Run one noninteractive request | [ask](ask-cli.md) |
 | `background [last\|<id>] [--json]` | Inspect bounded persisted background history | [background](background-cli.md) |
 | `doctor [--json]` | Run bounded local health checks | [doctor](doctor-cli.md) |
@@ -43,6 +48,7 @@ Additional arguments do not activate a helper.
 | `permissions [--json]` | Report configured permission mode | [permissions](permissions-cli.md) |
 | `replay <tape> [options]` | Replay an FXTP terminal tape | [replay](replay-cli.md) |
 | `resume <id> [--] <prompt...>` | Continue one saved session with one prompt | [resume](resume-cli.md) |
+| `resume [last\|<id>]` | Resume latest or an exact saved session interactively | This page |
 | `session <id> [--json]` | Inspect one saved session summary | [session](session-cli.md) |
 | `sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json]` | Page rich saved-session summaries for the current workspace or all workspaces | [sessions](sessions-cli.md) |
 | `status [--json]` | Report the effective local runtime snapshot | This page |
@@ -69,10 +75,59 @@ the exact ones in the command table above and the command-specific contracts.
 The three aliases produce byte-identical output.
 
 Pinned fx has a broader command catalog, terminal-sensitive ANSI styling,
-adaptive `COLUMNS` wrapping, interactive bare invocation, additional global
+adaptive `COLUMNS` wrapping, additional global
 flags, examples, and resources. Those presentation and product-surface details
 are intentional scenario differences. This slice makes no byte-equivalence or
 complete-fx-help claim.
+
+## Interactive ownership
+
+Bare startup creates a fresh native session; `resume` and `resume last` select
+latest through the validated native catalog, while `resume <id>` selects that
+exact record. Interactive startup sends no fabricated initial prompt. It retains
+one complete host, credential and completed model-catalog cache across turns.
+The catalog can fall back without inventing model capabilities. The noninteractive
+`ask` and prompt-bearing `resume` paths retain their separate contracts.
+Both stdin and stdout must be TTYs for production interactive startup; failure
+exits `1` with a fixed diagnostic before configuration, credentials or sessions
+are acquired. The explicitly supplied native pipe adapter is not permission to
+treat piped bare input as an upstream-compatible interactive prompt.
+
+Input is LF/CRLF-framed, with a 256 KiB UTF-8 line bound. Invalid or oversized
+lines produce one fixed error and drain to the next line boundary. One input
+reader serves prompts and commands. Permission choices distinguish once, turn,
+session and deny; session permission is not saved-rule confirmation. Ordinary
+questions present ordered numbered options plus `other <answer>` and cancellation.
+Answers require the exact native prompt token and acknowledged question page.
+Already-received chunks and partial lines retain their original binding; they
+cannot be retargeted to a replacement prompt or next question page. This does
+not claim timestamps or provenance for unread bytes still in the kernel.
+
+Native session ownership drives admitted turns, accepted saves, transitions and
+shutdown independently of stdout acknowledgements. Typed save and lifecycle
+receipts stay separate from disposable streaming text. Session retirement is
+not full-host cleanup: the CLI drops native ownership and joins actual input and
+terminal workers before waiting for final presentation. Signals during acquired
+host startup or active work latch until cleanup; post-cleanup output retains the
+existing signal-exit behavior. The CLI never treats a save error as rollback or
+automatically repeats an uncertain operation.
+
+The complete slash-command, picker, workspace and policy feature remains governed
+by the implementation plan; command names in the native catalog alone do not
+establish CLI support. `/help` describes the handlers actually wired in this host.
+
+The wired handlers include `/help`, `/status`, `/version`, `/quit` (`/exit`),
+`/cancel`, `/clear`, `/new`, `/reset`, argumentless `/resume` (latest), `/continue`,
+`/rename <title>` and `/compact`. Policy selection uses
+`/permissions [ask|auto|yolo|reset]` and `/sandbox [os|none]`. Model controls are
+`/models`, `/model [id-or-query|effort <name>|save|save-default]` and `/fast`.
+Model/effort/fast changes request native session and explicitly injected
+user-default saves; their independent receipts distinguish accepted, deferred,
+saved and failed targets. Without injected defaults authority only the session
+target is available; `save-default` never discovers an ambient store.
+Ordinary prompts retain their 256 KiB bound independently of the 64 KiB slash
+envelope. `/cancel` requests owned turn cancellation without replacing its
+session or discarding untaken prompts; an accepted save settles first.
 
 ## Identity
 

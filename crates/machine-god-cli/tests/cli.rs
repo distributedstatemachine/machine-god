@@ -61,6 +61,7 @@ const HELP: &str = concat!(
     "  machine-god models [--json]\n",
     "  machine-god permissions [--json]\n",
     "  machine-god replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>]\n",
+    "  machine-god resume [last | <id>]\n",
     "  machine-god resume <id> [--] <prompt...>\n",
     "  machine-god session <id> [--json]\n",
     "  machine-god sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json]\n",
@@ -75,7 +76,7 @@ const HELP: &str = concat!(
     "  models       List available models\n",
     "  permissions  Show the permission mode and rules\n",
     "  replay       Replay a recorded terminal session\n",
-    "  resume       Resume a saved session with one prompt\n",
+    "  resume       Resume interactively or with one prompt\n",
     "  session      Inspect a saved session\n",
     "  sessions     List saved sessions\n",
     "  status       Show configuration and runtime information\n",
@@ -108,7 +109,7 @@ const STATUS_MISSING_AUTH_HELP: &str = concat!(
 );
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list] [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | resume [last | <id>] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list] [--json]]\n",
 );
 const CONFIG_FAILURE: &str = "machine-god: failed to load configuration\n";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -919,8 +920,39 @@ fn assert_models_unavailable(output: &Output, json: bool) {
 
 #[test]
 fn identity_and_version_aliases_are_byte_stable() {
-    for arguments in [&[][..], &["--version"][..], &["-V"][..]] {
+    for arguments in [&["--version"][..], &["-V"][..]] {
         assert_success(&run(arguments), IDENTITY);
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn interactive_startup_requires_tty_before_configuration_or_session_effects() {
+    let temporary = TestDirectory::new("interactive-tty-admission");
+    let configuration = temporary.path().join("missing-config");
+    let state = temporary.path().join("missing-state");
+    for arguments in [
+        &[][..],
+        &["resume"][..],
+        &["resume", "last"][..],
+        &["resume", "alpha"][..],
+    ] {
+        let output = machine_god()
+            .args(arguments)
+            .env("XDG_CONFIG_HOME", &configuration)
+            .env("XDG_STATE_HOME", &state)
+            .env_remove("HOME")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert_eq!(
+            output.stderr,
+            b"machine-god requires an interactive terminal (TTY).\n"
+        );
+        assert!(!configuration.exists());
+        assert!(!state.exists());
     }
 }
 
@@ -1240,12 +1272,10 @@ fn malformed_arguments_have_one_diagnostic_and_exit_two() {
         &["permissions", "extra"][..],
         &["permissions", "--json", "extra"][..],
         &["permissions", "--json", "--json"][..],
-        &["resume"][..],
         &["resume", "last", "prompt"][..],
         &["resume", "--id", "alpha", "prompt"][..],
         &["resume", "--json", "prompt"][..],
         &["resume", "--flag", "prompt"][..],
-        &["resume", "alpha"][..],
         &["resume", "alpha", "--"][..],
         &["resume", "alpha", "--flag"][..],
         &["resume", "alpha", " \t\r\n"][..],
@@ -1345,12 +1375,10 @@ fn invalid_resume_grammar_precedes_configuration_state_credentials_and_stdin() {
     let state_root = temporary.path().join("missing-state");
 
     for arguments in [
-        &["resume"][..],
         &["resume", "last", "prompt"][..],
         &["resume", "--id", "alpha", "prompt"][..],
         &["resume", "--json", "prompt"][..],
         &["resume", "--flag", "prompt"][..],
-        &["resume", "alpha"][..],
         &["resume", "alpha", "--"][..],
         &["resume", "alpha", "--flag"][..],
         &["resume", "alpha", " \t\r\n"][..],

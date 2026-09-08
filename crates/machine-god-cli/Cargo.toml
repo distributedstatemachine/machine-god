@@ -19,6 +19,7 @@ harness = false
 futures-core.workspace = true
 machine-god-core.workspace = true
 machine-god-native.workspace = true
+serde_json.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 machine-god-native = { workspace = true, features = ["ai-gateway-model-catalog-http"] }
@@ -30,8 +31,9 @@ machine-god-native = { workspace = true, features = ["ai-gateway-http"] }
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 
-[dev-dependencies]
-serde_json.workspace = true
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
+futures-util = "0.3.32"
+sha2.workspace = true
 
 [lints]
 workspace = true

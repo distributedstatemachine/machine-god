@@ -817,9 +817,11 @@ name = "machine-god-cli"
 version = "0.1.0"
 dependencies = [
  "futures-core",
+ "futures-util",
  "machine-god-core",
  "machine-god-native",
  "serde_json",
+ "sha2",
  "tokio",
 ]
 

@@ -285,6 +285,16 @@ pub trait QuestionPrompter: Send + Sync + 'static {
         &self,
         request: QuestionPromptRequest,
     ) -> BoxFuture<'_, Result<QuestionPromptOutcome, QuestionPromptError>>;
+
+    /// Presents a question for its exact execution identity. Legacy hosts keep
+    /// their existing behavior; identity-bound interactive hosts override this.
+    fn prompt_with_context(
+        &self,
+        _context: ToolContext,
+        request: QuestionPromptRequest,
+    ) -> BoxFuture<'_, Result<QuestionPromptOutcome, QuestionPromptError>> {
+        self.prompt(request)
+    }
 }
 
 /// Fixed construction failure for an invalid active-prompt bound.
@@ -476,7 +486,7 @@ impl Tool for AskUserQuestionTool {
 
     fn execute(
         &self,
-        _context: ToolContext,
+        context: ToolContext,
         arguments: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
@@ -503,7 +513,8 @@ impl Tool for AskUserQuestionTool {
                 .collect();
             check_cancellation(&cancellation)?;
             let prompt = match catch_unwind(AssertUnwindSafe(|| {
-                self.prompter.prompt(normalized.request)
+                self.prompter
+                    .prompt_with_context(context, normalized.request)
             })) {
                 Ok(prompt) => prompt,
                 Err(payload) => {

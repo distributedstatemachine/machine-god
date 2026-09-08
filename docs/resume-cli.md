@@ -1,6 +1,6 @@
 # Explicit-session `resume` command
 
-`machine-god resume` continues one existing durable session with one bounded,
+Prompt-bearing `machine-god resume` continues one existing durable session with one bounded,
 noninteractive prompt. It exposes native conversation resume and runtime
 admission through the same streaming request path as [`ask`](ask-cli.md); it is
 not a session picker, interactive shell, replay, reset, migration, or recovery
@@ -8,7 +8,7 @@ command.
 
 ## Grammar
 
-The only accepted form is:
+The noninteractive form is:
 
 ```text
 machine-god resume <id> [--] <prompt...>
@@ -18,24 +18,26 @@ machine-god resume <id> [--] <prompt...>
 digits, `-`, `_`, `.`, or `:`, and with a first byte other than `-`. The core
 `SessionId` alphabet itself remains unchanged; rejecting a command-position ID
 that begins with `-` is an intentional CLI parser tightening because that token
-is option-like. The exact token `last` is also reserved for possible future
-selection behavior and cannot name a resume target. One or more Unicode prompt
+is option-like. The exact token `last` is reserved for
+interactive latest selection and cannot name an exact resume target. One or more Unicode prompt
 arguments follow the ID and are joined with one ASCII space into exactly one
 prompt. A single `--` after the ID ends option recognition and permits the first
 prompt part to begin with `-`; it is not part of the prompt.
 
 The joined prompt must contain at least one byte other than space, tab, CR, or
 LF, contain no NUL byte, and contain at most 256 KiB of UTF-8. Join accounting
-is checked before allocation. Missing or invalid IDs, missing or blank prompts,
+is checked before allocation. Invalid IDs or explicitly supplied blank prompts,
 non-Unicode input, oversized prompts, misplaced delimiters, extra-invalid
 arguments, and unsupported options use the global invalid-arguments diagnostic
 and exit `2`.
 
 Grammar and prompt validation complete before configuration, current-directory,
 state-root, credential, runtime, session-store, or network effects. Standard
-input is never read. There is no implicit `last` session, picker, alias,
+input is never read by this prompt-bearing form. There is no picker, alias,
 `--resume`, `--resume-last`, `--continue`, short flag, JSON form, or interactive
-mode in this slice.
+mode in this prompt-bearing form. Separately, `resume`, `resume last`, and
+`resume <id>` with no prompt start the [interactive host](cli.md#interactive-ownership)
+using validated latest/exact selection. No synthetic user prompt is added.
 
 ## Native composition and authority
 

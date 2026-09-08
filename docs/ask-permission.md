@@ -506,6 +506,48 @@ preparer's exact-turn cleanup hook runs outside controller locks after the
 registration is invalidated, allowing the file registry to retire unclaimed
 approvals without keeping the controller or core turn alive.
 
+## Owned interactive prompt bridge
+
+`NativeInteractivePromptBridge` supplies shared permission and contextual
+question prompters plus one uniquely owned `NativeInteractivePromptInbox`.
+It acquires no input, output, thread, task, timer, environment, or session
+authority. The host routes its existing input owner to this inbox.
+
+The inbox explicitly activates an exact session/incarnation. Every activation
+advances a checked scope generation, including reactivation of the same owner.
+Prompt construction only observes that scope; first polling performs bounded
+validation and FIFO admission. An old unpolled future cannot inherit a new
+binding. Tokens combine the scope, a checked request generation, and inert
+bridge identity. Requests retain exact permission request/turn identities or
+the actual question `ToolContext`; reused call IDs cannot revive old tokens.
+
+One prompt is displayed at a time. Polling returns its same token until
+answered, cancelled, or dropped; empty observations do not self-wake. Replies
+must match the displayed unanswered token and response type. All four permission
+choices are preserved. Explicit cancellation returns Deny for permissions and
+Cancelled for ordinary questions. AllowSession is an in-memory grant, not a
+saved rule; saved-rule management keeps the separate confirmed controller API.
+
+Limits allow one through eight outstanding entries and one through 67,108,864
+aggregate request payload bytes; defaults are eight and 8,388,608. Replied but
+unconsumed entries still count. Permission size uses bounded compact
+serialization after depth-64/node-65,536 JSON validation; question size counts
+normalized presentation and identity UTF-8 bytes. Bounded entry/question/option
+counts cover structural overhead. Question responses independently retain the
+existing 4,096-byte aggregate raw-answer bound per outstanding request. No input
+is truncated. Payloads are not cloned during admission or included in debug or
+error text; rejected and unpolled permission JSON is dropped iteratively.
+Immutable views retain bounded payloads but no admission or grant; caller-held
+views are outside outstanding-entry accounting.
+
+Future drop removes only its exact registration. `deactivate` retires the scope
+while allowing later activation; close and inbox drop permanently close it.
+Queued, displayed, and already-replied entries are invalidated on retirement.
+Ready responses are checked again after cleanup callbacks. Waker clone, wake,
+drop, and payload cleanup run outside state locks. Hosts must pin input framing
+to the displayed token and discard obsolete fragments instead of applying them
+to a replacement prompt after a transition.
+
 ## Saved exact-action rule values
 
 `NativeSessionPermissionRules` is the pure schema-1 value codec for

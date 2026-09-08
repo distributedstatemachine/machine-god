@@ -19,6 +19,7 @@ pub(crate) enum AskCommandOutcome {
     Completed,
     OperationalFailure,
     OutputFailure,
+    TerminalRequired,
     Interrupted,
     Terminated,
 }
@@ -29,11 +30,18 @@ pub(crate) enum SessionSelection {
     Resume(SessionId),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum InteractiveSessionSelection {
+    Fresh,
+    Latest,
+    Exact(SessionId),
+}
+
 impl AskCommandOutcome {
     const fn exit_code(self) -> u8 {
         match self {
             Self::Completed => 0,
-            Self::OperationalFailure | Self::OutputFailure => 1,
+            Self::OperationalFailure | Self::OutputFailure | Self::TerminalRequired => 1,
             Self::Interrupted => 130,
             Self::Terminated => 143,
         }
@@ -41,6 +49,14 @@ impl AskCommandOutcome {
 }
 
 pub(crate) trait AskCommandHost {
+    fn execute_interactive(
+        &self,
+        _selection: InteractiveSessionSelection,
+        _output: &mut dyn io::Write,
+    ) -> AskCommandExecution {
+        AskCommandExecution::without_finalizer(AskCommandOutcome::OperationalFailure)
+    }
+
     fn execute(
         &self,
         selection: SessionSelection,
@@ -189,6 +205,33 @@ fn run_prompt(
     let outcome = execution.outcome();
     let diagnostic = match outcome {
         AskCommandOutcome::OperationalFailure => Some(operational_failure),
+        AskCommandOutcome::TerminalRequired => {
+            Some("machine-god requires an interactive terminal (TTY).\n")
+        }
+        AskCommandOutcome::OutputFailure => Some(output_failure),
+        AskCommandOutcome::Completed
+        | AskCommandOutcome::Interrupted
+        | AskCommandOutcome::Terminated => None,
+    };
+    if let Some(diagnostic) = diagnostic {
+        let _ = stderr.write_all(diagnostic.as_bytes());
+    }
+    execution.finish()
+}
+
+pub(crate) fn run_interactive(
+    host: &impl AskCommandHost,
+    selection: InteractiveSessionSelection,
+    stdout: &mut impl io::Write,
+    stderr: &mut impl io::Write,
+    output_failure: &'static str,
+) -> u8 {
+    let execution = host.execute_interactive(selection, stdout);
+    let diagnostic = match execution.outcome() {
+        AskCommandOutcome::OperationalFailure => Some("machine-god: interactive request failed\n"),
+        AskCommandOutcome::TerminalRequired => {
+            Some("machine-god requires an interactive terminal (TTY).\n")
+        }
         AskCommandOutcome::OutputFailure => Some(output_failure),
         AskCommandOutcome::Completed
         | AskCommandOutcome::Interrupted
@@ -202,6 +245,7 @@ fn run_prompt(
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod production {
+    mod interactive;
     use std::future::{Future, poll_fn};
     use std::pin::Pin;
     use std::sync::{Arc, mpsc};
@@ -866,6 +910,30 @@ mod production {
     }
 
     impl AskCommandHost for ProductionAskCommandHost {
+        fn execute_interactive(
+            &self,
+            selection: super::InteractiveSessionSelection,
+            output: &mut dyn std::io::Write,
+        ) -> AskCommandExecution {
+            use std::io::IsTerminal;
+            if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+                return AskCommandExecution::without_finalizer(AskCommandOutcome::TerminalRequired);
+            }
+            let Ok(controller) = AskSignalController::spawn() else {
+                return AskCommandExecution::without_finalizer(
+                    AskCommandOutcome::OperationalFailure,
+                );
+            };
+            if !controller.registration_complete() {
+                let _ = controller.enter_final();
+                return AskCommandExecution::with_finalizer(
+                    AskCommandOutcome::OperationalFailure,
+                    controller,
+                );
+            }
+            let (outcome, controller) = interactive::execute(selection, output, controller);
+            AskCommandExecution::with_finalizer(outcome, controller)
+        }
         fn execute(
             &self,
             selection: SessionSelection,
@@ -914,6 +982,7 @@ mod production {
                             observations,
                             catalog,
                             catalog_cache: _catalog_cache,
+                            user_config: _user_config,
                         } = prepare_conversation_host(
                             Arc::new(DenyPermissionPrompter),
                             Arc::new(UnavailableQuestionPrompter),
@@ -960,6 +1029,7 @@ mod production {
         observations: Arc<NativeConversationObservations>,
         catalog: Option<Arc<NativeModelCatalog>>,
         catalog_cache: Arc<NativeModelCatalogCache>,
+        user_config: Option<Arc<machine_god_native::NativeUserConfigStore>>,
     }
 
     /// Shared CLI acquisition order for one-shot and long-lived conversation
@@ -969,7 +1039,23 @@ mod production {
         permission_prompter: Arc<dyn PermissionPrompter>,
         question_prompter: Arc<dyn QuestionPrompter>,
     ) -> Result<PreparedConversationHost, ()> {
+        prepare_conversation_host_with_activation(permission_prompter, question_prompter, || Ok(()))
+    }
+
+    fn prepare_conversation_host_with_activation(
+        permission_prompter: Arc<dyn PermissionPrompter>,
+        question_prompter: Arc<dyn QuestionPrompter>,
+        before_host: impl FnOnce() -> Result<(), ()>,
+    ) -> Result<PreparedConversationHost, ()> {
         let environment = NativeEnvironment::from_process();
+        let user_config = machine_god_native::inspect_native_status(&environment)
+            .config_file_path()
+            .and_then(std::path::Path::parent)
+            .map(|directory| {
+                Arc::new(machine_god_native::NativeUserConfigStore::new(
+                    directory.to_owned(),
+                ))
+            });
         let loaded_config = load_native_config(&environment).map_err(|_| ())?;
         let root_selection =
             NativeRootSelection::from_current_process(&environment).map_err(|_| ())?;
@@ -1000,6 +1086,7 @@ mod production {
             .with_model_routes(model_routes.clone())
             .with_observations(Arc::clone(&observations))
             .with_permissions(capture_permission_options());
+        before_host()?;
         let host =
             NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots_and_conversation_and_credential(
                 loaded_config,
@@ -1019,6 +1106,7 @@ mod production {
             observations,
             catalog,
             catalog_cache: cache,
+            user_config,
         })
     }
 

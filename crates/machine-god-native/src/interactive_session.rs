@@ -15,6 +15,11 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
+mod controls;
+pub use controls::{
+    NativeInteractiveControl, NativeInteractiveControlError, NativeInteractiveControlId,
+    NativeInteractiveControlOutcome, NativeInteractiveControlReceipt,
+};
 mod driver;
 #[cfg(test)]
 mod tests;
@@ -110,6 +115,8 @@ pub enum NativeInteractiveError {
     Busy,
     Closed,
     IdentityExhausted,
+    /// Exact control error or partial-target receipt is retained separately.
+    ControlFailed,
     Runtime(NativeConversationRuntimeError),
     Conversation(NativeConversationError),
     Resume(NativeSessionResumeError),
@@ -200,6 +207,10 @@ pub struct NativeInteractiveSession {
     next_request: u64,
     presentation: Option<EngineEvent>,
     outcome: Option<NativeInteractiveOutcome>,
+    control: Option<controls::OwnedControl>,
+    control_outcome: Option<NativeInteractiveControlOutcome>,
+    next_control: u64,
+    cancel_requested: bool,
     shutting_down: bool,
     closed: bool,
     shutdown_error: Option<NativeInteractiveError>,
@@ -270,6 +281,10 @@ impl NativeInteractiveSession {
                 next_request: 1,
                 presentation: None,
                 outcome: None,
+                control: None,
+                control_outcome: None,
+                next_control: 1,
+                cancel_requested: false,
                 shutting_down: false,
                 closed: false,
                 shutdown_error: None,
@@ -309,6 +324,13 @@ impl NativeInteractiveSession {
         if self.is_fenced() {
             return Err(NativeInteractiveError::Busy);
         }
+        if self
+            .control_outcome
+            .as_ref()
+            .is_some_and(NativeInteractiveControlOutcome::failed)
+        {
+            return Err(NativeInteractiveError::ControlFailed);
+        }
         let id = NativeInteractiveRequestId(self.next_request);
         self.next_request = self
             .next_request
@@ -330,6 +352,18 @@ impl NativeInteractiveSession {
         self.pending.take();
         self.presentation.take();
         self.notify();
+    }
+    /// Requests cancellation of the owned admission/current turn without
+    /// replacing the session or discarding queued input. Accepted publications
+    /// settle first; cancellation never drops their metadata editor.
+    /// Returns acceptance, not a settled turn or persistence receipt.
+    pub fn request_cancel(&mut self) -> bool {
+        if self.closed || self.shutting_down || (self.admission.is_none() && self.turn.is_none()) {
+            return false;
+        }
+        self.cancel_requested = true;
+        self.notify();
+        true
     }
     #[must_use]
     pub fn take_presentation(&mut self) -> Option<EngineEvent> {

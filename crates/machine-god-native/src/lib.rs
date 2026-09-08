@@ -100,8 +100,16 @@ mod conversation_runtime;
 mod interactive_input;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use interactive_input::{
-    NATIVE_INTERACTIVE_INPUT_CHUNK_BYTES, NativeInteractiveInput, NativeInteractiveInputChunk,
-    NativeInteractiveInputError, NativeInteractiveInputSource,
+    INTERACTIVE_INPUT_HELPER_ARGUMENT, NATIVE_INTERACTIVE_INPUT_CHUNK_BYTES,
+    NativeInteractiveInput, NativeInteractiveInputChunk, NativeInteractiveInputError,
+    NativeInteractiveInputHelper, NativeInteractiveInputSource, run_interactive_input_helper,
+};
+mod interactive_prompts;
+pub use interactive_prompts::{
+    MAX_NATIVE_INTERACTIVE_PROMPT_PAYLOAD_BYTES, MAX_NATIVE_INTERACTIVE_PROMPTS,
+    NativeInteractivePromptBridge, NativeInteractivePromptError, NativeInteractivePromptInbox,
+    NativeInteractivePromptLimits, NativeInteractivePromptResponse, NativeInteractivePromptScope,
+    NativeInteractivePromptToken, NativeInteractivePromptView,
 };
 mod copy_file;
 mod create_folder;
@@ -199,10 +207,11 @@ mod reference_host;
     any(target_os = "linux", target_os = "macos")
 ))]
 pub use interactive_session::{
-    NativeInteractiveError, NativeInteractiveInitialSession, NativeInteractiveOutcome,
-    NativeInteractiveRequestId, NativeInteractiveRequestReceipt, NativeInteractiveSession,
-    NativeInteractiveSessionOptions, NativeInteractiveTransition,
-    NativeInteractiveTransitionReceipt,
+    NativeInteractiveControl, NativeInteractiveControlError, NativeInteractiveControlId,
+    NativeInteractiveControlOutcome, NativeInteractiveControlReceipt, NativeInteractiveError,
+    NativeInteractiveInitialSession, NativeInteractiveOutcome, NativeInteractiveRequestId,
+    NativeInteractiveRequestReceipt, NativeInteractiveSession, NativeInteractiveSessionOptions,
+    NativeInteractiveTransition, NativeInteractiveTransitionReceipt,
 };
 mod rename_file;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

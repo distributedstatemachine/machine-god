@@ -195,6 +195,49 @@ shutdown from `is_closed`. The caller then drops the owner and its actual host
 handles once, using the host's existing completion observer. Dropping the owner
 without shutdown is abandonment, not a cleanup or persistence receipt.
 
+The interactive owner also retains one explicitly requested durable control and
+one independent `take_control_outcome` receipt. Rename, compact, session model
+save, session-plus-user-default model save and explicitly confirmed permission
+rule changes call the existing runtime/controller operations on the captured
+exact runtime. They remain inert until progress polls them. Rename retains only
+the existing validated, trimmed 240-byte title. Continue instead performs the
+existing bounded synchronous empty-queue/checkpoint admission and immediately
+returns a queued-job receipt; it does not claim provider work or persistence.
+Control IDs are checked before queue mutation and never wrap.
+
+Accepted controls settle before quiescence, cancellation or advancement of an
+actual turn. In particular, an active-turn permission editor remains live until
+its confirmed save settles; a later transition or shutdown cannot invalidate it
+by closing the turn first. The owner does not reopen a deactivated human prompt
+or infer confirmation from a proposal. Input/presentation wait cancellation must
+not be connected to an already explicitly confirmed control's publication.
+
+The independent control lane progresses even with occupied presentation. Its
+unread receipt blocks new queued-prompt admission, not transition/finalizer or
+shutdown progress. New controls require both the prior control receipt and prior
+lifecycle outcome to be consumed, and are rejected while switching/shutting down.
+An accepted save is retained through dropped outer polling wrappers. It is not
+superseded by a newer transition. Failure or partial model-target failure rejects
+the latest pending transition before undo reservation or terminal effects; the
+exact control receipt and rejected-transition outcome remain separate. A failed
+unread control receipt also rejects later transition requests. Shutdown still
+settles native work and preserves that receipt without claiming rollback.
+
+`set_model_preferences` on the interactive owner is a synchronous selection
+change returning an accepted generation, not a persistence receipt. It shares
+control admission checks. Session save outcomes preserve `Unchanged`, `Deferred`
+and `Saved`; composite model saves preserve both independent target results.
+Failed or uncertain publications are never retried automatically or described as
+unsaved merely because the caller received an error. Direct retained runtime
+aliases retain their separate runtime contract until actual quiescence begins.
+
+`request_cancel` retains cancellation of the currently owned admission/turn;
+it does not replace the session or discard untaken queued input. An already
+accepted control finishes first, preserving its active-turn metadata editor.
+The owner then cancels the actual turn handle and drains its finalization even
+with occupied presentation. Acceptance is not a settled cancellation receipt;
+the ordinary typed turn outcome remains authoritative.
+
 ### Runtime controls and persistence
 
 Runtime `rename`, `compact`, and `set_max_history_turns` expose the conversation's

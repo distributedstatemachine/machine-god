@@ -16,6 +16,11 @@ const MAX_PROGRESS_STEPS: usize = 32;
 impl NativeInteractiveSession {
     pub(super) fn drive(&mut self, cx: &mut Context<'_>, now_ms: i64) -> Poll<()> {
         self.wake = Some(cx.waker().clone());
+        // Finish accepted saves before closing admission or the actual turn's
+        // metadata editor. This lane never waits for presentation consumption.
+        if self.poll_control(cx).is_pending() {
+            return self.readiness();
+        }
         for _ in 0..MAX_PROGRESS_STEPS {
             if self.closed
                 || self.shutdown_error.is_some()
@@ -26,9 +31,14 @@ impl NativeInteractiveSession {
             if !self.begin_requested_transition(now_ms) {
                 return Poll::Ready(());
             }
-            let draining = self.transition.is_some() || self.shutting_down;
+            let draining = self.transition.is_some() || self.shutting_down || self.cancel_requested;
             if draining {
                 self.presentation.take();
+            }
+            // The progress budget may have retained an admission before its
+            // first poll. An unread control receipt must not let it take a job.
+            if !draining && self.control_outcome.is_some() && !self.current.status().active {
+                return Poll::Ready(());
             }
             if let Some(admission) = &mut self.admission {
                 match admission.as_mut().poll(cx) {
@@ -45,6 +55,7 @@ impl NativeInteractiveSession {
                     }
                 }
             }
+            self.dispatch_requested_cancel();
             if let Some(turn) = &mut self.turn {
                 if !draining && self.presentation.is_some() {
                     return Poll::Ready(());
@@ -57,6 +68,7 @@ impl NativeInteractiveSession {
                             TurnEvent::Completed { .. } | TurnEvent::Failed { .. }
                         ) {
                             self.turn.take();
+                            self.cancel_requested = false;
                             if let Some(transition) = &mut self.transition {
                                 transition.terminal = Some(event);
                             } else {
@@ -83,6 +95,7 @@ impl NativeInteractiveSession {
                 }
                 continue;
             }
+            self.cancel_requested = false;
             if let Some(transition) = self.transition.take() {
                 if self.drive_transition(transition, cx).is_pending() {
                     return self.readiness();
@@ -90,6 +103,9 @@ impl NativeInteractiveSession {
                 continue;
             }
             if self.presentation.is_some() {
+                return Poll::Ready(());
+            }
+            if self.control_outcome.is_some() {
                 return Poll::Ready(());
             }
             if self.current.status().queued_jobs == 0 {
@@ -135,8 +151,19 @@ impl NativeInteractiveSession {
         }
         true
     }
+    fn dispatch_requested_cancel(&self) {
+        if self.cancel_requested
+            && let Some(handle) = self
+                .turn
+                .as_ref()
+                .and_then(crate::NativeConversationRuntimeTurn::handle)
+        {
+            let _ = handle.cancel();
+        }
+    }
     fn readiness(&self) -> Poll<()> {
         if self.outcome.is_some()
+            || self.control_outcome.is_some()
             || self.presentation.is_some()
             || self.closed
             || self.shutdown_error.is_some()
@@ -147,6 +174,7 @@ impl NativeInteractiveSession {
         }
     }
     fn fail_turn(&mut self, error: NativeInteractiveError) {
+        self.cancel_requested = false;
         if let Some(mut transition) = self.transition.take() {
             let request = self
                 .pending

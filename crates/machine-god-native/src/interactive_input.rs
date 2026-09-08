@@ -11,6 +11,11 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
+mod shared_input;
+pub use shared_input::{
+    INTERACTIVE_INPUT_HELPER_ARGUMENT, NativeInteractiveInputHelper, run_interactive_input_helper,
+};
+
 /// Maximum bytes in one input chunk. No line or UTF-8 framing is performed.
 pub const NATIVE_INTERACTIVE_INPUT_CHUNK_BYTES: usize = 4096;
 const WAIT_INTERVAL: Duration = Duration::from_millis(25);
@@ -28,6 +33,13 @@ pub enum NativeInteractiveInputSource {
     /// description, including every duplicated alias. Never restore flags.
     /// This is not automatically suitable for a caller's or shell's stdin.
     AdoptNonblockingStatus(File),
+    /// Preserve inherited status flags: reopen a verified TTY independently,
+    /// or use an explicitly owned helper for a blocking pipe. Acquisition and
+    /// helper admission occur only on the first input poll.
+    PreserveShared {
+        input: File,
+        helper: NativeInteractiveInputHelper,
+    },
 }
 
 impl fmt::Debug for NativeInteractiveInputSource {
@@ -36,6 +48,7 @@ impl fmt::Debug for NativeInteractiveInputSource {
             Self::Disabled => "Disabled",
             Self::PreserveNonblocking(_) => "PreserveNonblocking(..)",
             Self::AdoptNonblockingStatus(_) => "AdoptNonblockingStatus(..)",
+            Self::PreserveShared { .. } => "PreserveShared(..)",
         })
     }
 }
@@ -98,6 +111,40 @@ struct Shared {
     host_stop: CancellationToken,
 }
 impl Shared {
+    fn wait_for_demand(&self) -> Outcome {
+        loop {
+            if self.cancelled() {
+                return Err(NativeInteractiveInputError::Cancelled);
+            }
+            if self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .demand
+            {
+                return Ok(());
+            }
+            self.pause();
+        }
+    }
+
+    fn publish_chunk(&self, chunk: NativeInteractiveInputChunk) -> Outcome {
+        let waker = {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if self.cancelled() {
+                return Err(NativeInteractiveInputError::Cancelled);
+            }
+            state.chunk = Some(chunk);
+            state.demand = false;
+            state.waker.take()
+        };
+        wake(waker);
+        Ok(())
+    }
+
     fn cancelled(&self) -> bool {
         self.stopped.load(Ordering::Acquire) || self.host_stop.is_cancelled()
     }
@@ -296,7 +343,8 @@ fn prepare(
     source: NativeInteractiveInputSource,
 ) -> Result<PreparedDescriptor, NativeInteractiveInputError> {
     let (file, adopt) = match source {
-        NativeInteractiveInputSource::Disabled => {
+        NativeInteractiveInputSource::Disabled
+        | NativeInteractiveInputSource::PreserveShared { .. } => {
             return Err(NativeInteractiveInputError::InvalidDescriptor);
         }
         NativeInteractiveInputSource::PreserveNonblocking(file) => (file, false),
@@ -370,24 +418,24 @@ fn run_worker(source: NativeInteractiveInputSource, shared: &Shared, io: &impl I
     if shared.cancelled() {
         return Err(NativeInteractiveInputError::Cancelled);
     }
+    let source = match source {
+        NativeInteractiveInputSource::PreserveShared { input, helper } => {
+            match shared_input::acquire(input, helper, shared)? {
+                shared_input::AcquiredInput::Direct(file) => {
+                    NativeInteractiveInputSource::PreserveNonblocking(file)
+                }
+                shared_input::AcquiredInput::Helper(helper) => return helper.drive(shared),
+            }
+        }
+        source => source,
+    };
     let PreparedDescriptor {
         file,
         timed_tty,
         empty_read_is_idle,
     } = prepare(source)?;
     loop {
-        if shared.cancelled() {
-            return Err(NativeInteractiveInputError::Cancelled);
-        }
-        let demand = shared
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .demand;
-        if !demand {
-            shared.pause();
-            continue;
-        }
+        shared.wait_for_demand()?;
         if !timed_tty {
             match io.readable(&file) {
                 Ok(true) => {}
@@ -416,19 +464,7 @@ fn run_worker(source: NativeInteractiveInputSource, shared: &Shared, io: &impl I
             }
             Err(_) => return Err(NativeInteractiveInputError::Read),
         }
-        let waker = {
-            let mut state = shared
-                .state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if shared.cancelled() {
-                return Err(NativeInteractiveInputError::Cancelled);
-            }
-            state.chunk = Some(chunk);
-            state.demand = false;
-            state.waker.take()
-        };
-        wake(waker);
+        shared.publish_chunk(chunk)?;
     }
 }
 

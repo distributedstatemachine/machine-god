@@ -21,7 +21,10 @@ mod status;
 #[cfg(not(target_family = "wasm"))]
 use std::sync::Arc;
 
-use ask::{AskCommandHost, ProductionAskCommandHost, parse_prompt_arguments, run_ask, run_resume};
+use ask::{
+    AskCommandHost, InteractiveSessionSelection, ProductionAskCommandHost, parse_prompt_arguments,
+    run_ask, run_interactive, run_resume,
+};
 use background::{
     BackgroundCommandHost, ProductionBackgroundCommandHost, is_background_command, run_background,
 };
@@ -49,7 +52,7 @@ use status::{ProductionStatusCommandHost, StatusCommandHost, is_status_command, 
 
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list] [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | resume [last | <id>] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list] [--json]]\n",
 );
 const CONFIGURATION_FAILURE: &str = "machine-god: failed to load configuration\n";
 const DOCTOR_RENDER_FAILURE: &str = "machine-god doctor: could not render report\n";
@@ -183,15 +186,36 @@ impl std::fmt::Write for BoundedWorkspaceOutput {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Command {
     Identity,
+    Interactive {
+        selection: InteractiveSessionSelection,
+    },
     Help,
-    Ask { prompt: String },
-    Doctor { json: bool },
-    Models { json: bool },
-    Permissions { json: bool },
-    Resume { id: SessionId, prompt: String },
-    Session { id: SessionId, json: bool },
-    Sessions { options: SessionsOptions },
-    Workspace { json: bool },
+    Ask {
+        prompt: String,
+    },
+    Doctor {
+        json: bool,
+    },
+    Models {
+        json: bool,
+    },
+    Permissions {
+        json: bool,
+    },
+    Resume {
+        id: SessionId,
+        prompt: String,
+    },
+    Session {
+        id: SessionId,
+        json: bool,
+    },
+    Sessions {
+        options: SessionsOptions,
+    },
+    Workspace {
+        json: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1069,6 +1093,19 @@ fn classify_provider_error(error: &ProviderError) -> ModelsOperationalFailure {
 }
 
 fn main() -> ExitCode {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    if is_exact_helper_arguments(
+        env::args_os().skip(1),
+        machine_god_native::INTERACTIVE_INPUT_HELPER_ARGUMENT,
+    ) {
+        return ExitCode::from(
+            if machine_god_native::run_interactive_input_helper().is_ok() {
+                0
+            } else {
+                125
+            },
+        );
+    }
     #[cfg(target_os = "macos")]
     if is_exact_helper_arguments(
         env::args_os().skip(1),
@@ -1473,6 +1510,9 @@ fn run_with_hosts_and_status(
 
     let output = match command {
         Command::Identity => identity(),
+        Command::Interactive { selection } => {
+            return run_interactive(ask_host, selection, stdout, stderr, OUTPUT_FAILURE);
+        }
         Command::Help => help(),
         Command::Ask { prompt } => {
             return run_ask(ask_host, prompt, stdout, stderr, OUTPUT_FAILURE);
@@ -1518,7 +1558,9 @@ fn is_help_command(argument: &std::ffi::OsStr) -> bool {
 fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Command, ()> {
     let mut arguments = arguments.into_iter();
     let Some(first) = arguments.next() else {
-        return Ok(Command::Identity);
+        return Ok(Command::Interactive {
+            selection: InteractiveSessionSelection::Fresh,
+        });
     };
     let Some(first) = first.to_str() else {
         return Err(());
@@ -1557,14 +1599,7 @@ fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Comm
             };
             Command::Permissions { json }
         }
-        "resume" => {
-            let id =
-                parse_explicit_session_id(arguments.next().ok_or(())?, SessionIdGrammar::Resume)?;
-            Command::Resume {
-                id,
-                prompt: parse_prompt_arguments(arguments.by_ref())?,
-            }
-        }
+        "resume" => return parse_resume_command(arguments),
         "session" => {
             let id = parse_explicit_session_id(
                 arguments.next().ok_or(())?,
@@ -1625,6 +1660,33 @@ fn identity() -> String {
     )
 }
 
+fn parse_resume_command(mut arguments: impl Iterator<Item = OsString>) -> Result<Command, ()> {
+    let Some(target) = arguments.next() else {
+        return Ok(Command::Interactive {
+            selection: InteractiveSessionSelection::Latest,
+        });
+    };
+    if target == "last" {
+        return if arguments.next().is_none() {
+            Ok(Command::Interactive {
+                selection: InteractiveSessionSelection::Latest,
+            })
+        } else {
+            Err(())
+        };
+    }
+    let id = parse_explicit_session_id(target, SessionIdGrammar::Resume)?;
+    let Some(first_prompt) = arguments.next() else {
+        return Ok(Command::Interactive {
+            selection: InteractiveSessionSelection::Exact(id),
+        });
+    };
+    Ok(Command::Resume {
+        id,
+        prompt: parse_prompt_arguments(std::iter::once(first_prompt).chain(arguments))?,
+    })
+}
+
 fn help() -> String {
     format!(
         concat!(
@@ -1640,6 +1702,7 @@ fn help() -> String {
             "  machine-god models [--json]\n",
             "  machine-god permissions [--json]\n",
             "  machine-god replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>]\n",
+            "  machine-god resume [last | <id>]\n",
             "  machine-god resume <id> [--] <prompt...>\n",
             "  machine-god session <id> [--json]\n",
             "  machine-god sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json]\n",
@@ -1654,7 +1717,7 @@ fn help() -> String {
             "  models       List available models\n",
             "  permissions  Show the permission mode and rules\n",
             "  replay       Replay a recorded terminal session\n",
-            "  resume       Resume a saved session with one prompt\n",
+            "  resume       Resume interactively or with one prompt\n",
             "  session      Inspect a saved session\n",
             "  sessions     List saved sessions\n",
             "  status       Show configuration and runtime information\n",
@@ -2218,8 +2281,8 @@ mod tests {
         run_models, terminate_signal_event,
     };
     use crate::ask::{
-        AskCommandExecution, AskCommandHost, AskCommandOutcome, MAX_ASK_PROMPT_BYTES,
-        SessionSelection,
+        AskCommandExecution, AskCommandHost, AskCommandOutcome, InteractiveSessionSelection,
+        MAX_ASK_PROMPT_BYTES, SessionSelection,
     };
     use crate::background::{
         BackgroundCommandHost, BackgroundOperationalFailure, BackgroundSnapshot,
@@ -2342,6 +2405,24 @@ mod tests {
     }
 
     impl AskCommandHost for FakeAskHost {
+        fn execute_interactive(
+            &self,
+            selection: InteractiveSessionSelection,
+            output: &mut dyn io::Write,
+        ) -> AskCommandExecution {
+            self.calls.set(self.calls.get() + 1);
+            self.selections.borrow_mut().push(match selection {
+                InteractiveSessionSelection::Fresh => None,
+                InteractiveSessionSelection::Latest => Some("last".into()),
+                InteractiveSessionSelection::Exact(id) => Some(id.as_str().into()),
+            });
+            let outcome = if output.write_all(self.output).is_err() {
+                AskCommandOutcome::OutputFailure
+            } else {
+                self.outcome
+            };
+            AskCommandExecution::without_finalizer(outcome)
+        }
         fn execute(
             &self,
             selection: SessionSelection,
@@ -3459,7 +3540,12 @@ mod tests {
 
     #[test]
     fn parser_accepts_only_the_documented_grammar() {
-        assert_eq!(parse_arguments([]), Ok(Command::Identity));
+        assert_eq!(
+            parse_arguments([]),
+            Ok(Command::Interactive {
+                selection: InteractiveSessionSelection::Fresh
+            })
+        );
         for alias in ["help", "--help", "-h"] {
             assert_eq!(parse_arguments([OsString::from(alias)]), Ok(Command::Help));
             assert_eq!(
@@ -3855,7 +3941,6 @@ mod tests {
 
         let oversized_prompt = "x".repeat(MAX_ASK_PROMPT_BYTES + 1);
         for arguments in [
-            vec![OsString::from("resume")],
             vec![
                 OsString::from("resume"),
                 OsString::from("last"),
@@ -3877,7 +3962,6 @@ mod tests {
                 OsString::from("--flag"),
                 OsString::from("prompt"),
             ],
-            vec![OsString::from("resume"), OsString::from("alpha")],
             vec![
                 OsString::from("resume"),
                 OsString::from("alpha"),
@@ -3924,6 +4008,32 @@ mod tests {
     }
 
     #[test]
+    fn interactive_startup_selects_fresh_latest_or_exact_without_inventing_a_prompt() {
+        for (arguments, expected) in [
+            (vec![], None),
+            (vec!["resume"], Some("last")),
+            (vec!["resume", "last"], Some("last")),
+            (vec!["resume", "alpha"], Some("alpha")),
+        ] {
+            let host = FakeAskHost::new(AskCommandOutcome::Completed, b"interactive\n");
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let exit = run_with_ask_host(
+                arguments.into_iter().map(OsString::from),
+                &mut stdout,
+                &mut stderr,
+                &host,
+            );
+            assert_eq!(exit, 0);
+            assert_eq!(stdout, b"interactive\n");
+            assert!(stderr.is_empty());
+            assert_eq!(host.calls.get(), 1);
+            assert_eq!(*host.selections.borrow(), vec![expected.map(str::to_owned)]);
+            assert!(host.prompts.borrow().is_empty());
+        }
+    }
+
+    #[test]
     fn help_lists_doctor_before_models_with_the_frozen_summary() {
         let output = help();
         assert!(output.contains("  machine-god ask [--] <prompt...>\n"));
@@ -3948,7 +4058,7 @@ mod tests {
             .find("  machine-god permissions [--json]\n")
             .expect("permissions usage");
         let resume_usage = output
-            .find("  machine-god resume <id> [--] <prompt...>\n")
+            .find("  machine-god resume [last | <id>]\n")
             .expect("resume usage");
         let inspection_usage = output
             .find("  machine-god session <id> [--json]\n")
@@ -3968,7 +4078,7 @@ mod tests {
             .find("  permissions  Show the permission mode and rules\n")
             .expect("permissions command");
         let resume_command = output
-            .find("  resume       Resume a saved session with one prompt\n")
+            .find("  resume       Resume interactively or with one prompt\n")
             .expect("resume command");
         let inspection_command = output
             .find("  session      Inspect a saved session\n")
@@ -4062,7 +4172,6 @@ mod tests {
         let host = FakeAskHost::new(AskCommandOutcome::Completed, b"never");
         let oversized_prompt = "x".repeat(MAX_ASK_PROMPT_BYTES + 1);
         for arguments in [
-            vec![OsString::from("resume")],
             vec![
                 OsString::from("resume"),
                 OsString::from("last"),
@@ -4073,7 +4182,6 @@ mod tests {
                 OsString::from("--flag"),
                 OsString::from("prompt"),
             ],
-            vec![OsString::from("resume"), OsString::from("alpha")],
             vec![
                 OsString::from("resume"),
                 OsString::from("alpha"),
@@ -5401,7 +5509,7 @@ mod tests {
     fn output_failure_is_a_fixed_diagnostic_without_panicking() {
         let mut stdout = BrokenWriter;
         let mut stderr = Vec::new();
-        let exit = run([], &mut stdout, &mut stderr);
+        let exit = run([OsString::from("--version")], &mut stdout, &mut stderr);
 
         assert_eq!(exit, 1);
         assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
@@ -5439,6 +5547,7 @@ mod tests {
     #[test]
     fn private_terminal_helpers_require_exact_single_argument_without_normal_cli_dispatch() {
         for helper in [
+            machine_god_native::INTERACTIVE_INPUT_HELPER_ARGUMENT,
             #[cfg(target_os = "macos")]
             machine_god_native::PROCESS_INVENTORY_HELPER_ARGUMENT,
             #[cfg(target_os = "macos")]

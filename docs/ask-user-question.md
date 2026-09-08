@@ -164,6 +164,22 @@ native tool supports owned and shared construction, including
 and exposes read-only getters. Debug output is structural and excludes all
 question, option, description, and answer text.
 
+Execution invokes `prompt_with_context` with the exact owned `ToolContext` and
+normalized batch. Its default implementation delegates to legacy `prompt`,
+preserving existing hosts and their cancellation behavior. Identity-bound hosts
+can override it without deriving a question's identity from ambient UI state.
+
+`NativeInteractivePromptBridge` implements this contextual seam using its one
+explicitly activated UI inbox; its contextless `prompt` returns a fixed prompt
+error instead of assigning an ambient session. The inbox exposes all ordered
+questions/options and accepts bounded free-form answers, including an `Other`
+presentation path, or explicit cancellation. Wrong answer types/counts, empty
+answers, and raw-answer limit violations reject without consuming the displayed
+request. Session-scope replacement and future drop invalidate old reply tokens.
+The host retains one input reader; the bridge starts no terminal or background
+work. Its bounds and ownership are defined in the
+[interactive prompt bridge contract](ask-permission.md#owned-interactive-prompt-bridge).
+
 Calling `Tool::execute` creates an inert future. On first poll the future:
 
 1. checks engine cancellation;
@@ -365,8 +381,8 @@ objects, explicit byte and concurrency limits, bounded host outcomes, its own
 terminal-safe answer encoding, and the authority boundary above. This is not a
 byte-level or full fx-equivalence claim.
 
-Deferred work includes approval continuation and broader permission modes; a
-terminal, graphical, browser, remote, or CLI question UI; timeouts, detached or
+Deferred work includes approval continuation; graphical, browser or remote
+question UIs; timeouts, detached or
 background prompts, persistence/history/resume, and multi-process capacity;
 multi-select/default choices; durable terminal actions; Milestone 05 extension
 surfaces; benchmark workloads; and product-performance or compatibility-
