@@ -23,17 +23,17 @@ use crate::{
     AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayHttpTransport,
     AiGatewayLimits, AiGatewayProvider, AiGatewayToolInputLimits, AiGatewayTransport,
     AiGatewayVisionTransport, AiGatewayWebSearchTransport, AskPermissionHandler,
-    AskUserQuestionTool, FileSessionStore, FileUndoTracker, LoadedNativeConfig,
-    McpFeatureAuthority, McpFeatureError, McpFeatureErrorKind, McpFeaturePayload,
-    McpFeatureRequest, McpFeaturesTool, McpSearchToolsTool, McpSelectTool, McpToolCatalog,
-    McpToolCatalogError, McpToolCatalogSnapshot, MemoryTool, NativeCredentialSourceKind,
-    NativeProviderKind, NativeSessionLifecycle, NativeToolResultArchiveAdapter,
-    NativeTransportKind, PermissionMode, PermissionPrompter, PreparedNativeRoots, QuestionPrompter,
-    ReadToolResultTool, TerminalBackgroundCatalog, TerminalBackgroundInspector,
-    TerminalBackgroundOutputReader, TerminalBackgroundSignaler, TerminalBackgroundStarter,
-    TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError, TerminalBackgroundWriter,
-    TerminalTool, ToolResultArchive, VisionDeadline, VisionLimits, VisionTool,
-    VisionTransportError, VisionTransportErrorKind, WebFetchTool, WebSearchDeadline,
+    AskUserQuestionTool, DiscoveredAiGatewayCredential, FileSessionStore, FileUndoTracker,
+    LoadedNativeConfig, McpFeatureAuthority, McpFeatureError, McpFeatureErrorKind,
+    McpFeaturePayload, McpFeatureRequest, McpFeaturesTool, McpSearchToolsTool, McpSelectTool,
+    McpToolCatalog, McpToolCatalogError, McpToolCatalogSnapshot, MemoryTool,
+    NativeCredentialSourceKind, NativeProviderKind, NativeSessionLifecycle,
+    NativeToolResultArchiveAdapter, NativeTransportKind, PermissionMode, PermissionPrompter,
+    PreparedNativeRoots, QuestionPrompter, ReadToolResultTool, TerminalBackgroundCatalog,
+    TerminalBackgroundInspector, TerminalBackgroundOutputReader, TerminalBackgroundSignaler,
+    TerminalBackgroundStarter, TerminalBackgroundWaitDelay, TerminalBackgroundWaitDelayError,
+    TerminalBackgroundWriter, TerminalTool, ToolResultArchive, VisionDeadline, VisionLimits,
+    VisionTool, VisionTransportError, VisionTransportErrorKind, WebFetchTool, WebSearchDeadline,
     WebSearchLimits, WebSearchTool, WebSearchTransportErrorKind, discover_ai_gateway_credential,
 };
 
@@ -510,14 +510,74 @@ impl NativeReferenceHost {
         web_search_deadline: Arc<dyn WebSearchDeadline>,
         options: PreparedCompositionOptions,
     ) -> Result<Self, NativeReferenceHostBuildError> {
+        Self::compose_production_prepared_with_credential(
+            loaded_config,
+            || {
+                discover_ai_gateway_credential(credential_environment).map_err(|_| {
+                    NativeReferenceHostBuildError::new(
+                        NativeReferenceHostBuildErrorKind::Credential,
+                    )
+                })
+            },
+            prepared_roots,
+            permission_prompter,
+            question_prompter,
+            web_search_deadline,
+            options,
+        )
+    }
+
+    /// Composes production HTTP and shared file undo using an already acquired
+    /// credential, preserving its concrete OIDC or API-key source observation.
+    ///
+    /// A trusted startup owner may first borrow this credential for an
+    /// authenticated model catalog, then move it here for inference. No second
+    /// credential acquisition or process-credential discovery occurs. Root, undo,
+    /// optional terminal, and blocking-worker requirements match
+    /// [`Self::compose_ai_gateway_http_with_prepared_roots_and_conversation`].
+    /// Composition itself makes no network request and starts no runtime.
+    ///
+    /// # Errors
+    /// Returns existing redacted stage-only failures for unsupported selections,
+    /// unsafe roots, or component construction failure.
+    pub fn compose_ai_gateway_http_with_prepared_roots_and_conversation_and_credential(
+        loaded_config: LoadedNativeConfig,
+        credential: DiscoveredAiGatewayCredential,
+        prepared_roots: PreparedNativeRoots,
+        permission_prompter: Arc<dyn PermissionPrompter>,
+        question_prompter: Arc<dyn QuestionPrompter>,
+        web_search_deadline: Arc<dyn WebSearchDeadline>,
+        conversation_options: NativeReferenceHostConversationOptions,
+    ) -> Result<Self, NativeReferenceHostBuildError> {
+        Self::compose_production_prepared_with_credential(
+            loaded_config,
+            || Ok(credential),
+            prepared_roots,
+            permission_prompter,
+            question_prompter,
+            web_search_deadline,
+            conversation_options.into(),
+        )
+    }
+
+    fn compose_production_prepared_with_credential(
+        loaded_config: LoadedNativeConfig,
+        acquire_credential: impl FnOnce() -> Result<
+            DiscoveredAiGatewayCredential,
+            NativeReferenceHostBuildError,
+        >,
+        prepared_roots: PreparedNativeRoots,
+        permission_prompter: Arc<dyn PermissionPrompter>,
+        question_prompter: Arc<dyn QuestionPrompter>,
+        web_search_deadline: Arc<dyn WebSearchDeadline>,
+        options: PreparedCompositionOptions,
+    ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_selections(&loaded_config)?;
         let model_routes = options.model_routes.clone();
         let (workspace_tools, session_store, selection) =
             consume_prepared_composition(prepared_roots, options)?;
         let memory = open_memory_tool(&session_store)?;
-        let credential = discover_ai_gateway_credential(credential_environment).map_err(|_| {
-            NativeReferenceHostBuildError::new(NativeReferenceHostBuildErrorKind::Credential)
-        })?;
+        let credential = acquire_credential()?;
         let credential_source = credential.source();
         let transport =
             AiGatewayHttpTransport::new(credential.into_bearer_token()).map_err(|_| {

@@ -199,6 +199,23 @@ Production composition opens the workspace and session roots before credential
 discovery. A failure never causes a fallback to a different provider,
 transport, permission mode, credential source, or model.
 
+`compose_ai_gateway_http_with_prepared_roots_and_conversation_and_credential`
+accepts the same conversation-constructor inputs, replacing the environment
+snapshot argument with an owned `DiscoveredAiGatewayCredential`. This explicit
+startup seam consumes a previously acquired token into the ordinary inference
+transport and retains its OIDC/API-key source. A host may first borrow that
+credential through
+`AiGatewayModelCatalogHttpTransport::with_discovered_credential` to obtain
+authenticated model capabilities before constructing terminal authority.
+Credential acquisition and any catalog request belong to that trusted startup
+owner; composition itself neither reacquires credentials nor requests a catalog.
+The ordinary inference discovery API still rejects missing credentials, so
+callers can perform that check before granting catalog network authority.
+All prepared-root paths share the same internal construction stages; existing
+environment-taking constructors still consume roots and prepare memory before
+discovering credentials. The acquired path preserves loaded configuration,
+undo/model-routing allocations, optional terminal behavior, and fixed errors.
+
 ## Composition graph
 
 Every successful host contains the shared components below. Terminal-specific
@@ -364,7 +381,7 @@ documented bounded setup needed to own later authority:
 - clone the retained state-root descriptor once for `memory`, without reading
   or creating memory state;
 - discover and validate the two supported credential environment sources on
-  the production path;
+  the ordinary production path, or consume the explicitly acquired credential;
 - snapshot the bounded process environment used by `terminal`;
 - retain the exact workspace and state-root descriptors plus the fixed
   background environment identity after a read-only owner/mode/ACL suitability
@@ -392,7 +409,8 @@ The host exposes read-only accessors for:
 - the exact concrete `Arc<FileSessionStore>`;
 - `NativeSessionLifecycle` over that same engine/store pair;
 - the retained `LoadedNativeConfig`; and
-- the selected production credential-source enum, if discovery ran.
+- the selected production credential-source enum, including when acquisition
+  preceded construction through the explicit acquired-credential seam.
 
 It exposes no bearer-token getter, raw environment value, root path, descriptor,
 transport internals, prompt state, or provider response. `into_engine` consumes

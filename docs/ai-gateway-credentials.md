@@ -68,6 +68,18 @@ discover_process_ai_gateway_catalog_credential()
 `ai_gateway_api_key`. `into_bearer_token` consumes the result and returns the
 existing `AiGatewayBearerToken`; there is no revealing token accessor.
 
+`AiGatewayModelCatalogHttpTransport::with_discovered_credential(&credential)`
+borrows the validated credential to create a sensitive authorization header,
+leaving the non-cloneable token owned by the caller. A native-only private
+accessor connects the transports; the public API exposes no borrowed secret.
+The acquired credential can subsequently move into
+`NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots_and_conversation_and_credential`
+for inference, preserving the exact concrete source without a second lookup.
+Neither constructor sends a request or starts a runtime. The catalog retains
+its own bounded sensitive header allocation, not a cloned bearer-token value;
+dropping either transport does not invalidate the other. Existing HTTP-header
+copies remain outside the token's best-effort clearing guarantee.
+
 The snapshot and discovered result do not implement `Clone`, serialization, or
 equality. Discovery consumes the snapshot so the selected token moves into the
 result and an unused valid fallback can be dropped without cloning either

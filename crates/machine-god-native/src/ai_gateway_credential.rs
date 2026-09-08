@@ -134,6 +134,12 @@ impl DiscoveredAiGatewayCredential {
         self.source
     }
 
+    // Native transports may borrow the validated token to construct their own
+    // sensitive headers without cloning the token or exposing secret access.
+    pub(crate) fn bearer_token(&self) -> &AiGatewayBearerToken {
+        &self.bearer_token
+    }
+
     /// Consumes the discovered credential and returns its bearer token.
     #[must_use]
     pub fn into_bearer_token(self) -> AiGatewayBearerToken {

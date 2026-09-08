@@ -28,9 +28,9 @@ use machine_god_core::{
 };
 use machine_god_native::{
     AI_GATEWAY_DEFAULT_MODEL, ASK_USER_QUESTION_TOOL_NAME, AiGatewayByteStream,
-    AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayTransport,
-    AiGatewayTransportRequest, COPY_FILE_TOOL_NAME, CREATE_FOLDER_TOOL_NAME, ConfigOrigin,
-    DELETE_FILE_TOOL_NAME, EDIT_FILE_TOOL_NAME, FILE_INFO_TOOL_NAME, FileUndoOutcome,
+    AiGatewayCredentialEnvironment, AiGatewayCredentialSource, AiGatewayModelCatalogHttpTransport,
+    AiGatewayTransport, AiGatewayTransportRequest, COPY_FILE_TOOL_NAME, CREATE_FOLDER_TOOL_NAME,
+    ConfigOrigin, DELETE_FILE_TOOL_NAME, EDIT_FILE_TOOL_NAME, FILE_INFO_TOOL_NAME, FileUndoOutcome,
     FileUndoTracker, GLOB_FILES_TOOL_NAME, GREP_FILES_TOOL_NAME, INSTALL_SKILL_TOOL_NAME,
     LIST_FILES_TOOL_NAME, LoadedNativeConfig, MCP_FEATURES_TOOL_NAME, MCP_SEARCH_TOOLS_TOOL_NAME,
     MCP_SELECT_TOOL_NAME, MEMORY_TOOL_NAME, McpFeatureAuthority, McpFeatureError,
@@ -43,7 +43,8 @@ use machine_god_native::{
     QuestionPromptOutcome, QuestionPromptRequest, QuestionPrompter, READ_FILE_TOOL_NAME,
     READ_TOOL_RESULT_TOOL_NAME, RENAME_FILE_TOOL_NAME, SEMANTIC_SEARCH_TOOL_NAME, SKILL_TOOL_NAME,
     TERMINAL_TOOL_NAME, VISION_TOOL_NAME, WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME,
-    WRITE_FILE_TOOL_NAME, WebSearchDeadline, WebSearchTransportError, load_native_config,
+    WRITE_FILE_TOOL_NAME, WebSearchDeadline, WebSearchTransportError,
+    discover_ai_gateway_credential, load_native_config,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -792,6 +793,77 @@ fn conversation_production_composition_discovers_credentials_without_clearing_pr
     );
     drop(host);
     assert_eq!(Arc::strong_count(&tracker), 1);
+}
+
+#[test]
+fn acquired_catalog_credential_moves_into_host_with_exact_source_without_runtime_effects() {
+    let marker = "ACQUIRED_HOST_CREDENTIAL_SENTINEL";
+    for source in [
+        AiGatewayCredentialSource::VercelOidcToken,
+        AiGatewayCredentialSource::AiGatewayApiKey,
+    ] {
+        let temporary = TemporaryDirectory::new("acquired-conversation-production");
+        let (prepared, state) = complete_terminal_roots(temporary.path());
+        let environment = if source == AiGatewayCredentialSource::VercelOidcToken {
+            AiGatewayCredentialEnvironment::new(
+                Some(marker.into()),
+                Some("IGNORED_FALLBACK".into()),
+            )
+        } else {
+            AiGatewayCredentialEnvironment::new(Some(OsString::new()), Some(marker.into()))
+        };
+        let credential = discover_ai_gateway_credential(environment).unwrap();
+        let catalog =
+            AiGatewayModelCatalogHttpTransport::with_discovered_credential(&credential).unwrap();
+        let tracker = Arc::new(FileUndoTracker::new());
+        let prompter = AllowingPrompter::default();
+        let config = built_in_config();
+        let origin = config.origin();
+        let schema = config.config().schema_version();
+        let host = NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots_and_conversation_and_credential(
+            config, credential, prepared, Arc::new(prompter.clone()), inert_question_prompter(),
+            never_deadline(), NativeReferenceHostConversationOptions::new(Arc::clone(&tracker)),
+        ).unwrap();
+        assert_eq!(host.credential_source(), Some(source));
+        assert_eq!(host.loaded_config().origin(), origin);
+        assert_eq!(host.loaded_config().config().schema_version(), schema);
+        assert_eq!(Arc::strong_count(&tracker), 6);
+        assert!(prompter.requests().is_empty());
+        assert_eq!(fs::read_dir(state).unwrap().count(), 0);
+        assert!(!format!("{host:?} {catalog:?}").contains(marker));
+        drop(host);
+        assert_eq!(Arc::strong_count(&tracker), 1);
+        assert!(!format!("{catalog:?}").contains(marker));
+    }
+}
+
+#[test]
+fn prepared_environment_constructor_still_rejects_credentials_before_terminal_child_setup() {
+    let temporary = TemporaryDirectory::new("prepared-credential-ordering");
+    let (prepared, state) = complete_terminal_roots(temporary.path());
+    let marker = state.join("terminal-startup");
+    fs::write(&marker, b"existing non-directory must stay unchanged").unwrap();
+    let prompter = AllowingPrompter::default();
+    let tracker = Arc::new(FileUndoTracker::new());
+    let error = build_error(
+        NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots_and_conversation(
+            built_in_config(),
+            AiGatewayCredentialEnvironment::new(None, None),
+            prepared,
+            Arc::new(prompter.clone()),
+            inert_question_prompter(),
+            never_deadline(),
+            NativeReferenceHostConversationOptions::new(Arc::clone(&tracker))
+                .with_terminal(complete_terminal_options()),
+        ),
+    );
+    assert_eq!(error.kind(), NativeReferenceHostBuildErrorKind::Credential);
+    assert_eq!(
+        fs::read(marker).unwrap(),
+        b"existing non-directory must stay unchanged"
+    );
+    assert_eq!(Arc::strong_count(&tracker), 1);
+    assert!(prompter.requests().is_empty());
 }
 
 fn tool_round_responses(final_text: &str) -> [Vec<u8>; 5] {

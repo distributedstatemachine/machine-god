@@ -11,7 +11,7 @@ use crate::{
     AI_GATEWAY_MODEL_CATALOG_MAX_BODY_BYTES, AiGatewayBearerToken,
     AiGatewayModelCatalogRequestAccess, AiGatewayModelCatalogTransport,
     AiGatewayModelCatalogTransportError, AiGatewayModelCatalogTransportErrorKind,
-    AiGatewayModelCatalogTransportResponse,
+    AiGatewayModelCatalogTransportResponse, DiscoveredAiGatewayCredential,
 };
 use hickory_proto::op::{Header, Message, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::{DNSClass, Name as DnsName, RData, RecordType};
@@ -349,6 +349,27 @@ impl AiGatewayModelCatalogHttpTransport {
         )
     }
 
+    /// Creates an authenticated production catalog transport while retaining
+    /// the acquired credential for subsequent inference-host construction.
+    ///
+    /// Borrows the validated token only to construct a sensitive authorization
+    /// header. This neither clones the bearer token nor discovers credentials,
+    /// starts a runtime, or performs a network request. Production construction
+    /// retains its ordinary bounded system resolver configuration setup.
+    ///
+    /// # Errors
+    /// Returns the existing fixed redacted header or backend initialization error.
+    pub fn with_discovered_credential(
+        credential: &DiscoveredAiGatewayCredential,
+    ) -> Result<Self, AiGatewayModelCatalogHttpConfigError> {
+        let authorization = catalog_authorization(Some(credential.bearer_token()))?;
+        Self::with_authorization(
+            authorization,
+            AiGatewayModelCatalogHttpEndpoint::default(),
+            AiGatewayModelCatalogHttpLimits::default(),
+        )
+    }
+
     /// Creates a transport with an approved endpoint and explicit limits.
     ///
     /// # Errors
@@ -360,16 +381,16 @@ impl AiGatewayModelCatalogHttpTransport {
         endpoint: AiGatewayModelCatalogHttpEndpoint,
         limits: AiGatewayModelCatalogHttpLimits,
     ) -> Result<Self, AiGatewayModelCatalogHttpConfigError> {
-        let authorization = token
-            .as_ref()
-            .map(authorization_value)
-            .transpose()
-            .map_err(|_| {
-                AiGatewayModelCatalogHttpConfigError::new(
-                    AiGatewayModelCatalogHttpConfigErrorKind::InvalidCredential,
-                )
-            })?;
+        let authorization = catalog_authorization(token.as_ref())?;
         drop(token);
+        Self::with_authorization(authorization, endpoint, limits)
+    }
+
+    fn with_authorization(
+        authorization: Option<HeaderValue>,
+        endpoint: AiGatewayModelCatalogHttpEndpoint,
+        limits: AiGatewayModelCatalogHttpLimits,
+    ) -> Result<Self, AiGatewayModelCatalogHttpConfigError> {
         let certificates = root_certificates().map_err(|_| {
             AiGatewayModelCatalogHttpConfigError::new(
                 AiGatewayModelCatalogHttpConfigErrorKind::ClientInitialization,
@@ -384,6 +405,16 @@ impl AiGatewayModelCatalogHttpTransport {
             permits: Arc::new(Semaphore::new(limits.max_active_requests)),
         })
     }
+}
+
+fn catalog_authorization(
+    token: Option<&AiGatewayBearerToken>,
+) -> Result<Option<HeaderValue>, AiGatewayModelCatalogHttpConfigError> {
+    token.map(authorization_value).transpose().map_err(|_| {
+        AiGatewayModelCatalogHttpConfigError::new(
+            AiGatewayModelCatalogHttpConfigErrorKind::InvalidCredential,
+        )
+    })
 }
 
 fn build_client(
@@ -1591,6 +1622,54 @@ mod tests {
 
     #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
     static TEMP_DIRECTORY_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn acquired_credential_headers_are_sensitive_and_leave_token_owned_by_caller() {
+        let marker = "BORROWED_CATALOG_CREDENTIAL_SENTINEL";
+        let credential = crate::discover_ai_gateway_credential(
+            crate::AiGatewayCredentialEnvironment::new(Some(marker.into()), None),
+        )
+        .unwrap();
+        let transport =
+            AiGatewayModelCatalogHttpTransport::with_discovered_credential(&credential).unwrap();
+        let header = transport.authorization.as_ref().unwrap();
+        assert!(header.is_sensitive());
+        assert_eq!(header.to_str().unwrap(), format!("Bearer {marker}"));
+        assert!(!format!("{header:?} {transport:?} {credential:?}").contains(marker));
+        let request = build_request(
+            transport.endpoint.url.clone(),
+            Some(header),
+            AiGatewayModelCatalogRequestAccess::Authenticated,
+        )
+        .unwrap();
+        assert!(request.headers()[AUTHORIZATION].is_sensitive());
+        assert_eq!(request.headers()[AUTHORIZATION], *header);
+        assert!(!format!("{request:?}").contains(marker));
+        let public = build_request(
+            transport.endpoint.url.clone(),
+            Some(header),
+            AiGatewayModelCatalogRequestAccess::Public,
+        )
+        .unwrap();
+        assert!(!public.headers().contains_key(AUTHORIZATION));
+
+        // Creating and dropping an unpolled request requires no runtime and
+        // cannot dispatch. It also cannot consume a concurrency permit.
+        let pending = transport.get(
+            AiGatewayModelCatalogRequestAccess::Authenticated,
+            Instant::now() + Duration::from_secs(1),
+            CancellationToken::new(),
+        );
+        assert_eq!(transport.permits.available_permits(), 8);
+        drop(pending);
+        assert_eq!(transport.permits.available_permits(), 8);
+        drop(transport);
+        let token = credential.into_bearer_token();
+        assert_eq!(
+            authorization_value(&token).unwrap().to_str().unwrap(),
+            format!("Bearer {marker}")
+        );
+    }
 
     #[derive(Debug)]
     struct PendingResolver {
