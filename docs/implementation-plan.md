@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
 - Active phase: `implementing the full combined M03 top-level CLI and slash-command feature`
-- Next gate: `wire automatic history producers and native permission/runtime policy, then complete all pinned CLI scenarios before full feature gates`
+- Next gate: `finish automatic background history, interactive commands and remaining policy/workspace scenarios before the full feature gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -188,9 +188,12 @@ exact descriptor/preimage evidence for all five mutations, claims one request
 generation and revalidates at the final effect. Old unpolled execution futures
 cannot consume newer approvals. The real fixed-model Gateway reviewer enforces
 bounded evidence, deadline, cancellation and pinned completion semantics.
-The controller's execution proof can serve as the file adapter's live policy.
-Production host/CLI composition and taken-job sandbox routing remain required
-before permission scenarios close.
+The controller's execution proof serves as the file adapter's live policy.
+Prepared-root host composition now shares the exact registered tool allocations,
+file approval registry, live invocation contexts and actual fixed-model reviewer.
+Ask/resume attach that controller to each created or restored native conversation.
+The noninteractive CLI honors configured policy and proven Auto/Yolo behavior;
+unresolved human requirements remain denied without manufacturing a prompt.
 The opt-in governed-tool wrapper preserves prepared cancellation and archive
 semantics while admitting otherwise policy-skipping calls through exact tool
 capabilities. Taken policy also retains sandbox preference separately from Yolo's
@@ -204,9 +207,12 @@ root-input provenance without cloning the transcript or inferring human authorit
 from message roles. Target preparation uses actual registered tools, descriptor
 observations and the terminal host's selected cwd/shell. Prepared question and grep
 arguments use their execution validators rather than being decoded as raw input.
-The macOS sandbox adapter now wraps real foreground, background, PTY and tmux
-launches with retained executable/root checks. Focused native process tests pass;
-selection still needs production host routing from the actual taken policy.
+The macOS sandbox adapter wraps real foreground, background, PTY and tmux
+launches with retained executable/root checks. Production terminal routing captures
+the actual taken policy through a weak controller link; retained custom monitors
+keep their admitted snapshot after the originating turn retires. The CLI explicitly
+supplies the system executable. Missing Os authority never falls back; configured
+None and effective Yolo remain distinct and are exercised through the real host.
 Remaining work includes interactive CLI persistence-outcome presentation,
 long-lived cache composition, automatic background history producers,
 interactive command/session transitions,
@@ -235,14 +241,13 @@ passes its 12 focused service tests, and full warnings-denied Clippy passes.
 The complete replacement workspace gate remains open. These internal
 checks do not replace the exact-candidate feature gates below.
 
-The current permission/context/target checkpoint passes 105 focused native
-integrations, three core/testkit invocation regressions, twelve sandbox regressions
-and both actual resolver tests in the directly included component harness.
-Sandbox process checks use the sandbox component's release helper; they are not
-the final freshly built full-feature CLI gate. Earlier file-approval and core
-metadata regressions remain covered by the required replacement workspace run.
-Production host composition remains part of the unfinished combined feature,
-not a delivery.
+The integrated preparer passes all five real file mutations, actual reviewer
+Allow/Ask/error and cancellation, read-grant/reset, canonical terminal identity,
+and separate execution/review-bound regressions. All reference-host tests pass,
+including configured denial, Ask/Auto/Yolo, real automatic review and actual
+sandboxed terminal execution. The CLI's real create/resume turn path also passes
+configured-mode regressions. These focused checks do not close the replacement
+workspace gate or the unfinished combined feature; no new delivery is claimed.
 
 ### CI and documentation maintenance
 

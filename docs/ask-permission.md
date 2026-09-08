@@ -210,6 +210,43 @@ unmatched targets remain unresolved. These prepared outcomes do not grant,
 persist, prompt, or execute; the native controller and final-effect adapters own
 those responsibilities.
 
+## Concrete native action preparer
+
+`NativeToolPermissionPreparer` composes the target authority, file authority and
+registry, exact live contexts, real reviewer, and an explicitly supplied owned
+worker scope. Its constructor and unpolled preparation futures are inert. The
+host binds its controller once through a weak reference and attaches both
+controller and context registrations to the actual conversation. At most four
+preparations/admissions are retained. Borrowed arguments and request capabilities
+are bounded before copies; native target observation runs on owned workers.
+Cancellation or dropping preparation cancels its work, while the supplied scope
+retains actual worker completion. A retained context cannot revive authorization.
+
+Saved and grant identities are separately owned, length-framed and bounded to
+4,096 bytes without truncation. Oversized identities remain unavailable for reuse
+without disabling once-only approval. Command keys include actual resolved cwd,
+shell executable/profile, environment and selection digests, execution controls,
+and the taken effective sandbox selection, excluding private call/host stamps.
+File keys include the canonical workspace and complete existing content identity.
+Read grants use the canonical workspace and target independently of read ranges;
+live turn/session read grants satisfy configured write/edit disclosure checks.
+Reset, turn closure and uncertain rule publication invalidate that lookup.
+
+Automatic review borrows the original pending call and proven root context,
+never canonical private envelopes as user intent. It receives complete prepared
+file evidence or the actual resolved command; Ask/failure stays with the
+controller's recoverable denial path and does not prompt a human. Workspace
+write/edit bypass remains tool-specific and excludes pinned sensitive paths and
+unresolved configured read disclosure. Unknown dynamic tools need a distinct
+trusted schema-bearing adapter, not a guessed builtin identity.
+
+All five mutation admissions retain the exact registry proof and live controller
+policy through the existing final publication checks. Exact-turn cleanup retires
+unclaimed proofs. Ordinary core admission retains bounded evidence and checks
+live policy without native I/O; it does not claim an atomic target-check/effect
+operation. The host must use the same workspace and registry allocations for
+preparation and execution; file/target directory agreement is checked on the worker.
+
 ## Automatic permission reviewer
 
 `AiGatewayPermissionReviewer` implements `NativePermissionReviewer` over an

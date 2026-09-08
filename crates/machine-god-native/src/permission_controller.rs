@@ -147,6 +147,37 @@ pub struct NativePermissionController {
 }
 
 impl NativePermissionController {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn has_live_grant(
+        &self,
+        session: &machine_god_core::SessionId,
+        incarnation: &machine_god_core::SessionIncarnationId,
+        turn: &TurnId,
+        key: &NativePermissionRuleKey,
+    ) -> Result<bool, PermissionError> {
+        let owner = lock(&self.routes)
+            .iter()
+            .filter_map(Weak::upgrade)
+            .find(|owner| {
+                &owner.session.id() == session && &owner.session.incarnation_id() == incarnation
+            })
+            .ok_or_else(unavailable)?;
+        let state = lock(&owner.state);
+        if state.changing_rules
+            || state.uncertain_rules
+            || state.active.as_ref().is_none_or(|attempt| {
+                attempt.handle.id() != turn
+                    || attempt.handle.is_cancelled()
+                    || !attempt.editor.is_active()
+            })
+        {
+            return Err(unavailable());
+        }
+        Ok(state.grants.iter().any(|grant| {
+            grant.key == *key && grant.turn.as_ref().is_none_or(|granted| granted == turn)
+        }))
+    }
+
     #[must_use]
     pub fn new(
         preparer: Arc<dyn NativePermissionActionPreparer>,

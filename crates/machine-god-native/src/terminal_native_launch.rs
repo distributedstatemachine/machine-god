@@ -114,6 +114,13 @@ impl ResolvedTerminalNativeLaunch {
     pub(crate) fn shell(&self) -> &TerminalShell {
         &self.shell
     }
+    pub(crate) fn with_sandbox(
+        mut self,
+        sandbox: std::sync::Arc<crate::NativeSandboxLaunch>,
+    ) -> Self {
+        self.shell = self.shell.with_sandbox(sandbox);
+        self
+    }
     #[cfg(test)]
     pub(crate) fn dimensions(&self) -> &TerminalDimensions {
         &self.dimensions

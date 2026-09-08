@@ -106,6 +106,8 @@ mod file_info;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod os_sandbox;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+mod terminal_permission_policy;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use file_approval::{
     MAX_NATIVE_FILE_APPROVAL_PREIMAGE_BYTES, MAX_NATIVE_FILE_APPROVAL_RETAINED_BYTES,
     MAX_NATIVE_FILE_APPROVALS, NativeFileApprovalAdmission, NativeFileApprovalAuthority,
@@ -117,6 +119,8 @@ pub use os_sandbox::{
     MAX_NATIVE_SANDBOX_PROFILE_BYTES, MAX_NATIVE_SANDBOX_ROOT_PATH_BYTES, MAX_NATIVE_SANDBOX_ROOTS,
     NATIVE_SANDBOX_EXECUTABLE, NativeSandboxError, NativeSandboxLaunch, NativeSandboxRoot,
 };
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use terminal_permission_policy::NativeTerminalPermissionPolicy;
 mod file_undo;
 mod glob_files;
 mod grep_files;
@@ -134,6 +138,10 @@ mod open_file;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod permission_context;
 mod permission_patterns;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod permission_preparer;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use permission_preparer::NativeToolPermissionPreparer;
 mod permission_reviewer;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod permission_targets;
@@ -637,7 +645,8 @@ pub use read_tool_result::{
 ))]
 pub use reference_host::{
     NativeReferenceHost, NativeReferenceHostBuildError, NativeReferenceHostBuildErrorKind,
-    NativeReferenceHostConversationOptions, NativeReferenceHostTerminalOptions,
+    NativeReferenceHostConversationOptions, NativeReferenceHostPermissionOptions,
+    NativeReferenceHostTerminalOptions,
 };
 pub use rename_file::{
     MAX_RENAME_FILE_PATH_BYTES, MAX_RENAME_FILE_PATH_COMPONENTS,

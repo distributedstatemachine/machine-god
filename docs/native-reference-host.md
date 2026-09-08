@@ -35,12 +35,16 @@ the same runtime-paired deadline authority used by web search and vision.
 
 ## Required selections
 
-Composition rejects a loaded configuration unless it selects exactly:
+Composition requires these provider selections:
 
-- permission mode `ask`;
 - provider `vercel_ai_gateway`;
 - transport `ai_gateway_http`; and
 - credential source `environment`.
+
+Legacy constructors require permission mode `ask`, sandbox `none` and no
+configured permission rules. They reject policy they cannot enforce. Explicit
+conversation permission options compose `ask`, `auto` and `yolo`, configured
+patterns and saved exact rules through the native controller described below.
 
 The validated configured model is retained and used by the ordinary AI Gateway
 provider and the legacy fixed-model web-search transport adapter. Explicit
@@ -141,6 +145,31 @@ contracts; native conversation finalization owns history publication. Compositio
 does not collect observations or write session history itself. Constructors
 without this option retain their existing unwrapped tools.
 
+`with_permissions(NativeReferenceHostPermissionOptions)` opts into native
+permission preparation, selected-file preimage reads and mode/rule enforcement.
+The options retain an explicitly supplied `NativePermissionContexts` registry
+and reviewer clock. `with_sandbox_executable(File)` separately supplies the
+retained system launcher; configuration cannot open it. Construction is inert.
+This path requires complete terminal options for the shared native worker and
+launch lifetime, and rejects missing selection before preparing namespaces.
+
+Call `host.configure_conversation_permissions(conversation)` before admitting
+each created or resumed conversation. It binds that exact incarnation to the
+host's controller and context registry, using the configuration's initial policy;
+the native runtime subsequently captures taken-job policy. Saved rules are
+validated, not converted to restored grants. Direct engine sessions without the
+required routes cannot execute permission-governed calls.
+
+The host registers exact tool allocations for canonical preparation, including
+typed grep, question and complete-terminal validators. The five mutation tools
+share one file-approval registry and retain final-effect proof checks; file-history
+instrumentation and tool archives remain intact. Automatic review uses the same
+explicit Gateway transport with its dedicated fixed model and clock. The terminal
+policy and preparer bind weakly to the controller, avoiding ownership cycles.
+Configured sandbox selection follows the live turn into native launch; missing
+or unsupported Os authority fails without an unsandboxed fallback. Legacy hosts
+retain their prior tools and `AskPermissionHandler`.
+
 The prepared-root constructors
 `compose_ai_gateway_http_with_prepared_roots_and_conversation` and
 `compose_with_ai_gateway_transport_and_prepared_roots_and_conversation` append
@@ -148,9 +177,10 @@ these options to the corresponding prepared-root inputs. Before engine
 construction they attach the **same** `Arc<FileUndoTracker>` to `write_file`,
 `edit_file`, `delete_file`, `rename_file`, and `copy_file`, using each tool's
 existing builder and retained workspace descriptor. They never reopen the
-selected workspace or state path to create undo authority. Preparation and
-ordinary forward permission handling remain unchanged; denied mutations and
-dropped unpolled tool futures do not acquire preimages or register inverses.
+selected workspace or state path to create undo authority. Undo instrumentation
+preserves forward permission handling; denied mutations and dropped unpolled tool
+futures do not acquire undo preimages or register inverses. The opt-in permission
+adapter's separately authorized approval evidence is distinct from undo history.
 
 `with_terminal(NativeReferenceHostTerminalOptions)` also selects the complete
 terminal path described below, including its blocking-worker requirements,
@@ -158,7 +188,7 @@ startup/archive directory preparation, limits, and owned cleanup. Without it,
 conversation composition retains the legacy terminal and creates no terminal
 startup/archive children. All existing constructors keep their prior behavior
 and do not implicitly inject an undo tracker. MCP, subagent, provider, and
-permission selections are unchanged.
+permission selections are unchanged unless permission options are also supplied.
 
 The trusted host retains its own tracker handle for explicit inverse operations
 and must clear or replace it at the intended conversation-lifetime boundary.
@@ -233,7 +263,8 @@ bullets describe constructors without explicit terminal options; the complete
 terminal selection described above replaces those legacy components.
 
 - `AiGatewayProvider` over one shared `Arc<dyn AiGatewayTransport>`;
-- `AskPermissionHandler` over an injected `Arc<dyn PermissionPrompter>`;
+- `AskPermissionHandler` over an injected `Arc<dyn PermissionPrompter>`, or the
+  explicitly selected native controller/preparer/reviewer composition;
 - `AskUserQuestionTool` over an injected `Arc<dyn QuestionPrompter>`;
 - one concrete `Arc<FileSessionStore>` shared exactly, through the same erased
   `Arc<dyn SessionStore>`, with the engine, `ReadToolResultTool`, and
@@ -442,7 +473,8 @@ Construction failures are fixed, redacted stage categories:
 - vision transport (`VisionTransport`);
 - terminal configuration;
 - background-supervisor configuration;
-- provider; or
+- provider;
+- permission configuration (`PermissionConfig`); or
 - engine.
 
 Display and debug output include only the stable stage, never a token, path,
@@ -452,7 +484,7 @@ component detail.
 ## Deferred composition
 
 The reference host does not itself supply a full interactive CLI/TUI,
-persistent grant policy, alternate provider or credential selections, remote
+alternate provider or credential selections, remote
 or packaged skill discovery and installation, production MCP transport,
 authentication, protocol-driven catalog discovery, caching, subscriptions,
 ACP or persistent/background subagent management, encrypted storage, non-Unix

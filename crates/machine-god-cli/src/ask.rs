@@ -217,11 +217,12 @@ mod production {
         NativeConversation, NativeConversationModelRoutes, NativeConversationObservations,
         NativeConversationRuntime, NativeConversationRuntimeTurn, NativeEnvironment,
         NativeModelCatalog, NativeModelCatalogCache, NativeModelCatalogCacheState,
-        NativeReferenceHost, NativeReferenceHostConversationOptions,
-        NativeReferenceHostTerminalOptions, NativeRootSelection, NativeSessionMetadata,
-        NativeSessionOrigin, PermissionPromptDecision, PermissionPromptError, PermissionPrompter,
-        PreparedNativeRoots, QuestionPromptError, QuestionPromptOutcome, QuestionPromptRequest,
-        QuestionPrompter, TerminalShell, TokioWebSearchDeadline, discover_ai_gateway_credential,
+        NativePermissionContexts, NativeReferenceHost, NativeReferenceHostConversationOptions,
+        NativeReferenceHostPermissionOptions, NativeReferenceHostTerminalOptions,
+        NativeRootSelection, NativeSessionMetadata, NativeSessionOrigin, PermissionPromptDecision,
+        PermissionPromptError, PermissionPrompter, PreparedNativeRoots, QuestionPromptError,
+        QuestionPromptOutcome, QuestionPromptRequest, QuestionPrompter, TerminalShell,
+        TokioPermissionReviewClock, TokioWebSearchDeadline, discover_ai_gateway_credential,
         load_native_config,
     };
 
@@ -931,7 +932,8 @@ mod production {
                         let observations = Arc::new(NativeConversationObservations::new());
                         let options = NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
                             .with_terminal(terminal_options).with_model_routes(model_routes.clone())
-                            .with_observations(Arc::clone(&observations));
+                            .with_observations(Arc::clone(&observations))
+                            .with_permissions(capture_permission_options());
                         let host =
                             NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots_and_conversation_and_credential(
                                 loaded_config,
@@ -1060,6 +1062,22 @@ mod production {
         }
     }
 
+    fn capture_permission_options() -> NativeReferenceHostPermissionOptions {
+        let options = NativeReferenceHostPermissionOptions::new(
+            Arc::new(NativePermissionContexts::new()),
+            Arc::new(TokioPermissionReviewClock),
+        );
+        // This blocking CLI owner chooses the fixed system executable explicitly.
+        // Missing authority is retained as missing: an Os launch must then fail,
+        // never fall back to an unconfined child. None/Yolo need no executable.
+        #[cfg(target_os = "macos")]
+        let options = match std::fs::File::open(machine_god_native::NATIVE_SANDBOX_EXECUTABLE) {
+            Ok(executable) => options.with_sandbox_executable(executable),
+            Err(_) => options,
+        };
+        options
+    }
+
     async fn execute_turn(
         host: &NativeReferenceHost,
         selection: SessionSelection,
@@ -1088,6 +1106,9 @@ mod production {
         .map_err(|_| ())?
         .with_observations(&setup.observations)
         .map_err(|_| ())?;
+        let conversation = host
+            .configure_conversation_permissions(conversation)
+            .map_err(|_| ())?;
         let conversation = NativeConversationRuntime::new_with_model_routes(
             conversation,
             host.loaded_config().config().model_preferences(),
@@ -2491,6 +2512,89 @@ mod production {
             Arc::new(OneShotTransport::new(
                 "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n",
             ))
+        }
+
+        #[test]
+        fn actual_cli_turn_and_resume_attach_configured_permissions_without_a_human_prompt() {
+            use machine_god_native::{
+                FileUndoTracker, NativeReferenceHostConversationOptions,
+                NativeReferenceHostTerminalOptions, NativeRootSelection, PreparedNativeRoots,
+            };
+            for mode in ["ask", "auto", "yolo"] {
+                let fixture = ModelConversationFixture::new();
+                let config_base = fixture.temporary.path().join("permissions");
+                fs::create_dir_all(config_base.join("machine-god")).unwrap();
+                fs::write(
+                    config_base.join("machine-god/config.json"),
+                    serde_json::json!({
+                        "schema_version":5, "permission_mode":mode, "sandbox_mode":"none",
+                        "permission_rules":[], "provider":"vercel_ai_gateway",
+                        "transport":"ai_gateway_http", "credential_source":"environment",
+                        "model":"test/model", "effort":"auto", "fast_mode":false,
+                    })
+                    .to_string(),
+                )
+                .unwrap();
+                let environment = NativeEnvironment::new(
+                    Some(config_base.into_os_string()),
+                    Some(fixture.sessions.clone().into_os_string()),
+                    None,
+                );
+                let prepared = PreparedNativeRoots::prepare(
+                    NativeRootSelection::from_environment(&environment, &fixture.workspace)
+                        .unwrap(),
+                )
+                .unwrap();
+                let tool = concat!(
+                    "data: {\"type\":\"tool-call\",\"toolCallId\":\"write\",\"toolName\":\"write_file\",\"input\":{\"path\":\"applied\",\"content\":\"exact bytes\"}}\n\n",
+                    "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"tool-calls\"}}\n\n"
+                );
+                let done =
+                    "data: {\"type\":\"finish\",\"finishReason\":{\"unified\":\"stop\"}}\n\n";
+                let transport = Arc::new(OneShotTransport::scripted([tool, done, tool, done]));
+                let options =
+                    NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
+                        .with_terminal(
+                            NativeReferenceHostTerminalOptions::new(
+                                "/explicit-unexecuted-machine-god-helper".into(),
+                                Some("/bin/bash".into()),
+                                vec![],
+                            )
+                            .unwrap(),
+                        )
+                        .with_permissions(super::capture_permission_options());
+                let host = NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
+                    load_native_config(&environment).unwrap(), transport.clone(),
+                    NetworkTarget { scheme: "https".into(), host: "ai-gateway.vercel.sh".into(), port: None },
+                    prepared, Arc::new(DenyPermissionPrompter), Arc::new(UnavailableQuestionPrompter),
+                    Arc::new(NeverWebSearchDeadline), options,
+                ).unwrap();
+                let completion = host.terminal_shutdown_completion().unwrap();
+                assert_eq!(
+                    fixture.run(&host, SessionSelection::CreateGenerated, None),
+                    AskCommandOutcome::Completed
+                );
+                let session = transport.session_ids()[0].clone();
+                assert_eq!(
+                    fixture.run(&host, SessionSelection::Resume(session), None),
+                    AskCommandOutcome::Completed
+                );
+                let output = fixture.workspace.join("applied");
+                assert_eq!(output.exists(), mode != "ask");
+                if mode != "ask" {
+                    assert_eq!(fs::read(output).unwrap(), b"exact bytes");
+                }
+                let requests = transport.request_bodies();
+                assert_eq!(requests.len(), 4);
+                for index in [1, 3] {
+                    assert_eq!(
+                        String::from_utf8_lossy(&requests[index]).contains("permission_denied"),
+                        mode == "ask"
+                    );
+                }
+                drop(host);
+                completion.wait_on_worker().unwrap();
+            }
         }
 
         #[test]

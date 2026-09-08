@@ -62,8 +62,10 @@ The stored transcript is provider-neutral. The continued turn deliberately
 uses the provider, transport, credentials, engine limits, permission
 adapter, tool catalog, current workspace, and other authority from the current
 invocation's configuration and composed host. It does not resurrect historical
-credentials, configuration, workspace authority, pending prompt UI, permission
-decisions, or external tool effects from the durable record.
+credentials, configuration, workspace authority, pending prompt UI, ephemeral
+permission grants, or external tool effects from the durable record. Confirmed
+saved exact rules are validated and evaluated against newly prepared actions;
+historical allow decisions alone do not become execution authority.
 
 Saved session model/effort/fast preferences override the current configuration's
 ordinary defaults. If historical preferences are absent, configuration supplies
@@ -80,10 +82,11 @@ historical workspace metadata. Native context preferences select provider views
 without deleting canonical history, and existing confirmed transcript evidence
 is not automatically replayed as external effects.
 
-As with `ask`, this noninteractive host denies every permission-gated native
-capability per request and gives `ask_user_question` its fixed unavailable
-outcome. Neither path reads standard input, grants authority, or starts detached
-interaction.
+As with `ask`, this noninteractive host enforces configured mode, patterns and
+saved exact rules through newly attached native permission/context routes.
+Permitted actions may execute; remaining human-prompt requirements are denied
+per request. `ask_user_question` receives its fixed unavailable outcome. Neither
+path reads standard input or starts detached interaction.
 
 Targets other than Linux and macOS return the fixed operational failure for
 valid grammar without attempting the complete native reference-host

@@ -77,6 +77,7 @@ impl TerminalHostProbePreparer {
         &self,
         definition: &TerminalMonitorDefinition,
         session_cwd: &str,
+        sandbox: Option<Arc<crate::NativeSandboxLaunch>>,
         deadline: Instant,
         cancellation: &CancellationToken,
     ) -> Result<PreparedTerminalMonitor> {
@@ -140,8 +141,13 @@ impl TerminalHostProbePreparer {
                         .map_err(probe_error)?
                         .1,
                 );
+                let shell = self.legacy_shell(&canonical_cwd, deadline, cancellation)?;
+                let shell = match sandbox {
+                    Some(sandbox) => shell.with_sandbox(sandbox),
+                    None => shell,
+                };
                 let context = Arc::new(TerminalProbeCustomContext::with_environment(
-                    self.legacy_shell(&canonical_cwd, deadline, cancellation)?,
+                    shell,
                     Arc::clone(&self.environment),
                 ));
                 Some(TerminalProbeAuthority::Custom {
@@ -1019,6 +1025,7 @@ mod tests {
                     .prepare_on_worker(
                         &definition,
                         session_cwd.to_str().unwrap(),
+                        None,
                         Instant::now() + Duration::from_secs(5),
                         &CancellationToken::new(),
                     )
@@ -1362,6 +1369,7 @@ mod tests {
                     .prepare_on_worker(
                         &definition(Condition::PathExists { path: raw.into() }),
                         root.to_str().unwrap(),
+                        None,
                         Instant::now() + Duration::from_secs(1),
                         &CancellationToken::new()
                     )
@@ -1383,6 +1391,7 @@ mod tests {
                             port: 80
                         }),
                         root.to_str().unwrap(),
+                        None,
                         deadline,
                         &token
                     )

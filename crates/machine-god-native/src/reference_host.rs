@@ -6,6 +6,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+mod permissions;
+pub use permissions::NativeReferenceHostPermissionOptions;
+use permissions::{PermissionComposition, ReferenceHostToolCatalog};
+
 use machine_god_core::{
     BoxFuture, CancellationToken, Engine, EngineLimits, NetworkTarget, SessionIncarnationId,
     SessionStore, SubagentAuthority, SubagentAuthorityError, SubagentAuthorityErrorKind,
@@ -68,6 +72,8 @@ pub enum NativeReferenceHostBuildErrorKind {
     BackgroundConfig,
     /// The selected provider could not be constructed.
     Provider,
+    /// Explicit permission authority could not be composed.
+    PermissionConfig,
     /// The provider-neutral engine could not be constructed.
     Engine,
 }
@@ -102,6 +108,9 @@ impl fmt::Debug for NativeReferenceHostBuildError {
 impl fmt::Display for NativeReferenceHostBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self.kind {
+            NativeReferenceHostBuildErrorKind::PermissionConfig => {
+                "native reference-host permission configuration failed"
+            }
             NativeReferenceHostBuildErrorKind::UnsupportedSelection => {
                 "native reference-host selection is unsupported"
             }
@@ -268,6 +277,7 @@ pub struct NativeReferenceHostConversationOptions {
     terminal: Option<NativeReferenceHostTerminalOptions>,
     model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
     observations: Option<Arc<crate::NativeConversationObservations>>,
+    permissions: Option<NativeReferenceHostPermissionOptions>,
 }
 
 impl NativeReferenceHostConversationOptions {
@@ -279,6 +289,7 @@ impl NativeReferenceHostConversationOptions {
             terminal: None,
             model_routes: None,
             observations: None,
+            permissions: None,
         }
     }
 
@@ -308,6 +319,14 @@ impl NativeReferenceHostConversationOptions {
         self.observations = Some(observations);
         self
     }
+
+    /// Enables native mode/rule enforcement and selected-file approval reads.
+    /// Requires the complete terminal selection and matching conversation routes.
+    #[must_use]
+    pub fn with_permissions(mut self, permissions: NativeReferenceHostPermissionOptions) -> Self {
+        self.permissions = Some(permissions);
+        self
+    }
 }
 
 impl fmt::Debug for NativeReferenceHostConversationOptions {
@@ -324,6 +343,7 @@ struct PreparedCompositionOptions {
     terminal: Option<NativeReferenceHostTerminalOptions>,
     model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
     observations: Option<Arc<crate::NativeConversationObservations>>,
+    permissions: Option<NativeReferenceHostPermissionOptions>,
 }
 
 impl From<NativeReferenceHostConversationOptions> for PreparedCompositionOptions {
@@ -333,6 +353,7 @@ impl From<NativeReferenceHostConversationOptions> for PreparedCompositionOptions
             terminal: options.terminal,
             model_routes: options.model_routes,
             observations: options.observations,
+            permissions: options.permissions,
         }
     }
 }
@@ -361,6 +382,8 @@ pub struct NativeReferenceHost {
     loaded_config: LoadedNativeConfig,
     credential_source: Option<AiGatewayCredentialSource>,
     terminal_shutdown: Option<crate::NativeOwnedWorkerCompletion>,
+    permissions: Option<Arc<crate::NativePermissionController>>,
+    permission_contexts: Option<Arc<crate::NativePermissionContexts>>,
 }
 
 impl NativeReferenceHost {
@@ -588,9 +611,10 @@ impl NativeReferenceHost {
         web_search_deadline: Arc<dyn WebSearchDeadline>,
         options: PreparedCompositionOptions,
     ) -> Result<Self, NativeReferenceHostBuildError> {
-        validate_selections(&loaded_config)?;
+        validate_prepared_selections(&loaded_config, &options)?;
         let model_routes = options.model_routes.clone();
         let observations = options.observations.clone();
+        let permissions = options.permissions.clone();
         let (workspace_tools, session_store, selection) =
             consume_prepared_composition(prepared_roots, options)?;
         let memory = open_memory_tool(&session_store)?;
@@ -617,6 +641,7 @@ impl NativeReferenceHost {
             selection,
             model_routes,
             observations,
+            permissions,
         )
     }
 
@@ -714,6 +739,7 @@ impl NativeReferenceHost {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -766,6 +792,7 @@ impl NativeReferenceHost {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -811,6 +838,7 @@ impl NativeReferenceHost {
             Arc::new(EmptyMcpToolCatalog),
             Arc::new(EmptyMcpFeatureAuthority),
             subagent_authority,
+            None,
             None,
             None,
             None,
@@ -861,6 +889,7 @@ impl NativeReferenceHost {
             mcp_catalog,
             mcp_feature_authority,
             subagent_authority,
+            None,
             None,
             None,
             None,
@@ -988,9 +1017,10 @@ impl NativeReferenceHost {
         web_search_deadline: Arc<dyn WebSearchDeadline>,
         options: PreparedCompositionOptions,
     ) -> Result<Self, NativeReferenceHostBuildError> {
-        validate_selections(&loaded_config)?;
+        validate_prepared_selections(&loaded_config, &options)?;
         let model_routes = options.model_routes.clone();
         let observations = options.observations.clone();
+        let permissions = options.permissions.clone();
         let (workspace_tools, session_store, selection) =
             consume_prepared_composition(prepared_roots, options)?;
         let memory = open_memory_tool(&session_store)?;
@@ -1011,6 +1041,7 @@ impl NativeReferenceHost {
             selection,
             model_routes,
             observations,
+            permissions,
         )
     }
 
@@ -1018,6 +1049,33 @@ impl NativeReferenceHost {
     #[must_use]
     pub const fn engine(&self) -> &Engine {
         &self.engine
+    }
+
+    /// Attaches this host's exact native permission routes before admitting work.
+    /// Legacy hosts leave the conversation unchanged. No prompt or file snapshot
+    /// occurs; restored saved rules are validated, never restored as live grants.
+    /// # Errors
+    /// Rejects duplicate/busy registration or invalid saved permission metadata.
+    pub fn configure_conversation_permissions(
+        &self,
+        conversation: crate::NativeConversation,
+    ) -> Result<crate::NativeConversation, crate::NativeConversationError> {
+        let Some(controller) = &self.permissions else {
+            return Ok(conversation);
+        };
+        let contexts = self
+            .permission_contexts
+            .as_ref()
+            .ok_or(crate::NativeConversationError::Engine)?;
+        let config = self.loaded_config.config();
+        let policy = crate::NativePermissionPolicySnapshot::new(
+            config.permission_mode(),
+            Arc::new(config.permission_rules().clone()),
+        )
+        .with_sandbox_mode(config.sandbox_mode());
+        conversation
+            .with_permission_controller(controller, policy)?
+            .with_permission_contexts(contexts)
     }
 
     /// Observes settlement of this host's complete terminal workers, including
@@ -1092,6 +1150,7 @@ impl NativeReferenceHost {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -1113,39 +1172,56 @@ impl NativeReferenceHost {
         terminal_selection: Option<TerminalCompositionSelection>,
         model_routes: Option<Arc<crate::NativeConversationModelRoutes>>,
         observations: Option<Arc<crate::NativeConversationObservations>>,
+        permission_options: Option<NativeReferenceHostPermissionOptions>,
     ) -> Result<Self, NativeReferenceHostBuildError> {
+        let permission_setup = permission_options
+            .map(|options| PermissionComposition::new(options, &workspace_tools))
+            .transpose()?;
+        let permission_contexts = permission_setup
+            .as_ref()
+            .map(|setup| Arc::clone(&setup.contexts));
+        let workspace_tools = match &permission_setup {
+            Some(setup) => setup.install_files(workspace_tools),
+            None => workspace_tools,
+        };
         let model = loaded_config.config().model().to_owned();
+        let (provider, engine_limits) = if terminal_selection.is_some() {
+            compose_full_terminal_provider(model.clone(), Arc::clone(&transport))?
+        } else {
+            compose_provider(model.clone(), Arc::clone(&transport))?
+        };
+        let mut catalog =
+            ReferenceHostToolCatalog::new(observations, engine_limits, permission_setup.is_some());
+        let authority = catalog.workspace(workspace_tools);
         let SharedNetworkTools {
             vision,
             web_search,
             terminal_wait_delay,
         } = compose_network_tools(
-            workspace_tools.vision_root,
+            authority.vision_root,
             &model,
             &transport,
             network_target,
             web_search_deadline,
             model_routes,
         )?;
-        let (provider, engine_limits) = if terminal_selection.is_some() {
-            compose_full_terminal_provider(model, transport)?
-        } else {
-            compose_provider(model, transport)?
-        };
         let web_fetch = compose_web_fetch()?;
-        let permission_handler = AskPermissionHandler::shared_prompter(permission_prompter);
         let ask_user_question = AskUserQuestionTool::shared_prompter(question_prompter);
         let SelectedTerminalComposition {
             tool: terminal,
             resource: host_resource,
             archive,
+            concrete: terminal_concrete,
         } = compose_selected_terminal(
-            workspace_tools.terminal_root,
-            workspace_tools.canonical_workspace,
-            workspace_tools.background_root,
+            authority.terminal_root,
+            authority.canonical_workspace,
+            authority.background_root,
             &session_store,
             terminal_wait_delay,
             terminal_selection,
+            permission_setup
+                .as_ref()
+                .map(|setup| Arc::clone(&setup.sandbox)),
         )?;
         let session_store = Arc::new(session_store);
         let (engine_session_store, read_tool_result) = session_store_components(&session_store);
@@ -1153,44 +1229,60 @@ impl NativeReferenceHost {
             Some(archive) => read_tool_result.with_archive(archive),
             None => read_tool_result,
         };
-        let file_history = FileHistoryTools(observations);
-        let builder = Engine::builder()
+        catalog.question(ask_user_question);
+        catalog.extensions(mcp_catalog, mcp_feature_authority, subagent_authority);
+        catalog.add(memory, None);
+        catalog.add(read_tool_result, None);
+        catalog.terminal(terminal, terminal_concrete)?;
+        catalog.add(vision, None);
+        catalog.add(web_fetch, None);
+        catalog.add(web_search, None);
+        let permissions = permission_setup
+            .map(|setup| {
+                let workers = host_resource
+                    .as_ref()
+                    .ok_or_else(permissions::error)?
+                    .worker_scope();
+                setup.finish(
+                    catalog.registrations,
+                    workers,
+                    transport,
+                    Arc::clone(&permission_prompter),
+                )
+            })
+            .transpose()?;
+        let mut builder = Engine::builder()
             .limits(engine_limits)
             .provider(provider)
-            .shared_session_store(engine_session_store)
-            .permission_handler(permission_handler)
-            .tool(ask_user_question)
-            .shared_tool(file_history.wrap(workspace_tools.copy_file, NativeFileHistoryKind::Copy))
-            .tool(workspace_tools.create_folder)
-            .shared_tool(
-                file_history.wrap(workspace_tools.delete_file, NativeFileHistoryKind::Delete),
-            )
-            .shared_tool(file_history.wrap(workspace_tools.edit_file, NativeFileHistoryKind::Edit))
-            .tool(workspace_tools.file_info)
-            .shared_tool(file_history.wrap(workspace_tools.glob_files, NativeFileHistoryKind::Glob))
-            .shared_tool(file_history.wrap(workspace_tools.grep_files, NativeFileHistoryKind::Grep))
-            .tool(workspace_tools.install_skill)
-            .shared_tool(file_history.wrap(workspace_tools.list_files, NativeFileHistoryKind::List))
-            .tool(McpSearchToolsTool::shared_catalog(Arc::clone(&mcp_catalog)))
-            .tool(McpSelectTool::shared_catalog(mcp_catalog))
-            .tool(McpFeaturesTool::shared_authority(mcp_feature_authority))
-            .tool(memory)
-            .tool(workspace_tools.open_file)
-            .shared_tool(file_history.wrap(workspace_tools.read_file, NativeFileHistoryKind::Read))
-            .tool(read_tool_result)
-            .shared_tool(
-                file_history.wrap(workspace_tools.rename_file, NativeFileHistoryKind::Rename),
-            )
-            .tool(workspace_tools.semantic_search)
-            .tool(workspace_tools.skill)
-            .tool(SubagentTool::shared_authority(subagent_authority))
-            .shared_tool(terminal)
-            .tool(vision)
-            .tool(web_fetch)
-            .tool(web_search)
-            .shared_tool(
-                file_history.wrap(workspace_tools.write_file, NativeFileHistoryKind::Write),
-            );
+            .shared_session_store(engine_session_store);
+        builder = match &permissions {
+            Some(controller) => builder.shared_permission_handler(controller.clone()),
+            None => builder
+                .permission_handler(AskPermissionHandler::shared_prompter(permission_prompter)),
+        };
+        for tool in catalog.tools {
+            builder = builder.shared_tool(tool);
+        }
+        Self::from_composed_builder(
+            builder,
+            session_store,
+            loaded_config,
+            credential_source,
+            host_resource,
+            permissions,
+            permission_contexts,
+        )
+    }
+
+    fn from_composed_builder(
+        builder: machine_god_core::EngineBuilder,
+        session_store: Arc<FileSessionStore>,
+        loaded_config: LoadedNativeConfig,
+        credential_source: Option<AiGatewayCredentialSource>,
+        host_resource: Option<NativeTerminalHostResource>,
+        permissions: Option<Arc<crate::NativePermissionController>>,
+        permission_contexts: Option<Arc<crate::NativePermissionContexts>>,
+    ) -> Result<Self, NativeReferenceHostBuildError> {
         let terminal_shutdown = host_resource
             .as_ref()
             .map(NativeTerminalHostResource::completion);
@@ -1213,21 +1305,9 @@ impl NativeReferenceHost {
             loaded_config,
             credential_source,
             terminal_shutdown,
+            permissions,
+            permission_contexts,
         })
-    }
-}
-
-struct FileHistoryTools(Option<Arc<crate::NativeConversationObservations>>);
-impl FileHistoryTools {
-    fn wrap(&self, tool: impl Tool, kind: NativeFileHistoryKind) -> Arc<dyn Tool> {
-        match &self.0 {
-            Some(observations) => Arc::new(NativeFileHistoryTool::new(
-                tool,
-                kind,
-                Arc::clone(observations),
-            )),
-            None => Arc::new(tool),
-        }
     }
 }
 
@@ -1327,6 +1407,7 @@ struct FullTerminalComposition {
 
 struct SelectedTerminalComposition {
     tool: Arc<dyn Tool>,
+    concrete: Option<Arc<crate::TerminalActionTool>>,
     resource: Option<NativeTerminalHostResource>,
     archive: Option<Arc<NativeToolResultArchiveAdapter>>,
 }
@@ -1338,11 +1419,20 @@ fn compose_selected_terminal(
     session_store: &FileSessionStore,
     wait_delay: Arc<dyn TerminalBackgroundWaitDelay>,
     selection: Option<TerminalCompositionSelection>,
+    permission: Option<Arc<crate::NativeTerminalPermissionPolicy>>,
 ) -> Result<SelectedTerminalComposition, NativeReferenceHostBuildError> {
     if let Some(selection) = selection {
-        let full = compose_full_terminal(workspace, workspace_path, session_store, selection)?;
+        let full = compose_full_terminal(
+            workspace,
+            workspace_path,
+            session_store,
+            selection,
+            permission,
+        )?;
+        let tool = Arc::new(full.tool);
         Ok(SelectedTerminalComposition {
-            tool: Arc::new(full.tool),
+            tool: tool.clone(),
+            concrete: Some(tool),
             resource: Some(full.resource),
             archive: Some(full.archive),
         })
@@ -1356,6 +1446,7 @@ fn compose_selected_terminal(
         )?;
         Ok(SelectedTerminalComposition {
             tool: Arc::new(tool),
+            concrete: None,
             resource: None,
             archive: None,
         })
@@ -1367,6 +1458,7 @@ fn compose_full_terminal(
     workspace_path: PathBuf,
     session_store: &FileSessionStore,
     selection: TerminalCompositionSelection,
+    permission: Option<Arc<crate::NativeTerminalPermissionPolicy>>,
 ) -> Result<FullTerminalComposition, NativeReferenceHostBuildError> {
     use std::fmt::Write as _;
     let state_root = session_store
@@ -1405,8 +1497,16 @@ fn compose_full_terminal(
         artifacts,
         artifact_path: state_path.join("terminal-startup"),
     };
-    let (tool, resource) = NativeTerminalHost::compose_on_worker(inputs, state_root, host_identity)
-        .map_err(|_| terminal_options_error())?;
+    let (tool, resource) = match permission {
+        Some(permission) => NativeTerminalHost::compose_with_permission_on_worker(
+            inputs,
+            state_root,
+            host_identity,
+            permission,
+        ),
+        None => NativeTerminalHost::compose_on_worker(inputs, state_root, host_identity),
+    }
+    .map_err(|_| terminal_options_error())?;
     let archive = Arc::new(
         NativeToolResultArchiveAdapter::new(archive).with_worker_scope(resource.worker_scope()),
     );
@@ -1649,11 +1749,39 @@ impl fmt::Debug for NativeReferenceHost {
 fn validate_selections(
     loaded_config: &LoadedNativeConfig,
 ) -> Result<(), NativeReferenceHostBuildError> {
+    validate_provider_selections(loaded_config)?;
+    let config = loaded_config.config();
+    if config.permission_mode() != PermissionMode::Ask
+        || config.sandbox_mode() != crate::NativeSandboxMode::None
+        || !config.permission_rules().rules().is_empty()
+    {
+        return Err(NativeReferenceHostBuildError::new(
+            NativeReferenceHostBuildErrorKind::UnsupportedSelection,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_prepared_selections(
+    loaded_config: &LoadedNativeConfig,
+    options: &PreparedCompositionOptions,
+) -> Result<(), NativeReferenceHostBuildError> {
+    if options.permissions.is_none() {
+        return validate_selections(loaded_config);
+    }
+    if options.terminal.is_none() {
+        return Err(permissions::error());
+    }
+    validate_provider_selections(loaded_config)
+}
+
+fn validate_provider_selections(
+    loaded_config: &LoadedNativeConfig,
+) -> Result<(), NativeReferenceHostBuildError> {
     let config = loaded_config.config();
     if config.credential_source() != NativeCredentialSourceKind::Environment
         || config.provider() != NativeProviderKind::VercelAiGateway
         || config.transport() != NativeTransportKind::AiGatewayHttp
-        || config.permission_mode() != PermissionMode::Ask
     {
         return Err(NativeReferenceHostBuildError::new(
             NativeReferenceHostBuildErrorKind::UnsupportedSelection,

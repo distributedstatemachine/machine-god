@@ -53,6 +53,14 @@ impl fmt::Debug for NativePermissionTargetAuthority {
 }
 
 impl NativePermissionTargetAuthority {
+    pub(crate) fn validate_file_authority(
+        &self,
+        files: &crate::NativeFileApprovalAuthority,
+    ) -> Result<(), PermissionError> {
+        paths::validate_root(&self.root, &self.workspace)?;
+        paths::validate_root(files.directory(), &self.workspace)
+    }
+
     /// Projects existing file evidence without duplicating preimages or I/O.
     /// The caller retains the approval and its same-workspace execution binding.
     /// # Errors
@@ -608,7 +616,7 @@ fn invalid() -> PermissionError {
     )
 }
 
-fn sensitive_path(path: &str) -> bool {
+pub(crate) fn sensitive_path(path: &str) -> bool {
     const PARTS: &[&str] = &[
         ".git/hooks",
         ".git/config",

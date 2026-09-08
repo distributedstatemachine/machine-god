@@ -96,6 +96,10 @@ pub struct NativeFileApprovalAuthority {
     root: Arc<File>,
 }
 impl NativeFileApprovalAuthority {
+    pub(crate) fn directory(&self) -> &File {
+        &self.root
+    }
+
     /// # Errors
     /// Rejects a descriptor that is not a currently linked directory.
     pub fn from_directory(directory: File) -> Result<Self, Error> {

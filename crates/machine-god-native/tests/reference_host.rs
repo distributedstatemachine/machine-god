@@ -50,6 +50,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
 
+#[path = "reference_host/permission_composition.rs"]
+mod permission_composition;
 mod web_search_support;
 
 use web_search_support::{never_deadline, production_gateway_target};

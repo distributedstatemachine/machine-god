@@ -30,7 +30,10 @@ use crate::terminal_runtime::{
 };
 use crate::terminal_session::TerminalSessionError;
 use crate::terminal_staged_start::TerminalStagedStarter;
-use crate::{NativeOwnedWorkerCompletion, NativeOwnedWorkerScope};
+use crate::{
+    NativeOwnedWorkerCompletion, NativeOwnedWorkerScope, NativeSandboxLaunch,
+    NativeTerminalPermissionPolicy,
+};
 use futures_util::future::{Either, select};
 use machine_god_core::{
     BackgroundOutputOwner, BoxFuture, CancellationToken, SessionIncarnationId, TerminalAction,
@@ -119,7 +122,11 @@ impl PreparedHost {
         );
         #[cfg(target_os = "macos")]
         let captured = captured.with_inventory_registration(
-            host.launch_config().pty_helper.inventory_helper().ok_or_else(unavailable)?.clone(),
+            host.launch_config()
+                .pty_helper
+                .inventory_helper()
+                .ok_or_else(unavailable)?
+                .clone(),
         );
         let captured = Arc::new(captured);
         let preparer = Arc::new(TerminalHostProbePreparer::new_on_worker(
@@ -148,6 +155,24 @@ impl NativeTerminalHost {
         inputs: TerminalHostAuthorityInputs,
         state_root: OwnedFd,
         host_identity: SessionIncarnationId,
+    ) -> Result<(TerminalActionTool, NativeTerminalHostResource), ToolError> {
+        Self::compose(inputs, state_root, host_identity, None)
+    }
+
+    pub(crate) fn compose_with_permission_on_worker(
+        inputs: TerminalHostAuthorityInputs,
+        state_root: OwnedFd,
+        host_identity: SessionIncarnationId,
+        permission: Arc<NativeTerminalPermissionPolicy>,
+    ) -> Result<(TerminalActionTool, NativeTerminalHostResource), ToolError> {
+        Self::compose(inputs, state_root, host_identity, Some(permission))
+    }
+
+    fn compose(
+        inputs: TerminalHostAuthorityInputs,
+        state_root: OwnedFd,
+        host_identity: SessionIncarnationId,
+        permission: Option<Arc<NativeTerminalPermissionPolicy>>,
     ) -> Result<(TerminalActionTool, NativeTerminalHostResource), ToolError> {
         let workers = NativeOwnedWorkerScope::new();
         let PreparedHost {
@@ -218,9 +243,12 @@ impl NativeTerminalHost {
         );
         let identity = host.identity().clone();
         let permission_resolver = Arc::new(crate::permission_targets::HostPermissionResolver::new(
-            Arc::clone(&host), workers.clone(), stop.clone(),
+            Arc::clone(&host),
+            workers.clone(),
+            stop.clone(),
         ));
         let executor = NativeTerminalActionExecutor {
+            permission,
             requester,
             host,
             preparer,
@@ -245,6 +273,7 @@ impl NativeTerminalHost {
 
 #[derive(Clone)]
 struct NativeTerminalActionExecutor {
+    permission: Option<Arc<NativeTerminalPermissionPolicy>>,
     requester: Requester,
     host: Arc<CapturedTerminalHostAuthority>,
     preparer: Arc<TerminalHostProbePreparer>,
@@ -265,15 +294,18 @@ impl TerminalActionExecutor for NativeTerminalActionExecutor {
         let host = self.clone();
         Box::pin(async move {
             check(&cancellation, &host.stop)?;
-            let authority = resident_authority(context);
+            let authority = resident_authority(context.clone());
             if invocation.action() == TerminalAction::Exec {
-                return host.exec(invocation, cancellation).await;
+                return host.exec(context, invocation, cancellation).await;
             }
             if matches!(
                 invocation.action(),
                 TerminalAction::Start | TerminalAction::Monitor
-            ) || invocation.has_workspace_filter() {
-                return host.owned_action(authority, invocation, cancellation).await;
+            ) || invocation.has_workspace_filter()
+            {
+                return host
+                    .owned_action(context, authority, invocation, cancellation)
+                    .await;
             }
             let request = invocation.resolve_cwd(|_| Err(unavailable()))?;
             let reply = terminal_host_dispatch::dispatch(
@@ -293,10 +325,12 @@ impl TerminalActionExecutor for NativeTerminalActionExecutor {
 impl NativeTerminalActionExecutor {
     fn exec(
         &self,
+        context: ToolContext,
         invocation: TerminalActionInvocation,
         cancellation: CancellationToken,
     ) -> BoxFuture<'static, Result<TerminalActionResult, ToolError>> {
         let host = Arc::clone(&self.host);
+        let permission = self.permission.clone();
         let future = self.captured.execute_prepared(
             move |deadline, cancellation, stop| {
                 check(cancellation, stop).map_err(|_| TerminalCapturedExecError::Cancelled)?;
@@ -306,9 +340,23 @@ impl NativeTerminalActionExecutor {
                 let TerminalActionRequest::Exec { request } = resolved.request else {
                     return Err(TerminalCapturedExecError::Invalid);
                 };
-                let shell = host
+                let mut shell = host
                     .exec_shell(&request)
                     .map_err(|_| TerminalCapturedExecError::Invalid)?;
+                if let Some(permission) = permission {
+                    let sandbox = permission
+                        .capture_on_worker(&context, deadline, cancellation)
+                        .map_err(|error| match error {
+                            crate::NativeSandboxError::Cancelled => {
+                                TerminalCapturedExecError::Cancelled
+                            }
+                            crate::NativeSandboxError::Timeout => {
+                                TerminalCapturedExecError::Process
+                            }
+                            _ => TerminalCapturedExecError::Invalid,
+                        })?;
+                    shell = shell.with_sandbox(sandbox);
+                }
                 Ok(TerminalCapturedAuthority {
                     request,
                     shell,
@@ -332,6 +380,7 @@ impl NativeTerminalActionExecutor {
 
     fn owned_action(
         self,
+        context: ToolContext,
         authority: TerminalResidentAuthority,
         invocation: TerminalActionInvocation,
         cancellation: CancellationToken,
@@ -355,6 +404,7 @@ impl NativeTerminalActionExecutor {
                         check(&cancellation, &dropped)?;
                         let effective = CancellationToken::new();
                         let operation = self.effect_on_worker(
+                            context,
                             authority,
                             invocation,
                             deadline,
@@ -382,6 +432,7 @@ impl NativeTerminalActionExecutor {
 
     fn effect_on_worker(
         &self,
+        context: ToolContext,
         authority: TerminalResidentAuthority,
         invocation: TerminalActionInvocation,
         deadline: Instant,
@@ -392,41 +443,79 @@ impl NativeTerminalActionExecutor {
             let resolved = self
                 .host
                 .resolve_on_worker(invocation, deadline, &cancellation)?;
+            let needs_launch = match &resolved.request {
+                TerminalActionRequest::Start { .. } => true,
+                TerminalActionRequest::Monitor {
+                    operation:
+                        TerminalMonitorOperation::Add { definition }
+                        | TerminalMonitorOperation::Update { definition, .. },
+                    ..
+                } => matches!(
+                    definition.condition,
+                    machine_god_core::TerminalMonitorCondition::CustomProbe { .. }
+                ),
+                _ => false,
+            };
+            let sandbox = if needs_launch {
+                self.permission
+                    .as_ref()
+                    .map(|permission| {
+                        permission
+                            .capture_on_worker(&context, deadline, &cancellation)
+                            .map_err(|error| match error {
+                                crate::NativeSandboxError::Cancelled => cancelled(),
+                                _ => unavailable(),
+                            })
+                    })
+                    .transpose()?
+            } else {
+                None
+            };
             match resolved.request {
                 TerminalActionRequest::Start { request } => {
                     let cwd = resolved.cwd.ok_or_else(unavailable)?;
-                    self.start_on_worker(authority, request, cwd, deadline, cancellation)
+                    self.start_on_worker(authority, request, cwd, sandbox, deadline, cancellation)
                         .await
                 }
                 TerminalActionRequest::Monitor {
                     session_id,
                     operation,
                 } => {
-                    self.monitor_on_worker(authority, session_id, operation, deadline, cancellation)
-                        .await
-                }
-                request @ TerminalActionRequest::List { .. } => {
-                    terminal_host_dispatch::dispatch(
-                        self.requester.clone(),
+                    self.monitor_on_worker(
                         authority,
-                        request,
-                        TerminalMonitorActivation::default(),
+                        session_id,
+                        operation,
+                        sandbox,
+                        deadline,
                         cancellation,
                     )
                     .await
-                    .map(reply_result)
-                    .map_err(dispatch_error)
                 }
+                request @ TerminalActionRequest::List { .. } => terminal_host_dispatch::dispatch(
+                    self.requester.clone(),
+                    authority,
+                    request,
+                    TerminalMonitorActivation::default(),
+                    cancellation,
+                )
+                .await
+                .map(reply_result)
+                .map_err(dispatch_error),
                 _ => Err(unavailable()),
             }
         })
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit actor, launch authority and original deadline"
+    )]
     async fn start_on_worker(
         &self,
         authority: TerminalResidentAuthority,
         request: TerminalStartRequest,
         cwd: OwnedFd,
+        sandbox: Option<Arc<NativeSandboxLaunch>>,
         deadline: Instant,
         cancellation: CancellationToken,
     ) -> Result<TerminalActionResult, ToolError> {
@@ -437,6 +526,7 @@ impl NativeTerminalActionExecutor {
             prepared.push(self.preparer.prepare_on_worker(
                 definition,
                 &request.cwd,
+                sandbox.clone(),
                 deadline,
                 &cancellation,
             )?);
@@ -461,6 +551,7 @@ impl NativeTerminalActionExecutor {
                 authority.clone(),
                 id.clone(),
                 request,
+                sandbox,
                 move || {
                     check(&launch_cancel, &launch_stop)
                         .map_err(|_| TerminalNativeLaunchError::Cancelled)?;
@@ -535,6 +626,7 @@ impl NativeTerminalActionExecutor {
         authority: TerminalResidentAuthority,
         id: TerminalSessionId,
         operation: TerminalMonitorOperation,
+        sandbox: Option<Arc<NativeSandboxLaunch>>,
         deadline: Instant,
         cancellation: CancellationToken,
     ) -> Result<TerminalActionResult, ToolError> {
@@ -555,10 +647,13 @@ impl NativeTerminalActionExecutor {
                     .await
                     .map_err(|_| unavailable())?
                     .ok_or_else(unavailable)?;
-                Some(
-                    self.preparer
-                        .prepare_on_worker(definition, &cwd, deadline, &cancellation)?,
-                )
+                Some(self.preparer.prepare_on_worker(
+                    definition,
+                    &cwd,
+                    sandbox,
+                    deadline,
+                    &cancellation,
+                )?)
             }
             _ => None,
         };
@@ -804,7 +899,12 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
 
+    mod permission_policy {
+        include!("terminal_permission_policy/host_tests.rs");
+    }
+
     struct Fixture {
+        context: ToolContext,
         root: PathBuf,
         tool: TerminalActionTool,
         resource: Option<NativeTerminalHostResource>,
@@ -841,6 +941,11 @@ mod tests {
 
     impl Fixture {
         fn new() -> Self {
+            Self::with_permission(|_| None)
+        }
+        fn with_permission(
+            permission: impl FnOnce(&Path) -> Option<Arc<NativeTerminalPermissionPolicy>>,
+        ) -> Self {
             let mut nonce = [0_u8; 8];
             getrandom::fill(&mut nonce).unwrap();
             let root =
@@ -864,26 +969,32 @@ mod tests {
                 std::fs::set_permissions(&artifacts, std::fs::Permissions::from_mode(0o700))
                     .unwrap();
             }
-            let (tool, resource) = NativeTerminalHost::compose_on_worker(
-                TerminalHostAuthorityInputs {
-                    workspace: open(&workspace),
-                    workspace_path: workspace.clone(),
-                    default_cwd: workspace,
-                    environment: vec![
-                        ("PATH".into(), "/usr/bin:/bin".into()),
-                        ("HOME".into(), root.as_os_str().to_owned()),
-                    ],
-                    account_shell: TerminalHostAccountShell::Explicit(Some("/bin/bash".into())),
-                    cli_executable: cli,
-                    tmux_executable: None,
-                    artifacts: open(&artifacts),
-                    artifact_path: artifacts,
-                },
-                open(&root.join("state")),
-                SessionIncarnationId::new("host-test").unwrap(),
-            )
+            let permission = permission(&workspace);
+            let inputs = TerminalHostAuthorityInputs {
+                workspace: open(&workspace),
+                workspace_path: workspace.clone(),
+                default_cwd: workspace,
+                environment: vec![
+                    ("PATH".into(), "/usr/bin:/bin".into()),
+                    ("HOME".into(), root.as_os_str().to_owned()),
+                ],
+                account_shell: TerminalHostAccountShell::Explicit(Some("/bin/bash".into())),
+                cli_executable: cli,
+                tmux_executable: None,
+                artifacts: open(&artifacts),
+                artifact_path: artifacts,
+            };
+            let state = open(&root.join("state"));
+            let identity = SessionIncarnationId::new("host-test").unwrap();
+            let (tool, resource) = match permission {
+                Some(permission) => NativeTerminalHost::compose_with_permission_on_worker(
+                    inputs, state, identity, permission,
+                ),
+                None => NativeTerminalHost::compose_on_worker(inputs, state, identity),
+            }
             .unwrap();
             Self {
+                context: Self::context(),
                 root,
                 tool,
                 completion: resource.completion(),
@@ -921,12 +1032,17 @@ mod tests {
                 .tool
                 .prepare(call)
                 .unwrap_or_else(|error| panic!("prepare {action}: {error:?}"));
-            let execution =
-                self.tool
-                    .execute(Self::context(), prepared.arguments().clone(), cancellation);
+            let execution = self.tool.execute(
+                self.context.clone(),
+                prepared.arguments().clone(),
+                cancellation,
+            );
             Box::pin(async move {
                 let output = execution.await?;
-                assert_eq!(output.is_error, expected_error, "{action}: tool failure flag");
+                assert_eq!(
+                    output.is_error, expected_error,
+                    "{action}: tool failure flag"
+                );
                 Ok(serde_json::from_value(output.content).unwrap())
             })
         }
@@ -943,17 +1059,25 @@ mod tests {
             // retained failure before issuing another explicit close for this
             // exact session. Never replay start, write, or arbitrary errors.
             for attempt in 0..4 {
-                match self.try_action(json!({"action":"close","session_id":id.as_str(),"close_policy":"force"})) {
+                match self.try_action(
+                    json!({"action":"close","session_id":id.as_str(),"close_policy":"force"}),
+                ) {
                     Ok(TerminalActionResult::Close { session, .. }) => {
                         assert_eq!(&session.session_id, id);
-                        assert_eq!(session.lifecycle, machine_god_core::TerminalLifecycle::Closed);
+                        assert_eq!(
+                            session.lifecycle,
+                            machine_god_core::TerminalLifecycle::Closed
+                        );
                         return session;
                     }
                     Ok(_) => panic!("close receipt"),
                     Err(error) => {
                         assert_native_cleanup_failure(&error);
                         self.assert_retained_close_failure(id);
-                        assert!(attempt < 3, "bounded explicit close recovery exhausted: {error:?}");
+                        assert!(
+                            attempt < 3,
+                            "bounded explicit close recovery exhausted: {error:?}"
+                        );
                         std::thread::sleep(Duration::from_millis(10));
                     }
                 }
@@ -1032,8 +1156,10 @@ mod tests {
 
         let mut nonce = [0_u8; 8];
         getrandom::fill(&mut nonce).unwrap();
-        let root = std::env::temp_dir()
-            .join(format!("mg-host-inventory-{:016x}", u64::from_le_bytes(nonce)));
+        let root = std::env::temp_dir().join(format!(
+            "mg-host-inventory-{:016x}",
+            u64::from_le_bytes(nonce)
+        ));
         std::fs::create_dir(&root).unwrap();
         let helper = write_cli_fixture_helper(&root);
         let flag = crate::PROCESS_INVENTORY_HELPER_ARGUMENT;
@@ -1067,7 +1193,11 @@ mod tests {
             .unwrap(),
         );
         std::fs::remove_dir_all(root).unwrap();
-        assert_eq!(valid, Ok(true), "exact helper must emit only canonical PID lines");
+        assert_eq!(
+            valid,
+            Ok(true),
+            "exact helper must emit only canonical PID lines"
+        );
         assert!(missing.is_err(), "missing private flag must fail");
         assert!(extra.is_err(), "extra private arguments must fail");
         assert!(expired.is_err(), "expired transferred deadline must fail");
@@ -1082,11 +1212,14 @@ mod tests {
             CancellationToken::new(),
         ));
         assert!(!fixture.root.join("workspace/forbidden").exists());
-        let TerminalActionResult::Exec { result } = futures_executor::block_on(fixture.future_with_expected_error(
-            json!({"action":"exec","profile":"clean","command":"printf foreground; exit 7"}),
-            CancellationToken::new(),
-            true,
-        )).unwrap() else {
+        let TerminalActionResult::Exec { result } =
+            futures_executor::block_on(fixture.future_with_expected_error(
+                json!({"action":"exec","profile":"clean","command":"printf foreground; exit 7"}),
+                CancellationToken::new(),
+                true,
+            ))
+            .unwrap()
+        else {
             panic!("exec receipt");
         };
         assert_eq!(
@@ -1150,41 +1283,73 @@ mod tests {
         std::os::unix::fs::symlink("real/deep", workspace.join("link")).unwrap();
         let TerminalActionResult::Start { session, .. } = fixture.action(json!({
             "action":"start", "profile":"clean", "command":"exec /bin/sleep 30"
-        })) else { panic!("start receipt"); };
+        })) else {
+            panic!("start receipt");
+        };
         fixture.close(&session.session_id);
         let ids = |arguments| {
-            let TerminalActionResult::List { sessions } = fixture.action(arguments)
-            else { panic!("list receipt"); };
-            sessions.into_iter().map(|session| session.session_id).collect::<Vec<_>>()
+            let TerminalActionResult::List { sessions } = fixture.action(arguments) else {
+                panic!("list receipt");
+            };
+            sessions
+                .into_iter()
+                .map(|session| session.session_id)
+                .collect::<Vec<_>>()
         };
         let expected = ids(json!({"action":"list"}));
         assert_eq!(expected, vec![session.session_id]);
         for root in [
-            ".".to_owned(), workspace.display().to_string(),
-            format!("{}/.", workspace.display()), "link/../..".to_owned(),
-            " \t.\r\n".to_owned(), "~/workspace".to_owned(), "~//workspace".to_owned(),
+            ".".to_owned(),
+            workspace.display().to_string(),
+            format!("{}/.", workspace.display()),
+            "link/../..".to_owned(),
+            " \t.\r\n".to_owned(),
+            "~/workspace".to_owned(),
+            "~//workspace".to_owned(),
         ] {
-            assert_eq!(ids(json!({"action":"list","workspace_root":root})), expected, "{root}");
+            assert_eq!(
+                ids(json!({"action":"list","workspace_root":root})),
+                expected,
+                "{root}"
+            );
         }
         // Native link/.. is real, not the workspace produced by lexical removal.
-        for root in ["link/..".to_owned(), fixture.root.display().to_string(), "..".to_owned()] {
+        for root in [
+            "link/..".to_owned(),
+            fixture.root.display().to_string(),
+            "..".to_owned(),
+        ] {
             assert!(ids(json!({"action":"list","workspace_root":root})).is_empty());
         }
-        assert!(ids(json!({"action":"list","workspace_root":".","task_id":"other-owner"})).is_empty());
+        assert!(
+            ids(json!({"action":"list","workspace_root":".","task_id":"other-owner"})).is_empty()
+        );
         let mut foreign = Fixture::context();
         foreign.session_id = SessionId::new("foreign-owner").unwrap();
-        let prepared = fixture.tool.prepare(ToolCall {
-            id: foreign.call_id.clone(), name: ToolName::new("terminal").unwrap(),
-            arguments: json!({"action":"list","workspace_root":".","task_id":"owner"}),
-        }).unwrap();
+        let prepared = fixture
+            .tool
+            .prepare(ToolCall {
+                id: foreign.call_id.clone(),
+                name: ToolName::new("terminal").unwrap(),
+                arguments: json!({"action":"list","workspace_root":".","task_id":"owner"}),
+            })
+            .unwrap();
         let output = futures_executor::block_on(fixture.tool.execute(
-            foreign, prepared.arguments().clone(), CancellationToken::new()
-        )).unwrap();
+            foreign,
+            prepared.arguments().clone(),
+            CancellationToken::new(),
+        ))
+        .unwrap();
         assert_eq!(output.content["sessions"], json!([]));
         for root in ["missing", "missing/..", " \t ", "~other"] {
-            assert!(futures_executor::block_on(fixture.future(
-                json!({"action":"list","workspace_root":root}), CancellationToken::new()
-            )).is_err(), "{root}");
+            assert!(
+                futures_executor::block_on(fixture.future(
+                    json!({"action":"list","workspace_root":root}),
+                    CancellationToken::new()
+                ))
+                .is_err(),
+                "{root}"
+            );
         }
     }
 
@@ -1310,7 +1475,8 @@ mod tests {
             .unwrap();
         let injection = InjectedSnapshotFailure(pid);
         crate::background_process::inject_group_snapshot_spawn_failures_for_test(pid, 1);
-        let failed = fixture.try_action(json!({"action":"close","session_id":id.as_str(),"close_policy":"force"}));
+        let failed = fixture
+            .try_action(json!({"action":"close","session_id":id.as_str(),"close_policy":"force"}));
         drop(injection);
         assert_native_cleanup_failure(&failed.unwrap_err());
         fixture.assert_retained_close_failure(&id);
@@ -1326,7 +1492,14 @@ mod tests {
         else {
             panic!("retained output receipt");
         };
-        assert!(output.windows(b"CLOSE_RETAINED".len()).any(|bytes| bytes == b"CLOSE_RETAINED"));
-        assert_eq!(std::fs::read_to_string(fixture.root.join("workspace/close-count")).unwrap(), "once\n");
+        assert!(
+            output
+                .windows(b"CLOSE_RETAINED".len())
+                .any(|bytes| bytes == b"CLOSE_RETAINED")
+        );
+        assert_eq!(
+            std::fs::read_to_string(fixture.root.join("workspace/close-count")).unwrap(),
+            "once\n"
+        );
     }
 }

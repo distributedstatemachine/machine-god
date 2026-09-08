@@ -50,14 +50,23 @@ impl NativeFileHistoryKind {
         }
     }
 }
-pub(crate) struct NativeFileHistoryTool<T> {
-    tool: T,
+pub(crate) struct NativeFileHistoryTool {
+    tool: Arc<dyn Tool>,
     kind: NativeFileHistoryKind,
     registry: Arc<NativeConversationObservations>,
 }
-impl<T: Tool> NativeFileHistoryTool<T> {
+impl NativeFileHistoryTool {
+    #[cfg(test)]
     pub(crate) fn new(
-        tool: T,
+        tool: impl Tool,
+        kind: NativeFileHistoryKind,
+        registry: Arc<NativeConversationObservations>,
+    ) -> Self {
+        Self::shared(Arc::new(tool), kind, registry)
+    }
+
+    pub(crate) fn shared(
+        tool: Arc<dyn Tool>,
         kind: NativeFileHistoryKind,
         registry: Arc<NativeConversationObservations>,
     ) -> Self {
@@ -128,7 +137,7 @@ impl<T: Tool> NativeFileHistoryTool<T> {
             )
     }
 }
-impl<T: Tool> Tool for NativeFileHistoryTool<T> {
+impl Tool for NativeFileHistoryTool {
     fn spec(&self) -> ToolSpec {
         self.tool.spec()
     }

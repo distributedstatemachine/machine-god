@@ -157,6 +157,7 @@ impl<S: 'static> TerminalStagedStarter<S> {
             authority,
             session_id,
             request,
+            None,
             prepare_authority,
             activations,
             |_, _| {},
@@ -177,6 +178,7 @@ impl<S: 'static> TerminalStagedStarter<S> {
         authority: TerminalResidentAuthority,
         session_id: TerminalSessionId,
         request: TerminalStartRequest,
+        sandbox: Option<Arc<crate::NativeSandboxLaunch>>,
         prepare_authority: impl FnOnce() -> std::result::Result<
             TerminalNativeLaunchAuthority,
             TerminalNativeLaunchError,
@@ -197,6 +199,7 @@ impl<S: 'static> TerminalStagedStarter<S> {
             authority,
             session_id,
             request,
+            sandbox,
             prepare_authority,
             activations,
             reconcile_monitors,
@@ -215,6 +218,7 @@ impl<S: 'static> TerminalStagedStarter<S> {
         authority: TerminalResidentAuthority,
         session_id: TerminalSessionId,
         request: TerminalStartRequest,
+        sandbox: Option<Arc<crate::NativeSandboxLaunch>>,
         prepare_authority: impl FnOnce() -> std::result::Result<
             TerminalNativeLaunchAuthority,
             TerminalNativeLaunchError,
@@ -247,6 +251,10 @@ impl<S: 'static> TerminalStagedStarter<S> {
             let deadline = deadline.resolve()?;
             let resolved = ResolvedTerminalNativeLaunch::resolve(&config, &request)
                 .map_err(TerminalStagedStartError::Launch)?;
+            let resolved = match sandbox {
+                Some(sandbox) => resolved.with_sandbox(sandbox),
+                None => resolved,
+            };
             active
                 .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                     (count < MAX_STAGED_STARTS).then_some(count + 1)
@@ -1001,6 +1009,7 @@ mod tests {
             authority(),
             id(),
             fixture.request(None),
+            None,
             || panic!("expired authority"),
             Vec::new(),
             |_, _| {},
@@ -1252,6 +1261,7 @@ mod tests {
                 authority(),
                 id(),
                 request,
+                None,
                 move || Ok(native_authority),
                 vec![TerminalMonitorActivation::default()],
                 |state, registry| {

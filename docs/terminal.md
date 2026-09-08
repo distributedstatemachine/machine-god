@@ -229,6 +229,26 @@ Without explicit injection, all existing constructors retain their behavior.
 Neither builder alone performs discovery, spawns a process or grants permission;
 the embedding host must route the taken-job snapshot into every launch family.
 
+The opt-in terminal host composition accepts `NativeTerminalPermissionPolicy`.
+Its inert constructor retains only explicitly supplied roots and launcher;
+`bind_controller` installs one weak controller link and rejects rebinding even
+after that controller expires. The weak link avoids an ownership cycle through
+the controller's prepared tools. On the existing effect worker, the real tool
+context resolves the exact live session incarnation and turn's taken policy.
+Unbound, expired, closed or uncertain routes fail closed, including effective
+`none`; a missing OS executable never selects an unsandboxed fallback.
+
+Foreground execution attaches that snapshot to its selected shell. Staged PTY
+and tmux starts retain the same snapshot through release, and initial or newly
+added/updated custom monitor commands retain it in their authorized shell
+context. Later mode/sandbox changes and reset cannot widen those retained jobs.
+Pausing/resuming a monitor retains its original snapshot; an update prepares
+new authority under the updating turn. Scheduled probes need not keep their
+source conversation turn alive. Existing probe grants, deadlines and cleanup
+ownership remain authoritative, and the snapshot itself is not an execution
+grant. This composition does not enable optional localhost listening. Without
+the explicit policy option, the existing host constructor remains unchanged.
+
 The profile ceiling is derived from seventeen worst-case escaped paths plus
 fixed policy syntax. The private helper frame adds only that bounded profile,
 the inner program and three wrapper arguments. Ordinary command, environment,
@@ -1318,8 +1338,10 @@ The capability authorizes a process, not a sandbox. The retained workspace
 descriptor constrains only the child's starting-directory identity. Once
 approved, `/bin/sh` and the command can use absolute paths, inherited
 credentials in the approved snapshot, child processes, and network or other
-host authority available to the machine account. Hosts requiring isolation
-must add an external sandbox; this contract claims none.
+host authority available to the machine account unless the host additionally
+injects the explicit sandbox launch authority described above. The capability
+and cwd descriptor alone provide no isolation; effective `none` retains this
+unrestricted process boundary.
 
 ## Workspace and platform boundary
 

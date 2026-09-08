@@ -2,7 +2,7 @@
 
 `machine-god ask` runs one bounded, noninteractive prompt through the native
 reference host and native conversation runtime. It does not introduce an
-interactive shell or a broader permission mode.
+interactive UI or command-line permission-mode override.
 
 ## Grammar
 
@@ -43,7 +43,7 @@ then:
    enabled, awaiting a completed cache observation;
 5. consumes that same credential into the production reference host with
    complete terminal, shared undo, conversation-model routing, and native file
-   observation allocations;
+   observation and native permission allocations;
 6. creates one fresh durable native conversation using a bounded random-identity
    operation, with the verified selected workspace, explicit current Unix time
    in milliseconds, and `Cli` origin in its initial metadata; and
@@ -83,6 +83,14 @@ runtime admission and an attachment failure stops setup. Native code correlates
 observations and publishes durable history; the CLI neither copies observation
 state nor writes history metadata itself.
 
+Before admission, the CLI attaches the host's exact permission controller and
+review context to the conversation. The controller enforces configured mode,
+patterns, saved rules and final file approvals. The owned Tokio runtime also
+drives the dedicated automatic reviewer. On macOS the constructor worker
+explicitly attempts to retain the fixed system sandbox executable. Missing
+authority remains missing: a later Os launch fails instead of running unconfined;
+None and Yolo require no sandbox executable.
+
 Targets outside Linux and macOS fail through one fixed unsupported operational
 path without importing or attempting the complete reference-host composition.
 
@@ -90,7 +98,7 @@ The constructor worker captures the account shell and full environment once,
 then explicitly supplies the CLI executable as the private terminal helper.
 An available tmux executable is selected from that frozen PATH. The resulting
 terminal tool exposes all twelve actions with shared lossless input/result
-archives; ordinary transcript limits and permission decisions are unchanged.
+archives; ordinary transcript limits remain unchanged.
 Library embeddings are not assumed to implement the CLI's private helper modes.
 After the turn succeeds, fails, or unwinds, the constructor worker drops the
 host and waits for its terminal worker scope to settle before returning the
@@ -111,14 +119,17 @@ retain the ordinary fixed operational-failure diagnostic.
 
 ## Noninteractive authority
 
-The command never prompts on standard input. Every permission-gated native
-capability receives a per-request denial from the host adapter. The rootless
+The command never prompts on standard input. Native configured and saved policy
+is evaluated first. Proven built-in bypasses and permitted Auto/Yolo actions may
+execute; any remaining human-prompt requirement receives a per-request denial.
+Auto review returning Ask or failing denies for replanning without a human
+fallback. The rootless
 `ask_user_question` tool receives its fixed unavailable outcome. The model may
 continue after either result, but neither path grants authority or starts
 detached interaction.
 
-`--auto`, `--yolo`, `--prompt-permissions`, persistent grants, and additional
-permission modes are not exposed by this grammar. Images, JSON, quiet or TTY
+`--auto`, `--yolo` and `--prompt-permissions` are not exposed by this grammar;
+permission mode comes from validated native configuration. Images, JSON, quiet or TTY
 presentation, no-save operation, resume, replay, and recovery flags also remain
 outside this one-shot form.
 
