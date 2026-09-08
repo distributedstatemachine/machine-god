@@ -44,10 +44,19 @@ use std::process::Stdio;
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
+fn sandbox_error(error: crate::NativeSandboxError) -> TerminalTmuxLaunchError {
+    match error {
+        crate::NativeSandboxError::Cancelled => TerminalTmuxLaunchError::Cancelled,
+        crate::NativeSandboxError::Timeout => TerminalTmuxLaunchError::Timeout,
+        _ => TerminalTmuxLaunchError::Process,
+    }
+}
+
 /// Explicit launch authority, already resolved/authorized by the host. The
 /// program/argv may source the ordinary shared startup bootstrap; no shell
 /// selector, environment lookup, or model-owned path is interpreted here.
 pub(crate) struct TerminalTmuxLaunchRequest {
+    pub(crate) sandbox: Option<std::sync::Arc<crate::NativeSandboxLaunch>>,
     pub(crate) executable: PathBuf,
     pub(crate) helper: TerminalPtyHelper,
     pub(crate) capture_helper: TerminalPtyHelper,
@@ -262,6 +271,7 @@ impl AuthenticatedTerminalTmuxPane {
 }
 
 pub(crate) struct PreparedTerminalTmuxLaunch {
+    sandbox: Option<std::sync::Arc<crate::NativeSandboxLaunch>>,
     #[cfg(target_os = "macos")]
     inventory: Option<crate::process_inventory_helper::PreparedProcessInventory>,
     server: NativeTerminalTmuxServer,
@@ -324,6 +334,12 @@ impl PreparedTerminalTmuxLaunch {
             request.dimensions,
         )
         .map_err(process_error)?;
+        if let Some(sandbox) = &request.sandbox {
+            sandbox
+                .revalidate(deadline, cancellation)
+                .map_err(sandbox_error)?;
+            pty_request = pty_request.with_sandbox(std::sync::Arc::clone(sandbox));
+        }
         if let Some(source) = &request.initial_source {
             pty_request = pty_request
                 .with_startup_source(source.clone())
@@ -494,6 +510,7 @@ impl PreparedTerminalTmuxLaunch {
         )?;
         Ok(Self {
             server,
+            sandbox: request.sandbox,
             #[cfg(target_os = "macos")]
             inventory,
             pane,
@@ -551,6 +568,11 @@ impl PreparedTerminalTmuxLaunch {
                     }
                 }
             }
+        }
+        if let Some(sandbox) = &self.sandbox {
+            sandbox
+                .revalidate(self.deadline, cancellation)
+                .map_err(sandbox_error)?;
         }
         write_gate(
             &mut self.pane.channel,
@@ -1185,6 +1207,7 @@ fn nonce() -> Result<[u8; 32]> {
 #[cfg(test)]
 mod tests {
     include!("terminal_tmux_startup_reap_tests.rs");
+    include!("os_sandbox/tmux_tests.rs");
     use super::*;
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
@@ -1352,6 +1375,7 @@ mod tests {
             assert!(executable.is_absolute() && executable.is_file());
         }
         Some(TerminalTmuxLaunchRequest {
+            sandbox: None,
             executable,
             helper: helper(),
             capture_helper: helper(),

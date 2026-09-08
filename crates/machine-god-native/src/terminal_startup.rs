@@ -174,6 +174,9 @@ impl PreparedTerminalStartup {
             request.dimensions,
         )
         .map_err(process_error)?;
+        if let Some(sandbox) = request.shell.sandbox() {
+            pty_request = pty_request.with_sandbox(std::sync::Arc::clone(sandbox));
+        }
         if let Some(source) = bootstrap.startup_source() {
             pty_request = pty_request
                 .with_startup_source(source.to_owned())

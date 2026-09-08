@@ -107,8 +107,16 @@ const fn error(kind: TerminalPtyErrorKind) -> TerminalPtyError {
 fn process_error(_: impl fmt::Debug) -> TerminalPtyError {
     error(TerminalPtyErrorKind::Process)
 }
+fn sandbox_error(failure: crate::NativeSandboxError) -> TerminalPtyError {
+    error(match failure {
+        crate::NativeSandboxError::Cancelled => TerminalPtyErrorKind::Cancelled,
+        crate::NativeSandboxError::Timeout => TerminalPtyErrorKind::Timeout,
+        _ => TerminalPtyErrorKind::Process,
+    })
+}
 
 pub(crate) struct TerminalPtyRequest {
+    sandbox: Option<std::sync::Arc<crate::NativeSandboxLaunch>>,
     program: String,
     arguments: Vec<String>,
     environment: ValidatedBackgroundEnvironment,
@@ -129,6 +137,7 @@ impl TerminalPtyRequest {
         let environment = ValidatedBackgroundEnvironment::new(environment)
             .map_err(|_| error(TerminalPtyErrorKind::InvalidRequest))?;
         Ok(Self {
+            sandbox: None,
             program,
             arguments,
             environment,
@@ -136,6 +145,13 @@ impl TerminalPtyRequest {
             dimensions: dimensions.validate()?,
             startup_source: None,
         })
+    }
+    pub(crate) fn with_sandbox(
+        mut self,
+        sandbox: std::sync::Arc<crate::NativeSandboxLaunch>,
+    ) -> Self {
+        self.sandbox = Some(sandbox);
+        self
     }
     pub(crate) fn with_startup_source(mut self, source: String) -> Result<Self, TerminalPtyError> {
         // Each physical line remains below both canonical input-line ceilings.
@@ -153,9 +169,19 @@ impl TerminalPtyRequest {
         Ok(self)
     }
     pub(crate) fn frame(&self) -> Result<Vec<u8>, TerminalPtyError> {
+        let wrapped = self
+            .sandbox
+            .as_ref()
+            .map(|sandbox| sandbox.wrap(self.program.clone(), self.arguments.clone()))
+            .transpose()
+            .map_err(process_error)?;
+        let (program, arguments) = wrapped.as_ref().map_or(
+            (self.program.as_str(), self.arguments.as_slice()),
+            |(program, arguments)| (program.as_str(), arguments.as_slice()),
+        );
         Ok(LaunchFrame::encode(
-            &self.program,
-            &self.arguments,
+            program,
+            arguments,
             &self.environment,
             self.dimensions,
         )?)
@@ -209,6 +235,7 @@ fn report_prepare_master(master: &impl AsFd) {
 }
 
 pub(crate) struct PreparedTerminalPty {
+    sandbox: Option<std::sync::Arc<crate::NativeSandboxLaunch>>,
     startup_source: Option<crate::terminal_helper::TerminalStartupInput>,
     deadline: Instant,
     process: Option<OwnedBackgroundProcess>,
@@ -245,6 +272,11 @@ impl PreparedTerminalPty {
         )?;
         let helper_deadline =
             prepare_step!(deadline, "encode-deadline", encode_pty_deadline(deadline))?;
+        if let Some(sandbox) = &request.sandbox {
+            sandbox
+                .revalidate(deadline, cancellation)
+                .map_err(sandbox_error)?;
+        }
         let permit = prepare_step!(deadline, "permit", PtyPermit::acquire())?;
         let frame = prepare_step!(deadline, "encode-frame", request.frame())?;
         #[cfg(target_os = "macos")]
@@ -322,6 +354,7 @@ impl PreparedTerminalPty {
             check_deadline(deadline, cancellation)
         )?;
         Ok(Self {
+            sandbox: request.sandbox,
             startup_source: startup_source.filter(|source| !source.complete()),
             deadline,
             process: Some(process),
@@ -335,6 +368,11 @@ impl PreparedTerminalPty {
         mut self,
         cancellation: &CancellationToken,
     ) -> Result<TerminalPty, TerminalPtyError> {
+        if let Some(sandbox) = &self.sandbox {
+            sandbox
+                .revalidate(self.deadline, cancellation)
+                .map_err(sandbox_error)?;
+        }
         let gate = self
             .gate
             .as_mut()

@@ -111,7 +111,6 @@ impl ResolvedTerminalNativeLaunch {
         })
     }
 
-    #[cfg(test)]
     pub(crate) fn shell(&self) -> &TerminalShell {
         &self.shell
     }
@@ -191,6 +190,7 @@ impl ResolvedTerminalNativeLaunch {
                 )
                 .map_err(startup_error)?;
                 let request = TerminalTmuxLaunchRequest {
+                    sandbox: self.shell.sandbox().cloned(),
                     executable: tmux.executable.clone(),
                     helper: tmux.pane_helper.clone(),
                     capture_helper: tmux.capture_helper.clone(),

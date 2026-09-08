@@ -313,6 +313,45 @@ pub struct AskUserQuestionTool {
 }
 
 impl AskUserQuestionTool {
+    /// Validates actual prepared presentation without applying the smaller raw
+    /// input bounds again. No prompt slot or host interaction is acquired.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn validate_permission_preparation(
+        &self,
+        request: &machine_god_core::PermissionRequest,
+        invocation: machine_god_core::PermissionInvocation<'_>,
+    ) -> Result<(), ToolError> {
+        if invocation.tool_name != &self.spec().name {
+            return Err(invalid_arguments());
+        }
+        let machine_god_core::Capability::Tool {
+            name,
+            call_id,
+            arguments,
+        } = &request.capability
+        else {
+            return Err(invalid_arguments());
+        };
+        if name != invocation.tool_name
+            || call_id != invocation.call_id
+            || arguments != invocation.arguments
+        {
+            return Err(invalid_arguments());
+        }
+        if !serialized_json_value_fits(
+            invocation.arguments,
+            MAX_ASK_USER_QUESTION_SERIALIZED_PREPARED_ARGUMENT_BYTES,
+        ) {
+            return Err(resource_limit());
+        }
+        let owner = JsonOwner::new(invocation.arguments.clone());
+        let normalized = normalize_arguments(&owner, ArgumentPhase::Prepared)?;
+        if normalized.arguments != *invocation.arguments {
+            return Err(invalid_arguments());
+        }
+        Ok(())
+    }
+
     /// Constructs a tool with the default one-active-prompt bound.
     #[must_use]
     pub fn new(prompter: impl QuestionPrompter) -> Self {

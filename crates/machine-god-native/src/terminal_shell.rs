@@ -43,6 +43,8 @@ pub struct TerminalShell {
     program: PathBuf,
     kind: ShellKind,
     profile: TerminalProfile,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    sandbox: Option<std::sync::Arc<crate::NativeSandboxLaunch>>,
 }
 
 impl fmt::Debug for TerminalShell {
@@ -64,6 +66,8 @@ impl TerminalShell {
             program,
             kind: ShellKind::LegacySh,
             profile: TerminalProfile::User,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            sandbox: None,
         })
     }
     /// Resolves explicitly injected account data without filesystem or process effects.
@@ -104,6 +108,8 @@ impl TerminalShell {
             program,
             kind,
             profile,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            sandbox: None,
         })
     }
 
@@ -123,6 +129,8 @@ impl TerminalShell {
             } else {
                 TerminalProfile::User
             },
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            sandbox: None,
         })
     }
 
@@ -152,6 +160,20 @@ impl TerminalShell {
     #[must_use]
     pub fn program(&self) -> &Path {
         &self.program
+    }
+
+    /// Pins this job's immutable native launch policy without changing its
+    /// selected shell or granting execution permission. Construction is inert.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[must_use]
+    pub fn with_sandbox(mut self, sandbox: std::sync::Arc<crate::NativeSandboxLaunch>) -> Self {
+        self.sandbox = Some(sandbox);
+        self
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn sandbox(&self) -> Option<&std::sync::Arc<crate::NativeSandboxLaunch>> {
+        self.sandbox.as_ref()
     }
 
     /// Returns the selected startup profile.

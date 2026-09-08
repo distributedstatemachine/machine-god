@@ -598,6 +598,68 @@ mod tests {
     }
 
     #[test]
+    fn permission_resolver_preserves_actual_default_cwd_shell_and_owned_descriptor() {
+        use crate::NativePermissionTerminalResolver;
+        let fixture = Fixture::new();
+        let directory = fixture.0.join("workspace/default");
+        std::fs::create_dir(&directory).unwrap();
+        let mut inputs = fixture.inputs();
+        inputs.default_cwd = directory.clone();
+        let host = Arc::new(capture(inputs));
+        let workers = crate::NativeOwnedWorkerScope::new();
+        let completion = workers.completion();
+        let resolver = crate::permission_targets::HostPermissionResolver::new(
+            Arc::clone(&host),
+            workers.clone(),
+            CancellationToken::new(),
+        );
+        for start in [false, true] {
+            let selection = futures_executor::block_on(
+                resolver.resolve(invocation(".", start), CancellationToken::new()),
+            )
+            .unwrap();
+            let cwd = match selection.action() {
+                TerminalActionRequest::Exec { request } => &request.cwd,
+                TerminalActionRequest::Start { request } => &request.cwd,
+                _ => panic!("expected command"),
+            };
+            assert_eq!(cwd, directory.to_str().unwrap());
+            let retained = rustix::fs::fstat(selection.cwd().unwrap()).unwrap();
+            let named = rustix::fs::stat(&directory).unwrap();
+            assert_eq!(
+                (retained.st_dev, retained.st_ino),
+                (named.st_dev, named.st_ino)
+            );
+            assert_eq!(selection.shell().unwrap().program(), Path::new("/bin/bash"));
+            assert_eq!(
+                selection.environment_sha256(),
+                host.identity().environment_sha256
+            );
+        }
+        workers.close();
+        completion.wait_on_worker().unwrap();
+    }
+
+    #[test]
+    fn permission_resolver_unpolled_future_cannot_outlive_host_stop() {
+        use crate::NativePermissionTerminalResolver;
+        let fixture = Fixture::new();
+        let workers = crate::NativeOwnedWorkerScope::new();
+        let completion = workers.completion();
+        let stop = CancellationToken::new();
+        let resolver = crate::permission_targets::HostPermissionResolver::new(
+            Arc::new(fixture.authority()),
+            workers.clone(),
+            stop.clone(),
+        );
+        let future = resolver.resolve(invocation(".", false), CancellationToken::new());
+        stop.cancel();
+        workers.close();
+        assert!(completion.is_complete());
+        assert!(futures_executor::block_on(future).is_err());
+    }
+
+    #[test]
     fn inert_configuration_rejects_bad_data_without_validating_native_paths() {
         let fixture = Fixture::new();
         let mut inputs = fixture.inputs();

@@ -82,6 +82,8 @@ mod conversation_observations;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod file_history_tool;
 mod permission_controller;
+mod permission_tool;
+pub use permission_tool::NativePermissionGovernedTool;
 mod permission_rules;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use conversation_observations::{NativeConversationObservations, NativeObservationError};
@@ -102,11 +104,18 @@ mod edit_file;
 mod file_approval;
 mod file_info;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+mod os_sandbox;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use file_approval::{
     MAX_NATIVE_FILE_APPROVAL_PREIMAGE_BYTES, MAX_NATIVE_FILE_APPROVAL_RETAINED_BYTES,
     MAX_NATIVE_FILE_APPROVALS, NativeFileApprovalAdmission, NativeFileApprovalAuthority,
     NativeFileApprovalError, NativeFileApprovalKind, NativeFileApprovalPolicy,
     NativeFileApprovalPreimage, NativeFileApprovalRegistry, PreparedFileApproval,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use os_sandbox::{
+    MAX_NATIVE_SANDBOX_PROFILE_BYTES, MAX_NATIVE_SANDBOX_ROOT_PATH_BYTES, MAX_NATIVE_SANDBOX_ROOTS,
+    NATIVE_SANDBOX_EXECUTABLE, NativeSandboxError, NativeSandboxLaunch, NativeSandboxRoot,
 };
 mod file_undo;
 mod glob_files;
@@ -122,8 +131,24 @@ mod model_selection;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod native_tool_result_archive;
 mod open_file;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod permission_context;
 mod permission_patterns;
 mod permission_reviewer;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod permission_targets;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use permission_context::{
+    MAX_NATIVE_PERMISSION_CONTEXT_SESSIONS, MAX_NATIVE_PERMISSION_ROOT_REQUEST_BYTES,
+    NATIVE_PERMISSION_CONTEXT_KEY, NativePermissionContextError, NativePermissionContexts,
+    NativePermissionReviewContext,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use permission_targets::{
+    NativePermissionOwnedTarget, NativePermissionTargetAuthority, NativePermissionTargetTool,
+    NativePermissionTerminalResolution, NativePermissionTerminalResolver,
+    NativePreparedPermissionTargets,
+};
 #[cfg(target_os = "macos")]
 mod process_inventory_helper;
 #[cfg(target_os = "macos")]
@@ -813,9 +838,9 @@ impl PermissionMode {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum NativeSandboxMode {
     /// Request the operating-system sandbox where supported by the native host.
-    #[default]
     Os,
-    /// Request no operating-system sandbox.
+    /// Request no operating-system sandbox; the pinned absent-setting default.
+    #[default]
     None,
 }
 

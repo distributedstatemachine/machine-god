@@ -13,6 +13,55 @@ use serde_json::json;
 #[path = "permission_controller/file_composition.rs"]
 mod file_composition;
 
+#[test]
+fn taken_sandbox_selection_survives_changes_yolo_and_reset() {
+    let fixture = Fixture::new(PermissionMode::Auto);
+    fixture.owner.set_sandbox_mode(NativeSandboxMode::Os);
+    let taken = fixture.owner.snapshot();
+    assert_eq!(taken.sandbox_mode(), NativeSandboxMode::Os);
+    fixture.owner.set_sandbox_mode(NativeSandboxMode::None);
+    fixture.owner.set_mode(PermissionMode::Yolo);
+    let yolo = fixture
+        .owner
+        .snapshot()
+        .with_sandbox_mode(NativeSandboxMode::Os);
+    assert_eq!(yolo.sandbox_mode(), NativeSandboxMode::Os);
+    assert_eq!(yolo.effective_sandbox_mode(), NativeSandboxMode::None);
+    fixture.owner.reset().unwrap();
+    assert_eq!(fixture.owner.snapshot().mode(), PermissionMode::Ask);
+    assert_eq!(
+        fixture.owner.snapshot().sandbox_mode(),
+        NativeSandboxMode::None
+    );
+    assert_eq!(taken.effective_sandbox_mode(), NativeSandboxMode::Os);
+    assert_eq!(yolo.effective_sandbox_mode(), NativeSandboxMode::None);
+}
+
+#[test]
+fn execution_policy_lookup_uses_exact_live_turn_and_taken_selection() {
+    let fixture = Fixture::new(PermissionMode::Auto);
+    fixture.owner.set_sandbox_mode(NativeSandboxMode::Os);
+    let (turn, registration) = fixture.turn();
+    let mut context = ToolContext {
+        session_id: fixture.session.id(),
+        session_incarnation_id: fixture.session.incarnation_id(),
+        turn_id: turn.id().clone(),
+        call_id: ToolCallId::new("call").unwrap(),
+    };
+    fixture.owner.set_mode(PermissionMode::Yolo);
+    fixture.owner.set_sandbox_mode(NativeSandboxMode::None);
+    let policy = fixture.controller.policy_for_execution(&context).unwrap();
+    assert_eq!(policy.mode(), PermissionMode::Auto);
+    assert_eq!(policy.effective_sandbox_mode(), NativeSandboxMode::Os);
+    context.session_incarnation_id = SessionIncarnationId::new("foreign").unwrap();
+    assert!(fixture.controller.policy_for_execution(&context).is_err());
+    context.session_incarnation_id = fixture.session.incarnation_id();
+    assert!(turn.handle().cancel());
+    assert!(fixture.controller.policy_for_execution(&context).is_err());
+    drop(registration);
+    assert!(fixture.controller.policy_for_execution(&context).is_err());
+}
+
 #[derive(Clone)]
 struct Behavior {
     configured: NativePermissionConfiguredOutcome,

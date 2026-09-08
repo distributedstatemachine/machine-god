@@ -186,6 +186,71 @@ Shared cleanup workers temporarily restore the originating completion scope
 while servicing its obligations, including nested cleanup children. They restore
 the previous attribution on return or unwind; unrelated hosts cannot inherit it.
 
+## Explicit macOS OS sandbox launch
+
+`NativeSandboxLaunch` is immutable native launch authority, separate from
+execution permission and mutable host preferences. A taken job captures its
+configured `NativeSandboxMode` and permission mode once: `ask` and `auto` use
+the configured backend; `yolo` uses effective `none` without overwriting the
+configured value. Later preference or workspace-selection changes cannot mutate
+that retained snapshot. Capturing `os` on Linux is explicitly unsupported;
+an unavailable macOS backend never falls back to an unsandboxed command.
+
+The caller supplies `NativeSandboxRoot` values containing open directory files
+and their exact canonical UTF-8 paths, plus an explicitly opened
+`/usr/bin/sandbox-exec` file. Root construction checks bounded syntax without
+I/O; snapshot capture and revalidation run on the caller's owned blocking worker
+under its supplied deadline and cancellation token. There are at most seventeen
+roots (primary plus sixteen additional directories), each at most 4,096 bytes.
+Missing, replaced, unlinked, non-directory, noncanonical or mismatched roots
+fail closed. The launcher must match the retained regular, root-owned,
+non-group/world-writable executable at that fixed system path. No ambient CWD,
+HOME, PATH executable, cache directory or temporary profile file grants authority.
+
+On macOS the actual `sandbox-exec` Seatbelt profile denies by default, allows
+file reads, and allows writes to the captured roots plus the pinned upstream
+exceptions `/tmp`, `/private/tmp` and `/dev`. It also permits process execution
+and fork, outbound networking, signals, sysctl reads, Mach lookup and IOKit open.
+An explicitly supplied flag additionally permits localhost binding/inbound
+traffic. This is not workspace-only isolation, read confidentiality, network
+isolation, resource accounting or protection from writes to those exceptions.
+There is no automatic permissive HOME/cache expansion or retry without isolation.
+
+`TerminalShell::with_sandbox` attaches the snapshot without changing the selected
+shell or startup profile. Captured foreground execution and native PTY/tmux
+startup wrap that exact shell argv as
+`/usr/bin/sandbox-exec -p <profile> <shell> <arguments...>` inside their existing
+owned helper protocol. The command stays one exact argument; paths are escaped
+as SBPL string data, never interpolated into shell source. Private protocol,
+inventory and persistence owners remain outside the sandbox. The background
+process request's separate `with_sandbox` builder wraps its gated helper at
+spawn; the eventual fixed `/bin/sh` and descendants inherit that OS policy.
+Without explicit injection, all existing constructors retain their behavior.
+Neither builder alone performs discovery, spawns a process or grants permission;
+the embedding host must route the taken-job snapshot into every launch family.
+
+The profile ceiling is derived from seventeen worst-case escaped paths plus
+fixed policy syntax. The private helper frame adds only that bounded profile,
+the inner program and three wrapper arguments. Ordinary command, environment,
+shell-argument and startup limits remain unchanged; excess input rejects without
+truncating roots or falling back. The profile is transferred as owned data and
+never published to disk. Protected system execution can apply the operating
+system's ordinary environment restrictions; the host does not synthesize a
+replacement environment.
+
+Retained roots and launcher are checked during preparation and again before
+the existing final release/commit. Cancellation, caller drop and failure retain
+the existing exact child, process-group/session, cleanup and worker-completion
+obligations; no detached sandbox worker or second command execution is created.
+The original launch, startup, release and cleanup deadlines are not reset.
+Path validation and process launch are not one atomic system call. Seatbelt
+enforces pathname-based rules, not permanent inode ownership: a concurrent
+rename/replacement after the last check or during an already-running command
+is outside an inode-stability guarantee. Symlinks do not authorize writes to
+resolved targets outside the allowed paths. Failed setup never authorizes an
+unsandboxed fallback; ordinary command failure remains an observed result,
+not permission to replay a possibly executed effect.
+
 ## Native screen projection
 
 `TerminalScreenEngine` projects bounded raw chunks into structured styled

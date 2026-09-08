@@ -49,7 +49,7 @@ the explicit built-in schema-v5 configuration. A resolved file that is missing
 also produces this configuration:
 
 ```json
-{"schema_version":5,"permission_mode":"ask","sandbox_mode":"os","permission_rules":[],"provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"zai/glm-5.2","credential_source":"environment","effort":"auto","fast_mode":false}
+{"schema_version":5,"permission_mode":"ask","sandbox_mode":"none","permission_rules":[],"provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"zai/glm-5.2","credential_source":"environment","effort":"auto","fast_mode":false}
 ```
 
 Invalid selected environment input is not treated as absence and fails closed.
@@ -260,7 +260,9 @@ Schema v5 requires all eight v4 fields plus `sandbox_mode` and
 `permission_rules`. `permission_mode` accepts exactly `ask`, `auto`, or `yolo`;
 `sandbox_mode` accepts exactly `os` or `none`. Their typed accessors return
 `PermissionMode::{Ask, Auto, Yolo}` and `NativeSandboxMode::{Os, None}` with
-matching `as_str` names. Defaults remain `ask` and `os`.
+matching `as_str` names. Defaults are `ask` and `none`, matching pinned
+`sandbox.zig::backendFromConfig` when no sandbox setting exists. An explicit
+schema-v5 `os` remains `os`; permission mode does not rewrite the preference.
 
 `permission_rules` is an ordered JSON array, including an empty array. Each
 entry has exactly three required string fields: `permission`, `pattern`, and
@@ -273,7 +275,7 @@ last-match semantics; these configured patterns are not saved exact-action
 rules or persisted grants. Debug output never reveals pattern contents.
 
 Schemas 1–4 remain strictly ask-only and reject both new fields. They project
-`sandbox_mode: os` and empty rules in memory without rewriting their bytes or
+`sandbox_mode: none` and empty rules in memory without rewriting their bytes or
 changing their observed version. Provider and model defaults are unchanged.
 
 These fields are preferences, not enforcement or execution authority. Loading

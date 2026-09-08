@@ -102,9 +102,15 @@ impl Drop for Directory {
 fn real_file_tool_composes_owned_preparation_native_policy_and_final_effect_check() {
     use futures_util::StreamExt;
     use machine_god_testkit::ModelProviderStep;
-    for decision in [
-        PermissionPromptDecision::AllowOnce,
-        PermissionPromptDecision::Deny,
+    for (decision, path, prompt_count, written) in [
+        (PermissionPromptDecision::AllowOnce, "output.txt", 1, true),
+        (PermissionPromptDecision::Deny, "output.txt", 1, false),
+        (
+            PermissionPromptDecision::AllowOnce,
+            "missing/output.txt",
+            0,
+            false,
+        ),
     ] {
         let directory = Directory::new();
         let registry = Arc::new(NativeFileApprovalRegistry::new());
@@ -129,7 +135,7 @@ fn real_file_tool_composes_owned_preparation_native_policy_and_final_effect_chec
                         call: ToolCall {
                             name: ToolName::new("write_file").unwrap(),
                             id: ToolCallId::new("write").unwrap(),
-                            arguments: json!({"path":"output.txt","content":"actual bytes"}),
+                            arguments: json!({"path":path,"content":"actual bytes"}),
                         },
                     },
                     ModelEvent::Stop {
@@ -166,13 +172,20 @@ fn real_file_tool_composes_owned_preparation_native_policy_and_final_effect_chec
             )
             .unwrap();
         let mut turn = block_on(conversation.prompt("write the file".into(), 100)).unwrap();
+        let mut completed = false;
         block_on(async {
             while let Some(event) = turn.next().await {
-                event.unwrap();
+                let event = event.unwrap();
+                assert!(
+                    !matches!(event.payload, TurnEvent::Failed { .. }),
+                    "{event:?}"
+                );
+                completed |= matches!(event.payload, TurnEvent::Completed { .. });
             }
         });
-        assert_eq!(prompt.calls.load(Ordering::SeqCst), 1);
-        if decision == PermissionPromptDecision::AllowOnce {
+        assert!(completed);
+        assert_eq!(prompt.calls.load(Ordering::SeqCst), prompt_count);
+        if written {
             assert_eq!(
                 fs::read(directory.0.join("output.txt")).unwrap(),
                 b"actual bytes"

@@ -2,7 +2,7 @@
 
 mod evidence;
 mod policy;
-mod secrets;
+pub(crate) mod secrets;
 
 use std::fmt;
 use std::future::{Future, poll_fn};

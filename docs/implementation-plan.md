@@ -189,8 +189,24 @@ generation and revalidates at the final effect. Old unpolled execution futures
 cannot consume newer approvals. The real fixed-model Gateway reviewer enforces
 bounded evidence, deadline, cancellation and pinned completion semantics.
 The controller's execution proof can serve as the file adapter's live policy.
-Production host/CLI composition, trusted reviewer context routing and actual
-process sandbox enforcement remain required before permission scenarios close.
+Production host/CLI composition and taken-job sandbox routing remain required
+before permission scenarios close.
+The opt-in governed-tool wrapper preserves prepared cancellation and archive
+semantics while admitting otherwise policy-skipping calls through exact tool
+capabilities. Taken policy also retains sandbox preference separately from Yolo's
+effective selection. Built-in and legacy configuration now correctly project an
+absent sandbox setting to None, matching the pinned upstream; explicit Os survives
+loading and user-default publication.
+Unexecutable native preparations now return recoverable denial rather than aborting
+the conversation; composed file tests require actual completion after replanning.
+Exact live invocation context now retains the pending provider call and native
+root-input provenance without cloning the transcript or inferring human authority
+from message roles. Target preparation uses actual registered tools, descriptor
+observations and the terminal host's selected cwd/shell. Prepared question and grep
+arguments use their execution validators rather than being decoded as raw input.
+The macOS sandbox adapter now wraps real foreground, background, PTY and tmux
+launches with retained executable/root checks. Focused native process tests pass;
+selection still needs production host routing from the actual taken policy.
 Remaining work includes interactive CLI persistence-outcome presentation,
 long-lived cache composition, automatic background history producers,
 interactive command/session transitions,
@@ -219,11 +235,14 @@ passes its 12 focused service tests, and full warnings-denied Clippy passes.
 The complete replacement workspace gate remains open. These internal
 checks do not replace the exact-candidate feature gates below.
 
-The integrated permission components pass 24 file-approval regressions,
-105 controller/reviewer/conversation integrations, 38 core metadata tests, and
-the full warnings-denied workspace lint gate. Configuration/store integrations
-also pass. Composed tests exercise real file publication and denial; production
-host composition remains part of the unfinished combined feature, not a delivery.
+The current permission/context/target checkpoint passes 105 focused native
+integrations, three core/testkit invocation regressions, twelve sandbox regressions
+and both actual resolver tests in the directly included component harness.
+Sandbox process checks use the sandbox component's release helper; they are not
+the final freshly built full-feature CLI gate. Earlier file-approval and core
+metadata regressions remain covered by the required replacement workspace run.
+Production host composition remains part of the unfinished combined feature,
+not a delivery.
 
 ### CI and documentation maintenance
 

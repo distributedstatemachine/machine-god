@@ -24,7 +24,10 @@ use std::task::{Context, Poll};
 
 use crate::engine::{EngineInner, HostLease, HostResource, SessionRegistration, SessionRegistry};
 
+mod permission_context;
 mod turn_metadata;
+pub use permission_context::PermissionInvocationSnapshot;
+use permission_context::{ActivePermissionContext, PermissionContextScope};
 use turn_metadata::TurnMetadataScope;
 pub use turn_metadata::{TurnMetadataEditor, TurnMetadataSnapshot};
 
@@ -245,6 +248,7 @@ pub struct Session {
 }
 
 pub(crate) struct SessionState {
+    permission_context: Mutex<Option<std::sync::Weak<ActivePermissionContext>>>,
     data: Mutex<SessionData>,
     active_turn: AtomicBool,
     // Armed before metadata persistence can run. Failure or future drop leaves
@@ -266,6 +270,7 @@ impl SessionState {
     ) -> Arc<Self> {
         let id = record.id.clone();
         Arc::new_cyclic(move |state| Self {
+            permission_context: Mutex::new(None),
             data: Mutex::new(SessionData {
                 record: Arc::new(record),
                 persisted,
@@ -1914,11 +1919,23 @@ async fn run_turn_inner(
         )
         .await?;
         cumulative_tool_result_bytes = placeholder_cumulative;
+        let source_message = placeholder_start - 1;
+        let source_block_start = record.messages[source_message].content.len() - calls.len();
 
         for (round_index, (call, input_limits)) in
             calls.into_iter().zip(call_input_limits).enumerate()
         {
             check_cancelled(&cancellation)?;
+            // Move, rather than deep-clone, the original provider input into a
+            // shared exact-call view. Canonical persistence may use an archive
+            // projection and cannot substitute for this pending action.
+            let pending_assistant = Arc::new(Message {
+                role: Role::Assistant,
+                content: vec![ContentBlock::ToolCall { call }],
+            });
+            let ContentBlock::ToolCall { call } = &pending_assistant.content[0] else {
+                unreachable!()
+            };
             let call_id = call.id.clone();
             let call_name = call.name.clone();
             let tool = turn_tools.tool(&engine, &call_name).ok_or_else(|| {
@@ -1969,6 +1986,13 @@ async fn run_turn_inner(
                                     request: request.clone(),
                                 })
                                 .await;
+                            let context_scope = PermissionContextScope::open(
+                                &session_state,
+                                &request,
+                                (source_message, source_block_start + round_index),
+                                &pending_assistant,
+                                &cancellation,
+                            );
                             let authorization = engine.permission_handler.authorize_invocation(
                                 request,
                                 PermissionInvocation {
@@ -1980,6 +2004,7 @@ async fn run_turn_inner(
                             let authorization = await_cancellable(authorization, &cancellation)
                                 .await?
                                 .map_err(|error| TurnFailure::permission(&error))?;
+                            drop(context_scope);
                             admission = authorization.admission;
                             let decision = match authorization.decision {
                                 PermissionDecision::Allow { scope } => {

@@ -152,6 +152,64 @@ configured domain patterns stay inert and are counted by
 URL normalization occurs. Constructors and diagnostics retain no ambient authority,
 and debug/error formatting omits rule and target content.
 
+## Native prepared policy targets
+
+`NativePermissionTargetAuthority` receives a retained directory `File`, its
+canonical absolute workspace spelling, and explicitly registered real native
+tool implementations. Construction is inert. Its owned preparation future first
+bounds the actual borrowed JSON, then checks canonical arguments and the exact
+requested capability against that trusted implementation. Unknown tools are
+rejected; a registered name or risk hint alone cannot establish a builtin bypass.
+The typed question-tool registration uses its prepared-presentation validator,
+so a valid 1,024-byte raw question expanded to 4,096 terminal-safe bytes is not
+rejected by applying the incoming-text limit twice. It acquires no prompt slot.
+Likewise, typed grep registration validates its actual execution object, including
+the canonical `include: null` default that the incoming grammar does not accept.
+Dynamic tools require a separate trusted schema-bearing adapter. The host must
+register implementations bound to the same workspace authority.
+
+Ordinary arguments retain the core 65,536-node/64-depth envelope and a 1-MiB
+encoded ceiling. Terminal preparation uses its existing complete prepared-byte
+and node bounds instead. These are independent of the smaller reviewer packet
+and context limits: inability to fit a review does not truncate execution identity.
+All diagnostics omit arguments, paths and native failures.
+
+Existing paths are walked from the retained root without following directory
+symlinks. `file_info` preserves final-entry metadata semantics without opening
+the selected file for content. Create-folder preparation observes missing entries
+without creating them, evaluates target and parent separately, and grants no
+Auto bypass for pinned sensitive paths. Prepared observations retain identities
+and selected descriptors for explicit native revalidation. Revalidation is not a
+core no-I/O admission guard or an atomic final-effect check. The five file
+mutations instead project targets from `PreparedFileApproval`; their separately
+retained file evidence remains responsible for final-effect validation.
+
+Terminal preparation validates the private canonical envelope against the actual
+`TerminalActionTool`, including host/call stamps, digest and repeated-probe
+capability. It does not reinterpret that envelope as provider input. The native
+terminal host attaches its actual captured resolver automatically: one owned
+worker resolves the immutable default cwd and native path semantics, retains
+the resulting directory descriptor, and selects the same foreground/start shell
+used by execution. At most four permission-resolution workers run concurrently;
+each checks a two-second first-poll deadline and cancellation around native
+boundaries. Indivisible filesystem calls are not preempted. Dropping the future
+cancels its work, and the real host's stop token and worker scope own shutdown
+and completion; retaining a resolver does not keep the terminal runtime alive.
+
+Typed terminal results expose selected shell, environment/selection digests and
+cwd ownership. Semantic argument identity excludes private call/host stamps;
+configured bash matching uses resolved cwd plus command text. Neither is a
+direct-execution plan. Commands receive no fabricated read-only bypass. Auto
+terminal bypass is exactly read, screen, list, or inspect without acknowledgement;
+wait and other actions still need their ordinary policy. A standalone terminal
+without a resolver cannot invent command cwd or resolve a workspace filter.
+
+Multi-target evaluation preserves last-match semantics per target: any Deny
+wins, otherwise any Ask remains Ask, Allow requires every target to allow, and
+unmatched targets remain unresolved. These prepared outcomes do not grant,
+persist, prompt, or execute; the native controller and final-effect adapters own
+those responsibilities.
+
 ## Automatic permission reviewer
 
 `AiGatewayPermissionReviewer` implements `NativePermissionReviewer` over an
@@ -319,15 +377,37 @@ postcommit verification and ambiguity handling remain authoritative.
 
 ## Native permission controller
 
+`NativePermissionGovernedTool` is an explicit host wrapper over an exact trusted
+tool allocation and the hosting engine's limits. It routes standalone
+no-authority preparations through an exact tool-name/call-ID/prepared-arguments
+capability, so configured policy can govern them. It bounds normalized JSON
+before the extra capability copy and leaves existing concrete capabilities
+unchanged. Complete-input/output limits, owned argument archives, extended tool
+execution and prepared completion-wins cancellation semantics remain those of
+the underlying tool. Standalone tools are unchanged; the wrapper does not grant
+permission or classify an action as read-only.
+
 `NativePermissionController` composes explicitly injected action preparation and
 human prompts. Unlike the legacy adapter, it requires the actual prepared
 invocation and a live exact-session/incarnation/turn registration. Native
 conversations can register the controller; the runtime captures its mode and
 configured patterns when taking a queued job, before awaiting core reservation.
 Saved exact rules stay live, and are not copied into the taken-job snapshot.
+The snapshot also retains configured sandbox mode separately from its effective
+mode: Yolo selects effective None without replacing the configured preference.
+Changing sandbox selection affects future taken jobs only; reset preserves that
+preference. Neither selecting nor observing these values establishes OS launch
+enforcement.
 The controller does not itself supply file descriptors, an Auto transport or an
 OS sandbox. Those remain concrete native adapter/host responsibilities; selecting
 a mode alone is not evidence of sandbox enforcement.
+
+Native action-preparation failures produce a fixed recoverable denial for
+replanning, without a prompt, grant or execution. A missing selected target
+therefore does not abort an otherwise healthy conversation. Unknown/closed
+session routes, invalid canonical policy and failed prompt infrastructure
+remain permission-service failures; this distinction never authorizes a
+partially prepared action.
 
 Configured denial wins before saved denial; saved allow and an existing exact
 capability grant can satisfy configured ask. Unresolved configured ask requires
@@ -395,3 +475,39 @@ These values follow pinned `src/core/permissions/session_permission_state.zig`.
 Decoding or constructing them performs no prompt, confirmation, persistence or
 execution. They remain separate from capability grants and the authorization
 handler; loading a saved `allow` value alone does not grant tool authority.
+
+## Native automatic-review context
+
+An explicitly shared `NativePermissionContexts` registry attaches through
+`NativeConversation::with_permission_contexts`. It holds at most 64 weak routes
+for exact session incarnations. The production preparer reads `snapshot(request)`
+only during that request's authorization. The returned immutable context pairs
+the actual taken model and permission-policy snapshots with the original pending
+provider call and its canonical message/block position. Call IDs are not searched
+or parsed; prepared action arguments and archived argument projections remain
+separate. Core's scoped `Session::permission_invocation_snapshot` exposes only
+this current call and conveys no root-user authority.
+
+Native admission writes bounded index provenance in
+`machine_god.permission_root_provenance` atomically with the actual user prompt
+and turn reservation. Canceled queued input and unpolled prompt futures add
+nothing. Continuation uses its proven original request; resumed sessions without
+provenance remain unknown. Stored user-role messages, assistant prose, tool
+results, images, attachments and repository text are never inferred as trusted
+requests. This metadata records provenance, not permission grants.
+
+The root projection follows pinned first/current/recent labels and omission
+counts within 1,024 bytes, masking pinned secret spans and escaping terminal
+controls before UTF-8-safe head/tail reduction. Each admitted raw request is
+bounded to 256 KiB; provenance retains only current/first indices, at most 32
+recent indices and an omitted count, not duplicate transcript text. Invalid
+provenance or bounds fail with redacted errors. The shared masking detector does
+not change the reviewer's rejection of incomplete action evidence.
+
+Context lookup performs no I/O, and snapshots retain only the single pending
+call and bounded taken-turn context. Cancellation, authorization return/drop and
+native finalization retire access; retaining a snapshot cannot keep a session
+or turn alive. Hosts must honor `is_live()` and use `trusted_root_context()`;
+missing or retired context cannot substitute an authorization reason or a
+generic history-role projection. Queued jobs capture model and policy when
+taken, so later selection changes cannot rewrite an active review.

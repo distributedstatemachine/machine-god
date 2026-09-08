@@ -8,6 +8,9 @@ use std::fmt;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
+#[cfg(test)]
+mod permission_wrapper_tests;
+
 /// Model-visible description and JSON Schema input contract for a tool.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ToolSpec {
@@ -117,6 +120,30 @@ impl PreparedToolCall {
     #[must_use]
     pub fn completion_wins_after_first_poll(mut self) -> Self {
         self.execution_cancellation = ToolExecutionCancellation::CompletionWinsAfterFirstPoll;
+        self
+    }
+
+    /// Makes an otherwise no-authority invocation subject to explicit host policy.
+    ///
+    /// Trusted host wrappers may govern operations that a standalone tool leaves
+    /// outside permission policy. Existing concrete capabilities are preserved.
+    /// The synthetic capability contains the exact prepared arguments, not the
+    /// original provider input. Execution arguments and cancellation semantics
+    /// remain unchanged. No external authority is exercised. As with preparation
+    /// itself, callers must bound arguments
+    /// before calling this method; only the no-authority case clones them.
+    #[must_use]
+    pub fn require_tool_permission(mut self, name: ToolName, call_id: ToolCallId) -> Self {
+        if matches!(
+            self.authorization,
+            PreparedToolAuthorization::NoAuthorityRequired
+        ) {
+            self.authorization = PreparedToolAuthorization::PermissionRequired(Capability::Tool {
+                name,
+                call_id,
+                arguments: self.arguments.clone(),
+            });
+        }
         self
     }
 

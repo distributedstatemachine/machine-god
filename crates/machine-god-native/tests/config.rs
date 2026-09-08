@@ -155,7 +155,7 @@ fn assert_loaded_config(
     assert_eq!(config.permission_mode(), PermissionMode::Ask);
     assert_eq!(
         config.sandbox_mode(),
-        machine_god_native::NativeSandboxMode::Os
+        machine_god_native::NativeSandboxMode::None
     );
     assert!(config.permission_rules().rules().is_empty());
     assert_eq!(config.provider(), NativeProviderKind::VercelAiGateway);

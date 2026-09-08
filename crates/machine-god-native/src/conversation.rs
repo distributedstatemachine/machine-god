@@ -17,6 +17,7 @@ use machine_god_core::{
 use serde_json::{Value, json};
 
 use crate::conversation_observations::{ObservationBatch, ObservationSession};
+use crate::permission_context::{ContextRegistration, ContextSession};
 
 use crate::{
     NATIVE_CONTEXT_PREFERENCES_KEY, NATIVE_CONVERSATION_HISTORY_KEY, NATIVE_MODEL_PREFERENCES_KEY,
@@ -41,6 +42,7 @@ pub enum NativeConversationError {
     InvalidCheckpoint,
     InvalidHistory(NativeConversationHistoryError),
     Observation(NativeObservationError),
+    PermissionContext(crate::NativePermissionContextError),
     InvalidContext(NativeContextError),
     InvalidModelPreferences(NativeModelPreferencesError),
     InvalidMetadata(NativeSessionMetadataError),
@@ -59,6 +61,7 @@ impl fmt::Display for NativeConversationError {
             Self::InvalidCheckpoint => f.write_str("conversation checkpoint is invalid"),
             Self::InvalidHistory(error) => error.fmt(f),
             Self::Observation(error) => error.fmt(f),
+            Self::PermissionContext(error) => error.fmt(f),
             Self::InvalidContext(error) => error.fmt(f),
             Self::InvalidModelPreferences(error) => error.fmt(f),
             Self::InvalidMetadata(error) => error.fmt(f),
@@ -153,6 +156,7 @@ pub struct NativeConversation {
     active: Arc<AtomicBool>,
     observations: Option<Arc<ObservationSession>>,
     permissions: Option<Arc<crate::NativePermissionSession>>,
+    permission_contexts: Option<Arc<ContextSession>>,
 }
 
 impl fmt::Debug for NativeConversation {
@@ -184,6 +188,7 @@ impl NativeConversation {
             active: Arc::new(AtomicBool::new(false)),
             observations: None,
             permissions: None,
+            permission_contexts: None,
         })
     }
 
@@ -202,6 +207,25 @@ impl NativeConversation {
             observations
                 .register(self.id(), self.incarnation_id())
                 .map_err(NativeConversationError::Observation)?,
+        );
+        Ok(self)
+    }
+
+    /// Connects exact native admissions to automatic permission review. Missing
+    /// historical provenance remains unknown; construction performs no I/O.
+    /// # Errors
+    /// Rejects busy or duplicate ownership, invalid provenance, and capacity.
+    pub fn with_permission_contexts(
+        mut self,
+        contexts: &Arc<crate::NativePermissionContexts>,
+    ) -> Result<Self, NativeConversationError> {
+        if self.is_busy() || self.permission_contexts.is_some() {
+            return Err(NativeConversationError::Busy);
+        }
+        self.permission_contexts = Some(
+            contexts
+                .register(&self.session)
+                .map_err(NativeConversationError::PermissionContext)?,
         );
         Ok(self)
     }
@@ -674,6 +698,9 @@ impl NativeConversation {
         self.start_with_policy(input, model, policy, now_ms).await
     }
 
+    // Keep reservation, exact-turn registrations, and rollback-owned leases in
+    // one linear admission scope; no provider work is polled between them.
+    #[allow(clippy::too_many_lines)]
     pub(crate) async fn start_with_policy(
         &self,
         mut input: PendingInput,
@@ -724,9 +751,27 @@ impl NativeConversation {
             NATIVE_CONVERSATION_HISTORY_KEY.to_owned(),
             history.to_value(),
         );
-        if let Some(model) = model {
-            apply_model_snapshot(&mut input, &mut record, &model);
+        let root_context = if self.permission_contexts.is_some() {
+            let prompt = match input.0.as_ref().expect("input is consumed once") {
+                ConversationInput::Prompt(prompt) => Some(prompt.text.as_str()),
+                ConversationInput::Continue(_) => None,
+            };
+            crate::permission_context::prepare_provenance(
+                &mut record,
+                prompt,
+                checkpoint.first_user_message,
+            )
+            .map_err(NativeConversationError::PermissionContext)?
+        } else {
+            None
+        };
+        if let Some(model) = &model {
+            apply_model_snapshot(&mut input, &mut record, model);
         }
+        let source_model = match input.0.as_ref().expect("input is consumed once") {
+            ConversationInput::Prompt(prompt) => prompt.options.model.clone(),
+            ConversationInput::Continue(options) => options.model.clone(),
+        };
         let preparation = SessionTurnPreparation {
             expected_revision: record.revision,
             metadata: Some(record.metadata),
@@ -743,6 +788,15 @@ impl NativeConversation {
             }
         }
         .map_err(map_engine_error)?;
+        let permission_context = self
+            .permission_contexts
+            .as_ref()
+            .map(|owner| {
+                owner
+                    .begin(&turn, root_context, model, source_model, policy.clone())
+                    .map_err(NativeConversationError::PermissionContext)
+            })
+            .transpose()?;
         let permission_turn = self.bind_permission_turn(&turn, policy)?;
         if let Some(owner) = &self.permissions {
             owner
@@ -774,6 +828,7 @@ impl NativeConversation {
             source_cursor,
             observation_batch: None,
             permission_turn,
+            permission_context,
             done: false,
         })
     }
@@ -1050,6 +1105,7 @@ pub struct NativeConversationTurn {
     source_cursor: (usize, usize),
     observation_batch: Option<ObservationBatch>,
     permission_turn: Option<crate::NativePermissionTurn>,
+    permission_context: Option<ContextRegistration>,
     done: bool,
 }
 
@@ -1068,6 +1124,7 @@ impl NativeConversationTurn {
     }
 
     fn finish(&mut self) {
+        self.permission_context.take();
         self.permission_turn.take();
         self.core.take();
         if let Some(owner) = &self.observations {
@@ -1083,6 +1140,7 @@ impl NativeConversationTurn {
         &mut self,
         terminal: Result<EngineEvent, NativeConversationError>,
     ) -> Result<(), NativeConversationError> {
+        self.permission_context.take();
         self.core.take();
         if let Some(owner) = &self.observations {
             owner.finish_attempt(self.handle.id());

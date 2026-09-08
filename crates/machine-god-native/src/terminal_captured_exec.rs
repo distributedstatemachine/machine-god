@@ -462,12 +462,29 @@ fn run(
     let arguments = shell
         .captured_arguments(&request.command)
         .map_err(|_| TerminalCapturedExecError::Invalid)?;
+    let program = shell
+        .program()
+        .to_str()
+        .ok_or(TerminalCapturedExecError::Invalid)?
+        .to_owned();
+    let (program, arguments) = if let Some(sandbox) = shell.sandbox() {
+        match sandbox.revalidate(deadline, cancellation) {
+            Ok(()) => {}
+            Err(_) if stopped(cancellation, stop) => {
+                return Err(TerminalCapturedExecError::Cancelled);
+            }
+            Err(_) if Instant::now() >= deadline => return Ok(empty_timeout(started)),
+            Err(_) => return Err(TerminalCapturedExecError::Process),
+        }
+        sandbox
+            .wrap(program, arguments)
+            .map_err(|_| TerminalCapturedExecError::Invalid)?
+    } else {
+        (program, arguments)
+    };
     validate_pty_directory(&cwd).map_err(|_| TerminalCapturedExecError::Invalid)?;
     let frame = LaunchFrame::encode(
-        shell
-            .program()
-            .to_str()
-            .ok_or(TerminalCapturedExecError::Invalid)?,
+        &program,
         &arguments,
         environment,
         TerminalPtyDimensions {
@@ -571,6 +588,19 @@ fn run(
         .process
         .activate_signal_controller()
         .map_err(|_| TerminalCapturedExecError::Process)?;
+    if stopped(cancellation, stop) {
+        return Err(TerminalCapturedExecError::Cancelled);
+    }
+    if let Some(sandbox) = shell.sandbox() {
+        match sandbox.revalidate(deadline, cancellation) {
+            Ok(()) => {}
+            Err(_) if stopped(cancellation, stop) => {
+                return Err(TerminalCapturedExecError::Cancelled);
+            }
+            Err(_) if Instant::now() >= deadline => return Ok(empty_timeout(started)),
+            Err(_) => return Err(TerminalCapturedExecError::Process),
+        }
+    }
     if stopped(cancellation, stop) {
         return Err(TerminalCapturedExecError::Cancelled);
     }

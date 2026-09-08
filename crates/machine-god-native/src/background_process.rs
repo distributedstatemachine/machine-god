@@ -1628,6 +1628,8 @@ impl ValidatedBackgroundEnvironment {
 
 /// Exact, bounded request for one prepared background command.
 pub struct BackgroundProcessRequest {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    sandbox: Option<Arc<crate::NativeSandboxLaunch>>,
     stdin: ProcessInput,
     command: String,
     cwd: String,
@@ -1674,6 +1676,8 @@ impl BackgroundProcessRequest {
         let descriptor_path = validated_descriptor_path(directory.as_fd())?;
         Ok(Self {
             stdin: ProcessInput::Null,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            sandbox: None,
             command,
             cwd,
             environment,
@@ -1727,6 +1731,15 @@ impl BackgroundProcessRequest {
     #[must_use]
     pub fn command(&self) -> &str {
         &self.command
+    }
+
+    /// Pins immutable configured/effective policy for this exact prepared job.
+    /// The native adapter revalidates it before helper launch and final release.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[must_use]
+    pub fn with_sandbox(mut self, sandbox: Arc<crate::NativeSandboxLaunch>) -> Self {
+        self.sandbox = Some(sandbox);
+        self
     }
 
     /// Returns the display working directory.
@@ -2370,6 +2383,8 @@ mod input_tests {
 
 /// A spawned process blocked on its private start gate.
 pub struct PreparedBackgroundProcess {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    sandbox: Option<Arc<crate::NativeSandboxLaunch>>,
     stdin: ProcessInput,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     input_controller: Option<BackgroundProcessInputController>,
@@ -3966,9 +3981,8 @@ fn prepare_system(
     #[cfg(target_os = "macos")]
     let directory = rustix::io::dup(request.directory.as_fd()).map_err(|_| spawn_error())?;
 
-    let mut command = Command::new(&helper.program);
+    let mut command = background_helper_command(helper, request.sandbox.as_deref(), cancellation)?;
     command
-        .args(&helper.arguments)
         .env_clear()
         .env("LANG", SAFE_BOOTSTRAP_LANGUAGE)
         .env("LC_ALL", SAFE_BOOTSTRAP_LANGUAGE)
@@ -4021,12 +4035,14 @@ fn prepare_system(
     // `spawn` has completed the descriptor-backed chdir in the child. Move
     // only the inert release frame out of the retained request.
     let BackgroundProcessRequest {
+        sandbox,
         command,
         environment,
         stdin,
         ..
     } = request;
     Ok(PreparedBackgroundProcess {
+        sandbox,
         stdin,
         input_controller: None,
         child,
@@ -4072,6 +4088,32 @@ fn retain_helper_output(
             )?;
             Err(readiness_error)
         }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn background_helper_command(
+    helper: &BackgroundProcessHelper,
+    sandbox: Option<&crate::NativeSandboxLaunch>,
+    cancellation: &CancellationToken,
+) -> Result<Command, BackgroundProcessError> {
+    if let Some(sandbox) = sandbox {
+        sandbox
+            .revalidate(Instant::now() + HELPER_READY_TIMEOUT, cancellation)
+            .map_err(|error| {
+                if error == crate::NativeSandboxError::Cancelled {
+                    cancelled_error()
+                } else {
+                    spawn_error()
+                }
+            })?;
+        sandbox
+            .command(helper.program.as_os_str(), &helper.arguments)
+            .map_err(|_| spawn_error())
+    } else {
+        let mut command = Command::new(&helper.program);
+        command.args(&helper.arguments);
+        Ok(command)
     }
 }
 
@@ -4182,6 +4224,7 @@ fn release_prepared(
                 prepared.stdin,
                 cancellation,
                 prepared.pid,
+                prepared.sandbox.as_deref(),
             )
             .map_err(ReleaseWriteFailure::into_process_error)
         });
@@ -4301,6 +4344,7 @@ impl<'a, W: std::io::Write + ?Sized> ReleaseFrameChunkWriter<'a, W> {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+#[allow(clippy::too_many_arguments)] // Keep the exact release frame, cancellation and retained sandbox authority explicit.
 fn write_release_frame_bounded(
     output: &mut ChildStdin,
     command: &str,
@@ -4309,6 +4353,7 @@ fn write_release_frame_bounded(
     stdin: ProcessInput,
     cancellation: &CancellationToken,
     pid: NonZeroU32,
+    sandbox: Option<&crate::NativeSandboxLaunch>,
 ) -> Result<(), ReleaseWriteFailure> {
     #[cfg(not(test))]
     let _ = pid;
@@ -4344,6 +4389,17 @@ fn write_release_frame_bounded(
         output.failure = Some(ReleaseWriteFailure::Release);
         output.cancellation_token.cancel();
         return Err(output.observed_failure());
+    }
+    if let Some(sandbox) = sandbox {
+        sandbox
+            .revalidate(output.deadline, cancellation)
+            .map_err(|error| {
+                if error == crate::NativeSandboxError::Cancelled {
+                    ReleaseWriteFailure::Cancelled
+                } else {
+                    ReleaseWriteFailure::Release
+                }
+            })?;
     }
     std::io::Write::write_all(&mut output, &[RELEASE_COMMIT_BYTE])
         .map_err(|_| output.observed_failure())?;

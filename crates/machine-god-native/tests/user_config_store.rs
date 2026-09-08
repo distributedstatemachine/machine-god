@@ -61,6 +61,10 @@ fn missing_load_and_unpolled_write_are_inert_then_publish_current_defaults() {
     assert!(!fixture.root().exists());
     let saved = block_on(store.set_model_preferences(&snapshot, &prefs)).unwrap();
     assert_eq!(saved.config().schema_version(), 5);
+    assert_eq!(
+        saved.config().sandbox_mode(),
+        machine_god_native::NativeSandboxMode::None
+    );
     assert_eq!(saved.config().model_preferences(), prefs);
     assert_eq!(store.load().unwrap().loaded(), &saved);
     assert_eq!(
@@ -82,6 +86,7 @@ fn legacy_versions_are_not_migrated_until_explicit_write_and_keep_other_fields()
         r#"{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"legacy/model","credential_source":"environment"}"#,
         r#"{"schema_version":4,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"legacy/model","credential_source":"environment","effort":"high","fast_mode":false}"#,
         r#"{"schema_version":5,"permission_mode":"yolo","sandbox_mode":"none","permission_rules":[{"permission":"edit","pattern":"private/*","action":"deny"},{"permission":"edit","pattern":"private/*","action":"allow"}],"provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"legacy/model","credential_source":"environment","effort":"high","fast_mode":false}"#,
+        r#"{"schema_version":5,"permission_mode":"ask","sandbox_mode":"os","permission_rules":[],"provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"legacy/model","credential_source":"environment","effort":"high","fast_mode":false}"#,
     ] {
         let fixture = Fixture::new();
         fixture.write(source.as_bytes());
@@ -92,10 +97,19 @@ fn legacy_versions_are_not_migrated_until_explicit_write_and_keep_other_fields()
             source.as_bytes()
         );
         let before = snapshot.loaded().config();
+        let original: serde_json::Value = serde_json::from_str(source).unwrap();
+        let expected_sandbox = original
+            .get("sandbox_mode")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("none");
+        assert_eq!(before.sandbox_mode().as_str(), expected_sandbox);
         let saved =
             block_on(store.set_model_preferences(&snapshot, &preferences("next/model"))).unwrap();
         assert_eq!(saved.config().permission_mode(), before.permission_mode());
         assert_eq!(saved.config().sandbox_mode(), before.sandbox_mode());
+        let written: serde_json::Value =
+            serde_json::from_slice(&fs::read(fixture.root().join("config.json")).unwrap()).unwrap();
+        assert_eq!(written["sandbox_mode"], expected_sandbox);
         assert_eq!(saved.config().permission_rules(), before.permission_rules());
         assert_eq!(saved.config().schema_version(), 5);
         assert_eq!(saved.config().provider(), before.provider());

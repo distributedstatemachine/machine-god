@@ -14,8 +14,8 @@ use machine_god_core::{
 
 use crate::{
     NATIVE_SESSION_PERMISSION_RULES_KEY, NativeConfiguredPermissionRules,
-    NativePermissionRuleDecision, NativePermissionRuleKey, NativeSessionPermissionRules,
-    PermissionMode, PermissionPromptDecision, PermissionPrompter,
+    NativePermissionRuleDecision, NativePermissionRuleKey, NativeSandboxMode,
+    NativeSessionPermissionRules, PermissionMode, PermissionPromptDecision, PermissionPrompter,
 };
 
 pub use rules::{NativePermissionRuleChange, NativePermissionRuleProposal};
@@ -97,17 +97,44 @@ pub trait NativePreparedPermissionAction: Send + Sync + 'static {
 pub struct NativePermissionPolicySnapshot {
     mode: PermissionMode,
     configured: Arc<NativeConfiguredPermissionRules>,
+    sandbox_mode: NativeSandboxMode,
 }
 
 impl NativePermissionPolicySnapshot {
     #[must_use]
     pub fn new(mode: PermissionMode, configured: Arc<NativeConfiguredPermissionRules>) -> Self {
-        Self { mode, configured }
+        Self {
+            mode,
+            configured,
+            sandbox_mode: NativeSandboxMode::default(),
+        }
     }
 
     #[must_use]
     pub const fn mode(&self) -> PermissionMode {
         self.mode
+    }
+
+    /// Captures the configured preference; construction grants no OS authority.
+    #[must_use]
+    pub const fn with_sandbox_mode(mut self, sandbox_mode: NativeSandboxMode) -> Self {
+        self.sandbox_mode = sandbox_mode;
+        self
+    }
+
+    #[must_use]
+    pub const fn sandbox_mode(&self) -> NativeSandboxMode {
+        self.sandbox_mode
+    }
+
+    /// Taken Yolo jobs bypass the OS sandbox without changing the preference.
+    /// Actual enforcement still requires a native launch authority.
+    #[must_use]
+    pub const fn effective_sandbox_mode(&self) -> NativeSandboxMode {
+        match self.mode {
+            PermissionMode::Yolo => NativeSandboxMode::None,
+            PermissionMode::Ask | PermissionMode::Auto => self.sandbox_mode,
+        }
     }
 }
 
@@ -181,6 +208,30 @@ impl NativePermissionController {
             })
             .ok_or_else(unavailable)
     }
+
+    /// Observes the policy captured by one still-live exact tool turn.
+    ///
+    /// Native execution adapters use this to select a taken job's sandbox,
+    /// never the mutable selection for future jobs. This bounded, effect-free
+    /// observation is not an execution grant and does not revive a closed turn.
+    /// # Errors
+    /// Rejects unknown session incarnations, cancelled/closed turns and uncertain
+    /// rule publication. Call IDs do not substitute for those ownership checks.
+    pub fn policy_for_execution(
+        &self,
+        context: &machine_god_core::ToolContext,
+    ) -> Result<NativePermissionPolicySnapshot, PermissionError> {
+        let owner = lock(&self.routes)
+            .iter()
+            .filter_map(Weak::upgrade)
+            .find(|owner| {
+                owner.session.id() == context.session_id
+                    && owner.session.incarnation_id() == context.session_incarnation_id
+            })
+            .ok_or_else(unavailable)?;
+        let (attempt, _, _) = owner.attempt(&context.turn_id)?;
+        Ok(attempt.policy.clone())
+    }
 }
 
 impl fmt::Debug for NativePermissionController {
@@ -234,6 +285,11 @@ impl NativePermissionSession {
     /// Changes future taken jobs only. This is not a sandbox backend switch.
     pub fn set_mode(&self, mode: PermissionMode) {
         lock(&self.state).policy.mode = mode;
+    }
+
+    /// Changes future taken jobs only; no running launch is silently widened.
+    pub fn set_sandbox_mode(&self, mode: NativeSandboxMode) {
+        lock(&self.state).policy.sandbox_mode = mode;
     }
 
     /// Clears grants and invalidates pending approvals before returning. Saved
@@ -412,10 +468,16 @@ impl PermissionHandler for NativePermissionController {
         Box::pin(async move {
             let owner = self.route(&request)?;
             let (attempt, epoch, rules_epoch) = owner.attempt(&request.turn_id)?;
-            let action = self
+            let Ok(action) = self
                 .preparer
                 .prepare(&request, invocation, attempt.cancellation.clone())
-                .await?;
+                .await
+            else {
+                // An unavailable selected target is an unexecutable action,
+                // not a failed permission service. Keep the model's bounded
+                // replanning path without prompting or fabricating authority.
+                return Ok(denied("native action preparation requires replanning"));
+            };
             let rules = read_rules(&owner.session)?;
             let bypass = attempt.policy.mode == PermissionMode::Yolo;
             let saved = if bypass && !action.is_file_mutation() {

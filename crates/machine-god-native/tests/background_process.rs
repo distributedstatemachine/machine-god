@@ -1,5 +1,17 @@
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
+#[allow(
+    dead_code,
+    reason = "shared sandbox launch implementation also serves foreground and PTY components"
+)]
+#[path = "../src/os_sandbox/launch.rs"]
+mod os_sandbox;
+use machine_god_native::{NativeSandboxMode, PermissionMode};
+use os_sandbox::{
+    MAX_NATIVE_SANDBOX_PROFILE_BYTES, NATIVE_SANDBOX_EXECUTABLE, NativeSandboxError,
+    NativeSandboxLaunch,
+};
+
 #[path = "../src/background_input.rs"]
 mod background_input;
 #[path = "../src/background_process.rs"]

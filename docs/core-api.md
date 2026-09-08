@@ -187,6 +187,15 @@ next provider round. Core never derives the disposition from model-controlled
 arguments. Hosts must treat the no-authority constructor as a trust-boundary
 assertion rather than a permission optimization.
 
+An explicit trusted host wrapper can use
+[`PreparedToolCall::require_tool_permission`](crate::PreparedToolCall::require_tool_permission)
+to make an otherwise no-authority call subject to policy. The synthetic tool
+capability binds the registered name, call ID and exact prepared arguments.
+Existing concrete capabilities are never replaced. The wrapper must bound the
+normalized value before this additional copy; core still validates the complete
+capability afterward. The same prepared call retains its execution arguments
+and completion-wins cancellation state.
+
 Prepared calls are ordinarily cancellation-first throughout execution. A
 trusted tool whose durable contract defines its first execution poll as an
 irreversible submission boundary may additionally use

@@ -4,9 +4,21 @@
     reason = "private runtime components are composed here before full host integration"
 )]
 use machine_god_native::{
-    NativeOwnedWorkerCleanup, NativeOwnedWorkerScope, NativeOwnedWorkerSpawner,
-    TERMINAL_CAPTURED_HELPER_ARGUMENT,
+    NativeOwnedWorkerCleanup, NativeOwnedWorkerScope, NativeOwnedWorkerSpawner, NativeSandboxMode,
+    PermissionMode, TERMINAL_CAPTURED_HELPER_ARGUMENT, TerminalActionInvocation,
 };
+#[path = "../src/os_sandbox/launch.rs"]
+mod os_sandbox;
+#[cfg(target_os = "macos")]
+use os_sandbox::NativeSandboxRoot;
+use os_sandbox::{
+    MAX_NATIVE_SANDBOX_PROFILE_BYTES, NATIVE_SANDBOX_EXECUTABLE, NativeSandboxError,
+    NativeSandboxLaunch,
+};
+#[path = "support/terminal_permission_targets.rs"]
+mod permission_targets;
+use permission_targets::NativePermissionTerminalResolver;
+use terminal_shell::TerminalShell;
 mod terminal_action_tool {
     pub(crate) use machine_god_native::{TerminalActionHostIdentity, TerminalActionInvocation};
 }

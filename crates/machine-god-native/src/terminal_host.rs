@@ -217,6 +217,9 @@ impl NativeTerminalHost {
             .with_worker_scope(workers.clone()),
         );
         let identity = host.identity().clone();
+        let permission_resolver = Arc::new(crate::permission_targets::HostPermissionResolver::new(
+            Arc::clone(&host), workers.clone(), stop.clone(),
+        ));
         let executor = NativeTerminalActionExecutor {
             requester,
             host,
@@ -227,7 +230,8 @@ impl NativeTerminalHost {
             active: Arc::new(AtomicUsize::new(0)),
             workers: workers.clone(),
         };
-        let tool = TerminalActionTool::new(Arc::new(executor), identity)?;
+        let tool = TerminalActionTool::new(Arc::new(executor), identity)?
+            .with_permission_resolver(permission_resolver);
         Ok((
             tool,
             NativeTerminalHostResource {

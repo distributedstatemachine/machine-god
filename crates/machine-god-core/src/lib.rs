@@ -48,6 +48,7 @@ pub use permission::{
     PermissionExecutionAdmission, PermissionGrantScope, PermissionHandler, PermissionInvocation,
     PermissionRequest, PermissionRisk, ProcessEnvironment, ProcessInput,
 };
+pub use session::PermissionInvocationSnapshot;
 pub use session::{
     Prompt, Session, SessionRecord, SessionReservation, SessionRevision, SessionStore, Turn,
     TurnHandle, TurnMetadataEditor, TurnMetadataSnapshot,

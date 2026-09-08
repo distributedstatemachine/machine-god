@@ -252,6 +252,8 @@ pub struct TerminalActionTool {
     identity: TerminalActionHostIdentity,
     publisher: Option<Arc<dyn TerminalActionResultPublisher>>,
     input_publisher: Option<Arc<dyn TerminalActionInputPublisher>>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    permission_resolver: Option<Arc<dyn crate::NativePermissionTerminalResolver>>,
 }
 
 impl std::fmt::Debug for TerminalActionTool {
@@ -274,6 +276,72 @@ struct Prepared {
 }
 
 impl TerminalActionTool {
+    /// Attaches the same native host's owned permission-resolution authority.
+    /// Construction does not start a worker or resolve a path.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[must_use]
+    pub fn with_permission_resolver(
+        mut self,
+        resolver: Arc<dyn crate::NativePermissionTerminalResolver>,
+    ) -> Self {
+        self.permission_resolver = Some(resolver);
+        self
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn permission_resolver(
+        &self,
+    ) -> Option<Arc<dyn crate::NativePermissionTerminalResolver>> {
+        self.permission_resolver.clone()
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn permission_workspace(&self) -> &str {
+        &self.identity.workspace
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) const fn permission_host_identity(&self) -> &TerminalActionHostIdentity {
+        &self.identity
+    }
+
+    /// Rechecks the canonical envelope against the actual trusted tool, not a
+    /// second provider-input normalization. Performs no native effects.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn validate_permission_preparation(
+        &self,
+        request: &machine_god_core::PermissionRequest,
+        invocation: machine_god_core::PermissionInvocation<'_>,
+    ) -> Result<TerminalActionInvocation, ToolError> {
+        if invocation.tool_name.as_str() != "terminal" {
+            return Err(invalid());
+        }
+        let digest = digest_value(invocation.arguments, MAX_TERMINAL_PREPARED_ARGUMENT_BYTES)?;
+        let prepared: Prepared =
+            serde_json::from_value(invocation.arguments.clone()).map_err(|_| invalid())?;
+        if prepared.version != 1
+            || prepared.host != self.identity
+            || &prepared.call_id != invocation.call_id
+            || serde_json::to_value(&prepared).map_err(|_| invalid())? != *invocation.arguments
+        {
+            return Err(invalid());
+        }
+        prepared.invocation.validate()?;
+        let Capability::Custom { name, details } = &request.capability else {
+            return Err(invalid());
+        };
+        digest_value(details, MAX_TERMINAL_PREPARED_ARGUMENT_BYTES + 64 * 1024)?;
+        if name != authority_name(&prepared.invocation.draft)
+            || *details
+                != json!({
+                    "version": 1, "request_sha256": digest,
+                    "invocation": invocation.arguments["invocation"],
+                    "call_id": invocation.arguments["call_id"], "host": invocation.arguments["host"],
+                    "repeated_probe_authorities": probe_authorities(&prepared.invocation.draft),
+                })
+        {
+            return Err(invalid());
+        }
+        Ok(prepared.invocation)
+    }
+
     /// Constructs an inert adapter; no filesystem or environment discovery occurs.
     ///
     /// # Errors
@@ -288,6 +356,8 @@ impl TerminalActionTool {
             identity,
             publisher: None,
             input_publisher: None,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            permission_resolver: None,
         })
     }
 

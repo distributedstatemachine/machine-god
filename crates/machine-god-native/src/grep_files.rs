@@ -149,6 +149,31 @@ pub struct GrepFilesTool {
 }
 
 impl GrepFilesTool {
+    /// Checks prepared execution input, including the explicit null include
+    /// filter. This does not apply the distinct incoming argument grammar twice.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn validate_permission_preparation(
+        &self,
+        request: &machine_god_core::PermissionRequest,
+        invocation: machine_god_core::PermissionInvocation<'_>,
+    ) -> Result<(), ToolError> {
+        if invocation.tool_name != &self.spec().name {
+            return Err(invalid_arguments());
+        }
+        let arguments = decode_execution_arguments(invocation.arguments.clone())?;
+        validate_canonical_arguments(&arguments)?;
+        if arguments.as_json() != *invocation.arguments
+            || request.capability
+                != (Capability::Filesystem {
+                    access: FilesystemAccess::SearchContent,
+                    path: arguments.path,
+                })
+        {
+            return Err(invalid_arguments());
+        }
+        Ok(())
+    }
+
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
         Self { root }

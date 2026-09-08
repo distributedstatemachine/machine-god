@@ -289,14 +289,17 @@ pub(crate) const MAX_ARGUMENT_BYTES: usize = machine_god_core::MAX_TERMINAL_ACTI
 // independently of the full command, which remains one unmodified argv item.
 pub(crate) const MAX_ARGUMENTS_BYTES: usize = MAX_ARGUMENT_BYTES + 32 * 1024;
 pub(crate) const MAX_ARGUMENTS: usize = 256;
+const SANDBOX_ARGUMENT_OVERHEAD: usize =
+    crate::MAX_NATIVE_SANDBOX_PROFILE_BYTES + MAX_PROGRAM_BYTES + 2;
 // Binary fields do not escape: magic, dimensions, program, argv and environment
 // bytes, with a u32 length for each string and both collection counts.
 pub(crate) const MAX_FRAME: usize = MAGIC.len()
     + 4
     + MAX_PROGRAM_BYTES
     + MAX_ARGUMENTS_BYTES
+    + SANDBOX_ARGUMENT_OVERHEAD
     + MAX_BACKGROUND_PROCESS_ENVIRONMENT_BYTES
-    + 4 * (3 + MAX_ARGUMENTS + 2 * MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES);
+    + 4 * (6 + MAX_ARGUMENTS + 2 * MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES);
 pub(crate) const START_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const PTY_DEADLINE_ENV: &str = "MACHINE_GOD_PTY_DEADLINE";
 
@@ -612,13 +615,24 @@ pub(crate) fn read_frame(
         cancellation,
     )?)
     .map_err(process_error)?;
-    let count = read_length(input, MAX_ARGUMENTS, &mut budget, deadline, cancellation)?;
+    let wrapped = program == crate::NATIVE_SANDBOX_EXECUTABLE;
+    let count = read_length(
+        input,
+        MAX_ARGUMENTS + if wrapped { 3 } else { 0 },
+        &mut budget,
+        deadline,
+        cancellation,
+    )?;
     let mut arguments = Vec::with_capacity(count);
-    for _ in 0..count {
+    for index in 0..count {
         arguments.push(
             String::from_utf8(read_bytes(
                 input,
-                MAX_ARGUMENT_BYTES,
+                if wrapped && index == 1 {
+                    crate::MAX_NATIVE_SANDBOX_PROFILE_BYTES
+                } else {
+                    MAX_ARGUMENT_BYTES
+                },
                 &mut budget,
                 deadline,
                 cancellation,
@@ -664,6 +678,20 @@ pub(crate) fn validate_program_arguments(
     program: &str,
     arguments: &[String],
 ) -> Result<(), TerminalHelperError> {
+    if program == crate::NATIVE_SANDBOX_EXECUTABLE {
+        let [flag, profile, inner, rest @ ..] = arguments else {
+            return Err(error(TerminalHelperErrorKind::InvalidRequest));
+        };
+        if flag != "-p"
+            || profile.is_empty()
+            || profile.len() > crate::MAX_NATIVE_SANDBOX_PROFILE_BYTES
+            || profile.contains('\0')
+            || inner == crate::NATIVE_SANDBOX_EXECUTABLE
+        {
+            return Err(error(TerminalHelperErrorKind::InvalidRequest));
+        }
+        return validate_program_arguments(inner, rest);
+    }
     if !program.starts_with('/')
         || program.len() > MAX_PROGRAM_BYTES
         || program.as_bytes().contains(&0)

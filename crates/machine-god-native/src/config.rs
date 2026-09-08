@@ -227,7 +227,7 @@ impl Default for NativeConfig {
         Self {
             schema_version: CONFIG_SCHEMA_VERSION,
             permission_mode: PermissionMode::Ask,
-            sandbox_mode: NativeSandboxMode::Os,
+            sandbox_mode: NativeSandboxMode::None,
             permission_rules: NativeConfiguredPermissionRules::default(),
             provider: NativeProviderKind::VercelAiGateway,
             transport: NativeTransportKind::AiGatewayHttp,
@@ -496,7 +496,7 @@ fn parse_v1_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
     Ok(NativeConfig {
         schema_version: wire.schema_version,
         permission_mode: PermissionMode::Ask,
-        sandbox_mode: NativeSandboxMode::Os,
+        sandbox_mode: NativeSandboxMode::None,
         permission_rules: NativeConfiguredPermissionRules::default(),
         provider: NativeProviderKind::VercelAiGateway,
         transport: NativeTransportKind::AiGatewayHttp,
@@ -521,7 +521,7 @@ fn parse_v2_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
     Ok(NativeConfig {
         schema_version: wire.schema_version,
         permission_mode: PermissionMode::Ask,
-        sandbox_mode: NativeSandboxMode::Os,
+        sandbox_mode: NativeSandboxMode::None,
         permission_rules: NativeConfiguredPermissionRules::default(),
         provider: NativeProviderKind::VercelAiGateway,
         transport: NativeTransportKind::AiGatewayHttp,
@@ -547,7 +547,7 @@ fn parse_v3_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
     Ok(NativeConfig {
         schema_version: wire.schema_version,
         permission_mode: PermissionMode::Ask,
-        sandbox_mode: NativeSandboxMode::Os,
+        sandbox_mode: NativeSandboxMode::None,
         permission_rules: NativeConfiguredPermissionRules::default(),
         provider: NativeProviderKind::VercelAiGateway,
         transport: NativeTransportKind::AiGatewayHttp,
@@ -575,7 +575,7 @@ fn parse_v4_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
         schema_version: wire.schema_version,
         model: wire.model,
         permission_mode: PermissionMode::Ask,
-        sandbox_mode: NativeSandboxMode::Os,
+        sandbox_mode: NativeSandboxMode::None,
         permission_rules: NativeConfiguredPermissionRules::default(),
         provider: NativeProviderKind::VercelAiGateway,
         transport: NativeTransportKind::AiGatewayHttp,
@@ -818,10 +818,10 @@ mod tests {
                 );
             }
         }
-        assert_eq!(NativeSandboxMode::default(), NativeSandboxMode::Os);
+        assert_eq!(NativeSandboxMode::default(), NativeSandboxMode::None);
         assert_eq!(
             NativeConfig::default().sandbox_mode(),
-            NativeSandboxMode::Os
+            NativeSandboxMode::None
         );
         assert!(
             NativeConfig::default()
@@ -929,7 +929,7 @@ mod tests {
             }
             let parsed = parse_config_bytes(&serde_json::to_vec(&value).unwrap()).unwrap();
             assert_eq!(parsed.schema_version(), version);
-            assert_eq!(parsed.sandbox_mode(), NativeSandboxMode::Os);
+            assert_eq!(parsed.sandbox_mode(), NativeSandboxMode::None);
             assert!(parsed.permission_rules().rules().is_empty());
             for (key, extra) in [
                 ("permission_mode", serde_json::json!("auto")),
