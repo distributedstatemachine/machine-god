@@ -60,7 +60,7 @@ fn missing_load_and_unpolled_write_are_inert_then_publish_current_defaults() {
     drop(store.set_model_preferences(&snapshot, &prefs));
     assert!(!fixture.root().exists());
     let saved = block_on(store.set_model_preferences(&snapshot, &prefs)).unwrap();
-    assert_eq!(saved.config().schema_version(), 4);
+    assert_eq!(saved.config().schema_version(), 5);
     assert_eq!(saved.config().model_preferences(), prefs);
     assert_eq!(store.load().unwrap().loaded(), &saved);
     assert_eq!(
@@ -81,6 +81,7 @@ fn legacy_versions_are_not_migrated_until_explicit_write_and_keep_other_fields()
         r#"{"schema_version":2,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"legacy/model"}"#,
         r#"{"schema_version":3,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"legacy/model","credential_source":"environment"}"#,
         r#"{"schema_version":4,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"legacy/model","credential_source":"environment","effort":"high","fast_mode":false}"#,
+        r#"{"schema_version":5,"permission_mode":"yolo","sandbox_mode":"none","permission_rules":[{"permission":"edit","pattern":"private/*","action":"deny"},{"permission":"edit","pattern":"private/*","action":"allow"}],"provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"legacy/model","credential_source":"environment","effort":"high","fast_mode":false}"#,
     ] {
         let fixture = Fixture::new();
         fixture.write(source.as_bytes());
@@ -94,6 +95,9 @@ fn legacy_versions_are_not_migrated_until_explicit_write_and_keep_other_fields()
         let saved =
             block_on(store.set_model_preferences(&snapshot, &preferences("next/model"))).unwrap();
         assert_eq!(saved.config().permission_mode(), before.permission_mode());
+        assert_eq!(saved.config().sandbox_mode(), before.sandbox_mode());
+        assert_eq!(saved.config().permission_rules(), before.permission_rules());
+        assert_eq!(saved.config().schema_version(), 5);
         assert_eq!(saved.config().provider(), before.provider());
         assert_eq!(saved.config().transport(), before.transport());
         assert_eq!(
@@ -103,6 +107,55 @@ fn legacy_versions_are_not_migrated_until_explicit_write_and_keep_other_fields()
         assert_eq!(saved.config().effort().label(), "future-tier");
         assert!(saved.config().fast_mode());
     }
+}
+
+#[test]
+fn whole_config_write_bound_preserves_policy_and_original_bytes() {
+    let fixture = Fixture::new();
+    let mut value = serde_json::json!({
+        "schema_version":5, "permission_mode":"auto", "sandbox_mode":"none",
+        "permission_rules":[{"permission":"write","pattern":"","action":"ask"}],
+        "provider":"vercel_ai_gateway", "transport":"ai_gateway_http", "model":"x",
+        "credential_source":"environment", "effort":"future-tier", "fast_mode":true,
+    });
+    let base = serde_json::to_vec(&value).unwrap().len();
+    value["permission_rules"][0]["pattern"] = "x"
+        .repeat(machine_god_native::MAX_CONFIG_BYTES - base)
+        .into();
+    let bytes = serde_json::to_vec(&value).unwrap();
+    assert_eq!(bytes.len(), machine_god_native::MAX_CONFIG_BYTES);
+    fixture.write(&bytes);
+    let store = fixture.store();
+    let snapshot = store.load().unwrap();
+    assert_eq!(
+        snapshot.loaded().config().permission_mode(),
+        machine_god_native::PermissionMode::Auto
+    );
+    for oversized in ["xx", "\""] {
+        let error =
+            block_on(store.set_model_preferences(&snapshot, &preferences(oversized))).unwrap_err();
+        assert!(
+            matches!(error, NativeUserConfigError::InvalidConfig(error) if error.kind() == machine_god_native::NativeConfigErrorKind::TooLarge)
+        );
+        assert_eq!(fs::read(fixture.root().join("config.json")).unwrap(), bytes);
+        assert!(!fixture.root().join(".config.tmp").exists());
+    }
+    let saved = block_on(store.set_model_preferences(&snapshot, &preferences("y"))).unwrap();
+    assert_eq!(
+        fs::metadata(fixture.root().join("config.json"))
+            .unwrap()
+            .len(),
+        u64::try_from(machine_god_native::MAX_CONFIG_BYTES).unwrap()
+    );
+    assert_eq!(
+        saved.config().permission_rules(),
+        snapshot.loaded().config().permission_rules()
+    );
+    assert_eq!(
+        saved.config().sandbox_mode(),
+        machine_god_native::NativeSandboxMode::None
+    );
+    assert_eq!(store.load().unwrap().loaded(), &saved);
 }
 
 #[test]

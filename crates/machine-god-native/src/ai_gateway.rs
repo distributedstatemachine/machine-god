@@ -1884,7 +1884,25 @@ struct StreamedToolInput {
     ended: bool,
 }
 
+/// Reuses the bounded codec with the pinned reviewer's finish classification.
+/// Ordinary model-provider streams retain strict call/finish correspondence.
+pub(crate) fn decode_gateway_review_stream(
+    source: AiGatewayByteStream,
+    cancellation: &CancellationToken,
+    limits: AiGatewayLimits,
+) -> ModelEventStream {
+    let mut stream = GatewayEventStream::with_inputs(
+        source,
+        cancellation,
+        limits,
+        ResponseInputLimits::ordinary(limits),
+    );
+    stream.review_completion = true;
+    Box::pin(stream)
+}
+
 struct GatewayEventStream {
+    review_completion: bool,
     source: Option<AiGatewayByteStream>,
     cancellation_token: CancellationToken,
     cancellation: Option<Pin<Box<machine_god_core::Cancelled>>>,
@@ -1927,6 +1945,7 @@ impl GatewayEventStream {
         inputs: ResponseInputLimits,
     ) -> Self {
         Self {
+            review_completion: false,
             source: Some(source),
             cancellation_token: cancellation.clone(),
             cancellation: None,
@@ -2514,12 +2533,13 @@ impl GatewayEventStream {
             .and_then(Value::as_str)
             .ok_or_else(|| protocol_error("gateway_invalid_finish"))?;
         let has_calls = !self.emitted_calls.is_empty();
+        let review_completion = self.review_completion;
         let reason = match reason {
-            "stop" if !has_calls => StopReason::Completed,
-            "length" if !has_calls => StopReason::MaxOutputTokens,
-            "content-filter" if !has_calls => StopReason::ContentFilter,
+            "stop" if !has_calls || review_completion => StopReason::Completed,
+            "length" if !has_calls || review_completion => StopReason::MaxOutputTokens,
+            "content-filter" if !has_calls || review_completion => StopReason::ContentFilter,
             "tool-calls" if has_calls => StopReason::ToolCalls,
-            "other" if !has_calls => StopReason::Other("other".to_owned()),
+            "other" if !has_calls || review_completion => StopReason::Other("other".to_owned()),
             "error" => return Err(provider_failure()),
             "stop" | "length" | "content-filter" | "tool-calls" | "other" => {
                 return Err(protocol_error("gateway_finish_call_mismatch"));

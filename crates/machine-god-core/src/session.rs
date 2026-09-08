@@ -521,6 +521,15 @@ impl Session {
         (*record).clone()
     }
 
+    /// Returns one immutable canonical snapshot without cloning its transcript.
+    /// Like [`Self::record`], this is an in-memory observation, not a new store
+    /// receipt or proof that an uncertain write has been reconciled. Subsequent
+    /// commits replace the snapshot; retaining it does not block writers.
+    #[must_use]
+    pub fn record_snapshot(&self) -> Arc<SessionRecord> {
+        self.state.snapshot().0
+    }
+
     /// Finds an exact canonical tool call at or after a message/block cursor.
     ///
     /// Searches one shared immutable record snapshot without cloning transcript
@@ -3373,6 +3382,18 @@ impl fmt::Debug for Turn {
 }
 
 impl Turn {
+    /// Exact session owning this reserved turn.
+    #[must_use]
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+
+    /// Exact durable lifetime owning this reserved turn.
+    #[must_use]
+    pub fn session_incarnation_id(&self) -> &SessionIncarnationId {
+        &self.session_incarnation_id
+    }
+
     #[must_use]
     pub fn id(&self) -> &TurnId {
         &self.id

@@ -30,7 +30,7 @@ pub enum NativeUserConfigError {
     Busy,
     /// The snapshot no longer describes this store's current contents.
     Conflict,
-    /// Existing configuration is invalid and was not overwritten.
+    /// Loaded or proposed configuration is invalid; the file was not overwritten.
     InvalidConfig(NativeConfigError),
     /// Publication failed before replacing the configuration.
     Persistence,
@@ -199,7 +199,9 @@ impl NativeUserConfigStore {
             return Err(NativeUserConfigError::Conflict);
         }
         let config = current.config().with_model_preferences(preferences);
-        let encoded = config.serialize_current();
+        let encoded = config
+            .serialize_current()
+            .map_err(NativeUserConfigError::InvalidConfig)?;
         let temp = rustix::fs::openat(
             &root,
             TEMP,

@@ -172,16 +172,25 @@ compare-and-swap, transcript-preserving reconciliation and explicit uncertain
 publication handling, including saves awaited inside permission authorization.
 Configured permission-pattern values now preserve ordered last-match semantics,
 tool aliases, prepared path/command projection and exact web-fetch domains under
-bounded encoded size and matching work. These prerequisites are not yet wired
-into native permission enforcement; saved exact rules remain a separate domain.
+bounded encoded size and matching work. Saved exact rules remain a separate domain.
 Core permission policy now receives the actual borrowed prepared invocation and
 may retain a revocable admission guard across observer waits until execution.
-Legacy handlers keep their existing behavior; native mode/rule/reviewer composition
-must use that new seam before the permission scenarios can close.
-That composition must keep reset-cleared capability grants separate from saved
-exact-action rules and configured patterns. Exact file approvals need owned
-preimage/target identity preparation and execution revalidation, not arguments-only
-matching or an undo lock held across a prompt.
+Legacy handlers keep their existing behavior. The native controller now owns
+exact-turn registrations, taken-job policy snapshots, reset-cleared grants,
+ordered policy precedence and revocable execution proofs. Confirmed saved-rule
+changes use core metadata CAS, retain per-rule proposal generations, and block
+authority across uncertain publication without reviving invalidated proofs.
+Conversation/runtime composition binds actual core turns and retires their
+authority before finalization. Schema-v5 configuration adds mode, sandbox
+preference and ordered rules while preserving strict legacy reads and bounded
+policy-preserving user-default writes. The owned file-approval adapter now retains
+exact descriptor/preimage evidence for all five mutations, claims one request
+generation and revalidates at the final effect. Old unpolled execution futures
+cannot consume newer approvals. The real fixed-model Gateway reviewer enforces
+bounded evidence, deadline, cancellation and pinned completion semantics.
+The controller's execution proof can serve as the file adapter's live policy.
+Production host/CLI composition, trusted reviewer context routing and actual
+process sandbox enforcement remain required before permission scenarios close.
 Remaining work includes interactive CLI persistence-outcome presentation,
 long-lived cache composition, automatic background history producers,
 interactive command/session transitions,
@@ -209,6 +218,12 @@ configured-pattern components pass 51 focused tests, the inventory handshake
 passes its 12 focused service tests, and full warnings-denied Clippy passes.
 The complete replacement workspace gate remains open. These internal
 checks do not replace the exact-candidate feature gates below.
+
+The integrated permission components pass 24 file-approval regressions,
+105 controller/reviewer/conversation integrations, 38 core metadata tests, and
+the full warnings-denied workspace lint gate. Configuration/store integrations
+also pass. Composed tests exercise real file publication and denial; production
+host composition remains part of the unfinished combined feature, not a delivery.
 
 ### CI and documentation maintenance
 

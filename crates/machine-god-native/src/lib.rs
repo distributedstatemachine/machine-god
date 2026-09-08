@@ -81,6 +81,7 @@ mod conversation_observation_tests;
 mod conversation_observations;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod file_history_tool;
+mod permission_controller;
 mod permission_rules;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use conversation_observations::{NativeConversationObservations, NativeObservationError};
@@ -97,7 +98,16 @@ mod create_folder;
 mod delete_file;
 mod doctor;
 mod edit_file;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod file_approval;
 mod file_info;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use file_approval::{
+    MAX_NATIVE_FILE_APPROVAL_PREIMAGE_BYTES, MAX_NATIVE_FILE_APPROVAL_RETAINED_BYTES,
+    MAX_NATIVE_FILE_APPROVALS, NativeFileApprovalAdmission, NativeFileApprovalAuthority,
+    NativeFileApprovalError, NativeFileApprovalKind, NativeFileApprovalPolicy,
+    NativeFileApprovalPreimage, NativeFileApprovalRegistry, PreparedFileApproval,
+};
 mod file_undo;
 mod glob_files;
 mod grep_files;
@@ -113,6 +123,7 @@ mod model_selection;
 mod native_tool_result_archive;
 mod open_file;
 mod permission_patterns;
+mod permission_reviewer;
 #[cfg(target_os = "macos")]
 mod process_inventory_helper;
 #[cfg(target_os = "macos")]
@@ -391,11 +402,29 @@ pub use model_preferences::{
 pub use model_selection::{
     MAX_NATIVE_MODEL_QUERY_BYTES, NativeModelSelectionError, resolve_model_query,
 };
+pub use permission_controller::{
+    NativePermissionActionPreparer, NativePermissionAutomaticOutcome,
+    NativePermissionConfiguredOutcome, NativePermissionController, NativePermissionExecutionProof,
+    NativePermissionPolicySnapshot, NativePermissionRuleChange, NativePermissionRuleProposal,
+    NativePermissionSession, NativePermissionTurn, NativePreparedPermissionAction,
+};
 pub use permission_patterns::{
     MAX_CONFIGURED_PERMISSION_MATCH_STEPS, MAX_CONFIGURED_PERMISSION_TARGET_BYTES,
     NativeConfiguredPermissionDecision, NativeConfiguredPermissionError,
     NativeConfiguredPermissionRule, NativeConfiguredPermissionRules, NativePermissionTargetKind,
     NativePreparedPermissionTarget,
+};
+#[cfg(feature = "ai-gateway-http")]
+pub use permission_reviewer::TokioPermissionReviewClock;
+pub use permission_reviewer::{
+    AiGatewayPermissionReviewer, MAX_NATIVE_PERMISSION_REVIEW_PACKET_BYTES,
+    MAX_NATIVE_PERMISSION_REVIEW_RATIONALE_BYTES, NATIVE_PERMISSION_REVIEW_MODEL,
+    NATIVE_PERMISSION_REVIEW_TIMEOUT, NativeAutoPermissionAction, NativeAutoPermissionAssessment,
+    NativeAutoPermissionAuthorization, NativeAutoPermissionDecision,
+    NativeAutoPermissionFilePreimage, NativeAutoPermissionOrigin, NativeAutoPermissionPhase,
+    NativeAutoPermissionReview, NativeAutoPermissionReviewError, NativeAutoPermissionRisk,
+    NativeAutoPermissionRootContext, NativeAutoPermissionSandboxScope, NativeAutoPermissionTarget,
+    NativePermissionReviewClock, NativePermissionReviewer,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[doc(hidden)]
@@ -762,6 +791,10 @@ pub enum PermissionMode {
     /// Ask before exercising a permission-gated native capability.
     #[default]
     Ask,
+    /// Request automatic native permission policy; configuration alone does not enforce it.
+    Auto,
+    /// Request unrestricted native permission policy; configuration alone grants no authority.
+    Yolo,
 }
 
 impl PermissionMode {
@@ -770,6 +803,29 @@ impl PermissionMode {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Ask => "ask",
+            Self::Auto => "auto",
+            Self::Yolo => "yolo",
+        }
+    }
+}
+
+/// Configured sandbox preference, not proof of effective runtime enforcement.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum NativeSandboxMode {
+    /// Request the operating-system sandbox where supported by the native host.
+    #[default]
+    Os,
+    /// Request no operating-system sandbox.
+    None,
+}
+
+impl NativeSandboxMode {
+    /// Returns the stable configuration spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Os => "os",
+            Self::None => "none",
         }
     }
 }

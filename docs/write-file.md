@@ -8,6 +8,17 @@ preimage capture and registers committed publications under [file undo](file-und
 
 ## Public API, schema, and limits
 
+An explicit Linux/macOS `with_file_approvals` injection additionally requires
+an owned preapproval snapshot and one-shot execution proof under
+[file approvals](ask-permission.md#owned-file-approval-preparation-and-execution).
+That separately injected authority permits bounded selected preimage reads
+before the prompt and retains descriptors across it; it does not acquire an
+undo lock. The final effect rechecks exact preimages, parents, actual resulting
+bytes where applicable, and live policy. Missing/stale approval fails closed.
+The standalone preapproval-read and allocation guarantees below
+apply without this injection; schema, effect-free `Tool::prepare`, mutation
+semantics, and disclosed final-check/syscall races are unchanged.
+
 `machine-god-native` exports `WRITE_FILE_TOOL_NAME`, `WriteFileTool`,
 `WriteFileToolOpenError`, `WriteFileToolOpenErrorKind`, and these public limits:
 

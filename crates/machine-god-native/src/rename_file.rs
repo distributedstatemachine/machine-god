@@ -9,6 +9,10 @@ use machine_god_core::{
 };
 use serde_json::{Value, json};
 
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+#[path = "file_approval/rename_file_tests.rs"]
+mod file_approval_tests;
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::ffi::OsStr;
 #[cfg(target_os = "macos")]
@@ -110,6 +114,10 @@ impl Error for RenameFileToolOpenError {}
 /// special-file replacement can be moved; postcommit identity verification
 /// prevents that outcome from being reported as success.
 pub struct RenameFileTool {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    approvals: Option<std::sync::Arc<crate::file_approval::NativeFileApprovalRegistry>>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    active_approval: Option<crate::file_approval::NativeFileApprovalExecution>,
     undo: Option<std::sync::Arc<crate::file_undo::FileUndoTracker>>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     root: OwnedFd,
@@ -120,7 +128,12 @@ pub struct RenameFileTool {
 impl RenameFileTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
-        Self { root, undo: None }
+        Self {
+            root,
+            undo: None,
+            approvals: None,
+            active_approval: None,
+        }
     }
 
     /// Injects shared process-local undo authority; destination replacement stays forbidden.
@@ -235,11 +248,16 @@ impl Tool for RenameFileTool {
 
     fn execute(
         &self,
-        _context: ToolContext,
+        context: ToolContext,
         arguments: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let approval_ticket = self.approval_ticket(&context);
         Box::pin(async move {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            let approved =
+                self.approval_bound(&context, &arguments, &cancellation, approval_ticket)?;
             let arguments = validate_arguments(&arguments)?;
             if arguments.old != arguments.requested_old || arguments.new != arguments.requested_new
             {
@@ -248,19 +266,40 @@ impl Tool for RenameFileTool {
 
             #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             {
-                let _ = cancellation;
+                let _ = (context, cancellation);
                 Err(unsupported_platform())
             }
 
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             {
-                self.execute_supported(&arguments.old, &arguments.new, &cancellation)
+                approved.as_ref().unwrap_or(self).execute_supported(
+                    &arguments.old,
+                    &arguments.new,
+                    &cancellation,
+                )
             }
         })
     }
 }
 
 fn validate_arguments(arguments: &Value) -> Result<ValidatedArguments<'_>, ToolError> {
+    validate_arguments_inner(arguments)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn validate_approval_arguments(
+    arguments: &Value,
+) -> Result<(), crate::NativeFileApprovalError> {
+    let value =
+        validate_arguments(arguments).map_err(|_| crate::NativeFileApprovalError::Invalid)?;
+    if value.old == value.requested_old && value.new == value.requested_new {
+        Ok(())
+    } else {
+        Err(crate::NativeFileApprovalError::Invalid)
+    }
+}
+
+fn validate_arguments_inner(arguments: &Value) -> Result<ValidatedArguments<'_>, ToolError> {
     let Value::Object(object) = arguments else {
         return Err(invalid_arguments());
     };
@@ -627,6 +666,66 @@ struct ParentWalk<'path> {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl RenameFileTool {
+    /// Requires one exact, owned file approval for each execution. Without this
+    /// explicit injection the existing standalone tool contract is unchanged.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[must_use]
+    pub fn with_file_approvals(
+        mut self,
+        registry: std::sync::Arc<crate::NativeFileApprovalRegistry>,
+    ) -> Self {
+        self.approvals = Some(registry);
+        self
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn approval_ticket(
+        &self,
+        context: &ToolContext,
+    ) -> Option<Result<crate::file_approval::NativeFileApprovalClaim, crate::NativeFileApprovalError>>
+    {
+        self.approvals
+            .as_ref()
+            .map(|registry| registry.execution_ticket(context, RENAME_FILE_TOOL_NAME))
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn approval_bound(
+        &self,
+        context: &ToolContext,
+        arguments: &Value,
+        cancellation: &CancellationToken,
+        ticket: Option<
+            Result<crate::file_approval::NativeFileApprovalClaim, crate::NativeFileApprovalError>,
+        >,
+    ) -> Result<Option<Self>, ToolError> {
+        let Some(registry) = &self.approvals else {
+            return Ok(None);
+        };
+        validate_approval_arguments(arguments).map_err(crate::NativeFileApprovalError::tool)?;
+        let approval = registry
+            .claim(
+                ticket
+                    .ok_or(crate::NativeFileApprovalError::Denied)
+                    .and_then(|ticket| ticket)
+                    .map_err(crate::NativeFileApprovalError::tool)?,
+                context,
+                RENAME_FILE_TOOL_NAME,
+                arguments,
+                self.root.as_fd(),
+                cancellation,
+            )
+            .map_err(crate::NativeFileApprovalError::tool)?;
+        let root = rustix::io::fcntl_dupfd_cloexec(&self.root, 3)
+            .map_err(|_| crate::NativeFileApprovalError::Unavailable.tool())?;
+        Ok(Some(Self {
+            root,
+            undo: self.undo.clone(),
+            approvals: None,
+            active_approval: Some(approval),
+        }))
+    }
+
     fn execute_supported(
         &self,
         old_path: &str,
@@ -772,6 +871,11 @@ impl RenameFileTool {
         if let Some(undo) = &undo {
             undo.revalidate(cancellation)
                 .map_err(crate::file_undo::FileUndoError::tool)?;
+        }
+        if let Some(approval) = &self.active_approval {
+            approval
+                .revalidate(cancellation)
+                .map_err(crate::NativeFileApprovalError::tool)?;
         }
 
         let outcome = evidence.rename(

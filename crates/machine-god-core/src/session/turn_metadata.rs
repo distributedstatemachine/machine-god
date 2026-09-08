@@ -256,6 +256,16 @@ impl Turn {
 }
 
 impl TurnMetadataEditor {
+    /// Observes whether the exact owning turn still admits metadata operations.
+    /// This synchronous observation performs no I/O, keeps no turn lease, and
+    /// is not a store receipt or a guarantee against subsequent cancellation.
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        self.identity.scope.upgrade().is_some_and(|scope| {
+            scope.ensure_open().is_ok()
+                && scope.validate_identity(&scope.state.snapshot().0).is_ok()
+        })
+    }
     /// Authoritatively loads this entry through the core store and reconciles
     /// the canonical record. The owned future is inert until polled.
     ///

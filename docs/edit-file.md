@@ -9,6 +9,17 @@ default constructors retain the nontracking contract below.
 
 ## Public API, schema, and limits
 
+An explicit Linux/macOS `with_file_approvals` injection additionally requires
+an owned preapproval snapshot and one-shot execution proof under
+[file approvals](ask-permission.md#owned-file-approval-preparation-and-execution).
+That separately injected authority permits bounded selected preimage reads
+before the prompt and retains descriptors across it; it does not acquire an
+undo lock. The final effect rechecks exact preimages, parents, actual resulting
+bytes where applicable, and live policy. Missing/stale approval fails closed.
+The standalone preapproval-read and allocation guarantees below
+apply without this injection; schema, effect-free `Tool::prepare`, mutation
+semantics, and disclosed final-check/syscall races are unchanged.
+
 `machine-god-native` exports `EDIT_FILE_TOOL_NAME`, `EditFileTool`,
 `EditFileToolOpenError`, `EditFileToolOpenErrorKind`, and these public limits:
 
@@ -121,11 +132,11 @@ symlink-target access, or general mutation. Execution decodes the same strict
 shape, requires an already canonical path, and reapplies every input bound, so
 direct invocation cannot widen an approved capability.
 
-Because core preparation is contractually effect-free, this tool cannot
-reproduce pinned fx's preapproval preimage read or computed diff preview. Policy
-can receive the normalized path and distinct edit authority, not preimage bytes
-or a derived patch. Preview-bearing authorization is deferred rather than
-weakening `Tool::prepare` or moving an ambient filesystem effect into core.
+Core preparation remains contractually effect-free. Without explicit file-approval
+injection, policy receives the normalized path and distinct edit authority, not
+preimage bytes or a derived patch. With that injection, native permission handling
+separately prepares complete owned preimage/postimage evidence before prompting;
+it does not move filesystem effects into `Tool::prepare` or into core.
 
 For example, provider input:
 

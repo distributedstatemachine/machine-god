@@ -231,6 +231,12 @@ impl NativeConversationRuntime {
         self.conversation.record()
     }
 
+    /// Process-local policy controls. Taken turns retain their mode snapshot.
+    #[must_use]
+    pub fn permissions(&self) -> Option<&Arc<crate::NativePermissionSession>> {
+        self.conversation.permissions()
+    }
+
     /// Observes persisted context selection without starting queued work.
     /// # Errors
     /// Rejects active runtime work or invalid saved context.
@@ -549,7 +555,7 @@ impl NativeConversationRuntime {
     {
         Box::pin(async move {
             let lease = self.acquire_idle(false)?;
-            let Some((mut job, snapshot, generation)) = self.take_job() else {
+            let Some((job, snapshot, generation, policy)) = self.take_job() else {
                 return Ok(None);
             };
             if let Some(expected) = job.checkpoint
@@ -567,18 +573,10 @@ impl NativeConversationRuntime {
                 .lock()
                 .expect("runtime state poisoned")
                 .saved_generation = None;
-            let turn = match job.input.0.take().expect("queued input consumed once") {
-                ConversationInput::Prompt(prompt) => {
-                    self.conversation
-                        .prompt_with_model(prompt, snapshot.clone(), now_ms)
-                        .await?
-                }
-                ConversationInput::Continue(options) => {
-                    self.conversation
-                        .continue_turn_with_model(options, snapshot.clone(), now_ms)
-                        .await?
-                }
-            };
+            let turn = self
+                .conversation
+                .start_with_policy(job.input, Some(snapshot.clone()), policy, now_ms)
+                .await?;
             self.state
                 .lock()
                 .expect("runtime state poisoned")
@@ -593,7 +591,14 @@ impl NativeConversationRuntime {
         })
     }
 
-    fn take_job(&self) -> Option<(QueuedJob, NativeModelSnapshot, u64)> {
+    fn take_job(
+        &self,
+    ) -> Option<(
+        QueuedJob,
+        NativeModelSnapshot,
+        u64,
+        Option<crate::NativePermissionPolicySnapshot>,
+    )> {
         let mut state = self.state.lock().expect("runtime state poisoned");
         let job = state.queue.pop_front()?;
         state.bytes -= job.bytes;
@@ -604,7 +609,11 @@ impl NativeConversationRuntime {
             .and_then(|catalog| catalog.details(state.preferences.model()))
             .map_or(&unsupported, |entry| entry.capabilities());
         let snapshot = NativeModelSnapshot::new(&state.preferences, capabilities);
-        Some((job, snapshot, state.generation))
+        let policy = self
+            .conversation
+            .permissions()
+            .map(|owner| owner.snapshot());
+        Some((job, snapshot, state.generation, policy))
     }
 
     /// Flushes one captured preference generation while idle. Concurrent runtime

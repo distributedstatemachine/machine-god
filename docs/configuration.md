@@ -13,14 +13,14 @@ once after complete argument validation. It validates the closed provider,
 transport, and credential-source selections before native credential or
 network access, never reloads configuration for public fallback, never changes
 the configured generation model, and never writes or migrates the file. That
-catalog path accepts the built-in or missing-file safe schema-v4 defaults and
-strict v1/v2/v3/v4 files, but rejects any config-load failure before credential
+catalog path accepts the built-in or missing-file safe schema-v5 defaults and
+strict v1/v2/v3/v4/v5 files, but rejects any config-load failure before credential
 discovery. It does not add an endpoint, team, token, cache, or catalog field to
-schema v4.
+schema v5.
 
 The configuration contract advances the built-in and current file
-schema to v4 while retaining strict read compatibility for the exact legacy v1,
-v2 and v3 objects. Loading is still read-only; explicit user-default publication
+schema to v5 while retaining strict read compatibility for the exact legacy v1,
+v2, v3 and v4 objects. Loading is still read-only; explicit user-default publication
 is a separately granted native effect described below.
 
 ## Location and defaults
@@ -45,11 +45,11 @@ whether it is valid, relative, or non-Unicode, so that path neither reads nor
 falls back to `HOME`.
 
 An unavailable location, including a missing or empty needed `HOME`, produces
-the explicit built-in schema-v4 configuration. A resolved file that is missing
+the explicit built-in schema-v5 configuration. A resolved file that is missing
 also produces this configuration:
 
 ```json
-{"schema_version":4,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"zai/glm-5.2","credential_source":"environment","effort":"auto","fast_mode":false}
+{"schema_version":5,"permission_mode":"ask","sandbox_mode":"os","permission_rules":[],"provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"zai/glm-5.2","credential_source":"environment","effort":"auto","fast_mode":false}
 ```
 
 Invalid selected environment input is not treated as absence and fails closed.
@@ -119,13 +119,13 @@ projection. Their observable `schema_version()` values remain `1` and `2`
 respectively; neither is relabelled as v3. Loading never rewrites, expands, or
 migrates either file.
 
-Every integer schema version other than `1`, `2`, `3`, or `4` is unsupported. A
+Every integer schema version other than `1`, `2`, `3`, `4`, or `5` is unsupported. A
 missing, duplicate, non-integer, or otherwise malformed schema-version field is
 invalid format. Full-buffer UTF-8 validation still precedes schema dispatch.
 
 ## Public data boundary
 
-`CONFIG_SCHEMA_VERSION` is `4`. `AI_GATEWAY_DEFAULT_MODEL` is
+`CONFIG_SCHEMA_VERSION` is `5`. `AI_GATEWAY_DEFAULT_MODEL` is
 `"zai/glm-5.2"`, and `AI_GATEWAY_MAX_MODEL_BYTES` aliases core's
 `MAX_MODEL_ID_BYTES` (`1024`). The shared `validate_model_id` contract matches
 the pinned settings and durable-session model validators.
@@ -136,16 +136,17 @@ machine name `environment`. Their `as_str` accessors return those names. They
 do not imply that an optional implementation is compiled or usable in the
 current build.
 
-`NativeConfig` exposes read-only `schema_version`, `permission_mode`,
+`NativeConfig` exposes read-only `schema_version`, `permission_mode`, `sandbox_mode`,
+`permission_rules`,
 `provider`, `transport`, `model`, `credential_source`, `effort`, `fast_mode`, and
 complete typed `model_preferences` getters. The schema
 version remains the version actually loaded, including `1` or `2` for a legacy
 file. Provider, transport, and credential source return closed native enums;
 model returns the validated string.
 `NativeConfig` and `LoadedNativeConfig` implement `Clone`, but not `Copy`,
-because configuration owns its bounded model string. `NativeConfig` debug
+because configuration owns its bounded model string and ordered rules. `NativeConfig` debug
 output exposes the non-secret schema, permission, provider, transport, and
-credential-source fields but renders the model as `"<redacted>"`;
+credential-source fields but renders the model and permission rules as `"<redacted>"`;
 `LoadedNativeConfig` inherits that redaction through its nested configuration.
 
 `ai_gateway_http` is a declarative transport selection in the configuration
@@ -164,7 +165,7 @@ owns its non-cloneable secret snapshot and does not put secret values into
 
 The raw file limit remains 64 KiB (65,536 bytes). A file of exactly that length
 can be considered for parsing; any additional byte makes it oversized. Bytes
-must be valid UTF-8 and then valid strict v1, v2, v3, or v4 JSON. The loader retains
+must be valid UTF-8 and then valid strict v1, v2, v3, v4, or v5 JSON. The loader retains
 at most 64 KiB plus one byte while deciding whether input fits, so neither a
 stale size observation nor concurrent file growth turns loading into an
 unbounded retained buffer. The read loop retries the first 15 cumulative
@@ -236,12 +237,12 @@ the loader. Its preparation authority remains independent of this read-only
 surface; loading never rewrites built-in or file-backed configuration.
 
 An independent migration or rewrite command, a terminal permission
-prompter and modes beyond `ask`, runtime composition, session lifecycle, the
+prompter and runtime mode enforcement, runtime composition, session lifecycle, the
 remaining native tools, remaining CLI and session expansion, release-binary
 end-to-end host evidence, and compatibility or performance claims remain
 outside this configuration contract.
 
-## Schema v4 and durable user model defaults
+## Strict schema v4 read compatibility
 
 Schema v4 has exactly the six v3 fields plus required `effort` (string) and
 `fast_mode` (boolean). Model validation is unchanged. Effort uses the shared
@@ -252,6 +253,41 @@ Fast mode is the requested preference, not a claim that the selected model
 supports it. Legacy v1/v2/v3 inputs project automatic effort and disabled fast
 mode in memory while retaining their exact loaded schema versions. Strict
 unknown-field, duplicate-field and shape rejection remains unchanged.
+
+## Schema v5 permission preferences
+
+Schema v5 requires all eight v4 fields plus `sandbox_mode` and
+`permission_rules`. `permission_mode` accepts exactly `ask`, `auto`, or `yolo`;
+`sandbox_mode` accepts exactly `os` or `none`. Their typed accessors return
+`PermissionMode::{Ask, Auto, Yolo}` and `NativeSandboxMode::{Os, None}` with
+matching `as_str` names. Defaults remain `ask` and `os`.
+
+`permission_rules` is an ordered JSON array, including an empty array. Each
+entry has exactly three required string fields: `permission`, `pattern`, and
+`action`; action accepts only `allow`, `ask`, or `deny`. Unknown or duplicate
+fields, nulls, wrong types, and missing fields are rejected. The existing
+`NativeConfiguredPermissionRules` value preserves order and repeated rules;
+its constructors trim only SP/TAB/CR/LF around permission and pattern, reject
+an empty permission, and retain empty patterns. Its bounded evaluator uses
+last-match semantics; these configured patterns are not saved exact-action
+rules or persisted grants. Debug output never reveals pattern contents.
+
+Schemas 1–4 remain strictly ask-only and reject both new fields. They project
+`sandbox_mode: os` and empty rules in memory without rewriting their bytes or
+changing their observed version. Provider and model defaults are unchanged.
+
+These fields are preferences, not enforcement or execution authority. Loading
+`os` does not establish an active OS sandbox, and loading `auto`, `yolo`, or
+an allow rule does not itself approve or execute a tool. Runtime policy and
+platform enforcement remain separate native responsibilities.
+
+The 64 KiB bound covers the entire configuration, including every rule and
+JSON escaping, not just the rule array. Current-schema serialization is also
+bounded: increasing model preferences beyond the complete encoded limit
+returns `InvalidConfig(TooLarge)` before creating a publication temp or replacing
+the original file. Exactly 64 KiB remains accepted.
+
+## Durable user model-default publication
 
 On Linux and macOS, `NativeUserConfigStore::new` receives an explicit absolute
 configuration-directory path and is inert. `load` is read-only: it retains an
@@ -278,8 +314,9 @@ is never unlinked. Under this lock it rereads and validates the exact current
 bytes; stale or foreign snapshots return `Conflict` without overwriting them.
 
 Only the requested model/effort/fast fields change. Existing validated provider,
-transport, permission and credential-source selections are retained, and the
-explicit publication upgrades supported legacy formats to schema v4 in the
+transport, permission mode, sandbox preference, ordered permission rules and
+credential-source selections are retained, and the
+explicit publication upgrades supported legacy formats to schema v5 in the
 same `config.json`. Malformed or future configurations are never overwritten.
 Publication exclusively creates `.config.tmp` with mode 0600, writes and fsyncs
 it, rechecks entry identities and current bytes, renames it atomically, and

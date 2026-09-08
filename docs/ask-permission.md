@@ -152,6 +152,59 @@ configured domain patterns stay inert and are counted by
 URL normalization occurs. Constructors and diagnostics retain no ambient authority,
 and debug/error formatting omits rule and target content.
 
+## Automatic permission reviewer
+
+`AiGatewayPermissionReviewer` implements `NativePermissionReviewer` over an
+explicitly injected `AiGatewayTransport` and `NativePermissionReviewClock`.
+Construction and unpolled review futures are inert. A polled review owns one
+15-second monotonic deadline, one transport attempt, and all startup/stream/timer
+futures. Cancellation and deadline readiness are checked before and after work,
+including same-poll completion and owned-state teardown. Dropping the review
+releases those futures; it does not spawn a detached task or retry. Production
+`TokioPermissionReviewClock` is available with `ai-gateway-http` and uses the
+host's existing Tokio runtime.
+
+The dedicated wire model is always `zai/glm-5.2`, with required tool choice,
+2,048 maximum output tokens and no inherited effort/fast controls. The complete
+encoded request is bounded to 16 KiB. The pinned policy text is preserved from
+fx `auto_classifier.zig` at `b1774fbf6c7602b503026f96f6e960e946c692ef`.
+The existing Gateway codec handles bounded fragmented SSE, strict JSON and
+streamed argument integrity. Its private reviewer finish mode accepts pinned
+stop/length/other completions containing a valid decision; the ordinary provider
+retains its stricter call/finish correspondence. Content filtering is a permanent
+review failure, provider unavailability and retryable transport failures are
+transient, and malformed
+assessment output is invalid. None causes a retry or a fabricated assessment.
+
+`NativeAutoPermissionReview` borrows the successful pending assistant message,
+exact target call ID, explicit prepared action/targets and separately typed
+`NativeAutoPermissionRootContext`. The latter accepts only a bounded 1,024-byte
+canonical proven-root projection, strips historical permission feedback, and
+does not infer provenance from a message role. Its caller must own the actual
+user provenance. Only the exact uniquely identified pending call is forwarded;
+assistant prose, JSON/image attachments and sibling calls are omitted. A synthetic
+tool result explicitly says the call has not executed. Action evidence is
+terminal-safe and XML-escaped inside the policy, never promoted to user authority.
+
+Command, generic-tool, prepared-file and sandbox-widening actions have distinct
+borrowed inputs. Missing required schemas or reactive restricted results reject
+the review before transport. File review derives a complete delete/insert
+presentation from borrowed pre/postimages without filesystem access or an LCS
+allocation; byte counts, final-newline flags and absent/file/empty-directory
+identity preserve distinctions between otherwise similar line views. Invalid
+UTF-8 bytes are visibly escaped. Oversized packets or evidence that the pinned
+secret detector would mask are rejected, not silently truncated or auto-approved. Selected call arguments
+also have a 4,096-node/64-depth bound before bounded serialization.
+
+Accepted output has exactly one `permission_decision` call and no non-whitespace
+prose. Its object has exactly `risk`, `authorization`, `decision`, and `rationale`;
+the rationale is nonempty and at most 240 UTF-8 bytes. Decisions are only `Allow`
+or `Ask`; risk and authorization are informational and never veto an allow.
+Public assessment construction enforces the same bounds for injected deterministic
+reviewers. Debug/error formatting omits action, context, rationale and transport
+content. This reviewer does not itself grant execution, persist rules, or prompt
+a human: the native permission controller owns Auto recovery and admission.
+
 ## Polling, cancellation, and authority
 
 Calling `PermissionHandler::authorize` only creates an inert future. An
@@ -176,6 +229,144 @@ interaction, scheduling, and any associated authority belong to the explicitly
 injected prompter. This adapter does not provide a concrete prompter, wire the
 CLI, change the configured `ask` mode, implement modes beyond `ask`, or persist
 grant decisions.
+
+## Owned file-approval preparation and execution
+
+On Linux and macOS, `NativeFileApprovalAuthority::from_directory(File)` accepts
+an explicitly supplied retained workspace directory for selected-file approval
+reads. It never chooses a root from the environment or reopens a host root path.
+`NativeFileApprovalRegistry::prepare(&authority, &request, invocation, cancellation)`
+validates the concrete canonical arguments and exact requested capability before
+bounded copying; its owned future reserves capacity and performs descriptor work
+only when first polled. `Tool::prepare` remains effect-free. This additional
+authority is separate from ordinary mutation authority and from undo tracking.
+
+Preparation supports `write_file`, `edit_file`, `delete_file`, `rename_file`, and
+`copy_file`. `PreparedFileApproval` owns the root, existing parent and selected
+target/source descriptors, exact stable preimages, operation, arguments, and
+expected resulting bytes. Missing targets differ from empty files; unreadable,
+unsupported, unstable, symlink, and oversized observations fail closed rather
+than producing a permissive unavailable snapshot. Missing parents are rejected,
+never created. Delete accepts an explicitly verified empty directory using at
+most two dot entries and one end/nonempty witness, without recursive traversal.
+Edit uses the same bounded exact-one matcher and postimage builder as execution.
+Copy and rename expose both source and destination; their destination must be
+absent. Copy retains its complete source once, and borrows that same allocation
+as its expected result.
+
+Each complete preimage is bounded to 16 MiB; edit retains its existing 48-KiB
+preimage/result bounds. A registry admits at most four retained preparations,
+admissions, or executions. Its derived retained payload ceiling is four times
+16 MiB plus 128 KiB for bounded arguments, paths, identities, and write/edit
+results per slot. Each file read/compare has at most 4,096 native calls, at most
+16 cumulative interrupted results, and an exact-size overflow witness. Copies
+of borrowed preview data made by a caller are that caller's responsibility.
+
+Borrowed `kind`, `tool_name`, `target_path`, `source_path`, `preimage`,
+`source_preimage`, and `postimage` accessors support complete review evidence.
+No preview is silently masked, truncated, or decoded lossily by this component.
+`saved_rule_key()` constructs a length-framed UTF-8 content identity containing
+the operation, exact argument digest, canonical endpoints, distinct preimage
+states/digests, source digest, and expected-result digest. It deliberately excludes
+runtime device/inode values. A content-equivalent replacement may therefore
+match a saved rule only after fresh preparation; it cannot reuse the old runtime
+approval. A key exceeding the independent saved-rule 4,096-byte limit is unavailable
+for saving, without weakening or truncating the one-shot approval.
+
+`PreparedFileApproval::admit(Arc<dyn NativeFileApprovalPolicy>)` constructs a
+one-shot `NativeFileApprovalAdmission` for core's execution-admission seam. The
+injected policy performs only bounded synchronous checks. Core consumption checks
+that policy and transfers the exact generation's proof into the ready registry.
+An explicitly configured tool's `with_file_approvals(Arc<Registry>)` requires a
+ready proof: missing, denied, stale, foreign-workspace, mismatched-argument, and
+already-claimed proofs fail closed. Registry identity includes session,
+incarnation, turn, permission-request ID, actual tool name, and call ID, with a
+checked generation allocator. Concurrent ambiguous call-ID reuse is rejected;
+later sequential reuse is supported. Drop removes only its own exact generation.
+
+Execution-future construction captures only a read-only ready-route identity and
+generation stamp, without claiming it or doing filesystem work. An old unpolled
+future cannot consume a newer permission request that reuses the call ID, nor can
+a future constructed without approval acquire a later grant. Inside the inert
+execution future, the tool claims that exact proof once before undo,
+staging, or mutation. The claimed proof and live policy remain owned through the
+effect. All five tools rewalk and compare retained parents/targets and complete
+preimage contents at their final mutation checkpoint. Write/edit/copy also bind
+the actual staged pathname and descriptor, ordinary mode, and complete bytes to
+the approved result. The live policy is checked again immediately before the
+publication, unlink, or rename. No registry mutex is held across policy callbacks,
+prompts, descriptor I/O, or mutation. No undo mutex is acquired during preparation
+or held across a prompt. Standalone tools without registry injection retain their
+previous non-approval behavior.
+
+The host must invalidate its live exact-turn policy and call
+`close_turn(session, incarnation, turn)` on completion/drop, including an
+admitted call whose execution future was never polled. Cleanup removes only that
+turn's unclaimed entries; a claimed execution checks the separately invalidated
+policy. A checked closure epoch also rejects preparation futures constructed
+before closure and first-polled afterward, conservatively including an unrelated
+turn closure. There are no detached workers or unbounded closed-turn tombstones.
+Cancellation and drop release owned work without publishing a mutation; after
+the native irreversible syscall, existing success/uncertainty semantics remain.
+
+Errors and debug output omit paths, bytes, descriptor identities, OS diagnostics,
+and policy text. Tool-side rejection is the fixed nonretryable
+`file_approval_failed`; this component does not implement prompts, persisted rule
+updates, reviewer transport, or host lifecycle wiring. Revalidation is not a
+portable atomic filesystem/policy compare-and-swap: another actor can still act
+between the final check and syscall, or after observed success. Existing native
+postcommit verification and ambiguity handling remain authoritative.
+
+## Native permission controller
+
+`NativePermissionController` composes explicitly injected action preparation and
+human prompts. Unlike the legacy adapter, it requires the actual prepared
+invocation and a live exact-session/incarnation/turn registration. Native
+conversations can register the controller; the runtime captures its mode and
+configured patterns when taking a queued job, before awaiting core reservation.
+Saved exact rules stay live, and are not copied into the taken-job snapshot.
+The controller does not itself supply file descriptors, an Auto transport or an
+OS sandbox. Those remain concrete native adapter/host responsibilities; selecting
+a mode alone is not evidence of sandbox enforcement.
+
+Configured denial wins before saved denial; saved allow and an existing exact
+capability grant can satisfy configured ask. Unresolved configured ask requires
+the human prompter. Remaining unresolved Auto actions use the prepared action's
+reviewer; Ask or review failure is a recoverable denial for replanning, without
+an immediate human fallback. Tool-specific proven bypasses belong to the trusted
+preparer, not generic risk hints. Yolo skips ordinary configured/saved policy;
+file mutations still check saved exact denial.
+
+The owner retains at most 1,024 exact grants per session and routes at most 64
+live sessions. Turn grants retire on exact-turn closure; session grants survive
+turns but never restoration. Reset clears grants and invalidates pending ordinary
+approvals before returning, preserves saved rules, and changes only future jobs'
+mode to Ask. An already taken Yolo job keeps its captured mode. Core always
+receives a once-scoped result and a consumed execution proof; the native owner,
+not core, owns reuse. Closing/cancelling the actual core turn invalidates proofs
+even if its native registration has not yet been dropped.
+
+Saved-rule edits have an opaque owner-bound, single-use proposal and an expected
+per-rule generation. Hosts must obtain explicit human confirmation separately
+before consuming a proposal. Active-turn writes use the turn-owned metadata
+editor; idle writes use ordinary core metadata CAS. Neither writes directly to
+the session store. Rule publication invalidates old proofs before awaiting the
+store, and failure/drop leaves authority blocked until authoritative
+reconciliation. Reconciliation can admit a new proof, but cannot revive one
+invalidated by the attempted change. Transcript and unrelated metadata edits
+are preserved. These are publication outcomes, not implicit retries or success
+receipts after an uncertain save.
+
+The final proof checks current canonical saved rules without cloning the
+transcript. Native file adapters must retain it through their final mutation
+checkpoint, alongside descriptor/preimage identity, rather than treating core
+tool entry as the final effect boundary. A synchronous check is not an atomic
+check-and-effect guarantee against a subsequent policy or filesystem race.
+On Linux and macOS, `NativePermissionExecutionProof` implements
+`NativeFileApprovalPolicy` directly for `PreparedFileApproval::admit`. The
+preparer's exact-turn cleanup hook runs outside controller locks after the
+registration is invalidated, allowing the file registry to retire unclaimed
+approvals without keeping the controller or core turn alive.
 
 ## Saved exact-action rule values
 

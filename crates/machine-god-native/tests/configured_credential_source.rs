@@ -146,8 +146,8 @@ fn assert_format_error(config_root: &Path, contents: &str) {
 }
 
 #[test]
-fn schema_v4_public_contract_and_built_in_projection_are_stable() {
-    assert_eq!(CONFIG_SCHEMA_VERSION, 4);
+fn schema_v5_public_contract_and_built_in_projection_are_stable() {
+    assert_eq!(CONFIG_SCHEMA_VERSION, 5);
     assert_eq!(
         NativeCredentialSourceKind::Environment.as_str(),
         "environment"
@@ -159,7 +159,7 @@ fn schema_v4_public_contract_and_built_in_projection_are_stable() {
     assert_loaded(
         &loaded,
         ConfigOrigin::BuiltInDefaults,
-        4,
+        5,
         AI_GATEWAY_DEFAULT_MODEL,
     );
     assert!(!absent_root.exists());
@@ -372,8 +372,8 @@ fn future_integer_version_is_unsupported_while_malformed_versions_are_invalid() 
     let temporary = TemporaryDirectory::new("future-version");
     let config_root = temporary.path().join("xdg");
     for contents in [
-        r#"{"schema_version":5}"#,
-        r#"{"schema_version":5,"credential_source":"future","secret":"HIDDEN"}"#,
+        r#"{"schema_version":6}"#,
+        r#"{"schema_version":6,"credential_source":"future","secret":"HIDDEN"}"#,
         r#"{"schema_version":18446744073709551616,"future":true}"#,
         r#"{"schema_version":-1,"future":true}"#,
     ] {

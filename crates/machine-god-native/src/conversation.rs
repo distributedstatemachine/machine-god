@@ -152,6 +152,7 @@ pub struct NativeConversation {
     session: Session,
     active: Arc<AtomicBool>,
     observations: Option<Arc<ObservationSession>>,
+    permissions: Option<Arc<crate::NativePermissionSession>>,
 }
 
 impl fmt::Debug for NativeConversation {
@@ -182,6 +183,7 @@ impl NativeConversation {
             session,
             active: Arc::new(AtomicBool::new(false)),
             observations: None,
+            permissions: None,
         })
     }
 
@@ -202,6 +204,32 @@ impl NativeConversation {
                 .map_err(NativeConversationError::Observation)?,
         );
         Ok(self)
+    }
+
+    /// Connects this exact session to a native policy handler. The engine must
+    /// use the same controller and its tools the matching preparation adapters.
+    /// # Errors
+    /// Rejects busy/duplicate ownership, malformed rules and routing exhaustion.
+    pub fn with_permission_controller(
+        mut self,
+        controller: &crate::NativePermissionController,
+        policy: crate::NativePermissionPolicySnapshot,
+    ) -> Result<Self, NativeConversationError> {
+        if self.is_busy() || self.permissions.is_some() {
+            return Err(NativeConversationError::Busy);
+        }
+        self.permissions = Some(
+            controller
+                .register(self.session.clone(), policy)
+                .map_err(|_| NativeConversationError::Engine)?,
+        );
+        Ok(self)
+    }
+
+    /// Explicit process-local permission controls, independent of model state.
+    #[must_use]
+    pub fn permissions(&self) -> Option<&Arc<crate::NativePermissionSession>> {
+        self.permissions.as_ref()
     }
 
     /// Creates an empty conversation with metadata in its initial durable record.
@@ -638,8 +666,19 @@ impl NativeConversation {
 
     async fn start(
         &self,
+        input: PendingInput,
+        model: Option<NativeModelSnapshot>,
+        now_ms: i64,
+    ) -> Result<NativeConversationTurn, NativeConversationError> {
+        let policy = self.permissions.as_ref().map(|owner| owner.snapshot());
+        self.start_with_policy(input, model, policy, now_ms).await
+    }
+
+    pub(crate) async fn start_with_policy(
+        &self,
         mut input: PendingInput,
         model: Option<NativeModelSnapshot>,
+        policy: Option<crate::NativePermissionPolicySnapshot>,
         now_ms: i64,
     ) -> Result<NativeConversationTurn, NativeConversationError> {
         let lease = AdmissionLease::acquire(&self.active)?;
@@ -686,15 +725,7 @@ impl NativeConversation {
             history.to_value(),
         );
         if let Some(model) = model {
-            record.metadata.insert(
-                NATIVE_MODEL_PREFERENCES_KEY.to_owned(),
-                model.preferences().to_value(),
-            );
-            let options = match input.0.as_mut().expect("input is consumed once") {
-                ConversationInput::Prompt(prompt) => &mut prompt.options,
-                ConversationInput::Continue(options) => options,
-            };
-            model.apply_to(options);
+            apply_model_snapshot(&mut input, &mut record, &model);
         }
         let preparation = SessionTurnPreparation {
             expected_revision: record.revision,
@@ -712,6 +743,13 @@ impl NativeConversation {
             }
         }
         .map_err(map_engine_error)?;
+        let permission_turn = self.bind_permission_turn(&turn, policy)?;
+        if let Some(owner) = &self.permissions {
+            owner
+                .reconcile_rules()
+                .await
+                .map_err(|_| NativeConversationError::Engine)?;
+        }
         if let Some(owner) = &self.observations {
             owner
                 .begin_attempt(
@@ -735,9 +773,43 @@ impl NativeConversation {
             observations: self.observations.clone(),
             source_cursor,
             observation_batch: None,
+            permission_turn,
             done: false,
         })
     }
+
+    fn bind_permission_turn(
+        &self,
+        turn: &Turn,
+        policy: Option<crate::NativePermissionPolicySnapshot>,
+    ) -> Result<Option<crate::NativePermissionTurn>, NativeConversationError> {
+        let registration = match (&self.permissions, policy) {
+            (Some(owner), Some(policy)) => Some(
+                owner
+                    .begin_turn(turn, policy)
+                    .map_err(|_| NativeConversationError::Engine)?,
+            ),
+            (None, None) => None,
+            _ => return Err(NativeConversationError::Engine),
+        };
+        Ok(registration)
+    }
+}
+
+fn apply_model_snapshot(
+    input: &mut PendingInput,
+    record: &mut SessionRecord,
+    model: &NativeModelSnapshot,
+) {
+    record.metadata.insert(
+        NATIVE_MODEL_PREFERENCES_KEY.to_owned(),
+        model.preferences().to_value(),
+    );
+    let options = match input.0.as_mut().expect("input is consumed once") {
+        ConversationInput::Prompt(prompt) => &mut prompt.options,
+        ConversationInput::Continue(options) => options,
+    };
+    model.apply_to(options);
 }
 
 fn provider_context(
@@ -977,6 +1049,7 @@ pub struct NativeConversationTurn {
     observations: Option<Arc<ObservationSession>>,
     source_cursor: (usize, usize),
     observation_batch: Option<ObservationBatch>,
+    permission_turn: Option<crate::NativePermissionTurn>,
     done: bool,
 }
 
@@ -995,6 +1068,7 @@ impl NativeConversationTurn {
     }
 
     fn finish(&mut self) {
+        self.permission_turn.take();
         self.core.take();
         if let Some(owner) = &self.observations {
             owner.finish_attempt(self.handle.id());

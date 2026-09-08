@@ -717,6 +717,15 @@ at the end continues to later messages. Matching includes both name and ID, so
 hosts can distinguish reused historical IDs by advancing their cursor. The
 operation has no effects and is not evidence of execution or authority.
 
+`Session::record_snapshot()` returns the shared immutable canonical record
+without cloning the transcript. Retaining a snapshot neither blocks writers nor
+changes their publication rules. Like `record()`, it is an in-memory observation,
+not a new durable receipt or evidence that an uncertain write was reconciled.
+`Turn::session_id()` and `session_incarnation_id()` expose the actual reserved
+owner so native registrations can reject another session's turn. An editor's
+`is_active()` checks its weak exact-turn scope without I/O or retaining a lease;
+it is an observation, not a guarantee against a subsequent cancellation.
+
 The expected revision must equal the canonical revision. A stale revision or a
 concurrently changed canonical snapshot fails with a store conflict before save;
 the store receives the expected persisted revision for its own compare-and-save.

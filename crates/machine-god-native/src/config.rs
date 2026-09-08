@@ -12,11 +12,15 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 
 use super::ai_gateway::{AI_GATEWAY_DEFAULT_MODEL, valid_model};
+use super::{
+    NativeConfiguredPermissionDecision, NativeConfiguredPermissionRule,
+    NativeConfiguredPermissionRules, NativeSandboxMode,
+};
 use super::{NativeEnvironment, PermissionMode, ResolvedPath, resolve_config_file};
 use super::{NativeModelPreferences, NativeReasoningEffort};
 
 /// Current configuration schema version used by this native host.
-pub const CONFIG_SCHEMA_VERSION: u32 = 4;
+pub const CONFIG_SCHEMA_VERSION: u32 = 5;
 
 /// Maximum number of bytes retained while loading a native configuration.
 pub const MAX_CONFIG_BYTES: usize = 64 * 1024;
@@ -79,6 +83,8 @@ impl NativeCredentialSourceKind {
 pub struct NativeConfig {
     schema_version: u32,
     permission_mode: PermissionMode,
+    sandbox_mode: NativeSandboxMode,
+    permission_rules: NativeConfiguredPermissionRules,
     provider: NativeProviderKind,
     transport: NativeTransportKind,
     model: String,
@@ -121,15 +127,51 @@ impl NativeConfig {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    pub(crate) fn serialize_current(&self) -> Vec<u8> {
-        serde_json::to_vec(&serde_json::json!({
-            "schema_version": CONFIG_SCHEMA_VERSION,
-            "permission_mode": self.permission_mode.as_str(),
-            "provider": self.provider.as_str(), "transport": self.transport.as_str(),
-            "model": self.model, "credential_source": self.credential_source.as_str(),
-            "effort": self.effort.label(), "fast_mode": self.fast_mode
-        }))
-        .expect("bounded configuration serialization")
+    pub(crate) fn serialize_current(&self) -> Result<Vec<u8>, NativeConfigError> {
+        #[derive(serde::Serialize)]
+        struct View<'a> {
+            schema_version: u32,
+            permission_mode: &'a str,
+            sandbox_mode: &'a str,
+            permission_rules: &'a NativeConfiguredPermissionRules,
+            provider: &'a str,
+            transport: &'a str,
+            model: &'a str,
+            credential_source: &'a str,
+            effort: &'a str,
+            fast_mode: bool,
+        }
+        struct BoundedBytes(Vec<u8>);
+        impl io::Write for BoundedBytes {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                if bytes.len() > MAX_CONFIG_BYTES.saturating_sub(self.0.len()) {
+                    return Err(io::ErrorKind::FileTooLarge.into());
+                }
+                self.0.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut encoded = BoundedBytes(Vec::new());
+        serde_json::to_writer(
+            &mut encoded,
+            &View {
+                schema_version: CONFIG_SCHEMA_VERSION,
+                permission_mode: self.permission_mode.as_str(),
+                sandbox_mode: self.sandbox_mode.as_str(),
+                permission_rules: &self.permission_rules,
+                provider: self.provider.as_str(),
+                transport: self.transport.as_str(),
+                model: &self.model,
+                credential_source: self.credential_source.as_str(),
+                effort: self.effort.label(),
+                fast_mode: self.fast_mode,
+            },
+        )
+        .map_err(|_| NativeConfigError::new(NativeConfigErrorKind::TooLarge))?;
+        Ok(encoded.0)
     }
     /// Returns the schema version observed in the loaded configuration.
     #[must_use]
@@ -141,6 +183,18 @@ impl NativeConfig {
     #[must_use]
     pub const fn permission_mode(&self) -> PermissionMode {
         self.permission_mode
+    }
+
+    /// Returns the requested sandbox preference, not effective enforcement.
+    #[must_use]
+    pub const fn sandbox_mode(&self) -> NativeSandboxMode {
+        self.sandbox_mode
+    }
+
+    /// Returns ordered configured patterns, separately from saved exact rules.
+    #[must_use]
+    pub const fn permission_rules(&self) -> &NativeConfiguredPermissionRules {
+        &self.permission_rules
     }
 
     /// Returns the configured provider.
@@ -173,6 +227,8 @@ impl Default for NativeConfig {
         Self {
             schema_version: CONFIG_SCHEMA_VERSION,
             permission_mode: PermissionMode::Ask,
+            sandbox_mode: NativeSandboxMode::Os,
+            permission_rules: NativeConfiguredPermissionRules::default(),
             provider: NativeProviderKind::VercelAiGateway,
             transport: NativeTransportKind::AiGatewayHttp,
             model: AI_GATEWAY_DEFAULT_MODEL.to_owned(),
@@ -189,6 +245,8 @@ impl fmt::Debug for NativeConfig {
             .debug_struct("NativeConfig")
             .field("schema_version", &self.schema_version)
             .field("permission_mode", &self.permission_mode)
+            .field("sandbox_mode", &self.sandbox_mode)
+            .field("permission_rules", &"<redacted>")
             .field("provider", &self.provider)
             .field("transport", &self.transport)
             .field("model", &"<redacted>")
@@ -400,6 +458,7 @@ pub(crate) fn parse_config_bytes(bytes: &[u8]) -> Result<NativeConfig, NativeCon
         2 => parse_v2_config(bytes)?,
         3 => parse_v3_config(bytes)?,
         4 => parse_v4_config(bytes)?,
+        5 => parse_v5_config(bytes)?,
         _ => unreachable!("validated schema version is supported"),
     };
     Ok(config)
@@ -416,6 +475,7 @@ fn validate_schema_version(bytes: &[u8]) -> Result<u32, NativeConfigError> {
                 2 => return Ok(2),
                 3 => return Ok(3),
                 4 => return Ok(4),
+                5 => return Ok(5),
                 _ => {}
             }
         }
@@ -436,6 +496,8 @@ fn parse_v1_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
     Ok(NativeConfig {
         schema_version: wire.schema_version,
         permission_mode: PermissionMode::Ask,
+        sandbox_mode: NativeSandboxMode::Os,
+        permission_rules: NativeConfiguredPermissionRules::default(),
         provider: NativeProviderKind::VercelAiGateway,
         transport: NativeTransportKind::AiGatewayHttp,
         model: AI_GATEWAY_DEFAULT_MODEL.to_owned(),
@@ -459,6 +521,8 @@ fn parse_v2_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
     Ok(NativeConfig {
         schema_version: wire.schema_version,
         permission_mode: PermissionMode::Ask,
+        sandbox_mode: NativeSandboxMode::Os,
+        permission_rules: NativeConfiguredPermissionRules::default(),
         provider: NativeProviderKind::VercelAiGateway,
         transport: NativeTransportKind::AiGatewayHttp,
         model: wire.model,
@@ -483,6 +547,8 @@ fn parse_v3_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
     Ok(NativeConfig {
         schema_version: wire.schema_version,
         permission_mode: PermissionMode::Ask,
+        sandbox_mode: NativeSandboxMode::Os,
+        permission_rules: NativeConfiguredPermissionRules::default(),
         provider: NativeProviderKind::VercelAiGateway,
         transport: NativeTransportKind::AiGatewayHttp,
         model: wire.model,
@@ -509,8 +575,61 @@ fn parse_v4_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
         schema_version: wire.schema_version,
         model: wire.model,
         permission_mode: PermissionMode::Ask,
+        sandbox_mode: NativeSandboxMode::Os,
+        permission_rules: NativeConfiguredPermissionRules::default(),
         provider: NativeProviderKind::VercelAiGateway,
         transport: NativeTransportKind::AiGatewayHttp,
+        credential_source: NativeCredentialSourceKind::Environment,
+        effort,
+        fast_mode: wire.fast_mode,
+    })
+}
+
+fn parse_v5_config(bytes: &[u8]) -> Result<NativeConfig, NativeConfigError> {
+    let invalid = || NativeConfigError::new(NativeConfigErrorKind::InvalidFormat);
+    let wire: WireNativeConfigV5 = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+    let permission_mode = match wire.permission_mode.as_str() {
+        "ask" => PermissionMode::Ask,
+        "auto" => PermissionMode::Auto,
+        "yolo" => PermissionMode::Yolo,
+        _ => return Err(invalid()),
+    };
+    let sandbox_mode = match wire.sandbox_mode.as_str() {
+        "os" => NativeSandboxMode::Os,
+        "none" => NativeSandboxMode::None,
+        _ => return Err(invalid()),
+    };
+    if wire.provider != "vercel_ai_gateway"
+        || wire.transport != "ai_gateway_http"
+        || wire.credential_source != "environment"
+        || !valid_model(&wire.model)
+    {
+        return Err(invalid());
+    }
+    let effort = NativeReasoningEffort::parse(&wire.effort).map_err(|_| invalid())?;
+    let rules = wire
+        .permission_rules
+        .into_iter()
+        .map(|rule| {
+            let action = match rule.action.as_str() {
+                "allow" => NativeConfiguredPermissionDecision::Allow,
+                "ask" => NativeConfiguredPermissionDecision::Ask,
+                "deny" => NativeConfiguredPermissionDecision::Deny,
+                _ => return Err(invalid()),
+            };
+            NativeConfiguredPermissionRule::new(&rule.permission, &rule.pattern, action)
+                .map_err(|_| invalid())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let permission_rules = NativeConfiguredPermissionRules::new(rules).map_err(|_| invalid())?;
+    Ok(NativeConfig {
+        schema_version: wire.schema_version,
+        permission_mode,
+        sandbox_mode,
+        permission_rules,
+        provider: NativeProviderKind::VercelAiGateway,
+        transport: NativeTransportKind::AiGatewayHttp,
+        model: wire.model,
         credential_source: NativeCredentialSourceKind::Environment,
         effort,
         fast_mode: wire.fast_mode,
@@ -614,6 +733,29 @@ struct WireNativeConfigV4 {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireNativeConfigV5 {
+    schema_version: u32,
+    permission_mode: String,
+    sandbox_mode: String,
+    permission_rules: Vec<WirePermissionRule>,
+    provider: String,
+    transport: String,
+    model: String,
+    credential_source: String,
+    effort: String,
+    fast_mode: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WirePermissionRule {
+    permission: String,
+    pattern: String,
+    action: String,
+}
+
+#[derive(Deserialize)]
 struct WireSchemaEnvelope<'a> {
     #[serde(borrow)]
     schema_version: &'a RawValue,
@@ -621,6 +763,192 @@ struct WireSchemaEnvelope<'a> {
 
 #[cfg(test)]
 mod tests {
+    fn valid_v5() -> serde_json::Value {
+        serde_json::json!({
+            "schema_version":5, "permission_mode":"ask", "sandbox_mode":"os",
+            "permission_rules":[], "provider":"vercel_ai_gateway",
+            "transport":"ai_gateway_http", "model":"model",
+            "credential_source":"environment", "effort":"auto", "fast_mode":false,
+        })
+    }
+
+    #[test]
+    fn v5_preferences_preserve_order_and_redact_rule_contents() {
+        for (spelling, mode) in [
+            ("ask", PermissionMode::Ask),
+            ("auto", PermissionMode::Auto),
+            ("yolo", PermissionMode::Yolo),
+        ] {
+            for (sandbox, expected) in [
+                ("os", NativeSandboxMode::Os),
+                ("none", NativeSandboxMode::None),
+            ] {
+                let mut value = valid_v5();
+                value["permission_mode"] = spelling.into();
+                value["sandbox_mode"] = sandbox.into();
+                value["permission_rules"] = serde_json::json!([
+                    {"permission":" write_file ","pattern":" private-path/* ","action":"allow"},
+                    {"permission":"write_file","pattern":"private-path/*","action":"deny"},
+                    {"permission":"write_file","pattern":"","action":"ask"},
+                ]);
+                let parsed = parse_config_bytes(&serde_json::to_vec(&value).unwrap()).unwrap();
+                assert_eq!(parsed.schema_version(), 5);
+                assert_eq!(parsed.permission_mode(), mode);
+                assert_eq!(mode.as_str(), spelling);
+                assert_eq!(parsed.sandbox_mode(), expected);
+                assert_eq!(expected.as_str(), sandbox);
+                let rules = parsed.permission_rules().rules();
+                assert_eq!(rules.len(), 3);
+                assert_eq!(rules[0].permission(), "write_file");
+                assert_eq!(rules[0].pattern(), "private-path/*");
+                assert_eq!(
+                    rules[0].decision(),
+                    NativeConfiguredPermissionDecision::Allow
+                );
+                assert_eq!(
+                    rules[1].decision(),
+                    NativeConfiguredPermissionDecision::Deny
+                );
+                assert_eq!(rules[2].decision(), NativeConfiguredPermissionDecision::Ask);
+                assert!(!format!("{parsed:?}").contains("private-path"));
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                assert_eq!(
+                    parse_config_bytes(&parsed.serialize_current().unwrap()).unwrap(),
+                    parsed
+                );
+            }
+        }
+        assert_eq!(NativeSandboxMode::default(), NativeSandboxMode::Os);
+        assert_eq!(
+            NativeConfig::default().sandbox_mode(),
+            NativeSandboxMode::Os
+        );
+        assert!(
+            NativeConfig::default()
+                .permission_rules()
+                .rules()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn v5_requires_exact_fields_types_and_rule_shapes() {
+        let valid = valid_v5();
+        let object = valid.as_object().unwrap();
+        for (key, field) in object {
+            let mut missing = valid.clone();
+            missing.as_object_mut().unwrap().remove(key);
+            assert_eq!(
+                parse_config_bytes(&serde_json::to_vec(&missing).unwrap())
+                    .unwrap_err()
+                    .kind(),
+                NativeConfigErrorKind::InvalidFormat
+            );
+            let encoded = serde_json::to_string(&valid).unwrap();
+            let duplicate = format!(
+                "{{{}:{},{}",
+                serde_json::to_string(key).unwrap(),
+                field,
+                &encoded[1..]
+            );
+            assert_eq!(
+                parse_config_bytes(duplicate.as_bytes()).unwrap_err().kind(),
+                NativeConfigErrorKind::InvalidFormat
+            );
+            let mut null = valid.clone();
+            null[key] = serde_json::Value::Null;
+            assert_eq!(
+                parse_config_bytes(&serde_json::to_vec(&null).unwrap())
+                    .unwrap_err()
+                    .kind(),
+                NativeConfigErrorKind::InvalidFormat
+            );
+        }
+        for (key, wrong) in [
+            ("schema_version", serde_json::json!(5.0)),
+            ("permission_mode", serde_json::json!("AUTO")),
+            ("sandbox_mode", serde_json::json!("disabled")),
+            ("permission_rules", serde_json::json!({})),
+            (
+                "permission_rules",
+                serde_json::json!([{"permission":"read","pattern":"*","action":"ALLOW"}]),
+            ),
+            (
+                "permission_rules",
+                serde_json::json!([{"permission":"read","action":"ask"}]),
+            ),
+            (
+                "permission_rules",
+                serde_json::json!([{"permission":"read","pattern":false,"action":"ask"}]),
+            ),
+            (
+                "permission_rules",
+                serde_json::json!([{"permission":" ","pattern":"*","action":"allow"}]),
+            ),
+            (
+                "permission_rules",
+                serde_json::json!([{"permission":"read","pattern":"*","action":"allow","extra":0}]),
+            ),
+            ("extra", serde_json::json!(true)),
+        ] {
+            let mut value = valid.clone();
+            value[key] = wrong;
+            assert_eq!(
+                parse_config_bytes(&serde_json::to_vec(&value).unwrap())
+                    .unwrap_err()
+                    .kind(),
+                NativeConfigErrorKind::InvalidFormat
+            );
+        }
+        let encoded = serde_json::to_string(&valid).unwrap().replace("\"permission_rules\":[]", "\"permission_rules\":[{\"permission\":\"read\",\"pattern\":\"*\",\"action\":\"ask\",\"action\":\"allow\"}]");
+        assert_eq!(
+            parse_config_bytes(encoded.as_bytes()).unwrap_err().kind(),
+            NativeConfigErrorKind::InvalidFormat
+        );
+    }
+
+    #[test]
+    fn legacy_schemas_keep_ask_only_and_reject_policy_fields() {
+        for version in 1..=4 {
+            let mut value = valid_v5();
+            let object = value.as_object_mut().unwrap();
+            object.remove("sandbox_mode");
+            object.remove("permission_rules");
+            object.insert("schema_version".into(), version.into());
+            if version < 4 {
+                object.remove("effort");
+                object.remove("fast_mode");
+            }
+            if version < 3 {
+                object.remove("credential_source");
+            }
+            if version < 2 {
+                object.remove("model");
+                object.remove("provider");
+                object.remove("transport");
+            }
+            let parsed = parse_config_bytes(&serde_json::to_vec(&value).unwrap()).unwrap();
+            assert_eq!(parsed.schema_version(), version);
+            assert_eq!(parsed.sandbox_mode(), NativeSandboxMode::Os);
+            assert!(parsed.permission_rules().rules().is_empty());
+            for (key, extra) in [
+                ("permission_mode", serde_json::json!("auto")),
+                ("permission_mode", serde_json::json!("yolo")),
+                ("sandbox_mode", serde_json::json!("os")),
+                ("permission_rules", serde_json::json!([])),
+            ] {
+                let mut invalid = value.clone();
+                invalid[key] = extra;
+                assert_eq!(
+                    parse_config_bytes(&serde_json::to_vec(&invalid).unwrap())
+                        .unwrap_err()
+                        .kind(),
+                    NativeConfigErrorKind::InvalidFormat
+                );
+            }
+        }
+    }
+
     #[test]
     fn strict_v4_requires_all_fields_and_rejects_duplicates_and_wrong_controls() {
         let valid = br#"{"schema_version":4,"permission_mode":"ask","provider":"vercel_ai_gateway","transport":"ai_gateway_http","model":"model","credential_source":"environment","effort":"high","fast_mode":true}"#;
@@ -663,11 +991,12 @@ mod tests {
         CONFIG_SCHEMA_VERSION, ConfigOrigin, MAX_CONFIG_BYTES,
         MAX_CONFIG_INTERRUPTED_READ_ATTEMPTS, NativeConfig, NativeConfigErrorKind,
         NativeCredentialSourceKind, NativeProviderKind, NativeTransportKind, load_native_config,
-        load_process_config_with, read_bounded_from,
+        load_process_config_with, parse_config_bytes, read_bounded_from,
     };
     use crate::ai_gateway::valid_model;
     use crate::{
-        AI_GATEWAY_DEFAULT_MODEL, AI_GATEWAY_MAX_MODEL_BYTES, NativeEnvironment, PermissionMode,
+        AI_GATEWAY_DEFAULT_MODEL, AI_GATEWAY_MAX_MODEL_BYTES, NativeConfiguredPermissionDecision,
+        NativeEnvironment, NativeSandboxMode, PermissionMode,
     };
     use std::ffi::OsString;
     use std::fs;
@@ -1018,7 +1347,7 @@ mod tests {
         );
 
         let loaded = load_native_config(&temporary.environment()).unwrap();
-        assert_eq!(CONFIG_SCHEMA_VERSION, 4);
+        assert_eq!(CONFIG_SCHEMA_VERSION, 5);
         assert_eq!(loaded.origin(), ConfigOrigin::File);
         assert_config(loaded.config(), 3, "custom/model");
     }
@@ -1105,7 +1434,7 @@ mod tests {
     #[test]
     fn unsupported_schema_version_has_its_own_kind() {
         let temporary = TestDirectory::new("unsupported-version");
-        temporary.write_config(br#"{"schema_version":5,"permission_mode":"ask"}"#);
+        temporary.write_config(br#"{"schema_version":6,"permission_mode":"ask"}"#);
 
         let error = load_native_config(&temporary.environment()).unwrap_err();
         assert_eq!(
@@ -1117,7 +1446,7 @@ mod tests {
     #[test]
     fn future_and_arbitrary_size_integer_versions_are_classified_before_v1_fields() {
         for (index, document) in [
-            br#"{"schema_version":5,"permission_mode":"future","new_field":true}"#.as_slice(),
+            br#"{"schema_version":6,"permission_mode":"future","new_field":true}"#.as_slice(),
             br#"{"schema_version":18446744073709551616}"#.as_slice(),
             br#"{"schema_version":-1,"future_shape":[]}"#.as_slice(),
         ]
