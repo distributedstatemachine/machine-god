@@ -190,7 +190,8 @@ selected incarnation and revision, replay and validate the complete native
 conversation metadata, then use the engine's exact-revision guarded load. A
 changed revision or incarnation fails before canonical reconciliation; the
 operation does not silently follow a replacement. Busy candidates, invalid
-checkpoint/context/history/model metadata and ordinary load failures do not
+checkpoint/context/history/model metadata, invalid saved exact permission rules,
+and ordinary load failures do not
 trigger new-session creation, provider work, tool calls or automatic repair.
 
 Exact selection explicitly persists a requested workspace-association change

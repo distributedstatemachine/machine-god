@@ -160,6 +160,11 @@ the native runtime subsequently captures taken-job policy. Saved rules are
 validated, not converted to restored grants. Direct engine sessions without the
 required routes cannot execute permission-governed calls.
 
+`configure_conversation_permissions_with_policy(conversation, policy)` uses the
+same exact routes with a trusted host's explicit current selection instead of
+reapplying configuration defaults. It rejects hosts without native permission
+composition. It does not restore grants or bypass saved-rule validation.
+
 The host registers exact tool allocations for canonical preparation, including
 typed grep, question and complete-terminal validators. The five mutation tools
 share one file-approval registry and retain final-effect proof checks; file-history
@@ -190,8 +195,11 @@ startup/archive children. All existing constructors keep their prior behavior
 and do not implicitly inject an undo tracker. MCP, subagent, provider, and
 permission selections are unchanged unless permission options are also supplied.
 
-The trusted host retains its own tracker handle for explicit inverse operations
-and must clear or replace it at the intended conversation-lifetime boundary.
+`host.undo_tracker()` returns the exact injected allocation shared by all five
+mutations, or `None` when no conversation tracker was supplied. The reference
+host retains one additional share; access does not create authority or clear
+history. The trusted host must clear or replace that tracker at the intended
+conversation-lifetime boundary.
 Dropping a reference host neither performs undo nor clears independently retained
 tracker history; that history can retain descriptors and bounded snapshots after
 the engine is gone. It is not persisted or reconstructed on session resume.
@@ -223,6 +231,17 @@ handles retain the terminal host resource through `EngineBuilder::host_resource`
 Tools and pending operations retain only non-owning requesters. `into_engine`
 preserves this ownership, and dropping the last real host handle requests
 native shutdown even when a tool/turn future is retained.
+
+`terminal_lifecycle_requester()` exposes the complete terminal host's explicit
+session-transition authority to its trusted native owner. It shares the existing
+owner thread for activation, access handoff and current-workspace reset, not a
+new supervisor. The requester and unpolled operations do not retain the host's
+resource lifetime; retain the actual reference host or engine while driving them.
+Moving the host into its engine preserves that authority, but after the last real
+host handle closes, a retained requester cannot restart it. Legacy composition
+returns `None` without initializing its lazy background supervisor. This getter
+does not select or switch a conversation; transition operations retain the
+durability, ownership and uncertainty contract in [terminal](terminal.md).
 
 The explicit-path constructors require the trusted host to choose disjoint
 workspace and session roots; those constructors do not prove identity or

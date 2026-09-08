@@ -14,6 +14,9 @@ use machine_god_core::{
 };
 
 use crate::conversation::{ConversationInput, PendingInput};
+use crate::conversation_lifecycle::{
+    LifecycleError, LifecycleGate, LifecyclePermit, LifecyclePhase, LifecycleQuiescence,
+};
 use crate::conversation_model_routes::{CurrentModel, ModelRouteRegistration};
 use crate::tool_output_serializer::{
     CompactJsonScratch, CompactToolOutputLimits, measure_json_value_compact_with_scratch,
@@ -48,6 +51,9 @@ impl NativeQueuedJobId {
 #[non_exhaustive]
 pub enum NativeConversationRuntimeError {
     Busy,
+    Quiescing,
+    Retired,
+    StaleQuiescence,
     QueueLimit,
     InputLimit,
     IdentityExhausted,
@@ -60,6 +66,9 @@ impl fmt::Display for NativeConversationRuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Busy => f.write_str("conversation runtime is busy"),
+            Self::Quiescing => f.write_str("conversation runtime is quiescing"),
+            Self::Retired => f.write_str("conversation runtime is retired"),
+            Self::StaleQuiescence => f.write_str("conversation quiescence ownership is stale"),
             Self::QueueLimit => f.write_str("conversation queue limit exceeded"),
             Self::InputLimit => f.write_str("conversation queued input limit exceeded"),
             Self::IdentityExhausted => f.write_str("conversation runtime identity exhausted"),
@@ -72,6 +81,26 @@ impl fmt::Display for NativeConversationRuntimeError {
 
 impl std::error::Error for NativeConversationRuntimeError {}
 
+impl From<LifecycleError> for NativeConversationRuntimeError {
+    fn from(error: LifecycleError) -> Self {
+        match error {
+            LifecycleError::Busy => Self::Busy,
+            LifecycleError::Quiescing => Self::Quiescing,
+            LifecycleError::Retired => Self::Retired,
+            LifecycleError::Exhausted => Self::IdentityExhausted,
+            LifecycleError::Stale => Self::StaleQuiescence,
+        }
+    }
+}
+
+/// Process-local admission state, independent of durable session identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeConversationRuntimePhase {
+    Open,
+    Quiescing,
+    Retired,
+}
+
 impl From<NativeConversationError> for NativeConversationRuntimeError {
     fn from(error: NativeConversationError) -> Self {
         Self::Conversation(error)
@@ -81,6 +110,7 @@ impl From<NativeConversationError> for NativeConversationRuntimeError {
 /// Runtime observations, not cross-process durability evidence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NativeConversationRuntimeStatus {
+    pub phase: NativeConversationRuntimePhase,
     pub queued_jobs: usize,
     pub queued_input_bytes: usize,
     pub active: bool,
@@ -120,6 +150,13 @@ struct QueuedJob {
     checkpoint: Option<u64>,
 }
 
+type TakenJob = (
+    QueuedJob,
+    NativeModelSnapshot,
+    u64,
+    Option<crate::NativePermissionPolicySnapshot>,
+);
+
 struct RuntimeState {
     preferences: NativeModelPreferences,
     generation: u64,
@@ -129,6 +166,8 @@ struct RuntimeState {
     bytes: usize,
     next_id: u64,
     active: bool,
+    active_handle: Option<TurnHandle>,
+    active_cancel_dispatched: bool,
 }
 
 impl CurrentModel for Mutex<RuntimeState> {
@@ -144,9 +183,10 @@ impl CurrentModel for Mutex<RuntimeState> {
 /// One session's FIFO and requested model state, without a detached worker.
 /// Pending jobs share the current selection; a taken job owns a fixed snapshot.
 pub struct NativeConversationRuntime {
-    conversation: NativeConversation,
+    conversation: Arc<NativeConversation>,
     state: Arc<Mutex<RuntimeState>>,
     model_route: Option<Arc<ModelRouteRegistration>>,
+    lifecycle: Arc<LifecycleGate>,
 }
 
 impl fmt::Debug for NativeConversationRuntime {
@@ -177,8 +217,11 @@ impl NativeConversationRuntime {
                 .map_err(NativeConversationRuntimeError::InvalidModelPreferences)?;
         }
         let saved_generation = (saved.as_ref() == Some(&preferences)).then_some(0);
+        let lifecycle = LifecycleGate::new();
+        conversation.bind_lifecycle(&lifecycle)?;
         Ok(Self {
-            conversation,
+            conversation: Arc::new(conversation),
+            lifecycle,
             model_route: None,
             state: Arc::new(Mutex::new(RuntimeState {
                 preferences,
@@ -189,6 +232,8 @@ impl NativeConversationRuntime {
                 bytes: 0,
                 next_id: 1,
                 active: false,
+                active_handle: None,
+                active_cancel_dispatched: false,
             })),
         })
     }
@@ -229,6 +274,32 @@ impl NativeConversationRuntime {
     #[must_use]
     pub fn record(&self) -> SessionRecord {
         self.conversation.record()
+    }
+
+    /// Closes new admission and requests cancellation of an owned active turn.
+    /// The caller must keep polling its admission/turn and native finalizer.
+    /// Dropping the returned guard reopens admission without changing inputs.
+    /// # Errors
+    /// Rejects another quiescence owner, retired state or generation exhaustion.
+    /// # Panics
+    /// Panics if an earlier panic poisoned runtime state.
+    pub fn begin_quiescence(
+        &self,
+    ) -> Result<NativeRuntimeQuiescence, NativeConversationRuntimeError> {
+        let inner = self.lifecycle.begin_quiescence()?;
+        let handle = {
+            let mut state = self.state.lock().expect("runtime state poisoned");
+            cancellation_to_dispatch(&mut state)
+        };
+        if let Some(handle) = handle {
+            let _ = handle.cancel();
+        }
+        Ok(NativeRuntimeQuiescence {
+            inner,
+            conversation: Arc::clone(&self.conversation),
+            state: Arc::clone(&self.state),
+            model_route: self.model_route.clone(),
+        })
     }
 
     /// Process-local policy controls. Taken turns retain their mode snapshot.
@@ -383,8 +454,14 @@ impl NativeConversationRuntime {
     /// Panics if an earlier panic poisoned the runtime state mutex.
     #[must_use]
     pub fn status(&self) -> NativeConversationRuntimeStatus {
+        let phase = match self.lifecycle.phase() {
+            LifecyclePhase::Open => NativeConversationRuntimePhase::Open,
+            LifecyclePhase::Quiescing => NativeConversationRuntimePhase::Quiescing,
+            LifecyclePhase::Retired => NativeConversationRuntimePhase::Retired,
+        };
         let state = self.state.lock().expect("runtime state poisoned");
         NativeConversationRuntimeStatus {
+            phase,
             queued_jobs: state.queue.len(),
             queued_input_bytes: state.bytes,
             active: state.active,
@@ -417,6 +494,7 @@ impl NativeConversationRuntime {
         &self,
         preferences: NativeModelPreferences,
     ) -> Result<u64, NativeConversationRuntimeError> {
+        let _permit = self.lifecycle.acquire()?;
         let mut state = self.state.lock().expect("runtime state poisoned");
         let generation = state
             .generation
@@ -429,9 +507,16 @@ impl NativeConversationRuntime {
 
     /// Replaces explicitly fetched capabilities for future admissions only.
     ///
+    /// # Errors
+    /// Rejects quiescing/retired ownership or exhausted admission capacity.
+    ///
     /// # Panics
     /// Panics if an earlier panic poisoned the runtime state mutex.
-    pub fn set_model_catalog(&self, catalog: Arc<NativeModelCatalog>) {
+    pub fn set_model_catalog(
+        &self,
+        catalog: Arc<NativeModelCatalog>,
+    ) -> Result<(), NativeConversationRuntimeError> {
+        let _permit = self.lifecycle.acquire()?;
         let previous = self
             .state
             .lock()
@@ -439,6 +524,7 @@ impl NativeConversationRuntime {
             .catalog
             .replace(catalog);
         drop(previous);
+        Ok(())
     }
 
     /// Queues bounded owned input without saving or invoking a provider. Caller
@@ -480,6 +566,7 @@ impl NativeConversationRuntime {
         bytes: usize,
         checkpoint: Option<u64>,
     ) -> Result<NativeQueuedJobId, NativeConversationRuntimeError> {
+        let _permit = self.lifecycle.acquire()?;
         let mut state = self.state.lock().expect("runtime state poisoned");
         // An ordinary prompt may arrive while continuation checks the native
         // checkpoint outside this mutex. Do not put recovery behind new input.
@@ -508,11 +595,15 @@ impl NativeConversationRuntime {
     }
 
     /// Removes only still-pending input. Destruction occurs outside the mutex.
+    /// Returns false without mutation while admission is unavailable.
     ///
     /// # Panics
     /// Panics on a poisoned mutex or an internally inconsistent queue index.
     #[must_use]
     pub fn cancel_queued(&self, id: NativeQueuedJobId) -> bool {
+        let Ok(_permit) = self.lifecycle.acquire() else {
+            return false;
+        };
         let removed = {
             let mut state = self.state.lock().expect("runtime state poisoned");
             let Some(index) = state.queue.iter().position(|job| job.id == id) else {
@@ -527,11 +618,15 @@ impl NativeConversationRuntime {
     }
 
     /// Clears pending input, not the owned active turn or durable transcript.
+    /// Returns zero without mutation while admission is unavailable.
     ///
     /// # Panics
     /// Panics if an earlier panic poisoned the runtime state mutex.
     #[must_use]
     pub fn clear_queued(&self) -> usize {
+        let Ok(_permit) = self.lifecycle.acquire() else {
+            return 0;
+        };
         let removed = {
             let mut state = self.state.lock().expect("runtime state poisoned");
             state.bytes = 0;
@@ -555,7 +650,7 @@ impl NativeConversationRuntime {
     {
         Box::pin(async move {
             let lease = self.acquire_idle(false)?;
-            let Some((job, snapshot, generation, policy)) = self.take_job() else {
+            let Some((job, snapshot, generation, policy)) = self.take_job(&lease.permit)? else {
                 return Ok(None);
             };
             if let Some(expected) = job.checkpoint
@@ -575,12 +670,31 @@ impl NativeConversationRuntime {
                 .saved_generation = None;
             let turn = self
                 .conversation
-                .start_with_policy(job.input, Some(snapshot.clone()), policy, now_ms)
+                .start_with_policy_admitted(
+                    job.input,
+                    Some(snapshot.clone()),
+                    policy,
+                    now_ms,
+                    &lease.permit,
+                )
                 .await?;
-            self.state
-                .lock()
-                .expect("runtime state poisoned")
-                .saved_generation = Some(generation);
+            let handle = turn.handle();
+            let cancellation = {
+                let mut state = self.state.lock().expect("runtime state poisoned");
+                state.saved_generation = Some(generation);
+                state.active_handle = Some(handle.clone());
+                if lease.permit.was_quiesced() {
+                    cancellation_to_dispatch(&mut state)
+                } else {
+                    None
+                }
+            };
+            // A quiescence request can precede the core reservation's handle.
+            // Publish the handle first, then recheck: either this path or the
+            // requesting path observes it before any provider work is polled.
+            if let Some(handle) = cancellation {
+                let _ = handle.cancel();
+            }
             Ok(Some(NativeConversationRuntimeTurn {
                 core: Some(turn),
                 model_route: self.model_route.clone(),
@@ -593,14 +707,12 @@ impl NativeConversationRuntime {
 
     fn take_job(
         &self,
-    ) -> Option<(
-        QueuedJob,
-        NativeModelSnapshot,
-        u64,
-        Option<crate::NativePermissionPolicySnapshot>,
-    )> {
+        permit: &LifecyclePermit,
+    ) -> Result<Option<TakenJob>, NativeConversationRuntimeError> {
         let mut state = self.state.lock().expect("runtime state poisoned");
-        let job = state.queue.pop_front()?;
+        let Some(job) = state.queue.pop_front() else {
+            return Ok(None);
+        };
         state.bytes -= job.bytes;
         let unsupported = NativeModelCapabilities::default();
         let capabilities = state
@@ -612,8 +724,10 @@ impl NativeConversationRuntime {
         let policy = self
             .conversation
             .permissions()
-            .map(|owner| owner.snapshot());
-        Some((job, snapshot, state.generation, policy))
+            .map(|owner| owner.snapshot_admitted(permit))
+            .transpose()
+            .map_err(|_| NativeConversationError::Engine)?;
+        Ok(Some((job, snapshot, state.generation, policy)))
     }
 
     /// Flushes one captured preference generation while idle. Concurrent runtime
@@ -629,7 +743,8 @@ impl NativeConversationRuntime {
     ) -> BoxFuture<'_, Result<NativeModelPreferencePersistence, NativeConversationRuntimeError>>
     {
         Box::pin(async move {
-            let (preferences, generation, save) = self.prepare_preference_save();
+            let permit = self.lifecycle.acquire()?;
+            let (preferences, generation, save) = self.prepare_preference_save(permit);
             self.save_preferences(preferences, generation, save, now_ms)
                 .await
         })
@@ -645,6 +760,10 @@ impl NativeConversationRuntime {
     /// this operation without starting a detached user writer or claiming a receipt.
     /// The user store's bounded synchronous I/O contract still applies.
     ///
+    /// # Errors
+    /// Lifecycle admission failure rejects both targets before any user/store
+    /// work. Once admitted, the returned commit keeps independent target errors.
+    ///
     /// # Panics
     /// Polling panics if an earlier panic poisoned the runtime state mutex.
     #[must_use]
@@ -652,9 +771,11 @@ impl NativeConversationRuntime {
         &'a self,
         user_store: &'a NativeUserConfigStore,
         now_ms: i64,
-    ) -> BoxFuture<'a, NativeModelPreferenceCommit> {
+    ) -> BoxFuture<'a, Result<NativeModelPreferenceCommit, NativeConversationRuntimeError>> {
         Box::pin(async move {
-            let (preferences, generation, save) = self.prepare_preference_save();
+            let _operation = self.lifecycle.acquire()?;
+            let permit = self.lifecycle.acquire()?;
+            let (preferences, generation, save) = self.prepare_preference_save(permit);
             let user_snapshot = user_store.load();
             let session = self
                 .save_preferences(preferences.clone(), generation, save, now_ms)
@@ -667,15 +788,18 @@ impl NativeConversationRuntime {
                 }
                 Err(error) => Err(error),
             };
-            NativeModelPreferenceCommit {
+            Ok(NativeModelPreferenceCommit {
                 generation,
                 session,
                 user_defaults,
-            }
+            })
         })
     }
 
-    fn prepare_preference_save(&self) -> (NativeModelPreferences, u64, PreferenceSave) {
+    fn prepare_preference_save(
+        &self,
+        permit: LifecyclePermit,
+    ) -> (NativeModelPreferences, u64, PreferenceSave) {
         let mut state = self.state.lock().expect("runtime state poisoned");
         let save = if state.saved_generation == Some(state.generation) {
             PreferenceSave::Observed(NativeModelPreferencePersistence::Unchanged)
@@ -683,7 +807,10 @@ impl NativeConversationRuntime {
             PreferenceSave::Observed(NativeModelPreferencePersistence::Deferred)
         } else {
             state.active = true;
-            PreferenceSave::Write(RuntimeLease(Arc::clone(&self.state)))
+            PreferenceSave::Write(RuntimeLease {
+                state: Arc::clone(&self.state),
+                permit,
+            })
         };
         (state.preferences.clone(), state.generation, save)
     }
@@ -718,26 +845,100 @@ impl NativeConversationRuntime {
         &self,
         require_empty: bool,
     ) -> Result<RuntimeLease, NativeConversationRuntimeError> {
+        let permit = self.lifecycle.acquire()?;
         let mut state = self.state.lock().expect("runtime state poisoned");
         if state.active || (require_empty && !state.queue.is_empty()) {
             return Err(NativeConversationRuntimeError::Busy);
         }
         state.active = true;
-        Ok(RuntimeLease(Arc::clone(&self.state)))
+        Ok(RuntimeLease {
+            state: Arc::clone(&self.state),
+            permit,
+        })
     }
 }
 
 impl Drop for NativeConversationRuntime {
     fn drop(&mut self) {
-        let _ = self.clear_queued();
+        // Destruction disposes owned input even when a separate quiescence
+        // guard retains the gate. It is not a new host queue mutation.
+        let removed = {
+            let mut state = self.state.lock().expect("runtime state poisoned");
+            state.bytes = 0;
+            std::mem::take(&mut state.queue)
+        };
+        drop(removed);
     }
 }
 
-struct RuntimeLease(Arc<Mutex<RuntimeState>>);
+/// Exclusive reversible admission fence. This owns no worker and never drives
+/// a separately owned turn, retries persistence, or establishes a save receipt.
+pub struct NativeRuntimeQuiescence {
+    inner: LifecycleQuiescence,
+    conversation: Arc<NativeConversation>,
+    state: Arc<Mutex<RuntimeState>>,
+    model_route: Option<Arc<ModelRouteRegistration>>,
+}
+impl fmt::Debug for NativeRuntimeQuiescence {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("NativeRuntimeQuiescence { .. }")
+    }
+}
+impl NativeRuntimeQuiescence {
+    /// Waits for owned operations to finish or drop, including native finalizers
+    /// and independent policy/user-default saves. Construction is inert and only
+    /// one waiter can borrow this guard. Idle does not imply successful saving.
+    #[must_use]
+    pub fn wait_idle(&mut self) -> BoxFuture<'_, Result<(), NativeConversationRuntimeError>> {
+        Box::pin(async move { self.inner.wait_idle().await.map_err(Into::into) })
+    }
+    /// Irreversibly closes this runtime and detaches its exact native routes.
+    /// Discards queued, never-taken input only after the idle check succeeds.
+    /// Existing aliases remain observational but cannot admit work or mutations.
+    /// # Errors
+    /// Rejects outstanding owned work or stale ownership. Failed consumption
+    /// releases this fence, reopening admission without discarding queued input.
+    /// # Panics
+    /// Panics if an earlier panic poisoned runtime or routing state.
+    pub fn retire(self) -> Result<(), NativeConversationRuntimeError> {
+        self.inner.retire()?;
+        self.conversation.retire_lifecycle_routes();
+        if let Some(route) = &self.model_route {
+            route.retire();
+        }
+        let removed = {
+            let mut state = self.state.lock().expect("runtime state poisoned");
+            state.bytes = 0;
+            std::mem::take(&mut state.queue)
+        };
+        drop(removed);
+        Ok(())
+    }
+}
+
+struct RuntimeLease {
+    state: Arc<Mutex<RuntimeState>>,
+    permit: LifecyclePermit,
+}
 impl Drop for RuntimeLease {
     fn drop(&mut self) {
-        self.0.lock().expect("runtime state poisoned").active = false;
+        let handle = {
+            let mut state = self.state.lock().expect("runtime state poisoned");
+            state.active = false;
+            state.active_cancel_dispatched = false;
+            state.active_handle.take()
+        };
+        drop(handle);
     }
+}
+
+fn cancellation_to_dispatch(state: &mut RuntimeState) -> Option<TurnHandle> {
+    if state.active_cancel_dispatched {
+        return None;
+    }
+    let handle = state.active_handle.clone()?;
+    state.active_cancel_dispatched = true;
+    Some(handle)
 }
 
 /// Owned active job. Its lease covers native checkpoint finalization too.

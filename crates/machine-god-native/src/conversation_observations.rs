@@ -60,6 +60,7 @@ impl NativeConversationObservations {
             session,
             incarnation,
             state: Mutex::new(State::default()),
+            routes: Arc::downgrade(self),
         });
         routes.push(Arc::downgrade(&owner));
         Ok(owner)
@@ -83,6 +84,7 @@ impl NativeConversationObservations {
 
 #[derive(Default)]
 struct State {
+    retired: bool,
     active: Option<Attempt>,
     last_sequence: u64,
     next_version: u64,
@@ -107,6 +109,7 @@ pub(crate) struct ObservationSession {
     session: SessionId,
     incarnation: SessionIncarnationId,
     state: Mutex<State>,
+    routes: Weak<NativeConversationObservations>,
 }
 #[derive(Clone)]
 pub(crate) struct FileObservation {
@@ -136,6 +139,18 @@ impl ObservationBatch {
     }
 }
 impl ObservationSession {
+    pub(crate) fn retire(self: &Arc<Self>) {
+        {
+            let mut state = lock(&self.state);
+            state.retired = true;
+            state.active = None;
+        }
+        // Pending facts remain owned, including late settlements of already
+        // admitted effects. Detachment is not a persistence acknowledgment.
+        if let Some(routes) = self.routes.upgrade() {
+            lock(&routes.routes).retain(|route| !Weak::ptr_eq(route, &Arc::downgrade(self)));
+        }
+    }
     fn matches(&self, context: &ToolContext) -> bool {
         self.session == context.session_id && self.incarnation == context.session_incarnation_id
     }
@@ -146,7 +161,8 @@ impl ObservationSession {
         sequence: u64,
     ) -> Result<(), NativeObservationError> {
         let mut state = lock(&self.state);
-        if state.active.is_some()
+        if state.retired
+            || state.active.is_some()
             || sequence == 0
             || sequence <= state.last_sequence
             || first_user > MAX_FILE_SESSION_BYTES
@@ -172,6 +188,9 @@ impl ObservationSession {
             return Err(NativeObservationError::Identity);
         }
         let mut state = lock(&self.state);
+        if state.retired {
+            return Err(NativeObservationError::Identity);
+        }
         let attempt = state
             .active
             .as_mut()
@@ -236,6 +255,9 @@ impl ObservationSession {
         name: &str,
     ) -> Result<ObservationReservation, NativeObservationError> {
         let mut state = lock(&self.state);
+        if state.retired {
+            return Err(NativeObservationError::Identity);
+        }
         let attempt = state
             .active
             .as_ref()
@@ -397,6 +419,63 @@ pub(crate) mod tests {
         session.bind_call(&context, source(1, name)).unwrap();
         (registry, session, context)
     }
+    #[test]
+    fn retirement_detaches_exact_route_without_acknowledging_pending_facts() {
+        let (registry, old, context) = setup("write_file");
+        let pending = registry
+            .reserve(
+                &context,
+                "/file",
+                None,
+                crate::NativeHistoryFileAction::Write,
+                "write_file",
+            )
+            .unwrap();
+        old.retire();
+        assert!(
+            registry
+                .reserve(
+                    &context,
+                    "/other",
+                    None,
+                    crate::NativeHistoryFileAction::Write,
+                    "write_file"
+                )
+                .is_err()
+        );
+        assert_eq!(old.snapshot().entries().len(), 1);
+        let replacement = registry
+            .register(
+                context.session_id.clone(),
+                context.session_incarnation_id.clone(),
+            )
+            .unwrap();
+        old.retire();
+        pending.settle(true, false);
+        assert_eq!(
+            old.snapshot().entries()[0].file().status(),
+            NativeHistoryFileStatus::Success
+        );
+        drop(old);
+        replacement
+            .begin_attempt(context.turn_id.clone(), 0, 1)
+            .unwrap();
+        replacement
+            .bind_call(&context, source(1, "write_file"))
+            .unwrap();
+        registry
+            .reserve(
+                &context,
+                "/new",
+                None,
+                crate::NativeHistoryFileAction::Write,
+                "write_file",
+            )
+            .unwrap()
+            .settle(true, false);
+        assert_eq!(replacement.snapshot().entries().len(), 1);
+    }
+
     #[test]
     fn routes_are_exact_weak_bounded_and_reusable() {
         let registry = Arc::new(NativeConversationObservations::new());

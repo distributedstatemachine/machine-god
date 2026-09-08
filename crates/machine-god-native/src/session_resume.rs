@@ -269,6 +269,8 @@ fn validate_native_record(record: &machine_god_core::SessionRecord) -> Result<()
     }
     NativeModelPreferences::from_metadata(&record.metadata)
         .map_err(|_| Error::new(Kind::Corrupt))?;
+    crate::NativeSessionPermissionRules::from_metadata(&record.metadata)
+        .map_err(|_| Error::new(Kind::Corrupt))?;
     Ok(())
 }
 

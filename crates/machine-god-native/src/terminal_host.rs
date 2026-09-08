@@ -53,13 +53,26 @@ const FOREGROUND_TIMEOUT: Duration = Duration::from_secs(120);
 const START_TIMEOUT: Duration = crate::terminal_helper::MAX_STARTUP_TIMEOUT;
 const MAX_EFFECTS: usize = 16;
 
+#[path = "terminal_host_lifecycle.rs"]
+mod lifecycle;
+use lifecycle::TerminalAccessPrincipals;
+pub(crate) use lifecycle::TerminalAccessRoutes;
+pub use lifecycle::{
+    NativeTerminalHandoffReceipt, NativeTerminalLifecycleRequester, NativeTerminalResetEntry,
+    NativeTerminalResetOutcome, NativeTerminalResetReceipt, NativeTerminalTransitionError,
+};
+
 struct HostState {
     catalogs: TerminalHostCatalogs,
     probes: TerminalHostProbes,
+    access: TerminalAccessRoutes,
 }
 impl TerminalCatalogState for HostState {
     fn catalogs(&mut self) -> &mut TerminalHostCatalogs {
         &mut self.catalogs
+    }
+    fn access(&self) -> Option<&dyn terminal_host_dispatch::TerminalAccessView> {
+        Some(&self.access)
     }
 }
 fn probes(state: &mut HostState) -> &mut TerminalHostProbes {
@@ -77,6 +90,11 @@ pub(crate) struct NativeTerminalHostResource {
     workers: NativeOwnedWorkerScope,
 }
 impl NativeTerminalHostResource {
+    pub(crate) fn lifecycle_requester(&self) -> NativeTerminalLifecycleRequester {
+        NativeTerminalLifecycleRequester {
+            requester: self.runtime.requester(),
+        }
+    }
     pub(crate) fn worker_scope(&self) -> NativeOwnedWorkerScope {
         self.workers.clone()
     }
@@ -187,6 +205,8 @@ impl NativeTerminalHost {
         let requester_cell: Arc<OnceLock<Requester>> = Arc::new(OnceLock::new());
         let observer_requester = Arc::clone(&requester_cell);
         let clock = host_clock()?;
+        let principals = TerminalAccessPrincipals::default();
+        let owner_principals = principals.clone();
         let runtime = TerminalRuntime::new(
             move || {
                 let store = TerminalProfileStore::prepare(state_root)
@@ -196,6 +216,7 @@ impl NativeTerminalHost {
                 let budget = TerminalProfileBudget::new(TerminalProfileLimits::default())
                     .map_err(|_| TerminalRuntimeError::Initialization)?;
                 let state = HostState {
+                    access: TerminalAccessRoutes::new(owner_principals),
                     catalogs: TerminalHostCatalogs::new(workspace)
                         .map_err(|_| TerminalRuntimeError::Initialization)?,
                     probes: TerminalHostProbes::new(probe_executor, worker_stop),
@@ -248,6 +269,8 @@ impl NativeTerminalHost {
             stop.clone(),
         ));
         let executor = NativeTerminalActionExecutor {
+            principals,
+            access: None,
             permission,
             requester,
             host,
@@ -273,6 +296,8 @@ impl NativeTerminalHost {
 
 #[derive(Clone)]
 struct NativeTerminalActionExecutor {
+    principals: TerminalAccessPrincipals,
+    access: Option<CancellationToken>,
     permission: Option<Arc<NativeTerminalPermissionPolicy>>,
     requester: Requester,
     host: Arc<CapturedTerminalHostAuthority>,
@@ -291,10 +316,44 @@ impl TerminalActionExecutor for NativeTerminalActionExecutor {
         invocation: TerminalActionInvocation,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<TerminalActionResult, ToolError>> {
-        let host = self.clone();
+        let mut host = self.clone();
         Box::pin(async move {
             check(&cancellation, &host.stop)?;
-            let authority = resident_authority(context.clone());
+            let mut authority = resident_authority(context.clone());
+            let owner = authority.owner.clone();
+            let (access, writer) = host.principals.acquire(owner).map_err(|_| unavailable())?;
+            authority.writer = writer;
+            host.access = Some(access.clone());
+            let effective = CancellationToken::new();
+            let _cancel = CancelOnDrop(effective.clone());
+            let operation = host.execute_scoped(context, authority, invocation, effective.clone());
+            match select(
+                operation,
+                select(cancellation.cancelled(), access.cancelled()),
+            )
+            .await
+            {
+                Either::Left((result, _)) => result,
+                Either::Right((_, operation)) => {
+                    effective.cancel();
+                    operation.await
+                }
+            }
+        })
+    }
+}
+
+impl NativeTerminalActionExecutor {
+    fn execute_scoped(
+        self,
+        context: ToolContext,
+        authority: TerminalResidentAuthority,
+        invocation: TerminalActionInvocation,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'static, Result<TerminalActionResult, ToolError>> {
+        Box::pin(async move {
+            let host = self;
+            host.check_access()?;
             if invocation.action() == TerminalAction::Exec {
                 return host.exec(context, invocation, cancellation).await;
             }
@@ -308,12 +367,13 @@ impl TerminalActionExecutor for NativeTerminalActionExecutor {
                     .await;
             }
             let request = invocation.resolve_cwd(|_| Err(unavailable()))?;
-            let reply = terminal_host_dispatch::dispatch(
+            let reply = terminal_host_dispatch::dispatch_with_access(
                 host.requester,
                 authority,
                 request,
                 TerminalMonitorActivation::default(),
                 cancellation,
+                host.access,
             )
             .await
             .map_err(dispatch_error)?;
@@ -323,6 +383,17 @@ impl TerminalActionExecutor for NativeTerminalActionExecutor {
 }
 
 impl NativeTerminalActionExecutor {
+    fn check_access(&self) -> Result<(), ToolError> {
+        if self
+            .access
+            .as_ref()
+            .is_some_and(CancellationToken::is_cancelled)
+        {
+            Err(cancelled())
+        } else {
+            Ok(())
+        }
+    }
     fn exec(
         &self,
         context: ToolContext,
@@ -331,9 +402,13 @@ impl NativeTerminalActionExecutor {
     ) -> BoxFuture<'static, Result<TerminalActionResult, ToolError>> {
         let host = Arc::clone(&self.host);
         let permission = self.permission.clone();
+        let access = self.access.clone();
         let future = self.captured.execute_prepared(
             move |deadline, cancellation, stop| {
                 check(cancellation, stop).map_err(|_| TerminalCapturedExecError::Cancelled)?;
+                if access.as_ref().is_some_and(CancellationToken::is_cancelled) {
+                    return Err(TerminalCapturedExecError::Cancelled);
+                }
                 let resolved = host
                     .resolve_on_worker(invocation, deadline, cancellation)
                     .map_err(|_| TerminalCapturedExecError::Invalid)?;
@@ -440,6 +515,7 @@ impl NativeTerminalActionExecutor {
     ) -> BoxFuture<'_, Result<TerminalActionResult, ToolError>> {
         Box::pin(async move {
             check(&cancellation, &self.stop)?;
+            self.check_access()?;
             let resolved = self
                 .host
                 .resolve_on_worker(invocation, deadline, &cancellation)?;
@@ -491,24 +567,53 @@ impl NativeTerminalActionExecutor {
                     )
                     .await
                 }
-                request @ TerminalActionRequest::List { .. } => terminal_host_dispatch::dispatch(
-                    self.requester.clone(),
-                    authority,
-                    request,
-                    TerminalMonitorActivation::default(),
-                    cancellation,
-                )
-                .await
-                .map(reply_result)
-                .map_err(dispatch_error),
+                request @ TerminalActionRequest::List { .. } => {
+                    terminal_host_dispatch::dispatch_with_access(
+                        self.requester.clone(),
+                        authority,
+                        request,
+                        TerminalMonitorActivation::default(),
+                        cancellation,
+                        self.access.clone(),
+                    )
+                    .await
+                    .map(reply_result)
+                    .map_err(dispatch_error)
+                }
                 _ => Err(unavailable()),
             }
         })
     }
 
+    async fn admit_start_access(
+        &self,
+        owner: BackgroundOutputOwner,
+        id: TerminalSessionId,
+        cancellation: CancellationToken,
+    ) -> Result<(), ToolError> {
+        let access = self.access.clone();
+        self.requester
+            .request_with_context(cancellation, move |context| {
+                if access.as_ref().is_some_and(CancellationToken::is_cancelled)
+                    || !context
+                        .state
+                        .access
+                        .resolve(&owner, &id)
+                        .is_ok_and(|storage| storage == owner)
+                {
+                    Err(unavailable())
+                } else {
+                    Ok(())
+                }
+            })
+            .await
+            .map_err(|_| unavailable())?
+    }
+
     #[allow(
         clippy::too_many_arguments,
-        reason = "explicit actor, launch authority and original deadline"
+        clippy::too_many_lines,
+        reason = "ordered startup keeps explicit authority and retained receipts adjacent"
     )]
     async fn start_on_worker(
         &self,
@@ -520,6 +625,8 @@ impl NativeTerminalActionExecutor {
         cancellation: CancellationToken,
     ) -> Result<TerminalActionResult, ToolError> {
         let id = new_session_id()?;
+        self.admit_start_access(authority.owner.clone(), id.clone(), cancellation.clone())
+            .await?;
         let mut prepared = Vec::with_capacity(request.initial_monitors.len());
         for definition in &request.initial_monitors {
             check(&cancellation, &self.stop)?;
@@ -578,6 +685,7 @@ impl NativeTerminalActionExecutor {
                 },
                 deadline,
                 cancellation.clone(),
+                self.access.clone(),
             )
             .await
             .map_err(start_error)?;
@@ -591,12 +699,13 @@ impl NativeTerminalActionExecutor {
                 safety_ceiling_ms: ceiling,
             },
         };
-        let reply = terminal_host_dispatch::dispatch(
+        let reply = terminal_host_dispatch::dispatch_with_access(
             self.requester.clone(),
             authority,
             wait,
             TerminalMonitorActivation::default(),
             cancellation.clone(),
+            self.access.clone(),
         )
         .await;
         let reply = match reply {
@@ -621,6 +730,30 @@ impl NativeTerminalActionExecutor {
         result
     }
 
+    async fn monitor_cwd(
+        &self,
+        owner: BackgroundOutputOwner,
+        session: TerminalSessionId,
+        cancellation: CancellationToken,
+    ) -> Result<String, ToolError> {
+        let access = self.access.clone();
+        self.requester
+            .request_with_context(cancellation, move |context| {
+                if access.as_ref().is_some_and(CancellationToken::is_cancelled) {
+                    return None;
+                }
+                let owner = context.state.access.resolve(&owner, &session).ok()?;
+                context
+                    .registry
+                    .inspect(&owner, &session)
+                    .ok()
+                    .and_then(|facts| facts.metadata.map(|metadata| metadata.cwd))
+            })
+            .await
+            .map_err(|_| unavailable())?
+            .ok_or_else(unavailable)
+    }
+
     async fn monitor_on_worker(
         &self,
         authority: TerminalResidentAuthority,
@@ -633,20 +766,9 @@ impl NativeTerminalActionExecutor {
         let preparation = match &operation {
             TerminalMonitorOperation::Add { definition }
             | TerminalMonitorOperation::Update { definition, .. } => {
-                let owner = authority.owner.clone();
-                let session = id.clone();
                 let cwd = self
-                    .requester
-                    .request_with_context(cancellation.clone(), move |context| {
-                        context
-                            .registry
-                            .inspect(&owner, &session)
-                            .ok()
-                            .and_then(|facts| facts.metadata.map(|metadata| metadata.cwd))
-                    })
-                    .await
-                    .map_err(|_| unavailable())?
-                    .ok_or_else(unavailable)?;
+                    .monitor_cwd(authority.owner.clone(), id.clone(), cancellation.clone())
+                    .await?;
                 Some(self.preparer.prepare_on_worker(
                     definition,
                     &cwd,
@@ -658,8 +780,18 @@ impl NativeTerminalActionExecutor {
             _ => None,
         };
         check(&cancellation, &self.stop)?;
+        let access = self.access.clone();
         self.requester
             .request_with_context(cancellation, move |mut context| {
+                if access.as_ref().is_some_and(CancellationToken::is_cancelled) {
+                    return Err(cancelled());
+                }
+                let mut authority = authority;
+                authority.owner = context
+                    .state
+                    .access
+                    .resolve(&authority.owner, &id)
+                    .map_err(|_| unavailable())?;
                 reconcile_probes(context.state, context.registry);
                 let activation = preparation.as_ref().map_or_else(
                     TerminalMonitorActivation::default,
@@ -901,6 +1033,9 @@ mod tests {
 
     mod permission_policy {
         include!("terminal_permission_policy/host_tests.rs");
+    }
+    mod lifecycle {
+        include!("terminal_host_lifecycle/host_tests.rs");
     }
 
     struct Fixture {

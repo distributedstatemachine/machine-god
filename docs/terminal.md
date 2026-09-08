@@ -76,6 +76,57 @@ arrays. Its schema-derived JSON ceiling is 16,378,880 bytes, including one
 stringified-composite escaping layer; separate node and depth bounds apply
 during composite decoding, before recursive normalization.
 
+## Conversation handoff and workspace reset
+
+The complete host exposes an inert, non-host-owning
+`NativeTerminalLifecycleRequester`. Native conversation owners may hand off
+terminal access between exact session IDs and incarnations without replacing
+the terminal host. This component does not add transition support to the
+legacy foreground/background adapter or itself implement interactive commands.
+
+Handoff preserves each original backend, storage owner, journal namespace and
+acknowledgement history. A bounded host-local route gives the destination access
+to the exact transferred resources, including their later terminated history;
+it does not expose the original owner's whole disk catalog. Repeated A-to-B-to-C
+handoffs replace one current principal, without route chains. A conflicting
+public terminal ID rejects the handoff before access changes. List `task_id`
+filters use current access ownership; persisted historical owners remain intact.
+Routes and principal registrations retain the existing profile bounds of 1,024
+sessions and 256 owners. Capacity exhaustion fails explicitly.
+
+Old access generations are revoked across ordinary actions, monitor preparation
+and staged-start publication. Pending attention waits are cancelled and the old
+writer claim is durably settled before the route commit. Already admitted input
+bytes and receipts remain transport-owned; handoff does not permanently quiesce
+input. New access generations have distinct writer identities so a late old wait
+completion cannot clear a newer lease. Old external probe grants are retired;
+permissions, sandbox authority and active probe evidence are not transferred.
+Explicit `activate_session` permits a later resume of a retired principal with a
+fresh generation, but cannot revive old operations or original-owner access to
+transferred or forgotten resources. Activation of an active principal is a no-op.
+
+`reset_current_workspace` stops only exact resources currently routed to the
+principal under this host's retained workspace authority. It neither looks up
+arbitrary persisted PIDs nor shuts down other principals or the shared host.
+Its bounded receipt reports stopped-and-forgotten, already-terminated-and-forgotten,
+or retained-indeterminate outcomes separately. Cleanup, publication or outstanding
+receipt/residency uncertainty prevents forgetting. Validated terminated disk
+history with an observed exit/signal may lose its transient route; merely closing
+recovered history is not termination evidence. Unknown historical process state remains
+indeterminate. Forgetting never deletes or relabels journal files. Reset retires
+source admissions; retained resources can then be handed to the fresh conversation.
+
+Unpolled operations have no effects. Cancellation before owner execution leaves
+routes unchanged; handoff preparation failure also leaves source/destination
+routes unchanged, although already cancelled waits or attempted durable attention
+cleanup are not rolled back. Reset completes its bounded pass once started,
+including after caller cancellation. After a route commit or reset begins,
+dropping the future does not establish rollback. The enclosing native owner must
+drive it to its receipt and queue newer transitions behind that settled result.
+An unavailable post-enqueue receipt is publication uncertainty, not permission to
+repeat effects blindly. Conversation observation and persistence registrations
+are retired by the enclosing conversation owner; terminal journaling continues.
+
 ## Native shell resolution
 
 `TerminalShell` resolves explicitly injected account data or performs an

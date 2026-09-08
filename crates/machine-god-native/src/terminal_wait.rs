@@ -309,6 +309,22 @@ impl TerminalWaitCoordinator {
         }
     }
 
+    /// Revoke only pending waits for this exact terminal; completed conditions
+    /// and accepted input receipts remain truthful and independently owned.
+    pub(crate) fn cancel_session(
+        &mut self,
+        owner: &BackgroundOutputOwner,
+        session: &TerminalSessionId,
+    ) {
+        for registration in &mut self.registrations {
+            if registration.identity.owner == *owner && registration.identity.session == *session {
+                registration
+                    .ready
+                    .get_or_insert(TerminalWaitOutcome::Cancelled);
+            }
+        }
+    }
+
     /// Finishing one wait must not clear a newer pending wait's attention.
     /// The owner checks this immediately before its attention transaction.
     pub(crate) fn has_pending_attention(

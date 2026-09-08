@@ -23,6 +23,33 @@ use crate::terminal_write_completion::{TerminalWriteError, TerminalWriteReceipt}
 /// This trait does not require that worker-owned state be Send or Sync.
 pub(crate) trait TerminalCatalogState {
     fn catalogs(&mut self) -> &mut TerminalHostCatalogs;
+    fn access(&self) -> Option<&dyn TerminalAccessView> {
+        None
+    }
+}
+/// The component harness need not depend on the concrete full native host.
+/// Snapshots contain bounded routing data, not native backend authority.
+pub(crate) trait TerminalAccessView {
+    fn check(
+        &self,
+        owner: &machine_god_core::BackgroundOutputOwner,
+    ) -> std::result::Result<(), TerminalCatalogViewError>;
+    fn resolve(
+        &self,
+        owner: &machine_god_core::BackgroundOutputOwner,
+        id: &machine_god_core::TerminalSessionId,
+    ) -> std::result::Result<machine_god_core::BackgroundOutputOwner, TerminalCatalogViewError>;
+    fn visible(
+        &self,
+        owner: &machine_god_core::BackgroundOutputOwner,
+        storage: &machine_god_core::BackgroundOutputOwner,
+        id: &machine_god_core::TerminalSessionId,
+    ) -> bool;
+    fn origins(
+        &self,
+        owner: &machine_god_core::BackgroundOutputOwner,
+    ) -> Vec<machine_god_core::BackgroundOutputOwner>;
+    fn snapshot(&self) -> Box<dyn TerminalAccessView>;
 }
 impl TerminalCatalogState for TerminalHostCatalogs {
     fn catalogs(&mut self) -> &mut TerminalHostCatalogs {
@@ -62,12 +89,35 @@ pub(crate) struct TerminalHostReply {
 /// from separate authorized host work, never from stored probe descriptions.
 /// No I/O, worker initialization or request submission occurs before polling.
 /// A requester deliberately does not keep the host or its native sessions alive.
+#[cfg(test)]
 pub(crate) fn dispatch<B, S>(
     requester: TerminalRuntimeRequester<B, S>,
     authority: TerminalResidentAuthority,
     request: TerminalActionRequest,
     activation: TerminalMonitorActivation,
     cancellation: CancellationToken,
+) -> BoxFuture<'static, Result<TerminalHostReply>>
+where
+    B: TerminalSessionBackend + Send + 'static,
+    S: TerminalCatalogState + 'static,
+{
+    dispatch_with_access(
+        requester,
+        authority,
+        request,
+        activation,
+        cancellation,
+        None,
+    )
+}
+
+pub(crate) fn dispatch_with_access<B, S>(
+    requester: TerminalRuntimeRequester<B, S>,
+    authority: TerminalResidentAuthority,
+    request: TerminalActionRequest,
+    activation: TerminalMonitorActivation,
+    cancellation: CancellationToken,
+    access: Option<CancellationToken>,
 ) -> BoxFuture<'static, Result<TerminalHostReply>>
 where
     B: TerminalSessionBackend + Send + 'static,
@@ -84,8 +134,22 @@ where
             return Err(TerminalHostDispatchError::CommandAction);
         }
         let admitted_authority = authority.clone();
+        let admitted_access = access.clone();
         let (reply, residency) = requester
             .request_with_context(cancellation, move |context| {
+                if admitted_access
+                    .as_ref()
+                    .is_some_and(CancellationToken::is_cancelled)
+                {
+                    return Err(TerminalHostDispatchError::Catalog(
+                        TerminalCatalogViewError::Cancelled,
+                    ));
+                }
+                let mut admitted_authority = admitted_authority;
+                if let Some(id) = request.session_id() {
+                    admitted_authority.owner =
+                        resolve_owner(context.state, &admitted_authority.owner, id)?;
+                }
                 let residency = request
                     .session_id()
                     .and_then(|id| context.registry.lease(&admitted_authority.owner, id).ok());
@@ -112,7 +176,8 @@ where
             }),
             TerminalResidentDispatch::Wait { admitted, future } => {
                 let receipt = future.await;
-                let (session, facts_timing) = refresh(&requester, authority, admitted).await;
+                let (session, facts_timing) =
+                    refresh(&requester, authority, admitted, access).await;
                 let result = resident_wait_result(session, receipt)
                     .map_err(TerminalHostDispatchError::WaitReceipt)?;
                 Ok(TerminalHostReply {
@@ -122,7 +187,8 @@ where
             }
             TerminalResidentDispatch::Write { admitted, future } => {
                 let receipt = future.await.map_err(TerminalHostDispatchError::Write)?;
-                let (session, facts_timing) = refresh(&requester, authority, admitted).await;
+                let (session, facts_timing) =
+                    refresh(&requester, authority, admitted, access).await;
                 let result = resident_write_result(session, receipt)
                     .map_err(TerminalHostDispatchError::WriteReceipt)?;
                 Ok(TerminalHostReply {
@@ -142,23 +208,47 @@ async fn refresh<B, S>(
     requester: &TerminalRuntimeRequester<B, S>,
     authority: TerminalResidentAuthority,
     admitted: TerminalSessionFacts,
+    access: Option<CancellationToken>,
 ) -> (TerminalSessionFacts, TerminalHostFactsTiming)
 where
     B: TerminalSessionBackend + Send + 'static,
-    S: 'static,
+    S: TerminalCatalogState + 'static,
 {
     let id = admitted.session_id.clone();
     // User cancellation cannot erase an already committed receipt. This fresh
     // token does not bypass owner shutdown: the non-owning requester still closes.
     match requester
         .request_with_context(CancellationToken::new(), move |mut context| {
+            if access.as_ref().is_some_and(CancellationToken::is_cancelled) {
+                return Err(TerminalHostDispatchError::Catalog(
+                    TerminalCatalogViewError::Cancelled,
+                ));
+            }
+            let mut authority = authority;
+            authority.owner = resolve_owner(context.state, &authority.owner, &id)?;
             resident_facts(&mut context, &authority, &id)
+                .map_err(|error| TerminalHostDispatchError::Resident(error.into()))
         })
         .await
     {
         Ok(Ok(facts)) => (facts, TerminalHostFactsTiming::Current),
         _ => (admitted, TerminalHostFactsTiming::Admission),
     }
+}
+
+fn resolve_owner<S: TerminalCatalogState>(
+    state: &S,
+    owner: &machine_god_core::BackgroundOutputOwner,
+    id: &machine_god_core::TerminalSessionId,
+) -> Result<machine_god_core::BackgroundOutputOwner> {
+    state.access().map_or_else(
+        || Ok(owner.clone()),
+        |routes| {
+            routes
+                .resolve(owner, id)
+                .map_err(TerminalHostDispatchError::Catalog)
+        },
+    )
 }
 
 fn route<B: TerminalSessionBackend, S: TerminalCatalogState>(
@@ -173,23 +263,59 @@ fn route<B: TerminalSessionBackend, S: TerminalCatalogState>(
         ));
     }
     if let TerminalActionRequest::List { filters } = request {
-        let catalog = context
-            .state
-            .catalogs()
-            .catalog(context.store, &authority.owner, context.cancellation)
+        let access = context.state.access().map(TerminalAccessView::snapshot);
+        if let Some(access) = &access {
+            access
+                .check(&authority.owner)
+                .map_err(TerminalHostDispatchError::Catalog)?;
+        }
+        let origins = access.as_ref().map_or_else(
+            || vec![authority.owner.clone()],
+            |routes| routes.origins(&authority.owner),
+        );
+        let mut sessions = Vec::new();
+        for origin in origins {
+            let catalog = context
+                .state
+                .catalogs()
+                .catalog(context.store, &origin, context.cancellation)
+                .map_err(TerminalHostDispatchError::Catalog)?;
+            let result = terminal_catalog_view::list_selected_with(
+                context.registry,
+                context.store,
+                catalog,
+                *context.budget,
+                &origin,
+                authority.actor,
+                &authority.controls,
+                filters,
+                context.now_ms,
+                &authority.owner,
+                |id| {
+                    access
+                        .as_ref()
+                        .is_none_or(|routes| routes.visible(&authority.owner, &origin, id))
+                },
+            )
             .map_err(TerminalHostDispatchError::Catalog)?;
-        let result = terminal_catalog_view::list_with(
-            context.registry,
-            context.store,
-            catalog,
-            *context.budget,
-            &authority.owner,
-            authority.actor,
-            &authority.controls,
-            filters,
-            context.now_ms,
-        )
-        .map_err(TerminalHostDispatchError::Catalog)?;
+            let TerminalActionResult::List { sessions: rows } = result else {
+                unreachable!("list projection")
+            };
+            if sessions.len() + rows.len() > machine_god_core::MAX_TERMINAL_ACTION_RESULTS {
+                return Err(TerminalHostDispatchError::Catalog(
+                    TerminalCatalogViewError::ResourceLimit,
+                ));
+            }
+            sessions.extend(rows);
+        }
+        sessions.sort_unstable_by(|a, b| a.session_id.as_str().cmp(b.session_id.as_str()));
+        if sessions
+            .windows(2)
+            .any(|pair| pair[0].session_id == pair[1].session_id)
+        {
+            return Err(TerminalHostDispatchError::Invalid);
+        }
+        let result = TerminalActionResult::List { sessions };
         result
             .validate_for(request)
             .map_err(|_| TerminalHostDispatchError::Invalid)?;

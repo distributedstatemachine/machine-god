@@ -119,6 +119,14 @@ fn permission_host_actual_terminal_enforces_os_and_preserves_explicit_none_and_y
 }
 
 fn collect(host: &NativeReferenceHost, workspace: &Path) -> Vec<TurnEvent> {
+    collect_with_policy(host, workspace, None)
+}
+
+fn collect_with_policy(
+    host: &NativeReferenceHost,
+    workspace: &Path,
+    policy: Option<machine_god_native::NativePermissionPolicySnapshot>,
+) -> Vec<TurnEvent> {
     let executor = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -130,9 +138,13 @@ fn collect(host: &NativeReferenceHost, workspace: &Path) -> Vec<TurnEvent> {
         )
         .await
         .unwrap();
-        let conversation = host
-            .configure_conversation_permissions(conversation)
-            .unwrap();
+        let conversation = match policy {
+            Some(policy) => {
+                host.configure_conversation_permissions_with_policy(conversation, policy)
+            }
+            None => host.configure_conversation_permissions(conversation),
+        }
+        .unwrap();
         let runtime = NativeConversationRuntime::new(
             conversation,
             host.loaded_config().config().model_preferences(),
@@ -284,6 +296,51 @@ fn permission_host_wires_file_approval_and_ask_auto_yolo_without_extra_model_cal
             |event| matches!(event, TurnEvent::ToolFinished { output, .. } if !output.is_error)
         ));
         assert_eq!(fs::read(workspace.join("result")).unwrap(), b"exact bytes");
+        assert_eq!(prompt.requests().len(), prompts);
+        assert_eq!(transport.requests().len(), 2);
+        drop(host);
+        completion.wait_on_worker().unwrap();
+    }
+}
+
+#[test]
+fn explicit_current_policy_overrides_config_defaults_through_actual_tools() {
+    use machine_god_native::{
+        NativeConfiguredPermissionRules, NativePermissionPolicySnapshot, PermissionMode,
+    };
+    for (mode, prompts) in [(PermissionMode::Ask, 1), (PermissionMode::Yolo, 0)] {
+        let temporary = TemporaryDirectory::new("explicit-current-policy");
+        let (prepared, _) = complete_terminal_roots(temporary.path());
+        let workspace = temporary.path().join("workspace");
+        let transport = ScriptedTransport::new(
+            "explicit-current-policy",
+            [
+                call(
+                    "write_file",
+                    &json!({"path":"result", "content":"selected policy"}),
+                ),
+                answer(),
+            ],
+        );
+        let prompt = AllowingPrompter::default();
+        let host = NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
+            configured(temporary.path(), "ask", &json!([{"permission":"write_file", "pattern":"*", "action":"deny"}])),
+            Arc::new(transport.clone()), production_gateway_target(), prepared,
+            Arc::new(prompt.clone()), inert_question_prompter(), never_deadline(), options(),
+        ).unwrap();
+        let completion = host.terminal_shutdown_completion().unwrap();
+        let policy = NativePermissionPolicySnapshot::new(
+            mode,
+            Arc::new(NativeConfiguredPermissionRules::default()),
+        );
+        let events = collect_with_policy(&host, &workspace, Some(policy));
+        assert!(events.iter().any(|event| matches!(event,
+            TurnEvent::ToolFinished { output, .. } if !output.is_error
+        )));
+        assert_eq!(
+            fs::read(workspace.join("result")).unwrap(),
+            b"selected policy"
+        );
         assert_eq!(prompt.requests().len(), prompts);
         assert_eq!(transport.requests().len(), 2);
         drop(host);

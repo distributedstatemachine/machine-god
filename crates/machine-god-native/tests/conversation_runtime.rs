@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::future::poll_fn;
+use std::pin::Pin;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -26,10 +27,10 @@ use machine_god_native::{
     AiGatewayModelCatalogTransportResponse, MAX_NATIVE_QUEUED_INPUT_BYTES, MAX_NATIVE_QUEUED_JOBS,
     MAX_NATIVE_QUEUED_OPTIONS_BYTES, MAX_NATIVE_QUEUED_PROMPT_BYTES, NATIVE_MODEL_PREFERENCES_KEY,
     NATIVE_SESSION_METADATA_KEY, NativeConversation, NativeConversationError,
-    NativeConversationRuntime, NativeConversationRuntimeError, NativeConversationRuntimeTurn,
-    NativeHistoryBackground, NativeHistoryFileAction, NativeHistoryFileEvidence,
-    NativeModelCatalog, NativeModelPreferencePersistence, NativeModelPreferences,
-    NativeReasoningEffort, NativeSessionMetadata,
+    NativeConversationRuntime, NativeConversationRuntimeError, NativeConversationRuntimePhase,
+    NativeConversationRuntimeTurn, NativeHistoryBackground, NativeHistoryFileAction,
+    NativeHistoryFileEvidence, NativeModelCatalog, NativeModelPreferencePersistence,
+    NativeModelPreferences, NativeReasoningEffort, NativeSessionMetadata,
 };
 use machine_god_testkit::{
     InMemorySessionStore, ModelProviderStep, ScriptedModelProvider, ScriptedPermissionHandler,
@@ -376,7 +377,7 @@ fn queued_and_future_jobs_follow_changes_but_active_snapshot_and_request_do_not(
         [finished(), finished(), finished()],
         SessionStoreScript::default(),
     );
-    runtime.set_model_catalog(catalog());
+    runtime.set_model_catalog(catalog()).unwrap();
     let first = runtime.enqueue("first".into()).unwrap();
     let second = runtime.enqueue("second".into()).unwrap();
     let calls = store.calls().len();
@@ -658,7 +659,7 @@ mod preference_persistence {
         runtime
             .set_model_preferences(preferences("private/accepted"))
             .unwrap();
-        let commit = block_on(commit);
+        let commit = block_on(commit).unwrap();
         assert_saved(&commit, 1);
         assert_eq!(
             commit
@@ -677,7 +678,7 @@ mod preference_persistence {
         assert!(provider.requests().is_empty());
         assert!(!format!("{commit:?}").contains("private/accepted"));
         let calls = store.calls().len();
-        let again = block_on(runtime.persist_model_preferences(&user, 0));
+        let again = block_on(runtime.persist_model_preferences(&user, 0)).unwrap();
         assert_eq!(
             again.session,
             Ok(NativeModelPreferencePersistence::Unchanged)
@@ -707,7 +708,7 @@ mod preference_persistence {
         runtime
             .set_model_preferences(preferences("private/accepted"))
             .unwrap();
-        let commit = block_on(runtime.persist_model_preferences(&user, 100));
+        let commit = block_on(runtime.persist_model_preferences(&user, 100)).unwrap();
         assert_eq!(
             commit.session,
             Err(NativeConversationRuntimeError::Conversation(
@@ -731,7 +732,7 @@ mod preference_persistence {
         fixture.seed(bytes);
         let user = fixture.store();
         let (runtime, _, _) = setup(None, [], SessionStoreScript::default());
-        let commit = block_on(runtime.persist_model_preferences(&user, 100));
+        let commit = block_on(runtime.persist_model_preferences(&user, 100)).unwrap();
         assert_saved(&commit, 0);
         assert!(matches!(
             commit.user_defaults,
@@ -749,7 +750,7 @@ mod preference_persistence {
         fs::write(fixture.root().join(".config.tmp"), b"retained").unwrap();
         let user = fixture.store();
         let (runtime, _, _) = setup(None, [], SessionStoreScript::default());
-        let commit = block_on(runtime.persist_model_preferences(&user, 100));
+        let commit = block_on(runtime.persist_model_preferences(&user, 100)).unwrap();
         assert_saved(&commit, 0);
         assert_eq!(
             commit.user_defaults,
@@ -773,7 +774,7 @@ mod preference_persistence {
         runtime
             .set_model_preferences(preferences("private/next"))
             .unwrap();
-        let commit = block_on(runtime.persist_model_preferences(&user, 100));
+        let commit = block_on(runtime.persist_model_preferences(&user, 100)).unwrap();
         assert_eq!(commit.generation, 1);
         assert_eq!(
             commit.session,
@@ -789,7 +790,7 @@ mod preference_persistence {
         );
         assert!(runtime.status().active);
         complete(turn);
-        let commit = block_on(runtime.persist_model_preferences(&user, 200));
+        let commit = block_on(runtime.persist_model_preferences(&user, 200)).unwrap();
         assert_saved(&commit, 1);
         assert!(!runtime.status().model_preferences_pending);
     }
@@ -814,7 +815,7 @@ mod preference_persistence {
         );
         let expected = preferences("private/accepted");
         runtime.set_model_preferences(expected.clone()).unwrap();
-        let commit = block_on(runtime.persist_model_preferences(&user, 100));
+        let commit = block_on(runtime.persist_model_preferences(&user, 100)).unwrap();
         assert!(commit.session.is_err());
         assert!(commit.user_defaults.is_err());
         assert_eq!(runtime.model_preferences(), expected);
@@ -837,7 +838,7 @@ mod preference_persistence {
             .set_model_preferences(preferences("private/newer"))
             .unwrap();
         gate.release();
-        let commit = block_on(commit);
+        let commit = block_on(commit).unwrap();
         assert_saved(&commit, 0);
         assert_eq!(
             commit.user_defaults.unwrap().config().model(),
@@ -870,7 +871,7 @@ mod preference_persistence {
         )
         .unwrap();
         gate.release();
-        let commit = block_on(commit);
+        let commit = block_on(commit).unwrap();
         assert_saved(&commit, 0);
         assert_eq!(commit.user_defaults, Err(NativeUserConfigError::Conflict));
         assert_eq!(
@@ -899,6 +900,34 @@ mod preference_persistence {
         assert_eq!(runtime.record(), before);
         assert!(!runtime.status().active);
         assert!(runtime.status().model_preferences_pending);
+    }
+
+    #[test]
+    fn quiescence_tracks_composite_save_and_rejects_unpolled_old_user_writes() {
+        let fixture = ConfigFixture::new();
+        let user = fixture.store();
+        let (runtime, gate) = gated_runtime();
+        let stale = runtime.persist_model_preferences(&user, 200);
+        let mut active = runtime.persist_model_preferences(&user, 100);
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        assert!(active.as_mut().poll(&mut cx).is_pending());
+        let mut guard = runtime.begin_quiescence().unwrap();
+        assert!(guard.wait_idle().as_mut().poll(&mut cx).is_pending());
+        assert_eq!(
+            block_on(stale).unwrap_err(),
+            NativeConversationRuntimeError::Quiescing
+        );
+        gate.release();
+        let result = block_on(active).unwrap();
+        assert!(result.session.is_ok());
+        assert!(result.user_defaults.is_ok());
+        block_on(guard.wait_idle()).unwrap();
+        guard.retire().unwrap();
+        assert_eq!(
+            block_on(runtime.persist_model_preferences(&user, 300)).unwrap_err(),
+            NativeConversationRuntimeError::Retired
+        );
     }
 }
 impl SessionStore for GatedStore {
@@ -1435,6 +1464,219 @@ fn active_cancellation_preserves_pending_job_and_current_model_selection() {
         provider.requests()[1].request.options.model.as_deref(),
         Some("private/after-cancel")
     );
+}
+
+#[test]
+fn quiescence_is_reversible_preserves_queue_and_gates_preconstructed_futures() {
+    let (runtime, store, provider) = setup(None, [], SessionStoreScript::default());
+    let id = runtime.enqueue("kept".into()).unwrap();
+    let before = runtime.record();
+    let calls = store.calls().len();
+    let rename = runtime.rename("never saved", 200);
+    let start = runtime.start_next(200);
+    let flush = runtime.flush_model_preferences(200);
+    let guard = runtime.begin_quiescence().unwrap();
+    assert_eq!(
+        runtime.status().phase,
+        NativeConversationRuntimePhase::Quiescing
+    );
+    assert_eq!(
+        runtime.enqueue("rejected".into()),
+        Err(NativeConversationRuntimeError::Quiescing)
+    );
+    assert_eq!(
+        runtime.set_model_preferences(preferences("rejected")),
+        Err(NativeConversationRuntimeError::Quiescing)
+    );
+    assert_eq!(
+        runtime.set_model_catalog(catalog()),
+        Err(NativeConversationRuntimeError::Quiescing)
+    );
+    assert!(!runtime.cancel_queued(id));
+    assert_eq!(runtime.clear_queued(), 0);
+    assert_eq!(
+        block_on(rename),
+        Err(NativeConversationRuntimeError::Quiescing)
+    );
+    assert_eq!(
+        block_on(start).unwrap_err(),
+        NativeConversationRuntimeError::Quiescing
+    );
+    assert_eq!(
+        block_on(flush),
+        Err(NativeConversationRuntimeError::Quiescing)
+    );
+    assert_eq!(runtime.record(), before);
+    assert_eq!(store.calls().len(), calls);
+    assert!(provider.requests().is_empty());
+    drop(guard);
+    assert_eq!(runtime.status().phase, NativeConversationRuntimePhase::Open);
+    assert_eq!(runtime.status().queued_jobs, 1);
+    assert!(runtime.cancel_queued(id));
+}
+
+#[test]
+fn retired_runtime_aliases_cannot_mutate_and_routes_can_be_registered_again() {
+    let routes = Arc::new(machine_god_native::NativeConversationModelRoutes::new());
+    let runtime = Arc::new(routed_runtime(&routes, "revisit", "same-incarnation").unwrap());
+    let retained = Arc::clone(&runtime);
+    let context = route_context(&runtime);
+    runtime
+        .enqueue("discarded only on retirement".into())
+        .unwrap();
+    let mut guard = runtime.begin_quiescence().unwrap();
+    block_on(guard.wait_idle()).unwrap();
+    guard.retire().unwrap();
+    assert_eq!(
+        retained.status().phase,
+        NativeConversationRuntimePhase::Retired
+    );
+    assert_eq!(retained.status().queued_jobs, 0);
+    assert_eq!(
+        retained.enqueue("never".into()),
+        Err(NativeConversationRuntimeError::Retired)
+    );
+    assert_eq!(
+        block_on(retained.rename("never", 200)),
+        Err(NativeConversationRuntimeError::Retired)
+    );
+    assert_eq!(
+        block_on(retained.start_next(200)).unwrap_err(),
+        NativeConversationRuntimeError::Retired
+    );
+    assert!(routes.snapshot(&context).is_none());
+    let replacement = routed_runtime(&routes, "revisit", "same-incarnation").unwrap();
+    assert!(routes.snapshot(&context).is_some());
+    drop(runtime);
+    drop(retained);
+    assert!(routes.snapshot(&context).is_some());
+    drop(replacement);
+    assert!(routes.snapshot(&context).is_none());
+}
+
+#[test]
+fn quiescence_cancels_pending_admission_before_any_provider_poll() {
+    let initial = record(None);
+    let store = InMemorySessionStore::from_records(BTreeMap::from([(initial.id.clone(), initial)]));
+    let gate = Arc::new(Gate::default());
+    let provider = ScriptedModelProvider::new("test", [finished()]);
+    let runtime = runtime_with_store(
+        Arc::new(GatedStore {
+            store,
+            gate: gate.clone(),
+        }),
+        provider.clone(),
+        preferences("private/original"),
+        None,
+    );
+    runtime.enqueue("taken".into()).unwrap();
+    runtime.enqueue("kept".into()).unwrap();
+    let mut start = runtime.start_next(100);
+    let waker = noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    assert!(start.as_mut().poll(&mut cx).is_pending());
+    let mut guard = runtime.begin_quiescence().unwrap();
+    assert!(guard.wait_idle().as_mut().poll(&mut cx).is_pending());
+    gate.release();
+    let turn = block_on(start).unwrap().unwrap();
+    assert!(turn.handle().unwrap().is_cancelled());
+    assert!(!turn.handle().unwrap().cancel());
+    let events = block_on(turn.collect::<Vec<_>>());
+    assert!(matches!(
+        events.last().unwrap().as_ref().unwrap().payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    ));
+    block_on(guard.wait_idle()).unwrap();
+    assert!(provider.requests().is_empty());
+    assert_eq!(runtime.status().queued_jobs, 1);
+    drop(guard);
+    assert_eq!(runtime.status().phase, NativeConversationRuntimePhase::Open);
+}
+
+#[test]
+fn quiescence_waits_through_native_finalizer_and_drop_is_only_release() {
+    use futures_core::Stream;
+    let (runtime, _, _) = setup(
+        None,
+        [finished()],
+        SessionStoreScript {
+            saves: Some(vec![
+                SessionStoreStep::Pass,
+                SessionStoreStep::Pass,
+                SessionStoreStep::Pending,
+            ]),
+            ..SessionStoreScript::default()
+        },
+    );
+    runtime.enqueue("question".into()).unwrap();
+    let mut turn = block_on(runtime.start_next(100)).unwrap().unwrap();
+    let waker = noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    for _ in 0..32 {
+        match Pin::new(&mut turn).poll_next(&mut cx) {
+            Poll::Pending => break,
+            Poll::Ready(Some(Ok(event))) => assert!(!matches!(
+                event.payload,
+                TurnEvent::Completed { .. } | TurnEvent::Failed { .. }
+            )),
+            other @ Poll::Ready(_) => panic!("unexpected {other:?}"),
+        }
+    }
+    let mut guard = runtime.begin_quiescence().unwrap();
+    assert!(guard.wait_idle().as_mut().poll(&mut cx).is_pending());
+    assert!(runtime.status().active);
+    drop(turn);
+    block_on(guard.wait_idle()).unwrap();
+    // This checks release only: the pending finalizer did not report a save.
+    drop(guard);
+    assert!(!runtime.status().active);
+    assert_eq!(runtime.status().phase, NativeConversationRuntimePhase::Open);
+}
+
+#[test]
+fn abandoned_quiescence_does_not_undo_pending_admission_cancellation() {
+    let initial = record(None);
+    let store = InMemorySessionStore::from_records(BTreeMap::from([(initial.id.clone(), initial)]));
+    let gate = Arc::new(Gate::default());
+    let provider = ScriptedModelProvider::new("test", [finished()]);
+    let runtime = runtime_with_store(
+        Arc::new(GatedStore {
+            store,
+            gate: gate.clone(),
+        }),
+        provider.clone(),
+        preferences("private/original"),
+        None,
+    );
+    runtime.enqueue("already admitted".into()).unwrap();
+    let mut start = runtime.start_next(100);
+    let waker = noop_waker();
+    assert!(
+        start
+            .as_mut()
+            .poll(&mut Context::from_waker(&waker))
+            .is_pending()
+    );
+    drop(runtime.begin_quiescence().unwrap());
+    assert_eq!(runtime.status().phase, NativeConversationRuntimePhase::Open);
+    gate.release();
+    let turn = block_on(start).unwrap().unwrap();
+    assert!(turn.handle().unwrap().is_cancelled());
+    let events = block_on(turn.collect::<Vec<_>>());
+    assert!(matches!(
+        events.last().unwrap().as_ref().unwrap().payload,
+        TurnEvent::Completed {
+            reason: StopReason::Cancelled,
+            ..
+        }
+    ));
+    assert!(provider.requests().is_empty());
+    runtime.enqueue("newly admitted".into()).unwrap();
+    complete(block_on(runtime.start_next(200)).unwrap().unwrap());
+    assert_eq!(provider.requests().len(), 1);
 }
 
 #[test]

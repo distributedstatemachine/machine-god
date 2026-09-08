@@ -164,6 +164,7 @@ impl<S: 'static> TerminalStagedStarter<S> {
             install_monitors,
             StartDeadline::Relative(timeout),
             cancellation,
+            None,
         )
     }
 
@@ -194,6 +195,7 @@ impl<S: 'static> TerminalStagedStarter<S> {
         + 'static,
         deadline: Instant,
         cancellation: CancellationToken,
+        access: Option<CancellationToken>,
     ) -> BoxFuture<'static, Result<TerminalStagedStartReceipt>> {
         self.start_with_deadline(
             authority,
@@ -206,6 +208,7 @@ impl<S: 'static> TerminalStagedStarter<S> {
             install_monitors,
             StartDeadline::Absolute(deadline),
             cancellation,
+            access,
         )
     }
 
@@ -234,6 +237,7 @@ impl<S: 'static> TerminalStagedStarter<S> {
         + 'static,
         deadline: StartDeadline,
         cancellation: CancellationToken,
+        access: Option<CancellationToken>,
     ) -> BoxFuture<'static, Result<TerminalStagedStartReceipt>> {
         let requester = self.requester.clone();
         let config = Arc::clone(&self.config);
@@ -266,6 +270,7 @@ impl<S: 'static> TerminalStagedStarter<S> {
             let worker_stop = stop.clone();
             let operation = move || {
                 let request = StartPublication {
+                    access,
                     authority,
                     session_id,
                     request,
@@ -331,6 +336,7 @@ type InstallMonitors<S> = Box<
 >;
 
 struct StartPublication<B: TerminalSessionBackend, S> {
+    access: Option<CancellationToken>,
     authority: TerminalResidentAuthority,
     session_id: TerminalSessionId,
     request: TerminalStartRequest,
@@ -358,9 +364,13 @@ fn run_staged<B: TerminalSessionBackend + Send + 'static, S: 'static>(
     let owner = publication.authority.owner.clone();
     let id = publication.session_id.clone();
     let preparation_stop = cancellation.clone();
+    let access = publication.access.clone();
     let reservation = futures_executor::block_on(requester.request_with_context(
         cancellation.clone(),
         move |context| {
+            if access.as_ref().is_some_and(CancellationToken::is_cancelled) {
+                return Err(TerminalStagedStartError::Cancelled);
+            }
             if Instant::now() >= deadline {
                 return Err(TerminalStagedStartError::Launch(
                     TerminalNativeLaunchError::Timeout,
@@ -463,6 +473,13 @@ fn publish_start<B: TerminalSessionBackend + Send + 'static, S>(
     prepared: (B, TerminalStartupControl, TerminalNativeLaunchIdentity),
     cancellation: &CancellationToken,
 ) -> Result<TerminalStagedStartReceipt> {
+    if publication
+        .access
+        .as_ref()
+        .is_some_and(CancellationToken::is_cancelled)
+    {
+        return Err(TerminalStagedStartError::Cancelled);
+    }
     if cancellation.is_cancelled() {
         return Err(TerminalStagedStartError::Cancelled);
     }
@@ -1016,6 +1033,7 @@ mod tests {
             |_, _| Ok(()),
             deadline,
             CancellationToken::new(),
+            None,
         );
         std::thread::sleep(Duration::from_millis(20));
         assert!(matches!(
@@ -1066,6 +1084,33 @@ mod tests {
                 TerminalNativeLaunchError::Timeout
             ))
         ));
+        fixture.assert_slot_released();
+    }
+
+    #[test]
+    fn revoked_access_after_reservation_cannot_publish_prepared_start() {
+        let fixture = Fixture::new();
+        let native_authority = fixture.native_authority();
+        let access = CancellationToken::new();
+        let revoke = access.clone();
+        let result = futures_executor::block_on(fixture.starter.start_until(
+            authority(),
+            id(),
+            fixture.request(Some("printf forbidden > access-revoked")),
+            None,
+            move || {
+                revoke.cancel();
+                Ok(native_authority)
+            },
+            Vec::new(),
+            |_, _| {},
+            |_, _| Ok(()),
+            Instant::now() + Duration::from_secs(5),
+            CancellationToken::new(),
+            Some(access),
+        ));
+        assert!(matches!(result, Err(TerminalStagedStartError::Cancelled)));
+        assert!(!fixture.path.join("access-revoked").exists());
         fixture.assert_slot_released();
     }
 
@@ -1284,6 +1329,7 @@ mod tests {
                 },
                 Instant::now() + Duration::from_secs(5),
                 CancellationToken::new(),
+                None,
             ));
             assert_eq!(fixture.monitor_installations.load(Ordering::Acquire), 1);
             if reject {

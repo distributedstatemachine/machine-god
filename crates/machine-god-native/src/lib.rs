@@ -93,6 +93,7 @@ pub use permission_rules::{
     NativePermissionRuleError, NativePermissionRuleKey, NativePermissionRuleKind,
     NativeSessionPermissionRules,
 };
+mod conversation_lifecycle;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conversation_runtime;
 mod copy_file;
@@ -278,6 +279,14 @@ terminal_host_components!(
 pub use terminal_captured_exec::{
     TERMINAL_CAPTURED_HELPER_ARGUMENT, TerminalCapturedExec, TerminalCapturedExecError,
     run_terminal_captured_helper,
+};
+#[cfg(all(
+    any(test, feature = "ai-gateway-http"),
+    any(target_os = "linux", target_os = "macos")
+))]
+pub use terminal_host::{
+    NativeTerminalHandoffReceipt, NativeTerminalLifecycleRequester, NativeTerminalResetEntry,
+    NativeTerminalResetOutcome, NativeTerminalResetReceipt, NativeTerminalTransitionError,
 };
 mod terminal_display_width;
 mod terminal_grid;
@@ -516,8 +525,9 @@ pub use conversation_model_routes::{
 pub use conversation_runtime::{
     MAX_NATIVE_QUEUED_INPUT_BYTES, MAX_NATIVE_QUEUED_JOBS, MAX_NATIVE_QUEUED_OPTIONS_BYTES,
     MAX_NATIVE_QUEUED_PROMPT_BYTES, NativeConversationRuntime, NativeConversationRuntimeError,
-    NativeConversationRuntimeStatus, NativeConversationRuntimeTurn, NativeModelPreferenceCommit,
-    NativeModelPreferencePersistence, NativeQueuedJobId,
+    NativeConversationRuntimePhase, NativeConversationRuntimeStatus, NativeConversationRuntimeTurn,
+    NativeModelPreferenceCommit, NativeModelPreferencePersistence, NativeQueuedJobId,
+    NativeRuntimeQuiescence,
 };
 pub use copy_file::{
     COPY_FILE_TOOL_NAME, CopyFileTool, CopyFileToolOpenError, CopyFileToolOpenErrorKind,

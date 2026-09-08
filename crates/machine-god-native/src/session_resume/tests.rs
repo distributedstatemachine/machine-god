@@ -237,6 +237,7 @@ fn invalid_workspace_and_native_metadata_fail_before_publication() {
         crate::NATIVE_CONVERSATION_CHECKPOINT_KEY,
         crate::NATIVE_CONTEXT_PREFERENCES_KEY,
         crate::NATIVE_MODEL_PREFERENCES_KEY,
+        crate::NATIVE_SESSION_PERMISSION_RULES_KEY,
         crate::NATIVE_WORKSPACE_REBINDINGS_KEY,
         NATIVE_SESSION_METADATA_KEY,
     ] {
@@ -326,6 +327,43 @@ fn guarded_load_rejects_changed_record_without_reconciling_current_runtime() {
     assert_eq!(runtime.record(), before);
     assert_eq!(runtime.status(), status);
     assert_eq!(runtime.model_preferences().model(), "test");
+}
+
+#[test]
+fn invalid_saved_rules_are_rejected_before_reconciling_a_live_session() {
+    let fixture = Fixture::new();
+    fixture.save("current", 1, "/workspace");
+    let conversation = block_on(NativeConversation::resume(
+        &fixture.lifecycle,
+        id("current"),
+    ))
+    .unwrap();
+    let runtime = NativeConversationRuntime::new(
+        conversation,
+        NativeModelPreferences::new("test", NativeReasoningEffort::default(), false).unwrap(),
+        None,
+    )
+    .unwrap();
+    runtime.enqueue("keep queued input".into()).unwrap();
+    let before = runtime.record();
+    let status = runtime.status();
+    let mut changed = fixture.record("current");
+    let revision = changed.revision;
+    changed.metadata.insert(
+        crate::NATIVE_SESSION_PERMISSION_RULES_KEY.into(),
+        json!({"schema_version": 1, "next_generation": 0, "rules": []}),
+    );
+    block_on(fixture.store.save(changed, Some(revision))).unwrap();
+    let durable = fixture.record("current");
+    for target in [
+        NativeResumeTarget::Latest,
+        NativeResumeTarget::Exact(id("current")),
+    ] {
+        assert_eq!(fixture.prepare(target).unwrap_err().kind(), Kind::Corrupt);
+        assert_eq!(runtime.record(), before);
+        assert_eq!(runtime.status(), status);
+        assert_eq!(fixture.record("current"), durable);
+    }
 }
 
 #[test]

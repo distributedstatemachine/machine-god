@@ -43,6 +43,7 @@ impl NativePermissionSession {
         self: &Arc<Self>,
         change: NativePermissionRuleChange,
     ) -> Result<NativePermissionRuleProposal, PermissionError> {
+        let _permit = self.acquire_lifecycle()?;
         let state = lock(&self.state);
         if state.changing_rules || state.uncertain_rules {
             return Err(unavailable());
@@ -116,30 +117,48 @@ impl NativePermissionSession {
     #[must_use]
     pub fn reconcile_rules(&self) -> BoxFuture<'_, Result<(), PermissionError>> {
         Box::pin(async move {
-            let editor = {
-                let mut state = lock(&self.state);
-                if state.changing_rules {
-                    return Err(unavailable());
-                }
-                let editor = state
-                    .active
-                    .as_ref()
-                    .ok_or_else(unavailable)?
-                    .editor
-                    .clone();
-                state.changing_rules = true;
-                editor
-            };
-            let mut operation = RuleOperation {
-                owner: self,
-                editor: Some(editor.clone()),
-                armed: true,
-            };
-            let snapshot = editor.read_entry().await.map_err(|_| unavailable())?;
-            decode(snapshot.entry())?;
-            operation.confirmed();
-            Ok(())
+            let permit = self.acquire_lifecycle()?;
+            self.reconcile_rules_inner(Some(permit)).await
         })
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", test))]
+    pub(crate) async fn reconcile_rules_admitted(
+        &self,
+        permit: &crate::conversation_lifecycle::LifecyclePermit,
+    ) -> Result<(), PermissionError> {
+        self.check_admitted(permit)?;
+        self.reconcile_rules_inner(None).await
+    }
+
+    async fn reconcile_rules_inner(
+        &self,
+        permit: Option<super::ControlPermit>,
+    ) -> Result<(), PermissionError> {
+        let editor = {
+            let mut state = lock(&self.state);
+            if state.changing_rules {
+                return Err(unavailable());
+            }
+            let editor = state
+                .active
+                .as_ref()
+                .ok_or_else(unavailable)?
+                .editor
+                .clone();
+            state.changing_rules = true;
+            editor
+        };
+        let mut operation = RuleOperation {
+            owner: self,
+            editor: Some(editor.clone()),
+            armed: true,
+            _permit: permit,
+        };
+        let snapshot = editor.read_entry().await.map_err(|_| unavailable())?;
+        decode(snapshot.entry())?;
+        operation.confirmed();
+        Ok(())
     }
 }
 
@@ -166,10 +185,12 @@ struct RuleOperation<'a> {
     owner: &'a NativePermissionSession,
     editor: Option<TurnMetadataEditor>,
     armed: bool,
+    _permit: Option<super::ControlPermit>,
 }
 
 impl<'a> RuleOperation<'a> {
     fn begin(owner: &'a NativePermissionSession) -> Result<Self, PermissionError> {
+        let permit = owner.acquire_lifecycle()?;
         let mut state = lock(&owner.state);
         if state.changing_rules || state.uncertain_rules {
             return Err(unavailable());
@@ -180,6 +201,7 @@ impl<'a> RuleOperation<'a> {
             owner,
             editor,
             armed: false,
+            _permit: Some(permit),
         })
     }
 

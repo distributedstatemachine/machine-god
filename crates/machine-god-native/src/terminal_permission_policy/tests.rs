@@ -72,7 +72,10 @@ impl Fixture {
     }
     pub(crate) fn turn(&self) -> (Turn, NativePermissionTurn, ToolContext) {
         let turn = block_on(self.session.prompt("test")).unwrap();
-        let registration = self.owner.begin_turn(&turn, self.owner.snapshot()).unwrap();
+        let registration = self
+            .owner
+            .begin_turn(&turn, self.owner.snapshot().unwrap())
+            .unwrap();
         let context = ToolContext {
             session_id: self.session.id(),
             session_incarnation_id: self.session.incarnation_id(),
@@ -162,7 +165,10 @@ fn taken_yolo_needs_no_os_authority_and_retains_configured_os_after_reset() {
     let policy = NativeTerminalPermissionPolicy::new(vec![], None).unwrap();
     policy.bind_controller(&fixture.controller).unwrap();
     fixture.owner.reset().unwrap();
-    fixture.owner.set_sandbox_mode(NativeSandboxMode::None);
+    fixture
+        .owner
+        .set_sandbox_mode(NativeSandboxMode::None)
+        .unwrap();
     let snapshot = capture(&policy, &context).unwrap();
     assert_eq!(snapshot.configured(), NativeSandboxMode::Os);
     assert_eq!(snapshot.effective(), NativeSandboxMode::None);
@@ -174,8 +180,11 @@ fn taken_os_never_uses_later_yolo_or_missing_executable_fallback() {
     let (_turn, _registration, context) = fixture.turn();
     let policy = NativeTerminalPermissionPolicy::new(vec![], None).unwrap();
     policy.bind_controller(&fixture.controller).unwrap();
-    fixture.owner.set_mode(PermissionMode::Yolo);
-    fixture.owner.set_sandbox_mode(NativeSandboxMode::None);
+    fixture.owner.set_mode(PermissionMode::Yolo).unwrap();
+    fixture
+        .owner
+        .set_sandbox_mode(NativeSandboxMode::None)
+        .unwrap();
     fixture.owner.reset().unwrap();
     assert!(matches!(
         capture(&policy, &context),

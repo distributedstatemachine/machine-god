@@ -439,6 +439,27 @@ The controller does not itself supply file descriptors, an Auto transport or an
 OS sandbox. Those remain concrete native adapter/host responsibilities; selecting
 a mode alone is not evidence of sandbox enforcement.
 
+Runtime-bound permission owners share the conversation's Open/Quiescing/Retired
+admission gate. Policy snapshots, mode/sandbox changes, reset, rule proposals and
+newly polled rule operations reject unavailable ownership with redacted errors.
+A confirmed saved-rule operation retains its admission permit through the whole
+CAS/reconciliation future, including failure and drop. Quiescence therefore
+waits for already admitted operations; releasing an unsuccessful quiescence does
+not reset policy or discard pending observations. An admitted turn may finish
+binding its exact policy and editor while quiescing using its private permit.
+No retained handle or previously unpolled future can reopen a retired owner.
+Attaching the runtime gate rejects already admitted standalone controls instead
+of moving their ownership mid-operation. Both standalone control admission and
+the shared runtime gate are bounded to 256 concurrent permits.
+
+Successful retirement explicitly detaches model, permission, review-context and
+observation routes even when old owner aliases remain alive. Removal matches
+the exact registration allocation, so an old retirement/drop cannot remove a
+fresh registration for the same session and incarnation. Old execution proofs
+and review contexts remain unavailable. Detaching observations is not a save
+receipt: pending facts and late settlements stay with their old owner, and
+durable session history is not deleted.
+
 Native action-preparation failures produce a fixed recoverable denial for
 replanning, without a prompt, grant or execution. A missing selected target
 therefore does not abort an otherwise healthy conversation. Unknown/closed

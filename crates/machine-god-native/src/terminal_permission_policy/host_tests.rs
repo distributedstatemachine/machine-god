@@ -28,8 +28,8 @@ fn permission_host_taken_os_missing_executable_never_falls_back() {
     policy.bind_controller(&owner.controller).unwrap();
     let mut fixture = Fixture::with_permission(|_| Some(policy));
     fixture.context = context;
-    owner.owner.set_mode(PermissionMode::Yolo);
-    owner.owner.set_sandbox_mode(NativeSandboxMode::None);
+    owner.owner.set_mode(PermissionMode::Yolo).unwrap();
+    owner.owner.set_sandbox_mode(NativeSandboxMode::None).unwrap();
     owner.owner.reset().unwrap();
     for action in ["exec", "start"] {
         assert!(fixture.try_action(json!({"action":action,"profile":"clean","command":"printf forbidden > forbidden"})).is_err());
@@ -61,8 +61,8 @@ fn permission_host_taken_os_routes_foreground_pty_and_custom_monitors() {
         Some(policy)
     });
     fixture.context = context;
-    owner.owner.set_mode(PermissionMode::Yolo);
-    owner.owner.set_sandbox_mode(NativeSandboxMode::None);
+    owner.owner.set_mode(PermissionMode::Yolo).unwrap();
+    owner.owner.set_sandbox_mode(NativeSandboxMode::None).unwrap();
     owner.owner.reset().unwrap();
     let outside = fixture.root.join("forbidden");
     let quoted = outside.to_str().unwrap().replace('\'', "'\\''");

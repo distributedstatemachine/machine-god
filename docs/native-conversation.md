@@ -103,6 +103,45 @@ native finalization and drops native/core work before releasing that lease.
 Dropping the runtime clears pending inputs but does not invalidate a separately
 owned active turn. `cancel_queued` and `clear_queued` affect pending input only.
 
+### Quiescence and irreversible retirement
+
+`begin_quiescence()` synchronously fences new runtime work and requests active
+turn cancellation. It returns an owned, non-cloneable `NativeRuntimeQuiescence`;
+another simultaneous fence is rejected. Runtime status distinguishes `Open`,
+`Quiescing`, and `Retired`. Queue insertion, model/catalog mutations, and
+first-polled persistence/admission futures reject a closed fence. During
+quiescence or retirement, `cancel_queued` returns false and `clear_queued` returns
+zero without changing queued input. Read-only record and model observations
+remain available. `set_model_catalog` now reports admission failure explicitly.
+
+The guard's inert `wait_idle(&mut self)` installs at most one bounded waiter.
+It waits for owned operations to finish or drop, including native checkpoint
+finalization, confirmed rule edits, and the entire independent user-default save.
+The shared gate admits at most 256 overlapping permits; the limit rejects new
+work without evicting existing ownership. Cancellation and waiter callbacks run
+outside state locks. No worker is detached and the guard does not poll another
+owner's turn. The caller must keep driving pending admission and the active turn.
+A reservation completing after the fence is cancelled before provider entry.
+
+Idle means ownership release, not a successful persistence receipt: dropping a
+turn can release a pending, publication-uncertain finalizer. An interactive
+transition must handle its native terminal/persistence outcome separately.
+Dropping an uncommitted guard reopens only its exact generation, preserving
+queued inputs and accepted settings; it cannot undo cancellation already sent.
+Keep one guard while replacing a pending selection with a newer request.
+
+After the candidate has been prepared and the current work settled, consuming
+`retire()` requires zero outstanding permits, permanently closes admission,
+detaches the old native/model routes, and discards only never-taken queued input.
+Old runtime and permission aliases cannot regain mutation or admission authority.
+Returning to the same session may register fresh routes while old aliases still
+exist; dropping an old registration cannot remove its replacement. A failed busy
+retirement releases its guard and preserves queued input. Retirement does not
+delete canonical history, flush uncertain observations, close a shared engine,
+or revoke independently supplied core session handles.
+
+### Runtime controls and persistence
+
 Runtime `rename`, `compact`, and `set_max_history_turns` expose the conversation's
 existing durable operations through the same admission lease as queued jobs and
 preference saves. They are borrowed, inert-before-poll futures. A pending save
@@ -146,6 +185,11 @@ failure does not suppress the session attempt; a session error, `Unchanged`, or
 retains its existing conflict and ambiguous-publication semantics. No retries,
 rollback of accepted selection, detached writer or implied all-or-nothing
 transaction is added.
+
+The returned outer `Result` reports lifecycle admission failure before either
+target is touched. Once admitted, `NativeModelPreferenceCommit` retains the two
+independent target outcomes, and the lifecycle permit covers both attempts even
+when the session target is deferred, unchanged, or fails.
 
 `NativeModelPreferenceCommit` reports the captured `generation`, separate
 `session` and `user_defaults` results, and the exact published user config on

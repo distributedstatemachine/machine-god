@@ -382,6 +382,8 @@ pub struct NativeReferenceHost {
     loaded_config: LoadedNativeConfig,
     credential_source: Option<AiGatewayCredentialSource>,
     terminal_shutdown: Option<crate::NativeOwnedWorkerCompletion>,
+    terminal_lifecycle: Option<crate::NativeTerminalLifecycleRequester>,
+    undo_tracker: Option<Arc<FileUndoTracker>>,
     permissions: Option<Arc<crate::NativePermissionController>>,
     permission_contexts: Option<Arc<crate::NativePermissionContexts>>,
 }
@@ -612,6 +614,7 @@ impl NativeReferenceHost {
         options: PreparedCompositionOptions,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_prepared_selections(&loaded_config, &options)?;
+        let undo_tracker = options.undo_tracker.clone();
         let model_routes = options.model_routes.clone();
         let observations = options.observations.clone();
         let permissions = options.permissions.clone();
@@ -643,6 +646,10 @@ impl NativeReferenceHost {
             observations,
             permissions,
         )
+        .map(|mut host| {
+            host.undo_tracker = undo_tracker;
+            host
+        })
     }
 
     /// Composes a reference host over an explicitly injected AI Gateway transport.
@@ -1018,6 +1025,7 @@ impl NativeReferenceHost {
         options: PreparedCompositionOptions,
     ) -> Result<Self, NativeReferenceHostBuildError> {
         validate_prepared_selections(&loaded_config, &options)?;
+        let undo_tracker = options.undo_tracker.clone();
         let model_routes = options.model_routes.clone();
         let observations = options.observations.clone();
         let permissions = options.permissions.clone();
@@ -1043,6 +1051,10 @@ impl NativeReferenceHost {
             observations,
             permissions,
         )
+        .map(|mut host| {
+            host.undo_tracker = undo_tracker;
+            host
+        })
     }
 
     /// Returns the composed provider-neutral engine.
@@ -1060,19 +1072,38 @@ impl NativeReferenceHost {
         &self,
         conversation: crate::NativeConversation,
     ) -> Result<crate::NativeConversation, crate::NativeConversationError> {
-        let Some(controller) = &self.permissions else {
+        if self.permissions.is_none() {
             return Ok(conversation);
-        };
-        let contexts = self
-            .permission_contexts
-            .as_ref()
-            .ok_or(crate::NativeConversationError::Engine)?;
+        }
         let config = self.loaded_config.config();
         let policy = crate::NativePermissionPolicySnapshot::new(
             config.permission_mode(),
             Arc::new(config.permission_rules().clone()),
         )
         .with_sandbox_mode(config.sandbox_mode());
+        self.configure_conversation_permissions_with_policy(conversation, policy)
+    }
+
+    /// Attaches the exact host routes with an explicitly selected policy.
+    /// This is trusted host authority, not restoration of prior live grants.
+    /// Saved rules are validated and the supplied policy replaces config defaults.
+    ///
+    /// # Errors
+    /// Rejects hosts without native permission composition, duplicate/busy
+    /// registration, or invalid saved permission metadata.
+    pub fn configure_conversation_permissions_with_policy(
+        &self,
+        conversation: crate::NativeConversation,
+        policy: crate::NativePermissionPolicySnapshot,
+    ) -> Result<crate::NativeConversation, crate::NativeConversationError> {
+        let controller = self
+            .permissions
+            .as_ref()
+            .ok_or(crate::NativeConversationError::Engine)?;
+        let contexts = self
+            .permission_contexts
+            .as_ref()
+            .ok_or(crate::NativeConversationError::Engine)?;
         conversation
             .with_permission_controller(controller, policy)?
             .with_permission_contexts(contexts)
@@ -1086,6 +1117,22 @@ impl NativeReferenceHost {
     #[must_use]
     pub fn terminal_shutdown_completion(&self) -> Option<crate::NativeOwnedWorkerCompletion> {
         self.terminal_shutdown.clone()
+    }
+
+    /// Returns this complete terminal host's explicit session-lifecycle authority.
+    /// Clones and unpolled requests do not keep the host alive. Legacy terminal
+    /// composition returns `None`; this does not initialize a fallback supervisor.
+    #[must_use]
+    pub fn terminal_lifecycle_requester(&self) -> Option<crate::NativeTerminalLifecycleRequester> {
+        self.terminal_lifecycle.clone()
+    }
+
+    /// Returns the exact tracker injected into all five file mutation tools.
+    /// Hosts constructed without conversation options return `None`; no tracker
+    /// is manufactured, cleared, or granted new filesystem authority here.
+    #[must_use]
+    pub fn undo_tracker(&self) -> Option<Arc<FileUndoTracker>> {
+        self.undo_tracker.clone()
     }
 
     /// Returns the concrete store shared exactly with the engine, result reader,
@@ -1286,6 +1333,9 @@ impl NativeReferenceHost {
         let terminal_shutdown = host_resource
             .as_ref()
             .map(NativeTerminalHostResource::completion);
+        let terminal_lifecycle = host_resource
+            .as_ref()
+            .map(NativeTerminalHostResource::lifecycle_requester);
         let builder = match host_resource {
             Some(resource) => builder.host_resource(resource),
             None => builder,
@@ -1305,6 +1355,8 @@ impl NativeReferenceHost {
             loaded_config,
             credential_source,
             terminal_shutdown,
+            terminal_lifecycle,
+            undo_tracker: None,
             permissions,
             permission_contexts,
         })

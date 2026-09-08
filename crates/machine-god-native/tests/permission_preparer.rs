@@ -401,7 +401,8 @@ fn read_session_grant_satisfies_write_disclosure_but_reset_retires_it() {
         .runtime
         .permissions()
         .unwrap()
-        .set_mode(PermissionMode::Auto);
+        .set_mode(PermissionMode::Auto)
+        .unwrap();
     harness.run();
     assert_eq!(*harness.prompt.calls.lock().unwrap(), 2);
     assert_eq!(

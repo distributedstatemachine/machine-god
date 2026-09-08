@@ -38,7 +38,7 @@ type Error = NativePermissionContextError;
 /// At most 64 weak exact-session routes; this does not own sessions or start work.
 #[derive(Default)]
 pub struct NativePermissionContexts {
-    routes: Mutex<Vec<Weak<ContextSession>>>,
+    routes: Arc<Mutex<Vec<Weak<ContextSession>>>>,
 }
 impl NativePermissionContexts {
     #[must_use]
@@ -63,6 +63,8 @@ impl NativePermissionContexts {
         let owner = Arc::new(ContextSession {
             session: session.clone(),
             active: Mutex::new(None),
+            retired: AtomicBool::new(false),
+            routes: Arc::downgrade(&self.routes),
         });
         routes.push(Arc::downgrade(&owner));
         Ok(owner)
@@ -117,8 +119,28 @@ impl fmt::Debug for NativePermissionContexts {
 pub(crate) struct ContextSession {
     session: Session,
     active: Mutex<Option<Weak<ContextTurn>>>,
+    retired: AtomicBool,
+    routes: Weak<Mutex<Vec<Weak<Self>>>>,
 }
 impl ContextSession {
+    pub(crate) fn retire(self: &Arc<Self>) {
+        self.retired.store(true, Ordering::Release);
+        let turn = self
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+            .and_then(|turn| turn.upgrade());
+        if let Some(turn) = turn {
+            turn.open.store(false, Ordering::Release);
+        }
+        if let Some(routes) = self.routes.upgrade() {
+            routes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .retain(|route| !Weak::ptr_eq(route, &Arc::downgrade(self)));
+        }
+    }
     pub(crate) fn begin(
         self: &Arc<Self>,
         turn: &Turn,
@@ -136,14 +158,16 @@ impl ContextSession {
             .active
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if active
-            .as_ref()
-            .and_then(Weak::upgrade)
-            .is_some_and(|turn| turn.live())
+        if self.retired.load(Ordering::Acquire)
+            || active
+                .as_ref()
+                .and_then(Weak::upgrade)
+                .is_some_and(|turn| turn.live())
         {
             return Err(Error::Unavailable);
         }
         let state = Arc::new(ContextTurn {
+            owner: Arc::downgrade(self),
             handle: turn.handle(),
             open: AtomicBool::new(true),
             root,
@@ -159,6 +183,7 @@ impl ContextSession {
     }
 }
 struct ContextTurn {
+    owner: Weak<ContextSession>,
     handle: TurnHandle,
     open: AtomicBool,
     root: Option<String>,
@@ -168,7 +193,12 @@ struct ContextTurn {
 }
 impl ContextTurn {
     fn live(&self) -> bool {
-        self.open.load(Ordering::Acquire) && !self.handle.is_cancelled()
+        self.open.load(Ordering::Acquire)
+            && !self.handle.is_cancelled()
+            && self
+                .owner
+                .upgrade()
+                .is_some_and(|owner| !owner.retired.load(Ordering::Acquire))
     }
 }
 pub(crate) struct ContextRegistration {
@@ -266,6 +296,39 @@ mod tests {
     use machine_god_testkit::{
         InMemorySessionStore, ScriptedModelProvider, ScriptedPermissionHandler,
     };
+    #[test]
+    fn retired_context_owner_cannot_remove_same_identity_replacement_or_revive_turn() {
+        let engine = Engine::builder()
+            .provider(ScriptedModelProvider::new("fixture", []))
+            .session_store(InMemorySessionStore::new())
+            .permission_handler(ScriptedPermissionHandler::new([]))
+            .build()
+            .unwrap();
+        let session = engine
+            .create_session(
+                SessionId::new("context-retire").unwrap(),
+                SessionIncarnationId::new("same-life").unwrap(),
+            )
+            .unwrap();
+        let contexts = NativePermissionContexts::new();
+        let old = contexts.register(&session).unwrap();
+        let turn = futures_executor::block_on(session.prompt("root")).unwrap();
+        let registration = old
+            .begin(&turn, Some("root".into()), None, None, None)
+            .unwrap();
+        assert!(registration.state.live());
+        old.retire();
+        assert!(!registration.state.live());
+        assert!(old.begin(&turn, None, None, None, None).is_err());
+        let replacement = contexts.register(&session).unwrap();
+        let fresh = replacement.begin(&turn, None, None, None, None).unwrap();
+        old.retire();
+        drop(registration);
+        drop(old);
+        assert!(fresh.state.live());
+        assert_eq!(contexts.routes.lock().unwrap().len(), 1);
+    }
+
     #[test]
     fn weak_routes_enforce_capacity_and_release_without_owning_sessions() {
         let engine = Engine::builder()

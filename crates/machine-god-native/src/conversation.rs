@@ -16,6 +16,7 @@ use machine_god_core::{
 };
 use serde_json::{Value, json};
 
+use crate::conversation_lifecycle::{LifecycleGate, LifecyclePermit, LifecyclePhase};
 use crate::conversation_observations::{ObservationBatch, ObservationSession};
 use crate::permission_context::{ContextRegistration, ContextSession};
 
@@ -152,6 +153,7 @@ impl Checkpoint {
 /// provider or reexecutes a historical tool call. Other handles to the same core
 /// session still obey core's revision and turn leases.
 pub struct NativeConversation {
+    lifecycle: std::sync::OnceLock<Arc<LifecycleGate>>,
     session: Session,
     active: Arc<AtomicBool>,
     observations: Option<Arc<ObservationSession>>,
@@ -168,6 +170,66 @@ impl fmt::Debug for NativeConversation {
 }
 
 impl NativeConversation {
+    pub(crate) fn bind_lifecycle(
+        &self,
+        gate: &Arc<LifecycleGate>,
+    ) -> Result<(), NativeConversationError> {
+        if self.is_busy() {
+            return Err(NativeConversationError::Busy);
+        }
+        if let Some(current) = self.lifecycle.get() {
+            return if Arc::ptr_eq(current, gate) {
+                Ok(())
+            } else {
+                Err(NativeConversationError::Engine)
+            };
+        }
+        if let Some(owner) = &self.permissions {
+            owner
+                .bind_lifecycle(gate)
+                .map_err(|_| NativeConversationError::Engine)?;
+        }
+        self.lifecycle
+            .set(Arc::clone(gate))
+            .map_err(|_| NativeConversationError::Engine)
+    }
+
+    pub(crate) fn retire_lifecycle_routes(&self) {
+        if self
+            .lifecycle
+            .get()
+            .is_none_or(|gate| gate.phase() != LifecyclePhase::Retired)
+        {
+            return;
+        }
+        if let Some(owner) = &self.permissions {
+            owner.retire();
+        }
+        if let Some(owner) = &self.permission_contexts {
+            owner.retire();
+        }
+        if let Some(owner) = &self.observations {
+            owner.retire();
+        }
+    }
+
+    fn acquire_lifecycle(&self) -> Result<Option<LifecyclePermit>, NativeConversationError> {
+        self.lifecycle
+            .get()
+            .map(|gate| gate.acquire().map_err(|_| NativeConversationError::Busy))
+            .transpose()
+    }
+
+    fn acquire_admission(&self) -> Result<AdmissionLease, NativeConversationError> {
+        if self
+            .lifecycle
+            .get()
+            .is_some_and(|gate| gate.phase() == LifecyclePhase::Retired)
+        {
+            return Err(NativeConversationError::Busy);
+        }
+        AdmissionLease::acquire(&self.active)
+    }
     /// Adopts a validated live session without effects or inferred metadata.
     ///
     /// # Errors
@@ -184,6 +246,7 @@ impl NativeConversation {
         NativeModelPreferences::from_metadata(&record.metadata)
             .map_err(NativeConversationError::InvalidModelPreferences)?;
         Ok(Self {
+            lifecycle: std::sync::OnceLock::new(),
             session,
             active: Arc::new(AtomicBool::new(false)),
             observations: None,
@@ -317,7 +380,7 @@ impl NativeConversation {
         now_ms: i64,
     ) -> BoxFuture<'a, Result<SessionRevision, NativeConversationError>> {
         Box::pin(async move {
-            let _lease = AdmissionLease::acquire(&self.active)?;
+            let _lease = self.acquire_admission()?;
             rename_native_session(&self.session, title, now_ms)
                 .await
                 .map_err(|error| match error {
@@ -347,7 +410,7 @@ impl NativeConversation {
     pub fn model_preferences(
         &self,
     ) -> Result<Option<NativeModelPreferences>, NativeConversationError> {
-        let _lease = AdmissionLease::acquire(&self.active)?;
+        let _lease = self.acquire_admission()?;
         if self.session.has_active_turn() {
             return Err(NativeConversationError::Busy);
         }
@@ -366,7 +429,7 @@ impl NativeConversation {
         now_ms: i64,
     ) -> BoxFuture<'_, Result<SessionRevision, NativeConversationError>> {
         Box::pin(async move {
-            let _lease = AdmissionLease::acquire(&self.active)?;
+            let _lease = self.acquire_admission()?;
             if self.session.has_active_turn() {
                 return Err(NativeConversationError::Busy);
             }
@@ -398,7 +461,7 @@ impl NativeConversation {
     /// # Errors
     /// Returns `Busy` or rejects malformed preferences and invalid selections.
     pub fn context_preferences(&self) -> Result<NativeContextPreferences, NativeConversationError> {
-        let _lease = AdmissionLease::acquire(&self.active)?;
+        let _lease = self.acquire_admission()?;
         if self.session.has_active_turn() {
             return Err(NativeConversationError::Busy);
         }
@@ -412,7 +475,7 @@ impl NativeConversation {
     #[must_use]
     pub fn compact(&self, now_ms: i64) -> BoxFuture<'_, Result<bool, NativeConversationError>> {
         Box::pin(async move {
-            let _lease = AdmissionLease::acquire(&self.active)?;
+            let _lease = self.acquire_admission()?;
             if self.session.has_active_turn() {
                 return Err(NativeConversationError::Busy);
             }
@@ -441,7 +504,7 @@ impl NativeConversation {
         now_ms: i64,
     ) -> BoxFuture<'_, Result<SessionRevision, NativeConversationError>> {
         Box::pin(async move {
-            let _lease = AdmissionLease::acquire(&self.active)?;
+            let _lease = self.acquire_admission()?;
             if self.session.has_active_turn() {
                 return Err(NativeConversationError::Busy);
             }
@@ -487,7 +550,7 @@ impl NativeConversation {
     /// # Errors
     /// Returns `Busy` or rejects invalid native checkpoint state.
     pub fn paused_turn(&self) -> Result<Option<NativePausedTurn>, NativeConversationError> {
-        let _lease = AdmissionLease::acquire(&self.active)?;
+        let _lease = self.acquire_admission()?;
         if self.session.has_active_turn() {
             return Err(NativeConversationError::Busy);
         }
@@ -511,7 +574,7 @@ impl NativeConversation {
     /// # Errors
     /// Rejects active work or invalid typed facts/checkpoint relationships.
     pub fn history(&self) -> Result<NativeConversationHistory, NativeConversationError> {
-        let _lease = AdmissionLease::acquire(&self.active)?;
+        let _lease = self.acquire_admission()?;
         if self.session.has_active_turn() {
             return Err(NativeConversationError::Busy);
         }
@@ -527,7 +590,7 @@ impl NativeConversation {
         now_ms: i64,
     ) -> BoxFuture<'_, Result<Option<SessionRevision>, NativeConversationError>> {
         Box::pin(async move {
-            let _lease = AdmissionLease::acquire(&self.active)?;
+            let _lease = self.acquire_admission()?;
             if self.session.has_active_turn() {
                 return Err(NativeConversationError::Busy);
             }
@@ -587,7 +650,7 @@ impl NativeConversation {
         + 'a,
     ) -> BoxFuture<'a, Result<SessionRevision, NativeConversationError>> {
         Box::pin(async move {
-            let _lease = AdmissionLease::acquire(&self.active)?;
+            let _lease = self.acquire_admission()?;
             if self.session.has_active_turn() {
                 return Err(NativeConversationError::Busy);
             }
@@ -694,21 +757,61 @@ impl NativeConversation {
         model: Option<NativeModelSnapshot>,
         now_ms: i64,
     ) -> Result<NativeConversationTurn, NativeConversationError> {
-        let policy = self.permissions.as_ref().map(|owner| owner.snapshot());
+        let policy = self
+            .permissions
+            .as_ref()
+            .map(|owner| owner.snapshot())
+            .transpose()
+            .map_err(|_| NativeConversationError::Engine)?;
         self.start_with_policy(input, model, policy, now_ms).await
     }
 
     // Keep reservation, exact-turn registrations, and rollback-owned leases in
     // one linear admission scope; no provider work is polled between them.
-    #[allow(clippy::too_many_lines)]
     pub(crate) async fn start_with_policy(
+        &self,
+        input: PendingInput,
+        model: Option<NativeModelSnapshot>,
+        policy: Option<crate::NativePermissionPolicySnapshot>,
+        now_ms: i64,
+    ) -> Result<NativeConversationTurn, NativeConversationError> {
+        let permit = self.acquire_lifecycle()?;
+        let mut turn = self
+            .start_with_policy_inner(input, model, policy, now_ms, permit.as_ref())
+            .await?;
+        turn.lease.as_mut().expect("admitted turn retains lease").1 = permit;
+        Ok(turn)
+    }
+
+    pub(crate) async fn start_with_policy_admitted(
+        &self,
+        input: PendingInput,
+        model: Option<NativeModelSnapshot>,
+        policy: Option<crate::NativePermissionPolicySnapshot>,
+        now_ms: i64,
+        permit: &LifecyclePermit,
+    ) -> Result<NativeConversationTurn, NativeConversationError> {
+        if self
+            .lifecycle
+            .get()
+            .is_none_or(|gate| !permit.belongs_to(gate))
+        {
+            return Err(NativeConversationError::Engine);
+        }
+        self.start_with_policy_inner(input, model, policy, now_ms, Some(permit))
+            .await
+    }
+
+    #[allow(clippy::too_many_lines)]
+    async fn start_with_policy_inner(
         &self,
         mut input: PendingInput,
         model: Option<NativeModelSnapshot>,
         policy: Option<crate::NativePermissionPolicySnapshot>,
         now_ms: i64,
+        permit: Option<&LifecyclePermit>,
     ) -> Result<NativeConversationTurn, NativeConversationError> {
-        let lease = AdmissionLease::acquire(&self.active)?;
+        let lease = self.acquire_admission()?;
         if self.session.has_active_turn() {
             return Err(NativeConversationError::Busy);
         }
@@ -797,12 +900,14 @@ impl NativeConversation {
                     .map_err(NativeConversationError::PermissionContext)
             })
             .transpose()?;
-        let permission_turn = self.bind_permission_turn(&turn, policy)?;
+        let permission_turn = self.bind_permission_turn(&turn, policy, permit)?;
         if let Some(owner) = &self.permissions {
-            owner
-                .reconcile_rules()
-                .await
-                .map_err(|_| NativeConversationError::Engine)?;
+            if let Some(permit) = permit {
+                owner.reconcile_rules_admitted(permit).await
+            } else {
+                owner.reconcile_rules().await
+            }
+            .map_err(|_| NativeConversationError::Engine)?;
         }
         if let Some(owner) = &self.observations {
             owner
@@ -837,12 +942,16 @@ impl NativeConversation {
         &self,
         turn: &Turn,
         policy: Option<crate::NativePermissionPolicySnapshot>,
+        permit: Option<&LifecyclePermit>,
     ) -> Result<Option<crate::NativePermissionTurn>, NativeConversationError> {
         let registration = match (&self.permissions, policy) {
             (Some(owner), Some(policy)) => Some(
-                owner
-                    .begin_turn(turn, policy)
-                    .map_err(|_| NativeConversationError::Engine)?,
+                if let Some(permit) = permit {
+                    owner.begin_turn_admitted(turn, policy, permit)
+                } else {
+                    owner.begin_turn(turn, policy)
+                }
+                .map_err(|_| NativeConversationError::Engine)?,
             ),
             (None, None) => None,
             _ => return Err(NativeConversationError::Engine),
@@ -1075,13 +1184,13 @@ impl Drop for PendingInput {
     }
 }
 
-struct AdmissionLease(Arc<AtomicBool>);
+struct AdmissionLease(Arc<AtomicBool>, Option<LifecyclePermit>);
 impl AdmissionLease {
     fn acquire(active: &Arc<AtomicBool>) -> Result<Self, NativeConversationError> {
         active
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| NativeConversationError::Busy)?;
-        Ok(Self(Arc::clone(active)))
+        Ok(Self(Arc::clone(active), None))
     }
 }
 impl Drop for AdmissionLease {

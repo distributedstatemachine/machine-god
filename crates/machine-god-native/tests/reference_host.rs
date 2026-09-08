@@ -505,9 +505,10 @@ fn conversation_composition_shares_exact_undo_across_all_five_mutations_with_opt
         ).unwrap();
         assert_eq!(
             Arc::strong_count(&tracker),
-            6,
-            "one caller and five exact tool shares"
+            7,
+            "one caller, one host, and five exact tool shares"
         );
+        assert!(Arc::ptr_eq(&tracker, &host.undo_tracker().unwrap()));
         assert!(transport.requests().is_empty());
         assert!(prompter.requests().is_empty());
         assert_eq!(
@@ -781,7 +782,8 @@ fn conversation_production_composition_discovers_credentials_without_clearing_pr
         host.credential_source(),
         Some(AiGatewayCredentialSource::AiGatewayApiKey)
     );
-    assert_eq!(Arc::strong_count(&tracker), 6);
+    assert_eq!(Arc::strong_count(&tracker), 7);
+    assert!(Arc::ptr_eq(&tracker, &host.undo_tracker().unwrap()));
     assert!(!format!("{host:?}").contains(marker));
     assert!(prompter.requests().is_empty());
     assert_eq!(fs::read_dir(&state).unwrap().count(), 0);
@@ -829,7 +831,8 @@ fn acquired_catalog_credential_moves_into_host_with_exact_source_without_runtime
         assert_eq!(host.credential_source(), Some(source));
         assert_eq!(host.loaded_config().origin(), origin);
         assert_eq!(host.loaded_config().config().schema_version(), schema);
-        assert_eq!(Arc::strong_count(&tracker), 6);
+        assert_eq!(Arc::strong_count(&tracker), 7);
+        assert!(Arc::ptr_eq(&tracker, &host.undo_tracker().unwrap()));
         assert!(prompter.requests().is_empty());
         assert_eq!(fs::read_dir(state).unwrap().count(), 0);
         assert!(!format!("{host:?} {catalog:?}").contains(marker));
@@ -3003,10 +3006,30 @@ fn v1_projection_composes_without_migrating_observable_loaded_schema() {
         AI_GATEWAY_DEFAULT_MODEL
     );
     assert_eq!(host.credential_source(), None);
+    assert!(host.terminal_lifecycle_requester().is_none());
+    assert!(host.undo_tracker().is_none());
     assert!(transport.requests().is_empty());
     assert!(prompter.requests().is_empty());
     assert!(directory_is_empty(&sessions));
     assert_eq!(host.engine().provider().name(), "vercel_ai_gateway");
+    let conversation = futures_executor::block_on(machine_god_native::NativeConversation::create(
+        host.session_lifecycle(),
+        machine_god_native::NativeSessionMetadata::new(
+            &workspace,
+            100,
+            machine_god_native::NativeSessionOrigin::Cli,
+        )
+        .unwrap(),
+    ))
+    .unwrap();
+    let policy = machine_god_native::NativePermissionPolicySnapshot::new(
+        machine_god_native::PermissionMode::Yolo,
+        Arc::new(machine_god_native::NativeConfiguredPermissionRules::default()),
+    );
+    assert!(
+        host.configure_conversation_permissions_with_policy(conversation, policy)
+            .is_err()
+    );
     let engine = host.into_engine();
     assert_eq!(engine.provider().name(), "vercel_ai_gateway");
 }
@@ -3107,6 +3130,15 @@ fn complete_terminal_composition_registers_all_actions_and_survives_into_engine(
     assert!(state.join("terminal-startup").is_dir());
     assert!(state.join("tool-result-archive/archive-lock-v1").is_file());
     let shutdown = host.terminal_shutdown_completion().unwrap();
+    let lifecycle = host.terminal_lifecycle_requester().unwrap();
+    let pending_activation = lifecycle.activate_session(
+        machine_god_core::BackgroundOutputOwner::new(
+            SessionId::new("unpolled-activation").unwrap(),
+            SessionIncarnationId::new("unpolled-incarnation").unwrap(),
+        ),
+        CancellationToken::new(),
+    );
+    assert!(!state.join("terminal-v1").exists());
     assert!(!shutdown.is_complete());
     let engine = host.into_engine();
     let terminal = engine.tool(&ToolName::new("terminal").unwrap()).unwrap();
@@ -3166,6 +3198,8 @@ fn complete_terminal_composition_registers_all_actions_and_survives_into_engine(
         shutdown.is_complete(),
         "the completion observer does not own the host"
     );
+    assert!(futures_executor::block_on(pending_activation).is_err());
+    drop(lifecycle);
 }
 
 fn assert_full_terminal_limits(engine: &machine_god_core::Engine) {

@@ -274,8 +274,31 @@ tests and ten CLI frame tests. Its core checked-revision and guarded-load
 prerequisites pass the complete core suite and doctests. The integration's
 first workspace Clippy run rejected one CLI boolean expression; after the
 equivalent simplification, all 17 sessions renderer tests and warnings-denied
-workspace Clippy pass. Fresh release and full workspace tests remain to be run;
-previous checkpoint results above are not evidence for these new source changes.
+workspace Clippy pass. Exact `0382b0f` then passes a fresh release build and all
+19 release sessions integration tests. Its replacement full workspace, doctests,
+formatting and documentation checks pass; Python checks pass 263 tests with 14
+skips. The first workspace run failed 24 child-reaping admission checks and one
+tmux check. The unchanged failed binary passes focused PTY/startup/staged checks,
+and the unchanged replacement passes all 1,621 native unit tests with seven
+existing ignores. No deadline or test-concurrency relaxation was made; the
+replacement is not a claim that the unexplained first-run cause was fixed.
+
+The current integration adds native runtime quiescence and exact route retirement,
+including retained-alias and attach-time control races. Resume validation also
+rejects malformed saved permission rules before canonical reconciliation. The
+host retains its actual injected undo tracker and exposes explicit terminal
+lifecycle authority and current-policy candidate attachment. Combined checks
+pass 14 resume, 37 runtime, 18 controller, 11 preparer and 47 reference-host tests,
+plus 24 internal lifecycle/route tests. These are prerequisites for the native
+interactive owner, not a delivered session-switch feature.
+CLI regression tests and workspace Clippy are still running for this integration.
+The terminal component now supports bounded exact-principal handoff/reset,
+immutable journal ownership, generation/writer revocation, transferred history
+and retained-indeterminate cleanup. Its 74 focused worker tests and scoped Clippy
+pass; the integration passes 104 terminal host/start/catalog/wait tests with one
+existing helper ignore. Pinned clear/new carry terminals forward;
+reset and live resume use stop/forget. The native owner must preserve that
+distinction and retain started operations through their actual receipts.
 
 The integrated preparer passes all five real file mutations, actual reviewer
 Allow/Ask/error and cancellation, read-grant/reset, canonical terminal identity,

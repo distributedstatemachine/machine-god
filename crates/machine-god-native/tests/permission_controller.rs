@@ -16,21 +16,31 @@ mod file_composition;
 #[test]
 fn taken_sandbox_selection_survives_changes_yolo_and_reset() {
     let fixture = Fixture::new(PermissionMode::Auto);
-    fixture.owner.set_sandbox_mode(NativeSandboxMode::Os);
-    let taken = fixture.owner.snapshot();
+    fixture
+        .owner
+        .set_sandbox_mode(NativeSandboxMode::Os)
+        .unwrap();
+    let taken = fixture.owner.snapshot().unwrap();
     assert_eq!(taken.sandbox_mode(), NativeSandboxMode::Os);
-    fixture.owner.set_sandbox_mode(NativeSandboxMode::None);
-    fixture.owner.set_mode(PermissionMode::Yolo);
+    fixture
+        .owner
+        .set_sandbox_mode(NativeSandboxMode::None)
+        .unwrap();
+    fixture.owner.set_mode(PermissionMode::Yolo).unwrap();
     let yolo = fixture
         .owner
         .snapshot()
+        .unwrap()
         .with_sandbox_mode(NativeSandboxMode::Os);
     assert_eq!(yolo.sandbox_mode(), NativeSandboxMode::Os);
     assert_eq!(yolo.effective_sandbox_mode(), NativeSandboxMode::None);
     fixture.owner.reset().unwrap();
-    assert_eq!(fixture.owner.snapshot().mode(), PermissionMode::Ask);
     assert_eq!(
-        fixture.owner.snapshot().sandbox_mode(),
+        fixture.owner.snapshot().unwrap().mode(),
+        PermissionMode::Ask
+    );
+    assert_eq!(
+        fixture.owner.snapshot().unwrap().sandbox_mode(),
         NativeSandboxMode::None
     );
     assert_eq!(taken.effective_sandbox_mode(), NativeSandboxMode::Os);
@@ -40,7 +50,10 @@ fn taken_sandbox_selection_survives_changes_yolo_and_reset() {
 #[test]
 fn execution_policy_lookup_uses_exact_live_turn_and_taken_selection() {
     let fixture = Fixture::new(PermissionMode::Auto);
-    fixture.owner.set_sandbox_mode(NativeSandboxMode::Os);
+    fixture
+        .owner
+        .set_sandbox_mode(NativeSandboxMode::Os)
+        .unwrap();
     let (turn, registration) = fixture.turn();
     let mut context = ToolContext {
         session_id: fixture.session.id(),
@@ -48,8 +61,11 @@ fn execution_policy_lookup_uses_exact_live_turn_and_taken_selection() {
         turn_id: turn.id().clone(),
         call_id: ToolCallId::new("call").unwrap(),
     };
-    fixture.owner.set_mode(PermissionMode::Yolo);
-    fixture.owner.set_sandbox_mode(NativeSandboxMode::None);
+    fixture.owner.set_mode(PermissionMode::Yolo).unwrap();
+    fixture
+        .owner
+        .set_sandbox_mode(NativeSandboxMode::None)
+        .unwrap();
     let policy = fixture.controller.policy_for_execution(&context).unwrap();
     assert_eq!(policy.mode(), PermissionMode::Auto);
     assert_eq!(policy.effective_sandbox_mode(), NativeSandboxMode::Os);
@@ -235,7 +251,10 @@ impl Fixture {
 
     fn turn(&self) -> (Turn, NativePermissionTurn) {
         let turn = block_on(self.session.prompt("user request")).unwrap();
-        let registration = self.owner.begin_turn(&turn, self.owner.snapshot()).unwrap();
+        let registration = self
+            .owner
+            .begin_turn(&turn, self.owner.snapshot().unwrap())
+            .unwrap();
         (turn, registration)
     }
 
@@ -364,7 +383,10 @@ fn reset_revokes_delayed_admission_without_changing_taken_yolo_mode() {
     fixture.owner.reset().unwrap();
     allowed(authorization);
     allowed(fixture.authorize(&turn).unwrap());
-    assert_eq!(fixture.owner.snapshot().mode(), PermissionMode::Ask);
+    assert_eq!(
+        fixture.owner.snapshot().unwrap().mode(),
+        PermissionMode::Ask
+    );
     assert_eq!(fixture.prompt.calls.load(Ordering::SeqCst), 0);
 }
 
@@ -522,7 +544,7 @@ fn foreign_turn_binding_and_cancelled_turn_execution_are_rejected() {
     assert!(
         other
             .owner
-            .begin_turn(&turn, other.owner.snapshot())
+            .begin_turn(&turn, other.owner.snapshot().unwrap())
             .is_err()
     );
 }

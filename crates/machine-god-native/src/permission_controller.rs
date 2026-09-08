@@ -1,10 +1,13 @@
 //! Native permission ownership. Preparation adapters retain effect authority;
 //! this owner retains policy, prompt generations, grants and publication state.
 
+#[cfg(test)]
+mod lifecycle_tests;
 mod rules;
 
+use crate::conversation_lifecycle::{LifecycleGate, LifecyclePermit, LifecyclePhase};
 use std::fmt;
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 
 use machine_god_core::{
     BoxFuture, CancellationToken, PermissionAuthorization, PermissionDecision, PermissionError,
@@ -22,6 +25,7 @@ pub use rules::{NativePermissionRuleChange, NativePermissionRuleProposal};
 
 const MAX_SESSIONS: usize = 64;
 const MAX_GRANTS: usize = 1024;
+const MAX_CONTROL_OPERATIONS: usize = 256;
 
 /// Combined result after a preparer evaluates every actual target. A deny on
 /// any target wins; `Allow` requires all targets to have an explicit allow.
@@ -141,7 +145,7 @@ impl NativePermissionPolicySnapshot {
 /// Shared handler with weak, exact-incarnation routes. A live session owner is
 /// required; the table never restores grants from durable metadata.
 pub struct NativePermissionController {
-    routes: Mutex<Vec<Weak<NativePermissionSession>>>,
+    routes: Arc<Mutex<Vec<Weak<NativePermissionSession>>>>,
     preparer: Arc<dyn NativePermissionActionPreparer>,
     prompter: Arc<dyn PermissionPrompter>,
 }
@@ -163,7 +167,8 @@ impl NativePermissionController {
             })
             .ok_or_else(unavailable)?;
         let state = lock(&owner.state);
-        if state.changing_rules
+        if state.retired
+            || state.changing_rules
             || state.uncertain_rules
             || state.active.as_ref().is_none_or(|attempt| {
                 attempt.handle.id() != turn
@@ -184,7 +189,7 @@ impl NativePermissionController {
         prompter: Arc<dyn PermissionPrompter>,
     ) -> Self {
         Self {
-            routes: Mutex::new(Vec::new()),
+            routes: Arc::new(Mutex::new(Vec::new())),
             preparer,
             prompter,
         }
@@ -212,7 +217,12 @@ impl NativePermissionController {
         let owner = Arc::new(NativePermissionSession {
             session,
             preparer: Arc::clone(&self.preparer),
-            state: Mutex::new(State {
+            #[cfg(any(target_os = "linux", target_os = "macos", test))]
+            routes: Arc::downgrade(&self.routes),
+            lifecycle: OnceLock::new(),
+            state: Arc::new(Mutex::new(State {
+                controls: 0,
+                retired: false,
                 policy,
                 epoch: 1,
                 rules_epoch: 1,
@@ -220,7 +230,7 @@ impl NativePermissionController {
                 grants: Vec::new(),
                 changing_rules: false,
                 uncertain_rules: false,
-            }),
+            })),
         });
         routes.push(Arc::downgrade(&owner));
         Ok(owner)
@@ -272,6 +282,8 @@ impl fmt::Debug for NativePermissionController {
 }
 
 struct State {
+    controls: usize,
+    retired: bool,
     policy: NativePermissionPolicySnapshot,
     epoch: u64,
     rules_epoch: u64,
@@ -298,7 +310,10 @@ struct Grant {
 pub struct NativePermissionSession {
     session: Session,
     preparer: Arc<dyn NativePermissionActionPreparer>,
-    state: Mutex<State>,
+    state: Arc<Mutex<State>>,
+    #[cfg(any(target_os = "linux", target_os = "macos", test))]
+    routes: Weak<Mutex<Vec<Weak<Self>>>>,
+    lifecycle: OnceLock<Arc<LifecycleGate>>,
 }
 
 impl fmt::Debug for NativePermissionSession {
@@ -308,19 +323,109 @@ impl fmt::Debug for NativePermissionSession {
 }
 
 impl NativePermissionSession {
-    #[must_use]
-    pub fn snapshot(&self) -> NativePermissionPolicySnapshot {
-        lock(&self.state).policy.clone()
+    #[cfg(any(target_os = "linux", target_os = "macos", test))]
+    pub(crate) fn bind_lifecycle(&self, gate: &Arc<LifecycleGate>) -> Result<(), PermissionError> {
+        let _permit = gate.acquire().map_err(|_| unavailable())?;
+        let state = lock(&self.state);
+        if state.retired || state.active.is_some() || state.changing_rules || state.controls != 0 {
+            return Err(unavailable());
+        }
+        if let Some(current) = self.lifecycle.get() {
+            return if Arc::ptr_eq(current, gate) {
+                Ok(())
+            } else {
+                Err(unavailable())
+            };
+        }
+        self.lifecycle
+            .set(Arc::clone(gate))
+            .map_err(|_| unavailable())
+    }
+
+    fn acquire_lifecycle(&self) -> Result<ControlPermit, PermissionError> {
+        let mut state = lock(&self.state);
+        if state.retired || state.controls == MAX_CONTROL_OPERATIONS {
+            return Err(unavailable());
+        }
+        let lifecycle = self
+            .lifecycle
+            .get()
+            .map(|gate| gate.acquire().map_err(|_| unavailable()))
+            .transpose()?;
+        state.controls += 1;
+        Ok(ControlPermit {
+            state: Arc::clone(&self.state),
+            _lifecycle: lifecycle,
+        })
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", test))]
+    fn check_admitted(&self, permit: &LifecyclePermit) -> Result<(), PermissionError> {
+        if lock(&self.state).retired
+            || self
+                .lifecycle
+                .get()
+                .is_none_or(|gate| !permit.belongs_to(gate))
+        {
+            return Err(unavailable());
+        }
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", test))]
+    pub(crate) fn retire(self: &Arc<Self>) {
+        let attempt = {
+            let mut state = lock(&self.state);
+            state.retired = true;
+            state.grants.clear();
+            state.active.take()
+        };
+        if let Some(routes) = self.routes.upgrade() {
+            lock(&routes).retain(|route| !Weak::ptr_eq(route, &Arc::downgrade(self)));
+        }
+        if let Some(attempt) = attempt {
+            attempt.cancellation.cancel();
+            self.preparer.close_turn(
+                &self.session.id(),
+                &self.session.incarnation_id(),
+                attempt.handle.id(),
+            );
+        }
+    }
+
+    /// # Errors
+    /// Rejects quiescing or retired lifecycle ownership.
+    pub fn snapshot(&self) -> Result<NativePermissionPolicySnapshot, PermissionError> {
+        let _permit = self.acquire_lifecycle()?;
+        let snapshot = lock(&self.state).policy.clone();
+        Ok(snapshot)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", test))]
+    pub(crate) fn snapshot_admitted(
+        &self,
+        permit: &LifecyclePermit,
+    ) -> Result<NativePermissionPolicySnapshot, PermissionError> {
+        self.check_admitted(permit)?;
+        Ok(lock(&self.state).policy.clone())
     }
 
     /// Changes future taken jobs only. This is not a sandbox backend switch.
-    pub fn set_mode(&self, mode: PermissionMode) {
+    /// # Errors
+    /// Rejects quiescing or retired lifecycle ownership.
+    pub fn set_mode(&self, mode: PermissionMode) -> Result<(), PermissionError> {
+        let _permit = self.acquire_lifecycle()?;
         lock(&self.state).policy.mode = mode;
+        Ok(())
     }
 
     /// Changes future taken jobs only; no running launch is silently widened.
-    pub fn set_sandbox_mode(&self, mode: NativeSandboxMode) {
+    /// # Errors
+    /// Rejects quiescing or retired lifecycle ownership.
+    pub fn set_sandbox_mode(&self, mode: NativeSandboxMode) -> Result<(), PermissionError> {
+        let _permit = self.acquire_lifecycle()?;
         lock(&self.state).policy.sandbox_mode = mode;
+        Ok(())
     }
 
     /// Clears grants and invalidates pending approvals before returning. Saved
@@ -328,6 +433,7 @@ impl NativePermissionSession {
     /// # Errors
     /// Refuses epoch wrap rather than admitting stale authority.
     pub fn reset(&self) -> Result<(), PermissionError> {
+        let _permit = self.acquire_lifecycle()?;
         let mut state = lock(&self.state);
         state.epoch = state.epoch.checked_add(1).ok_or_else(unavailable)?;
         state.grants.clear();
@@ -340,6 +446,28 @@ impl NativePermissionSession {
     /// # Errors
     /// Rejects duplicate live turns and failed metadata-editor construction.
     pub fn begin_turn(
+        self: &Arc<Self>,
+        turn: &Turn,
+        policy: NativePermissionPolicySnapshot,
+    ) -> Result<NativePermissionTurn, PermissionError> {
+        let permit = self.acquire_lifecycle()?;
+        let mut registration = self.begin_turn_inner(turn, policy)?;
+        registration.lifecycle = Some(permit);
+        Ok(registration)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", test))]
+    pub(crate) fn begin_turn_admitted(
+        self: &Arc<Self>,
+        turn: &Turn,
+        policy: NativePermissionPolicySnapshot,
+        permit: &LifecyclePermit,
+    ) -> Result<NativePermissionTurn, PermissionError> {
+        self.check_admitted(permit)?;
+        self.begin_turn_inner(turn, policy)
+    }
+
+    fn begin_turn_inner(
         self: &Arc<Self>,
         turn: &Turn,
         policy: NativePermissionPolicySnapshot,
@@ -359,18 +487,27 @@ impl NativePermissionSession {
             cancellation: CancellationToken::new(),
         });
         let mut state = lock(&self.state);
-        if state.active.is_some() || !self.session.has_active_turn() {
+        if state.retired || state.active.is_some() || !self.session.has_active_turn() {
             return Err(unavailable());
         }
         state.active = Some(Arc::clone(&attempt));
         Ok(NativePermissionTurn {
             owner: Arc::clone(self),
             attempt,
+            lifecycle: None,
         })
     }
 
     fn attempt(&self, turn: &TurnId) -> Result<(Arc<Attempt>, u64, u64), PermissionError> {
         let state = lock(&self.state);
+        if state.retired
+            || self
+                .lifecycle
+                .get()
+                .is_some_and(|gate| gate.phase() == LifecyclePhase::Retired)
+        {
+            return Err(unavailable());
+        }
         let attempt = state
             .active
             .as_ref()
@@ -391,6 +528,19 @@ impl NativePermissionSession {
 pub struct NativePermissionTurn {
     owner: Arc<NativePermissionSession>,
     attempt: Arc<Attempt>,
+    lifecycle: Option<ControlPermit>,
+}
+
+// Tracks even standalone control admission so attaching the runtime gate cannot
+// race a previously unbound operation. Gate release/wakers follow state cleanup.
+struct ControlPermit {
+    state: Arc<Mutex<State>>,
+    _lifecycle: Option<LifecyclePermit>,
+}
+impl Drop for ControlPermit {
+    fn drop(&mut self) {
+        lock(&self.state).controls -= 1;
+    }
 }
 
 impl fmt::Debug for NativePermissionTurn {
@@ -421,6 +571,7 @@ impl Drop for NativePermissionTurn {
             &self.owner.session.incarnation_id(),
             self.attempt.handle.id(),
         );
+        drop(self.lifecycle.take());
     }
 }
 
@@ -589,7 +740,8 @@ fn remember_grant(
     decision: PermissionPromptDecision,
 ) -> Result<(), PermissionError> {
     let mut state = lock(&owner.state);
-    if state.epoch != epoch
+    if state.retired
+        || state.epoch != epoch
         || state
             .active
             .as_ref()

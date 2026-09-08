@@ -41,6 +41,7 @@ type Result<T> = std::result::Result<T, TerminalCatalogViewError>;
     clippy::too_many_arguments,
     reason = "explicit owner, profile and projection authority"
 )]
+#[cfg(test)]
 pub(crate) fn list_with<B: TerminalSessionBackend>(
     registry: &mut TerminalRegistry<B>,
     store: &TerminalProfileStore,
@@ -51,6 +52,39 @@ pub(crate) fn list_with<B: TerminalSessionBackend>(
     controls: &TerminalAllowedControls,
     filters: &TerminalListFilters,
     now_ms: i64,
+) -> Result<TerminalActionResult> {
+    list_selected_with(
+        registry,
+        store,
+        catalog,
+        budget,
+        owner,
+        actor,
+        controls,
+        filters,
+        now_ms,
+        owner,
+        |_| true,
+    )
+}
+
+/// Access filtering is supplied by the retained host, never provider arguments.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "separate immutable storage and current access principals"
+)]
+pub(crate) fn list_selected_with<B: TerminalSessionBackend>(
+    registry: &mut TerminalRegistry<B>,
+    store: &TerminalProfileStore,
+    catalog: &TerminalCatalog,
+    budget: TerminalProfileBudget,
+    owner: &BackgroundOutputOwner,
+    actor: TerminalActorRole,
+    controls: &TerminalAllowedControls,
+    filters: &TerminalListFilters,
+    now_ms: i64,
+    access_owner: &BackgroundOutputOwner,
+    visible: impl Fn(&machine_god_core::TerminalSessionId) -> bool,
 ) -> Result<TerminalActionResult> {
     filters
         .validate()
@@ -73,6 +107,7 @@ pub(crate) fn list_with<B: TerminalSessionBackend>(
     ids.extend(residents.iter().cloned());
     ids.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
     ids.dedup();
+    ids.retain(visible);
     if ids.len() > MAX_TERMINAL_ACTION_RESULTS {
         return Err(TerminalCatalogViewError::ResourceLimit);
     }
@@ -124,7 +159,7 @@ pub(crate) fn list_with<B: TerminalSessionBackend>(
                 .public_facts(owner, actor, controls)
                 .map_err(TerminalCatalogViewError::Session)?
         };
-        if matches_filters(&public, registry.workspace(), owner, filters) {
+        if matches_filters(&public, registry.workspace(), access_owner, filters) {
             sessions.push(public);
         }
     }

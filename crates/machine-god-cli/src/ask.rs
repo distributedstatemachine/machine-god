@@ -1117,7 +1117,7 @@ mod production {
         )
         .map_err(|_| ())?;
         if let Some(catalog) = setup.catalog {
-            conversation.set_model_catalog(catalog);
+            conversation.set_model_catalog(catalog).map_err(|_| ())?;
         }
         conversation.enqueue(prompt.into()).map_err(|_| ())?;
         let turn = conversation

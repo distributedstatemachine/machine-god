@@ -1963,7 +1963,6 @@ impl TerminalRecoveredSession {
         self.publication_error
     }
 
-    #[cfg(test)]
     pub(crate) fn facts(&self, owner: &BackgroundOutputOwner) -> Result<&TerminalSessionFacts> {
         self.authorize(owner)?;
         Ok(&self.facts)
