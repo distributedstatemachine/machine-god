@@ -11,6 +11,7 @@ mod model;
 mod model_catalog;
 mod permission;
 mod session;
+mod session_context;
 mod subagent;
 mod terminal;
 mod terminal_action;
@@ -49,6 +50,9 @@ pub use permission::{
 pub use session::{
     Prompt, Session, SessionRecord, SessionReservation, SessionRevision, SessionStore, Turn,
     TurnHandle,
+};
+pub use session_context::{
+    MAX_CONTEXT_SUMMARY_BYTES, SessionContextProjection, SessionTurnPreparation,
 };
 pub use subagent::{
     MAX_CONCURRENT_SUBAGENTS, MAX_CONCURRENT_SUBAGENTS_PER_PARENT_TURN,

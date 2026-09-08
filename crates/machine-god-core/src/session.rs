@@ -1,11 +1,12 @@
+use crate::session_context::ValidatedSessionContext;
 use crate::tool::ToolExecutionCancellation;
 use crate::{
     BoxFuture, CancellationToken, Capability, ContentBlock, EngineError, EngineEvent,
     InferenceOptions, Message, ModelEvent, ModelEventStream, ModelRequest, PermissionDecision,
     PermissionRequest, PermissionRequestId, PermissionRisk, PreparedToolAuthorization,
     PreparedToolCall, Role, SessionId, SessionIncarnationId, SessionStoreError,
-    SessionStoreErrorKind, StopReason, TokenUsage, ToolCall, ToolContext, ToolExecution, ToolName,
-    ToolOutput, ToolSpec, TurnEvent, TurnId, TurnToolRegistration,
+    SessionStoreErrorKind, SessionTurnPreparation, StopReason, TokenUsage, ToolCall, ToolContext,
+    ToolExecution, ToolName, ToolOutput, ToolSpec, TurnEvent, TurnId, TurnToolRegistration,
 };
 use futures_core::Stream;
 use serde::{Deserialize, Serialize};
@@ -574,7 +575,34 @@ impl Session {
             host: HostLease::new(self.host_resource.as_ref()),
         };
         let prompt = JsonOwnerGuard::new(prompt.into());
-        Box::pin(async move { session.start_prompt(prompt).await })
+        Box::pin(async move { session.start_prompt(prompt, None).await })
+    }
+
+    /// Starts a prompt with revision-pinned metadata and provider-only context.
+    ///
+    /// The future is inert before first poll. Preparation and user input share
+    /// the durable turn reservation and exclusive lease; canonical history is
+    /// never compacted. A failed or dropped save requires authoritative reload
+    /// before a later mutation, and stale preparations are never retried.
+    ///
+    /// # Errors
+    ///
+    /// Returns the ordinary prompt errors, a store conflict for a stale exact
+    /// revision, or a protocol error for invalid preparation or projection.
+    #[must_use]
+    pub fn prompt_prepared(
+        &self,
+        prompt: impl Into<Prompt>,
+        preparation: SessionTurnPreparation,
+    ) -> BoxFuture<'static, Result<Turn, EngineError>> {
+        let session = SessionOperation {
+            engine: Arc::clone(&self.engine),
+            state: Arc::clone(&self.state),
+            host: HostLease::new(self.host_resource.as_ref()),
+        };
+        let prompt = JsonOwnerGuard::new(prompt.into());
+        let preparation = JsonOwnerGuard::new(preparation);
+        Box::pin(async move { session.start_prompt(prompt, Some(preparation)).await })
     }
 
     /// Starts a new turn over existing history without appending user input.
@@ -601,7 +629,31 @@ impl Session {
             host: HostLease::new(self.host_resource.as_ref()),
         };
         let options = JsonOwnerGuard::new(options);
-        Box::pin(async move { session.start_turn(None, options).await })
+        Box::pin(async move { session.start_turn(None, options, None).await })
+    }
+
+    /// Starts a fresh no-input turn with the same atomic preparation contract as
+    /// [`Self::prompt_prepared`]. Historical calls are not replayed, and the host
+    /// remains responsible for checkpoint eligibility and consumption.
+    ///
+    /// # Errors
+    ///
+    /// Returns ordinary continuation errors and the preparation errors described
+    /// by [`Self::prompt_prepared`].
+    #[must_use]
+    pub fn continue_turn_prepared(
+        &self,
+        options: InferenceOptions,
+        preparation: SessionTurnPreparation,
+    ) -> BoxFuture<'static, Result<Turn, EngineError>> {
+        let session = SessionOperation {
+            engine: Arc::clone(&self.engine),
+            state: Arc::clone(&self.state),
+            host: HostLease::new(self.host_resource.as_ref()),
+        };
+        let options = JsonOwnerGuard::new(options);
+        let preparation = JsonOwnerGuard::new(preparation);
+        Box::pin(async move { session.start_turn(None, options, Some(preparation)).await })
     }
 }
 
@@ -702,16 +754,25 @@ impl SessionOperation {
         Ok(())
     }
 
-    async fn start_prompt(&self, prompt: JsonOwnerGuard<Prompt>) -> Result<Turn, EngineError> {
+    async fn start_prompt(
+        &self,
+        prompt: JsonOwnerGuard<Prompt>,
+        preparation: Option<JsonOwnerGuard<SessionTurnPreparation>>,
+    ) -> Result<Turn, EngineError> {
         let prompt = prompt.into_inner();
-        self.start_turn(Some(prompt.text), JsonOwnerGuard::new(prompt.options))
-            .await
+        self.start_turn(
+            Some(prompt.text),
+            JsonOwnerGuard::new(prompt.options),
+            preparation,
+        )
+        .await
     }
 
     async fn start_turn(
         &self,
         prompt_text: Option<String>,
         options: JsonOwnerGuard<InferenceOptions>,
+        preparation: Option<JsonOwnerGuard<SessionTurnPreparation>>,
     ) -> Result<Turn, EngineError> {
         self.host.ensure_open()?;
         if prompt_text
@@ -734,7 +795,12 @@ impl SessionOperation {
 
         self.reconcile_uncertain_metadata().await?;
 
-        let (turn_id, record) = self.reserve_turn_and_prompt(prompt_text).await?;
+        let (turn_id, record, context) = if let Some(preparation) = preparation {
+            self.reserve_prepared_turn(prompt_text, preparation).await?
+        } else {
+            let (turn_id, record) = self.reserve_turn_and_prompt(prompt_text).await?;
+            (turn_id, record, None)
+        };
         let session_id = record.id.clone();
         let session_incarnation_id = record.incarnation_id.clone();
         let cancellation = CancellationToken::new();
@@ -746,6 +812,7 @@ impl SessionOperation {
             turn_id.clone(),
             record,
             options.into_inner(),
+            context,
             cancellation.clone(),
             gate.emitter(),
         ));
@@ -770,6 +837,77 @@ impl SessionOperation {
             cancellation_waiter: None,
             lease: Some(lease),
         })
+    }
+
+    async fn reserve_prepared_turn(
+        &self,
+        prompt_text: Option<String>,
+        preparation: JsonOwnerGuard<SessionTurnPreparation>,
+    ) -> Result<(TurnId, SessionRecord, Option<ValidatedSessionContext>), EngineError> {
+        let (snapshot, persisted) = self.state.snapshot();
+        if snapshot.revision != preparation.get().expected_revision {
+            return Err(preparation_revision_conflict());
+        }
+        validate_record_limits(&snapshot, self.engine.limits)?;
+        if prompt_text.is_none() && snapshot.messages.is_empty() {
+            return Err(EngineError::Protocol(
+                "cannot continue a session with empty history".to_owned(),
+            ));
+        }
+        // Keep untrusted metadata guarded even when context validation fails.
+        let mut preparation = preparation.into_inner();
+        let metadata = preparation.metadata.take().map(JsonOwnerGuard::new);
+        let context = preparation
+            .context
+            .take()
+            .map(|context| context.validate(&snapshot.messages))
+            .transpose()?;
+        let mut candidate = (*snapshot).clone();
+        if let Some(metadata) = metadata {
+            candidate.metadata = metadata.into_inner();
+        }
+        let candidate = JsonOwnerGuard::new(candidate);
+        // Validate moved metadata before any recursive cloning or serialization.
+        validate_record_limits(candidate.get(), self.engine.limits)?;
+        let mut record = candidate.into_inner();
+        let sequence = record.next_turn_sequence;
+        record.next_turn_sequence = sequence.checked_add(1).ok_or_else(|| {
+            EngineError::Protocol("session turn sequence is exhausted".to_owned())
+        })?;
+        let turn_id = TurnId::new(format!("turn-{sequence}"))
+            .map_err(|error| EngineError::Protocol(error.to_string()))?;
+        if let Some(text) = prompt_text {
+            record.messages.push(Message::text(Role::User, text));
+        }
+        validate_record_limits(&record, self.engine.limits)?;
+        if let Some(context) = &context {
+            context.validate_limits(&record.messages, self.engine.limits)?;
+        }
+        if !self.state.snapshot_is_current(&snapshot, persisted) {
+            return Err(preparation_revision_conflict());
+        }
+        // A store future may commit before returning Pending or an error. Even
+        // a metadata-free reservation must not be repeated from stale state.
+        self.state
+            .metadata_reconciliation_required
+            .store(true, Ordering::Release);
+        let revision = self
+            .engine
+            .session_store
+            .save(record.clone(), persisted.then_some(snapshot.revision))
+            .await
+            .map_err(redact_store_error)?;
+        if revision <= snapshot.revision {
+            return Err(EngineError::Protocol(
+                "session store returned a non-increasing revision".to_owned(),
+            ));
+        }
+        record.revision = revision;
+        self.state.reconcile_saved(Arc::new(record.clone()))?;
+        self.state
+            .metadata_reconciliation_required
+            .store(false, Ordering::Release);
+        Ok((turn_id, record, context))
     }
 
     async fn reserve_turn_and_prompt(
@@ -872,6 +1010,16 @@ fn metadata_revision_conflict() -> EngineError {
         SessionStoreErrorKind::Conflict,
         "metadata_revision_conflict",
         "session metadata revision changed",
+        true,
+    )
+    .into()
+}
+
+fn preparation_revision_conflict() -> EngineError {
+    SessionStoreError::new(
+        SessionStoreErrorKind::Conflict,
+        "turn_preparation_conflict",
+        "session turn preparation revision changed",
         true,
     )
     .into()
@@ -1286,6 +1434,7 @@ async fn run_turn(
     turn_id: TurnId,
     record: SessionRecord,
     options: InferenceOptions,
+    context: Option<ValidatedSessionContext>,
     cancellation: CancellationToken,
     emitter: TurnEmitter,
 ) -> WorkflowExit {
@@ -1296,6 +1445,7 @@ async fn run_turn(
         turn_id,
         record,
         options,
+        context,
         cancellation,
         emitter,
     )
@@ -1320,6 +1470,7 @@ async fn run_turn_inner(
     turn_id: TurnId,
     mut record: SessionRecord,
     options: InferenceOptions,
+    context: Option<ValidatedSessionContext>,
     cancellation: CancellationToken,
     emitter: TurnEmitter,
 ) -> Result<CompletedTurn, WorkflowAbort> {
@@ -1355,11 +1506,20 @@ async fn run_turn_inner(
 
         validate_record(&record, limits)?;
         validate_inference_options(&options, limits)?;
+        let messages = match &context {
+            Some(context) => context.messages(&record.messages, limits).map_err(|_| {
+                TurnFailure::protocol(
+                    "context_projection_failed",
+                    "projected context exceeded its limits",
+                )
+            })?,
+            None => record.messages.clone(),
+        };
         let request = ModelRequest {
             session_id: session_id.clone(),
             session_incarnation_id: session_incarnation_id.clone(),
             turn_id: turn_id.clone(),
-            messages: record.messages.clone(),
+            messages,
             tools: turn_tools.model_specs(&engine),
             options: options.clone(),
         };

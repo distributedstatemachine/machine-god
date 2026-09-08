@@ -576,6 +576,79 @@ product and persistence decisions belong to the native host. In particular,
 continuation alone does not establish a CLI `/continue` availability contract or
 an exactly-once guarantee for uncertain external effects.
 
+### Atomic prepared turns and provider-only context
+
+`Session::prompt_prepared(prompt, preparation)` and
+`Session::continue_turn_prepared(options, preparation)` return owned,
+inert-before-poll futures resolving to `Result<Turn, EngineError>`. They keep
+the existing `Prompt` and ordinary prompt/continuation APIs unchanged.
+`SessionTurnPreparation` contains an exact `expected_revision`, optional complete
+replacement `metadata`, and optional `SessionContextProjection`. Core does not
+interpret native metadata, checkpoints, context preferences, or summary content.
+
+Admission acquires the ordinary exclusive turn/metadata lease and reconciles any
+uncertain previous save before checking the expected revision. One optimistic
+save atomically reserves a fresh turn ID, appends the prompt's user message (but
+no message for continuation), and replaces metadata if supplied. `None` preserves
+metadata; `Some(empty)` clears it. Stale revisions or a changed canonical snapshot
+fail before save, and a store conflict is returned without blindly retrying the
+preparation against newer state. Successful increasing revisions are reconciled
+before returning a `Turn`. Canonical transcript, metadata, JSON and inference
+limits apply before saving, even when the provider projection is much smaller.
+
+Every prepared reservation arms authoritative reconciliation before invoking
+save, including reservations with no metadata replacement. Dropping or failing
+the save, a non-increasing result, or failed reconciliation leaves the requirement
+armed. A later ordinary or prepared prompt, continuation, or metadata edit must
+load and validate the durable record before writing. A committed but unanswered
+reservation therefore keeps its input, metadata and consumed allocator position;
+a preparation pinned to the old revision conflicts after reload. Missing
+persisted state cannot be recreated from the stale snapshot. Futures retain no
+host authority or detached work, share `SessionBusy` admission, and release their
+lease on failure or drop. Unpolled, busy, stale, invalid and host-closed
+preparations iteratively drain caller-owned metadata JSON.
+
+`SessionContextProjection` contains `first_retained_message: usize` and
+`prefix_summary: Option<String>`. Index zero means full canonical history and
+requires `prefix_summary: None`; it also supports a new empty session when
+prompting. A nonzero index must name an existing `User` message: the retained
+suffix includes the complete final existing user-led group, and all future
+messages of this turn. Leading `System` messages are separately preserved in
+order. A cut cannot remove a later system message. A logical group consists of
+a user message followed by its assistant/tool execution messages up to the next
+user message; explicit no-input continuation extends the existing final group.
+
+On this opt-in context path, core validates the entire bounded canonical history
+before reservation: tool calls appear only in assistant messages, are unique
+within that round, and each has exactly one matching tool result before the next
+non-tool message. Empty/non-result tool messages, orphan or duplicate results,
+and unfinished call/result units fail closed, even if they would be omitted from
+the projection. Call IDs may recur after a round is fully closed. Confirmed
+results and explicit unknown-result placeholders are both retained evidence;
+neither is reconstructed, executed, or reinterpreted by context selection.
+
+An optional summary has a public UTF-8 payload ceiling of
+`MAX_CONTEXT_SUMMARY_BYTES` (16,384 bytes). Core wraps it in one fixed `Assistant`
+text message identifying it as untrusted advisory historical context, not
+instructions, tool evidence or authorization. The caller cannot choose its role
+or supply summary tool blocks. Omitting the summary permits history-selection
+preferences that intentionally retain only recent context. Summary text and
+preparation metadata are redacted by the public types' `Debug` implementations.
+
+The validated projection is pinned for the whole new turn. Each provider request
+receives leading system messages, optional advisory summary, and the canonical
+retained suffix including new assistant/tool messages. Projected message count
+and complete serialized bytes, including fixed summary framing, independently
+obey the ordinary transcript limits before cloning; they are checked again each
+model round. Canonical record validation bounds history scanning and precedes
+recursive JSON cloning. No serialized copy is allocated for size checking.
+The full `SessionRecord`, commit prefixes, tool-result placeholders and archive
+source remain unchanged. Tools such as native `read_tool_result` continue to read
+the full authoritative archive, not the provider projection. Projection is
+turn-local and not itself persisted: the native host owns durable preferences,
+summary generation, checkpoint availability and consumption. These core
+primitives alone do not establish `/compact` or `/continue` product completion.
+
 ### Exclusive metadata editing
 
 `Session::update_metadata(expected_revision, metadata)` returns an owned,
