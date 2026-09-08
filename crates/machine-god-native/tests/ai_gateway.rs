@@ -13,9 +13,10 @@ use machine_god_core::{
     ToolSpec, TurnId,
 };
 use machine_god_native::{
-    AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION, AI_GATEWAY_PROTOCOL_VERSION,
-    AI_GATEWAY_PROVIDER_NAME, AiGatewayByteStream, AiGatewayConfigErrorKind, AiGatewayLimits,
-    AiGatewayProvider, AiGatewayTransport, AiGatewayTransportRequest,
+    AI_GATEWAY_INFERENCE_OPTIONS_KEY, AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION,
+    AI_GATEWAY_PROTOCOL_VERSION, AI_GATEWAY_PROVIDER_NAME, AiGatewayByteStream,
+    AiGatewayConfigErrorKind, AiGatewayInferenceOptions, AiGatewayLimits, AiGatewayProvider,
+    AiGatewayTransport, AiGatewayTransportRequest, NativeReasoningEffort,
     READ_TOOL_RESULT_MAX_SOURCE_BYTES,
 };
 use serde_json::{Value, json};
@@ -703,6 +704,263 @@ fn unsupported_optional_inference_fields_are_ignored_and_omitted() {
     assert!(body.get("temperature").is_none());
     assert!(body.get("metadata").is_none());
     assert!(!String::from_utf8_lossy(&requests[0].body).contains("secret"));
+}
+
+fn gateway_options(effort: &str, fast: bool) -> AiGatewayInferenceOptions {
+    AiGatewayInferenceOptions::new(NativeReasoningEffort::parse(effort).unwrap(), fast)
+}
+
+#[test]
+fn inference_options_have_exact_default_reasoning_fast_and_combined_wire_bodies() {
+    let prefix = r#"{"prompt":[{"role":"user","content":[{"type":"text","text":"hello"}]}],"tools":[],"toolChoice":{"type":"none"}"#;
+    for (effort, fast, suffix) in [
+        ("auto", false, "}"),
+        ("high", false, r#","reasoning":"high"}"#),
+        (
+            "auto",
+            true,
+            r#","providerOptions":{"gateway":{"speed":"fast"}}}"#,
+        ),
+        (
+            "X-opaque_1.2",
+            true,
+            r#","reasoning":"X-opaque_1.2","providerOptions":{"gateway":{"speed":"fast"}}}"#,
+        ),
+    ] {
+        let transport = ScriptedTransport::new([bytes(finish("stop"))]);
+        let provider = provider(&transport);
+        let mut value = request(vec![Message::text(Role::User, "hello")]);
+        gateway_options(effort, fast).apply_to(&mut value.options);
+        drop(start(&provider, value, CancellationToken::new()).unwrap());
+        let expected = format!("{prefix}{suffix}");
+        assert_eq!(transport.requests()[0].body, expected.as_bytes());
+    }
+}
+
+#[test]
+fn inference_options_aliases_are_normalized_and_named_effort_is_not_inferred_from_model() {
+    for alias in ["auto", "AUTO", "adaptive", "AdApTiVe", "default", "DEFAULT"] {
+        let transport = ScriptedTransport::new([bytes(finish("stop"))]);
+        let provider = provider(&transport);
+        let mut value = request(vec![Message::text(Role::User, "hello")]);
+        let options = gateway_options(alias, false);
+        options.apply_to(&mut value.options);
+        assert_eq!(
+            value.options.metadata[AI_GATEWAY_INFERENCE_OPTIONS_KEY],
+            json!({"schema_version":1,"reasoning_effort":"auto","fast":false})
+        );
+        value
+            .options
+            .metadata
+            .get_mut(AI_GATEWAY_INFERENCE_OPTIONS_KEY)
+            .unwrap()["reasoning_effort"] = json!(alias);
+        value.options.model = Some("provider/model-high-fast".to_owned());
+        drop(start(&provider, value, CancellationToken::new()).unwrap());
+        let body: Value = serde_json::from_slice(&transport.requests()[0].body).unwrap();
+        assert!(body.get("reasoning").is_none());
+        assert!(body.get("providerOptions").is_none());
+    }
+    let transport = ScriptedTransport::new([bytes(finish("stop"))]);
+    let provider = provider(&transport);
+    let name = "Z".repeat(64);
+    let mut value = request(vec![Message::text(Role::User, "hello")]);
+    gateway_options(&name, false).apply_to(&mut value.options);
+    drop(start(&provider, value, CancellationToken::new()).unwrap());
+    let body: Value = serde_json::from_slice(&transport.requests()[0].body).unwrap();
+    assert_eq!(body["reasoning"], json!(name));
+}
+
+#[test]
+fn inference_options_reject_malformed_reserved_values_without_transport_or_reflection() {
+    for reserved in [
+        Value::Null,
+        json!(true),
+        json!([]),
+        json!("private-value"),
+        json!({}),
+        json!({"schema_version":2,"reasoning_effort":"high","fast":true}),
+        json!({"schema_version":1.0,"reasoning_effort":"high","fast":true}),
+        json!({"schema_version":1,"reasoning_effort":"high","fast":true,"private-field":true}),
+        json!({"schema_version":1,"reasoning_effort":"high"}),
+        json!({"schema_version":1,"reasoning_effort":false,"fast":true}),
+        json!({"schema_version":1,"reasoning_effort":{"private":"nested"},"fast":true}),
+        json!({"schema_version":1,"reasoning_effort":"high","fast":1}),
+        json!({"schema_version":1,"reasoning_effort":"high","fast":"true"}),
+        json!({"schema_version":1,"reasoning_effort":"","fast":false}),
+        json!({"schema_version":1,"reasoning_effort":"private effort","fast":false}),
+        json!({"schema_version":1,"reasoning_effort":"é","fast":false}),
+        json!({"schema_version":1,"reasoning_effort":"x".repeat(65),"fast":false}),
+        json!({"schema_version":1,"reasoning_effort":"x".repeat(1024*1024),"fast":false}),
+    ] {
+        let transport = ScriptedTransport::new([]);
+        let provider = provider(&transport);
+        let mut value = request(vec![Message::text(Role::User, "private prompt")]);
+        value
+            .options
+            .metadata
+            .insert(AI_GATEWAY_INFERENCE_OPTIONS_KEY.to_owned(), reserved);
+        let error = expect_start_error(
+            start(&provider, value, CancellationToken::new()),
+            "invalid reserved options",
+        );
+        assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+        assert_eq!(error.code, "gateway_invalid_inference_options");
+        assert_eq!(error.message, "gateway request rejected");
+        assert!(!error.retryable);
+        assert!(!format!("{error:?}").contains("private"));
+        assert!(transport.requests().is_empty());
+    }
+}
+
+#[test]
+fn inference_options_replace_only_the_reserved_entry_and_ignore_unrelated_metadata() {
+    let transport = ScriptedTransport::new([bytes(finish("stop"))]);
+    let provider = provider(&transport);
+    let mut value = request(vec![Message::text(Role::User, "hello")]);
+    value.options.model = Some("modèle name".to_owned());
+    value.options.temperature = Some(0.25);
+    value.options.max_output_tokens = Some(42);
+    value
+        .options
+        .metadata
+        .insert("reasoning".to_owned(), json!("private-reasoning"));
+    value
+        .options
+        .metadata
+        .insert("providerOptions".to_owned(), json!({"private": true}));
+    value
+        .options
+        .metadata
+        .insert("other".to_owned(), json!({"deep":["private"]}));
+    value.options.metadata.insert(
+        AI_GATEWAY_INFERENCE_OPTIONS_KEY.to_owned(),
+        deeply_nested_array(20_000),
+    );
+    let options = gateway_options("medium", true);
+    options.apply_to(&mut value.options);
+    assert_eq!(value.options.metadata.len(), 4);
+    assert_eq!(value.options.metadata["other"], json!({"deep":["private"]}));
+    assert_eq!(value.options.model.as_deref(), Some("modèle name"));
+    assert_eq!(value.options.temperature, Some(0.25));
+    assert_eq!(value.options.max_output_tokens, Some(42));
+    assert!(!format!("{options:?}").contains("medium"));
+    drop(start(&provider, value, CancellationToken::new()).unwrap());
+    let requests = transport.requests();
+    let body: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(body["reasoning"], json!("medium"));
+    assert_eq!(body["maxOutputTokens"], json!(42));
+    assert_eq!(body["providerOptions"], json!({"gateway":{"speed":"fast"}}));
+    assert!(!String::from_utf8_lossy(&requests[0].body).contains("private"));
+    assert!(!String::from_utf8_lossy(&requests[0].body).contains(AI_GATEWAY_INFERENCE_OPTIONS_KEY));
+}
+
+#[test]
+fn inference_options_are_immutable_snapshots_across_two_request_futures() {
+    let transport = ScriptedTransport::new([bytes(finish("stop")), bytes(finish("stop"))]);
+    let provider = provider(&transport);
+    let mut first = request(vec![Message::text(Role::User, "hello")]);
+    gateway_options("high", true).apply_to(&mut first.options);
+    let mut second = first.clone();
+    let first_future = provider.stream(first, CancellationToken::new());
+    AiGatewayInferenceOptions::default().apply_to(&mut second.options);
+    let second_future = provider.stream(second, CancellationToken::new());
+    assert!(transport.requests().is_empty());
+    drop(futures_executor::block_on(first_future).unwrap());
+    drop(futures_executor::block_on(second_future).unwrap());
+    let requests = transport.requests();
+    let first: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    let second: Value = serde_json::from_slice(&requests[1].body).unwrap();
+    assert_eq!(first["reasoning"], json!("high"));
+    assert_eq!(
+        first["providerOptions"],
+        json!({"gateway":{"speed":"fast"}})
+    );
+    assert!(second.get("reasoning").is_none());
+    assert!(second.get("providerOptions").is_none());
+}
+
+#[test]
+fn inference_options_retain_deep_json_drop_and_precancelled_inertness() {
+    for mode in ["unpolled", "invalid", "cancelled", "unrelated"] {
+        let transport = ScriptedTransport::new([]);
+        let provider = provider(&transport);
+        let mut value = request(vec![Message::text(Role::User, "hello")]);
+        gateway_options("high", true).apply_to(&mut value.options);
+        if mode == "unrelated" {
+            value
+                .options
+                .metadata
+                .insert("unrelated".to_owned(), deeply_nested_array(20_000));
+        } else {
+            value
+                .options
+                .metadata
+                .get_mut(AI_GATEWAY_INFERENCE_OPTIONS_KEY)
+                .unwrap()["fast"] = deeply_nested_array(20_000);
+        }
+        let cancellation = CancellationToken::new();
+        if mode == "cancelled" {
+            cancellation.cancel();
+        }
+        let future = provider.stream(value, cancellation);
+        if mode == "unpolled" {
+            drop(future);
+        } else {
+            let error =
+                expect_start_error(futures_executor::block_on(future), "deep inference options");
+            assert_eq!(
+                error.code,
+                match mode {
+                    "cancelled" => "gateway_cancelled",
+                    "unrelated" => "gateway_json_depth_limit",
+                    _ => "gateway_invalid_inference_options",
+                }
+            );
+        }
+        assert!(transport.requests().is_empty());
+    }
+}
+
+#[test]
+fn inference_options_obey_aggregate_json_nodes_and_exact_encoded_body_limits() {
+    let mut value = request(vec![Message::text(Role::User, "hello")]);
+    gateway_options("high", true).apply_to(&mut value.options);
+    let transport = ScriptedTransport::new([bytes(finish("stop"))]);
+    drop(
+        start(
+            &provider(&transport),
+            value.clone(),
+            CancellationToken::new(),
+        )
+        .unwrap(),
+    );
+    let exact = transport.requests()[0].body.len();
+    for (bytes_limit, node_limit, expected) in [
+        (exact, 4, None),
+        (exact - 1, 4, Some("gateway_request_byte_limit")),
+        (exact, 3, Some("gateway_json_node_limit")),
+    ] {
+        let transport = ScriptedTransport::new([bytes(finish("stop"))]);
+        let provider = AiGatewayProvider::with_limits(
+            "provider/default",
+            Arc::new(transport.clone()),
+            AiGatewayLimits {
+                max_request_bytes: bytes_limit,
+                max_json_nodes: node_limit,
+                ..AiGatewayLimits::default()
+            },
+        )
+        .unwrap();
+        let result = start(&provider, value.clone(), CancellationToken::new());
+        if let Some(expected) = expected {
+            let error = expect_start_error(result, "inference option resource cap");
+            assert_eq!(error.code, expected);
+            assert!(transport.requests().is_empty());
+        } else {
+            drop(result.unwrap());
+            assert_eq!(transport.requests()[0].body.len(), exact);
+        }
+    }
 }
 
 #[test]

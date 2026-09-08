@@ -100,17 +100,18 @@ the provider's default. The override has the same shared 1–1024-byte rule.
 The selected UTF-8 bytes are preserved in the `ai-language-model-id` header,
 including through the native HTTP transport; they are not trimmed, encoded,
 case-folded, or normalized.
-Temperature and inference metadata have no pinned wire projection and are
-ignored rather than making an otherwise valid request fail. Metadata JSON is
-still traversed under the same structural depth and node limits as other owned
-request JSON before it is discarded iteratively; temperature has no JSON
-structure to traverse.
-Neither field is serialized. A present `max_output_tokens` becomes the sole
-optional body field `maxOutputTokens`; zero is invalid.
+Temperature and unrelated inference metadata are ignored rather than making an
+otherwise valid request fail. The sole reserved Gateway inference entry described
+below has an explicit, shallow projection; there is no arbitrary metadata
+passthrough. All metadata JSON still shares the structural depth and aggregate
+node limits of other owned request JSON before guard release; temperature has no
+JSON structure to traverse. Neither `temperature` nor a general `metadata` field
+is serialized. A present `max_output_tokens` becomes `maxOutputTokens`; zero is
+invalid.
 
-The body has only `prompt`, `tools`, `toolChoice`, and the optional
-`maxOutputTokens`. `toolChoice` is `{"type":"auto"}` when tools are present
-and `{"type":"none"}` when the tool list is empty. Each `ToolSpec` is a
+The body has `prompt`, `tools`, `toolChoice`, and optional `maxOutputTokens`,
+`reasoning` and `providerOptions` fields. `toolChoice` is `{"type":"auto"}` when
+tools are present and `{"type":"none"}` when the tool list is empty. Each `ToolSpec` is a
 Gateway function tool with its validated name, description, and JSON Schema
 under `inputSchema`:
 
@@ -129,6 +130,59 @@ under `inputSchema`:
   "maxOutputTokens": 4096
 }
 ```
+
+### Explicit reasoning and fast inference options
+
+`AiGatewayInferenceOptions::new(reasoning_effort, fast)` captures effective,
+turn-pinned options using the shared native `NativeReasoningEffort` type and one
+boolean. It performs no model-ID inference, live catalog lookup or effects.
+The type is cloneable and defaults to automatic reasoning with fast disabled;
+its debug output is redacted.
+
+`apply_to(&mut InferenceOptions)` installs exactly one reserved metadata entry
+under `AI_GATEWAY_INFERENCE_OPTIONS_KEY`
+(`machine_god.ai_gateway_inference_options`):
+
+```json
+{"schema_version":1,"reasoning_effort":"auto","fast":false}
+```
+
+Only that entry is replaced. The selected model, other inference fields, and
+unrelated metadata remain unchanged. If a caller supplied a deeply nested old
+reserved value, replacement drains it iteratively. The helper's bounded scalar
+schema does not bypass the core inference-option or Gateway aggregate limits.
+
+The codec decodes the reserved entry while the entire `ModelRequest` is still
+guarded, before body construction or transport admission. A present entry must
+contain exactly the three fields above with schema integer 1, a reasoning string
+accepted by `NativeReasoningEffort::parse`, and a boolean fast flag. Unknown
+versions/fields, missing fields, wrong types, invalid or oversized reasoning, and
+nested malformed values fail with the fixed non-retryable `InvalidRequest` code
+`gateway_invalid_inference_options` and message `gateway request rejected`.
+Neither malformed values nor parser details appear in errors. Absence selects
+the same defaults as the typed helper.
+
+The shared parser treats `auto`, `adaptive` and `default` as automatic,
+ASCII-case-insensitively. Other effort names are opaque 1–64-byte ASCII
+alphanumeric/`-`/`_`/`.` tokens with case preserved. Nondefault named effort emits
+only top-level `"reasoning":"<name>"`. Automatic effort omits `reasoning`.
+Fast true emits only `"providerOptions":{"gateway":{"speed":"fast"}}`;
+false omits `providerOptions`. Defaults therefore preserve the existing request
+body exactly. These fields follow the pinned upstream
+`src/core/gateway/gateway_json.zig` reasoning writer at line 351 and
+`writeProviderOptions` at line 431. Other upstream provider-option families are
+not inferred or enabled by this entry.
+
+Encoding consumes the caller's request snapshot, not mutable session preference
+state. Two requests prepared under different effective options keep their own
+wire fields regardless of later host preference changes. Cancellation and
+inert-before-poll behavior remain unchanged: unpolled, pre-cancelled and invalid
+requests start no transport. All metadata, including unrelated ignored values,
+still passes aggregate JSON validation before the guard is disarmed. Rejection
+or future drop iteratively reclaims owned trees. The new wire fields are counted
+inside the ordinary exact encoded-body byte limit and confer no extra capacity.
+
+### Transcript projection
 
 The accepted provider-neutral transcript projection is intentionally narrow:
 
@@ -469,8 +523,9 @@ This generation-codec slice adds no URL or HTTP client, socket, DNS, proxy,
 TLS, native credential lookup, authorization header, status-code mapping, retry/backoff,
 clock, async runtime, endpoint selection, team routing, or model-catalog logic,
 provider-executed tool support in this outer codec, provider-neutral image
-content, structured-output, temperature, or metadata support. The private
-vision worker above does not change those general codec deferrals. It adds no
+content, structured-output, temperature, or arbitrary metadata support. The
+reserved reasoning/fast projection above is the sole inference-metadata exception.
+The private vision worker above does not change those general codec deferrals. It adds no
 CLI wiring or commands,
 production permission prompt, or
 permission mode beyond `ask`. The native session store remains a separate

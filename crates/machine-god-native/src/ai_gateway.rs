@@ -1,5 +1,6 @@
 //! Runtime-neutral codec for the pinned Vercel AI Gateway v3 wire contract.
 
+use crate::model_preferences::NativeReasoningEffort;
 use crate::tool_output_serializer::{
     CompactJsonScratch, CompactToolOutputError, CompactToolOutputLimits,
     measure_json_value_compact_with_scratch, serialize_tool_output_compact_with_scratch,
@@ -10,9 +11,9 @@ use crate::tool_result_projection::{
 };
 use futures_core::Stream;
 use machine_god_core::{
-    BoxFuture, CancellationToken, ContentBlock, MAX_SAFE_JSON_DEPTH, Message, ModelEvent,
-    ModelEventStream, ModelProvider, ModelRequest, ProviderError, ProviderErrorKind, Role,
-    SessionId, SessionIncarnationId, StopReason, TokenUsage, ToolCall, ToolCallId, ToolName,
+    BoxFuture, CancellationToken, ContentBlock, InferenceOptions, MAX_SAFE_JSON_DEPTH, Message,
+    ModelEvent, ModelEventStream, ModelProvider, ModelRequest, ProviderError, ProviderErrorKind,
+    Role, SessionId, SessionIncarnationId, StopReason, TokenUsage, ToolCall, ToolCallId, ToolName,
 };
 use serde::de::{DeserializeSeed, Error as _, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
@@ -36,6 +37,71 @@ pub const AI_GATEWAY_MAX_MODEL_BYTES: usize = machine_god_core::MAX_MODEL_ID_BYT
 pub const AI_GATEWAY_PROTOCOL_VERSION: &str = "0.0.1";
 /// Pinned language-model specification version.
 pub const AI_GATEWAY_LANGUAGE_MODEL_SPECIFICATION_VERSION: &str = "4";
+/// Reserved shallow metadata entry for explicit, turn-pinned Gateway controls.
+pub const AI_GATEWAY_INFERENCE_OPTIONS_KEY: &str = "machine_god.ai_gateway_inference_options";
+
+/// Effective native Gateway controls, without model inference or catalog lookup.
+#[derive(Clone, Default, Eq, PartialEq)]
+pub struct AiGatewayInferenceOptions {
+    reasoning_effort: NativeReasoningEffort,
+    fast: bool,
+}
+
+impl fmt::Debug for AiGatewayInferenceOptions {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AiGatewayInferenceOptions")
+            .finish_non_exhaustive()
+    }
+}
+
+impl AiGatewayInferenceOptions {
+    /// Captures already-resolved options for an immutable request/turn snapshot.
+    #[must_use]
+    pub const fn new(reasoning_effort: NativeReasoningEffort, fast: bool) -> Self {
+        Self {
+            reasoning_effort,
+            fast,
+        }
+    }
+
+    /// Replaces only the reserved schema-1 entry; unrelated metadata is retained.
+    /// A replaced untrusted JSON tree is drained iteratively, not recursively.
+    pub fn apply_to(&self, options: &mut InferenceOptions) {
+        let value = serde_json::json!({
+            "schema_version": 1,
+            "reasoning_effort": self.reasoning_effort.as_named().unwrap_or("auto"),
+            "fast": self.fast,
+        });
+        if let Some(previous) = options
+            .metadata
+            .insert(AI_GATEWAY_INFERENCE_OPTIONS_KEY.to_owned(), value)
+        {
+            OwnedJsonDropScratch::new().drop_value(previous);
+        }
+    }
+
+    fn decode(metadata: &BTreeMap<String, Value>) -> Result<Self, ProviderError> {
+        let Some(value) = metadata.get(AI_GATEWAY_INFERENCE_OPTIONS_KEY) else {
+            return Ok(Self::default());
+        };
+        let invalid = || invalid_request("gateway_invalid_inference_options");
+        let object = value.as_object().ok_or_else(invalid)?;
+        if object.len() != 3 || object.get("schema_version").and_then(Value::as_u64) != Some(1) {
+            return Err(invalid());
+        }
+        let effort = object
+            .get("reasoning_effort")
+            .and_then(Value::as_str)
+            .ok_or_else(invalid)?;
+        let fast = object
+            .get("fast")
+            .and_then(Value::as_bool)
+            .ok_or_else(invalid)?;
+        let reasoning_effort = NativeReasoningEffort::parse(effort).map_err(|_| invalid())?;
+        Ok(Self::new(reasoning_effort, fast))
+    }
+}
 
 const CONTENT_TYPE: &str = "application/json";
 const MAX_TOOL_INPUT_OVERRIDES: usize = 64;
@@ -353,6 +419,8 @@ impl ModelProvider for AiGatewayProvider {
                 self.limits,
                 &cancellation,
             )?;
+            let inference_options =
+                AiGatewayInferenceOptions::decode(&request.get().options.metadata)?;
             validate_request_json(request.get(), self.limits, &cancellation)?;
             let inputs = ResponseInputLimits::for_request(
                 request.get(),
@@ -364,6 +432,7 @@ impl ModelProvider for AiGatewayProvider {
                 &self.default_model,
                 self.limits,
                 &cancellation,
+                inference_options,
             )?;
             if cancellation.is_cancelled() {
                 return Err(cancelled_error());
@@ -597,6 +666,20 @@ struct GatewayRequest {
     tool_choice: GatewayToolChoice,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_output_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider_options: Option<GatewayProviderOptions>,
+}
+
+#[derive(Serialize)]
+struct GatewayProviderOptions {
+    gateway: GatewaySpeed,
+}
+
+#[derive(Serialize)]
+struct GatewaySpeed {
+    speed: &'static str,
 }
 
 #[derive(Serialize)]
@@ -660,6 +743,7 @@ fn build_request(
     default_model: &str,
     limits: AiGatewayLimits,
     cancellation: &CancellationToken,
+    inference_options: AiGatewayInferenceOptions,
 ) -> Result<AiGatewayTransportRequest, ProviderError> {
     if request.messages.is_empty()
         || request.messages.len() > limits.max_messages
@@ -710,6 +794,13 @@ fn build_request(
             tools,
             tool_choice,
             max_output_tokens: request.options.max_output_tokens,
+            reasoning: inference_options
+                .reasoning_effort
+                .as_named()
+                .map(str::to_owned),
+            provider_options: inference_options.fast.then_some(GatewayProviderOptions {
+                gateway: GatewaySpeed { speed: "fast" },
+            }),
         },
         limits.max_request_bytes,
         cancellation,
