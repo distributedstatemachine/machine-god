@@ -2,6 +2,7 @@ use super::{
     MAX_LIST_SESSIONS, NativeSessionCatalogEntry, NativeSessionCatalogError as Error,
     NativeSessionCatalogErrorKind as Kind,
 };
+use crate::NativeSessionCatalogCursor;
 use std::{
     fmt,
     os::unix::ffi::OsStrExt,
@@ -10,6 +11,14 @@ use std::{
 
 pub const MAX_NATIVE_SESSION_CATALOG_QUERY_BYTES: usize = 1024;
 
+/// Candidate corruption handling; unrelated I/O failures always fail the call.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum NativeSessionCatalogInvalidRecords {
+    #[default]
+    Fail,
+    SkipAndReport,
+}
+
 /// Pure bounded filtering data. Workspace association never grants filesystem authority.
 #[derive(Clone)]
 pub struct NativeSessionCatalogQuery {
@@ -17,6 +26,8 @@ pub struct NativeSessionCatalogQuery {
     workspace: Option<PathBuf>,
     search: String,
     updated_since: Option<i64>,
+    continuation: Option<NativeSessionCatalogCursor>,
+    invalid_records: NativeSessionCatalogInvalidRecords,
 }
 impl Default for NativeSessionCatalogQuery {
     fn default() -> Self {
@@ -25,6 +36,8 @@ impl Default for NativeSessionCatalogQuery {
             workspace: None,
             search: String::new(),
             updated_since: None,
+            continuation: None,
+            invalid_records: NativeSessionCatalogInvalidRecords::Fail,
         }
     }
 }
@@ -86,9 +99,31 @@ impl NativeSessionCatalogQuery {
         self.limit
     }
 
+    /// Reapplies the query to a new scan strictly after this semantic boundary.
+    #[must_use]
+    pub fn with_continuation(mut self, cursor: NativeSessionCatalogCursor) -> Self {
+        self.continuation = Some(cursor);
+        self
+    }
+
+    #[must_use]
+    pub const fn with_invalid_records(
+        mut self,
+        policy: NativeSessionCatalogInvalidRecords,
+    ) -> Self {
+        self.invalid_records = policy;
+        self
+    }
+
+    pub(super) fn skips_invalid(&self) -> bool {
+        self.invalid_records == NativeSessionCatalogInvalidRecords::SkipAndReport
+    }
+
     pub(super) fn matches(&self, entry: &NativeSessionCatalogEntry, scratch: &mut Vec<u8>) -> bool {
         let metadata = entry.native_metadata();
-        if self
+        if self.continuation.as_ref().is_some_and(|cursor| {
+            (metadata.updated_at_ms(), entry.id()) >= (cursor.updated_at_ms(), cursor.id())
+        }) || self
             .workspace
             .as_deref()
             .is_some_and(|path| metadata.workspace() != Some(path))

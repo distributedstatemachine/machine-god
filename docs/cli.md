@@ -44,7 +44,7 @@ Additional arguments do not activate a helper.
 | `replay <tape> [options]` | Replay an FXTP terminal tape | [replay](replay-cli.md) |
 | `resume <id> [--] <prompt...>` | Continue one saved session with one prompt | [resume](resume-cli.md) |
 | `session <id> [--json]` | Inspect one saved session summary | [session](session-cli.md) |
-| `sessions [--json]` | List bounded saved-session identities | [sessions](sessions-cli.md) |
+| `sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json]` | Page rich saved-session summaries for the current workspace or all workspaces | [sessions](sessions-cli.md) |
 | `status [--json]` | Report the effective local runtime snapshot | This page |
 | `workspace [list] [--json]` | Report the primary workspace | [workspace](workspace-cli.md) |
 

@@ -1,137 +1,131 @@
 # Top-level sessions command
 
-The command exposes the existing bounded native session-ID observation through
-the thin CLI. It does not construct an engine, provider, model transport,
-permission handler, workspace tool, network runtime, or full native reference
-host.
+The thin CLI presents the native rich session catalog without constructing an
+engine, provider, permission handler, tool registry, or network runtime.
 
 ## Grammar and exits
 
-The only accepted invocations are:
-
 ```text
-machine-god sessions
-machine-god sessions --json
+machine-god sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json]
 ```
 
-The singleton `--json` flag must be second. `--all`, `--limit`, `--cursor`,
-`--json=true`, repeated flags, extra positional arguments, reordered flags, and
-non-Unicode arguments are invalid. Parsing completes before environment or
-filesystem access. Invalid syntax writes the one global usage diagnostic to
-standard error, writes no standard output, and exits 2.
+Flags can occur in any order, once each. The default limit is 100. Limits use
+unsigned decimal digits; zero, values above 100, overflow, missing values,
+unknown/repeated flags, positional extras, and non-Unicode arguments are
+invalid. Parsing finishes before any host/environment/filesystem effects.
+Invalid syntax writes global usage to standard error, leaves standard output
+empty, and exits 2.
 
-A successful complete or truncated observation exits 0 with empty standard
-error. An operational or rendering failure exits 1. Human mode writes its
-fixed diagnostic to standard error with empty standard output. JSON mode writes
-one compact error object to standard output with empty standard error. Output
-failure uses the existing fixed `machine-god: failed to write output` standard-
-error diagnostic and exits 1.
+Default scope is the canonical current working directory's exact native
+workspace association. `--all` lists the entire selected native namespace,
+including records whose workspace is unknown. Neither scope infers workspace
+ownership from titles, previews, filenames, or environment text.
 
-Operational categories are closed and redacted:
-
-| Category | Meaning |
-| --- | --- |
-| `Corrupt` | A selected canonical record failed the native record contract. |
-| `Unavailable` | State selection, root safety, or bounded persistence work failed. |
-| `Unsupported` | The current target has no supported native listing implementation. |
-| `ResourceLimit` | A host/result invariant or serialized-output ceiling failed. |
-
-The human failure is exactly
-`machine-god sessions: could not list sessions: <Category>\n`. The JSON failure
-fixes key order `kind,error,code` and is exactly
-`{"kind":"sessions","error":"could not list sessions: <Category>","code":"<Category>"}\n`.
-Neither form reflects paths, environment values, record data, filenames,
-operating-system diagnostics, or raw error numbers.
-
-## Successful output
-
-The result contains no more than 100 validated session IDs in strict ascending
-lexical order with no duplicates. Each ID uses the core portable identifier
-alphabet and is at most 128 bytes. `truncated` means only that a scan, aggregate-
-byte, or result bound prevented an exhaustive observation. It is successful
-data, not an error, a `has_more` promise, or a pagination token.
-
-An empty complete human result is exactly:
+Complete, paginated, skipped-invalid, and resource-incomplete observations exit
+0 with empty standard error. Operational/render failures exit 1. Human errors
+use standard error; JSON errors use standard output. The closed categories are
+`Corrupt`, `Unavailable`, `Unsupported`, and `ResourceLimit`. Error text never
+includes record contents, filenames, paths, environment values, or OS details:
 
 ```text
-[sessions] no saved sessions
+machine-god sessions: could not list sessions: <Category>
 ```
-
-A nonempty result starts with `[sessions] N saved`, followed by one
-` - <id>` line per ID. An empty truncated result uses that counted header with
-`N` equal to zero rather than the complete-empty sentence. Any truncated result
-ends with:
-
-```text
-[sessions] listing incomplete: a resource limit was reached
-```
-
-JSON fixes top-level key order `kind,count,truncated,sessions`. `sessions` is an
-array in the same order as the human rows; every element currently has the sole
-key `id`:
 
 ```json
-{"kind":"sessions","count":2,"truncated":false,"sessions":[{"id":"alpha"},{"id":"beta"}]}
+{"kind":"sessions","error":"could not list sessions: <Category>","code":"<Category>"}
 ```
 
-`count` equals the array length. Both modes have exactly one final LF. The
-complete representation is built before the first success byte is written and
-is capped at 16 KiB including that LF. This ceiling covers 100 maximum-length
-valid IDs in either format. A violated result invariant or output cap fails as
-`ResourceLimit`; partial success output is never intentionally emitted.
+Output failure reports the existing fixed
+`machine-god: failed to write output` diagnostic and exits 1.
 
-## Native state and effects
+## Rich output
 
-On Linux and macOS the first poll selects nonempty `XDG_STATE_HOME`, otherwise
-nonempty `HOME` plus `.local/state`, and then the fixed `machine-god` namespace.
-The process facade requests `XDG_STATE_HOME` first and requests `HOME` only when
-that value is missing or empty; it never requests `XDG_CONFIG_HOME`. A selected
-invalid or non-Unicode nonempty XDG value fails without requesting or falling
-back to `HOME`. No configured state environment fails redacted as `Unavailable`.
+Rows retain native newest-first ordering: descending known update time,
+descending ID for ties, then unknown times with descending ID. Human output
+contains a title followed by ID, actual user-message turn count, optional
+language label, and UTC update time. Missing, negative, or out-of-calendar-range
+human timestamps render as `unknown`; JSON preserves known signed timestamps.
+The title fallback `Untitled session` is presentation only and is not persisted.
 
-The native facade walks an existing selected state root descriptor-relatively
-without following fixed suffix symlinks. It applies the same effective-user,
-group/other-write, private-final-mode, and macOS ACL policy as native root
-preparation, but it neither opens a workspace nor creates or repairs a missing
-directory. A genuinely absent selected base or fixed suffix is an empty,
-non-truncated success. Existing unsafe, inaccessible, symlink, or wrong-kind
-components fail closed. Unsupported targets return `Unsupported` without
-filesystem access.
+```text
+[sessions] 1 saved
+ - Investigate rendering
+   id=alpha | 1 turn | English | updated 2026-01-01 00:00:00.000 UTC
+```
 
-The actual observation delegates to the
-[`NativeSessionList`](native-session-listing.md) scan. Its bounds remain 100
-returned IDs, 1,024 processed non-dot entries plus one name-inspected overflow
-witness, 64 MiB of accepted aggregate record bytes plus one transient byte
-witness, and the existing per-record ceiling. A corrupt selected candidate
-fails the whole call; concurrent disappearance may omit that candidate.
+Complete empty output is exactly `[sessions] no saved sessions\n`.
+JSON uses the pinned rich row fields in this order:
 
-Constructing either injected-environment or process-environment future is
-effect-free. The process snapshot, state selection, descriptor operations,
-record reads, and advisory locks occur on first poll and complete synchronously
-on that polling thread. There is no task, thread, timer, provider request,
-permission prompt, network request, runtime construction, configuration read,
-credential discovery, workspace access, or `.fx` access.
+```json
+{"kind":"sessions","count":1,"sessions":[{"id":"alpha","title":"Untitled session","preview":null,"workspace_root":null,"origin_workspace_root":null,"created_at_ms":null,"updated_at_ms":null,"history_len":0,"conversation_language":null}]}
+```
 
-Listing creates no state root or record and never repairs, rewrites, deletes,
-or migrates a record. As already documented by the native library, validating
-an existing canonical record may create its missing permanent private `0600`
-advisory-lock sidecar. This bounded side effect is explicit; the command is not
-described as strictly no-write.
+Unknown metadata is null. `history_len` counts actual canonical user messages,
+not all transcript messages. Preview is the bounded native excerpt, not trusted
+user authority or a generated title. Native origin is an enum, not an original
+workspace path, so `origin_workspace_root` is null. A non-UTF-8 workspace has
+`workspace_root:null` and an additional final `workspace_root_hex` field with
+its exact lowercase native-byte hex; no replacement-character path is invented.
+Workspace filtering still compares exact native bytes.
 
-## Deliberate pinned-fx differences
+Both formats escape terminal controls, C1 characters, bidi controls, and line
+separators. JSON decoding preserves the original strings. Human strings also
+escape quotes and backslashes. Each representation ends with one LF.
 
-Pinned fx supports `--all`, `--limit`, and `--cursor`, defaults to the current
-workspace, returns rich summary objects, orders newest first, supplies cursors,
-and skips/report corrupt records. Current machine-god records have no
-authoritative workspace, title, preview, language, creation time, update time,
-history length, or display rank. The command therefore lists the selected
-machine-god namespace globally, returns ID-only objects in lexical order,
-exposes bounded truncation without pagination, and fails the call on selected
-corruption.
+The complete success output is bounded and constructed before any write:
+3,711,296 bytes including LF. This allows 100 rows with maximum-length IDs
+(128 bytes), titles/previews (240 each), workspace paths (4096), language tags
+(24), up to six output bytes per input byte, optional 8192-byte workspace hex,
+fixed fields, numbers, and page diagnostics. Invalid host projections fail
+closed as `ResourceLimit`, without intentionally emitting partial success.
 
-The pinned `sessions-json` benchmark record moves only from `unimplemented` to
-implemented-but-`non-equivalent`. Both commands remain `not-measured` and
-`claim_eligible: false`; no samples, thresholds, product-performance result,
-compatibility promotion, or fx-equivalence claim are introduced. Zig remains
-only the pinned toolchain used to build the upstream comparison input;
-machine-god remains a Rust product.
+## Pagination and damaged records
+
+Cursors are native checked values, not filenames:
+`v1:<signed-update-ms>:<id>` or `v1:unknown:<id>`. Timestamps use canonical
+decimal representation; only the first two colons delimit components because
+native IDs may contain colons. Raw cursors are bounded to 320 bytes.
+
+A fully scanned page with an additional eligible result includes
+`has_more:true` and `next_cursor` before `sessions`. Human output supplies a
+`machine-god sessions` continuation command preserving `--all` and the actual
+`--limit`. A cursor is an ordering boundary, not a snapshot or frozen index;
+concurrent changes can affect later observations.
+
+The native `SkipAndReport` policy retains healthy rows and counts unreadable
+records without exposing their names. Positive `skipped_invalid` appears
+before pagination fields in JSON; human output adds a count-only warning and
+`machine-god doctor` hint. Complete scans with no readable rows and skipped records use
+`[sessions] no readable saved sessions`, not the complete-empty sentence.
+
+A resource-incomplete scan never promises a continuation. JSON includes
+`scan_complete:false,truncated:true`; human output adds
+`[sessions] listing incomplete: a resource limit was reached`. An empty
+incomplete scan uses a counted zero-row header. Complete empty JSON with no
+invalid records remains exactly:
+
+```json
+{"kind":"sessions","count":0,"sessions":[]}
+```
+
+## Native effects and platforms
+
+Linux/macOS use the [native catalog](native-session-listing.md) facade. Default
+scope canonicalizes `.` in native code; `--all` does not require a workspace.
+State selection uses nonempty `XDG_STATE_HOME`, otherwise `HOME/.local/state`,
+with the fixed `machine-god` namespace and existing native root safety rules.
+Missing state roots produce empty observations; unsafe/inaccessible roots fail.
+No config, credential, model, or permission state is loaded.
+
+Future construction is inert. Canonicalization, environment selection,
+descriptor operations, bounded scans, reads, and advisory locks execute
+synchronously on first poll, without detached tasks. An injected pending
+future is polled once, dropped, and reported as `Unavailable`. Unsupported
+targets fail with the fixed `Unsupported` category without filesystem work.
+
+Native scan limits remain 1,024 processed directory entries plus an overflow
+witness, 64 MiB aggregate record bytes plus a byte witness, and per-record
+bounds. Listing does not create state roots or rewrite/delete/migrate records.
+Observing an existing record can create its missing permanent private advisory
+lock sidecar, as documented by the native store. No product-performance claim
+follows from this command.

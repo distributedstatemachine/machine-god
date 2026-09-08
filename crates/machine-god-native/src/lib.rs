@@ -186,6 +186,7 @@ mod runtime_status;
 mod semantic_search;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod session_catalog;
+mod session_catalog_cursor;
 mod session_inspection;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod session_lifecycle;
@@ -684,9 +685,14 @@ pub use semantic_search::{
 pub use session_catalog::{
     MAX_NATIVE_SESSION_CATALOG_QUERY_BYTES, MAX_NATIVE_SESSION_PREVIEW_BYTES, NativeSessionCatalog,
     NativeSessionCatalogEntry, NativeSessionCatalogError, NativeSessionCatalogErrorKind,
-    NativeSessionCatalogPage, NativeSessionCatalogQuery, NativeSessionSelectionIncomplete,
-    inspect_native_session_catalog_entry, inspect_process_session_catalog_entry,
-    list_native_session_catalog, list_process_session_catalog,
+    NativeSessionCatalogInvalidRecords, NativeSessionCatalogPage, NativeSessionCatalogQuery,
+    NativeSessionSelectionIncomplete, inspect_native_session_catalog_entry,
+    inspect_process_session_catalog_entry, list_native_session_catalog,
+    list_process_current_workspace_session_catalog, list_process_session_catalog,
+};
+pub use session_catalog_cursor::{
+    MAX_NATIVE_SESSION_CATALOG_CURSOR_BYTES, NativeSessionCatalogCursor,
+    NativeSessionCatalogCursorError,
 };
 pub use session_inspection::{
     NativeSessionInspection, NativeSessionInspectionError, NativeSessionInspectionErrorKind,

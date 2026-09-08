@@ -30,6 +30,22 @@ pub fn list_process_session_catalog(
         list(&environment, &query)
     })
 }
+
+/// Resolves the current directory on first poll and applies its canonical
+/// workspace spelling before state-only listing. Never creates state roots.
+#[must_use]
+pub fn list_process_current_workspace_session_catalog(
+    query: NativeSessionCatalogQuery,
+) -> BoxFuture<'static, Result<NativeSessionCatalogPage, Error>> {
+    Box::pin(async move {
+        let workspace = std::fs::canonicalize(".").map_err(|_| Error::new(Kind::Unavailable))?;
+        let query = query
+            .with_workspace(&workspace)
+            .map_err(|_| Error::new(Kind::Unavailable))?;
+        let environment = capture_state_environment(&mut ProcessStateEnvironmentReader);
+        list(&environment, &query)
+    })
+}
 /// Exact-ID metadata projection without enumeration or creating missing state.
 #[must_use]
 pub fn inspect_native_session_catalog_entry(

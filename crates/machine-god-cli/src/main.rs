@@ -15,6 +15,7 @@ use std::thread::JoinHandle;
 mod ask;
 mod background;
 mod replay;
+mod sessions;
 mod status;
 
 #[cfg(not(target_family = "wasm"))]
@@ -35,20 +36,20 @@ use machine_god_native::{
     DiscoveredAiGatewayCatalogCredential, discover_process_ai_gateway_catalog_credential,
 };
 use machine_god_native::{
-    MAX_LIST_SESSIONS, MAX_WORKSPACE_PATH_BYTES, NativeCredentialSourceKind,
-    NativeDoctorCheckStatus, NativeDoctorReport, NativeProviderKind, NativeSessionInspection,
-    NativeSessionInspectionError, NativeSessionInspectionErrorKind, NativeSessionList,
-    NativeSessionListingError, NativeSessionListingErrorKind, NativeTransportKind,
-    NativeWorkspaceInspection, NativeWorkspaceInspectionError, NativeWorkspaceInspectionErrorKind,
-    PermissionMode, inspect_process_doctor, inspect_process_session, inspect_process_workspace,
-    list_process_sessions, load_process_config,
+    MAX_WORKSPACE_PATH_BYTES, NativeCredentialSourceKind, NativeDoctorCheckStatus,
+    NativeDoctorReport, NativeProviderKind, NativeSessionInspection, NativeSessionInspectionError,
+    NativeSessionInspectionErrorKind, NativeTransportKind, NativeWorkspaceInspection,
+    NativeWorkspaceInspectionError, NativeWorkspaceInspectionErrorKind, PermissionMode,
+    inspect_process_doctor, inspect_process_session, inspect_process_workspace,
+    load_process_config,
 };
 use replay::{ProductionReplayCommandHost, ReplayCommandHost, is_replay_command, run_replay};
+use sessions::{ProductionSessionsCommandHost, SessionsCommandHost, SessionsOptions, run_sessions};
 use status::{ProductionStatusCommandHost, StatusCommandHost, is_status_command, run_status};
 
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--json] | status [--json] | workspace [list] [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list] [--json]]\n",
 );
 const CONFIGURATION_FAILURE: &str = "machine-god: failed to load configuration\n";
 const DOCTOR_RENDER_FAILURE: &str = "machine-god doctor: could not render report\n";
@@ -57,7 +58,6 @@ const DOCTOR_CHECK_COUNT: usize = 4;
 const MAX_DOCTOR_OUTPUT_BYTES: usize = 4096;
 const MAX_MODELS_OUTPUT_BYTES: usize = 64 * 1024;
 const MAX_SESSION_OUTPUT_BYTES: usize = 4096;
-const MAX_SESSIONS_OUTPUT_BYTES: usize = 16 * 1024;
 const MAX_WORKSPACE_OUTPUT_BYTES: usize = 32 * 1024;
 
 #[derive(Debug)]
@@ -151,11 +151,6 @@ impl std::fmt::Write for BoundedSessionOutput {
 }
 
 #[derive(Debug)]
-struct BoundedSessionsOutput {
-    value: String,
-}
-
-#[derive(Debug)]
 struct BoundedWorkspaceOutput {
     value: String,
 }
@@ -185,31 +180,6 @@ impl std::fmt::Write for BoundedWorkspaceOutput {
     }
 }
 
-impl BoundedSessionsOutput {
-    fn new() -> Self {
-        Self {
-            value: String::with_capacity(1024),
-        }
-    }
-
-    fn finish(self) -> String {
-        self.value
-    }
-}
-
-impl std::fmt::Write for BoundedSessionsOutput {
-    fn write_str(&mut self, value: &str) -> std::fmt::Result {
-        let Some(new_len) = self.value.len().checked_add(value.len()) else {
-            return Err(std::fmt::Error);
-        };
-        if new_len > MAX_SESSIONS_OUTPUT_BYTES {
-            return Err(std::fmt::Error);
-        }
-        self.value.push_str(value);
-        Ok(())
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Command {
     Identity,
@@ -220,7 +190,7 @@ enum Command {
     Permissions { json: bool },
     Resume { id: SessionId, prompt: String },
     Session { id: SessionId, json: bool },
-    Sessions { json: bool },
+    Sessions { options: SessionsOptions },
     Workspace { json: bool },
 }
 
@@ -403,83 +373,6 @@ fn classify_session_inspection_error_kind(
         NativeSessionInspectionErrorKind::NotFound => SessionOperationalFailure::NotFound,
         NativeSessionInspectionErrorKind::Corrupt => SessionOperationalFailure::Corrupt,
         _ => SessionOperationalFailure::Unavailable,
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct SessionsSnapshot {
-    session_ids: Vec<String>,
-    truncated: bool,
-}
-
-impl SessionsSnapshot {
-    fn from_native(listing: NativeSessionList) -> Self {
-        let truncated = listing.truncated();
-        Self {
-            session_ids: listing
-                .into_session_ids()
-                .into_iter()
-                .map(|session_id| session_id.as_str().to_owned())
-                .collect(),
-            truncated,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SessionsOperationalFailure {
-    Corrupt,
-    ResourceLimit,
-    Unavailable,
-    Unsupported,
-}
-
-impl SessionsOperationalFailure {
-    const fn category(self) -> &'static str {
-        match self {
-            Self::Corrupt => "Corrupt",
-            Self::ResourceLimit => "ResourceLimit",
-            Self::Unavailable => "Unavailable",
-            Self::Unsupported => "Unsupported",
-        }
-    }
-}
-
-trait SessionsCommandHost {
-    fn list_sessions(
-        &self,
-    ) -> BoxFuture<'static, Result<SessionsSnapshot, SessionsOperationalFailure>>;
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct ProductionSessionsCommandHost;
-
-impl SessionsCommandHost for ProductionSessionsCommandHost {
-    fn list_sessions(
-        &self,
-    ) -> BoxFuture<'static, Result<SessionsSnapshot, SessionsOperationalFailure>> {
-        Box::pin(async {
-            list_process_sessions()
-                .await
-                .map(SessionsSnapshot::from_native)
-                .map_err(classify_session_listing_error)
-        })
-    }
-}
-
-fn classify_session_listing_error(error: NativeSessionListingError) -> SessionsOperationalFailure {
-    classify_session_listing_error_kind(error.kind())
-}
-
-fn classify_session_listing_error_kind(
-    kind: NativeSessionListingErrorKind,
-) -> SessionsOperationalFailure {
-    match kind {
-        NativeSessionListingErrorKind::UnsupportedPlatform => {
-            SessionsOperationalFailure::Unsupported
-        }
-        NativeSessionListingErrorKind::Corrupt => SessionsOperationalFailure::Corrupt,
-        _ => SessionsOperationalFailure::Unavailable,
     }
 }
 
@@ -1603,8 +1496,8 @@ fn run_with_hosts_and_status(
         Command::Session { id, json } => {
             return run_session(inspection_host, id, json, stdout, stderr);
         }
-        Command::Sessions { json } => {
-            return run_sessions(listing_host, json, stdout, stderr);
+        Command::Sessions { options } => {
+            return run_sessions(listing_host, &options, stdout, stderr);
         }
         Command::Workspace { json } => {
             return run_workspace(workspace_host, json, stdout, stderr);
@@ -1684,14 +1577,9 @@ fn parse_arguments(arguments: impl IntoIterator<Item = OsString>) -> Result<Comm
             };
             Command::Session { id, json }
         }
-        "sessions" => {
-            let json = match arguments.next() {
-                None => false,
-                Some(argument) if argument == "--json" => true,
-                Some(_) => return Err(()),
-            };
-            Command::Sessions { json }
-        }
+        "sessions" => Command::Sessions {
+            options: sessions::parse_options(arguments.by_ref())?,
+        },
         "workspace" => {
             let json = match arguments.next() {
                 None => false,
@@ -1754,7 +1642,7 @@ fn help() -> String {
             "  machine-god replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>]\n",
             "  machine-god resume <id> [--] <prompt...>\n",
             "  machine-god session <id> [--json]\n",
-            "  machine-god sessions [--json]\n",
+            "  machine-god sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json]\n",
             "  machine-god status [--json]\n",
             "  machine-god workspace [list] [--json]\n",
             "\n",
@@ -2129,132 +2017,6 @@ fn write_json_session(
     output.write_str("}\n")
 }
 
-fn run_sessions(
-    host: &impl SessionsCommandHost,
-    json: bool,
-    stdout: &mut impl io::Write,
-    stderr: &mut impl io::Write,
-) -> u8 {
-    let mut listing = host.list_sessions();
-    let mut context = Context::from_waker(Waker::noop());
-    let result = match listing.as_mut().poll(&mut context) {
-        Poll::Ready(result) => result,
-        Poll::Pending => Err(SessionsOperationalFailure::Unavailable),
-    };
-    let snapshot = match result {
-        Ok(snapshot) => snapshot,
-        Err(failure) => return write_sessions_failure(failure, json, stdout, stderr),
-    };
-    let output = match render_sessions(&snapshot, json) {
-        Ok(output) => output,
-        Err(failure) => return write_sessions_failure(failure, json, stdout, stderr),
-    };
-    if stdout.write_all(output.as_bytes()).is_err() {
-        let _ = stderr.write_all(OUTPUT_FAILURE.as_bytes());
-        return 1;
-    }
-    0
-}
-
-fn write_sessions_failure(
-    failure: SessionsOperationalFailure,
-    json: bool,
-    stdout: &mut impl io::Write,
-    stderr: &mut impl io::Write,
-) -> u8 {
-    let category = failure.category();
-    if json {
-        let mut output = String::from("{\"kind\":\"sessions\",\"error\":");
-        let detail = format!("could not list sessions: {category}");
-        push_json_string(&mut output, &detail);
-        output.push_str(",\"code\":");
-        push_json_string(&mut output, category);
-        output.push_str("}\n");
-        if stdout.write_all(output.as_bytes()).is_err() {
-            let _ = stderr.write_all(OUTPUT_FAILURE.as_bytes());
-        }
-    } else {
-        let mut output = String::from("machine-god sessions: could not list sessions: ");
-        output.push_str(category);
-        output.push('\n');
-        if stderr.write_all(output.as_bytes()).is_err() {
-            let _ = stderr.write_all(OUTPUT_FAILURE.as_bytes());
-        }
-    }
-    1
-}
-
-fn render_sessions(
-    snapshot: &SessionsSnapshot,
-    json: bool,
-) -> Result<String, SessionsOperationalFailure> {
-    validate_sessions_snapshot(snapshot)?;
-    let mut output = BoundedSessionsOutput::new();
-    let rendered = if json {
-        write_json_sessions(&mut output, snapshot)
-    } else {
-        write_human_sessions(&mut output, snapshot)
-    };
-    rendered.map_err(|_| SessionsOperationalFailure::ResourceLimit)?;
-    Ok(output.finish())
-}
-
-fn validate_sessions_snapshot(
-    snapshot: &SessionsSnapshot,
-) -> Result<(), SessionsOperationalFailure> {
-    if snapshot.session_ids.len() > MAX_LIST_SESSIONS {
-        return Err(SessionsOperationalFailure::ResourceLimit);
-    }
-    let mut previous: Option<&str> = None;
-    for session_id in &snapshot.session_ids {
-        if SessionId::new(session_id.clone()).is_err()
-            || previous.is_some_and(|previous| previous >= session_id.as_str())
-        {
-            return Err(SessionsOperationalFailure::ResourceLimit);
-        }
-        previous = Some(session_id);
-    }
-    Ok(())
-}
-
-fn write_human_sessions(
-    output: &mut BoundedSessionsOutput,
-    snapshot: &SessionsSnapshot,
-) -> std::fmt::Result {
-    if snapshot.session_ids.is_empty() && !snapshot.truncated {
-        return output.write_str("[sessions] no saved sessions\n");
-    }
-    writeln!(output, "[sessions] {} saved", snapshot.session_ids.len())?;
-    for session_id in &snapshot.session_ids {
-        writeln!(output, " - {session_id}")?;
-    }
-    if snapshot.truncated {
-        output.write_str("[sessions] listing incomplete: a resource limit was reached\n")?;
-    }
-    Ok(())
-}
-
-fn write_json_sessions(
-    output: &mut BoundedSessionsOutput,
-    snapshot: &SessionsSnapshot,
-) -> std::fmt::Result {
-    write!(
-        output,
-        "{{\"kind\":\"sessions\",\"count\":{},\"truncated\":{},\"sessions\":[",
-        snapshot.session_ids.len(),
-        snapshot.truncated,
-    )?;
-    for (index, session_id) in snapshot.session_ids.iter().enumerate() {
-        if index != 0 {
-            output.write_char(',')?;
-        }
-        output.write_str("{\"id\":")?;
-        write_json_string(output, session_id)?;
-        output.write_char('}')?;
-    }
-    output.write_str("]}\n")
-}
-
 fn run_workspace(
     host: &impl WorkspaceCommandHost,
     json: bool,
@@ -2435,20 +2197,17 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use super::is_background_process_helper_arguments;
     use super::{
-        BoundedSessionOutput, BoundedSessionsOutput, BoundedWorkspaceOutput, Command,
-        DOCTOR_RENDER_FAILURE, DoctorCheckSnapshot, DoctorCheckStatus, DoctorCommandHost,
-        DoctorReportSnapshot, INVALID_ARGUMENTS, MAX_DOCTOR_OUTPUT_BYTES, MAX_SESSION_OUTPUT_BYTES,
-        MAX_SESSIONS_OUTPUT_BYTES, MAX_WORKSPACE_OUTPUT_BYTES, ModelsCommandExecution,
-        ModelsCommandHost, ModelsOperationalFailure, OUTPUT_FAILURE, PermissionMode,
-        SessionCommandHost, SessionOperationalFailure, SessionSnapshot, SessionsCommandHost,
-        SessionsOperationalFailure, SessionsSnapshot, WorkspaceCommandHost,
+        BoundedSessionOutput, BoundedWorkspaceOutput, Command, DOCTOR_RENDER_FAILURE,
+        DoctorCheckSnapshot, DoctorCheckStatus, DoctorCommandHost, DoctorReportSnapshot,
+        INVALID_ARGUMENTS, MAX_DOCTOR_OUTPUT_BYTES, MAX_SESSION_OUTPUT_BYTES,
+        MAX_WORKSPACE_OUTPUT_BYTES, ModelsCommandExecution, ModelsCommandHost,
+        ModelsOperationalFailure, OUTPUT_FAILURE, PermissionMode, SessionCommandHost,
+        SessionOperationalFailure, SessionSnapshot, SessionsOptions, WorkspaceCommandHost,
         WorkspaceOperationalFailure, WorkspaceSnapshot, classify_session_inspection_error_kind,
-        classify_session_listing_error_kind, classify_workspace_inspection_error_kind, help,
-        json_permissions, parse_arguments, permissions, push_json_string, render_doctor,
-        render_session, render_sessions, render_workspace, run, run_with_ask_host,
-        run_with_background_host, run_with_doctor_host, run_with_models_host,
-        run_with_session_host, run_with_sessions_host, run_with_status_host,
-        run_with_workspace_host,
+        classify_workspace_inspection_error_kind, help, json_permissions, parse_arguments,
+        permissions, push_json_string, render_doctor, render_session, render_workspace, run,
+        run_with_ask_host, run_with_background_host, run_with_doctor_host, run_with_models_host,
+        run_with_session_host, run_with_status_host, run_with_workspace_host,
     };
     #[cfg(not(target_family = "wasm"))]
     use super::{ModelsCompositionEffects, classify_provider_error, list_models_with_effects};
@@ -2476,7 +2235,7 @@ mod tests {
     use machine_god_native::{
         AI_GATEWAY_DEFAULT_MODEL, MAX_WORKSPACE_PATH_BYTES, NativeBackgroundQuery,
         NativeRuntimeCredentialEnvironment, NativeRuntimeStatus, NativeRuntimeStatusError,
-        NativeRuntimeStatusInput, NativeSessionInspectionErrorKind, NativeSessionListingErrorKind,
+        NativeRuntimeStatusInput, NativeSessionInspectionErrorKind,
         NativeWorkspaceInspectionErrorKind, inspect_native_runtime_status,
     };
     use std::cell::{Cell, RefCell};
@@ -2670,44 +2429,6 @@ mod tests {
     }
 
     #[derive(Clone, Debug)]
-    struct FakeSessionsHost {
-        result: Result<SessionsSnapshot, SessionsOperationalFailure>,
-        calls: Cell<usize>,
-        pending: bool,
-    }
-
-    impl FakeSessionsHost {
-        fn ready(result: Result<SessionsSnapshot, SessionsOperationalFailure>) -> Self {
-            Self {
-                result,
-                calls: Cell::new(0),
-                pending: false,
-            }
-        }
-
-        fn pending() -> Self {
-            Self {
-                result: Err(SessionsOperationalFailure::Unavailable),
-                calls: Cell::new(0),
-                pending: true,
-            }
-        }
-    }
-
-    impl SessionsCommandHost for FakeSessionsHost {
-        fn list_sessions(
-            &self,
-        ) -> BoxFuture<'static, Result<SessionsSnapshot, SessionsOperationalFailure>> {
-            self.calls.set(self.calls.get() + 1);
-            if self.pending {
-                Box::pin(std::future::pending())
-            } else {
-                Box::pin(std::future::ready(self.result.clone()))
-            }
-        }
-    }
-
-    #[derive(Clone, Debug)]
     struct FakeWorkspaceHost {
         result: Result<WorkspaceSnapshot, WorkspaceOperationalFailure>,
         calls: Cell<usize>,
@@ -2726,16 +2447,6 @@ mod tests {
         fn inspect_workspace(&self) -> Result<WorkspaceSnapshot, WorkspaceOperationalFailure> {
             self.calls.set(self.calls.get() + 1);
             self.result.clone()
-        }
-    }
-
-    fn sessions_snapshot(session_ids: &[&str], truncated: bool) -> SessionsSnapshot {
-        SessionsSnapshot {
-            session_ids: session_ids
-                .iter()
-                .map(|value| (*value).to_owned())
-                .collect(),
-            truncated,
         }
     }
 
@@ -3792,11 +3503,18 @@ mod tests {
         );
         assert_eq!(
             parse_arguments([OsString::from("sessions")]),
-            Ok(Command::Sessions { json: false })
+            Ok(Command::Sessions {
+                options: SessionsOptions::default()
+            })
         );
         assert_eq!(
             parse_arguments([OsString::from("sessions"), OsString::from("--json")]),
-            Ok(Command::Sessions { json: true })
+            Ok(Command::Sessions {
+                options: SessionsOptions {
+                    json: true,
+                    ..SessionsOptions::default()
+                }
+            })
         );
         for arguments in [
             vec![OsString::from("unknown")],
@@ -4236,7 +3954,7 @@ mod tests {
             .find("  machine-god session <id> [--json]\n")
             .expect("session usage");
         let listing_usage = output
-            .find("  machine-god sessions [--json]\n")
+            .find("  machine-god sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json]\n")
             .expect("sessions usage");
         let status_usage = output
             .find("  machine-god status [--json]\n")
@@ -5365,350 +5083,6 @@ mod tests {
         let mut stderr = FirstWriteFailsThenCaptures::default();
         let exit = run_with_session_host(
             [OsString::from("session"), OsString::from("alpha")],
-            &mut stdout,
-            &mut stderr,
-            &host,
-        );
-
-        assert_eq!(exit, 1);
-        assert!(stdout.is_empty());
-        assert_eq!(stderr.captured, OUTPUT_FAILURE.as_bytes());
-        assert_eq!(host.calls.get(), 1);
-    }
-
-    #[test]
-    fn sessions_human_output_is_exact_for_empty_populated_and_truncated_results() {
-        let cases = [
-            (
-                sessions_snapshot(&[], false),
-                "[sessions] no saved sessions\n",
-            ),
-            (
-                sessions_snapshot(&["alpha", "beta"], false),
-                "[sessions] 2 saved\n - alpha\n - beta\n",
-            ),
-            (
-                sessions_snapshot(&[], true),
-                concat!(
-                    "[sessions] 0 saved\n",
-                    "[sessions] listing incomplete: a resource limit was reached\n",
-                ),
-            ),
-            (
-                sessions_snapshot(&["alpha"], true),
-                concat!(
-                    "[sessions] 1 saved\n",
-                    " - alpha\n",
-                    "[sessions] listing incomplete: a resource limit was reached\n",
-                ),
-            ),
-        ];
-
-        for (snapshot, expected) in cases {
-            let host = FakeSessionsHost::ready(Ok(snapshot));
-            let mut stdout = Vec::new();
-            let mut stderr = Vec::new();
-            let exit = run_with_sessions_host(
-                [OsString::from("sessions")],
-                &mut stdout,
-                &mut stderr,
-                &host,
-            );
-
-            assert_eq!(exit, 0);
-            assert_eq!(stdout, expected.as_bytes());
-            assert!(stderr.is_empty());
-            assert_eq!(host.calls.get(), 1);
-        }
-    }
-
-    #[test]
-    fn sessions_json_output_has_exact_shape_key_order_and_lf() {
-        for (snapshot, expected) in [
-            (
-                sessions_snapshot(&[], false),
-                "{\"kind\":\"sessions\",\"count\":0,\"truncated\":false,\"sessions\":[]}\n",
-            ),
-            (
-                sessions_snapshot(&["alpha", "quoted.id"], true),
-                concat!(
-                    "{\"kind\":\"sessions\",\"count\":2,\"truncated\":true,",
-                    "\"sessions\":[{\"id\":\"alpha\"},{\"id\":\"quoted.id\"}]}\n",
-                ),
-            ),
-        ] {
-            let host = FakeSessionsHost::ready(Ok(snapshot));
-            let mut stdout = Vec::new();
-            let mut stderr = Vec::new();
-            let exit = run_with_sessions_host(
-                [OsString::from("sessions"), OsString::from("--json")],
-                &mut stdout,
-                &mut stderr,
-                &host,
-            );
-
-            assert_eq!(exit, 0);
-            assert_eq!(stdout, expected.as_bytes());
-            assert!(stderr.is_empty());
-            assert_eq!(host.calls.get(), 1);
-        }
-    }
-
-    #[test]
-    fn native_session_listing_errors_collapse_to_the_frozen_cli_categories() {
-        for (kind, expected) in [
-            (
-                NativeSessionListingErrorKind::UnsupportedPlatform,
-                SessionsOperationalFailure::Unsupported,
-            ),
-            (
-                NativeSessionListingErrorKind::InvalidEnvironment,
-                SessionsOperationalFailure::Unavailable,
-            ),
-            (
-                NativeSessionListingErrorKind::UnsafeStateRoot,
-                SessionsOperationalFailure::Unavailable,
-            ),
-            (
-                NativeSessionListingErrorKind::Corrupt,
-                SessionsOperationalFailure::Corrupt,
-            ),
-            (
-                NativeSessionListingErrorKind::Unavailable,
-                SessionsOperationalFailure::Unavailable,
-            ),
-        ] {
-            assert_eq!(classify_session_listing_error_kind(kind), expected);
-        }
-    }
-
-    #[test]
-    fn sessions_failures_use_exact_human_and_json_channels() {
-        for failure in [
-            SessionsOperationalFailure::Corrupt,
-            SessionsOperationalFailure::Unavailable,
-            SessionsOperationalFailure::Unsupported,
-            SessionsOperationalFailure::ResourceLimit,
-        ] {
-            let category = failure.category();
-            let host = FakeSessionsHost::ready(Err(failure));
-            let mut stdout = Vec::new();
-            let mut stderr = Vec::new();
-            let exit = run_with_sessions_host(
-                [OsString::from("sessions")],
-                &mut stdout,
-                &mut stderr,
-                &host,
-            );
-            assert_eq!(exit, 1);
-            assert!(stdout.is_empty());
-            assert_eq!(
-                stderr,
-                format!("machine-god sessions: could not list sessions: {category}\n").as_bytes()
-            );
-            assert_eq!(host.calls.get(), 1);
-
-            let host = FakeSessionsHost::ready(Err(failure));
-            let mut stdout = Vec::new();
-            let mut stderr = Vec::new();
-            let exit = run_with_sessions_host(
-                [OsString::from("sessions"), OsString::from("--json")],
-                &mut stdout,
-                &mut stderr,
-                &host,
-            );
-            assert_eq!(exit, 1);
-            assert_eq!(
-                stdout,
-                format!(
-                    "{{\"kind\":\"sessions\",\"error\":\"could not list sessions: {category}\",\"code\":\"{category}\"}}\n"
-                )
-                .as_bytes()
-            );
-            assert!(stderr.is_empty());
-            assert_eq!(host.calls.get(), 1);
-        }
-    }
-
-    #[test]
-    fn pending_sessions_listing_is_polled_once_and_maps_to_unavailable() {
-        let host = FakeSessionsHost::pending();
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
-        let exit = run_with_sessions_host(
-            [OsString::from("sessions")],
-            &mut stdout,
-            &mut stderr,
-            &host,
-        );
-
-        assert_eq!(exit, 1);
-        assert!(stdout.is_empty());
-        assert_eq!(
-            stderr,
-            b"machine-god sessions: could not list sessions: Unavailable\n"
-        );
-        assert_eq!(host.calls.get(), 1);
-    }
-
-    #[test]
-    fn invalid_sessions_arguments_are_rejected_before_host_effects() {
-        for arguments in [
-            vec![OsString::from("sessions"), OsString::from("extra")],
-            vec![OsString::from("sessions"), OsString::from("--json=true")],
-            vec![
-                OsString::from("sessions"),
-                OsString::from("--json"),
-                OsString::from("extra"),
-            ],
-        ] {
-            let host = FakeSessionsHost::ready(Err(SessionsOperationalFailure::Corrupt));
-            let mut stdout = Vec::new();
-            let mut stderr = Vec::new();
-            let exit = run_with_sessions_host(arguments, &mut stdout, &mut stderr, &host);
-
-            assert_eq!(exit, 2);
-            assert!(stdout.is_empty());
-            assert_eq!(stderr, INVALID_ARGUMENTS.as_bytes());
-            assert_eq!(host.calls.get(), 0);
-        }
-    }
-
-    #[test]
-    fn sessions_snapshot_invariants_fail_closed_as_resource_limit() {
-        let excessive = SessionsSnapshot {
-            session_ids: (0..=super::MAX_LIST_SESSIONS)
-                .map(|index| format!("session-{index:03}"))
-                .collect(),
-            truncated: false,
-        };
-        let cases = [
-            excessive,
-            sessions_snapshot(&["bad/session"], false),
-            sessions_snapshot(&["alpha", "alpha"], false),
-            sessions_snapshot(&["beta", "alpha"], false),
-        ];
-
-        for snapshot in cases {
-            for json in [false, true] {
-                let host = FakeSessionsHost::ready(Ok(snapshot.clone()));
-                let mut stdout = Vec::new();
-                let mut stderr = Vec::new();
-                let arguments = if json {
-                    vec![OsString::from("sessions"), OsString::from("--json")]
-                } else {
-                    vec![OsString::from("sessions")]
-                };
-                let exit = run_with_sessions_host(arguments, &mut stdout, &mut stderr, &host);
-
-                assert_eq!(exit, 1);
-                if json {
-                    assert_eq!(
-                        stdout,
-                        b"{\"kind\":\"sessions\",\"error\":\"could not list sessions: ResourceLimit\",\"code\":\"ResourceLimit\"}\n"
-                    );
-                    assert!(stderr.is_empty());
-                } else {
-                    assert!(stdout.is_empty());
-                    assert_eq!(
-                        stderr,
-                        b"machine-god sessions: could not list sessions: ResourceLimit\n"
-                    );
-                }
-                assert_eq!(host.calls.get(), 1);
-            }
-        }
-    }
-
-    #[test]
-    fn maximal_valid_sessions_snapshot_stays_within_the_output_cap() {
-        let session_ids: Vec<String> = (0..super::MAX_LIST_SESSIONS)
-            .map(|index| format!("{index:03}{}", "a".repeat(125)))
-            .collect();
-        let snapshot = SessionsSnapshot {
-            session_ids,
-            truncated: true,
-        };
-
-        for json in [false, true] {
-            let output = render_sessions(&snapshot, json).expect("valid maximum snapshot renders");
-            assert!(output.len() <= MAX_SESSIONS_OUTPUT_BYTES);
-            assert!(output.ends_with('\n'));
-        }
-    }
-
-    #[test]
-    fn sessions_output_cap_is_inclusive() {
-        let mut output = BoundedSessionsOutput::new();
-        output
-            .write_str(&"x".repeat(MAX_SESSIONS_OUTPUT_BYTES))
-            .expect("inclusive output limit is accepted");
-        assert_eq!(output.value.len(), MAX_SESSIONS_OUTPUT_BYTES);
-        assert!(output.write_char('x').is_err());
-    }
-
-    #[test]
-    fn sessions_broken_zero_progress_and_partial_stdout_use_output_diagnostic() {
-        for json in [false, true] {
-            let arguments = if json {
-                vec![OsString::from("sessions"), OsString::from("--json")]
-            } else {
-                vec![OsString::from("sessions")]
-            };
-            let snapshot = sessions_snapshot(&["alpha"], false);
-
-            let host = FakeSessionsHost::ready(Ok(snapshot.clone()));
-            let mut stdout = BrokenWriter;
-            let mut stderr = Vec::new();
-            let exit = run_with_sessions_host(arguments.clone(), &mut stdout, &mut stderr, &host);
-            assert_eq!(exit, 1);
-            assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
-
-            let host = FakeSessionsHost::ready(Ok(snapshot.clone()));
-            let mut stdout = ZeroProgressWriter::default();
-            let mut stderr = Vec::new();
-            let exit = run_with_sessions_host(arguments.clone(), &mut stdout, &mut stderr, &host);
-            assert_eq!(exit, 1);
-            assert!(stdout.captured.is_empty());
-            assert_eq!(stdout.calls, 1);
-            assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
-
-            let complete = render_sessions(&snapshot, json).expect("snapshot renders");
-            let host = FakeSessionsHost::ready(Ok(snapshot));
-            let mut stdout = PartialThenBrokenWriter::new(5);
-            let mut stderr = Vec::new();
-            let exit = run_with_sessions_host(arguments, &mut stdout, &mut stderr, &host);
-            assert_eq!(exit, 1);
-            assert!(!stdout.prefix.is_empty());
-            assert_eq!(stdout.prefix, complete.as_bytes()[..stdout.prefix.len()]);
-            assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
-        }
-    }
-
-    #[test]
-    fn sessions_json_failure_write_errors_use_output_diagnostic() {
-        let host = FakeSessionsHost::ready(Err(SessionsOperationalFailure::Corrupt));
-        let mut stdout = BrokenWriter;
-        let mut stderr = Vec::new();
-        let exit = run_with_sessions_host(
-            [OsString::from("sessions"), OsString::from("--json")],
-            &mut stdout,
-            &mut stderr,
-            &host,
-        );
-
-        assert_eq!(exit, 1);
-        assert_eq!(stderr, OUTPUT_FAILURE.as_bytes());
-        assert_eq!(host.calls.get(), 1);
-    }
-
-    #[test]
-    fn sessions_human_failure_write_errors_use_output_diagnostic() {
-        let host = FakeSessionsHost::ready(Err(SessionsOperationalFailure::Corrupt));
-        let mut stdout = Vec::new();
-        let mut stderr = FirstWriteFailsThenCaptures::default();
-        let exit = run_with_sessions_host(
-            [OsString::from("sessions")],
             &mut stdout,
             &mut stderr,
             &host,

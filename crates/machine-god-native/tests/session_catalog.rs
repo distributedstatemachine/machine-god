@@ -1,5 +1,8 @@
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
+#[path = "session_catalog/paging.rs"]
+mod paging;
+
 use futures_executor::block_on;
 use machine_god_core::{
     Message, Role, SessionId, SessionIncarnationId, SessionRecord, SessionStore,

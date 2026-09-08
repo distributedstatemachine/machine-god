@@ -176,6 +176,14 @@ pub(crate) struct FileSessionScan {
     pub(crate) complete: bool,
     pub(crate) records: usize,
     pub(crate) bytes: usize,
+    pub(crate) skipped_invalid: usize,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+enum SessionCandidateObservation {
+    Missing,
+    Record,
+    ByteLimit,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -196,10 +204,7 @@ pub(crate) struct FileSessionInspection {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 enum StoredRecordRead {
     Missing,
-    Record {
-        record: SessionRecord,
-        bytes_read: usize,
-    },
+    Record { record: SessionRecord },
     ByteLimit,
 }
 
@@ -420,11 +425,15 @@ impl FileSessionStore {
         after_directory_open: impl FnOnce(),
     ) -> Result<FileSessionList, SessionStoreError> {
         let mut session_ids = Vec::new();
-        let scan =
-            self.visit_session_records(Some(MAX_LIST_SESSIONS), after_directory_open, |record| {
+        let scan = self.visit_session_records(
+            Some(MAX_LIST_SESSIONS),
+            false,
+            after_directory_open,
+            |record| {
                 session_ids.push(record.id.clone());
                 Ok(())
-            })?;
+            },
+        )?;
         session_ids.sort_unstable();
         session_ids.dedup();
         Ok(FileSessionList {
@@ -439,9 +448,10 @@ impl FileSessionStore {
     /// borrowed records; each transient decoded record is released before the next.
     pub(crate) fn scan_session_records(
         &self,
+        skip_invalid: bool,
         visit: impl FnMut(&SessionRecord) -> Result<(), SessionStoreError>,
     ) -> Result<FileSessionScan, SessionStoreError> {
-        self.visit_session_records(None, || {}, visit)
+        self.visit_session_records(None, skip_invalid, || {}, visit)
     }
 
     /// Exact projection does not depend on a directory scan or presentation cap.
@@ -510,11 +520,13 @@ impl FileSessionStore {
     fn visit_session_records(
         &self,
         record_limit: Option<usize>,
+        skip_invalid: bool,
         after_directory_open: impl FnOnce(),
         mut visit: impl FnMut(&SessionRecord) -> Result<(), SessionStoreError>,
     ) -> Result<FileSessionScan, SessionStoreError> {
         let (candidates, mut truncated) = self.session_candidates(after_directory_open)?;
         let mut records = 0;
+        let mut skipped_invalid = 0;
         let mut total_record_bytes = 0_usize;
         for data_name in candidates {
             if record_limit.is_some_and(|limit| records >= limit) {
@@ -529,38 +541,72 @@ impl FileSessionStore {
                 break;
             }
 
-            if !probe_data(self.root.as_fd(), &data_name)? {
-                continue;
-            }
-            let lock_name = lock_name_for_data_name(&data_name);
-            let lock = open_lock(self.root.as_fd(), &lock_name)?;
-            lock_exclusive(&lock)?;
-            let (record, bytes_read) =
-                match read_stored_record(self.root.as_fd(), &data_name, remaining_bytes)? {
-                    StoredRecordRead::Missing => continue,
-                    StoredRecordRead::Record { record, bytes_read } => (record, bytes_read),
-                    StoredRecordRead::ByteLimit => {
-                        truncated = true;
-                        break;
-                    }
-                };
-            let record = RecordOwner::new(record);
-            if SessionNames::for_id(&record.get().id).data != data_name {
-                return Err(corrupt());
-            }
+            let mut bytes_read = 0;
+            let observed = self.visit_session_candidate(
+                &data_name,
+                remaining_bytes,
+                &mut bytes_read,
+                &mut visit,
+            );
+            // Charge transferred bytes even when decoding, native metadata,
+            // filename identity or another candidate check rejects the record.
+            // One aggregate overflow witness is not accepted into the budget.
             total_record_bytes = total_record_bytes
-                .checked_add(bytes_read)
+                .checked_add(bytes_read.min(remaining_bytes))
                 .filter(|total| *total <= MAX_LIST_SESSION_TOTAL_RECORD_BYTES)
                 .expect("a successful bounded listing read fits the aggregate limit");
-            visit(record.get())?;
-            records += 1;
+            let hit_byte_limit = matches!(&observed, Ok(SessionCandidateObservation::ByteLimit));
+            match observed {
+                Ok(SessionCandidateObservation::Missing) => {}
+                Ok(SessionCandidateObservation::Record) => records += 1,
+                Ok(SessionCandidateObservation::ByteLimit) => truncated = true,
+                Err(error) if skip_invalid && error.kind == SessionStoreErrorKind::Corrupt => {
+                    skipped_invalid += 1;
+                }
+                Err(error) => return Err(error),
+            }
+            if hit_byte_limit || bytes_read > remaining_bytes {
+                truncated = true;
+                break;
+            }
         }
 
         Ok(FileSessionScan {
             complete: !truncated,
             records,
             bytes: total_record_bytes,
+            skipped_invalid,
         })
+    }
+
+    fn visit_session_candidate(
+        &self,
+        data_name: &str,
+        remaining_bytes: usize,
+        bytes_read: &mut usize,
+        visit: &mut impl FnMut(&SessionRecord) -> Result<(), SessionStoreError>,
+    ) -> Result<SessionCandidateObservation, SessionStoreError> {
+        if !probe_data(self.root.as_fd(), data_name)? {
+            return Ok(SessionCandidateObservation::Missing);
+        }
+        let lock_name = lock_name_for_data_name(data_name);
+        let lock = open_lock(self.root.as_fd(), &lock_name)?;
+        lock_exclusive(&lock)?;
+        let record = match read_stored_record_counted(
+            self.root.as_fd(),
+            data_name,
+            remaining_bytes,
+            bytes_read,
+        )? {
+            StoredRecordRead::Missing => return Ok(SessionCandidateObservation::Missing),
+            StoredRecordRead::ByteLimit => return Ok(SessionCandidateObservation::ByteLimit),
+            StoredRecordRead::Record { record, .. } => RecordOwner::new(record),
+        };
+        if SessionNames::for_id(&record.get().id).data != data_name {
+            return Err(corrupt());
+        }
+        visit(record.get())?;
+        Ok(SessionCandidateObservation::Record)
     }
 
     fn load_unix(&self, id: &SessionId) -> Result<Option<SessionRecord>, SessionStoreError> {
@@ -2017,6 +2063,16 @@ fn read_stored_record(
     name: &str,
     byte_limit: usize,
 ) -> Result<StoredRecordRead, SessionStoreError> {
+    read_stored_record_counted(root, name, byte_limit, &mut 0)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn read_stored_record_counted(
+    root: rustix::fd::BorrowedFd<'_>,
+    name: &str,
+    byte_limit: usize,
+    bytes_read: &mut usize,
+) -> Result<StoredRecordRead, SessionStoreError> {
     let file = match rustix::fs::openat(
         root,
         name,
@@ -2058,6 +2114,7 @@ fn read_stored_record(
             break;
         }
         bytes.extend_from_slice(&chunk[..read]);
+        *bytes_read = bytes.len();
         if bytes.len() > MAX_FILE_SESSION_BYTES {
             return Err(corrupt());
         }
@@ -2077,10 +2134,7 @@ fn read_stored_record(
     {
         return Err(corrupt());
     }
-    Ok(StoredRecordRead::Record {
-        record,
-        bytes_read: bytes.len(),
-    })
+    Ok(StoredRecordRead::Record { record })
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

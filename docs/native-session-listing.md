@@ -174,13 +174,10 @@ that wrapper's stricter `ai-gateway-http`, non-WebAssembly, Linux/macOS gate.
 
 The original ID-only listing does not interpret native metadata or add rich
 summaries, workspace filters, newest selection, cursor, pagination,
-session-ID generation, deletion, cleanup, or slash commands. The strict
-top-level `sessions [--json]` command consumes this result without adding any
-of those absent semantics. Its separate
-[`CLI contract`](sessions-cli.md) uses a no-create, engine-free native process
-facade and preserves the exact scan bounds and per-record lock-sidecar effect.
-It does not implement fx's richer `sessions` behavior and makes no compatibility
-or upstream-equivalence claim.
+session-ID generation, deletion, cleanup, or slash commands. It remains a
+separate fail-fast library contract. The top-level command's richer native
+catalog consumption and presentation are specified in the
+[`CLI contract`](sessions-cli.md); they do not change this legacy API.
 
 ## Rich native catalog
 
@@ -195,9 +192,10 @@ message count, and authoritative `NativeSessionMetadata` snapshot described in
 [native session lifecycle](native-session-lifecycle.md). Missing historical
 native metadata stays unknown. The catalog does not infer title, workspace,
 origin, or timestamps from transcripts, filesystem modification times, current
-working directory, or ID spelling. Invalid reserved native metadata in any
-reached record fails the entire call with fixed `Corrupt`, even if the record
-would not match the query or fit the displayed results. Generic metadata is not
+working directory, or ID spelling. By default, invalid reserved native metadata
+in any reached record fails the entire call with fixed `Corrupt`, even if the
+record would not match the query or fit the displayed results. The explicit
+reporting mode below counts and omits these records instead. Generic metadata is not
 promoted into authoritative native facts.
 
 The separately named `preview` is presentation data, not a title or metadata
@@ -236,12 +234,63 @@ descending for ties. `scan_complete` reports whether directory/aggregate bounds
 allowed the full observation; `results_truncated` separately reports that more
 matching rows were observed than the display limit. The page also exposes
 matched count, matching unknown-activity count, scanned record count, and
-accepted record bytes. `latest()` refuses `ScanIncomplete` or `UnknownActivity`
+accepted record bytes. `history_len()` counts canonical user-message groups,
+excluding assistant/tool continuation rounds; `message_count()` still counts
+all canonical messages. `latest()` refuses `ScanIncomplete` or `UnknownActivity`
 when either prevents an authoritative ordering of eligible observed sessions,
 including unknown activity on a matching row omitted from the display. A
 complete scan with only result truncation can select its newest matching row.
 This remains a set of individually locked observations, not an atomic snapshot
 or a promise that concurrent writers cannot subsequently change the newest row.
+
+### Continuation and invalid-record reporting
+
+`NativeSessionCatalogCursor` is a portable value on all platforms, independent
+of native filesystem support. `new(updated_at_ms, id)` and `parse(text)` retain
+an optional authoritative timestamp and validated native ID. Display uses
+canonical `v1:<signed-i64>:<id>` for known time, matching the pinned ordinary-ID
+cursor spelling; `v1:unknown:<id>` explicitly represents unknown historical
+activity. Parsing bounds raw input to 320 bytes before copying and rejects
+noncanonical integers (including leading plus, leading zeros, and negative
+zero), invalid IDs, or other versions with a fixed redacted error. Native IDs
+permit colons, so the entire suffix after the first two separators belongs to
+the ID. This is an unambiguous native ID-domain extension, not a restriction of
+the existing native identifier alphabet. Cursor `Debug` is redacted; `Display`
+deliberately exposes its continuation value.
+
+`query.with_continuation(cursor)` selects rows strictly after that boundary in
+the descending optional-time/ID ordering, reapplying workspace, time, and search
+predicates during a new bounded scan. The cursor grants no authority and does
+not freeze the query or store. Concurrent updates can change later page
+membership. `page.next_cursor()` returns the last displayed row's boundary only
+when the scan is complete and additional matching valid rows were observed
+beyond the display limit. Empty/final pages and incomplete scans return `None`;
+there is no fabricated cursor claiming unseen candidates can be exhausted.
+
+`query.with_invalid_records(NativeSessionCatalogInvalidRecords::SkipAndReport)`
+opts into omitting candidate-local `Corrupt` outcomes and exposing only their
+count through `page.skipped_invalid()`. The default `Fail` and ID-only API retain
+their fail-fast behavior. Malformed records, invalid native metadata, wrong
+filename/ID identity, oversized files, nonregular or symlink candidates, and
+hostile derived lock entries retain their existing corruption classification.
+Reporting applies before query filtering and counts each reached invalid
+candidate once, without returning its ID, path, content, or raw error. Global
+root/enumeration failures and ordinary unavailable I/O still fail the entire
+call. Concurrent disappearance remains an omission, not corruption.
+
+All bytes actually read from a rejected candidate consume the existing 64 MiB
+aggregate budget before scanning can continue. Metadata-only rejections such
+as a stat-proven oversized file read no content and charge no content bytes.
+Per-file growth witnesses are charged when continuing; at most one final
+aggregate overflow witness can be transferred without acceptance into the
+budget. Presentation, raw-entry, per-file, and structural bounds are unchanged.
+`scanned_records()` counts successfully validated/projected records, while
+`scanned_record_bytes()` includes accepted bytes of rejected records as well.
+No repair, quarantine, deletion, or source rewrite is performed. Skipped
+corruption does not itself make the enumeration incomplete, so valid rows can
+still be paged with an explicit skipped count; however, `latest()` refuses
+`SkippedInvalid` whenever any candidate was skipped, including candidates whose
+query eligibility cannot be established. Scan incompleteness takes precedence.
 
 `exact(id)` loads only the requested canonical record through the retained
 store and returns its projection, independent of enumeration, ranking, or
@@ -254,6 +303,14 @@ empty page or `None`, while unsafe roots and malformed environment selection
 are fixed errors. Successful reads of existing records may create missing
 private lock sidecars, but no operation creates a state hierarchy or repairs,
 migrates, rewrites, or deletes records.
+
+`list_process_current_workspace_session_catalog(query)` additionally resolves
+`.` to its canonical spelling on first poll and applies an exact workspace
+filter before the same state scan. Resolution or unusable workspace spelling
+returns fixed `Unavailable`; construction and dropping an unpolled future do
+not access CWD. This explicitly scoped facade does not infer associations for
+unknown historical records. The existing all-workspaces process facade performs
+no CWD lookup, including when the process's former directory was removed.
 
 The ordering and bounded preview/search choices follow the pinned upstream
 `session_summary_codec.zig` newest comparator, `session_catalog.zig` query

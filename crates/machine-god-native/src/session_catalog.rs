@@ -5,12 +5,16 @@ mod projection;
 mod query;
 pub use facade::{
     inspect_native_session_catalog_entry, inspect_process_session_catalog_entry,
-    list_native_session_catalog, list_process_session_catalog,
+    list_native_session_catalog, list_process_current_workspace_session_catalog,
+    list_process_session_catalog,
 };
 pub use projection::{MAX_NATIVE_SESSION_PREVIEW_BYTES, NativeSessionCatalogEntry};
-pub use query::{MAX_NATIVE_SESSION_CATALOG_QUERY_BYTES, NativeSessionCatalogQuery};
+pub use query::{
+    MAX_NATIVE_SESSION_CATALOG_QUERY_BYTES, NativeSessionCatalogInvalidRecords,
+    NativeSessionCatalogQuery,
+};
 
-use crate::{FileSessionStore, MAX_LIST_SESSIONS};
+use crate::{FileSessionStore, MAX_LIST_SESSIONS, NativeSessionCatalogCursor};
 use machine_god_core::{BoxFuture, SessionId, SessionStoreError, SessionStoreErrorKind};
 use std::{fmt, sync::Arc};
 
@@ -64,6 +68,7 @@ pub struct NativeSessionCatalogPage {
     unknown_activity_count: usize,
     scanned_records: usize,
     scanned_record_bytes: usize,
+    skipped_invalid: usize,
 }
 impl NativeSessionCatalogPage {
     fn empty() -> Self {
@@ -74,6 +79,7 @@ impl NativeSessionCatalogPage {
             unknown_activity_count: 0,
             scanned_records: 0,
             scanned_record_bytes: 0,
+            skipped_invalid: 0,
         }
     }
     #[must_use]
@@ -107,16 +113,40 @@ impl NativeSessionCatalogPage {
         self.scanned_record_bytes
     }
 
+    #[must_use]
+    pub const fn skipped_invalid(&self) -> usize {
+        self.skipped_invalid
+    }
+
+    /// No cursor is issued from an incomplete scan. This boundary does not bind
+    /// a snapshot: the same predicates must be reapplied to subsequent scans.
+    #[must_use]
+    pub fn next_cursor(&self) -> Option<NativeSessionCatalogCursor> {
+        if !self.scan_complete || !self.results_truncated() {
+            return None;
+        }
+        self.entries.last().map(|entry| {
+            NativeSessionCatalogCursor::new(
+                entry.native_metadata().updated_at_ms(),
+                entry.id().clone(),
+            )
+        })
+    }
+
     /// Selects the newest eligible observed row only when the complete scan and
     /// authoritative activity times make that ranking knowable. Writers may
     /// still change records after any individual locked observation.
     /// # Errors
-    /// Refuses incomplete scanning or any matching unknown activity timestamp.
+    /// Refuses incomplete scanning, skipped invalid candidates or any matching
+    /// unknown activity timestamp.
     pub fn latest(
         &self,
     ) -> Result<Option<&NativeSessionCatalogEntry>, NativeSessionSelectionIncomplete> {
         if !self.scan_complete {
             return Err(NativeSessionSelectionIncomplete::ScanIncomplete);
+        }
+        if self.skipped_invalid != 0 {
+            return Err(NativeSessionSelectionIncomplete::SkippedInvalid);
         }
         if self.unknown_activity_count != 0 {
             return Err(NativeSessionSelectionIncomplete::UnknownActivity);
@@ -129,12 +159,14 @@ impl NativeSessionCatalogPage {
 pub enum NativeSessionSelectionIncomplete {
     ScanIncomplete,
     UnknownActivity,
+    SkippedInvalid,
 }
 impl fmt::Display for NativeSessionSelectionIncomplete {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::ScanIncomplete => "session selection scan is incomplete",
             Self::UnknownActivity => "session activity ordering is unknown",
+            Self::SkippedInvalid => "session selection omitted invalid records",
         })
     }
 }
@@ -199,7 +231,7 @@ fn list_from_store(
     let mut page = NativeSessionCatalogPage::empty();
     let mut scratch = Vec::new();
     let scan = store
-        .scan_session_records(|record| {
+        .scan_session_records(query.skips_invalid(), |record| {
             let entry = NativeSessionCatalogEntry::project(record)?;
             if query.matches(&entry, &mut scratch) {
                 page.matched_count += 1;
@@ -222,6 +254,7 @@ fn list_from_store(
     page.scan_complete = scan.complete;
     page.scanned_records = scan.records;
     page.scanned_record_bytes = scan.bytes;
+    page.skipped_invalid = scan.skipped_invalid;
     Ok(page)
 }
 fn exact_from_store(

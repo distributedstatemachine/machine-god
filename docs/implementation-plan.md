@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
 - Active phase: `implementing the full combined M03 top-level CLI and slash-command feature`
-- Next gate: `finish rich session pagination/reporting, interactive commands and remaining policy/workspace scenarios before the full feature gates`
+- Next gate: `finish resume/session lifecycle, interactive commands and remaining policy/workspace scenarios before the full feature gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -220,9 +220,14 @@ The native rich catalog now projects authoritative metadata and bounded previews
 filters workspace/search/time and ranks every reached record before retaining
 the newest bounded results. Exact lookup is independent of scan truncation;
 latest selection refuses incomplete scans or unknown eligible activity times.
-Legacy ID-only callers retain their existing behavior. CLI cursor pagination and
-explicit corrupt-record reporting remain required implementation work, not
-intentional compatibility exclusions.
+Legacy ID-only callers retain their existing behavior. The top-level sessions
+command now uses this rich catalog with canonical current-workspace scope,
+`--all`, `--limit`, cursor pagination and count-only corrupt-record reporting.
+Skipped decode bytes count against the scan budget. Incomplete scans never
+promise continuation or claim an empty store. Known cursor times use the pinned
+canonical format; native unknown times and colon-bearing IDs remain explicit.
+Rich output preserves unknown metadata, actual user-group counts, control-safe
+display and lossless non-UTF-8 workspace bytes without inventing path authority.
 Remaining work includes interactive CLI persistence-outcome presentation,
 long-lived cache composition,
 interactive command/session transitions,
@@ -235,11 +240,14 @@ the fresh release helper with default test concurrency and backtraces. All 1,590
 native unit and 46 reference-host tests pass. The frame fixture now tests ordinary
 and sandbox envelopes and independent encoder/decoder limits without changing
 production bounds or deadlines. Earlier macOS inventory/reaping failures did not
-recur; this alone does not establish their cause. The integrated catalog passes 57
-focused catalog/listing/store tests and full workspace Clippy. Repository Python tests
-and the fresh release CLI smoke previously passed. Catalog integration and the
-remaining commands still require the complete exact-candidate feature gates;
-none of these internal checkpoints is a delivery.
+recur; this alone does not establish their cause. Integrated paging/reporting
+passes 67 native catalog/cursor/listing/store tests, all 87 CLI integration tests
+and full workspace Clippy. The CLI worker's full unit suite passes 152 tests
+with five existing helper-entry ignores. The fresh release build, release CLI
+checks and replacement workspace gate are running for this combined checkpoint.
+Repository Python tests previously passed; the remaining commands still require
+the complete exact-candidate feature gates. These internal checkpoints are not
+deliveries and do not promote compatibility or performance evidence.
 
 The integrated preparer passes all five real file mutations, actual reviewer
 Allow/Ask/error and cancellation, read-grant/reset, canonical terminal identity,
@@ -460,6 +468,10 @@ For macOS native/workspace runtime checks, build the release CLI first and set
 `MACHINE_GOD_TERMINAL_RELEASE_BINARY` to its absolute path, matching the Apple
 matrix's existing production-helper fixture selection. Keep explicitly
 constructed protocol and failure fixtures; do not relax deadlines or skip tests.
+The CLI integration harness accepts `MACHINE_GOD_CLI_TEST_BINARY` as an explicit
+binary path for release-binary checks; absent that override it uses Cargo's
+freshly built test binary. Session integration fixtures exercise public commands
+through this boundary, not a substituted library-only smoke.
 
 ### Review and remote gate
 

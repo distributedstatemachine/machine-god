@@ -26,9 +26,14 @@ use machine_god_core::{
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use machine_god_native::{
-    FileSessionStore, MAX_FILE_SESSION_BYTES, NativeEnvironment, NativeSessionListingErrorKind,
+    FileSessionStore, MAX_FILE_SESSION_BYTES, NATIVE_SESSION_METADATA_KEY, NativeEnvironment,
+    NativeSessionListingErrorKind, NativeSessionMetadata, NativeSessionOrigin,
     list_native_sessions,
 };
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "cli/sessions.rs"]
+mod rich_sessions;
 
 const IDENTITY: &str = "machine-god 0.1.0 (engine API 1)\n";
 const PERMISSIONS: &str = concat!(
@@ -58,7 +63,7 @@ const HELP: &str = concat!(
     "  machine-god replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>]\n",
     "  machine-god resume <id> [--] <prompt...>\n",
     "  machine-god session <id> [--json]\n",
-    "  machine-god sessions [--json]\n",
+    "  machine-god sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json]\n",
     "  machine-god status [--json]\n",
     "  machine-god workspace [list] [--json]\n",
     "\n",
@@ -103,7 +108,7 @@ const STATUS_MISSING_AUTH_HELP: &str = concat!(
 );
 const INVALID_ARGUMENTS: &str = concat!(
     "machine-god: invalid arguments\n",
-    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--json] | status [--json] | workspace [list] [--json]]\n",
+    "Usage: machine-god [help | --help | -h | --version | -V | ask [--] <prompt...> | background [last | <unsigned-decimal-u64>] [--json] | doctor [--json] | models [--json] | permissions [--json] | replay <tape> [--frames] [--json] [--golden <path>] [--frames-dir <path>] | resume <id> [--] <prompt...> | session <id> [--json] | sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | status [--json] | workspace [list] [--json]]\n",
 );
 const CONFIG_FAILURE: &str = "machine-god: failed to load configuration\n";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -220,7 +225,10 @@ impl Drop for ScopedChild {
 }
 
 fn machine_god() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_machine-god"))
+    Command::new(
+        std::env::var_os("MACHINE_GOD_CLI_TEST_BINARY")
+            .unwrap_or_else(|| env!("CARGO_BIN_EXE_machine-god").into()),
+    )
 }
 
 fn run(arguments: &[&str]) -> Output {
@@ -601,7 +609,7 @@ fn assert_alternate_session_shape_is_rejected(id: &str, contents: &str, forbidde
     assert_eq!(fs::read(&lock_path).unwrap(), lock_before);
 
     let sessions = run_sessions_bounded(config_root.as_os_str(), state_base.as_os_str());
-    assert_sessions_error(&sessions, true, "Corrupt");
+    assert_sessions_rows(&sessions, &[], 1);
     assert_output_omits(&sessions, &[forbidden]);
     assert_eq!(fs::read(&record_path).unwrap(), record_before);
     assert_eq!(fs::read(&lock_path).unwrap(), lock_before);
@@ -650,7 +658,7 @@ fn run_session_bounded(config: &OsStr, state: &OsStr, id: &str) -> Output {
 fn run_sessions_bounded(config: &OsStr, state: &OsStr) -> Output {
     let mut command = sessions_command(config, state);
     command
-        .args(["sessions", "--json"])
+        .args(["sessions", "--all", "--json"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     ScopedChild::spawn(&mut command).wait_with_output(Duration::from_secs(10))
@@ -682,10 +690,30 @@ fn expected_session_json_with_counts(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn expected_single_session_listing_json(id: &str) -> String {
-    format!(
-        "{{\"kind\":\"sessions\",\"count\":1,\"truncated\":false,\"sessions\":[{{\"id\":\"{id}\"}}]}}\n"
-    )
+fn assert_sessions_rows(output: &Output, ids: &[&str], skipped: usize) -> serde_json::Value {
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    assert!(output.stdout.ends_with(b"\n"));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["kind"], "sessions");
+    assert_eq!(value["count"], ids.len());
+    assert_eq!(
+        value["skipped_invalid"].as_u64().unwrap_or(0),
+        u64::try_from(skipped).unwrap()
+    );
+    let observed: Vec<_> = value["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(observed, ids);
+    value
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -728,10 +756,10 @@ fn assert_session_recursion_process_case(
             &session,
             &expected_session_json_with_counts(label, message_count, metadata_entry_count),
         );
-        assert_success(&sessions, &expected_single_session_listing_json(label));
+        assert_sessions_rows(&sessions, &[label], 0);
     } else {
         assert_session_error(&session, true, "Corrupt");
-        assert_sessions_error(&sessions, true, "Corrupt");
+        assert_sessions_rows(&sessions, &[], 1);
     }
     assert_output_omits(&session, &["CLI_RECURSION_SHADOWED_SECRET"]);
     assert_output_omits(&sessions, &["CLI_RECURSION_SHADOWED_SECRET"]);
@@ -2509,17 +2537,17 @@ fn sessions_missing_root_is_exact_empty_and_ignores_unrelated_host_inputs() {
     let config_path = write_config(&config_root, contents);
 
     let human = sessions_command(config_root.as_os_str(), state_root.as_os_str())
-        .arg("sessions")
+        .args(["sessions", "--all"])
         .output()
         .unwrap();
     assert_success(&human, "[sessions] no saved sessions\n");
     let json = sessions_command(config_root.as_os_str(), state_root.as_os_str())
-        .args(["sessions", "--json"])
+        .args(["sessions", "--all", "--json"])
         .output()
         .unwrap();
     assert_success(
         &json,
-        "{\"kind\":\"sessions\",\"count\":0,\"truncated\":false,\"sessions\":[]}\n",
+        "{\"kind\":\"sessions\",\"count\":0,\"sessions\":[]}\n",
     );
 
     assert_output_omits(
@@ -2548,7 +2576,7 @@ fn sessions_missing_root_is_exact_empty_and_ignores_unrelated_host_inputs() {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn sessions_xdg_precedes_home_and_outputs_sorted_ids_exactly() {
+fn sessions_xdg_precedes_home_and_ranks_unknown_time_ids_descending() {
     let temporary = TestDirectory::new("sessions-xdg-precedence");
     let xdg_state = temporary.path().join("xdg-state");
     let home = temporary.path().join("home");
@@ -2559,30 +2587,36 @@ fn sessions_xdg_precedes_home_and_outputs_sorted_ids_exactly() {
 
     let mut command = machine_god();
     command
-        .arg("sessions")
+        .args(["sessions", "--all"])
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", "relative-config-must-not-be-read")
         .env("XDG_STATE_HOME", &xdg_state)
         .env("VERCEL_OIDC_TOKEN", "invalid credential must not be read");
-    assert_success(
-        &command.output().unwrap(),
-        "[sessions] 2 saved\n - alpha-session\n - zeta-session\n",
-    );
+    let output = command.output().unwrap();
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.starts_with("[sessions] 2 saved\n"));
+    assert!(text.find("id=zeta-session").unwrap() < text.find("id=alpha-session").unwrap());
+    assert!(!text.contains("home-must-not-appear"));
 
     let mut command = machine_god();
     command
-        .args(["sessions", "--json"])
+        .args(["sessions", "--all", "--json"])
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", "relative-config-must-not-be-read")
         .env("XDG_STATE_HOME", &xdg_state)
         .env("VERCEL_OIDC_TOKEN", "invalid credential must not be read");
-    assert_success(
+    let value = assert_sessions_rows(
         &command.output().unwrap(),
-        concat!(
-            "{\"kind\":\"sessions\",\"count\":2,\"truncated\":false,\"sessions\":[",
-            "{\"id\":\"alpha-session\"},{\"id\":\"zeta-session\"}]}\n",
-        ),
+        &["zeta-session", "alpha-session"],
+        0,
     );
+    for entry in value["sessions"].as_array().unwrap() {
+        assert!(entry["workspace_root"].is_null());
+        assert!(entry["updated_at_ms"].is_null());
+        assert_eq!(entry["title"], "Untitled session");
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -2593,7 +2627,7 @@ fn sessions_home_fallback_uses_dot_local_state() {
     save_session(&home.join(".local/state"), "fallback-session");
 
     let output = machine_god()
-        .args(["sessions", "--json"])
+        .args(["sessions", "--all", "--json"])
         .env("HOME", &home)
         .env_remove("XDG_CONFIG_HOME")
         .env_remove("XDG_STATE_HOME")
@@ -2601,13 +2635,7 @@ fn sessions_home_fallback_uses_dot_local_state() {
         .env_remove("AI_GATEWAY_API_KEY")
         .output()
         .unwrap();
-    assert_success(
-        &output,
-        concat!(
-            "{\"kind\":\"sessions\",\"count\":1,\"truncated\":false,",
-            "\"sessions\":[{\"id\":\"fallback-session\"}]}\n",
-        ),
-    );
+    assert_sessions_rows(&output, &["fallback-session"], 0);
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -2641,10 +2669,14 @@ fn sessions_listing_may_create_only_a_private_lock_sidecar() {
     let record_before = fs::read(&record_path).unwrap();
 
     let output = sessions_command(config_root.as_os_str(), state_base.as_os_str())
-        .arg("sessions")
+        .args(["sessions", "--all"])
         .output()
         .unwrap();
-    assert_success(&output, "[sessions] 1 saved\n - lock-session\n");
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.starts_with("[sessions] 1 saved\n"));
+    assert!(text.contains("id=lock-session"));
     assert_eq!(fs::read(&record_path).unwrap(), record_before);
 
     let mut entries = fs::read_dir(&state_root)
@@ -2669,7 +2701,7 @@ fn sessions_listing_may_create_only_a_private_lock_sidecar() {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn sessions_reports_bounded_incomplete_results() {
+fn sessions_pages_all_observed_results_without_confusing_display_and_scan_bounds() {
     let temporary = TestDirectory::new("sessions-truncated");
     let config_root = temporary.path().join("missing-config");
     let state_base = temporary.path().join("state");
@@ -2678,33 +2710,42 @@ fn sessions_reports_bounded_incomplete_results() {
     }
 
     let human = sessions_command(config_root.as_os_str(), state_base.as_os_str())
-        .arg("sessions")
+        .args(["sessions", "--all"])
         .output()
         .unwrap();
     assert!(human.status.success());
     assert!(human.stderr.is_empty());
     let human = String::from_utf8(human.stdout).unwrap();
     assert!(human.starts_with("[sessions] 100 saved\n"));
-    assert_eq!(human.matches("\n - bounded-session-").count(), 100);
-    assert!(human.ends_with("[sessions] listing incomplete: a resource limit was reached\n"));
+    assert_eq!(human.matches("id=bounded-session-").count(), 100);
+    assert!(human.contains("--all"));
+    assert!(human.contains("--cursor v1:unknown:bounded-session-001"));
 
     let json = sessions_command(config_root.as_os_str(), state_base.as_os_str())
-        .args(["sessions", "--json"])
+        .args(["sessions", "--all", "--json"])
         .output()
         .unwrap();
-    assert!(json.status.success());
-    assert!(json.stderr.is_empty());
-    let json = String::from_utf8(json.stdout).unwrap();
-    assert!(
-        json.starts_with("{\"kind\":\"sessions\",\"count\":100,\"truncated\":true,\"sessions\":[")
-    );
-    assert_eq!(json.matches("{\"id\":\"bounded-session-").count(), 100);
-    assert!(json.ends_with("]}\n"));
+    let ids: Vec<_> = (1..=100)
+        .rev()
+        .map(|index| format!("bounded-session-{index:03}"))
+        .collect();
+    let ids: Vec<_> = ids.iter().map(String::as_str).collect();
+    let page = assert_sessions_rows(&json, &ids, 0);
+    assert_eq!(page["has_more"], true);
+    let cursor = page["next_cursor"].as_str().unwrap();
+    assert_eq!(cursor, "v1:unknown:bounded-session-001");
+    let next = sessions_command(config_root.as_os_str(), state_base.as_os_str())
+        .args(["sessions", "--cursor", cursor, "--json", "--all"])
+        .output()
+        .unwrap();
+    let next = assert_sessions_rows(&next, &["bounded-session-000"], 0);
+    assert_ne!(next["has_more"], true);
+    assert!(next["next_cursor"].is_null());
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn sessions_corrupt_record_is_fixed_and_redacted() {
+fn sessions_corrupt_record_is_reported_and_preserved_without_disclosing_contents() {
     let temporary = TestDirectory::new("sessions-corrupt");
     let config_root = temporary.path().join("missing-config");
     let state_base = temporary.path().join("state-CLI_SESSIONS_STATE_SECRET");
@@ -2728,7 +2769,15 @@ fn sessions_corrupt_record_is_fixed_and_redacted() {
             .args(arguments)
             .output()
             .unwrap();
-        assert_sessions_error(&output, json, "Corrupt");
+        if json {
+            assert_sessions_rows(&output, &[], 1);
+        } else {
+            assert!(output.status.success());
+            assert!(output.stderr.is_empty());
+            let text = String::from_utf8_lossy(&output.stdout);
+            assert!(text.contains("no readable saved sessions"));
+            assert!(text.contains("skipped 1 unreadable saved session"));
+        }
         assert_output_omits(
             &output,
             &[
@@ -2738,6 +2787,10 @@ fn sessions_corrupt_record_is_fixed_and_redacted() {
             ],
         );
     }
+    assert_eq!(
+        fs::read(record_path).unwrap(),
+        b"CLI_SESSIONS_CORRUPT_RECORD_SECRET:not-json"
+    );
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -2773,7 +2826,7 @@ fn sessions_rejects_unsafe_symlink_and_wrong_kind_roots_without_mutation() {
         ("UNSAFE", &unsafe_base),
     ] {
         let output = sessions_command(config_root.as_os_str(), state_base.as_os_str())
-            .args(["sessions", "--json"])
+            .args(["sessions", "--all", "--json"])
             .output()
             .unwrap();
         assert_sessions_error(&output, true, "Unavailable");
@@ -2867,7 +2920,7 @@ fn sessions_non_unicode_state_environment_is_fixed_and_redacted() {
     let invalid = OsString::from_vec(b"CLI_SESSIONS_NON_UNICODE_STATE_SECRET-\xff".to_vec());
 
     let output = machine_god()
-        .args(["sessions", "--json"])
+        .args(["sessions", "--all", "--json"])
         .env("HOME", &home)
         .env("XDG_STATE_HOME", invalid)
         .env_remove("XDG_CONFIG_HOME")

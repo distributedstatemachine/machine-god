@@ -15,6 +15,7 @@ pub struct NativeSessionCatalogEntry {
     incarnation: SessionIncarnationId,
     revision: SessionRevision,
     message_count: usize,
+    history_len: usize,
     metadata: NativeSessionMetadata,
     preview: Option<String>,
     preview_truncated: bool,
@@ -35,6 +36,11 @@ impl NativeSessionCatalogEntry {
             incarnation: record.incarnation_id.clone(),
             revision: record.revision,
             message_count: record.messages.len(),
+            history_len: record
+                .messages
+                .iter()
+                .filter(|message| message.role == Role::User)
+                .count(),
             metadata,
             preview,
             preview_truncated,
@@ -55,6 +61,11 @@ impl NativeSessionCatalogEntry {
     #[must_use]
     pub const fn message_count(&self) -> usize {
         self.message_count
+    }
+    /// Number of canonical user-message groups, excluding assistant/tool rounds.
+    #[must_use]
+    pub const fn history_len(&self) -> usize {
+        self.history_len
     }
     #[must_use]
     pub const fn native_metadata(&self) -> &NativeSessionMetadata {
