@@ -314,6 +314,18 @@ These facts also do not reconstruct file-undo authority or permission grants.
 The context consumer and its bounded display rules are described in
 [native context](conversation-context.md).
 
+Full terminal `start`, `monitor`, and `close` return ordinary tool results and
+continue the model round; they do not manufacture legacy `log_path`/`url` history
+attachments or end the turn early. This follows pinned
+`src/core/tooling/tool_runtime.zig::toolExecutionResultFromDispatch` and
+`src/tools/terminal/terminal.zig::resultFromCompletion`. The legacy
+`background_command` completion field has no production producer in that revision.
+Terminal session identity and current monitor observations remain in the terminal
+host's typed records, not inferred from arbitrary result JSON. Late URL notices
+likewise do not rewrite launch-time history facts. A composed-host regression
+exercises real start, custom-monitor admission in a later turn, and close, with
+ordinary provider continuation and no invented legacy attachment.
+
 ### Automatic file observations
 
 The conversation and prepared reference host share one explicit

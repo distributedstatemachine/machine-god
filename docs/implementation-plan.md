@@ -27,7 +27,7 @@ input; it is not a machine-god product language or runtime dependency.
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
 - Active phase: `implementing the full combined M03 top-level CLI and slash-command feature`
-- Next gate: `finish automatic background history, interactive commands and remaining policy/workspace scenarios before the full feature gates`
+- Next gate: `finish interactive commands, rich session commands and remaining policy/workspace scenarios before the full feature gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -213,33 +213,26 @@ the actual taken policy through a weak controller link; retained custom monitors
 keep their admitted snapshot after the originating turn retires. The CLI explicitly
 supplies the system executable. Missing Os authority never falls back; configured
 None and effective Yolo remain distinct and are exercised through the real host.
+Full terminal start/monitor/close preserve ordinary model continuation. The
+pinned legacy background-completion branch has no production producer; terminal
+records and late URL notices do not establish legacy launch-time attachments.
 Remaining work includes interactive CLI persistence-outcome presentation,
-long-lived cache composition, automatic background history producers,
+long-lived cache composition,
 interactive command/session transitions,
 pinned recovery/retry policy, policy/sandbox/workspace enforcement, rich session
 commands and the complete feature gates.
 
-The preceding component's complete local workspace run passes on macOS with Rust 1.94.1,
-default test concurrency, enabled backtraces and the freshly built release helper.
-Local validation now uses a fresh target instead of the oversized shared artifact
-directory that stalled macOS bundle initialization and panic symbolication.
-The automatic-file component's replacement full gate is not yet green: child
-reaping probes intermittently failed, then a later run passed native units but
-hit catalog-lock contention during integration. Reaping diagnostics preserve the
-original deadlines; its cause remains unproven. A deterministic duplicated-lock
-regression reproduced the catalog ownership defect. The catalog now explicitly
-unlocks on owner drop and failed preparation, without a test retry workaround;
-all 16 catalog and 27 runtime tests pass, alongside Clippy, doctests, 105 repository
-Python tests and a fresh release CLI smoke. The replacement full run still fails
-four PTY cases: these pass initial reap admission but time out preparing the macOS
-inventory service, followed by cleanup timeout. Test-only startup diagnostics are
-being narrowed to that distinct path; an instrumented native-unit run passes but
-does not establish its cause or close the failed full gate. Assertions, cleanup
-guarantees and platform coverage remain unchanged. The integrated editor and
-configured-pattern components pass 51 focused tests, the inventory handshake
-passes its 12 focused service tests, and full warnings-denied Clippy passes.
-The complete replacement workspace gate remains open. These internal
-checks do not replace the exact-candidate feature gates below.
+Local validation uses a fresh target and the freshly built Rust 1.94.1 release
+helper with default test concurrency and backtraces. Prior catalog-lock ownership
+was fixed with explicit unlock on owner drop/failed preparation. Earlier macOS
+inventory/reaping failures did not recur in the latest workspace run; this alone
+does not establish their cause. That run passed 1,588 native unit tests and failed
+only the stale PTY frame equality, stopping before later integration tests. The
+replacement fixture distinguishes ordinary and sandbox envelopes and tests each
+independent encoder/decoder limit, without changing production bounds or deadlines.
+The complete replacement workspace gate remains open. Clippy, doctests, 105
+repository Python tests and the fresh release CLI smoke previously passed; these
+internal checks do not replace the exact-candidate feature gates below.
 
 The integrated preparer passes all five real file mutations, actual reviewer
 Allow/Ask/error and cancellation, read-grant/reset, canonical terminal identity,

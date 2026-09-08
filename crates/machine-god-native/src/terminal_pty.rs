@@ -1257,14 +1257,25 @@ mod tests {
         }
     }
 
-    #[test]
-    fn maximum_frame_roundtrips_all_bounded_fields_and_rejects_aggregate_overflow() {
-        let directory = Directory::new();
-        let mut request = request(&directory, &[]);
+    // Original unsandboxed wire maximum: header/dimensions, payload bytes,
+    // program/collection lengths and one length prefix per argv/env string.
+    const MAX_ORDINARY_FRAME: usize = crate::terminal_helper::MAGIC.len()
+        + 4
+        + MAX_PROGRAM_BYTES
+        + MAX_ARGUMENTS_BYTES
+        + MAX_BACKGROUND_PROCESS_ENVIRONMENT_BYTES
+        + 4 * (3 + MAX_ARGUMENTS + 2 * MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES);
+
+    fn maximum_frame_request(directory: &Directory) -> TerminalPtyRequest {
+        let mut request = request(directory, &[]);
         request.program = format!("/{}", "p".repeat(MAX_PROGRAM_BYTES - 1));
         request.arguments = vec![String::new(); MAX_ARGUMENTS];
         request.arguments[0] = "c".repeat(MAX_ARGUMENT_BYTES);
         request.arguments[1] = "a".repeat(MAX_ARGUMENTS_BYTES - MAX_ARGUMENT_BYTES);
+        request.dimensions = TerminalPtyDimensions {
+            rows: u16::MAX,
+            columns: u16::MAX,
+        };
         let environment = (0..MAX_BACKGROUND_PROCESS_ENVIRONMENT_ENTRIES)
             .map(|index| {
                 let key = format!("K{index:03}");
@@ -1278,10 +1289,14 @@ mod tests {
             .collect();
         request.environment = ValidatedBackgroundEnvironment::new(environment).unwrap();
         validate_program_arguments(&request.program, &request.arguments).unwrap();
+        request
+    }
+
+    fn assert_maximum_frame_roundtrip(request: &TerminalPtyRequest) -> Vec<u8> {
         let frame = request.frame().unwrap();
-        assert_eq!(frame.len(), MAX_FRAME);
+        let mut input = frame.as_slice();
         let decoded = read_frame(
-            &mut frame.as_slice(),
+            &mut input,
             Instant::now() + START_TIMEOUT,
             &CancellationToken::new(),
         )
@@ -1289,9 +1304,118 @@ mod tests {
         assert_eq!(decoded.program, request.program);
         assert_eq!(decoded.arguments, request.arguments);
         assert_eq!(decoded.environment.entries(), request.environment.entries());
+        assert_eq!(decoded.dimensions, request.dimensions);
+        assert!(input.is_empty(), "the complete frame must be consumed");
+        frame
+    }
+
+    // Corrupt a valid wire field independently of the encoder so decoder
+    // rejection cannot be satisfied merely by encoder-side validation.
+    fn grow_wire_argument(frame: &[u8], argument_index: usize) -> Vec<u8> {
+        let read_length = |offset| {
+            usize::try_from(u32::from_be_bytes(
+                frame[offset..offset + 4].try_into().unwrap(),
+            ))
+            .unwrap()
+        };
+        let program_length_offset = crate::terminal_helper::MAGIC.len() + 4;
+        let count_offset = program_length_offset + 4 + read_length(program_length_offset);
+        assert!(argument_index < read_length(count_offset));
+        let mut offset = count_offset + 4;
+        for _ in 0..argument_index {
+            offset += 4 + read_length(offset);
+        }
+        let length = read_length(offset);
+        let mut invalid = frame.to_vec();
+        invalid[offset..offset + 4]
+            .copy_from_slice(&u32::try_from(length + 1).unwrap().to_be_bytes());
+        invalid.insert(offset + 4 + length, b'x');
+        invalid
+    }
+
+    fn assert_invalid_frame(mut frame: &[u8]) {
+        assert_eq!(
+            read_frame(
+                &mut frame,
+                Instant::now() + START_TIMEOUT,
+                &CancellationToken::new(),
+            )
+            .err()
+            .unwrap()
+            .kind,
+            TerminalHelperErrorKind::InvalidRequest,
+        );
+    }
+
+    #[test]
+    fn maximum_frame_roundtrips_all_bounded_fields_and_rejects_aggregate_overflow() {
+        let directory = Directory::new();
+        let mut request = maximum_frame_request(&directory);
+        let frame = assert_maximum_frame_roundtrip(&request);
+        assert_eq!(MAX_ORDINARY_FRAME, 369_688);
+        assert_eq!(frame.len(), MAX_ORDINARY_FRAME);
+        assert_eq!(
+            MAX_FRAME,
+            MAX_ORDINARY_FRAME
+                + crate::MAX_NATIVE_SANDBOX_PROFILE_BYTES
+                + MAX_PROGRAM_BYTES
+                + 2
+                + 3 * 4,
+        );
         request.arguments[1].push('x');
         assert!(validate_program_arguments(&request.program, &request.arguments).is_err());
         assert!(request.frame().is_err());
+        assert_invalid_frame(&grow_wire_argument(&frame, 1));
+    }
+
+    #[test]
+    fn maximum_sandbox_frame_roundtrips_and_preserves_independent_limits() {
+        let directory = Directory::new();
+        let mut request = maximum_frame_request(&directory);
+        // This is inert wire data, not an executable sandbox policy or OS grant.
+        request.arguments.splice(
+            0..0,
+            [
+                "-p".into(),
+                "s".repeat(crate::MAX_NATIVE_SANDBOX_PROFILE_BYTES),
+                std::mem::replace(
+                    &mut request.program,
+                    crate::NATIVE_SANDBOX_EXECUTABLE.into(),
+                ),
+            ],
+        );
+        let frame = assert_maximum_frame_roundtrip(&request);
+        assert_eq!(request.arguments.len(), MAX_ARGUMENTS + 3);
+        assert_eq!(
+            frame.len(),
+            MAX_ORDINARY_FRAME
+                + crate::NATIVE_SANDBOX_EXECUTABLE.len()
+                + crate::MAX_NATIVE_SANDBOX_PROFILE_BYTES
+                + 2
+                + 3 * 4,
+        );
+        // The shared ceiling conservatively reserves MAX_PROGRAM_BYTES for
+        // the outer program; its fixed sandbox spelling uses only 21 bytes.
+        assert_eq!(
+            frame.len(),
+            MAX_FRAME - (MAX_PROGRAM_BYTES - crate::NATIVE_SANDBOX_EXECUTABLE.len()),
+        );
+        for index in [1, 2, 3, 4] {
+            // Respectively: profile, inner program, full command and auxiliary
+            // argv aggregate. Each is exactly full before the extra byte.
+            request.arguments[index].push('x');
+            assert!(request.frame().is_err(), "encoder accepted field {index}");
+            assert_eq!(request.arguments[index].pop(), Some('x'));
+            assert_invalid_frame(&grow_wire_argument(&frame, index));
+        }
+        request.arguments.push(String::new());
+        assert!(request.frame().is_err());
+        let count_offset =
+            crate::terminal_helper::MAGIC.len() + 4 + 4 + crate::NATIVE_SANDBOX_EXECUTABLE.len();
+        let mut invalid = frame;
+        invalid[count_offset..count_offset + 4]
+            .copy_from_slice(&u32::try_from(MAX_ARGUMENTS + 4).unwrap().to_be_bytes());
+        assert_invalid_frame(&invalid);
     }
 
     #[test]

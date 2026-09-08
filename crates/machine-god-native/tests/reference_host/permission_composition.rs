@@ -139,22 +139,110 @@ fn collect(host: &NativeReferenceHost, workspace: &Path) -> Vec<TurnEvent> {
             None,
         )
         .unwrap();
-        runtime
-            .enqueue("perform the requested workspace operation".into())
-            .unwrap();
-        let mut turn = runtime.start_next(101).await.unwrap().unwrap();
-        let mut events = Vec::new();
-        while let Some(event) = turn.next().await {
-            events.push(event.unwrap().payload);
-        }
-        assert_completed(&events);
-        assert!(
-            !events
-                .iter()
-                .any(|event| matches!(event, TurnEvent::Failed { .. }))
-        );
-        events
+        run_conversation(&runtime, 101).await
     })
+}
+
+async fn run_conversation(runtime: &NativeConversationRuntime, now_ms: i64) -> Vec<TurnEvent> {
+    runtime
+        .enqueue("perform the requested workspace operation".into())
+        .unwrap();
+    let mut turn = runtime.start_next(now_ms).await.unwrap().unwrap();
+    let mut events = Vec::new();
+    while let Some(event) = turn.next().await {
+        events.push(event.unwrap().payload);
+    }
+    assert_completed(&events);
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, TurnEvent::Failed { .. }))
+    );
+    events
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn terminal_start_and_monitor_continue_model_rounds_without_inventing_legacy_history() {
+    use machine_god_native::NativeConversationObservations;
+    let temporary = TemporaryDirectory::new("terminal-ordinary-history");
+    let (prepared, _) = complete_terminal_roots(temporary.path());
+    let workspace = temporary.path().join("workspace");
+    let helper = std::env::var_os("MACHINE_GOD_TERMINAL_RELEASE_BINARY").map_or_else(
+        || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/release/machine-god"),
+        PathBuf::from,
+    );
+    assert!(
+        helper.is_file(),
+        "build the release CLI before native process tests"
+    );
+    let observations = Arc::new(NativeConversationObservations::new());
+    let options = options()
+        .with_observations(observations.clone())
+        .with_terminal(
+            NativeReferenceHostTerminalOptions::new(
+                helper,
+                Some("/bin/bash".into()),
+                vec![("PATH".into(), "/usr/bin:/bin".into())],
+            )
+            .unwrap(),
+        );
+    let transport = ScriptedTransport::new("terminal-ordinary-history", Vec::<Vec<u8>>::new());
+    let host =
+        NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
+            configured(temporary.path(), "ask", &json!([])),
+            Arc::new(transport.clone()),
+            production_gateway_target(),
+            prepared,
+            Arc::new(AllowingPrompter::default()),
+            inert_question_prompter(),
+            never_deadline(),
+            options,
+        )
+        .unwrap();
+    let completion = host.terminal_shutdown_completion().unwrap();
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    executor.block_on(async {
+        let conversation = NativeConversation::create(host.session_lifecycle(),
+            NativeSessionMetadata::new(&workspace, 100, NativeSessionOrigin::Cli).unwrap(),
+        ).await.unwrap().with_observations(&observations).unwrap();
+        let conversation = host.configure_conversation_permissions(conversation).unwrap();
+        let runtime = NativeConversationRuntime::new(conversation,
+            host.loaded_config().config().model_preferences(), None,
+        ).unwrap();
+        let mut terminal_id = Value::Null;
+        for round in 0..3_u32 {
+            let input = match round {
+                0 => json!({"action":"start", "profile":"clean", "command":"exec /bin/sleep 30"}),
+                1 => json!({"action":"monitor", "session_id":terminal_id, "monitor":{"kind":"add", "definition":{
+                    "condition":{"kind":"custom_probe", "command":"printf observed", "cwd":"."},
+                    "check_interval_ms":100, "notify":{"kind":"on_match"}, "lifetime":{"kind":"until_session_end"}
+                }}}),
+                _ => json!({"action":"close", "session_id":terminal_id, "close_policy":"force"}),
+            };
+            transport.state.lock().unwrap().responses.extend([call("terminal", &input), answer()]);
+            let events = run_conversation(&runtime, 101 + i64::from(round)).await;
+            let output = events.iter().find_map(|event| match event {
+                TurnEvent::ToolFinished { output, .. } => Some(output),
+                _ => None,
+            }).expect("ordinary completed tool output");
+            assert!(!output.is_error, "round {round}: {:?}", output.content);
+            if round == 0 {
+                terminal_id = output.content["session"]["session_id"].clone();
+                assert!(terminal_id.is_string());
+            }
+            assert_eq!(transport.requests().len(), usize::try_from((round + 1) * 2).unwrap());
+            assert!(events.iter().any(|event| matches!(event, TurnEvent::Model { event: machine_god_core::ModelEvent::TextDelta { text } } if text == "complete")));
+            let history = runtime.history().unwrap();
+            assert_eq!(history.groups().len(), usize::try_from(round + 1).unwrap());
+            assert!(history.groups().iter().all(|group| group.background().is_none()));
+        }
+    });
+    drop(host);
+    completion.wait_on_worker().unwrap();
 }
 
 #[test]
