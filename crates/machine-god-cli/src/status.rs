@@ -443,7 +443,7 @@ mod tests {
         let host = FakeStatusHost {
             calls: Cell::new(0),
             status: inspect_native_runtime_status(NativeRuntimeStatusInput::new(
-                "provider/\"model\\variant",
+                "provider/\"模型 v2\\variant\u{85}\u{202e}",
                 PermissionMode::Ask,
                 NativeRuntimeCredentialEnvironment::new(None, None),
                 "/workspace",
@@ -457,7 +457,9 @@ mod tests {
             0
         );
         assert!(
-            stdout.starts_with(b"[status] model=provider/\\\"model\\\\variant\n"),
+            stdout.starts_with(
+                "[status] model=provider/\\\"模型 v2\\\\variant\\u0085\\u202e\n".as_bytes()
+            ),
             "unexpected human status output: {}",
             String::from_utf8_lossy(&stdout)
         );

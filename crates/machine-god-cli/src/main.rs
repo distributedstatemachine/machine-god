@@ -1945,7 +1945,9 @@ fn write_human_models(
     } else {
         writeln!(output, "[models] {} available", models.len())?;
         for model in models {
-            writeln!(output, " - {}", model.id())?;
+            output.write_str(" - ")?;
+            write_json_string_content(output, model.id())?;
+            output.write_char('\n')?;
         }
     }
     if let ModelCatalogAccess::PublicOnly { reason } = catalog.access() {
@@ -4696,6 +4698,32 @@ mod tests {
             assert_eq!(stdout, expected.as_bytes());
             assert!(stderr.is_empty());
             assert_eq!(host.calls.get(), 1);
+        }
+    }
+
+    #[test]
+    fn models_preserve_unicode_and_escape_terminal_controls_in_both_formats() {
+        let id = "provider/模型 v2\u{85}\u{202e}\u{2028}";
+        for json in [false, true] {
+            let host = FakeModelsHost::new(Ok(catalog(&[id], ModelCatalogAccess::Authenticated)));
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let mut arguments = vec![OsString::from("models")];
+            if json {
+                arguments.push(OsString::from("--json"));
+            }
+            assert_eq!(
+                run_with_models_host(arguments, &mut stdout, &mut stderr, &host),
+                0
+            );
+            assert!(stderr.is_empty());
+            let rendered = String::from_utf8(stdout).unwrap();
+            assert!(rendered.contains("provider/模型 v2\\u0085\\u202e\\u2028"));
+            assert!(!rendered.contains(['\u{85}', '\u{202e}', '\u{2028}']));
+            if json {
+                let decoded: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+                assert_eq!(decoded["ids"][0], id);
+            }
         }
     }
 

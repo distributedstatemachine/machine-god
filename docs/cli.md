@@ -169,7 +169,7 @@ is `none`, its history and session-grant counts are zero, and its agent step
 limit is eight. The workspace is the Unicode canonical current directory.
 Quotes, backslashes, C0/C1 controls and DEL, Unicode line and paragraph
 separators, and Unicode bidirectional-formatting controls in rendered string
-fields are escaped. The configured model retains its existing 128-byte bound,
+fields are escaped. The configured model has a 1,024 UTF-8-byte bound,
 and the canonical Unicode workspace is limited to 4,096 UTF-8 bytes. Every
 rendered value must also fit the inclusive report-output bound below.
 

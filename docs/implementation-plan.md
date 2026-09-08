@@ -124,8 +124,11 @@ atomic initial native metadata, durable title mutation, slash routing, explicit
 continuation, and revision-pinned prepared turns with provider-only context.
 The native conversation owner atomically reserves paused-turn checkpoints and
 settles their finalization; reference-host composition shares bounded undo across
-all five file mutations. These component commits are not deliveries. Remaining
-work includes interactive command/session transitions, native context summaries
+all five file mutations. Model-identifier validation now shares the pinned
+1,024-byte UTF-8 contract across catalog, configuration and Gateway; CLI rendering escapes accepted
+Unicode controls without changing the provider identifier. These component
+commits are not deliveries. Remaining work includes interactive command/session
+transitions, native context summaries
 and preferences, pinned recovery/retry policy, model selection, policy/sandbox/
 workspace enforcement, rich session commands and the complete feature gates.
 
