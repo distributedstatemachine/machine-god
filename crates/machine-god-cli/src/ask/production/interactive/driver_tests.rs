@@ -121,6 +121,7 @@ fn pending_tape_ack_never_owns_native_save_progress_or_host_input_cleanup() {
                 harness
                     .ack
                     .try_send(OutputAcknowledgement::Written {
+                        timestamp_ms: Ok(101),
                         bytes,
                         failed: false,
                     })
@@ -386,6 +387,7 @@ fn final_presentation_records_shutdown_output_after_native_host_has_joined() {
                         OutputWork::Write(bytes) => {
                             accepted.extend_from_slice(&bytes);
                             OutputAcknowledgement::Written {
+                                timestamp_ms: Ok(101),
                                 bytes,
                                 failed: false,
                             }
