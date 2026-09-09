@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
-- Active phase: `combined CLI post-cleanup signal budget integrated; replacement verification`
-- Next gate: `focused shutdown checks, full replacement local gate, three fresh reviews and exact remote gates`
+- Active phase: `CLI shutdown focused checks green; Linux background-signal diagnosis`
+- Next gate: `controlled signal diagnosis, replacement local gate, three fresh reviews and exact remote gates`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -234,9 +234,13 @@ rejected one CLI SIGINT recording assertion: the tape lacked final terminal-rese
 bytes. Controlled active-session and startup regressions established that the
 interactive signal timer could expire across native/input joins before final
 presentation. The integrated correction starts its unchanged, non-renewable
-100 ms budget in the post-cleanup tail. Focused and complete replacement checks
-remain pending; this mechanism does not prove the historical failure's exact
-cause. Native deadlines, cleanup requirements and Linux concurrency are unchanged.
+100 ms budget in the post-cleanup tail. All four new timing regressions and eight
+recording/resume scenarios pass on both platforms, including SIGINT. The full
+Linux run then rejected one native same-owner background-signal assertion with
+`Unavailable`; an unchanged isolated pass does not establish its cause. Controlled
+diagnosis is investigating descendant traversal while the fixture's child exits.
+Full macOS, fresh reviews and remote acceptance remain pending. Native deadlines,
+cleanup requirements and Linux concurrency are unchanged.
 The resumed product changes are not covered by the earlier maintenance review.
 Required scenarios cannot close with unsupported stubs.
 

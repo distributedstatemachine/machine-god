@@ -964,3 +964,35 @@ Preparation of integrated candidate `9e92afaa` stopped at the same
 warnings-denied Clippy finding on Linux and macOS: the new startup signal test
 used an underscore-prefixed fixture field. Renaming that field and its two uses
 preserves the test and production behavior without suppressing the lint.
+
+## Replacement background-signal failure: `e3fac2d4`
+
+The corrected candidate passed exact pinned formatting, full workspace
+warnings-denied Clippy, all test-target compilation and fresh locked release
+builds on Linux and macOS. All four new timing regressions and eight real
+recording/resume scenarios passed on both platforms, including the original
+SIGINT case with mandatory physical and recorded terminal reset. Python ran
+269 tests (255 passed, fourteen existing platform skips), including the genuine
+fresh optimized cleanup probe; documentation/drift, dependency policy/audit,
+FreeBSD/WASI, both Apple ABI/binding checks and standalone support checks passed.
+The released implementation and policy worktrees were removed.
+
+The complete default-concurrency Linux workspace run passed 4,543 tests and
+failed one, with seventeen existing helper ignores. Explicit doctests passed
+all three cases. The sole failure was
+`production_supervisor_signals_only_the_exact_live_owner` at
+`background_supervisor.rs:3768`: same-owner signal delivery returned
+`Unavailable`. Native unit results were 2,161 passed, one failed and eleven
+ignored. No-fail-fast ran the remaining targets; no test/helper processes or
+zombies remained. An authorized single run of the unchanged exact failing case
+then passed in 0.09 seconds. That isolated result neither accepts the full gate
+nor establishes why it failed. Full macOS runtime and replacement reviews were
+not started; there was no push or main advancement.
+
+Read-only inspection identified a discriminating lifecycle hypothesis: a live
+child admitted to Linux ancestry traversal can be reaped before its own queued
+descendant scan, producing the fixed process error mapped to `Unavailable`.
+The owner fixture continuously spawns and reaps one-second sleep children.
+Skipping such an incompletely inspected node could conceal descendants, so
+controlled diagnosis must preserve the fail-closed traversal and its original
+budget. No cause or correction is inferred solely from the isolated pass.
