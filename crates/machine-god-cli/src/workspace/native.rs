@@ -67,7 +67,7 @@ impl WorkspaceCommandHost for ProductionWorkspaceCommandHost {
     }
 }
 
-fn from_native(receipt: &NativeWorkspaceReceipt) -> WorkspaceSnapshot {
+pub(super) fn from_native(receipt: &NativeWorkspaceReceipt) -> WorkspaceSnapshot {
     let reconciliation = match receipt.reconciliation {
         NativeWorkspaceReconciliation::CachedBusy => Reconciliation::CachedBusy,
         NativeWorkspaceReconciliation::Refreshed => Reconciliation::Refreshed,
@@ -108,7 +108,7 @@ fn from_native(receipt: &NativeWorkspaceReceipt) -> WorkspaceSnapshot {
     }
 }
 
-fn classify(error: NativeWorkspaceServiceError) -> WorkspaceOperationalFailure {
+pub(super) fn classify(error: NativeWorkspaceServiceError) -> WorkspaceOperationalFailure {
     match error {
         NativeWorkspaceServiceError::Busy => WorkspaceOperationalFailure::Busy,
         NativeWorkspaceServiceError::InvalidPath => WorkspaceOperationalFailure::InvalidPath,

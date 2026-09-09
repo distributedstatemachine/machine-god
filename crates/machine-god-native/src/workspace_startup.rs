@@ -39,7 +39,27 @@ pub fn prepare_native_workspace(
 ) -> BoxFuture<'static, Result<NativeWorkspaceAuthority, Error>> {
     Box::pin(async move {
         workers
-            .run(move || prepare_workspace_blocking(&selection, &store, &launch, saved_suppressed))
+            .run(move || {
+                prepare_workspace_blocking(&selection, Some(&store), &launch, saved_suppressed)
+            })
+            .await
+            .map_err(|_| Error::Unavailable)?
+    })
+}
+
+/// Opens launch-only workspace authority without observing any settings path.
+/// Construction is inert; polling and started-worker ownership match
+/// [`prepare_native_workspace`]. No saved roots are inferred or discovered.
+#[must_use]
+pub fn prepare_native_workspace_without_settings(
+    selection: NativeRootSelection,
+    launch: Vec<PathBuf>,
+    saved_suppressed: bool,
+    workers: NativeOwnedWorkerScope,
+) -> BoxFuture<'static, Result<NativeWorkspaceAuthority, Error>> {
+    Box::pin(async move {
+        workers
+            .run(move || prepare_workspace_blocking(&selection, None, &launch, saved_suppressed))
             .await
             .map_err(|_| Error::Unavailable)?
     })
@@ -47,7 +67,7 @@ pub fn prepare_native_workspace(
 
 fn prepare_workspace_blocking(
     selection: &NativeRootSelection,
-    store: &NativeUserConfigStore,
+    store: Option<&NativeUserConfigStore>,
     launch: &[PathBuf],
     saved_suppressed: bool,
 ) -> Result<NativeWorkspaceAuthority, Error> {
@@ -71,17 +91,24 @@ fn prepare_workspace_blocking(
             Err(rustix::io::Errno::NOENT) => (None, selection.state_root().to_owned()),
             Err(_) => return Err(Error::Unavailable),
         };
-    let loaded = store.load().map_err(Error::Config)?;
-    let saved = loaded
-        .loaded()
-        .config()
-        .saved_workspace_directories(primary_identity.as_os_str().as_bytes())
-        .map_err(|error| Error::Config(crate::NativeUserConfigError::InvalidConfig(error)))?;
+    let saved = store
+        .map(|store| {
+            store
+                .load()
+                .map_err(Error::Config)?
+                .loaded()
+                .config()
+                .saved_workspace_directories(primary_identity.as_os_str().as_bytes())
+                .map(<[_]>::to_vec)
+                .map_err(|error| Error::Config(crate::NativeUserConfigError::InvalidConfig(error)))
+        })
+        .transpose()?
+        .unwrap_or_default();
     let launch = launch
         .iter()
         .map(|path| resolve_launch(&primary_identity, path))
         .collect::<Result<Vec<_>, _>>()?;
-    let entries = merge_workspace_sources_blocking(saved, &launch)?;
+    let entries = merge_workspace_sources_blocking(&saved, &launch)?;
     let authority = NativeWorkspaceAuthority::open_blocking(
         primary,
         primary_identity,

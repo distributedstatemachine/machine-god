@@ -1,4 +1,4 @@
-# Top-level workspace command
+# Workspace selection and management
 
 The bounded `workspace` command lists and manages native saved additional
 directories. Configuration, descriptor authority, publication, and reconciliation
@@ -135,12 +135,83 @@ preparers must still walk descendants relative to that descriptor using their
 existing no-follow confinement checks. This primitive alone does not change CLI
 grammar or extend any tool's authority.
 
-### Remaining command surface
+### Launch selection
 
-Global `--add-dir` / `--no-additional-dirs`, interactive `/workspace`, and
-actual additional-root tool/search/completion integration remain separate
-composition work. Top-level management alone does not extend a running
-conversation's tool authority or establish complete upstream equivalence.
+```text
+machine-god [--add-dir PATH | --add-dir=PATH]... [--no-additional-dirs] [ask ... | resume ... | <interactive-resume-options>]
+```
+
+Modifiers must precede the command. Parsing stops at the first nonmodifier;
+prompt operands are not rescanned as global flags. Both additional-directory
+spellings are repeatable, including canonical aliases. The next operand after
+`--add-dir` is the path even if it starts with a hyphen. Suppression is singleton
+and affects only saved roots, not explicit launch roots. Modifiers without a
+command start a fresh interactive session. They also apply to stdin `ask`,
+prompt-bearing resume and all supported interactive resume spellings. Other
+top-level commands reject them rather than silently discarding the selection.
+Ordinary first-argument help retains its existing no-effect precedence.
+
+Paths retain native bytes on Unix, are nonempty, contain no NUL, and are at most
+4,096 bytes. At most 64 raw additions are accepted; native preparation merges
+aliases and applies the sixteen-entry scope limit. Unknown modifiers, missing
+paths, duplicate suppression and unsupported command combinations fail grammar
+before host configuration. Launch options do not save configuration.
+
+Production startup first prepares its normal primary/state roots, then loads
+workspace selection through `prepare_native_workspace` on a temporary owned
+worker scope. That scope is closed and joined on success or failure before the
+complete reference host is acquired. Existing state authority is captured after
+state preparation; an earlier absent-state proof is never reused after creating
+that state directory. Composition validates retained primary/state identities
+against the prepared host roots. All conversations, including noninteractive
+ask/resume, attach the exact workspace-context allocation before admission.
+Signals latch before the first preparation worker starts and retain their first
+observed identity through cleanup, including preparation failure and the later
+turn-activation handoff.
+The existing native settings-store private-directory checks apply during this
+startup too; launch neither changes directory permissions nor falls back to
+ignoring an unreadable or unsafe saved configuration.
+When environment selection provides no user-settings authority, launch uses
+the explicit settings-free preparation path: no saved roots, no settings-path
+discovery, and the same validated launch roots. `/workspace list` still works;
+add/remove/clear are unavailable because there is no persistence capability.
+Fresh, resumed and reset interactive sessions keep this host selection; saved
+session paths do not grant additional authority.
+
+### Interactive management
+
+`/workspace`, `/workspace list`, `/workspace add PATH`, `/workspace remove PATH`
+and `/workspace clear` use the retained host's workspace service. The remainder
+after `add` or `remove` is one path, including internal spaces; surrounding ASCII
+space/tab is trimmed and shell quoting/escaping is not interpreted. There is no
+interactive `--json` flag. Paths obey the same byte/NUL bound.
+
+Acceptance retains a typed native control future bound to the exact current
+runtime. No save or filesystem refresh occurs before owner progress. The native
+idle-and-empty-queue lease admits mutations; a busy list returns cached authority
+without I/O, while a busy mutation fails without consuming or cancelling the
+queued/active turn. Started work remains owned through shutdown or a pending
+transition; a failed or uncertain control rejects a pending transition and
+retains the source session. Consuming the receipt is distinct from completion of
+the underlying owned worker.
+
+The slash receipt reuses the top-level human projection, including independent
+saved/runtime observations, provenance, availability, reconciliation and launch
+restoration facts. Its complete presentation is capped at the interactive 64 KiB
+limit; failure to render does not roll back a native publication. Errors are
+fixed redacted categories, never raw configuration or operating-system strings.
+The next admitted turn captures the published workspace snapshot; already-taken
+scopes keep their original descriptors. Top-level management alone does not
+rewrite another running host's captured authority. Further tool/completion
+compatibility remains governed by the individual tool contracts.
+
+The leading-flag grammar and supported launch categories follow pinned
+[`cli_surface.zig`](https://github.com/vercel-labs/fx/blob/b1774fbf6c7602b503026f96f6e960e946c692ef/src/core/cli/cli_surface.zig).
+The slash grammar follows pinned
+[`app_commands.zig`](https://github.com/vercel-labs/fx/blob/b1774fbf6c7602b503026f96f6e960e946c692ef/src/core/app/app_commands.zig),
+with actions from the retained registry and pinned
+[`workspace_commands.zig`](https://github.com/vercel-labs/fx/blob/b1774fbf6c7602b503026f96f6e960e946c692ef/src/core/workspace/workspace_commands.zig).
+These are scenario-level contracts, not a blanket upstream-equivalence claim.
 
 ## Native workspace operation ownership
 
@@ -193,6 +264,10 @@ merges sources and retains primary/additional descriptors plus state-exclusion
 authority. It does not discover environment or credentials, start a provider,
 create state/configuration directories, or publish settings. The caller must
 close and settle the actual worker scope even when a response is abandoned.
+`prepare_native_workspace_without_settings` preserves that same ownership and
+validation contract without a settings capability or saved-directory reads.
+`NativeWorkspaceService::without_settings` permits refreshed or cached listing
+and rejects persistence mutations before worker admission.
 
 At most 64 launch arguments are examined; the merged additional-root limit is
 still 16. Launch paths resolve relative to the primary root and must name

@@ -35,6 +35,9 @@ use std::{
 #[path = "allowlist_tests.rs"]
 mod allowlist;
 
+#[path = "workspace_tests.rs"]
+mod workspace;
+
 fn preferences(model: &str) -> NativeModelPreferences {
     NativeModelPreferences::new(model, NativeReasoningEffort::default(), false).unwrap()
 }

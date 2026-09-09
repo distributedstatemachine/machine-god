@@ -132,6 +132,14 @@ pub struct Fixture {
 
 impl Fixture {
     pub fn new() -> Self {
+        Self::configured(false)
+    }
+
+    pub fn new_with_workspace() -> Self {
+        Self::configured(true)
+    }
+
+    fn configured(with_workspace: bool) -> Self {
         let temporary = TemporaryDirectory::new();
         let workspace = temporary.0.join("workspace");
         let state = temporary.0.join("state");
@@ -175,7 +183,7 @@ impl Fixture {
         let undo = Arc::new(FileUndoTracker::new());
         let routes = Arc::new(NativeConversationModelRoutes::new());
         let observations = Arc::new(NativeConversationObservations::new());
-        let options = NativeReferenceHostConversationOptions::new(undo.clone())
+        let mut options = NativeReferenceHostConversationOptions::new(undo.clone())
             .with_model_routes(routes.clone())
             .with_observations(observations.clone())
             .with_terminal(
@@ -190,6 +198,27 @@ impl Fixture {
                 Arc::new(NativePermissionContexts::new()),
                 Arc::new(TokioPermissionReviewClock),
             ));
+        if with_workspace {
+            let primary = workspace.clone();
+            let state = state_root.canonicalize().unwrap();
+            let authority = std::thread::spawn(move || {
+                super::native::NativeWorkspaceAuthority::open_blocking(
+                    fs::File::open(&primary).unwrap().into(),
+                    primary,
+                    Some(fs::File::open(&state).unwrap().into()),
+                    state,
+                    vec![],
+                    false,
+                )
+                .unwrap()
+            })
+            .join()
+            .unwrap();
+            options = options.with_workspace(
+                authority,
+                Arc::new(super::native::NativeWorkspaceContexts::new()),
+            );
+        }
         let transport = ScriptedTransport::default();
         let host = Arc::new(NativeReferenceHost::compose_with_ai_gateway_transport_and_prepared_roots_and_conversation(
             config, Arc::new(transport.clone()), NetworkTarget {

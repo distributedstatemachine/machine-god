@@ -68,7 +68,7 @@ pub struct NativeWorkspaceReceipt {
 /// Construction receives every effect capability explicitly and performs no I/O.
 pub struct NativeWorkspaceService {
     authority: NativeWorkspaceAuthority,
-    store: Arc<NativeUserConfigStore>,
+    store: Option<Arc<NativeUserConfigStore>>,
     workers: NativeOwnedWorkerScope,
     active: AtomicBool,
 }
@@ -86,10 +86,31 @@ impl NativeWorkspaceService {
     ) -> Self {
         Self {
             authority,
-            store,
+            store: Some(store),
             workers,
             active: AtomicBool::new(false),
         }
+    }
+
+    /// Retains explicit authority for listing without a persistence capability.
+    /// Mutations are rejected without settings discovery or worker admission.
+    #[must_use]
+    pub const fn without_settings(
+        authority: NativeWorkspaceAuthority,
+        workers: NativeOwnedWorkerScope,
+    ) -> Self {
+        Self {
+            authority,
+            store: None,
+            workers,
+            active: AtomicBool::new(false),
+        }
+    }
+
+    fn settings(&self) -> Result<&NativeUserConfigStore, NativeWorkspaceServiceError> {
+        self.store
+            .as_deref()
+            .ok_or(NativeWorkspaceServiceError::Unavailable)
     }
 
     /// Administrative operation using the same owner as interactive commands.
@@ -131,6 +152,9 @@ impl NativeWorkspaceService {
     ) -> BoxFuture<'static, Result<NativeWorkspaceReceipt, NativeWorkspaceServiceError>> {
         let service = Arc::clone(self);
         Box::pin(async move {
+            if action != NativeWorkspaceAction::List {
+                service.settings()?;
+            }
             let lane = match service.active.compare_exchange(
                 false,
                 true,

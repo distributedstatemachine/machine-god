@@ -81,6 +81,15 @@ impl AskCommandOutcome {
 }
 
 pub(crate) trait AskCommandHost {
+    /// Retains validated launch inputs only; alternate hosts must explicitly
+    /// support them instead of silently dropping requested authority selection.
+    fn with_workspace(
+        &self,
+        _options: crate::workspace::launch::LaunchWorkspaceOptions,
+    ) -> Result<Box<dyn AskCommandHost + '_>, ()> {
+        Err(())
+    }
+
     fn execute_stdin(&self, _output: &mut dyn io::Write) -> AskCommandExecution {
         AskCommandExecution::without_finalizer(AskCommandOutcome::OperationalFailure)
     }
@@ -142,8 +151,14 @@ impl AskCommandExecution {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct ProductionAskCommandHost;
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ProductionAskCommandHost {
+    workspace: crate::workspace::launch::LaunchWorkspaceOptions,
+}
+
+pub(crate) static PRODUCTION_ASK_HOST: ProductionAskCommandHost = ProductionAskCommandHost {
+    workspace: crate::workspace::launch::LaunchWorkspaceOptions::EMPTY,
+};
 
 pub(crate) fn parse_prompt_arguments(
     arguments: impl IntoIterator<Item = OsString>,
@@ -657,8 +672,10 @@ mod production {
                 context.waker().wake_by_ref();
             }
             Poll::Ready(Some(AskSignalControl::ActivateTurn(ready))) => {
+                if state.phase != AskSignalPhase::Turn {
+                    state.turn_signal_latched = false;
+                }
                 state.phase = AskSignalPhase::Turn;
-                state.turn_signal_latched = false;
                 if ready.send(()).is_err() {
                     deferred_control_failure = Some(AskSignalGuardianResult::ControlClosed);
                 }
@@ -1000,6 +1017,13 @@ mod production {
     }
 
     impl AskCommandHost for ProductionAskCommandHost {
+        fn with_workspace(
+            &self,
+            workspace: crate::workspace::launch::LaunchWorkspaceOptions,
+        ) -> Result<Box<dyn AskCommandHost + '_>, ()> {
+            Ok(Box::new(Self { workspace }))
+        }
+
         fn execute_stdin(&self, output: &mut dyn std::io::Write) -> AskCommandExecution {
             let Ok(mut controller) = AskSignalController::spawn() else {
                 return AskCommandExecution::without_finalizer(
@@ -1014,6 +1038,7 @@ mod production {
             match result {
                 Ok(prompt) => {
                     let (outcome, controller) = execute_production(
+                        &self.workspace,
                         SessionSelection::CreateGenerated,
                         prompt,
                         output,
@@ -1048,7 +1073,8 @@ mod production {
                     controller,
                 );
             }
-            let (outcome, controller) = interactive::execute(selection, output, controller);
+            let (outcome, controller) =
+                interactive::execute(&self.workspace, selection, output, controller);
             AskCommandExecution::with_finalizer(outcome, controller)
         }
         fn execute(
@@ -1069,12 +1095,14 @@ mod production {
                     controller,
                 );
             }
-            let (outcome, controller) = execute_production(selection, prompt, output, controller);
+            let (outcome, controller) =
+                execute_production(&self.workspace, selection, prompt, output, controller);
             AskCommandExecution::with_finalizer(outcome, controller)
         }
     }
 
     fn execute_production(
+        launch: &crate::workspace::launch::LaunchWorkspaceOptions,
         selection: SessionSelection,
         prompt: String,
         output: &mut dyn std::io::Write,
@@ -1091,7 +1119,7 @@ mod production {
                 std::thread::Builder::new()
                     .name("machine-god-ask-turn".to_owned())
                     .spawn_scoped(scope, move || {
-                        let PreparedConversationHost {
+                        let Ok(PreparedConversationHost {
                             host,
                             runtime,
                             workspace,
@@ -1100,10 +1128,15 @@ mod production {
                             catalog,
                             catalog_cache: _catalog_cache,
                             user_config: _user_config,
-                        } = prepare_conversation_host(
+                        }) = prepare_conversation_host_with_activation(
+                            launch,
                             Arc::new(DenyPermissionPrompter),
                             Arc::new(UnavailableQuestionPrompter),
-                        )?;
+                            || control.activate_turn(),
+                        )
+                        else {
+                            return finish_setup_failure(signals, &control);
+                        };
                         with_settled_terminal_turn(host, signals, &control, |host, signals| {
                             runtime.block_on(execute_turn(
                                 host,
@@ -1149,17 +1182,24 @@ mod production {
         user_config: Option<Arc<machine_god_native::NativeUserConfigStore>>,
     }
 
+    /// No acquired worker remains here: preserve any signal latched during
+    /// joined workspace preparation before releasing its receiving endpoint.
+    fn finish_setup_failure(
+        mut signals: AskSignals,
+        control: &AskSignalControlSender,
+    ) -> Result<AskCommandOutcome, ()> {
+        control.enter_final()?;
+        Ok(signals
+            .first_observed
+            .or_else(|| signals.receiver.try_recv().ok())
+            .map_or(AskCommandOutcome::OperationalFailure, AskSignal::outcome))
+    }
+
     /// Shared CLI acquisition order for one-shot and long-lived conversation
     /// owners. Prompt adapters are supplied by the caller; no input is acquired
     /// here. No fallible setup follows acquisition of the full terminal host.
-    fn prepare_conversation_host(
-        permission_prompter: Arc<dyn PermissionPrompter>,
-        question_prompter: Arc<dyn QuestionPrompter>,
-    ) -> Result<PreparedConversationHost, ()> {
-        prepare_conversation_host_with_activation(permission_prompter, question_prompter, || Ok(()))
-    }
-
     fn prepare_conversation_host_with_activation(
+        launch: &crate::workspace::launch::LaunchWorkspaceOptions,
         permission_prompter: Arc<dyn PermissionPrompter>,
         question_prompter: Arc<dyn QuestionPrompter>,
         before_host: impl FnOnce() -> Result<(), ()>,
@@ -1176,7 +1216,8 @@ mod production {
         let loaded_config = load_native_config(&environment).map_err(|_| ())?;
         let root_selection =
             NativeRootSelection::from_current_process(&environment).map_err(|_| ())?;
-        let prepared_roots = PreparedNativeRoots::prepare(root_selection).map_err(|_| ())?;
+        let prepared_roots =
+            PreparedNativeRoots::prepare(root_selection.clone()).map_err(|_| ())?;
         let terminal_options = capture_terminal_options(prepared_roots.workspace_root())?;
         let workspace = prepared_roots.workspace_root().to_owned();
         let (runtime, deadline) = TokioWebSearchDeadline::build_runtime_pair().map_err(|_| ())?;
@@ -1198,12 +1239,20 @@ mod production {
         let catalog = runtime.block_on(load_conversation_catalog(&cache))?;
         let model_routes = Arc::new(NativeConversationModelRoutes::new());
         let observations = Arc::new(NativeConversationObservations::new());
+        // From the first owned workspace worker onward, signals latch until
+        // native cleanup. Setup's immediate-exit phase cannot abandon that work.
+        before_host()?;
+        let authority =
+            prepare_launch_workspace(&runtime, root_selection, user_config.clone(), launch)?;
         let options = NativeReferenceHostConversationOptions::new(Arc::new(FileUndoTracker::new()))
+            .with_workspace(
+                authority,
+                Arc::new(machine_god_native::NativeWorkspaceContexts::new()),
+            )
             .with_terminal(terminal_options)
             .with_model_routes(model_routes.clone())
             .with_observations(Arc::clone(&observations))
             .with_permissions(capture_permission_options());
-        before_host()?;
         let host =
             NativeReferenceHost::compose_ai_gateway_http_with_prepared_roots_and_conversation_and_credential(
                 loaded_config,
@@ -1225,6 +1274,39 @@ mod production {
             catalog_cache: cache,
             user_config,
         })
+    }
+
+    /// Startup owns and joins its temporary worker scope on both success and
+    /// failure before the complete terminal host can be acquired.
+    fn prepare_launch_workspace(
+        runtime: &machine_god_native::TokioWebSearchRuntime,
+        roots: NativeRootSelection,
+        store: Option<Arc<machine_god_native::NativeUserConfigStore>>,
+        launch: &crate::workspace::launch::LaunchWorkspaceOptions,
+    ) -> Result<machine_god_native::NativeWorkspaceAuthority, ()> {
+        let workers = machine_god_native::NativeOwnedWorkerScope::new();
+        let completion = workers.completion();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let future = match store {
+                Some(store) => machine_god_native::prepare_native_workspace(
+                    roots,
+                    store,
+                    launch.directories.clone(),
+                    launch.suppress_saved,
+                    workers.clone(),
+                ),
+                None => machine_god_native::prepare_native_workspace_without_settings(
+                    roots,
+                    launch.directories.clone(),
+                    launch.suppress_saved,
+                    workers.clone(),
+                ),
+            };
+            runtime.block_on(future)
+        }));
+        workers.close();
+        completion.wait_on_worker().map_err(|_| ())?;
+        result.map_err(std::mem::forget)?.map_err(|_| ())
     }
 
     /// Only the blocking CLI host thread may settle native workers. The
@@ -1364,6 +1446,9 @@ mod production {
         .map_err(|_| ())?;
         let conversation = host
             .configure_conversation_permissions(conversation)
+            .map_err(|_| ())?;
+        let conversation = host
+            .configure_conversation_workspace(conversation)
             .map_err(|_| ())?;
         let conversation = NativeConversationRuntime::new_with_model_routes(
             conversation,
@@ -1585,6 +1670,110 @@ mod production {
         };
 
         const BLOCKED_OUTPUT_CHILD_MODE: &str = "MACHINE_GOD_ASK_BLOCKED_OUTPUT_CHILD";
+
+        #[test]
+        fn launch_workspace_startup_preserves_saved_suppression_and_launch_authority_without_saving()
+         {
+            use crate::workspace::launch::LaunchWorkspaceOptions;
+            use machine_god_native::{
+                NativeRootSelection, NativeSavedWorkspaceDirectory, NativeUserConfigStore,
+                NativeWorkspaceDirectoryMutation, PreparedNativeRoots,
+            };
+            let temporary = ScopedTestDirectory::new("launch-workspace");
+            let base = temporary.path().canonicalize().unwrap();
+            let primary = base.join("primary");
+            let state = base.join("state");
+            let saved = base.join("saved");
+            let added = base.join("launch-only");
+            for path in [&primary, &state, &saved, &added] {
+                fs::create_dir(path).unwrap();
+                fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+            }
+            let environment = NativeEnvironment::new(None, Some(state.into_os_string()), None);
+            let roots = NativeRootSelection::from_environment(&environment, &primary).unwrap();
+            let _prepared = PreparedNativeRoots::prepare(roots.clone()).unwrap();
+            let store = Arc::new(NativeUserConfigStore::new(base.join("user")));
+            let (runtime, _) =
+                machine_god_native::TokioWebSearchDeadline::build_runtime_pair().unwrap();
+            runtime
+                .block_on(
+                    store.apply_workspace_directory_mutation(
+                        primary.as_os_str().as_encoded_bytes(),
+                        &NativeWorkspaceDirectoryMutation::Add(
+                            NativeSavedWorkspaceDirectory::new(
+                                saved.as_os_str().as_encoded_bytes(),
+                                saved.as_os_str().as_encoded_bytes(),
+                                true,
+                            )
+                            .unwrap(),
+                        ),
+                        &[],
+                    ),
+                )
+                .unwrap();
+            let before = fs::read(base.join("user/config.json")).unwrap();
+            let settings_free = super::prepare_launch_workspace(
+                &runtime,
+                roots.clone(),
+                None,
+                &LaunchWorkspaceOptions {
+                    directories: vec![added.clone()],
+                    suppress_saved: false,
+                },
+            )
+            .unwrap()
+            .snapshot()
+            .unwrap();
+            assert_eq!(settings_free.entries().len(), 1);
+            assert!(settings_free.route(&added.join("file")).is_ok());
+            assert!(settings_free.route(&saved.join("file")).is_err());
+            let authority = super::prepare_launch_workspace(
+                &runtime,
+                roots.clone(),
+                Some(store.clone()),
+                &LaunchWorkspaceOptions {
+                    directories: vec![added.clone()],
+                    suppress_saved: true,
+                },
+            )
+            .unwrap();
+            let scope = authority.snapshot().unwrap();
+            assert!(scope.saved_suppressed());
+            assert_eq!(scope.entries().len(), 2);
+            assert!(scope.route(&saved.join("file")).is_err());
+            assert!(scope.route(&added.join("file")).is_ok());
+            let merged = super::prepare_launch_workspace(
+                &runtime,
+                roots.clone(),
+                Some(store.clone()),
+                &LaunchWorkspaceOptions {
+                    directories: vec![saved.clone(), saved.clone()],
+                    suppress_saved: true,
+                },
+            )
+            .unwrap()
+            .snapshot()
+            .unwrap();
+            assert_eq!(merged.entries().len(), 1);
+            assert!(
+                merged.entries()[0].saved()
+                    && merged.entries()[0].launch()
+                    && merged.entries()[0].active()
+            );
+            assert!(
+                super::prepare_launch_workspace(
+                    &runtime,
+                    roots,
+                    Some(store),
+                    &LaunchWorkspaceOptions {
+                        directories: vec![base.join("missing")],
+                        suppress_saved: false
+                    }
+                )
+                .is_err()
+            );
+            assert_eq!(fs::read(base.join("user/config.json")).unwrap(), before);
+        }
         const BLOCKED_OUTPUT_READY_PATH: &str = "MACHINE_GOD_ASK_BLOCKED_OUTPUT_READY_PATH";
         const BLOCKED_OUTPUT_DRAINED_PATH: &str = "MACHINE_GOD_ASK_BLOCKED_OUTPUT_DRAINED_PATH";
         const SETUP_LOCK_CHILD_MODE: &str = "MACHINE_GOD_ASK_SETUP_LOCK_CHILD";
@@ -2143,6 +2332,72 @@ mod production {
                 .expect("turn activation should acknowledge");
             assert_eq!(turn_receiver.try_recv(), Ok(AskSignal::Interrupt));
             assert!(state.turn_signal_latched);
+        }
+
+        #[test]
+        fn repeated_activation_after_workspace_startup_does_not_reset_first_signal() {
+            let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+            let (turn_sender, mut turn_receiver) = tokio::sync::mpsc::channel(1);
+            let mut state = AskSignalGuardianState::default();
+            let mut listeners = QueuedGuardianSignals {
+                interrupt: true,
+                terminate: false,
+            };
+            let mut cx = Context::from_waker(std::task::Waker::noop());
+            for index in 0..2 {
+                let (ready, ack) = mpsc::sync_channel(1);
+                sender
+                    .try_send(AskSignalControl::ActivateTurn(ready))
+                    .unwrap();
+                assert!(
+                    poll_signal_guardian(
+                        &mut cx,
+                        &mut receiver,
+                        &turn_sender,
+                        &mut listeners,
+                        &mut state
+                    )
+                    .is_pending()
+                );
+                ack.recv().unwrap();
+                if index == 0 {
+                    assert_eq!(turn_receiver.try_recv(), Ok(AskSignal::Interrupt));
+                    listeners.terminate = true;
+                } else {
+                    assert!(
+                        turn_receiver.try_recv().is_err(),
+                        "second activation cannot forward a replacement signal"
+                    );
+                }
+                assert!(state.turn_signal_latched);
+            }
+        }
+
+        #[test]
+        fn joined_workspace_startup_failure_preserves_observed_or_queued_signal() {
+            for observed in [None, Some(AskSignal::Interrupt)] {
+                let (control_sender, mut controls) = tokio::sync::mpsc::channel(1);
+                let control = AskSignalControlSender {
+                    sender: control_sender,
+                };
+                let (sender, receiver) = tokio::sync::mpsc::channel(1);
+                sender.try_send(AskSignal::Terminate).unwrap();
+                let signals = AskSignals {
+                    receiver,
+                    first_observed: observed,
+                };
+                let guardian = std::thread::spawn(move || {
+                    let Some(AskSignalControl::EnterFinal(ready)) = controls.blocking_recv() else {
+                        panic!("cleanup must precede final signal observation");
+                    };
+                    ready.send(()).unwrap();
+                });
+                assert_eq!(
+                    super::finish_setup_failure(signals, &control).unwrap(),
+                    observed.unwrap_or(AskSignal::Terminate).outcome()
+                );
+                guardian.join().unwrap();
+            }
         }
 
         #[test]
@@ -3971,12 +4226,20 @@ mod production {
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 impl AskCommandHost for ProductionAskCommandHost {
+    fn with_workspace(
+        &self,
+        workspace: crate::workspace::launch::LaunchWorkspaceOptions,
+    ) -> Result<Box<dyn AskCommandHost + '_>, ()> {
+        Ok(Box::new(Self { workspace }))
+    }
+
     fn execute(
         &self,
         _selection: SessionSelection,
         _prompt: String,
         _output: &mut dyn io::Write,
     ) -> AskCommandExecution {
+        let _ = &self.workspace;
         AskCommandExecution::without_finalizer(AskCommandOutcome::OperationalFailure)
     }
 }

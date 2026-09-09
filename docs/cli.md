@@ -26,6 +26,10 @@ Model signal ownership remains alive through output and cleanup.
 - A first argument of `help`, `--help`, or `-h` prints the same help text and
   preempts every following argument and effect.
 - `--version` and `-V` print the identity line.
+- Leading `--add-dir PATH` / `--add-dir=PATH` and singleton
+  `--no-additional-dirs` select actual native workspace authority for interactive,
+  ask and resume launches. They are rejected on administrative commands. See
+  [workspace selection](workspace-cli.md#launch-selection).
 - Invalid arguments are rejected before command-specific effects. They write
   the fixed global diagnostic to standard error and exit `2` unless the
   command contract below defines a command-local parse failure.
@@ -180,7 +184,11 @@ establish CLI support. `/help` describes the handlers actually wired in this hos
 
 The wired handlers include `/help`, `/status`, `/version`, `/quit` (`/exit`),
 `/cancel`, `/clear`, `/new`, `/reset`, argumentless `/resume` (picker), `/continue`,
-`/rename <title>`, `/compact` and argumentless `/undo` and `/copy`. Policy selection uses
+`/rename <title>`, `/compact` and argumentless `/undo` and `/copy`.
+`/workspace [list|add PATH|remove PATH|clear]` manages the host's actual retained
+roots through the same native service as top-level workspace management;
+workspace state is not CLI-owned or reconstructed from session metadata.
+Policy selection uses
 `/permissions [ask|auto|yolo|reset]` and `/sandbox [os|none]`. Model controls are
 `/models`, `/model [id-or-query|effort <name>|save|save-default]` and `/fast`.
 Configured persistent rule editing uses `/allowlist`, with native parsing,

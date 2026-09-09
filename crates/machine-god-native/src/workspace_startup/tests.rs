@@ -64,7 +64,7 @@ impl Fixture {
         launch: &[PathBuf],
         suppressed: bool,
     ) -> Result<NativeWorkspaceAuthority, Error> {
-        prepare_workspace_blocking(&self.selection, &self.store, launch, suppressed)
+        prepare_workspace_blocking(&self.selection, Some(&self.store), launch, suppressed)
     }
 }
 
@@ -72,6 +72,42 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         std::fs::remove_dir_all(&self.base).unwrap();
     }
+}
+
+#[test]
+fn settings_free_startup_is_inert_ignores_saved_roots_and_validates_launch_roots() {
+    let fixture = Fixture::new();
+    let saved = fixture.directory("saved");
+    let launch = fixture.directory("launch");
+    fixture.save(&saved, &saved, true);
+    let before = std::fs::read(fixture.base.join("config/config.json")).unwrap();
+    let workers = NativeOwnedWorkerScope::default();
+    let completion = workers.completion();
+    let prepare = |paths| {
+        prepare_native_workspace_without_settings(
+            fixture.selection.clone(),
+            paths,
+            false,
+            workers.clone(),
+        )
+    };
+    drop(prepare(vec![launch.clone()]));
+    let authority = block_on(prepare(vec![launch.clone()])).unwrap();
+    let snapshot = authority.snapshot().unwrap();
+    assert_eq!(snapshot.entries().len(), 1);
+    assert!(snapshot.entries()[0].launch());
+    assert!(!snapshot.entries()[0].saved());
+    assert!(snapshot.route(&launch.join("file")).is_ok());
+    assert!(snapshot.route(&saved.join("file")).is_err());
+    assert!(block_on(prepare(vec![fixture.base.join("missing")])).is_err());
+    assert!(block_on(prepare(vec![launch; MAX_WORKSPACE_LAUNCH_ARGUMENTS + 1])).is_err());
+    workers.close();
+    completion.wait_on_worker().unwrap();
+    assert_eq!(
+        std::fs::read(fixture.base.join("config/config.json")).unwrap(),
+        before
+    );
+    assert!(!fixture.selection.state_root().exists());
 }
 
 #[test]

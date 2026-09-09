@@ -41,6 +41,12 @@ pub enum NativeInteractiveControl {
         request: crate::NativeAllowlistRequest,
         store: Arc<NativeUserConfigStore>,
     },
+    /// Uses this owner's retained host authority and exact accepted runtime.
+    /// Absent settings permit listing only; no persistence path is discovered.
+    Workspace {
+        action: crate::NativeWorkspaceAction,
+        store: Option<Arc<NativeUserConfigStore>>,
+    },
 }
 
 impl fmt::Debug for NativeInteractiveControl {
@@ -63,6 +69,7 @@ pub enum NativeInteractiveControlError {
     Runtime(NativeConversationRuntimeError),
     Permission(PermissionError),
     Allowlist(crate::NativeAllowlistError),
+    Workspace(crate::NativeWorkspaceServiceError),
     Unavailable,
 }
 impl fmt::Debug for NativeInteractiveControlError {
@@ -92,6 +99,7 @@ pub enum NativeInteractiveControlReceipt {
     ModelDefaults(NativeModelPreferenceCommit),
     PermissionRuleConfirmed(SessionRevision),
     Allowlist(crate::NativeAllowlistReceipt),
+    Workspace(crate::NativeWorkspaceReceipt),
 }
 impl fmt::Debug for NativeInteractiveControlReceipt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -110,13 +118,21 @@ impl fmt::Debug for NativeInteractiveControlOutcome {
     }
 }
 impl NativeInteractiveControlOutcome {
-    pub(super) fn failed(&self) -> bool {
+    /// Reports failure or uncertainty without collapsing independent save facts.
+    #[must_use]
+    pub fn failed(&self) -> bool {
         match &self.result {
             Err(_) => true,
             Ok(NativeInteractiveControlReceipt::ModelDefaults(commit)) => {
                 commit.session.is_err() || commit.user_defaults.is_err()
             }
             Ok(NativeInteractiveControlReceipt::Allowlist(receipt)) => receipt.failed(),
+            Ok(NativeInteractiveControlReceipt::Workspace(receipt)) => !matches!(
+                receipt.reconciliation,
+                crate::NativeWorkspaceReconciliation::CachedBusy
+                    | crate::NativeWorkspaceReconciliation::Refreshed
+                    | crate::NativeWorkspaceReconciliation::Confirmed
+            ),
             Ok(_) => false,
         }
     }
@@ -190,6 +206,28 @@ impl NativeInteractiveSession {
         };
         let runtime = self.current.clone();
         let future = match control {
+            NativeInteractiveControl::Workspace { action, store } => {
+                if let crate::NativeWorkspaceAction::Add(path)
+                | crate::NativeWorkspaceAction::Remove(path) = &action
+                {
+                    let bytes = path.as_os_str().as_encoded_bytes();
+                    if bytes.is_empty() || bytes.len() > 4096 || bytes.contains(&0) {
+                        return Err(NativeInteractiveError::Configuration);
+                    }
+                }
+                let service = match store {
+                    Some(store) => self.host.workspace_service(store),
+                    None => self.host.workspace_service_without_settings(),
+                }
+                .ok_or(NativeInteractiveError::Configuration)?;
+                let future = service.execute_for_runtime(runtime, action);
+                Box::pin(async move {
+                    future
+                        .await
+                        .map(NativeInteractiveControlReceipt::Workspace)
+                        .map_err(NativeInteractiveControlError::Workspace)
+                }) as BoxFuture<'static, _>
+            }
             NativeInteractiveControl::Allowlist { request, store } => {
                 request
                     .validate_registry(|name| self.host.allowlist_tool_registered(name))
@@ -355,6 +393,7 @@ async fn execute(
             )
         }
         NativeInteractiveControl::Continue { .. }
+        | NativeInteractiveControl::Workspace { .. }
         | NativeInteractiveControl::UndoLast
         | NativeInteractiveControl::Allowlist { .. } => {
             unreachable!("specialized control checked before retention")

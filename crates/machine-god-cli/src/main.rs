@@ -15,8 +15,8 @@ mod status;
 mod test_support;
 mod workspace;
 use ask::{
-    AskCommandHost, InteractiveSessionSelection, ProductionAskCommandHost, parse_ask_arguments,
-    parse_prompt_arguments, run_ask, run_interactive, run_piped_ask, run_resume,
+    AskCommandHost, InteractiveSessionSelection, parse_ask_arguments, parse_prompt_arguments,
+    run_ask, run_interactive, run_piped_ask, run_resume,
 };
 use background::{
     BackgroundCommandHost, ProductionBackgroundCommandHost, is_background_command, run_background,
@@ -230,7 +230,7 @@ impl Default for CommandHosts<'_> {
             sessions: &ProductionSessionsCommandHost,
             workspace: &ProductionWorkspaceCommandHost,
             replay: &ProductionReplayCommandHost,
-            ask: &ProductionAskCommandHost,
+            ask: &ask::PRODUCTION_ASK_HOST,
             status: &ProductionStatusCommandHost,
             background: &ProductionBackgroundCommandHost,
         }
@@ -251,19 +251,23 @@ fn run_with_hosts(
     stderr: &mut impl io::Write,
     hosts: CommandHosts<'_>,
 ) -> u8 {
-    let CommandHosts {
-        models: models_host,
-        doctor: doctor_host,
-        session: inspection_host,
-        sessions: listing_host,
-        workspace: workspace_host,
-        replay: replay_host,
-        ask: ask_host,
-        status: status_host,
-        background: background_host,
-    } = hosts;
-    let mut arguments = arguments.into_iter();
+    let mut arguments = arguments.into_iter().peekable();
+    let Ok(launch) = workspace::launch::LaunchWorkspaceOptions::parse(&mut arguments) else {
+        let _ = stderr.write_all(INVALID_ARGUMENTS.as_bytes());
+        return 2;
+    };
     let first = arguments.next();
+    if launch.selected()
+        && first.as_deref().is_some_and(|first| {
+            is_help_command(first)
+                || is_background_command(first)
+                || is_status_command(first)
+                || is_replay_command(first)
+        })
+    {
+        let _ = stderr.write_all(INVALID_ARGUMENTS.as_bytes());
+        return 2;
+    }
     if first.as_deref().is_some_and(is_help_command) {
         let output = help();
         if stdout.write_all(output.as_bytes()).is_err() {
@@ -274,7 +278,7 @@ fn run_with_hosts(
     }
     if first.as_deref().is_some_and(is_background_command) {
         return run_background(
-            background_host,
+            hosts.background,
             arguments,
             stdout,
             stderr,
@@ -285,7 +289,7 @@ fn run_with_hosts(
     if first.as_deref().is_some_and(is_status_command) {
         let status_arguments = arguments.collect::<Vec<_>>();
         return run_status(
-            status_host,
+            hosts.status,
             &status_arguments,
             stdout,
             stderr,
@@ -295,7 +299,7 @@ fn run_with_hosts(
     if first.as_deref().is_some_and(is_replay_command) {
         let replay_arguments = arguments.collect::<Vec<_>>();
         return run_replay(
-            replay_host,
+            hosts.replay,
             &replay_arguments,
             stdout,
             stderr,
@@ -306,6 +310,55 @@ fn run_with_hosts(
         let _ = stderr.write_all(INVALID_ARGUMENTS.as_bytes());
         return 2;
     };
+
+    let configured_ask;
+    let ask_host = if launch.selected() {
+        if !matches!(
+            command,
+            Command::Interactive { .. }
+                | Command::Ask { .. }
+                | Command::AskStdin
+                | Command::Resume { .. }
+        ) {
+            let _ = stderr.write_all(INVALID_ARGUMENTS.as_bytes());
+            return 2;
+        }
+        let Ok(host) = hosts.ask.with_workspace(launch) else {
+            let _ = stderr.write_all(CONFIGURATION_FAILURE.as_bytes());
+            return 1;
+        };
+        configured_ask = host;
+        configured_ask.as_ref()
+    } else {
+        hosts.ask
+    };
+
+    run_parsed_command(
+        command,
+        stdout,
+        stderr,
+        CommandHosts {
+            ask: ask_host,
+            ..hosts
+        },
+    )
+}
+
+fn run_parsed_command(
+    command: Command,
+    stdout: &mut impl io::Write,
+    stderr: &mut impl io::Write,
+    hosts: CommandHosts<'_>,
+) -> u8 {
+    let CommandHosts {
+        models: models_host,
+        doctor: doctor_host,
+        session: inspection_host,
+        sessions: listing_host,
+        workspace: workspace_host,
+        ask: ask_host,
+        ..
+    } = hosts;
 
     let output = match command {
         Command::Identity => identity(),
@@ -554,6 +607,7 @@ fn help() -> String {
             "\n",
             "Usage:\n",
             "  machine-god\n",
+            "  machine-god [--add-dir PATH | --add-dir=PATH]... [--no-additional-dirs] [ask ... | resume ... | <interactive-resume-options>]\n",
             "  machine-god help\n",
             "  machine-god ask [--] [<prompt...>]\n",
             "  machine-god background [last | <unsigned-decimal-u64>] [--json]\n",
@@ -594,6 +648,8 @@ fn help() -> String {
             "  --resume-last    Resume the latest workspace session\n",
             "  --resume [last | <id>]  Resume latest or an exact session\n",
             "  --resume-<id>    Resume an exact session\n",
+            "  --add-dir PATH  Add a launch-only workspace directory (repeatable, before command)\n",
+            "  --no-additional-dirs  Suppress saved additional directories for this launch\n",
         ),
         env!("CARGO_PKG_VERSION")
     )
