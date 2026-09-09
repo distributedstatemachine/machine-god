@@ -158,7 +158,10 @@ and debug/error formatting omits rule and target content.
 canonical absolute workspace spelling, and explicitly registered real native
 tool implementations. Construction is inert. Its owned preparation future first
 bounds the actual borrowed JSON, then checks canonical arguments and the exact
-requested capability against that trusted implementation. Unknown tools are
+requested capability against that trusted implementation. Ordinary validation
+calls contextual preparation with the exact request session, incarnation, turn
+and invocation call ID, so scope-aware tools observe the same captured turn as
+core preparation. This adds no permission grant or filesystem lookup. Unknown tools are
 rejected; a registered name or risk hint alone cannot establish a builtin bypass.
 The typed question-tool registration uses its prepared-presentation validator,
 so a valid 1,024-byte raw question expanded to 4,096 terminal-safe bytes is not

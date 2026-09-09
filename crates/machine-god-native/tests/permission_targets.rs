@@ -131,6 +131,79 @@ fn real_read_defaults_ignore_risk_and_still_evaluate_configured_policy() {
 }
 
 #[test]
+fn ordinary_validation_uses_the_exact_request_and_invocation_context() {
+    struct ContextualRead {
+        inner: ReadFileTool,
+        seen: Arc<std::sync::Mutex<Vec<ToolContext>>>,
+    }
+    impl Tool for ContextualRead {
+        fn spec(&self) -> ToolSpec {
+            self.inner.spec()
+        }
+        fn prepare(&self, _: ToolCall) -> Result<PreparedToolCall, ToolError> {
+            Err(ToolError::new(
+                ToolErrorKind::InvalidInput,
+                "needs_context",
+                "needs context",
+                false,
+            ))
+        }
+        fn prepare_for_turn(
+            &self,
+            context: &ToolContext,
+            call: ToolCall,
+        ) -> Result<PreparedToolCall, ToolError> {
+            self.seen.lock().unwrap().push(context.clone());
+            self.inner.prepare(call)
+        }
+        fn execute(
+            &self,
+            context: ToolContext,
+            arguments: Value,
+            cancellation: CancellationToken,
+        ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+            self.inner.execute(context, arguments, cancellation)
+        }
+    }
+    let fixture = Fixture::new();
+    fs::write(fixture.0.join("file"), "data").unwrap();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let tool = Arc::new(ContextualRead {
+        inner: ReadFileTool::open(&fixture.0).unwrap(),
+        seen: seen.clone(),
+    });
+    let authority = fixture.authority(vec![NativePermissionTargetTool::Ordinary(tool)]);
+    let raw = call("read_file", json!({"path":"file"}));
+    let request = request(Capability::Filesystem {
+        access: FilesystemAccess::Read,
+        path: "file".into(),
+    });
+    let targets = block_on(authority.prepare(
+        &request,
+        PermissionInvocation {
+            tool_name: &raw.name,
+            call_id: &raw.id,
+            arguments: &raw.arguments,
+        },
+        CancellationToken::new(),
+    ))
+    .unwrap();
+    assert_eq!(
+        targets.targets()[0].path(),
+        fixture.0.join("file").to_str().unwrap()
+    );
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].session_id, request.session_id);
+    assert_eq!(
+        seen[0].session_incarnation_id,
+        request.session_incarnation_id
+    );
+    assert_eq!(seen[0].turn_id, request.turn_id);
+    assert_eq!(seen[0].call_id, raw.id);
+}
+
+#[test]
 fn create_folder_observes_missing_target_and_parent_without_creating_them() {
     let f = Fixture::new();
     let tool = Arc::new(CreateFolderTool::open(&f.0).unwrap());

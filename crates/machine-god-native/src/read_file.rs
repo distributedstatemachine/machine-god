@@ -89,6 +89,8 @@ impl Error for ReadFileToolOpenError {}
 pub struct ReadFileTool {
     #[cfg(unix)]
     root: OwnedFd,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    workspace_contexts: Option<std::sync::Arc<crate::NativeWorkspaceContexts>>,
     #[cfg(not(unix))]
     _unsupported: std::convert::Infallible,
 }
@@ -96,7 +98,24 @@ pub struct ReadFileTool {
 impl ReadFileTool {
     #[cfg(unix)]
     pub(crate) const fn from_root_descriptor(root: OwnedFd) -> Self {
-        Self { root }
+        Self {
+            root,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            workspace_contexts: None,
+        }
+    }
+
+    /// Selects the exact native turn's retained workspace scope. Relative paths
+    /// still select its primary root; absolute paths may select an active
+    /// additional root. Unregistered or expired turns have no fallback access.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[must_use]
+    pub fn with_workspace_contexts(
+        mut self,
+        contexts: std::sync::Arc<crate::NativeWorkspaceContexts>,
+    ) -> Self {
+        self.workspace_contexts = Some(contexts);
+        self
     }
 
     /// Opens and retains an absolute workspace root without following its final
@@ -161,6 +180,13 @@ struct ReadFileArguments {
 
 impl Tool for ReadFileTool {
     fn spec(&self) -> ToolSpec {
+        let path_description = "Workspace-relative file path";
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let path_description = if self.workspace_contexts.is_some() {
+            "Primary-relative file path or absolute file path within an active workspace root"
+        } else {
+            path_description
+        };
         ToolSpec {
             name: read_file_name(),
             description: "Read one UTF-8 file within the configured workspace".to_owned(),
@@ -169,7 +195,7 @@ impl Tool for ReadFileTool {
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Workspace-relative file path"
+                        "description": path_description
                     }
                 },
                 "required": ["path"],
@@ -198,13 +224,31 @@ impl Tool for ReadFileTool {
         ))
     }
 
+    fn prepare_for_turn(
+        &self,
+        context: &ToolContext,
+        call: ToolCall,
+    ) -> Result<PreparedToolCall, ToolError> {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if let Some(contexts) = &self.workspace_contexts {
+            return workspace::prepare(contexts, context, call);
+        }
+        let _ = context;
+        self.prepare(call)
+    }
+
     fn execute(
         &self,
-        _context: ToolContext,
+        context: ToolContext,
         arguments: Value,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if let Some(contexts) = &self.workspace_contexts {
+                return workspace::execute(contexts, &context, arguments, &cancellation);
+            }
+            let _ = context;
             let arguments = decode_arguments(arguments)?;
             let normalized = normalize_relative_path(&arguments.path)?;
             if normalized != arguments.path {
@@ -224,6 +268,10 @@ impl Tool for ReadFileTool {
         })
     }
 }
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "read_file_workspace.rs"]
+mod workspace;
 
 fn decode_arguments(arguments: Value) -> Result<ReadFileArguments, ToolError> {
     let Value::Object(mut object) = arguments else {

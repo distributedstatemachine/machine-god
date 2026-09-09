@@ -16,7 +16,7 @@ use crate::{
 };
 use machine_god_core::{
     BoxFuture, CancellationToken, Capability, PermissionError, PermissionInvocation,
-    PermissionRequest, TerminalActionRequest, Tool, ToolCall,
+    PermissionRequest, TerminalActionRequest, Tool, ToolCall, ToolContext,
 };
 use serde_json::Value;
 use std::{fmt, fs::File, sync::Arc};
@@ -528,11 +528,19 @@ fn validate_ordinary(
     invocation: PermissionInvocation<'_>,
 ) -> Result<(), PermissionError> {
     let prepared = tool
-        .prepare(ToolCall {
-            id: invocation.call_id.clone(),
-            name: invocation.tool_name.clone(),
-            arguments: invocation.arguments.clone(),
-        })
+        .prepare_for_turn(
+            &ToolContext {
+                session_id: request.session_id.clone(),
+                session_incarnation_id: request.session_incarnation_id.clone(),
+                turn_id: request.turn_id.clone(),
+                call_id: invocation.call_id.clone(),
+            },
+            ToolCall {
+                id: invocation.call_id.clone(),
+                name: invocation.tool_name.clone(),
+                arguments: invocation.arguments.clone(),
+            },
+        )
         .map_err(|_| invalid())?;
     if prepared.arguments() != invocation.arguments {
         return Err(invalid());

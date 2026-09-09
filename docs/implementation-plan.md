@@ -238,8 +238,8 @@ all 96 command tests and scoped warnings-denied Clippy. Both completed component
 worktrees are removed. The fresh locked `d55a45a` release passes all 96 command
 tests, seven production-input tests and all 295 CLI unit tests with five
 private-helper ignores. Workspace configuration, retained multi-root authority
-and context-aware tool preparation are now being implemented in isolated trees;
-actual tool/approval/sandbox/search integration and CLI handlers remain required.
+and context-aware tool preparation are integrated; actual
+tool/approval/sandbox/search integration and CLI handlers remain required.
 Contextual tool preparation is integrated at `a2a14ca`: core and wrapper tests,
 61 tool-loop tests, 295 CLI unit tests with five private-helper ignores, all 96
 command tests, workspace warnings-denied Clippy and core WASI lint pass. The clean
@@ -247,8 +247,18 @@ preparation worktree is removed. Descriptor scope component `a18661b` passes 17
 focused tests; its public wiring and real install caller remain integration work.
 Schema-v7 workspace persistence is integrated at `df7bdb5`, with 113 scoped tests,
 native warnings-denied Clippy and both WASI feature checks passing. The clean
-configuration and authority worktrees are removed. The operation service and
-permission-independent exact-turn scope ownership are being composed separately.
+configuration and authority worktrees are removed. Exact-turn scope ownership is
+integrated at `d0d3524`, with nine new and 83 existing tests passing; its clean
+worktree is removed. Operation service `ac5536a` passes 78 combined workspace
+tests and native all-target/all-feature Clippy against that actual turn owner.
+Provisional directory sources now resolve once and remain pinned after retargeting.
+Owned startup `b65c1ae` and explicit scoped `read_file` composition pass 84
+workspace-related tests, four real scoped-read tests, 19 public read tests and 14
+permission-target tests. Native all-target/all-feature Clippy and all-feature
+WASI lint pass after the portable metadata-description fix. Top-level CLI and
+cross-root mutation/approval/undo work proceed in isolated trees. Latest-state
+alias capacity and first-use missing-config-parent handling remain active
+refinements; production host routing for the complete tool set is still required.
 The all-feature WASI build failure is corrected by matching the Tokio reviewer
 clock's implementation, export and test guards to the non-WebAssembly dependency.
 The portable reviewer remains compiled. Both all-feature reviewer and minimal

@@ -112,7 +112,7 @@ fn provisional_saved_alias_merges_with_first_canonical_launch_observation() {
     let additional = fixture.directory("additional");
     std::os::unix::fs::symlink(&additional, &alias).unwrap();
     let snapshot = fixture
-        .prepare(&[additional.clone()], false)
+        .prepare(std::slice::from_ref(&additional), false)
         .unwrap()
         .snapshot()
         .unwrap();
@@ -141,7 +141,11 @@ fn missing_saved_roots_remain_visible_but_missing_launch_roots_fail() {
 #[test]
 fn rejects_state_overlap_files_and_excessive_arguments_without_publication() {
     let fixture = Fixture::new();
-    assert!(fixture.prepare(&[fixture.base.clone()], false).is_err());
+    assert!(
+        fixture
+            .prepare(std::slice::from_ref(&fixture.base), false)
+            .is_err()
+    );
     let file = fixture.base.join("file");
     std::fs::write(&file, b"not a directory").unwrap();
     assert!(matches!(

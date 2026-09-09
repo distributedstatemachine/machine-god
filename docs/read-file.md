@@ -149,6 +149,25 @@ and discards accumulated bytes. It cannot preempt an individual open, metadata,
 or read syscall already in flight; the contract is cooperative at those stated
 boundaries. Execution spawns no detached task or thread.
 
+## Exact-turn additional roots
+
+On Linux and macOS, a host can explicitly inject `NativeWorkspaceContexts` with
+`ReadFileTool::with_workspace_contexts`. The conversation must register with that
+same allocation. Relative paths select the captured primary root; absolute paths
+may select a captured active additional root. Contextual preparation resolves
+only the retained immutable scope and lexical path: it does not open, inspect or
+duplicate a descriptor. The resulting filesystem capability and prepared path
+retain the selected logical identity.
+
+Execution requires the same live session/incarnation/turn, checks cancellation,
+duplicates only the selected retained descriptor, and uses the existing bounded
+no-follow reader. Missing, foreign and expired contexts never fall back to the
+constructor's primary directory. Already captured turns retain their descriptor
+scope across later directory removal from the manager or root renames; later
+turns observe the newly installed scope. This routing does not grant permission,
+expand the content/path limits, follow descendant symlinks, or discover roots.
+Without explicit context injection, standalone single-root behavior is unchanged.
+
 ## Deferred scope
 
 This slice does not add CLI commands or alter existing CLI bytes. It does not

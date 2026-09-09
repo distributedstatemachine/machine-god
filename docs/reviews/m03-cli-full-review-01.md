@@ -389,3 +389,25 @@ and permission CAS routes remain unchanged. Native all-target/all-feature Clippy
 minimal and all-feature WASI lint, formatting and bounded documentation checks
 pass. Temporary exports were restored before commit and its clean worktree is
 removed. Actual service, turn binding and tool/CLI integration remain required.
+
+Turn component `b5b976d`, integrated as `d0d3524`, passes six scope and three
+control tests plus 37 conversation, 39 runtime and seven permission-context
+regressions. Its clean tree is removed. Service component `46d5bc8`, integrated
+as `ac5536a`, closes the actual install/control callers and passes 78 combined
+workspace tests, native all-target/all-feature warnings-denied Clippy and bounded
+docs/format checks. The focused directory regression now proves a previously
+missing source can first resolve through a symlink, become active, and retain
+that canonical identity after its source is retargeted. The service tree remains
+active for the separately identified latest-config alias-capacity refinement.
+The WASI remediation is rechecked on the integrated branch: both target feature
+variants, all 21 native reviewer tests and all 29 CI/manifest tests pass.
+
+Owned startup `b65c1ae` passes six new tests within the 84 workspace-related
+checks. Scoped `read_file` passes four actual engine/descriptor tests, including
+root-qualified permission capability and content, same-name roots, retained
+access across rename, next-turn scope replacement and expired/foreign context
+rejection. Nineteen public read regressions and 14 permission-target tests pass;
+the new ordinary-target regression checks the exact contextual preparation tuple.
+Replacement native all-target/all-feature Clippy and all-feature WASI lint pass
+after fixing wildcard imports, two unnecessary fixture clones and a portable
+unused-self warning. These remain component checks, not final feature gates.
