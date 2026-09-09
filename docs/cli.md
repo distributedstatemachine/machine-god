@@ -51,9 +51,14 @@ that Enter does not submit a truncated prefix. Submitted prompt identity comes
 from the first received byte, including buffered answers across modal pages.
 
 A bounded single-row viewport uses the native screen's pinned Unicode display
-units. It never truncates the underlying draft. Columns come from the retained
-output TTY, with owned reads after resize notifications; unavailable or zero
-dimensions fail explicitly. Draft rendering pauses during model streaming
+units. It never truncates the underlying draft. Columns and rows come from one
+size observation on the retained output TTY, initially and through owned reads
+after coalesced resize notifications. Subscription precedes the initial read;
+unavailable or zero dimensions fail explicitly without guessed defaults.
+The native columns-only API remains available and accepts zero rows, while
+full-dimensions observation validates both axes. Reads share one admission lane
+and stay owned through actual worker completion even if their futures are dropped.
+Draft rendering pauses during model streaming
 unless a human prompt is active, keeping model deltas contiguous. Terminal
 controls in draft text are escaped. Bracketed-paste mode is enabled through the
 acknowledged output lane and disabled in its final tail; output failure or a

@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub enum NativeInteractiveTerminalSizeError {
     InvalidTerminal,
     InvalidColumns,
+    InvalidRows,
     Busy,
     Unavailable,
 }
@@ -21,6 +22,7 @@ impl fmt::Display for NativeInteractiveTerminalSizeError {
         formatter.write_str(match self {
             Self::InvalidTerminal => "terminal dimensions require a TTY",
             Self::InvalidColumns => "terminal columns are unavailable",
+            Self::InvalidRows => "terminal rows are unavailable",
             Self::Busy => "terminal dimensions read is already active",
             Self::Unavailable => "terminal dimensions read is unavailable",
         })
@@ -28,6 +30,35 @@ impl fmt::Display for NativeInteractiveTerminalSizeError {
 }
 impl std::error::Error for NativeInteractiveTerminalSizeError {}
 type Error = NativeInteractiveTerminalSizeError;
+
+/// Nonzero columns and rows from one terminal-size observation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeInteractiveTerminalDimensions {
+    columns: NonZeroU16,
+    rows: NonZeroU16,
+}
+impl NativeInteractiveTerminalDimensions {
+    /// Pure validation without terminal access or guessed dimensions.
+    ///
+    /// # Errors
+    /// Rejects zero columns or rows, checking columns first.
+    pub fn new(columns: u16, rows: u16) -> Result<Self, Error> {
+        Ok(Self {
+            columns: NonZeroU16::new(columns).ok_or(Error::InvalidColumns)?,
+            rows: NonZeroU16::new(rows).ok_or(Error::InvalidRows)?,
+        })
+    }
+
+    #[must_use]
+    pub const fn columns(self) -> NonZeroU16 {
+        self.columns
+    }
+
+    #[must_use]
+    pub const fn rows(self) -> NonZeroU16 {
+        self.rows
+    }
+}
 
 /// Retains the caller's stdout TTY without opening ambient paths or changing
 /// terminal modes or status flags. Each read observes the current dimensions;
@@ -64,22 +95,44 @@ impl NativeInteractiveTerminalSizeReader {
     /// # Errors
     /// Rejects non-TTY descriptors, zero columns, overlapping reads, and worker
     /// admission or native failures. No guessed column count is substituted.
+    /// Zero rows do not invalidate this columns-only observation.
     pub fn read_columns(&mut self) -> BoxFuture<'_, Result<NonZeroU16, Error>> {
         Box::pin(async move {
-            self.active
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .map_err(|_| Error::Busy)?;
-            let permit = ReadPermit(self.active.clone());
-            let tty = self.tty.clone();
-            let io = self.io.clone();
-            self.scope
-                .run(move || {
-                    let _permit = permit;
-                    io.columns(&tty)
-                })
-                .await
-                .map_err(|_| Error::Unavailable)?
+            let size = self.read_size().await?;
+            NonZeroU16::new(size.ws_col).ok_or(Error::InvalidColumns)
         })
+    }
+
+    /// Observes rows and columns together using one native size ioctl.
+    /// Shares the same admission and owned-worker lifetime as `read_columns`.
+    /// Construction is inert until the future is polled.
+    ///
+    /// # Errors
+    /// Rejects non-TTY descriptors, zero columns or rows, overlapping reads,
+    /// and worker admission or native failures. No defaults are substituted.
+    pub fn read_dimensions(
+        &mut self,
+    ) -> BoxFuture<'_, Result<NativeInteractiveTerminalDimensions, Error>> {
+        Box::pin(async move {
+            let size = self.read_size().await?;
+            NativeInteractiveTerminalDimensions::new(size.ws_col, size.ws_row)
+        })
+    }
+
+    async fn read_size(&mut self) -> Result<rustix::termios::Winsize, Error> {
+        self.active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| Error::Busy)?;
+        let permit = ReadPermit(self.active.clone());
+        let tty = self.tty.clone();
+        let io = self.io.clone();
+        self.scope
+            .run(move || {
+                let _permit = permit;
+                io.size(&tty)
+            })
+            .await
+            .map_err(|_| Error::Unavailable)?
     }
 
     /// Permanently closes admission without abandoning an already owned read.
@@ -108,11 +161,11 @@ impl Drop for ReadPermit {
 }
 
 trait SizeIo: Send + Sync {
-    fn columns(&self, tty: &File) -> Result<NonZeroU16, Error>;
+    fn size(&self, tty: &File) -> Result<rustix::termios::Winsize, Error>;
 }
 struct NativeSizeIo;
 impl SizeIo for NativeSizeIo {
-    fn columns(&self, tty: &File) -> Result<NonZeroU16, Error> {
+    fn size(&self, tty: &File) -> Result<rustix::termios::Winsize, Error> {
         let stat = rustix::fs::fstat(tty).map_err(|_| Error::Unavailable)?;
         if rustix::fs::FileType::from_raw_mode(stat.st_mode)
             != rustix::fs::FileType::CharacterDevice
@@ -120,8 +173,7 @@ impl SizeIo for NativeSizeIo {
             return Err(Error::InvalidTerminal);
         }
         rustix::termios::tcgetattr(tty).map_err(|_| Error::InvalidTerminal)?;
-        let size = rustix::termios::tcgetwinsize(tty).map_err(|_| Error::Unavailable)?;
-        NonZeroU16::new(size.ws_col).ok_or(Error::InvalidColumns)
+        rustix::termios::tcgetwinsize(tty).map_err(|_| Error::Unavailable)
     }
 }
 
