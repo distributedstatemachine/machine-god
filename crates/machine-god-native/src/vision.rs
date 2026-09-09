@@ -42,6 +42,9 @@ use rustix::fs::{FileType, Mode, OFlags};
 
 use crate::session_store::JsonValueOwner;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod workspace;
+
 /// Model-visible tool name.
 pub const VISION_TOOL_NAME: &str = "vision";
 /// Maximum number of ordered images in one invocation.
@@ -75,7 +78,7 @@ pub const VISION_MAX_ACTIVE_REQUESTS: usize = 8;
 const READ_CHUNK_BYTES: usize = 64 * 1024;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const SIGNATURE_PROBE_BYTES: usize = 12;
-const VISION_DESCRIPTION: &str = "Inspect up to 20 workspace images with a focused question. Accepts exactly one of workspace-relative paths or prior image attachment IDs; attachment history is unavailable in this host slice.";
+const VISION_DESCRIPTION: &str = "Inspect up to 20 authorized workspace images with a focused question. Accepts exactly one of paths or prior image attachment IDs; attachment history is unavailable in this host slice.";
 
 /// Stable construction-error category for [`VisionTool`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -197,6 +200,8 @@ impl Default for VisionLimits {
 /// deadline authorities.
 pub struct VisionTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
+    workspace_contexts: Option<Arc<crate::NativeWorkspaceContexts>>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     root: OwnedFd,
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     _unsupported: std::convert::Infallible,
@@ -211,6 +216,18 @@ pub struct VisionTool {
 }
 
 impl VisionTool {
+    /// Binds path calls to the immutable workspace scope of their exact live turn.
+    /// This builder performs no filesystem work and leaves attachment IDs unchanged.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[must_use]
+    pub fn with_workspace_contexts(
+        mut self,
+        contexts: Arc<crate::NativeWorkspaceContexts>,
+    ) -> Self {
+        self.workspace_contexts = Some(contexts);
+        self
+    }
+
     /// Opens and retains an absolute workspace root with production limits.
     ///
     /// # Errors
@@ -285,6 +302,7 @@ impl VisionTool {
             ));
         }
         Ok(Self {
+            workspace_contexts: None,
             root,
             target,
             transport,
@@ -331,6 +349,13 @@ struct CanonicalVisionRequest {
 
 impl Tool for VisionTool {
     fn spec(&self) -> ToolSpec {
+        let path_description = "Ordered workspace-relative image paths.";
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let path_description = if self.workspace_contexts.is_some() {
+            "Ordered primary-relative or absolute image paths within the current turn's workspace roots."
+        } else {
+            path_description
+        };
         ToolSpec {
             name: vision_name(),
             description: VISION_DESCRIPTION.to_owned(),
@@ -353,7 +378,7 @@ impl Tool for VisionTool {
                         "minItems": 1,
                         "maxItems": MAX_VISION_IMAGES,
                         "uniqueItems": true,
-                        "description": "Ordered workspace-relative image paths."
+                        "description": path_description
                     },
                     "image_ids": {
                         "type": "array",
@@ -397,6 +422,19 @@ impl Tool for VisionTool {
         }
     }
 
+    fn prepare_for_turn(
+        &self,
+        context: &ToolContext,
+        call: ToolCall,
+    ) -> Result<PreparedToolCall, ToolError> {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if let Some(contexts) = &self.workspace_contexts {
+            return workspace::prepare(self, contexts, context, call);
+        }
+        let _ = context;
+        self.prepare(call)
+    }
+
     fn execute(
         &self,
         context: ToolContext,
@@ -405,6 +443,13 @@ impl Tool for VisionTool {
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         let arguments = JsonValueOwner::new(arguments);
         Box::pin(async move {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            let (request, routes) = if let Some(contexts) = &self.workspace_contexts {
+                workspace::canonical(contexts, &context, &arguments)?
+            } else {
+                (canonical_request_owned(&arguments)?, Vec::new())
+            };
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             let request = canonical_request_owned(&arguments)?;
             drop(arguments);
             check_cancellation_and_deadline(&cancellation, None)?;
@@ -426,7 +471,7 @@ impl Tool for VisionTool {
 
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             {
-                self.execute_supported(context, focus, paths, cancellation)
+                self.execute_supported(context, focus, paths, routes, cancellation)
                     .await
             }
         })
@@ -440,6 +485,7 @@ impl VisionTool {
         context: ToolContext,
         focus: String,
         paths: Vec<String>,
+        routes: Vec<crate::workspace_path_tools::Projection>,
         cancellation: CancellationToken,
     ) -> Result<ToolOutput, ToolError> {
         let deadline = Instant::now()
@@ -460,6 +506,7 @@ impl VisionTool {
                         &context,
                         &focus,
                         &paths,
+                        &routes,
                         &cancellation,
                         deadline,
                         cancelled,
@@ -480,6 +527,7 @@ impl VisionTool {
         context: &ToolContext,
         focus: &str,
         paths: &[String],
+        routes: &[crate::workspace_path_tools::Projection],
         cancellation: &CancellationToken,
         deadline: Instant,
         mut cancelled: Pin<&mut machine_god_core::Cancelled>,
@@ -491,7 +539,11 @@ impl VisionTool {
         let mut processed_bytes = 0_usize;
         let mut read_scratch = Vec::new();
         for (index, path) in paths.iter().enumerate() {
+            if let Some(output) = workspace::expiry_output(routes, paths.len(), &mut results)? {
+                return Ok(output);
+            }
             check_cancellation_and_deadline(cancellation, Some(deadline))?;
+            let (root, path) = workspace::location(routes, index, &self.root, path)?;
             let image_id = u64::try_from(index + 1).expect("at most 20 vision images fit u64");
             let remaining_total = MAX_VISION_TOTAL_IMAGE_BYTES.saturating_sub(processed_bytes);
             if remaining_total == 0 {
@@ -499,73 +551,70 @@ impl VisionTool {
                 continue;
             }
             let image_limit = remaining_total.min(MAX_VISION_IMAGE_BYTES);
-            match self.open_and_probe_image(path, image_limit, cancellation, deadline) {
-                Ok(probe) => {
-                    processed_bytes = processed_bytes.saturating_add(probe.bytes_read);
-                    let probe_bytes = probe.bytes_read;
-                    let Some(image) = probe.image else {
-                        results.insert(image_id, RenderedImage::unavailable(image_id));
-                        continue;
-                    };
-                    let image_bytes = image.fingerprint.size;
-                    let crosses_batch =
-                        vision_batch_would_overflow(batch.len(), batch_bytes, image_bytes);
-                    if crosses_batch {
-                        self.dispatch_batch(
-                            std::mem::take(&mut batch),
-                            context,
-                            focus,
-                            cancellation,
-                            deadline,
-                            cancelled.as_mut(),
-                            timeout.as_mut(),
-                            &mut results,
-                        )
-                        .await?;
-                        batch_bytes = 0;
-                    }
-                    let read = match self.finish_image_read(
-                        path,
-                        image,
-                        image_id,
-                        cancellation,
-                        deadline,
-                        &mut read_scratch,
-                    ) {
-                        Ok(read) => read,
-                        Err(LocalImageFailure::Cancelled) => return Err(cancelled_error()),
-                        Err(LocalImageFailure::Timeout) => return Err(timeout_error()),
-                    };
-                    processed_bytes =
-                        processed_bytes.saturating_add(read.bytes_read.saturating_sub(probe_bytes));
-                    let Some(image) = read.image else {
-                        results.insert(image_id, RenderedImage::unavailable(image_id));
-                        continue;
-                    };
-                    batch_bytes = batch_bytes
-                        .checked_add(image_bytes)
-                        .filter(|bytes| *bytes <= MAX_VISION_BATCH_BYTES)
-                        .expect("one admitted image fits an empty vision batch");
-                    batch.push(image);
-                    if batch.len() == MAX_VISION_BATCH_IMAGES
-                        || batch_bytes == MAX_VISION_BATCH_BYTES
-                    {
-                        self.dispatch_batch(
-                            std::mem::take(&mut batch),
-                            context,
-                            focus,
-                            cancellation,
-                            deadline,
-                            cancelled.as_mut(),
-                            timeout.as_mut(),
-                            &mut results,
-                        )
-                        .await?;
-                        batch_bytes = 0;
-                    }
-                }
-                Err(LocalImageFailure::Cancelled) => return Err(cancelled_error()),
-                Err(LocalImageFailure::Timeout) => return Err(timeout_error()),
+            let probe =
+                Self::open_and_probe_image_at(root, path, image_limit, cancellation, deadline)
+                    .map_err(LocalImageFailure::tool_error)?;
+            processed_bytes = processed_bytes.saturating_add(probe.bytes_read);
+            let probe_bytes = probe.bytes_read;
+            let Some(image) = probe.image else {
+                results.insert(image_id, RenderedImage::unavailable(image_id));
+                continue;
+            };
+            let image_bytes = image.fingerprint.size;
+            let crosses_batch = vision_batch_would_overflow(batch.len(), batch_bytes, image_bytes);
+            if crosses_batch {
+                self.dispatch_batch(
+                    std::mem::take(&mut batch),
+                    context,
+                    focus,
+                    cancellation,
+                    deadline,
+                    cancelled.as_mut(),
+                    timeout.as_mut(),
+                    &mut results,
+                    routes,
+                )
+                .await?;
+                batch_bytes = 0;
+            }
+            if let Some(output) = workspace::expiry_output(routes, paths.len(), &mut results)? {
+                return Ok(output);
+            }
+            let read = Self::finish_image_read_at(
+                root,
+                path,
+                image,
+                image_id,
+                cancellation,
+                deadline,
+                &mut read_scratch,
+            )
+            .map_err(LocalImageFailure::tool_error)?;
+            processed_bytes =
+                processed_bytes.saturating_add(read.bytes_read.saturating_sub(probe_bytes));
+            let Some(image) = read.image else {
+                results.insert(image_id, RenderedImage::unavailable(image_id));
+                continue;
+            };
+            batch_bytes = batch_bytes
+                .checked_add(image_bytes)
+                .filter(|bytes| *bytes <= MAX_VISION_BATCH_BYTES)
+                .expect("one admitted image fits an empty vision batch");
+            batch.push(image);
+            if batch.len() == MAX_VISION_BATCH_IMAGES || batch_bytes == MAX_VISION_BATCH_BYTES {
+                self.dispatch_batch(
+                    std::mem::take(&mut batch),
+                    context,
+                    focus,
+                    cancellation,
+                    deadline,
+                    cancelled.as_mut(),
+                    timeout.as_mut(),
+                    &mut results,
+                    routes,
+                )
+                .await?;
+                batch_bytes = 0;
             }
         }
         self.finish_execution(
@@ -578,6 +627,7 @@ impl VisionTool {
             cancelled,
             timeout.as_mut(),
             &mut results,
+            routes,
         )
         .await
     }
@@ -594,6 +644,7 @@ impl VisionTool {
         cancelled: Pin<&mut machine_god_core::Cancelled>,
         timeout: Pin<&mut (dyn Future<Output = Result<(), VisionTransportError>> + Send)>,
         results: &mut BTreeMap<u64, RenderedImage>,
+        routes: &[crate::workspace_path_tools::Projection],
     ) -> Result<ToolOutput, ToolError> {
         if !batch.is_empty() {
             self.dispatch_batch(
@@ -605,6 +656,7 @@ impl VisionTool {
                 cancelled,
                 timeout,
                 results,
+                routes,
             )
             .await?;
         }
@@ -636,7 +688,20 @@ impl VisionTool {
         cancelled: Pin<&mut machine_god_core::Cancelled>,
         timeout: Pin<&mut (dyn Future<Output = Result<(), VisionTransportError>> + Send)>,
         results: &mut BTreeMap<u64, RenderedImage>,
+        routes: &[crate::workspace_path_tools::Projection],
     ) -> Result<(), ToolError> {
+        if workspace::ensure_live(routes).is_err() {
+            if results.is_empty() {
+                return Err(crate::workspace_path_tools::unavailable());
+            }
+            for image in images {
+                results.insert(
+                    image.image_id(),
+                    RenderedImage::unavailable(image.image_id()),
+                );
+            }
+            return Ok(());
+        }
         check_cancellation_and_deadline(cancellation, Some(deadline))?;
         let requested_ids = images.iter().map(VisionImage::image_id).collect::<Vec<_>>();
         let provider_request =
@@ -674,6 +739,7 @@ impl VisionTool {
         check_cancellation_and_deadline(cancellation, Some(deadline))
     }
 
+    #[cfg(test)]
     fn open_and_probe_image(
         &self,
         path: &str,
@@ -681,8 +747,18 @@ impl VisionTool {
         cancellation: &CancellationToken,
         deadline: Instant,
     ) -> Result<LocalImageProbe, LocalImageFailure> {
+        Self::open_and_probe_image_at(&self.root, path, max_bytes, cancellation, deadline)
+    }
+
+    fn open_and_probe_image_at(
+        root: &OwnedFd,
+        path: &str,
+        max_bytes: usize,
+        cancellation: &CancellationToken,
+        deadline: Instant,
+    ) -> Result<LocalImageProbe, LocalImageFailure> {
         local_boundary(cancellation, deadline)?;
-        let Ok(file) = open_confined_image(&self.root, path) else {
+        let Ok(file) = open_confined_image(root, path) else {
             return Ok(LocalImageProbe::unavailable(0));
         };
 
@@ -701,14 +777,35 @@ impl VisionTool {
         let Some(fingerprint) = ImageFingerprint::from_stat(&metadata) else {
             return Ok(LocalImageProbe::unavailable(0));
         };
-        if !confined_binding_matches(&self.root, &file, path, cancellation, deadline)? {
+        if !confined_binding_matches(root, &file, path, cancellation, deadline)? {
             return Ok(LocalImageProbe::unavailable(0));
         }
         probe_verified_image(file, fingerprint, cancellation, deadline)
     }
 
+    #[cfg(test)]
     fn finish_image_read(
         &self,
+        path: &str,
+        image: ProbedImage,
+        image_id: u64,
+        cancellation: &CancellationToken,
+        deadline: Instant,
+        read_scratch: &mut Vec<u8>,
+    ) -> Result<LocalImageRead, LocalImageFailure> {
+        Self::finish_image_read_at(
+            &self.root,
+            path,
+            image,
+            image_id,
+            cancellation,
+            deadline,
+            read_scratch,
+        )
+    }
+
+    fn finish_image_read_at(
+        root: &OwnedFd,
         path: &str,
         image: ProbedImage,
         image_id: u64,
@@ -719,7 +816,7 @@ impl VisionTool {
         let bytes_read_before = image.probe_len;
         let read = finish_verified_image(image, image_id, cancellation, deadline, read_scratch)?;
         if read.image.is_some()
-            && !confined_binding_matches(&self.root, &read.file, path, cancellation, deadline)?
+            && !confined_binding_matches(root, &read.file, path, cancellation, deadline)?
         {
             return Ok(LocalImageRead::unavailable(read.bytes_read));
         }
@@ -1041,6 +1138,16 @@ enum LocalImageFailure {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+impl LocalImageFailure {
+    fn tool_error(self) -> ToolError {
+        match self {
+            Self::Cancelled => cancelled_error(),
+            Self::Timeout => timeout_error(),
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn local_boundary(
     cancellation: &CancellationToken,
     deadline: Instant,
@@ -1065,6 +1172,13 @@ fn canonical_request(arguments: Value) -> Result<CanonicalVisionRequest, ToolErr
 
 fn canonical_request_owned(
     arguments: &JsonValueOwner,
+) -> Result<CanonicalVisionRequest, ToolError> {
+    canonical_request_with(arguments, normalize_relative_path)
+}
+
+fn canonical_request_with(
+    arguments: &JsonValueOwner,
+    mut normalize: impl FnMut(&str) -> Result<String, ToolError>,
 ) -> Result<CanonicalVisionRequest, ToolError> {
     preflight_arguments(arguments.get())?;
     let object = arguments
@@ -1123,7 +1237,7 @@ fn canonical_request_owned(
             let mut seen = BTreeSet::new();
             let mut canonical_paths = Vec::with_capacity(paths.len());
             for path in paths {
-                let path = normalize_relative_path(&path)?;
+                let path = normalize(&path)?;
                 if !seen.insert(path.clone()) {
                     return Err(invalid_sources_error());
                 }

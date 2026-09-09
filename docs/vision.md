@@ -42,7 +42,7 @@ are invalid. Source order is significant. Preparation preserves `focus` bytes
 after validating that ASCII-edge trimming is nonempty; it does not otherwise
 rewrite the requested analysis.
 
-Milestone 03 implements workspace-relative `paths`. Absolute paths, `~/`,
+Unbound tools implement workspace-relative `paths`. Absolute paths, `~/`,
 ASCII-whitespace-only paths, empty components, `.`, `..`, repeated separators,
 NUL or any other Unicode control character, U+061C, U+200E, U+200F, every code
 point from U+2028 through U+202E, every code point from U+2066 through U+2069,
@@ -97,6 +97,34 @@ provider access for that image.
 Valid `image_ids` require no policy-governed effect in this milestone and are
 prepared without authority. They deterministically return the documented
 unsupported records and do not consult the workspace or transport.
+
+### Exact-turn workspace scopes
+
+On Linux and macOS, `with_workspace_contexts` binds path calls to the immutable
+workspace snapshot registered for their exact live native turn. The builder is
+inert. Contextual preparation performs only bounded lexical routing, with no
+descriptor duplication, filesystem lookup, or mutable-manager access. Relative
+paths select the primary root; absolute paths select an admitted root from that
+snapshot. Canonical logical paths agree exactly between prepared arguments and
+the composite Vision capability. The strict image component, separator,
+character, count, and byte limits still apply, including to absolute root
+prefixes. No home expansion or ambient path authority is added.
+
+Execution selects each image's retained root descriptor and confined relative
+path only when polled. A taken turn keeps its descriptors across workspace
+updates and root renames; a missing, foreign, or expired turn never falls back
+to the constructor root. Matching a turn is not permission authorization.
+All roots share the same invocation capacity, deadline, read scratch, aggregate
+image-byte allowance, ordered batching, transport allocation, and result limit.
+Local lookup and read remain the existing synchronous, cooperatively bounded
+native operations; workspace routing adds no detached worker.
+
+Expiry observed before later reads or dispatch prevents those effects. Already
+received provider records are retained, with unsent images reported as
+`image_unavailable`; expiry cannot retract a previously dispatched request.
+Cancellation, timeout, transport uncertainty, and teardown keep their existing
+contracts. Authority-free attachment-ID calls remain unchanged, even when the
+caller has no live workspace context.
 
 ## Media admission and batching
 
@@ -346,7 +374,7 @@ graph. Construction is network-inert.
 ## Deliberately deferred
 
 This slice does not add durable image attachments, prompt images, CLI
-`--image`, absolute or home-relative image paths, remote/data URLs, image
+`--image`, unrestricted absolute or home-relative image paths, remote/data URLs, image
 history, image generation, local OCR, raster decoding/resizing, artifact
 persistence, progress events, live-provider tests,
 parallel batches, cache behavior, measured performance claims, or complete fx
