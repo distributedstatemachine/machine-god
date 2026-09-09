@@ -47,6 +47,7 @@ pub(crate) struct TerminalHostProbePreparer {
 pub(crate) struct PreparedTerminalMonitor {
     authority: Option<TerminalProbeAuthority>,
     activation: TerminalMonitorActivation,
+    workspace_scope: Option<Arc<crate::NativeWorkspaceTurnScope>>,
 }
 impl PreparedTerminalMonitor {
     pub(crate) const fn activation(&self) -> TerminalMonitorActivation {
@@ -73,6 +74,7 @@ impl TerminalHostProbePreparer {
     /// path acquisition and activation observations remain off the owner loop.
     /// Indivisible system resolver/filesystem calls are checked before and after;
     /// they cannot extend the deadline for any subsequent probe effect.
+    #[cfg(test)]
     pub(crate) fn prepare_on_worker(
         &self,
         definition: &TerminalMonitorDefinition,
@@ -81,8 +83,21 @@ impl TerminalHostProbePreparer {
         deadline: Instant,
         cancellation: &CancellationToken,
     ) -> Result<PreparedTerminalMonitor> {
+        self.prepare_on_worker_with_scope(definition, session_cwd, sandbox, None, deadline, cancellation)
+    }
+
+    pub(crate) fn prepare_on_worker_with_scope(
+        &self,
+        definition: &TerminalMonitorDefinition,
+        session_cwd: &str,
+        sandbox: Option<Arc<crate::NativeSandboxLaunch>>,
+        scope: Option<&Arc<crate::NativeWorkspaceTurnScope>>,
+        deadline: Instant,
+        cancellation: &CancellationToken,
+    ) -> Result<PreparedTerminalMonitor> {
         definition.validate().map_err(|_| invalid())?;
         check(deadline, cancellation)?;
+        check_workspace(scope.map(AsRef::as_ref))?;
         let mut activation = TerminalMonitorActivation::default();
         let authority = match &definition.condition {
             Condition::TcpReady { host, port } => Some(TerminalProbeAuthority::Tcp {
@@ -115,6 +130,7 @@ impl TerminalHostProbePreparer {
                 let path_resolved = monitor_path(session_cwd, path)?;
                 let (parent, leaf) = self.resolve_path(
                     path_resolved.to_str().ok_or_else(invalid)?,
+                    scope.map(AsRef::as_ref),
                     deadline,
                     cancellation,
                 )?;
@@ -130,8 +146,9 @@ impl TerminalHostProbePreparer {
             }
             Condition::CustomProbe { command, cwd } => {
                 let resolved = monitor_path(session_cwd, cwd)?;
-                let (canonical, directory) = self.host.resolve_directory(
+                let (canonical, directory) = self.host.resolve_directory_with_scope(
                     resolved.to_str().ok_or_else(invalid)?,
+                    scope.map(AsRef::as_ref),
                     deadline,
                     cancellation,
                 )?;
@@ -164,6 +181,7 @@ impl TerminalHostProbePreparer {
         Ok(PreparedTerminalMonitor {
             authority,
             activation,
+            workspace_scope: scope.cloned(),
         })
     }
 
@@ -199,6 +217,7 @@ impl TerminalHostProbePreparer {
     fn resolve_path(
         &self,
         raw: &str,
+        scope: Option<&crate::NativeWorkspaceTurnScope>,
         deadline: Instant,
         cancellation: &CancellationToken,
     ) -> Result<(rustix::fd::OwnedFd, OsString)> {
@@ -206,6 +225,7 @@ impl TerminalHostProbePreparer {
         let mut missing = Vec::new();
         loop {
             check(deadline, cancellation)?;
+            check_workspace(scope)?;
             match std::fs::canonicalize(&current) {
                 Ok(mut canonical) => {
                     if missing.is_empty()
@@ -216,8 +236,9 @@ impl TerminalHostProbePreparer {
                         missing.push(canonical.file_name().ok_or_else(invalid)?.to_owned());
                         canonical.pop();
                     }
-                    let (_, descriptor) = self.host.resolve_directory(
+                    let (_, descriptor) = self.host.resolve_directory_with_scope(
                         canonical.to_str().ok_or_else(invalid)?,
+                        scope,
                         deadline,
                         cancellation,
                     )?;
@@ -348,6 +369,7 @@ impl TerminalHostProbes {
         mutation: &TerminalMonitorMutation,
         prepared: PreparedTerminalMonitor,
     ) -> Result<()> {
+        check_workspace(prepared.workspace_scope.as_deref())?;
         if self.closed || self.stop.is_cancelled() || mutation.removed || mutation.generation == 0 {
             return Err(invalid());
         }
@@ -753,6 +775,14 @@ impl TerminalHostProbes {
 impl Drop for TerminalHostProbes {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+fn check_workspace(scope: Option<&crate::NativeWorkspaceTurnScope>) -> Result<()> {
+    if scope.is_some_and(|scope| !scope.is_live()) {
+        Err(unavailable())
+    } else {
+        Ok(())
     }
 }
 
@@ -1495,6 +1525,7 @@ mod tests {
     }
     fn prepared_tcp() -> PreparedTerminalMonitor {
         PreparedTerminalMonitor {
+            workspace_scope: None,
             authority: Some(TerminalProbeAuthority::Tcp {
                 host: "127.0.0.1".into(),
                 port: 80,
@@ -1712,6 +1743,7 @@ mod tests {
         let mut scheduler =
             TerminalHostProbes::new(Arc::clone(&fixture.executor), CancellationToken::new());
         let prepared = || PreparedTerminalMonitor {
+            workspace_scope: None,
             authority: Some(TerminalProbeAuthority::Tcp {
                 host: "127.0.0.1".into(),
                 port: 80,

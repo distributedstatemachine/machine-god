@@ -19,6 +19,7 @@ pub(crate) struct HostPermissionResolver {
     workers: NativeOwnedWorkerScope,
     stop: CancellationToken,
     active: Arc<AtomicUsize>,
+    workspace_required: bool,
 }
 impl HostPermissionResolver {
     pub(crate) fn new(
@@ -31,7 +32,13 @@ impl HostPermissionResolver {
             workers,
             stop,
             active: Arc::new(AtomicUsize::new(0)),
+            workspace_required: false,
         }
+    }
+
+    pub(crate) fn with_workspace_scope_required(mut self) -> Self {
+        self.workspace_required = true;
+        self
     }
 }
 struct Permit(Arc<AtomicUsize>);
@@ -53,9 +60,23 @@ impl NativePermissionTerminalResolver for HostPermissionResolver {
         invocation: TerminalActionInvocation,
         cancellation: CancellationToken,
     ) -> BoxFuture<'_, Result<NativePermissionTerminalResolution, PermissionError>> {
+        self.resolve_with_workspace_scope(invocation, None, cancellation)
+    }
+
+    fn resolve_with_workspace_scope(
+        &self,
+        invocation: TerminalActionInvocation,
+        scope: Option<Arc<crate::NativeWorkspaceTurnScope>>,
+        cancellation: CancellationToken,
+    ) -> BoxFuture<'_, Result<NativePermissionTerminalResolution, PermissionError>> {
         Box::pin(async move {
             let deadline = Instant::now() + Duration::from_secs(2);
             if cancellation.is_cancelled() || self.stop.is_cancelled() {
+                return Err(invalid());
+            }
+            if (self.workspace_required && scope.is_none())
+                || scope.as_ref().is_some_and(|scope| !scope.is_live())
+            {
                 return Err(invalid());
             }
             self.active
@@ -70,7 +91,12 @@ impl NativePermissionTerminalResolver for HostPermissionResolver {
             let operation = self.workers.run(move || {
                 let _permit = permit;
                 let resolved = host
-                    .resolve_on_worker(invocation, deadline, &effective)
+                    .resolve_on_worker_with_scope(
+                        invocation,
+                        scope.as_deref(),
+                        deadline,
+                        &effective,
+                    )
                     .map_err(|_| invalid())?;
                 let shell = match &resolved.request {
                     TerminalActionRequest::Exec { request } => {
@@ -84,7 +110,10 @@ impl NativePermissionTerminalResolver for HostPermissionResolver {
                     ),
                     _ => None,
                 };
-                if effective.is_cancelled() || Instant::now() >= deadline {
+                if effective.is_cancelled()
+                    || Instant::now() >= deadline
+                    || scope.as_ref().is_some_and(|scope| !scope.is_live())
+                {
                     return Err(invalid());
                 }
                 let identity = host.identity();
