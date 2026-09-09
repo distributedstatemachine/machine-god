@@ -27,6 +27,12 @@ impl Driver {
         signals: &mut AskSignals,
     ) -> Poll<TurnDriveResult> {
         self.poll_signals(cx, signals);
+        if self.output.poll_tape(cx).is_err() {
+            self.output_failed = true;
+            if !self.shutting_down {
+                self.shutdown();
+            }
+        }
         let now_ms = if let Ok(now) = wall_clock_ms() {
             now
         } else {
@@ -129,6 +135,11 @@ impl Driver {
             && let Poll::Ready(signal) = signals.poll_signal(cx)
         {
             self.signal = Some(signal);
+            if signal == super::AskSignal::Interrupt
+                && let Some(tape) = &mut self.output.tape
+            {
+                tape.sigint();
+            }
             self.grace = Some(Box::pin(tokio::time::sleep(SIGNAL_OUTPUT_GRACE)));
             self.shutdown();
         }
@@ -229,7 +240,12 @@ impl Driver {
             self.poll_raw_input(cx, binding, now_ms);
             return;
         }
-        match self.input.poll_line(cx, binding) {
+        let tape = &mut self.output.tape;
+        match self.input.poll_line_recorded(cx, binding, |bytes| {
+            if let Some(tape) = tape {
+                tape.stdin(bytes);
+            }
+        }) {
             Poll::Pending => {}
             Poll::Ready(None) => {
                 self.input_ended = true;
@@ -277,6 +293,9 @@ impl Driver {
             Poll::Ready(Ok(dimensions)) => {
                 frontend.columns = dimensions.columns().get();
                 frontend.rows = dimensions.rows().get();
+                if let Some(tape) = &mut self.output.tape {
+                    tape.resize(frontend.columns, frontend.rows);
+                }
                 frontend.dirty = true;
                 if let Some(picker) = &mut self.picker {
                     picker.resize(frontend.rows);
@@ -297,7 +316,14 @@ impl Driver {
             active_response: status.active || status.queued_jobs != 0,
             session_picker: self.picker_open(),
         };
-        let polled = self.input.poll_event(cx, binding, context);
+        let tape = &mut self.output.tape;
+        let polled = self
+            .input
+            .poll_event_recorded(cx, binding, context, |bytes| {
+                if let Some(tape) = tape {
+                    tape.stdin(bytes);
+                }
+            });
         if self.input.take_cancel_disarm() {
             self.frontend.as_mut().expect("raw frontend").cancel_armed = None;
         }
@@ -380,7 +406,7 @@ impl Driver {
             return;
         }
         if self.in_flight.is_some() {
-            match self.output.acknowledgements.poll_recv(cx) {
+            match self.output.poll_acknowledgement(cx) {
                 Poll::Pending => return,
                 Poll::Ready(Some(OutputAcknowledgement::Succeeded)) => {
                     self.acknowledge();
@@ -388,7 +414,7 @@ impl Driver {
                     // native receipt even when there is no next output item.
                     cx.waker().wake_by_ref();
                 }
-                Poll::Ready(Some(OutputAcknowledgement::Failed) | None) => {
+                Poll::Ready(Some(_) | None) => {
                     self.output_failed = true;
                     self.shutdown();
                     return;
@@ -715,21 +741,39 @@ impl FinalPresentation {
             && let Poll::Ready(signal) = signals.poll_signal(cx)
         {
             self.signal = Some(signal);
+            if signal == super::AskSignal::Interrupt
+                && let Some(tape) = &mut self.output.tape
+            {
+                tape.sigint();
+            }
             self.grace = Some(Box::pin(tokio::time::sleep(SIGNAL_OUTPUT_GRACE)));
         }
         if !self.output_failed && !self.result.stalled_output_after_signal {
+            self.output_failed |= self.output.poll_tape(cx).is_err();
             self.poll_output(cx);
+        }
+        let output_done = self.final_flush_sent && self.in_flight.is_none();
+        let mut tape_done = false;
+        if output_done && !self.output_failed && !self.result.stalled_output_after_signal {
+            match self.output.poll_finish_tape(cx) {
+                Poll::Ready(Ok(())) => tape_done = true,
+                Poll::Ready(Err(())) => self.output_failed = true,
+                Poll::Pending => {}
+            }
         }
         if let Some(grace) = &mut self.grace
             && grace.as_mut().poll(cx).is_ready()
-            && (self.in_flight.is_some() || self.render.is_some() || !self.final_flush_sent)
+            && (!output_done || !tape_done)
         {
             self.result.stalled_output_after_signal = true;
         }
         if self.output_failed
             || self.result.stalled_output_after_signal
-            || (self.final_flush_sent && self.in_flight.is_none())
+            || (output_done && tape_done)
         {
+            if self.output_failed || self.result.stalled_output_after_signal {
+                self.output.abort_tape();
+            }
             self.result.outcome = self.signal.map_or_else(
                 || {
                     if self.output_failed {
@@ -750,7 +794,7 @@ impl FinalPresentation {
 
     fn poll_output(&mut self, cx: &mut Context<'_>) {
         if self.in_flight.is_some() {
-            match self.output.acknowledgements.poll_recv(cx) {
+            match self.output.poll_acknowledgement(cx) {
                 Poll::Pending => return,
                 Poll::Ready(Some(OutputAcknowledgement::Succeeded)) => {
                     if let Some(InFlight::Flush { receipt, .. }) = self.in_flight.take() {
@@ -768,7 +812,7 @@ impl FinalPresentation {
                         }
                     }
                 }
-                Poll::Ready(Some(OutputAcknowledgement::Failed) | None) => {
+                Poll::Ready(Some(_) | None) => {
                     self.output_failed = true;
                     return;
                 }
