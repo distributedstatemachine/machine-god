@@ -1098,7 +1098,6 @@ fn read_background_state(state_root: &Path, workspace: &Path, id: u64) -> String
         .to_owned()
 }
 
-#[cfg(target_os = "linux")]
 fn expected_semantic_search_output() -> Value {
     json!({
         "content": {
@@ -2427,7 +2426,6 @@ fn reference_subagent_fixture_is_inert_until_its_future_is_polled() {
     assert!(authority.requests().is_empty());
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn composed_semantic_search_uses_retained_workspace_and_persists_exact_result() {
     let temporary = TemporaryDirectory::new("semantic-search");
@@ -2522,19 +2520,18 @@ fn composed_semantic_search_uses_retained_workspace_and_persists_exact_result() 
     assert!(!directory_is_empty(&sessions));
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn composed_semantic_search_preserves_catalog_and_returns_fixed_unsupported_result() {
-    let temporary = TemporaryDirectory::new("semantic-search-unsupported");
+fn composed_semantic_search_preserves_catalog_and_persists_empty_matches() {
+    let temporary = TemporaryDirectory::new("semantic-search-no-matches");
     let (workspace, sessions) = roots(temporary.path());
     fs::create_dir(workspace.join("scope")).unwrap();
     fs::write(
         workspace.join("scope/concept.rs"),
-        "SEMANTIC_MACOS_CONTENT_MUST_NOT_BE_READ",
+        "NONMATCHING_CONTENT_SENTINEL",
     )
     .unwrap();
     let transport = ScriptedTransport::new(
-        "SEMANTIC_MACOS_FACTORY_SENTINEL",
+        "SEMANTIC_NO_MATCHES_FACTORY_SENTINEL",
         semantic_search_round_responses(),
     );
     let prompter = AllowingPrompter::default();
@@ -2547,7 +2544,7 @@ fn composed_semantic_search_preserves_catalog_and_returns_fixed_unsupported_resu
     )
     .unwrap();
 
-    let (session_id, events) = collect_turn(&host, "semantic-search-unsupported");
+    let (session_id, events) = collect_turn(&host, "semantic-search-no-matches");
     assert_completed(&events);
 
     let permission_requests = prompter.requests();
@@ -2566,19 +2563,14 @@ fn composed_semantic_search_preserves_catalog_and_returns_fixed_unsupported_resu
     assert_exact_native_tool_catalog(&first);
     let second = body(&requests[1]);
     assert_exact_native_tool_catalog(&second);
-    let expected = json!({
-        "content": {
-            "code": "tool_error",
-            "message": "tool execution failed",
-            "retryable": false,
-        },
-        "is_error": true,
-    });
+    let mut expected = expected_semantic_search_output();
+    expected["content"]["results"] = json!([]);
+    expected["content"]["matching_files"] = json!(0);
     assert_eq!(decoded_tool_output(&second, 2), expected);
     assert!(
         !serde_json::to_string(&second)
             .unwrap()
-            .contains("SEMANTIC_MACOS_CONTENT_MUST_NOT_BE_READ")
+            .contains("NONMATCHING_CONTENT_SENTINEL")
     );
 
     let finished_output = events
@@ -2587,19 +2579,19 @@ fn composed_semantic_search_preserves_catalog_and_returns_fixed_unsupported_resu
             TurnEvent::ToolFinished { output, .. } => Some(output),
             _ => None,
         })
-        .expect("unsupported semantic search emits one completed tool result");
+        .expect("nonmatching semantic search emits one completed tool result");
     assert_eq!(finished_output.content, expected["content"]);
-    assert!(finished_output.is_error);
+    assert!(!finished_output.is_error);
 
     let durable = futures_executor::block_on(host.engine().load_session(session_id))
         .unwrap()
-        .expect("unsupported semantic search turn is durable");
+        .expect("nonmatching semantic search turn is durable");
     let record = durable.record();
     let [ContentBlock::ToolResult { output, .. }] = record.messages[2].content.as_slice() else {
-        panic!("unsupported semantic search result is retained as one structured tool result")
+        panic!("nonmatching semantic search result is retained as one structured tool result")
     };
     assert_eq!(output.content, expected["content"]);
-    assert!(output.is_error);
+    assert!(!output.is_error);
     assert!(!directory_is_empty(&sessions));
 }
 

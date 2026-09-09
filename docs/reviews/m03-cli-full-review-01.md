@@ -638,3 +638,30 @@ unsupported-tool WASI lint pass, as do 21 native reviewer tests and 18 focused
 CI/manifest checks. The existing selected CI job now guards both WASI builds.
 Typed historical cards and the remaining command/session scenarios still need
 implementation; complete local, review and exact remote feature gates stay open.
+
+## Combined-candidate local regression: `56d5de41`
+
+The candidate integrated recording, session maintenance, configured permission
+reporting, saved-rule interaction and positive startup-resume scenarios. Its
+Rust 1.94.1 formatting, workspace warnings-denied Clippy, fresh locked release
+build, bounded documentation checks, compatibility/Unicode drift, dependency
+checks and repository Python suite passed (255 passed, 14 existing platform
+skips). Exact FreeBSD/WASI compilation checks also passed. The fresh macOS
+release passed help/version and nine permission/maintenance command scenarios.
+
+The full serial macOS workspace run passed 370 CLI unit tests with six fixture
+helpers ignored, 108 command tests, ten replay tests, core suites and 2,163
+native unit tests with twelve fixture helpers ignored. It subsequently failed
+`composed_semantic_search_preserves_catalog_and_returns_fixed_unsupported_result`
+in the native reference-host integration suite: the newly supported macOS
+scanner correctly returned successful searched-file evidence, while the old
+test expected a fixed unsupported error. The run stopped there; later workspace
+suites and doc tests were not accepted, and this candidate was not reviewed or
+delivered.
+
+The correction runs the existing retained-root/exact-result persistence scenario
+on both Linux and macOS, and converts the obsolete macOS-only unsupported
+scenario into a cross-platform exact empty-match success scenario. Catalog,
+permission, completion and durable-result assertions remain; successful scanning
+is checked through exact counters rather than an unsupported stub. No production
+behavior, deadlines or test-runner policy changed.

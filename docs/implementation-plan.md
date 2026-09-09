@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-cli-shell`
-- Active phase: `combined CLI integrated; full-feature verification pending`
-- Next gate: `full exact local gate, three fresh reviews and exact feature CI/Benchmark evidence`
+- Active phase: `combined CLI verification; rerunning full gate after platform regression fix`
+- Next gate: `replacement full local gate, three fresh reviews and exact feature CI/Benchmark evidence`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -210,7 +210,7 @@ rejects one-shot, duplicate and misplaced requests before host effects. Its
 dispatch tests pass. Session migration/recovery and guarded cleanup now compose
 the native state-only, completion-owned process facade with CLI grammar, bounded
 receipts and six public subprocess tests. The integrated CLI package passes
-359 unit tests (six subprocess fixture helpers ignored), 105 command subprocess
+370 unit tests (six subprocess fixture helpers ignored), 108 command subprocess
 tests, ten replay tests and warnings-denied Clippy. These are component checks,
 not a fresh-release or complete-feature gate. A positive acknowledged startup
 picker test restores the selected identity, preferences and history without new
@@ -222,6 +222,11 @@ policy. Latest/exact startup-resume scenarios pass under PTY. Native Linux also
 passes configured permission discovery from an actual non-Unicode working path.
 These integrated component checks leave the complete feature gates pending;
 they do not constitute a delivery or fresh-release acceptance.
+The full macOS run passed CLI/core/native unit checks, then exposed a stale
+composed-host test that still expected macOS semantic search to be unsupported.
+Both supported platforms now exercise retained-root success and a real empty
+match result through the composed host; both focused macOS scenarios pass.
+The replacement full gate remains open.
 The resumed product changes are not covered by the earlier maintenance review.
 Required scenarios cannot close with unsupported stubs.
 
