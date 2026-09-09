@@ -1265,22 +1265,17 @@ fn ensure_root_is_linked(root: BorrowedFd<'_>) -> Result<(), ToolError> {
 fn ensure_macos_root_is_linked(root: BorrowedFd<'_>) -> Result<(), ToolError> {
     let root_metadata = rustix::fs::fstat(root).map_err(|_| unavailable(true))?;
     let root_path = rustix::fs::getpath(root).map_err(|_| unavailable(true))?;
-    let root_path = root_path.as_bytes();
-    if root_path == b"/" {
+    let Some(observation) =
+        crate::retained_root::RetainedRootObservation::new(root, &root_metadata, &root_path)
+            .map_err(|()| unavailable(true))?
+    else {
         return Ok(());
-    }
-    let name = root_path
-        .rsplit(|byte| *byte == b'/')
-        .next()
-        .filter(|name| !name.is_empty())
-        .ok_or_else(|| unavailable(true))?;
-    let name = std::ffi::CString::new(name).map_err(|_| unavailable(true))?;
-    let parent = rustix::fs::openat(root, "..", directory_open_flags(), Mode::empty())
+    };
+    let parent = observation.open_parent().map_err(|_| unavailable(true))?;
+    let linked = observation
+        .stat_link(&parent)
         .map_err(|_| unavailable(true))?;
-    let linked = rustix::fs::statat(&parent, &name, AtFlags::SYMLINK_NOFOLLOW)
-        .map_err(|_| unavailable(true))?;
-    if !same_identity(&root_metadata, &linked) || !FileType::from_raw_mode(linked.st_mode).is_dir()
-    {
+    if !observation.matches(&linked) {
         return Err(unavailable(true));
     }
     Ok(())
@@ -2755,4 +2750,9 @@ mod tests {
             assert!(suffix.bytes().all(|byte| byte.is_ascii_hexdigit()));
         }
     }
+}
+#[cfg(all(test, target_os = "macos"))]
+#[test]
+fn retained_root_characterization_preserves_states_and_error_mapping() {
+    crate::retained_root::tests::assert_root_states(ensure_macos_root_is_linked, unavailable(true));
 }

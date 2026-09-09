@@ -268,6 +268,8 @@ mod read_tool_result;
     any(target_os = "linux", target_os = "macos")
 ))]
 mod reference_host;
+#[cfg(target_os = "macos")]
+mod retained_root;
 #[cfg(all(
     feature = "ai-gateway-http",
     not(target_family = "wasm"),

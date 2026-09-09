@@ -1004,27 +1004,18 @@ fn ensure_macos_root_is_linked(
     check_cancellation(cancellation)?;
     let root_path = rustix::fs::getpath(root).map_err(|_| unavailable())?;
     check_cancellation(cancellation)?;
-    let root_path = root_path.as_bytes();
-    if root_path == b"/" {
+    let Some(observation) =
+        crate::retained_root::RetainedRootObservation::new(root, &root_metadata, &root_path)
+            .map_err(|()| unavailable())?
+    else {
         return Ok(());
-    }
-    let name = root_path
-        .rsplit(|byte| *byte == b'/')
-        .next()
-        .filter(|name| !name.is_empty())
-        .ok_or_else(unavailable)?;
-    let name = std::ffi::CString::new(name).map_err(|_| unavailable())?;
+    };
     check_cancellation(cancellation)?;
-    let parent = rustix::fs::openat(root, "..", directory_open_flags(), Mode::empty())
-        .map_err(|_| unavailable())?;
+    let parent = observation.open_parent().map_err(|_| unavailable())?;
     check_cancellation(cancellation)?;
-    let linked_metadata =
-        rustix::fs::statat(&parent, &name, AtFlags::SYMLINK_NOFOLLOW).map_err(|_| unavailable())?;
+    let linked = observation.stat_link(&parent).map_err(|_| unavailable())?;
     check_cancellation(cancellation)?;
-    if linked_metadata.st_dev != root_metadata.st_dev
-        || linked_metadata.st_ino != root_metadata.st_ino
-        || !FileType::from_raw_mode(linked_metadata.st_mode).is_dir()
-    {
+    if !observation.matches(&linked) {
         return Err(unavailable());
     }
     Ok(())
@@ -1394,4 +1385,26 @@ mod tests {
         byte_limit.observe_entry(1).unwrap();
         assert!(byte_limit.observe_entry(1).is_err());
     }
+}
+#[cfg(all(test, target_os = "macos"))]
+#[test]
+fn retained_root_characterization_preserves_states_and_error_mapping() {
+    crate::retained_root::tests::assert_root_states(
+        |root| ensure_macos_root_is_linked(root, &CancellationToken::new()),
+        unavailable(),
+    );
+}
+
+#[cfg(all(test, target_os = "macos"))]
+#[test]
+fn retained_root_cancellation_precedes_observation() {
+    let fixture = crate::retained_root::tests::Fixture::new();
+    let root = fixture.open_root();
+    std::fs::remove_dir(fixture.root()).unwrap();
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    assert_eq!(
+        ensure_macos_root_is_linked(root.as_fd(), &cancellation).unwrap_err(),
+        check_cancellation(&cancellation).unwrap_err()
+    );
 }
