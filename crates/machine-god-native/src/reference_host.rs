@@ -1359,14 +1359,7 @@ impl NativeReferenceHost {
             &session_store,
             terminal_wait_delay,
             terminal_selection,
-            TerminalScopeSelection {
-                permission: permission_setup
-                    .as_ref()
-                    .map(|setup| Arc::clone(&setup.sandbox)),
-                workspace_contexts: workspace_binding
-                    .as_ref()
-                    .map(|binding| Arc::clone(&binding.contexts)),
-            },
+            TerminalScopeSelection::new(permission_setup.as_ref(), workspace_binding.as_ref()),
         )?;
         let session_store = Arc::new(session_store);
         let (engine_session_store, read_tool_result) = session_store_components(&session_store);
@@ -1572,6 +1565,18 @@ struct SelectedTerminalComposition {
 struct TerminalScopeSelection {
     permission: Option<Arc<crate::NativeTerminalPermissionPolicy>>,
     workspace_contexts: Option<Arc<crate::NativeWorkspaceContexts>>,
+}
+
+impl TerminalScopeSelection {
+    fn new(
+        permission: Option<&PermissionComposition>,
+        workspace: Option<&WorkspaceBinding>,
+    ) -> Self {
+        Self {
+            permission: permission.map(|setup| Arc::clone(&setup.sandbox)),
+            workspace_contexts: workspace.map(|binding| Arc::clone(&binding.contexts)),
+        }
+    }
 }
 
 fn compose_selected_terminal(
