@@ -26,8 +26,8 @@ input; it is not a machine-god product language or runtime dependency.
 - Main CI: `34163483918` (`GREEN`)
 - Main Benchmark evidence: `34163483934` (`GREEN`)
 - Active branch: `agent/m60-agent-readiness`
-- Active phase: `implementing all twelve whole-codebase agent-readiness and Rust-structure findings on a stacked maintenance branch`
-- Next gate: `integrate the maintenance worktrees, pass the complete local gate, three fresh reviews and exact feature-branch CI/Benchmark evidence`
+- Active phase: `verifying all twelve integrated whole-codebase agent-readiness and Rust-structure fixes on a stacked maintenance branch`
+- Next gate: `fresh exact-release full local gate, three fresh independent reviews, then exact feature-branch CI/Benchmark evidence`
 <!-- canonical-live-status:end -->
 
 The complete terminal is delivered as one feature. The exact behavior commit
@@ -119,8 +119,14 @@ The maintenance acceptance boundary is:
 - Extract native environment/status implementation behind compatible root
   exports with unchanged feature/platform behavior.
 
-Implementation and integrated verification are in progress. Freeze a single
-candidate after the complete local gate, run three fresh independent review
+All twelve changes are integrated; acceptance remains open. Component checks
+preserved the original 2,089 unique native test identities while removing 965
+duplicate executions. The broader run also identified a stale model-save error
+fixture; it now uses a deterministically obstructed parent, with its original
+receipt and transition assertions preserved. No production behavior was changed
+for that fixture correction.
+
+Freeze a single candidate after the complete local gate, run three fresh independent review
 tracks, fix until all are green, and require exact feature-branch CI and
 Benchmark evidence. Clean up only committed, integrated maintenance worktrees.
 The unfinished parent feature remains outside this maintenance acceptance.

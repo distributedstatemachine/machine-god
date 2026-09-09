@@ -105,6 +105,12 @@ retains the public types and functions as re-exports; configuration loading and
 doctor diagnostics share internal path resolution without owning it in the
 root façade. Snapshot values remain private and immutable.
 
+On macOS, filesystem tools and session storage share the private `retained_root`
+identity-observation primitive. Callers retain their own cancellation and
+syscall checkpoints, commit-phase errors, and retry policy; sharing basename
+selection and parent-entry comparison does not make those observations atomic
+or confer new filesystem authority.
+
 The [native reference host](native-reference-host.md) is the maintained example
 of full composition. It validates the selected configuration, retains roots,
 constructs the provider and transports, installs prompt adapters and the shared
