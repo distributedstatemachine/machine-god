@@ -886,25 +886,25 @@ mod production {
     }
 
     async fn acknowledgement_finishes_within_signal_grace(
-        acknowledgements: &mut tokio::sync::mpsc::Receiver<OutputAcknowledgement>,
+        output: &mut OutputBridge,
         deadline: tokio::time::Instant,
     ) -> SignalGraceResult {
-        match tokio::time::timeout_at(deadline, acknowledgements.recv()).await {
+        match tokio::time::timeout_at(deadline, output.acknowledgement()).await {
             Ok(acknowledgement) => SignalGraceResult::Acknowledged(acknowledgement),
             Err(_) => SignalGraceResult::TimedOut,
         }
     }
 
     async fn record_signal_grace(
-        acknowledgements: &mut tokio::sync::mpsc::Receiver<OutputAcknowledgement>,
+        output: &mut OutputBridge,
         state: &mut TurnDriveState,
     ) {
         let deadline = *state
             .signal_output_deadline
             .get_or_insert_with(|| tokio::time::Instant::now() + SIGNAL_OUTPUT_GRACE);
-        match acknowledgement_finishes_within_signal_grace(acknowledgements, deadline).await {
+        match acknowledgement_finishes_within_signal_grace(output, deadline).await {
             SignalGraceResult::Acknowledged(Some(OutputAcknowledgement::Succeeded)) => {}
-            SignalGraceResult::Acknowledged(Some(OutputAcknowledgement::Failed) | None) => {
+            SignalGraceResult::Acknowledged(Some(_) | None) => {
                 state.output_failed = true;
             }
             SignalGraceResult::TimedOut => state.stalled_output_after_signal = true,
@@ -912,14 +912,14 @@ mod production {
     }
 
     async fn poll_acknowledgement_or_signal<G: SignalSource>(
-        acknowledgements: &mut tokio::sync::mpsc::Receiver<OutputAcknowledgement>,
+        output: &mut OutputBridge,
         signals: &mut G,
     ) -> PollResult<Option<OutputAcknowledgement>> {
         poll_fn(|context| {
             if let Poll::Ready(signal) = signals.poll_signal(context) {
                 return Poll::Ready(PollResult::Signal(signal));
             }
-            acknowledgements.poll_recv(context).map(PollResult::Value)
+            output.poll_acknowledgement(context).map(PollResult::Value)
         })
         .await
     }
@@ -947,18 +947,18 @@ mod production {
             return;
         }
         if state.requested_signal.is_some() {
-            record_signal_grace(&mut output.acknowledgements, state).await;
+            record_signal_grace(output, state).await;
             return;
         }
-        match poll_acknowledgement_or_signal(&mut output.acknowledgements, signals).await {
+        match poll_acknowledgement_or_signal(output, signals).await {
             PollResult::Signal(signal) => {
                 if state.requested_signal.is_none() {
                     state.requested_signal = Some(signal);
                 }
-                record_signal_grace(&mut output.acknowledgements, state).await;
+                record_signal_grace(output, state).await;
             }
             PollResult::Value(Some(OutputAcknowledgement::Succeeded)) => {}
-            PollResult::Value(Some(OutputAcknowledgement::Failed) | None) => {
+            PollResult::Value(Some(_) | None) => {
                 state.output_failed = true;
             }
         }
@@ -1128,6 +1128,7 @@ mod production {
                                 OutputBridge {
                                     work: work_sender,
                                     acknowledgements: acknowledgement_receiver,
+                                    tape: None,
                                 },
                                 signals,
                                 &control,
@@ -1530,18 +1531,18 @@ mod production {
                             drain_turn(stream, signals, &mut state.requested_signal).await;
                             break;
                         }
-                        match poll_acknowledgement_or_signal(&mut output.acknowledgements, signals)
+                        match poll_acknowledgement_or_signal(&mut output, signals)
                             .await
                         {
                             PollResult::Signal(signal) => {
                                 state.requested_signal = Some(signal);
                                 cancel();
                                 drain_turn(stream, signals, &mut state.requested_signal).await;
-                                record_signal_grace(&mut output.acknowledgements, &mut state).await;
+                                record_signal_grace(&mut output, &mut state).await;
                                 break;
                             }
                             PollResult::Value(Some(OutputAcknowledgement::Succeeded)) => {}
-                            PollResult::Value(Some(OutputAcknowledgement::Failed) | None) => {
+                            PollResult::Value(Some(_) | None) => {
                                 state.output_failed = true;
                                 cancel();
                                 drain_turn(stream, signals, &mut state.requested_signal).await;
@@ -2214,6 +2215,7 @@ mod production {
                     OutputBridge {
                         work: work_sender,
                         acknowledgements: acknowledgement_receiver,
+                        tape: None,
                     },
                 ));
                 let output = output_worker.join().expect("output worker should join");
@@ -2832,6 +2834,7 @@ mod production {
                         OutputBridge {
                             work: work_sender,
                             acknowledgements: acknowledgement_receiver,
+                            tape: None,
                         },
                         &mut signals,
                         &control,
@@ -3875,6 +3878,7 @@ mod production {
                             OutputBridge {
                                 work: work_sender,
                                 acknowledgements: acknowledgement_receiver,
+                                tape: None,
                             },
                         )
                         .await;
@@ -4131,6 +4135,7 @@ mod production {
                 let mut output = OutputBridge {
                     work: work_sender,
                     acknowledgements: acknowledgement_receiver,
+                    tape: None,
                 };
                 let mut state = TurnDriveState {
                     requested_signal: Some(AskSignal::Interrupt),
@@ -4138,7 +4143,7 @@ mod production {
                 };
 
                 let mut write_grace = Box::pin(record_signal_grace(
-                    &mut output.acknowledgements,
+                    &mut output,
                     &mut state,
                 ));
                 poll_fn(|context| {
